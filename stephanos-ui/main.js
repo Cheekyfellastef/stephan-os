@@ -1,9 +1,5 @@
 import { moduleLoader } from "./system/module_loader.js";
 
-
-<script type="module" src="./main.js"></script>
-
-
 function renderProjectRegistry() {
 
     const projects = [
@@ -14,16 +10,21 @@ function renderProjectRegistry() {
 
     const container = document.getElementById("project-registry");
 
-    if (!container) return;
-
-    container.innerHTML = "";
+    if (!container) {
+        console.error("Project registry container not found");
+        return;
+    }
 
     projects.forEach(project => {
+
         const item = document.createElement("div");
         item.className = "project-item";
         item.textContent = project;
+
         container.appendChild(item);
+
     });
+
 }
 
 async function startStephanos() {
@@ -34,7 +35,8 @@ async function startStephanos() {
 
     renderProjectRegistry();
 
-    console.log("All modules initialized");
+    console.log("System ready");
+
 }
 
 startStephanos();
