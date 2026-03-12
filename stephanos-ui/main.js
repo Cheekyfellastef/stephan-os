@@ -1,3 +1,16 @@
+import { moduleLoader } from "./system/module_loader.js";
+
+async function startStephanos() {
+
+    console.log("Stephan OS starting...");
+
+    await moduleLoader.loadModules();
+
+    console.log("All modules initialized");
+}
+
+startStephanos();
+
 const systemStatus = document.getElementById("system-status");
 const projectList = document.getElementById("project-list");
 
