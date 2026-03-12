@@ -1,50 +1,52 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
 
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <title>Stephan OS</title>
 
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="./styles.css">
 
 </head>
 
 <body>
 
-<div id="desktop">
-
-<header id="topbar">
-    <div>Stephan OS</div>
-    <div id="clock"></div>
+<header>
+<h1>Stephan OS</h1>
 </header>
 
-<div id="system-panel">
+<section id="system-status">
 
-<h1>System Status</h1>
+<h2>System Status</h2>
 
-<div id="system-status">
-System Initializing...
-</div>
+<p id="system-status-text">System Initializing...</p>
 
-</div>
+</section>
 
-<div id="projects">
+
+<section id="projects">
 
 <h2>Projects</h2>
 
-<ul id="project-list"></ul>
+<div id="project-registry"></div>
 
-</div>
+</section>
 
-</div>
 
-<div id="dev-console">
+<section id="developer-console">
+
 <h3>Developer Console</h3>
-<pre id="console-output"></pre>
-</div>
 
-<script src="main.js"></script>
+<div id="dev-console"></div>
+
+</section>
+
+
+<script type="module" src="./main.js"></script>
 
 </body>
+
 </html>
