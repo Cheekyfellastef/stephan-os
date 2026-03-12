@@ -1,5 +1,3 @@
-import { moduleLoader } from "./system/module_loader.js";
-
 function log(message) {
 
     const consoleDiv = document.getElementById("dev-console");
@@ -24,7 +22,7 @@ function renderProjectRegistry() {
     const container = document.getElementById("project-registry");
 
     if (!container) {
-        log("ERROR: project-registry container not found");
+        log("ERROR: project-registry container missing");
         return;
     }
 
@@ -33,7 +31,6 @@ function renderProjectRegistry() {
     projects.forEach(project => {
 
         const item = document.createElement("div");
-        item.className = "project-item";
         item.textContent = project;
 
         container.appendChild(item);
@@ -44,21 +41,9 @@ function renderProjectRegistry() {
 }
 
 
-async function startStephanos() {
+function startStephanos() {
 
     log("Stephan OS starting...");
-
-    try {
-
-        await moduleLoader.loadModules();
-        log("Modules loaded");
-
-    } catch (err) {
-
-        log("Module loader error:");
-        log(err.toString());
-
-    }
 
     renderProjectRegistry();
 
@@ -69,6 +54,7 @@ async function startStephanos() {
     }
 
     log("System ready");
+
 }
 
 
