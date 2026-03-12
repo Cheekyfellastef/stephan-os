@@ -1,7 +1,5 @@
 import { moduleLoader } from "./system/module_loader.js";
 
-console.log(document.getElementById("project-registry"));
-
 function renderProjectRegistry() {
 
     const projects = [
@@ -13,9 +11,11 @@ function renderProjectRegistry() {
     const container = document.getElementById("project-registry");
 
     if (!container) {
-        console.error("Project registry container not found");
+        console.error("Project registry container missing");
         return;
     }
+
+    container.innerHTML = "";
 
     projects.forEach(project => {
 
@@ -33,11 +33,25 @@ async function startStephanos() {
 
     console.log("Stephan OS starting...");
 
-    await moduleLoader.loadModules();
+    try {
 
+        await moduleLoader.loadModules();
+        console.log("Modules loaded");
+
+    } catch (err) {
+
+        console.warn("Module system not ready yet", err);
+
+    }
+
+    // ALWAYS render projects even if modules fail
     renderProjectRegistry();
 
-    console.log("System ready");
+    const status = document.getElementById("system-status-text");
+
+    if (status) {
+        status.textContent = "Stephan OS Online";
+    }
 
 }
 
