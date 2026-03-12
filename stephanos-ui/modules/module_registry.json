@@ -1,0 +1,12 @@
+{
+  "modules": [
+    {
+      "name": "commandDeck",
+      "path": "./modules/command-deck/commandDeck.js"
+    },
+    {
+      "name": "knowledgeGraph",
+      "path": "./modules/knowledge-graph/knowledgeGraph.js"
+    }
+  ]
+}
