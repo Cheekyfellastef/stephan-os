@@ -1,0 +1,38 @@
+body {
+
+background: black;
+color: #00ff9f;
+
+font-family: monospace;
+
+margin: 0;
+padding: 40px;
+
+}
+
+h1 {
+
+font-size: 40px;
+margin-bottom: 20px;
+
+}
+
+#app {
+
+max-width: 900px;
+
+}
+
+#system-status {
+
+margin-bottom: 30px;
+
+color: cyan;
+
+}
+
+li {
+
+margin-bottom: 10px;
+
+}
