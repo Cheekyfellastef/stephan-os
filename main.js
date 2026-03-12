@@ -25,13 +25,49 @@ function renderProjectRegistry(projects) {
     projects.forEach(project => {
 
         const item = document.createElement("div");
+
         item.textContent = project;
+
+        item.style.cursor = "pointer";
+
+        item.onclick = () => launchProject(project);
 
         container.appendChild(item);
 
     });
 
     log("Projects rendered");
+
+}
+
+
+function launchProject(project) {
+
+    log("Launching " + project);
+
+    document.getElementById("projects").style.display = "none";
+
+    const workspace = document.getElementById("workspace");
+
+    workspace.style.display = "block";
+
+    document.getElementById("workspace-title").textContent = project;
+
+    const content = document.getElementById("workspace-content");
+
+    content.innerHTML = "Workspace for " + project;
+
+}
+
+
+function returnToCommandDeck() {
+
+    log("Returning to Command Deck");
+
+    document.getElementById("workspace").style.display = "none";
+
+    document.getElementById("projects").style.display = "block";
+
 }
 
 
