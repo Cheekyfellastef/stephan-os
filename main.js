@@ -1,5 +1,18 @@
 import { moduleLoader } from "./system/module_loader.js";
 
+function log(message) {
+
+    const consoleDiv = document.getElementById("dev-console");
+
+    if (!consoleDiv) return;
+
+    const line = document.createElement("div");
+    line.textContent = message;
+
+    consoleDiv.appendChild(line);
+}
+
+
 function renderProjectRegistry() {
 
     const projects = [
@@ -10,63 +23,53 @@ function renderProjectRegistry() {
 
     const container = document.getElementById("project-registry");
 
-    if (!container) return;
+    if (!container) {
+        log("ERROR: project-registry container not found");
+        return;
+    }
 
     container.innerHTML = "";
 
     projects.forEach(project => {
+
         const item = document.createElement("div");
         item.className = "project-item";
         item.textContent = project;
+
         container.appendChild(item);
+
     });
+
+    log("Projects rendered");
 }
+
 
 async function startStephanos() {
 
-    console.log("Stephan OS starting...");
+    log("Stephan OS starting...");
 
-    await moduleLoader.loadModules();
+    try {
+
+        await moduleLoader.loadModules();
+        log("Modules loaded");
+
+    } catch (err) {
+
+        log("Module loader error:");
+        log(err.toString());
+
+    }
 
     renderProjectRegistry();
 
-    console.log("All modules initialized");
-}
+    const status = document.getElementById("system-status-text");
 
-startStephanos();
-
-
-const systemStatus = document.getElementById("system-status");
-const projectList = document.getElementById("project-list");
-
-systemStatus.innerText = "Stephan OS Online";
-
-const projects = [
-
-    {
-        name: "Galaxians",
-        description: "Arcade game engine experiment"
-    },
-
-    {
-        name: "Wealth App",
-        description: "Retirement modelling simulator"
-    },
-
-    {
-        name: "Stephan OS",
-        description: "Human-AI collaborative thinking environment"
+    if (status) {
+        status.textContent = "Stephan OS Online";
     }
 
-];
+    log("System ready");
+}
 
-projects.forEach(project => {
 
-    const item = document.createElement("li");
-
-    item.innerText =
-        project.name + " — " + project.description;
-
-    projectList.appendChild(item);
-
-});
+startStephanos();
