@@ -1,0 +1,1 @@
+Data structures representing the Stephan OS knowledge graph.
