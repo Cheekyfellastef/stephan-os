@@ -4,7 +4,6 @@
 <head>
 
 <meta charset="UTF-8">
-
 <title>Stephan OS</title>
 
 <link rel="stylesheet" href="styles.css">
@@ -13,12 +12,21 @@
 
 <body>
 
-<div id="app">
+<div id="desktop">
 
-<h1>Stephan OS</h1>
+<header id="topbar">
+    <div>Stephan OS</div>
+    <div id="clock"></div>
+</header>
+
+<div id="system-panel">
+
+<h1>System Status</h1>
 
 <div id="system-status">
 System Initializing...
+</div>
+
 </div>
 
 <div id="projects">
@@ -31,8 +39,12 @@ System Initializing...
 
 </div>
 
+<div id="dev-console">
+<h3>Developer Console</h3>
+<pre id="console-output"></pre>
+</div>
+
 <script src="main.js"></script>
 
 </body>
-
 </html>
