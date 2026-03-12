@@ -29,14 +29,18 @@ function renderProjectRegistry(projects) {
         item.textContent = project;
 
         item.style.cursor = "pointer";
+        item.style.padding = "6px";
+        item.style.borderBottom = "1px solid #ccc";
 
-        item.onclick = () => launchProject(project);
+        item.onclick = function () {
+            launchProject(project);
+        };
 
         container.appendChild(item);
 
     });
 
-    log("Projects rendered");
+    log("Projects rendered and clickable");
 
 }
 
@@ -100,11 +104,7 @@ async function startStephanos() {
 
     renderProjectRegistry(projects);
 
-    const status = document.getElementById("system-status-text");
-
-    if (status) {
-        status.textContent = "Stephan OS Online";
-    }
+    document.getElementById("system-status-text").textContent = "Stephan OS Online";
 
     log("System ready");
 
