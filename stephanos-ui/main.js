@@ -1,5 +1,9 @@
 import { moduleLoader } from "./system/module_loader.js";
 
+
+<script type="module" src="./main.js"></script>
+
+
 function renderProjectRegistry() {
 
     const projects = [
