@@ -8,13 +8,41 @@
 
 <title>Stephan OS</title>
 
-<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="styles.css">
+
+<style>
+
+body{
+    font-family: Arial, Helvetica, sans-serif;
+    padding:20px;
+}
+
+#project-registry div{
+    padding:6px;
+    cursor:pointer;
+}
+
+#dev-console{
+    margin-top:20px;
+    padding:10px;
+    background:#111;
+    color:#0f0;
+    font-family:monospace;
+}
+
+button{
+    margin-top:10px;
+}
+
+</style>
 
 </head>
+
 
 <body>
 
 <h1>Stephan OS</h1>
+
 
 <section>
 
@@ -24,10 +52,22 @@
 </section>
 
 
-<section>
+<section id="projects">
 
 <h2>Projects</h2>
+
 <div id="project-registry"></div>
+
+</section>
+
+
+<section id="workspace" style="display:none; margin-top:20px;">
+
+<h2 id="workspace-title"></h2>
+
+<div id="workspace-content"></div>
+
+<button onclick="returnToCommandDeck()">Return to Command Deck</button>
 
 </section>
 
@@ -35,18 +75,14 @@
 <section>
 
 <h3>Developer Console</h3>
+
 <div id="dev-console"></div>
 
 </section>
 
 
+<script src="main.js"></script>
 
-<script>
-document.getElementById("dev-console").innerHTML = "INLINE SCRIPT RUNNING";
-</script>
-
-
-<script type="module" src="./main.js"></script>
 
 </body>
 
