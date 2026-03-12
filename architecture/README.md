@@ -1,0 +1,1 @@
+Stephan OS architecture documents will live in this folder.
