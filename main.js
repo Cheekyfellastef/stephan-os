@@ -11,13 +11,7 @@ function log(message) {
 }
 
 
-function renderProjectRegistry() {
-
-    const projects = [
-        "Galaxians",
-        "Wealth App",
-        "Stephan OS"
-    ];
+function renderProjectRegistry(projects) {
 
     const container = document.getElementById("project-registry");
 
@@ -41,11 +35,34 @@ function renderProjectRegistry() {
 }
 
 
-function startStephanos() {
+async function loadProjects() {
+
+    try {
+
+        const response = await fetch("projects_registry.json");
+
+        const data = await response.json();
+
+        return data.projects;
+
+    } catch (error) {
+
+        log("Failed to load project registry");
+
+        return [];
+
+    }
+
+}
+
+
+async function startStephanos() {
 
     log("Stephan OS starting...");
 
-    renderProjectRegistry();
+    const projects = await loadProjects();
+
+    renderProjectRegistry(projects);
 
     const status = document.getElementById("system-status-text");
 
