@@ -1,5 +1,7 @@
 import { moduleLoader } from "./system/module_loader.js";
 
+console.log(document.getElementById("project-registry"));
+
 function renderProjectRegistry() {
 
     const projects = [
