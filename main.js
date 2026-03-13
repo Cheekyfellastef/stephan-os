@@ -91,22 +91,27 @@ function returnToCommandDeck() {
 }
 
 
-async function loadProjects() 
-const versionMeta = document.querySelector('meta[name="stephanos-version"]');
+async function loadProjects() {
 
-if (versionMeta) {
+    try {
 
-    const version = versionMeta.getAttribute("content");
+        const response = await fetch("projects_registry.json?v=0.1");
 
-    const title = document.getElementById("boot-title");
+        const data = await response.json();
 
-    if (title) {
+        return data.projects;
 
-        title.textContent = "Stephanos OS v" + version;
+    } catch (error) {
+
+        log("Failed to load project registry");
+
+        return [];
 
     }
 
 }
+
+
 
 
 {
