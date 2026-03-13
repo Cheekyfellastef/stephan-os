@@ -24,17 +24,32 @@ function renderProjectRegistry(projects) {
 
     projects.forEach(project => {
 
+        let name;
+        let icon;
+
+        if (typeof project === "string") {
+
+            name = project;
+            icon = "🧩";
+
+        } else {
+
+            name = project.name;
+            icon = project.icon || "🧩";
+
+        }
+
         const tile = document.createElement("div");
 
         tile.className = "app-tile";
 
         tile.innerHTML = `
-            <div style="font-size:36px;">${project.icon}</div>
-            <div style="margin-top:8px;">${project.name}</div>
+            <div style="font-size:36px;">${icon}</div>
+            <div style="margin-top:8px;">${name}</div>
         `;
 
         tile.onclick = function () {
-            launchProject(project.name);
+            launchProject(name);
         };
 
         container.appendChild(tile);
