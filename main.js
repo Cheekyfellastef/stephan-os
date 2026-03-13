@@ -95,8 +95,8 @@ async function loadProjects() {
 
     try {
 
+const response = await fetch("projects_registry.json?v=0.1");
 
-const response = await fetch("projects_registry.json?v=" + Date.now());
 
         const data = await response.json();
 
