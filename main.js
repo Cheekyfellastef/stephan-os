@@ -28,10 +28,13 @@ function renderProjectRegistry(projects) {
 
         tile.className = "app-tile";
 
-        tile.textContent = project;
+        tile.innerHTML = `
+            <div style="font-size:36px;">${project.icon}</div>
+            <div style="margin-top:8px;">${project.name}</div>
+        `;
 
         tile.onclick = function () {
-            launchProject(project);
+            launchProject(project.name);
         };
 
         container.appendChild(tile);
