@@ -91,7 +91,25 @@ function returnToCommandDeck() {
 }
 
 
-async function loadProjects() {
+async function loadProjects() 
+const versionMeta = document.querySelector('meta[name="stephanos-version"]');
+
+if (versionMeta) {
+
+    const version = versionMeta.getAttribute("content");
+
+    const title = document.getElementById("boot-title");
+
+    if (title) {
+
+        title.textContent = "Stephanos OS v" + version;
+
+    }
+
+}
+
+
+{
 
     try {
 
