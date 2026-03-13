@@ -128,19 +128,18 @@ async function startStephanos() {
     }
 
     log("System ready");
-    
-    setTimeout(() => {
 
     const boot = document.getElementById("boot-screen");
 
     if (boot) {
 
-        boot.style.display = "none";
+        setTimeout(() => {
+
+            boot.style.display = "none";
+
+        }, 1200);
 
     }
-
-}, 1200);
-    
 
 }
 
