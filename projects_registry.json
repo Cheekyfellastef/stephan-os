@@ -1,7 +1,16 @@
 {
   "projects": [
-    "Galaxians",
-    "Wealth App",
-    "Stephan OS"
+    {
+      "name": "Galaxians",
+      "icon": "🚀"
+    },
+    {
+      "name": "Wealth App",
+      "icon": "📈"
+    },
+    {
+      "name": "Stephan OS",
+      "icon": "⚙"
+    }
   ]
 }
