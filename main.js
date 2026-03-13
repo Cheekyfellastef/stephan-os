@@ -133,7 +133,24 @@ const response = await fetch("projects_registry.json?v=0.1");
 
 async function startStephanos() {
 
-    log("Stephan OS starting...");
+    // show version on boot screen
+    const versionMeta = document.querySelector('meta[name="stephanos-version"]');
+
+    if (versionMeta) {
+
+        const version = versionMeta.getAttribute("content");
+
+        const title = document.getElementById("boot-title");
+
+        if (title) {
+
+            title.textContent = "Stephanos OS v" + version;
+
+        }
+
+    }
+
+    log("Stephanos OS starting...");
 
     const projects = await loadProjects();
 
@@ -142,11 +159,12 @@ async function startStephanos() {
     const status = document.getElementById("system-status-text");
 
     if (status) {
-        status.textContent = "Stephan OS Online";
+        status.textContent = "Stephanos OS Online";
     }
 
     log("System ready");
 
+    // hide boot screen
     const boot = document.getElementById("boot-screen");
 
     if (boot) {
@@ -160,6 +178,3 @@ async function startStephanos() {
     }
 
 }
-
-
-startStephanos();
