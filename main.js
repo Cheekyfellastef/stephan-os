@@ -178,3 +178,20 @@ async function startStephanos() {
     }
 
 }
+window.onload = function() {
+
+    startStephanos();
+
+    const boot = document.getElementById("boot-screen");
+
+    if (boot) {
+
+        setTimeout(() => {
+
+            boot.style.display = "none";
+
+        }, 1000);
+
+    }
+
+};
