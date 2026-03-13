@@ -8,6 +8,7 @@ function log(message) {
     line.textContent = message;
 
     consoleDiv.appendChild(line);
+
 }
 
 
@@ -112,33 +113,9 @@ async function loadProjects() {
 }
 
 
-
-
-{
-
-    try {
-
-const response = await fetch("projects_registry.json?v=0.1");
-
-
-        const data = await response.json();
-
-        return data.projects;
-
-    } catch (error) {
-
-        log("Failed to load project registry");
-
-        return [];
-
-    }
-
-}
-
-
 async function startStephanos() {
 
-    // show version on boot screen
+    // Show version number on boot screen
     const versionMeta = document.querySelector('meta[name="stephanos-version"]');
 
     if (versionMeta) {
@@ -148,9 +125,7 @@ async function startStephanos() {
         const title = document.getElementById("boot-title");
 
         if (title) {
-
             title.textContent = "Stephanos OS v" + version;
-
         }
 
     }
@@ -169,7 +144,7 @@ async function startStephanos() {
 
     log("System ready");
 
-    // hide boot screen
+    // Hide boot screen
     const boot = document.getElementById("boot-screen");
 
     if (boot) {
@@ -183,20 +158,11 @@ async function startStephanos() {
     }
 
 }
+
+
+// Start system after page loads
 window.onload = function() {
 
     startStephanos();
-
-    const boot = document.getElementById("boot-screen");
-
-    if (boot) {
-
-        setTimeout(() => {
-
-            boot.style.display = "none";
-
-        }, 1000);
-
-    }
 
 };
