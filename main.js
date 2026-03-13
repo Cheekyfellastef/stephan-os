@@ -24,23 +24,21 @@ function renderProjectRegistry(projects) {
 
     projects.forEach(project => {
 
-        const item = document.createElement("div");
+        const tile = document.createElement("div");
 
-        item.textContent = project;
+        tile.className = "app-tile";
 
-        item.style.cursor = "pointer";
-        item.style.padding = "6px";
-        item.style.borderBottom = "1px solid #ccc";
+        tile.textContent = project;
 
-        item.onclick = function () {
+        tile.onclick = function () {
             launchProject(project);
         };
 
-        container.appendChild(item);
+        container.appendChild(tile);
 
     });
 
-    log("Projects rendered and clickable");
+    log("Project tiles rendered");
 
 }
 
@@ -104,7 +102,11 @@ async function startStephanos() {
 
     renderProjectRegistry(projects);
 
-    document.getElementById("system-status-text").textContent = "Stephan OS Online";
+    const status = document.getElementById("system-status-text");
+
+    if (status) {
+        status.textContent = "Stephan OS Online";
+    }
 
     log("System ready");
 
