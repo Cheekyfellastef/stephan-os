@@ -3,16 +3,16 @@
 
 <head>
 
-<meta name="stephanos-version" content="0.1">
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=<meta name="stephanos-version" content="0.1">
-    
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Stephan OS</title>
+<title>Stephanos OS</title>
+
+<meta name="stephanos-version" content="0.1">
 
 <link rel="stylesheet" href="styles.css">
-    
-    <!-- Stephanos App Icon -->
+
+<!-- Stephanos App Icon -->
 <link rel="apple-touch-icon" href="stephanos-icon.png">
 <link rel="icon" href="stephanos-icon.png">
 
@@ -24,58 +24,52 @@
 <style>
 
 #project-registry{
-
-    display:grid;
-
-    grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
-
-    gap:20px;
-
+display:grid;
+grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
+gap:20px;
 }
 
 .app-tile {
 
-    background:#222;
-    color:white;
+background:#222;
+color:white;
 
-    padding:20px;
-    margin:15px 0;
+padding:20px;
+margin:15px 0;
 
-    font-size:22px;
-    text-align:center;
+font-size:22px;
+text-align:center;
 
-    border-radius:10px;
+border-radius:10px;
 
-    cursor:pointer;
+cursor:pointer;
 
-    transition:all 0.2s ease;
+transition:all 0.2s ease;
 
 }
 
 .app-tile:hover {
 
-    background:#444;
-    transform:scale(1.02);
+background:#444;
+transform:scale(1.02);
 
 }
 
 body{
-    font-family: Arial, Helvetica, sans-serif;
-    padding:20px;
+font-family: Arial, Helvetica, sans-serif;
+padding:20px;
 }
 
-
-
 #dev-console{
-    margin-top:20px;
-    padding:10px;
-    background:#111;
-    color:#0f0;
-    font-family:monospace;
+margin-top:20px;
+padding:10px;
+background:#111;
+color:#0f0;
+font-family:monospace;
 }
 
 button{
-    margin-top:10px;
+margin-top:10px;
 }
 
 #boot-screen {
@@ -109,31 +103,25 @@ z-index:9999;
 #boot-screen h1{
 
 font-size:32px;
-
 margin-bottom:20px;
 
 }
-
 
 </style>
 
 </head>
 
+<body>
 
-<<div id="boot-screen">
+<div id="boot-screen">
 
 <h1 id="boot-title">Stephanos OS</h1>
 
 <p id="boot-status">Initializing systems...</p>
 
 </div>
-    
-    
-    
-    
 
-<h1>Stephan OS</h1>
-
+<h1>Stephanos OS</h1>
 
 <section>
 
@@ -142,7 +130,6 @@ margin-bottom:20px;
 
 </section>
 
-
 <section id="projects">
 
 <h2>Projects</h2>
@@ -150,7 +137,6 @@ margin-bottom:20px;
 <div id="project-registry"></div>
 
 </section>
-
 
 <section id="workspace" style="display:none; margin-top:20px;">
 
@@ -162,7 +148,6 @@ margin-bottom:20px;
 
 </section>
 
-
 <section>
 
 <h3>Developer Console</h3>
@@ -170,7 +155,6 @@ margin-bottom:20px;
 <div id="dev-console"></div>
 
 </section>
-
 
 <script src="main.js?v=0.1"></script>
 
