@@ -1,10 +1,18 @@
 export async function loadModules(context) {
-  const res = await fetch("modules/module_registry.json");
+  const registryUrl = new URL("../modules/module_registry.json", import.meta.url);
+  const res = await fetch(registryUrl);
   const registry = await res.json();
 
-  for (const modulePath of registry.modules || []) {
+  for (const moduleEntry of registry.modules || []) {
+    const modulePath = typeof moduleEntry === "string" ? moduleEntry : moduleEntry?.path;
+    if (!modulePath) {
+      console.warn("Skipping module with no path", moduleEntry);
+      continue;
+    }
+
     try {
-      const loadedModule = await import(modulePath);
+      const moduleUrl = new URL(modulePath, window.location.href);
+      const loadedModule = await import(moduleUrl.href);
       if (typeof loadedModule.init === "function") {
         await loadedModule.init(context);
       }
