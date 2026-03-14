@@ -172,7 +172,15 @@ async function startStephanos() {
 
     const projects = await loadProjects();
 
-    renderProjectRegistry(projects);
+    const { workspace } = await import("./system/workspace.js");
+    const { loadModules } = await import("./system/module_loader.js");
+
+    const context = {
+        workspace,
+        projects
+    };
+
+    await loadModules(context);
 
     const status = document.getElementById("system-status-text");
 

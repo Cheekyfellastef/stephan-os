@@ -1,0 +1,6 @@
+{
+  "id": "command-deck",
+  "name": "Command Deck",
+  "version": "1.0",
+  "entry": "command-deck.js"
+}
