@@ -1,6 +1,6 @@
-# Stephan OS Architecture
+# Stephanos OS Architecture
 
-Stephan OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices and spatial environments.
+Stephanos OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices and spatial environments.
 
 Initial goal:
 Create a thinking surface where systems, simulations, agents, and projects can interact.
@@ -24,4 +24,4 @@ Interactive environments such as Galaxians and WealthApp.
 
 Long Term Vision
 
-Stephan OS becomes a spatial computing environment where humans and AI agents collaborate to design systems and run simulations.
+Stephanos OS becomes a spatial computing environment where humans and AI agents collaborate to design systems and run simulations.

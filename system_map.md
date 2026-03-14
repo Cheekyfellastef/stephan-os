@@ -1,6 +1,6 @@
-# Stephan OS – System Map
+# Stephanos OS – System Map
 
-This document describes the architectural flow of Stephan OS and how major system layers connect.
+This document describes the architectural flow of Stephanos OS and how major system layers connect.
 
 The purpose of this map is to make debugging, scaling, and future development easier.
 
@@ -8,7 +8,7 @@ The purpose of this map is to make debugging, scaling, and future development ea
 
 # High-Level Architecture
 
-Stephan OS is structured in layers.
+Stephanos OS is structured in layers.
 
 System flow:
 
@@ -45,7 +45,7 @@ Responsibilities:
 
 Flow:
 
-User opens Stephan OS  
+User opens Stephanos OS  
 ↓  
 Bootloader loads UI shell
 
@@ -82,7 +82,7 @@ The UI shell acts as the **bridge of the starship**.
 
 Purpose:
 
-Central coordination layer for Stephan OS.
+Central coordination layer for Stephanos OS.
 
 This layer will eventually manage:
 
@@ -134,13 +134,13 @@ Modules should be independent so they can be added without modifying the system 
 
 # Layer 5 — Projects
 
-Projects are applications that run inside Stephan OS.
+Projects are applications that run inside Stephanos OS.
 
 Current projects:
 
 Galaxians  
 Wealth App  
-Stephan OS
+Stephanos OS
 
 Projects are accessed through the **project registry**.
 
@@ -195,7 +195,7 @@ This layered approach prevents random debugging and allows issues to be isolated
 
 # Long-Term Vision
 
-Stephan OS will evolve from a web interface into a **cross-device cognitive operating system**.
+Stephanos OS will evolve from a web interface into a **cross-device cognitive operating system**.
 
 Future environments may include:
 

@@ -1,1 +1,1 @@
-General documentation for Stephan OS.
+General documentation for Stephanos OS.

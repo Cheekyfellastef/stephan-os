@@ -15,7 +15,7 @@ function renderProjectRegistry() {
     const projects = [
         "Galaxians",
         "Wealth App",
-        "Stephan OS"
+        "Stephanos OS"
     ];
 
     const container = document.getElementById("project-registry");
@@ -41,14 +41,14 @@ function renderProjectRegistry() {
 
 function startStephanos() {
 
-    log("Stephan OS starting...");
+    log("Stephanos OS starting...");
 
     renderProjectRegistry();
 
     const status = document.getElementById("system-status-text");
 
     if (status) {
-        status.textContent = "Stephan OS Online";
+        status.textContent = "Stephanos OS Online";
     }
 
     log("System ready");

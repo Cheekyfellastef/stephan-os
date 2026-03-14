@@ -1,4 +1,4 @@
-# Stephan OS Repository Architecture Review
+# Stephanos OS Repository Architecture Review
 
 ## Scope
 
@@ -55,7 +55,7 @@ The repository includes multiple vision/roadmap/state docs and placeholder domai
 
 ## A) Naming and structure inconsistency (`Stephan` vs `Stephanos`)
 
-Different files and runtime strings alternate between `Stephan OS` and `Stephanos OS`, including titles, logs, and docs. This creates brand ambiguity and can later impact URLs, package names, and import paths.
+Different files and runtime strings previously alternated between naming variants, including titles, logs, and docs. This creates brand ambiguity and can later impact URLs, package names, and import paths.
 
 ## B) Duplicate frontend implementations
 
@@ -100,7 +100,7 @@ There are currently no lint/test/validation scripts to verify:
    - Keep one runtime entry and mark the other deprecated.
 
 2. Normalize naming convention.
-   - Choose either `Stephan OS` or `Stephanos OS` and apply globally.
+   - Apply the standardized `Stephanos OS` naming globally.
    - Update titles, docs, console text, and registry labels together.
 
 3. Add startup/CI validation for registries.
@@ -195,7 +195,7 @@ This would remove ambiguity between prototypes and make the layering explicit in
 
 ## Summary Assessment
 
-Stephan OS has a strong conceptual architecture and a good modular direction for a cognitive operating environment. The immediate need is not feature expansion, but **consolidation and contract definition**:
+Stephanos OS has a strong conceptual architecture and a good modular direction for a cognitive operating environment. The immediate need is not feature expansion, but **consolidation and contract definition**:
 
 - one runtime surface
 - one naming convention

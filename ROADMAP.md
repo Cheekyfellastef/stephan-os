@@ -1,12 +1,12 @@
-# Stephan OS Roadmap
+# Stephanos OS Roadmap
 
 ## Purpose
 
-Stephan OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices including PC, iPad, VR (Quest), and mobile.
+Stephanos OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices including PC, iPad, VR (Quest), and mobile.
 
 The system will allow humans and AI agents to collaborate on designing systems, running simulations, and developing projects within a shared thinking surface.
 
-The development of Stephan OS will proceed through incremental phases, starting with simple tools and expanding into a spatial computing environment.
+The development of Stephanos OS will proceed through incremental phases, starting with simple tools and expanding into a spatial computing environment.
 
 ---
 
@@ -16,7 +16,7 @@ Goal: Establish the core structure and documentation of the project.
 
 Tasks:
 
-• Create the Stephan OS GitHub repository  
+• Create the Stephanos OS GitHub repository  
 • Define the vision of the system  
 • Define the architecture of the system  
 • Create an initial project folder structure  
@@ -24,18 +24,18 @@ Tasks:
 
 Outcome:
 
-The Stephan OS project exists as a structured blueprint that can evolve into a working system.
+The Stephanos OS project exists as a structured blueprint that can evolve into a working system.
 
 ---
 
 # Phase 1 — Minimal Working System
 
-Goal: Create the first functional interface for Stephan OS.
+Goal: Create the first functional interface for Stephanos OS.
 
 Features:
 
 • A simple web-based dashboard  
-• Display connected projects (Galaxians, Wealth App, Stephan OS)  
+• Display connected projects (Galaxians, Wealth App, Stephanos OS)  
 • Basic project navigation  
 • Accessible from PC, iPad, Quest browser, and mobile  
 
@@ -59,12 +59,12 @@ Example nodes:
 
 Project → Galaxians  
 Project → Wealth App  
-Idea → Stephan OS  
+Idea → Stephanos OS  
 System → Enemy AI  
 
 Outcome:
 
-Stephan OS evolves from a project dashboard into a knowledge system.
+Stephanos OS evolves from a project dashboard into a knowledge system.
 
 ---
 
@@ -87,13 +87,13 @@ Capabilities:
 
 Outcome:
 
-The human–AI flywheel becomes part of the Stephan OS environment.
+The human–AI flywheel becomes part of the Stephanos OS environment.
 
 ---
 
 # Phase 4 — Simulation Integration
 
-Goal: Integrate simulation systems into Stephan OS.
+Goal: Integrate simulation systems into Stephanos OS.
 
 Initial simulations:
 
@@ -102,13 +102,13 @@ Initial simulations:
 
 Capabilities:
 
-• Run simulations directly from Stephan OS  
+• Run simulations directly from Stephanos OS  
 • Visualize system behavior  
 • Allow agents to modify and experiment with systems  
 
 Outcome:
 
-Stephan OS becomes a system design and experimentation laboratory.
+Stephanos OS becomes a system design and experimentation laboratory.
 
 ---
 
@@ -129,13 +129,13 @@ Features:
 
 Outcome:
 
-Stephan OS becomes a spatial thinking environment.
+Stephanos OS becomes a spatial thinking environment.
 
 ---
 
 # Long Term Vision
 
-Stephan OS evolves into:
+Stephanos OS evolves into:
 
 • A persistent thinking surface  
 • A collaborative environment for humans and AI  
