@@ -1,10 +1,10 @@
-# Stephan OS – Project State
+# Stephanos OS – Project State
 
 ## Vision
 
-Stephan OS is a cross-device cognitive operating environment designed to function as a persistent "thinking surface".
+Stephanos OS is a cross-device cognitive operating environment designed to function as a persistent "thinking surface".
 
-The long-term goal is to evolve Stephan OS into a spatial computing environment accessible from:
+The long-term goal is to evolve Stephanos OS into a spatial computing environment accessible from:
 
 - PC
 - tablet
@@ -19,7 +19,7 @@ The conceptual inspiration is a **Starship bridge-style interface** where differ
 
 Current Phase: **Web Bootstrap Prototype**
 
-Stephan OS currently runs as a lightweight web system hosted on **GitHub Pages**.
+Stephanos OS currently runs as a lightweight web system hosted on **GitHub Pages**.
 
 Purpose of this phase:
 
@@ -36,7 +36,7 @@ Purpose of this phase:
 
 # Planned System Modules
 
-Future modules planned for Stephan OS include:
+Future modules planned for Stephanos OS include:
 
 ### Command Deck
 Navigation layer for the entire system.
@@ -60,7 +60,7 @@ Arcade game recreation project.
 ### Wealth App
 Interactive financial simulation tool used for retirement modelling.
 
-### Stephan OS
+### Stephanos OS
 The operating environment hosting all projects.
 
 ---
@@ -91,4 +91,4 @@ Immediate next additions:
 
 Project Creator: Stephan Callear
 
-Stephan OS is being developed as a long-term cognitive operating system and thinking surface.
+Stephanos OS is being developed as a long-term cognitive operating system and thinking surface.

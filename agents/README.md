@@ -1,1 +1,1 @@
-AI agents used inside Stephan OS.
+AI agents used inside Stephanos OS.

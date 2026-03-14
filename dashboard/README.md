@@ -1,1 +1,1 @@
-The Stephan OS control interface.
+The Stephanos OS control interface.

@@ -1,2 +1,2 @@
 # stephan-os
-Core architecture and development of Stephan OS
+Core architecture and development of Stephanos OS

@@ -1,1 +1,1 @@
-Data structures representing the Stephan OS knowledge graph.
+Data structures representing the Stephanos OS knowledge graph.

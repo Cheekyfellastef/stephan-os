@@ -1,10 +1,10 @@
-# Stephan OS Vision
+# Stephanos OS Vision
 
-Stephan OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices including PC, iPad, VR, and mobile.
+Stephanos OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices including PC, iPad, VR, and mobile.
 
 The system will allow humans and AI agents to collaborate on designing systems, running simulations, and developing projects.
 
-Initial projects connected to Stephan OS:
+Initial projects connected to Stephanos OS:
 
 - Galaxians Engine
 - Wealth App
