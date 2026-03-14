@@ -92,6 +92,44 @@ function returnToCommandDeck() {
 }
 
 
+function openSystemPanel() {
+    const panel = document.getElementById("system-panel");
+    if (!panel) return;
+
+    panel.style.display = "flex";
+}
+
+
+function closeSystemPanel() {
+    const panel = document.getElementById("system-panel");
+    if (!panel) return;
+
+    panel.style.display = "none";
+}
+
+
+function reloadStephanos() {
+    window.location.reload();
+}
+
+
+function exitStephanos() {
+    window.location.href = "https://google.com";
+}
+
+
+function toggleDevConsole() {
+    const consolePanel = document.getElementById("dev-console");
+    if (!consolePanel) return;
+
+    if (consolePanel.style.display === "none") {
+        consolePanel.style.display = "block";
+    } else {
+        consolePanel.style.display = "none";
+    }
+}
+
+
 async function loadProjects() {
 
     try {
