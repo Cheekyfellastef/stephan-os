@@ -111,6 +111,9 @@ async function startStephanos() {
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
   const { createUIRenderer } = await import("./system/ui_renderer.js");
+  const { createAgentRegistry } = await import("./system/agents/agent_registry.js");
+  const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
+  const { sampleAgent } = await import("./system/agents/sample_agent.js");
 
   const eventBus = createEventBus();
   const systemState = createSystemState();
@@ -118,6 +121,9 @@ async function startStephanos() {
   const uiRenderer = createUIRenderer();
 
   services.registerService("ui", uiRenderer);
+
+  const agentRegistry = createAgentRegistry();
+  services.registerService("agentRegistry", agentRegistry);
 
   const context = {
     eventBus,
@@ -127,6 +133,11 @@ async function startStephanos() {
     workspace,
     projects
   };
+
+  const agentRuntime = createAgentRuntime(context);
+  services.registerService("agentRuntime", agentRuntime);
+
+  agentRuntime.startAgent(sampleAgent);
 
   context.moduleLoader = {
     getLoadedModules: () => getLoadedModules(),
