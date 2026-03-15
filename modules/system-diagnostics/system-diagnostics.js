@@ -7,22 +7,23 @@ export const moduleDefinition = {
 const PANEL_ID = "system-diagnostics-panel";
 
 export function init(context) {
-  if (document.getElementById(PANEL_ID)) {
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
     return;
   }
 
-  const panel = document.createElement("div");
+  const panel = ui.createPanel(PANEL_ID, "Stephanos Diagnostics");
 
-  panel.id = PANEL_ID;
-
-  panel.innerHTML = `
-    <h3>Stephanos Diagnostics</h3>
+  if (!document.getElementById("diag-modules")) {
+    panel.insertAdjacentHTML(
+      "beforeend",
+      `
     <div id="diag-modules"></div>
     <div id="diag-services"></div>
     <div id="diag-events"></div>
-  `;
-
-  document.body.appendChild(panel);
+  `
+    );
+  }
 
   const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
   panel.style.display = developerModeEnabled ? "block" : "none";
@@ -30,11 +31,13 @@ export function init(context) {
   updateDiagnostics(context);
 }
 
-export function dispose() {
-  const panel = document.getElementById(PANEL_ID);
-  if (panel) {
-    panel.remove();
+export function dispose(context) {
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
   }
+
+  ui.removePanel(PANEL_ID);
 }
 
 function updateDiagnostics(context) {

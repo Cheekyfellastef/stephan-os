@@ -8,19 +8,22 @@ export const moduleDefinition = {
 };
 
 export function init(context) {
-  let panel = document.getElementById(PANEL_ID);
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
+  }
 
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.innerHTML = `
-      <h3>Stephanos Module Installer</h3>
+  const panel = ui.createPanel(PANEL_ID, "Stephanos Module Installer");
+
+  if (!document.getElementById("module-installer-button")) {
+    panel.insertAdjacentHTML(
+      "beforeend",
+      `
       <input id="module-installer-url" type="url" placeholder="https://example.com/module.js" />
       <button id="module-installer-button">Install</button>
       <div id="${STATUS_ID}"></div>
-    `;
-
-    document.body.appendChild(panel);
+    `
+    );
   }
 
   const installButton = document.getElementById("module-installer-button");
@@ -91,9 +94,11 @@ async function installModule(url, context) {
   console.log("Module added to registry:", url);
 }
 
-export function dispose() {
-  const panel = document.getElementById(PANEL_ID);
-  if (panel) {
-    panel.remove();
+export function dispose(context) {
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
   }
+
+  ui.removePanel(PANEL_ID);
 }

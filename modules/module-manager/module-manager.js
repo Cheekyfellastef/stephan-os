@@ -12,17 +12,15 @@ export const moduleDefinition = {
 };
 
 export async function init(context) {
-  let panel = document.getElementById(PANEL_ID);
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
+  }
 
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.innerHTML = `
-      <h3>Stephanos Module Manager</h3>
-      <div id="${LIST_ID}"></div>
-    `;
+  const panel = ui.createPanel(PANEL_ID, "Stephanos Module Manager");
 
-    document.body.appendChild(panel);
+  if (!document.getElementById(LIST_ID)) {
+    panel.insertAdjacentHTML("beforeend", `<div id="${LIST_ID}"></div>`);
   }
 
   updatePanelVisibility(panel);
@@ -32,13 +30,15 @@ export async function init(context) {
   await renderModuleList(context);
 }
 
-export function dispose() {
+export function dispose(context) {
   unsubscribeFromRuntimeUpdates();
 
-  const panel = document.getElementById(PANEL_ID);
-  if (panel) {
-    panel.remove();
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
   }
+
+  ui.removePanel(PANEL_ID);
 }
 
 function updatePanelVisibility(panel = document.getElementById(PANEL_ID)) {

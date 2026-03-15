@@ -110,10 +110,14 @@ async function startStephanos() {
   const { createEventBus } = await import("./system/core/event_bus.js");
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
+  const { createUIRenderer } = await import("./system/ui_renderer.js");
 
   const eventBus = createEventBus();
   const systemState = createSystemState();
   const services = createServiceRegistry();
+  const uiRenderer = createUIRenderer();
+
+  services.registerService("ui", uiRenderer);
 
   const context = {
     eventBus,
