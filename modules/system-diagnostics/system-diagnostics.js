@@ -24,6 +24,9 @@ export function init(context) {
 
   document.body.appendChild(panel);
 
+  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
+  panel.style.display = developerModeEnabled ? "block" : "none";
+
   updateDiagnostics(context);
 }
 
