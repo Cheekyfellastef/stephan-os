@@ -4,6 +4,8 @@
     "./modules/system-diagnostics/system-diagnostics.js",
     "./modules/module-manager/module-manager.js",
     "./modules/module-installer/module-installer.js",
-    "./modules/event-monitor/event-monitor.js"
+    "./modules/event-monitor/event-monitor.js",
+    "./modules/service-inspector/service-inspector.js",
+    "./modules/module-map/module-map.js"
   ]
 }
