@@ -37,25 +37,19 @@ async function renderModuleList(context) {
     return;
   }
 
-  const registryUrl = new URL("../../modules/module_registry.json", import.meta.url);
-  const response = await fetch(registryUrl);
-  const registry = await response.json();
-
-  const activeModules = context?.activeModules || {};
+  const modules = context?.moduleLoader?.getLoadedModules?.() || [];
 
   list.innerHTML = "";
 
-  for (const modulePath of registry.modules || []) {
-    const moduleUrl = new URL(modulePath, window.location.href);
-    const importedModule = await import(moduleUrl.href);
-    const definition = importedModule?.moduleDefinition;
+  for (const moduleEntry of modules) {
+    const definition = moduleEntry?.moduleDefinition;
 
     if (!definition?.id) {
       continue;
     }
 
-    const activeModule = activeModules[definition.id];
-    const status = activeModule ? "active" : "disabled";
+    const isModuleManager = definition.id === moduleDefinition.id;
+    const status = moduleEntry?.status === "active" ? "active" : "disabled";
     const version = definition.version || "unknown";
 
     const row = document.createElement("div");
@@ -66,24 +60,37 @@ async function renderModuleList(context) {
 
     const actions = document.createElement("span");
 
-    const reloadButton = document.createElement("button");
-    reloadButton.textContent = "reload";
-    reloadButton.disabled = !activeModule;
-    reloadButton.onclick = async () => {
-      await context.moduleLoader.reloadModule(definition.id);
-      await renderModuleList(context);
-    };
+    if (status === "active") {
+      const reloadButton = document.createElement("button");
+      reloadButton.textContent = "reload";
+      reloadButton.disabled = false;
+      reloadButton.onclick = async () => {
+        await context.moduleLoader.reloadModule(definition.id);
+        await renderModuleList(context);
+      };
+      actions.appendChild(reloadButton);
 
-    const disableButton = document.createElement("button");
-    disableButton.textContent = "disable";
-    disableButton.disabled = !activeModule;
-    disableButton.onclick = async () => {
-      await context.moduleLoader.disableModule(definition.id);
-      await renderModuleList(context);
-    };
+      const disableButton = document.createElement("button");
+      disableButton.textContent = "disable";
+      disableButton.disabled = isModuleManager;
+      disableButton.onclick = async () => {
+        if (isModuleManager) {
+          return;
+        }
 
-    actions.appendChild(reloadButton);
-    actions.appendChild(disableButton);
+        await context.moduleLoader.disableModule(definition.id);
+        await renderModuleList(context);
+      };
+      actions.appendChild(disableButton);
+    } else {
+      const enableButton = document.createElement("button");
+      enableButton.textContent = "enable";
+      enableButton.onclick = async () => {
+        await context.moduleLoader.enableModule(definition.id);
+        await renderModuleList(context);
+      };
+      actions.appendChild(enableButton);
+    }
 
     row.appendChild(details);
     row.appendChild(actions);
