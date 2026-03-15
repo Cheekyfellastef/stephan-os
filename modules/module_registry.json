@@ -1,5 +1,6 @@
 {
   "modules": [
-    "./modules/command-deck/command-deck.js"
+    "./modules/command-deck/command-deck.js",
+    "./modules/system-diagnostics/system-diagnostics.js"
   ]
 }

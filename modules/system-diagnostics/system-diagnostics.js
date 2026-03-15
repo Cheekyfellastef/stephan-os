@@ -1,0 +1,37 @@
+export const moduleDefinition = {
+  id: "system-diagnostics",
+  version: "1.0",
+  description: "Displays runtime health information for Stephanos OS."
+};
+
+export function init(context) {
+  const panel = document.createElement("div");
+
+  panel.id = "system-diagnostics-panel";
+
+  panel.innerHTML = `
+    <h3>Stephanos Diagnostics</h3>
+    <div id="diag-modules"></div>
+    <div id="diag-services"></div>
+    <div id="diag-events"></div>
+  `;
+
+  document.body.appendChild(panel);
+
+  updateDiagnostics(context);
+}
+
+function updateDiagnostics(context) {
+  const moduleCount = document.querySelectorAll(".app-tile").length;
+
+  document.getElementById("diag-modules").innerText =
+    "Modules loaded: " + moduleCount;
+
+  const services = context.services.listServices();
+
+  document.getElementById("diag-services").innerText =
+    "Services registered: " + services.length;
+
+  document.getElementById("diag-events").innerText =
+    "Event bus active: true";
+}

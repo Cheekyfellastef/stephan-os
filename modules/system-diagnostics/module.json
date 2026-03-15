@@ -1,0 +1,6 @@
+{
+  "id": "system-diagnostics",
+  "name": "System Diagnostics",
+  "version": "1.0",
+  "description": "Displays runtime health information for Stephanos OS."
+}
