@@ -1,4 +1,5 @@
 const loadedModules = [];
+const moduleStates = {};
 
 function ensureActiveModules(context) {
   if (!context) {
@@ -28,6 +29,20 @@ function isValidModuleDefinition(moduleDefinition) {
 
 function findLoadedModuleIndex(moduleId) {
   return loadedModules.findIndex((entry) => entry.moduleDefinition.id === moduleId);
+}
+
+function setModuleState(moduleId, state) {
+  moduleStates[moduleId] = {
+    ...(moduleStates[moduleId] || {}),
+    ...state
+  };
+}
+
+function removeActiveModule(moduleId, context) {
+  const activeModules = ensureActiveModules(context);
+  if (activeModules && moduleId) {
+    delete activeModules[moduleId];
+  }
 }
 
 async function loadModuleFromPath(modulePath, context, options = {}) {
@@ -67,6 +82,12 @@ async function loadModuleFromPath(modulePath, context, options = {}) {
     };
   }
 
+  setModuleState(moduleDefinition.id, {
+    modulePath,
+    moduleDefinition: { ...moduleDefinition },
+    status: "active"
+  });
+
   console.log("Loaded module:", moduleDefinition.id);
   context?.eventBus?.emit("module:loaded", moduleDefinition);
 
@@ -84,10 +105,10 @@ async function disposeLoadedModule(loadedEntry, context) {
 }
 
 export function getLoadedModules() {
-  return loadedModules.map((entry) => ({
+  return Object.values(moduleStates).map((entry) => ({
     modulePath: entry.modulePath,
     moduleDefinition: { ...entry.moduleDefinition },
-    status: "active"
+    status: entry.status
   }));
 }
 
@@ -113,6 +134,11 @@ export async function loadModules(context) {
 }
 
 export async function disableModule(moduleId, context) {
+  if (moduleId === "module-manager") {
+    console.warn("The Module Manager cannot be disabled.");
+    return false;
+  }
+
   const moduleIndex = findLoadedModuleIndex(moduleId);
 
   if (moduleIndex < 0) {
@@ -121,13 +147,10 @@ export async function disableModule(moduleId, context) {
 
   const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
 
-  const activeModules = ensureActiveModules(context);
-  if (activeModules && loadedEntry?.moduleDefinition?.id) {
-    delete activeModules[loadedEntry.moduleDefinition.id];
-  }
-
   try {
     await disposeLoadedModule(loadedEntry, context);
+    removeActiveModule(loadedEntry?.moduleDefinition?.id, context);
+    setModuleState(loadedEntry?.moduleDefinition?.id, { status: "disabled" });
     console.log("Disabled module:", moduleId);
     return true;
   } catch (err) {
@@ -151,10 +174,7 @@ export async function reloadModule(moduleId, context) {
     console.error("Module dispose error:", loadedEntry.modulePath, err);
   }
 
-  const activeModules = ensureActiveModules(context);
-  if (activeModules && loadedEntry?.moduleDefinition?.id) {
-    delete activeModules[loadedEntry.moduleDefinition.id];
-  }
+  removeActiveModule(loadedEntry?.moduleDefinition?.id, context);
 
   try {
     await loadModuleFromPath(loadedEntry.modulePath, context, { cacheBust: true });
@@ -162,6 +182,27 @@ export async function reloadModule(moduleId, context) {
     return true;
   } catch (err) {
     console.error("Module reload error:", loadedEntry.modulePath, err);
+    return false;
+  }
+}
+
+export async function enableModule(moduleId, context) {
+  const existingModuleIndex = findLoadedModuleIndex(moduleId);
+  if (existingModuleIndex >= 0) {
+    return true;
+  }
+
+  const state = moduleStates[moduleId];
+  if (!state?.modulePath) {
+    return false;
+  }
+
+  try {
+    await loadModuleFromPath(state.modulePath, context, { cacheBust: true });
+    console.log("Enabled module:", moduleId);
+    return true;
+  } catch (err) {
+    console.error("Module enable error:", state.modulePath, err);
     return false;
   }
 }
@@ -175,6 +216,8 @@ export async function disposeModules(context) {
     if (activeModules && loaded?.moduleDefinition?.id) {
       delete activeModules[loaded.moduleDefinition.id];
     }
+
+    setModuleState(loaded?.moduleDefinition?.id, { status: "disabled" });
 
     try {
       await disposeLoadedModule(loaded, context);
