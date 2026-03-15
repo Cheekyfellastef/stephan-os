@@ -22,5 +22,20 @@ export const workspace = {
     }
 
     context?.eventBus?.emit("workspace:opened", project);
+  },
+
+  close(context = {}) {
+    const workspacePanel = document.getElementById("workspace");
+    const projectsPanel = document.getElementById("projects");
+
+    if (!workspacePanel || !projectsPanel) {
+      console.error("Workspace UI is missing required elements");
+      return;
+    }
+
+    workspacePanel.style.display = "none";
+    projectsPanel.style.display = "block";
+
+    context?.eventBus?.emit("workspace:closed");
   }
 };

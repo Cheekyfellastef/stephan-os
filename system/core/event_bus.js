@@ -1,6 +1,11 @@
 export function createEventBus() {
   const listeners = new Map();
 
+  // Event naming conventions:
+  // - system:* for runtime lifecycle and shell-level events.
+  // - module:* for module lifecycle and inter-module status events.
+  // - workspace:* for workspace navigation/state transitions.
+  // - project:* for project-specific actions and state changes.
   function on(eventName, handler) {
     if (typeof handler !== "function") {
       throw new TypeError("eventBus.on requires a function handler");
