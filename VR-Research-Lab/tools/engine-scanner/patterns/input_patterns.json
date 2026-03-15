@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "PlayerControls",
+    "InputManager",
+    "ControllerUpdate",
+    "InputState",
+    "MouseLook",
+    "GamepadState",
+    "RawInput",
+    "Keybind"
+  ],
+  "structures": [
+    "ProcessInput(",
+    "UpdateController(",
+    "HandleMouse(",
+    "PollInput(",
+    "class PlayerController"
+  ]
+}

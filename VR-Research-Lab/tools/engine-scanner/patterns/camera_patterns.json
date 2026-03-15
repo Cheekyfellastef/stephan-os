@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "ViewMatrix",
+    "ProjectionMatrix",
+    "ViewProjectionMatrix",
+    "CameraManager",
+    "UpdateCamera",
+    "CameraTransform",
+    "Frustum",
+    "FOV"
+  ],
+  "structures": [
+    "class Camera",
+    "UpdateCamera(",
+    "SetProjection(",
+    "BuildViewMatrix(",
+    "GetActiveCamera("
+  ]
+}
