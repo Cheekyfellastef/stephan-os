@@ -11,7 +11,7 @@ let developerModeEnabled = false;
 
 function applyDeveloperModeVisibility() {
   const display = developerModeEnabled ? "block" : "none";
-  const developerElements = ["dev-console", "system-diagnostics-panel"];
+  const developerElements = ["dev-console", "system-diagnostics-panel", "module-manager-panel"];
 
   for (const elementId of developerElements) {
     const element = document.getElementById(elementId);
@@ -79,7 +79,7 @@ async function startStephanos() {
   const projects = await loadProjects();
 
   const { workspace } = await import("./system/workspace.js");
-  const { loadModules, disposeModules } = await import("./system/module_loader.js");
+  const { loadModules, disposeModules, getLoadedModules, reloadModule, disableModule } = await import("./system/module_loader.js");
   const { createEventBus } = await import("./system/core/event_bus.js");
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
@@ -94,6 +94,12 @@ async function startStephanos() {
     services,
     workspace,
     projects
+  };
+
+  context.moduleLoader = {
+    getLoadedModules: () => getLoadedModules(),
+    reloadModule: (moduleId) => reloadModule(moduleId, context),
+    disableModule: (moduleId) => disableModule(moduleId, context)
   };
 
   await loadModules(context);
