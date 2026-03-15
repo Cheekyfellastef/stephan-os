@@ -1,5 +1,5 @@
 export const workspace = {
-  open(project) {
+  open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
     const content = document.getElementById("workspace-content");
     const projectsPanel = document.getElementById("projects");
@@ -20,5 +20,7 @@ export const workspace = {
     } else {
       content.textContent = `Workspace for ${project?.name || "project"}`;
     }
+
+    context?.eventBus?.emit("workspace:opened", project);
   }
 };

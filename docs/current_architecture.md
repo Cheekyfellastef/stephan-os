@@ -1,228 +1,110 @@
 # Stephanos OS — Current Technical Architecture
 
-## 1) High-Level System Architecture
+## 1) Runtime Flow (Updated)
 
-Stephanos OS currently implements a browser-based shell with a lightweight modular runtime.
+Stephanos OS now follows this runtime sequence:
 
-### Runtime layers (as implemented)
+1. **Boot Layer**
+   - `index.html` renders the shell and boot UI.
+   - `main.js` starts initialization and transitions to online state.
 
-1. **Web entry shell (root app)**
-   - `index.html` defines the UI skeleton (boot screen, system panel, project registry, workspace, dev console).
-   - `main.js` orchestrates startup and binds user interactions.
+2. **System Core**
+   - `system/core/event_bus.js` provides publish/subscribe communication.
+   - `system/core/system_state.js` provides in-memory runtime state.
+   - `system/core/service_registry.js` provides service registration and lookup.
 
-2. **System core services**
-   - `system/core/event_bus.js`: pub/sub event mechanism.
-   - `system/core/system_state.js`: mutable key-value state container.
-   - `system/core/service_registry.js`: service locator/DI-like registry.
+3. **Workspace Runtime**
+   - `system/workspace.js` is part of runtime orchestration (not a standalone feature layer).
+   - Opening a project updates workspace UI and emits runtime events.
 
-3. **Module system**
-   - `system/module_loader.js` fetches `modules/module_registry.json`, dynamically imports each module, and calls `init(context)` when present.
-   - Modules are expected (by convention) to export an `init` function.
+4. **Module Loader**
+   - `system/module_loader.js` reads `modules/module_registry.json`.
+   - Each module is validated against the contract before initialization.
 
-4. **Feature modules**
-   - Current concrete module: `modules/command-deck/command-deck.js`.
-   - This module renders project tiles from the project registry and delegates launch behavior to workspace APIs.
+5. **Modules**
+   - Runtime modules initialize through `init(context)`.
+   - Modules can participate in event-driven communication via `context.eventBus`.
 
-5. **Project workspace host**
-   - `system/workspace.js` handles opening a project view in the workspace panel and embedding project entries via iframe when provided.
+Architecture flow:
 
-### Supporting architecture artifacts
-
-- `ARCHITECTURE.md`, `system_map.md`, and `ROADMAP.md` define a longer-term multi-layer cognitive OS vision (knowledge graph, agents, simulation systems), while the currently running implementation is a minimal shell plus module foundation.
-
----
-
-## 2) Directory Structure and Purpose
-
-> Scope: repository root folders currently present.
-
-- **`system/`** — Runtime system code used by root app.
-  - `core/`: event bus, state store, service registry primitives.
-  - `module_loader.js`: dynamic module bootstrap.
-  - `workspace.js`: workspace UI control.
-
-- **`modules/`** — Runtime modules for root app.
-  - `module_registry.json`: list of module entry points to load.
-  - `command-deck/`: current module implementation + metadata (`module.json`).
-
-- **`docs/`** — Project documentation and analysis artifacts.
-  - Includes repository architecture review and general docs index.
-
-- **`architecture/`** — Architecture-doc namespace (currently minimal placeholder README).
-
-- **`knowledge-graph/`** — Placeholder/data-doc space for graph model direction.
-
-- **`agents/`** — Placeholder/data-doc space for AI agent capabilities.
-
-- **`dashboard/`** — Placeholder/data-doc space for control interface concepts.
-
-- **`stephanos-ui/`** — Secondary/legacy prototype UI with its own entrypoint, module loader, and module registry (parallel implementation).
-
-- **Root files (selected):**
-  - `index.html`, `main.js`, `style.css`: root web shell entrypoint assets.
-  - `projects_registry.json`: project source of truth for tiles rendered by command deck.
-  - `ARCHITECTURE.md`, `system_map.md`, `ROADMAP.md`, `project_state.md`, `VISION.md`: strategic architecture/roadmap docs.
+**Boot → System Core → Workspace Runtime → Module Loader → Modules**
 
 ---
 
-## 3) Core Systems
+## 2) Formal Module Contract
 
-### A. System Core (`system/core/*`)
+Modules are now expected to export:
 
-The system core is currently a small set of in-memory primitives passed to modules via context:
+```js
+export const moduleDefinition = {
+  id: "module-id",
+  version: "1.0",
+  description: "module description"
+};
 
-- **Event Bus**
-  - API: `on(eventName, handler)`, `off(eventName, handler)`, `emit(eventName, data)`.
-  - Uses `Map<eventName, Set<handler>>` listener structure.
-  - Supports unsubscribe via function returned by `on`.
+export function init(context) {}
+```
 
-- **System State**
-  - API: `get`, `set`, `has`, `snapshot`.
-  - Backed by a plain object cloned from `initialState`.
-  - No immutability guard, schema validation, or persistence layer yet.
+Validation rules in the loader:
+- `init` must exist and be a function.
+- `moduleDefinition` must include `id`, `version`, and `description` as strings.
 
-- **Service Registry**
-  - API: `registerService`, `getService`, `hasService`, `unregisterService`, `listServices`.
-  - Backed by `Map`, enabling module-to-module service sharing through named instances.
+If validation fails, the loader skips the module and logs an error instead of crashing runtime initialization.
 
-### B. Module Loader (`system/module_loader.js`)
+On success, the loader logs:
 
-Responsibilities:
-
-- Fetch module registry (`modules/module_registry.json`).
-- Resolve each module path.
-- Dynamically import modules at runtime.
-- Call `init(context)` when exported.
-- Isolate failures with per-module `try/catch` and continue loading remaining modules.
-
-Current contract characteristics:
-
-- Contract is **convention-based**, not validated.
-- Supports registry entries as either strings or objects containing `path`.
-
-### C. Command Deck (`modules/command-deck/command-deck.js`)
-
-Responsibilities:
-
-- Normalize incoming project entries (string or object) into `{ name, icon, entry }`.
-- Render project tiles in `#project-registry`.
-- Wire tile click events to `context.workspace.open(project)`.
-
-Behavioral role:
-
-- Serves as the primary navigation module for available projects.
-- Effectively bridges project metadata and workspace presentation.
-
-### D. Workspace (`system/workspace.js`)
-
-Responsibilities:
-
-- Toggle between Projects panel and Workspace panel.
-- Update workspace title.
-- Render embedded project entry via iframe when `project.entry` is defined.
-- Fall back to text placeholder when no `entry` exists.
-
-Integration role:
-
-- Receives normalized project objects from modules (currently command deck).
-- Acts as the host surface for launched projects.
+```text
+Loaded module: <moduleDefinition.id>
+```
 
 ---
 
-## 4) Runtime Startup Flow
+## 3) Event-Driven Module System
 
-Current root-app startup sequence:
+Stephanos OS modules now communicate through the system event bus:
 
-1. **Page load event**
-   - `window.onload` triggers `startStephanos()`.
+- Subscribe:
 
-2. **Boot metadata + visual initialization**
-   - Reads `<meta name="stephanos-version">` and updates boot title text.
-   - Logs startup message to developer console panel.
+```js
+context.eventBus.on("eventName", handler);
+```
 
-3. **Project data loading**
-   - Fetches `projects_registry.json` and extracts `projects` array.
+- Emit:
 
-4. **Core system dynamic imports**
-   - Imports workspace, module loader, and core services (`event_bus`, `system_state`, `service_registry`).
+```js
+eventBus.emit("eventName", payload);
+```
 
-5. **Core context assembly**
-   - Instantiates `eventBus`, `systemState`, `services`.
-   - Builds `context = { eventBus, systemState, services, workspace, projects }`.
+Current runtime events include:
+- `module:loaded` — emitted by `module_loader.js` after a module initializes.
+- `workspace:opened` — emitted by `workspace.js` when a project launches.
 
-6. **Module bootstrap**
-   - Calls `loadModules(context)`.
-   - Module loader imports each registry module and invokes `init(context)`.
-
-7. **System-ready state**
-   - Sets system status to “Stephanos OS Online”.
-   - Hides boot screen after timeout.
+This decouples modules from direct dependencies and enables feature growth via events.
 
 ---
 
-## 5) How Modules Integrate with the System
+## 4) Module Lifecycle Support
 
-### Module integration model
+The loader supports optional lifecycle hooks:
 
-- Modules are listed in `modules/module_registry.json`.
-- Loader dynamically imports each module path.
-- Module `init(context)` receives shared runtime context.
+```js
+export function dispose(context) {}
+```
 
-### Available context dependencies
+Lifecycle behavior:
+- Loaded modules are tracked internally in `loadedModules`.
+- During system reload, `dispose(context)` is called for each module if defined.
+- Disposal errors are isolated and logged per module.
 
-- `eventBus`: cross-module events.
-- `systemState`: shared state.
-- `services`: service registration/discovery.
-- `workspace`: host navigation and rendering API.
-- `projects`: loaded registry data.
-
-### Practical integration example
-
-`command-deck` consumes:
-
-- `context.projects` to render tiles.
-- `context.workspace.open(...)` to launch selected project.
-
-This demonstrates a plugin-like pattern where modules add UI/functionality without modifying boot logic directly, as long as they comply with the expected init signature.
+This allows modules to remove listeners, release resources, and reset transient state safely.
 
 ---
 
-## 6) Architectural Risks and Inconsistencies
+## 5) Implementation Notes
 
-1. **Dual application surfaces (root app vs `stephanos-ui/`)**
-   - Two parallel entrypoints, module loaders, and registries increase drift risk and ownership ambiguity.
+- Stylesheet mismatch was corrected so the root app references `style.css`.
+- The command deck module remains functional and now implements the module contract.
+- Workspace launch behavior remains intact while emitting `workspace:opened` events.
+- Reload behavior now attempts module disposal before page refresh.
 
-2. **Root stylesheet reference mismatch**
-   - `index.html` references `styles.css`, but repository provides `style.css` at root.
-   - Many key styles still work due to inline CSS, but file naming mismatch can hide style regressions.
-
-3. **Module contract is implicit**
-   - No schema/validation for registry entries, module metadata, or required exports.
-   - Runtime failures are only caught during dynamic import/init.
-
-4. **`module.json` currently unused by loader**
-   - `modules/command-deck/module.json` exists, but loader consumes only `modules/module_registry.json` and module exports.
-   - This creates metadata duplication without enforcement.
-
-5. **Core primitives are in-memory only**
-   - No persistence, auth boundaries, or isolation.
-   - Suitable for prototype stage but insufficient for multi-session/multi-agent goals.
-
-6. **Limited startup validation**
-   - No preflight checks for missing files, invalid registry entries, or malformed project schema.
-
-7. **Documentation vs implementation gap**
-   - Strategic docs describe advanced layers (agents, knowledge graph, simulation, spatial UX), but runtime implementation is still a minimal shell + module seed.
-
----
-
-## Current Architecture Summary
-
-Stephanos OS currently functions as a **modular browser shell prototype** with:
-
-- a clear startup orchestrator,
-- lightweight core coordination services,
-- dynamic module loading,
-- and a working command-deck-to-workspace navigation path.
-
-The primary architectural need is consolidation (single canonical app path), formalization (explicit module contract + validation), and alignment (bring implementation and architecture docs into tighter sync).
+Stephanos OS remains a browser-based modular shell while gaining stronger runtime boundaries, contract enforcement, and event-driven extensibility.

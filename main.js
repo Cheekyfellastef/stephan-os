@@ -108,7 +108,11 @@ function closeSystemPanel() {
 }
 
 
-function reloadStephanos() {
+async function reloadStephanos() {
+    if (window.__stephanosRuntime?.disposeModules) {
+        await window.__stephanosRuntime.disposeModules(window.__stephanosRuntime.context);
+    }
+
     window.location.reload();
 }
 
@@ -173,7 +177,7 @@ async function startStephanos() {
     const projects = await loadProjects();
 
     const { workspace } = await import("./system/workspace.js");
-    const { loadModules } = await import("./system/module_loader.js");
+    const { loadModules, disposeModules } = await import("./system/module_loader.js");
     const { createEventBus } = await import("./system/core/event_bus.js");
     const { createSystemState } = await import("./system/core/system_state.js");
     const { createServiceRegistry } = await import("./system/core/service_registry.js");
@@ -191,6 +195,12 @@ async function startStephanos() {
     };
 
     await loadModules(context);
+
+    window.__stephanosRuntime = {
+        context,
+        disposeModules
+    };
+
 
     const status = document.getElementById("system-status-text");
 
