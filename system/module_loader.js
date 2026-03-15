@@ -1,5 +1,17 @@
 const loadedModules = [];
 
+function ensureActiveModules(context) {
+  if (!context) {
+    return null;
+  }
+
+  if (!context.activeModules || typeof context.activeModules !== "object") {
+    context.activeModules = {};
+  }
+
+  return context.activeModules;
+}
+
 function resolveModulePath(moduleEntry) {
   return typeof moduleEntry === "string" ? moduleEntry : moduleEntry?.path;
 }
@@ -41,6 +53,15 @@ async function loadModuleFromPath(modulePath, context, options = {}) {
   };
 
   loadedModules.push(loadedEntry);
+
+  const activeModules = ensureActiveModules(context);
+  if (activeModules) {
+    activeModules[moduleDefinition.id] = {
+      modulePath,
+      moduleDefinition: { ...moduleDefinition },
+      status: "active"
+    };
+  }
 
   console.log("Loaded module:", moduleDefinition.id);
   context?.eventBus?.emit("module:loaded", moduleDefinition);
@@ -96,6 +117,11 @@ export async function disableModule(moduleId, context) {
 
   const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
 
+  const activeModules = ensureActiveModules(context);
+  if (activeModules && loadedEntry?.moduleDefinition?.id) {
+    delete activeModules[loadedEntry.moduleDefinition.id];
+  }
+
   try {
     await disposeLoadedModule(loadedEntry, context);
     console.log("Disabled module:", moduleId);
@@ -115,6 +141,11 @@ export async function reloadModule(moduleId, context) {
 
   const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
 
+  const activeModules = ensureActiveModules(context);
+  if (activeModules && loadedEntry?.moduleDefinition?.id) {
+    delete activeModules[loadedEntry.moduleDefinition.id];
+  }
+
   try {
     await disposeLoadedModule(loadedEntry, context);
   } catch (err) {
@@ -132,8 +163,14 @@ export async function reloadModule(moduleId, context) {
 }
 
 export async function disposeModules(context) {
+  const activeModules = ensureActiveModules(context);
+
   while (loadedModules.length > 0) {
     const loaded = loadedModules.pop();
+
+    if (activeModules && loaded?.moduleDefinition?.id) {
+      delete activeModules[loaded.moduleDefinition.id];
+    }
 
     try {
       await disposeLoadedModule(loaded, context);

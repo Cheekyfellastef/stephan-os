@@ -92,6 +92,7 @@ async function startStephanos() {
     eventBus,
     systemState,
     services,
+    activeModules: {},
     workspace,
     projects
   };
