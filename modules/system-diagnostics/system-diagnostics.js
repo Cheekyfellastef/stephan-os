@@ -4,10 +4,16 @@ export const moduleDefinition = {
   description: "Displays runtime health information for Stephanos OS."
 };
 
+const PANEL_ID = "system-diagnostics-panel";
+
 export function init(context) {
+  if (document.getElementById(PANEL_ID)) {
+    return;
+  }
+
   const panel = document.createElement("div");
 
-  panel.id = "system-diagnostics-panel";
+  panel.id = PANEL_ID;
 
   panel.innerHTML = `
     <h3>Stephanos Diagnostics</h3>
@@ -19,6 +25,13 @@ export function init(context) {
   document.body.appendChild(panel);
 
   updateDiagnostics(context);
+}
+
+export function dispose() {
+  const panel = document.getElementById(PANEL_ID);
+  if (panel) {
+    panel.remove();
+  }
 }
 
 function updateDiagnostics(context) {
