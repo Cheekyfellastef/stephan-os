@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "RenderGraph",
+    "DrawCall",
+    "Present",
+    "CommandBuffer",
+    "Swapchain",
+    "RenderPipeline",
+    "Submit",
+    "GPUFence"
+  ],
+  "structures": [
+    "RenderGraphNode",
+    "ExecuteRenderPass(",
+    "SubmitCommandBuffer(",
+    "PresentFrame(",
+    "DrawIndexed("
+  ]
+}
