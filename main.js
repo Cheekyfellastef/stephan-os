@@ -7,11 +7,16 @@ function log(message) {
   consoleDiv.appendChild(line);
 }
 
-let developerModeEnabled = false;
+let developerMode = false;
 
 function applyDeveloperModeVisibility() {
-  const display = developerModeEnabled ? "block" : "none";
-  const developerElements = ["dev-console", "system-diagnostics-panel", "module-manager-panel"];
+  const display = developerMode ? "block" : "none";
+  const developerElements = [
+    "developer-console-title",
+    "dev-console",
+    "system-diagnostics-panel",
+    "module-manager-panel"
+  ];
 
   for (const elementId of developerElements) {
     const element = document.getElementById(elementId);
@@ -48,8 +53,12 @@ function exitStephanos() {
 }
 
 function toggleDeveloperMode() {
-  developerModeEnabled = !developerModeEnabled;
+  developerMode = !developerMode;
   applyDeveloperModeVisibility();
+}
+
+function isDeveloperModeEnabled() {
+  return developerMode;
 }
 
 async function loadProjects() {
@@ -137,6 +146,7 @@ window.closeSystemPanel = closeSystemPanel;
 window.reloadStephanos = reloadStephanos;
 window.exitStephanos = exitStephanos;
 window.toggleDeveloperMode = toggleDeveloperMode;
+window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.onload = function() {
   startStephanos();
