@@ -10,17 +10,15 @@ export const moduleDefinition = {
 let unsubscribeAllEvents = null;
 
 export function init(context) {
-  let panel = document.getElementById(PANEL_ID);
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
+  }
 
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.innerHTML = `
-      <h3>Stephanos Event Monitor</h3>
-      <div id="${LOG_ID}"></div>
-    `;
+  const panel = ui.createPanel(PANEL_ID, "Stephanos Event Monitor");
 
-    document.body.appendChild(panel);
+  if (!document.getElementById(LOG_ID)) {
+    panel.insertAdjacentHTML("beforeend", `<div id="${LOG_ID}"></div>`);
   }
 
   const logEvent = (event) => {
@@ -39,15 +37,17 @@ export function init(context) {
   unsubscribeAllEvents = context?.eventBus?.on?.("*", logEvent) || null;
 }
 
-export function dispose() {
+export function dispose(context) {
   if (typeof unsubscribeAllEvents === "function") {
     unsubscribeAllEvents();
   }
 
   unsubscribeAllEvents = null;
 
-  const panel = document.getElementById(PANEL_ID);
-  if (panel) {
-    panel.remove();
+  const ui = context?.services?.getService?.("ui");
+  if (!ui) {
+    return;
   }
+
+  ui.removePanel(PANEL_ID);
 }
