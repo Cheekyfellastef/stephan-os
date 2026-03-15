@@ -174,8 +174,18 @@ async function startStephanos() {
 
     const { workspace } = await import("./system/workspace.js");
     const { loadModules } = await import("./system/module_loader.js");
+    const { createEventBus } = await import("./system/core/event_bus.js");
+    const { createSystemState } = await import("./system/core/system_state.js");
+    const { createServiceRegistry } = await import("./system/core/service_registry.js");
+
+    const eventBus = createEventBus();
+    const systemState = createSystemState();
+    const services = createServiceRegistry();
 
     const context = {
+        eventBus,
+        systemState,
+        services,
         workspace,
         projects
     };
