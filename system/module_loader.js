@@ -1,5 +1,6 @@
 const loadedModules = [];
 const moduleStates = {};
+let moduleRegistry = [];
 
 function ensureActiveModules(context) {
   if (!context) {
@@ -45,14 +46,21 @@ function removeActiveModule(moduleId, context) {
   }
 }
 
-async function loadModuleFromPath(modulePath, context, options = {}) {
-  const moduleUrl = new URL(modulePath, window.location.href);
+function createImportUrl(modulePath, options = {}) {
+  const moduleUrl = /^https?:\/\//i.test(modulePath)
+    ? new URL(modulePath)
+    : new URL(modulePath, window.location.href);
 
   if (options.cacheBust) {
     moduleUrl.searchParams.set("v", String(Date.now()));
   }
 
-  const loadedModule = await import(moduleUrl.href);
+  return moduleUrl.href;
+}
+
+async function loadModuleFromPath(modulePath, context, options = {}) {
+  const moduleImportPath = createImportUrl(modulePath, options);
+  const loadedModule = await import(moduleImportPath);
   const { moduleDefinition, init } = loadedModule;
 
   if (!init || typeof init !== "function") {
@@ -104,6 +112,13 @@ async function disposeLoadedModule(loadedEntry, context) {
   context?.eventBus?.emit("module:disposed", loadedEntry?.moduleDefinition);
 }
 
+async function fetchRegistry() {
+  const registryUrl = new URL("../modules/module_registry.json", import.meta.url);
+  const res = await fetch(registryUrl);
+  const registry = await res.json();
+  return registry.modules || [];
+}
+
 export function getLoadedModules() {
   return Object.values(moduleStates).map((entry) => ({
     modulePath: entry.modulePath,
@@ -112,12 +127,28 @@ export function getLoadedModules() {
   }));
 }
 
-export async function loadModules(context) {
-  const registryUrl = new URL("../modules/module_registry.json", import.meta.url);
-  const res = await fetch(registryUrl);
-  const registry = await res.json();
+export function getRegisteredModules() {
+  return [...moduleRegistry];
+}
 
-  for (const moduleEntry of registry.modules || []) {
+export function registerModulePath(modulePath) {
+  if (typeof modulePath !== "string" || modulePath.trim().length === 0) {
+    return false;
+  }
+
+  const normalizedPath = modulePath.trim();
+  if (moduleRegistry.includes(normalizedPath)) {
+    return false;
+  }
+
+  moduleRegistry.push(normalizedPath);
+  return true;
+}
+
+export async function loadModules(context) {
+  moduleRegistry = await fetchRegistry();
+
+  for (const moduleEntry of moduleRegistry) {
     const modulePath = resolveModulePath(moduleEntry);
 
     if (!modulePath) {
@@ -131,6 +162,11 @@ export async function loadModules(context) {
       console.error("Module load error:", modulePath, err);
     }
   }
+}
+
+export async function reloadModules(context) {
+  await disposeModules(context);
+  await loadModules(context);
 }
 
 export async function disableModule(moduleId, context) {

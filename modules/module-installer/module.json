@@ -1,0 +1,6 @@
+{
+  "id": "module-installer",
+  "name": "Module Installer",
+  "version": "1.0",
+  "description": "Install Stephanos modules from remote URLs."
+}

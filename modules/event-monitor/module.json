@@ -1,0 +1,6 @@
+{
+  "id": "event-monitor",
+  "name": "Event Monitor",
+  "version": "1.0",
+  "description": "Live event stream for Stephanos OS."
+}
