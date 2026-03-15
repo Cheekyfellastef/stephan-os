@@ -14,6 +14,12 @@ function normaliseProject(project) {
   };
 }
 
+export const moduleDefinition = {
+  id: "command-deck",
+  version: "1.0",
+  description: "Renders project tiles and routes launches into the workspace runtime."
+};
+
 export function init(context) {
   const container = document.getElementById("project-registry");
   if (!container) {
@@ -35,7 +41,7 @@ export function init(context) {
       <div style="margin-top:8px;">${safeProject.name}</div>
     `;
 
-    tile.onclick = () => context.workspace.open(safeProject);
+    tile.onclick = () => context.workspace.open(safeProject, context);
     container.appendChild(tile);
   });
 }
