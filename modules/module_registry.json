@@ -7,6 +7,7 @@
     "./modules/event-monitor/event-monitor.js",
     "./modules/service-inspector/service-inspector.js",
     "./modules/module-map/module-map.js",
-    "./modules/knowledge-graph/knowledge-graph.js"
+    "./modules/knowledge-graph/knowledge-graph.js",
+    "./modules/agent-console/agent-console.js"
   ]
 }

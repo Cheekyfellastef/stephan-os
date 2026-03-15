@@ -1,0 +1,6 @@
+{
+  "id": "agent-console",
+  "name": "Agent Console",
+  "version": "1.0",
+  "description": "Displays active Stephanos agents."
+}
