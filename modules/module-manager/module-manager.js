@@ -41,8 +41,7 @@ async function renderModuleList(context) {
   const response = await fetch(registryUrl);
   const registry = await response.json();
 
-  const activeModules = context?.moduleLoader?.getLoadedModules?.() || [];
-  const activeById = new Map(activeModules.map((entry) => [entry.moduleDefinition.id, entry]));
+  const activeModules = context?.activeModules || {};
 
   list.innerHTML = "";
 
@@ -55,7 +54,7 @@ async function renderModuleList(context) {
       continue;
     }
 
-    const activeModule = activeById.get(definition.id);
+    const activeModule = activeModules[definition.id];
     const status = activeModule ? "active" : "disabled";
     const version = definition.version || "unknown";
 
