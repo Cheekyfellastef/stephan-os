@@ -1,5 +1,9 @@
 const PANEL_ID = "module-manager-panel";
 const LIST_ID = "module-list";
+const DEVELOPER_MODE_EVENT = "stephanos:developer-mode-changed";
+
+let eventBusUnsubscribers = [];
+let developerModeListener = null;
 
 export const moduleDefinition = {
   id: "module-manager",
@@ -21,16 +25,62 @@ export async function init(context) {
     document.body.appendChild(panel);
   }
 
-  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
-  panel.style.display = developerModeEnabled ? "block" : "none";
+  updatePanelVisibility(panel);
+
+  subscribeToRuntimeUpdates(context);
 
   await renderModuleList(context);
 }
 
 export function dispose() {
+  unsubscribeFromRuntimeUpdates();
+
   const panel = document.getElementById(PANEL_ID);
   if (panel) {
     panel.remove();
+  }
+}
+
+function updatePanelVisibility(panel = document.getElementById(PANEL_ID)) {
+  if (!panel) {
+    return;
+  }
+
+  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
+  panel.style.display = developerModeEnabled ? "block" : "none";
+}
+
+function subscribeToRuntimeUpdates(context) {
+  unsubscribeFromRuntimeUpdates();
+
+  const onModulesChanged = () => {
+    renderModuleList(context);
+  };
+
+  if (context?.eventBus?.on) {
+    eventBusUnsubscribers = [
+      context.eventBus.on("module:loaded", onModulesChanged),
+      context.eventBus.on("module:disposed", onModulesChanged)
+    ].filter((unsubscribe) => typeof unsubscribe === "function");
+  }
+
+  developerModeListener = () => {
+    updatePanelVisibility();
+  };
+
+  window.addEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
+}
+
+function unsubscribeFromRuntimeUpdates() {
+  for (const unsubscribe of eventBusUnsubscribers) {
+    unsubscribe();
+  }
+
+  eventBusUnsubscribers = [];
+
+  if (developerModeListener) {
+    window.removeEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
+    developerModeListener = null;
   }
 }
 
