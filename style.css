@@ -66,3 +66,37 @@ h1 {
 .module-entry button {
   margin-left: 4px;
 }
+
+#event-monitor-panel {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  width: 260px;
+  background: #111;
+  color: #0f0;
+  padding: 10px;
+  font-family: monospace;
+  border-radius: 6px;
+  z-index: 10000;
+  max-height: 240px;
+  overflow: auto;
+}
+
+#module-installer-panel {
+  position: fixed;
+  bottom: 10px;
+  right: 280px;
+  width: 260px;
+  background: #111;
+  color: #0f0;
+  padding: 10px;
+  font-family: monospace;
+  border-radius: 6px;
+  z-index: 10000;
+}
+
+#module-installer-url {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}

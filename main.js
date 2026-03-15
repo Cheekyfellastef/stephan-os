@@ -15,7 +15,9 @@ function applyDeveloperModeVisibility() {
     "developer-console-title",
     "dev-console",
     "system-diagnostics-panel",
-    "module-manager-panel"
+    "module-manager-panel",
+    "module-installer-panel",
+    "event-monitor-panel"
   ];
 
   for (const elementId of developerElements) {
@@ -94,7 +96,17 @@ async function startStephanos() {
   const projects = await loadProjects();
 
   const { workspace } = await import("./system/workspace.js");
-  const { loadModules, disposeModules, getLoadedModules, reloadModule, disableModule, enableModule } = await import("./system/module_loader.js");
+  const {
+    loadModules,
+    disposeModules,
+    getLoadedModules,
+    getRegisteredModules,
+    registerModulePath,
+    reloadModules,
+    reloadModule,
+    disableModule,
+    enableModule
+  } = await import("./system/module_loader.js");
   const { createEventBus } = await import("./system/core/event_bus.js");
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
@@ -116,7 +128,10 @@ async function startStephanos() {
     getLoadedModules: () => getLoadedModules(),
     reloadModule: (moduleId) => reloadModule(moduleId, context),
     disableModule: (moduleId) => disableModule(moduleId, context),
-    enableModule: (moduleId) => enableModule(moduleId, context)
+    enableModule: (moduleId) => enableModule(moduleId, context),
+    getRegisteredModules: () => getRegisteredModules(),
+    registerModulePath: (modulePath) => registerModulePath(modulePath),
+    reloadModules: () => reloadModules(context)
   };
 
   await loadModules(context);

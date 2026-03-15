@@ -1,5 +1,6 @@
 export function createEventBus() {
   const listeners = new Map();
+  const WILDCARD_EVENT = "*";
 
   // Event naming conventions:
   // - system:* for runtime lifecycle and shell-level events.
@@ -33,12 +34,25 @@ export function createEventBus() {
 
   function emit(eventName, data) {
     const handlers = listeners.get(eventName);
-    if (!handlers) {
+    if (handlers) {
+      for (const handler of handlers) {
+        handler(data);
+      }
+    }
+
+    const wildcardHandlers = listeners.get(WILDCARD_EVENT);
+    if (!wildcardHandlers) {
       return;
     }
 
-    for (const handler of handlers) {
-      handler(data);
+    const envelope = {
+      name: eventName,
+      data,
+      timestamp: Date.now()
+    };
+
+    for (const handler of wildcardHandlers) {
+      handler(envelope);
     }
   }
 
