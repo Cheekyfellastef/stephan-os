@@ -31,8 +31,12 @@ function findLoadedModuleIndex(moduleId) {
 }
 
 async function loadModuleFromPath(modulePath, context, options = {}) {
-  const cacheBust = options.cacheBust ? `?t=${Date.now()}` : "";
-  const moduleUrl = new URL(modulePath + cacheBust, window.location.href);
+  const moduleUrl = new URL(modulePath, window.location.href);
+
+  if (options.cacheBust) {
+    moduleUrl.searchParams.set("v", String(Date.now()));
+  }
+
   const loadedModule = await import(moduleUrl.href);
   const { moduleDefinition, init } = loadedModule;
 
@@ -141,15 +145,15 @@ export async function reloadModule(moduleId, context) {
 
   const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
 
-  const activeModules = ensureActiveModules(context);
-  if (activeModules && loadedEntry?.moduleDefinition?.id) {
-    delete activeModules[loadedEntry.moduleDefinition.id];
-  }
-
   try {
     await disposeLoadedModule(loadedEntry, context);
   } catch (err) {
     console.error("Module dispose error:", loadedEntry.modulePath, err);
+  }
+
+  const activeModules = ensureActiveModules(context);
+  if (activeModules && loadedEntry?.moduleDefinition?.id) {
+    delete activeModules[loadedEntry.moduleDefinition.id];
   }
 
   try {
