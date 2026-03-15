@@ -1,0 +1,6 @@
+{
+  "id": "module-map",
+  "name": "Module Map",
+  "version": "1.0",
+  "description": "Shows loaded modules and their status."
+}

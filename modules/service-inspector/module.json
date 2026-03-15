@@ -1,0 +1,6 @@
+{
+  "id": "service-inspector",
+  "name": "Service Inspector",
+  "version": "1.0",
+  "description": "Displays services registered in Stephanos."
+}

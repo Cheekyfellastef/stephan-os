@@ -1,14 +1,12 @@
-const PANEL_ID = "event-monitor-panel";
-const LOG_ID = "event-log";
+const PANEL_ID = "service-inspector-panel";
 const DEVELOPER_MODE_EVENT = "stephanos:developer-mode-changed";
 
 export const moduleDefinition = {
-  id: "event-monitor",
+  id: "service-inspector",
   version: "1.0",
-  description: "Live event stream"
+  description: "Lists active services"
 };
 
-let originalEmit = null;
 let developerModeListener = null;
 
 export function init(context) {
@@ -17,27 +15,21 @@ export function init(context) {
     return;
   }
 
-  const panel = ui.createPanel(PANEL_ID, "Stephanos Event Monitor");
+  const panel = ui.createPanel(PANEL_ID, "Stephanos Services");
+  const list = document.createElement("div");
 
-  if (!document.getElementById(LOG_ID)) {
-    const log = document.createElement("div");
-    log.id = LOG_ID;
-    panel.appendChild(log);
-  }
+  const services = context?.services?.listServices?.() || [];
+
+  services.forEach((service) => {
+    const entry = document.createElement("div");
+    entry.textContent = service;
+    list.appendChild(entry);
+  });
+
+  panel.appendChild(list);
 
   updatePanelVisibility(panel);
   subscribeToDeveloperModeChanges();
-
-  if (typeof context?.eventBus?.emit !== "function") {
-    return;
-  }
-
-  originalEmit = context.eventBus.emit;
-
-  context.eventBus.emit = function(eventName, payload) {
-    logEvent(eventName);
-    return originalEmit.call(this, eventName, payload);
-  };
 }
 
 function updatePanelVisibility(panel = document.getElementById(PANEL_ID)) {
@@ -70,23 +62,7 @@ function unsubscribeFromDeveloperModeChanges() {
   developerModeListener = null;
 }
 
-function logEvent(eventName) {
-  const log = document.getElementById(LOG_ID);
-  if (!log) {
-    return;
-  }
-
-  const entry = document.createElement("div");
-  entry.textContent = eventName;
-  log.prepend(entry);
-}
-
 export function dispose(context) {
-  if (originalEmit && context?.eventBus) {
-    context.eventBus.emit = originalEmit;
-  }
-
-  originalEmit = null;
   unsubscribeFromDeveloperModeChanges();
 
   const ui = context?.services?.getService?.("ui");
