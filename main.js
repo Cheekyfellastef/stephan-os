@@ -24,6 +24,12 @@ function applyDeveloperModeVisibility() {
       element.style.display = display;
     }
   }
+
+  window.dispatchEvent(new CustomEvent("stephanos:developer-mode-changed", {
+    detail: {
+      enabled: developerMode
+    }
+  }));
 }
 
 function openSystemPanel() {
