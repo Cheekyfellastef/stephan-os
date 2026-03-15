@@ -14,6 +14,58 @@ function isValidModuleDefinition(moduleDefinition) {
   );
 }
 
+function findLoadedModuleIndex(moduleId) {
+  return loadedModules.findIndex((entry) => entry.moduleDefinition.id === moduleId);
+}
+
+async function loadModuleFromPath(modulePath, context, options = {}) {
+  const cacheBust = options.cacheBust ? `?t=${Date.now()}` : "";
+  const moduleUrl = new URL(modulePath + cacheBust, window.location.href);
+  const loadedModule = await import(moduleUrl.href);
+  const { moduleDefinition, init } = loadedModule;
+
+  if (!init || typeof init !== "function") {
+    throw new Error(`Invalid module init function: ${modulePath}`);
+  }
+
+  if (!isValidModuleDefinition(moduleDefinition)) {
+    throw new Error(`Invalid module definition: ${modulePath}`);
+  }
+
+  await init(context);
+
+  const loadedEntry = {
+    modulePath,
+    moduleDefinition,
+    module: loadedModule
+  };
+
+  loadedModules.push(loadedEntry);
+
+  console.log("Loaded module:", moduleDefinition.id);
+  context?.eventBus?.emit("module:loaded", moduleDefinition);
+
+  return loadedEntry;
+}
+
+async function disposeLoadedModule(loadedEntry, context) {
+  const dispose = loadedEntry?.module?.dispose;
+
+  if (typeof dispose === "function") {
+    await dispose(context);
+  }
+
+  context?.eventBus?.emit("module:disposed", loadedEntry?.moduleDefinition);
+}
+
+export function getLoadedModules() {
+  return loadedModules.map((entry) => ({
+    modulePath: entry.modulePath,
+    moduleDefinition: { ...entry.moduleDefinition },
+    status: "active"
+  }));
+}
+
 export async function loadModules(context) {
   const registryUrl = new URL("../modules/module_registry.json", import.meta.url);
   const res = await fetch(registryUrl);
@@ -28,42 +80,65 @@ export async function loadModules(context) {
     }
 
     try {
-      const moduleUrl = new URL(modulePath, window.location.href);
-      const loadedModule = await import(moduleUrl.href);
-      const { moduleDefinition, init } = loadedModule;
-
-      if (!init || typeof init !== "function") {
-        console.error("Invalid module:", modulePath);
-        continue;
-      }
-
-      if (!isValidModuleDefinition(moduleDefinition)) {
-        console.error("Invalid module definition:", modulePath);
-        continue;
-      }
-
-      await init(context);
-      loadedModules.push({ modulePath, moduleDefinition, module: loadedModule });
-
-      console.log("Loaded module:", moduleDefinition.id);
-      context?.eventBus?.emit("module:loaded", moduleDefinition);
+      await loadModuleFromPath(modulePath, context);
     } catch (err) {
       console.error("Module load error:", modulePath, err);
     }
   }
 }
 
+export async function disableModule(moduleId, context) {
+  const moduleIndex = findLoadedModuleIndex(moduleId);
+
+  if (moduleIndex < 0) {
+    return false;
+  }
+
+  const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
+
+  try {
+    await disposeLoadedModule(loadedEntry, context);
+    console.log("Disabled module:", moduleId);
+    return true;
+  } catch (err) {
+    console.error("Module disable error:", loadedEntry.modulePath, err);
+    return false;
+  }
+}
+
+export async function reloadModule(moduleId, context) {
+  const moduleIndex = findLoadedModuleIndex(moduleId);
+
+  if (moduleIndex < 0) {
+    return false;
+  }
+
+  const [loadedEntry] = loadedModules.splice(moduleIndex, 1);
+
+  try {
+    await disposeLoadedModule(loadedEntry, context);
+  } catch (err) {
+    console.error("Module dispose error:", loadedEntry.modulePath, err);
+  }
+
+  try {
+    await loadModuleFromPath(loadedEntry.modulePath, context, { cacheBust: true });
+    console.log("Reloaded module:", moduleId);
+    return true;
+  } catch (err) {
+    console.error("Module reload error:", loadedEntry.modulePath, err);
+    return false;
+  }
+}
+
 export async function disposeModules(context) {
   while (loadedModules.length > 0) {
     const loaded = loadedModules.pop();
-    const dispose = loaded?.module?.dispose;
 
-    if (typeof dispose === "function") {
-      try {
-        await dispose(context);
-      } catch (err) {
-        console.error("Module dispose error:", loaded.modulePath, err);
-      }
+    try {
+      await disposeLoadedModule(loaded, context);
+    } catch (err) {
+      console.error("Module dispose error:", loaded?.modulePath, err);
     }
   }
 }

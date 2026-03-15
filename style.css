@@ -43,3 +43,26 @@ h1 {
   font-family: monospace;
   z-index: 10000;
 }
+
+#module-manager-panel {
+  position: fixed;
+  top: 70px;
+  right: 10px;
+  width: 260px;
+  background: #111;
+  color: #0f0;
+  padding: 10px;
+  border-radius: 6px;
+  font-family: monospace;
+  z-index: 10000;
+}
+
+.module-entry {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.module-entry button {
+  margin-left: 4px;
+}

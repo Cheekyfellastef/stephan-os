@@ -1,0 +1,6 @@
+{
+  "id": "module-manager",
+  "name": "Module Manager",
+  "version": "1.0",
+  "description": "Runtime management of Stephanos OS modules."
+}
