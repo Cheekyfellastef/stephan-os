@@ -3,10 +3,12 @@
     {
       "name": "Galaxians",
       "icon": "🚀"
+      "entry": "apps/galaxians/index.html"
     },
     {
       "name": "Wealth App",
       "icon": "📈"
+      "entry": "apps/wealthapp/index.html"
     },
     {
       "name": "Stephanos OS",
