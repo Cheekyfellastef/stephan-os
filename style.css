@@ -31,32 +31,6 @@ h1 {
     margin-top: 40px;
 
 }
-#system-diagnostics-panel {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  width: 220px;
-  background: #111;
-  color: #0f0;
-  padding: 10px;
-  border-radius: 6px;
-  font-family: monospace;
-  z-index: 10000;
-}
-
-#module-manager-panel {
-  position: fixed;
-  top: 70px;
-  right: 10px;
-  width: 260px;
-  background: #111;
-  color: #0f0;
-  padding: 10px;
-  border-radius: 6px;
-  font-family: monospace;
-  z-index: 10000;
-}
-
 .module-entry {
   display: flex;
   justify-content: space-between;
@@ -65,34 +39,6 @@ h1 {
 
 .module-entry button {
   margin-left: 4px;
-}
-
-#event-monitor-panel {
-  position: fixed;
-  bottom: 10px;
-  left: 10px;
-  width: 260px;
-  background: #111;
-  color: #0f0;
-  padding: 10px;
-  font-family: monospace;
-  border-radius: 6px;
-  z-index: 10000;
-  max-height: 240px;
-  overflow: auto;
-}
-
-#module-installer-panel {
-  position: fixed;
-  bottom: 10px;
-  right: 280px;
-  width: 260px;
-  background: #111;
-  color: #0f0;
-  padding: 10px;
-  font-family: monospace;
-  border-radius: 6px;
-  z-index: 10000;
 }
 
 #module-installer-url {
@@ -108,19 +54,20 @@ h1 {
 
 
 .stephanos-panel {
-
   position: fixed;
-  right: 20px;
-  top: 80px;
-  width: 300px;
-
+  width: 320px;
   background: #111;
   color: #0f0;
-
   border: 1px solid #333;
   border-radius: 6px;
-
   padding: 10px;
+  font-family: monospace;
   z-index: 2000;
+  display: flex;
+  flex-direction: column;
+}
 
+.stephanos-panel-content {
+  overflow-y: auto;
+  max-height: 400px;
 }

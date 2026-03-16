@@ -80,7 +80,7 @@ export function init(context) {
   subscribeToModuleLoaded(context);
 
   renderGraphPanel();
-  updatePanelVisibility(panel);
+  updatePanelVisibility();
   subscribeToDeveloperModeChanges();
 }
 

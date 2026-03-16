@@ -25,7 +25,7 @@ export function init(context) {
     panel.appendChild(log);
   }
 
-  updatePanelVisibility(panel);
+  updatePanelVisibility();
   subscribeToDeveloperModeChanges();
 
   if (typeof context?.eventBus?.emit !== "function") {

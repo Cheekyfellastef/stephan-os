@@ -1,3 +1,5 @@
+let cleanupConsoleList = null;
+
 export const moduleDefinition = {
   id: "command-console",
   version: "1.0",
@@ -42,13 +44,9 @@ export function init(context) {
     }
   });
 
-  const unlistenConsoleList = context.eventBus.on("console:list", (target) => {
+  cleanupConsoleList = context.eventBus.on("console:list", (target) => {
     executeCommand(`list ${target}`, context, output);
   });
-
-  panel.__cleanup = () => {
-    unlistenConsoleList();
-  };
 }
 
 function executeCommand(command, context, output) {
@@ -118,10 +116,9 @@ function log(output, text) {
 
 export function dispose(context) {
   const ui = context.services.getService("ui");
-  const panel = document.getElementById("command-console-panel");
-
-  if (panel?.__cleanup) {
-    panel.__cleanup();
+  if (typeof cleanupConsoleList === "function") {
+    cleanupConsoleList();
+    cleanupConsoleList = null;
   }
 
   ui.removePanel("command-console-panel");

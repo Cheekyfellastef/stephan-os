@@ -23,7 +23,7 @@ export async function init(context) {
     panel.insertAdjacentHTML("beforeend", `<div id="${LIST_ID}"></div>`);
   }
 
-  updatePanelVisibility(panel);
+  updatePanelVisibility();
 
   subscribeToRuntimeUpdates(context);
 
