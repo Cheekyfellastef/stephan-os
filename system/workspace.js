@@ -18,11 +18,48 @@ export const workspace = {
     if (project?.entry && project.entry.endsWith(".md")) {
       const response = await fetch(project.entry);
       const text = await response.text();
-      const pre = document.createElement("pre");
+      const container = document.createElement("div");
 
-      pre.textContent = text;
+      container.style.whiteSpace = "pre-wrap";
+      container.style.wordWrap = "break-word";
+      container.style.maxHeight = "70vh";
+      container.style.overflowY = "auto";
+      container.style.padding = "20px";
+      container.style.background = "#111";
+      container.style.color = "#0f0";
+      container.style.fontFamily = "monospace";
+      container.style.borderRadius = "8px";
+
+      container.textContent = text;
       content.innerHTML = "";
-      content.appendChild(pre);
+
+      // TOP LEFT BACK BUTTON
+      const backTop = document.createElement("button");
+      backTop.textContent = "← Back";
+      backTop.style.display = "block";
+      backTop.style.marginBottom = "10px";
+
+      backTop.onclick = () => {
+        document.getElementById("workspace").style.display = "none";
+        document.getElementById("projects").style.display = "block";
+      };
+
+      // BOTTOM LEFT BACK BUTTON
+      const backBottom = document.createElement("button");
+      backBottom.textContent = "← Back";
+      backBottom.style.display = "block";
+      backBottom.style.marginTop = "15px";
+
+      backBottom.onclick = () => {
+        document.getElementById("workspace").style.display = "none";
+        document.getElementById("projects").style.display = "block";
+      };
+
+      content.appendChild(backTop);
+      content.appendChild(container);
+      content.appendChild(backBottom);
+
+      return;
     } else if (project?.entry) {
       content.innerHTML = `<iframe src="${project.entry}" width="100%" height="600" style="border:0;"></iframe>`;
     } else {
