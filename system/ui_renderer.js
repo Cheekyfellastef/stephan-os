@@ -12,6 +12,8 @@ export function createUIRenderer() {
         document.body.appendChild(panel);
       }
 
+      panel.classList.add("stephanos-panel");
+
       return panel;
     },
 

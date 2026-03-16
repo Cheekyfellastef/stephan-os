@@ -213,16 +213,23 @@ window.reloadStephanos = function () {
 
 window.openSystemPanel = function () {
 
-  console.log("Opening system panel");
+  console.log("Toggling system panels");
 
-  const panel = document.getElementById("dev-console");
+  const panels = document.querySelectorAll(".stephanos-panel");
 
-  if (!panel) return;
-
-  if (panel.style.display === "none") {
-    panel.style.display = "block";
-  } else {
-    panel.style.display = "none";
+  if (!panels.length) {
+    console.warn("No panels found");
+    return;
   }
+
+  panels.forEach(panel => {
+
+    if (panel.style.display === "none" || !panel.style.display) {
+      panel.style.display = "block";
+    } else {
+      panel.style.display = "none";
+    }
+
+  });
 
 };
