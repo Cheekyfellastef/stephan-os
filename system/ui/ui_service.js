@@ -16,7 +16,7 @@ export function createUIRenderer() {
         container.style.top = "80px";
         container.style.right = "20px";
 
-        container.style.display = "flex";
+        container.style.display = "none";
         container.style.flexDirection = "column";
 
         container.style.gap = "10px";

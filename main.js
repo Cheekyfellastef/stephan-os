@@ -6,10 +6,17 @@ window.openSystemPanel = function() {};
 
 window.setPanelState = function(panelId, enabled) {
   const panel = document.getElementById(panelId);
+  const container = document.getElementById("stephanos-panel-stack");
 
   if (!panel) return;
 
   panel.style.display = enabled ? "block" : "none";
+
+  if (!container) return;
+
+  const anyVisible = Array.from(container.children).some(p => p.style.display !== "none");
+
+  container.style.display = anyVisible ? "flex" : "none";
 };
 
 function log(message) {
