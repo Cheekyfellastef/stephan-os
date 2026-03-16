@@ -2,12 +2,12 @@
   "projects": [
     {
       "name": "Galaxians",
-      "icon": "🚀"
+      "icon": "🚀",
       "entry": "apps/galaxians/index.html"
     },
     {
       "name": "Wealth App",
-      "icon": "📈"
+      "icon": "📈",
       "entry": "apps/wealthapp/index.html"
     },
     {
