@@ -8,44 +8,46 @@ export const assistantAgent = {
 
     console.log("Assistant received:", userInput);
 
-    const command = await interpretCommand(userInput);
+    const interpreted = interpretLocally(userInput);
 
-    executeStephanosCommand(command, context);
+    if (interpreted) {
+      executeStephanosCommand(interpreted, context);
+    }
   }
 };
 
-async function interpretCommand(text) {
-  const response = await fetch("/api/assistant", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      message: text
-    })
-  });
+function interpretLocally(text) {
+  const cmd = text.toLowerCase();
 
-  const data = await response.json();
+  if (cmd.includes("module")) {
+    return "list modules";
+  }
 
-  return data.command;
+  if (cmd.includes("agent")) {
+    return "list agents";
+  }
+
+  if (cmd.includes("service")) {
+    return "list services";
+  }
+
+  if (cmd.includes("galaxians")) {
+    return "start galaxians";
+  }
+
+  return text;
 }
 
 function executeStephanosCommand(command, context) {
-  if (!command) return;
+  const parts = command.split(" ");
 
   const eventBus = context.eventBus;
-  const parts = command.split(" ");
-  const cmd = parts[0];
 
-  if (cmd === "start") {
-    eventBus.emit("simulation:start", parts[1]);
-  }
-
-  if (cmd === "list") {
+  if (parts[0] === "list") {
     eventBus.emit("console:list", parts[1]);
   }
 
-  if (cmd === "run") {
-    eventBus.emit("experiment:run", parts.slice(1).join(" "));
+  if (parts[0] === "start") {
+    eventBus.emit("simulation:start", parts[1]);
   }
 }

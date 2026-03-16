@@ -10,7 +10,8 @@
     },
     {
       "name": "Stephanos OS",
-      "icon": "⚙"
+      "icon": "🧠",
+      "entry": "ROADMAP.md"
     }
   ]
 }

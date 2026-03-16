@@ -28,12 +28,14 @@ export function init(context) {
 
       if (!command) return;
 
-      console.log("Console emitted command:", command);
+      console.log("Console command:", command);
 
+      // send command to assistant agent
       context.eventBus.emit("console:command", {
         text: command
       });
 
+      // fallback to local command parser
       executeCommand(command, context, output);
 
       input.value = "";
