@@ -166,6 +166,18 @@ async function startStephanos() {
   console.log("modules loading");
   await loadModules(context);
 
+  const panels = document.querySelectorAll(".stephanos-panel");
+
+  panels.forEach(panel => {
+    panel.style.display = "none";
+  });
+
+  const container = document.getElementById("stephanos-panel-stack");
+
+  if (container) {
+    container.style.display = "none";
+  }
+
   applyDeveloperModeVisibility();
 
   window.__stephanosRuntime = {
@@ -200,12 +212,4 @@ window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.addEventListener("load", () => {
   startStephanos();
-});
-
-window.addEventListener("load", () => {
-  const panels = document.querySelectorAll(".stephanos-panel");
-
-  panels.forEach(panel => {
-    panel.style.display = "none";
-  });
 });
