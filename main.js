@@ -1,3 +1,4 @@
+import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
 
 console.log("Stephanos OS booting");
@@ -75,17 +76,6 @@ function isDeveloperModeEnabled() {
   return developerMode;
 }
 
-async function loadProjects() {
-  try {
-    const response = await fetch("projects_registry.json?v=0.1");
-    const data = await response.json();
-    return data.projects;
-  } catch (error) {
-    log("Failed to load project registry");
-    return [];
-  }
-}
-
 async function startStephanos() {
   const versionMeta = document.querySelector('meta[name="stephanos-version"]');
   if (versionMeta) {
@@ -99,7 +89,7 @@ async function startStephanos() {
 
   log("Stephanos OS starting...");
 
-  const projects = await loadProjects();
+  const projects = await discoverApps();
 
   const { workspace } = await import("./system/workspace.js");
   const {
