@@ -111,6 +111,8 @@ async function startStephanos() {
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
   const { createUIRenderer } = await import("./system/ui_renderer.js");
+  const { createTaskQueue } = await import("./system/tasks/task_queue.js");
+  const { createTaskScheduler } = await import("./system/tasks/task_scheduler.js");
   const { createAgentRegistry } = await import("./system/agents/agent_registry.js");
   const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
   const { sampleAgent } = await import("./system/agents/sample_agent.js");
@@ -119,8 +121,10 @@ async function startStephanos() {
   const systemState = createSystemState();
   const services = createServiceRegistry();
   const uiRenderer = createUIRenderer();
+  const taskQueue = createTaskQueue();
 
   services.registerService("ui", uiRenderer);
+  services.registerService("taskQueue", taskQueue);
 
   const agentRegistry = createAgentRegistry();
   services.registerService("agentRegistry", agentRegistry);
@@ -136,6 +140,9 @@ async function startStephanos() {
 
   const agentRuntime = createAgentRuntime(context);
   services.registerService("agentRuntime", agentRuntime);
+
+  const taskScheduler = createTaskScheduler(context);
+  services.registerService("taskScheduler", taskScheduler);
 
   agentRuntime.startAgent(sampleAgent);
 

@@ -7,6 +7,14 @@ export const sampleAgent = {
   ],
 
   handleEvent(payload, context) {
-    console.log("Agent observed event:", payload);
+    const task = {
+      id: `system-observer-${Date.now()}`,
+      agent: "system-observer",
+      execute() {
+        console.log("Agent observed event:", payload);
+      }
+    };
+
+    context.services.getService("taskQueue").addTask(task);
   }
 };
