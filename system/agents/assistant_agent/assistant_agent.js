@@ -15,37 +15,45 @@ export const assistantAgent = {
 };
 
 function interpretLocally(text) {
+
   const cmd = text.toLowerCase();
 
-  if (cmd.includes("module")) {
-    return "list modules";
-  }
+  if (cmd.includes("module")) return "list modules";
 
-  if (cmd.includes("agent")) {
-    return "list agents";
-  }
+  if (cmd.includes("agent")) return "list agents";
 
-  if (cmd.includes("service")) {
-    return "list services";
-  }
+  if (cmd.includes("service")) return "list services";
 
   if (cmd.includes("galaxians")) {
+
+    if (cmd.includes("run")) return "start galaxians";
+
+    if (cmd.includes("start")) return "start galaxians";
+
     return "start galaxians";
+
   }
 
   return text;
+
 }
 
 function executeStephanosCommand(command, context) {
+
   const parts = command.split(" ");
 
   const eventBus = context.eventBus;
 
   if (parts[0] === "list") {
+
     eventBus.emit("console:list", parts[1]);
+
   }
 
-  if (parts[0] === "start") {
+  if (parts[0] === "start" || parts[0] === "run") {
+
     eventBus.emit("simulation:start", parts[1]);
+
   }
+
 }
