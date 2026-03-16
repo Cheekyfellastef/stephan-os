@@ -38,6 +38,10 @@ function interpretLocally(text) {
 
   }
 
+  if (cmd.includes("wealth")) {
+    return "start wealth app";
+  }
+
   return text;
 
 }
@@ -56,7 +60,13 @@ function executeStephanosCommand(command, context) {
 
   if (parts[0] === "start" || parts[0] === "run") {
 
-    eventBus.emit("simulation:start", parts[1]);
+    const simulation = parts.slice(1).join(" ").trim();
+
+    if (!simulation) {
+      return;
+    }
+
+    eventBus.emit("simulation:start", simulation);
 
   }
 

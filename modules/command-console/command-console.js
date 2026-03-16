@@ -93,8 +93,13 @@ function executeCommand(command, context, output) {
     return;
   }
 
-  if (cmd === "start") {
-    const simulation = parts[1];
+  if (cmd === "start" || cmd === "run") {
+    const simulation = parts.slice(1).join(" ").trim();
+
+    if (!simulation) {
+      log(output, "Usage: run <simulation-name>");
+      return;
+    }
 
     context.eventBus.emit("simulation:start", simulation);
 

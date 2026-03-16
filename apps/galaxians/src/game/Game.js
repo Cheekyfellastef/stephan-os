@@ -1,6 +1,6 @@
 import Renderer from "../engine/Renderer.js";
 import Input from "../engine/Input.js";
-import GameLoop from "./GameLoop.js";
+import GameLoop from "./Gameloop.js";
 
 import Player from "../entities/Player.js";
 import EnemyFormation from "../systems/EnemyFormation.js";
