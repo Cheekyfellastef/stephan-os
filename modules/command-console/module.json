@@ -1,0 +1,6 @@
+{
+  "id": "command-console",
+  "name": "Command Console",
+  "version": "1.0",
+  "description": "Text interface for controlling Stephanos OS."
+}
