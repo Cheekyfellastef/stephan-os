@@ -61,7 +61,23 @@ export const workspace = {
 
       return;
     } else if (project?.entry) {
-      content.innerHTML = `<iframe src="${project.entry}" width="100%" height="600" style="border:0;"></iframe>`;
+      content.innerHTML = "";
+
+      const backButton = document.createElement("button");
+      backButton.textContent = "◀ Return to Command Deck";
+      backButton.style.marginBottom = "10px";
+      backButton.onclick = () => {
+        window.returnToCommandDeck();
+      };
+
+      const iframe = document.createElement("iframe");
+      iframe.src = project.entry;
+      iframe.style.width = "100%";
+      iframe.style.height = "700px";
+      iframe.style.border = "none";
+
+      content.appendChild(backButton);
+      content.appendChild(iframe);
     } else {
       content.textContent = `Workspace for ${project?.name || "project"}`;
     }
