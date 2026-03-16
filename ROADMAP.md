@@ -1,145 +1,134 @@
 # Stephanos OS Roadmap
 
-## Purpose
+Stephanos OS is evolving into a modular cognitive operating environment
+for simulations, AI agents, and research workflows.
 
-Stephanos OS is a persistent cognitive operating environment designed to support human–AI collaboration across devices including PC, iPad, VR (Quest), and mobile.
+--------------------------------------------------
 
-The system will allow humans and AI agents to collaborate on designing systems, running simulations, and developing projects within a shared thinking surface.
+Stage 1 — Modular OS Shell
 
-The development of Stephanos OS will proceed through incremental phases, starting with simple tools and expanding into a spatial computing environment.
-
----
-
-# Phase 0 — Foundation (Current Phase)
-
-Goal: Establish the core structure and documentation of the project.
-
-Tasks:
-
-• Create the Stephanos OS GitHub repository  
-• Define the vision of the system  
-• Define the architecture of the system  
-• Create an initial project folder structure  
-• Document the roadmap and development plan  
-
-Outcome:
-
-The Stephanos OS project exists as a structured blueprint that can evolve into a working system.
-
----
-
-# Phase 1 — Minimal Working System
-
-Goal: Create the first functional interface for Stephanos OS.
+Status: Complete
 
 Features:
+- Command Deck UI
+- Module Loader
+- Workspace system
+- Project Registry
+- Developer Console
+- Boot screen
 
-• A simple web-based dashboard  
-• Display connected projects (Galaxians, Wealth App, Stephanos OS)  
-• Basic project navigation  
-• Accessible from PC, iPad, Quest browser, and mobile  
+Purpose:
+Provide the foundation for a modular operating environment.
 
-Outcome:
+--------------------------------------------------
 
-A single interface that acts as the control center for development projects.
+Stage 2 — Knowledge Graph
 
----
-
-# Phase 2 — Knowledge Graph
-
-Goal: Introduce persistent system memory.
-
-Features:
-
-• Nodes representing projects, ideas, systems, and simulations  
-• Relationships between nodes  
-• Visualization of the knowledge graph  
-
-Example nodes:
-
-Project → Galaxians  
-Project → Wealth App  
-Idea → Stephanos OS  
-System → Enemy AI  
-
-Outcome:
-
-Stephanos OS evolves from a project dashboard into a knowledge system.
-
----
-
-# Phase 3 — Agent Integration
-
-Goal: Introduce AI agents that assist development.
-
-Initial agents:
-
-• Architect Agent (system design)  
-• Code Agent (implementation assistance)  
-• Research Agent (information gathering and summarization)
-
-Capabilities:
-
-• Analyze project structure  
-• Suggest improvements  
-• Assist coding and documentation  
-• Interact with development tools  
-
-Outcome:
-
-The human–AI flywheel becomes part of the Stephanos OS environment.
-
----
-
-# Phase 4 — Simulation Integration
-
-Goal: Integrate simulation systems into Stephanos OS.
-
-Initial simulations:
-
-• Galaxians engine  
-• Wealth App financial modelling
-
-Capabilities:
-
-• Run simulations directly from Stephanos OS  
-• Visualize system behavior  
-• Allow agents to modify and experiment with systems  
-
-Outcome:
-
-Stephanos OS becomes a system design and experimentation laboratory.
-
----
-
-# Phase 5 — Spatial Interface
-
-Goal: Introduce spatial computing and VR interaction.
-
-Platform:
-
-Meta Quest 3
+Status: In progress
 
 Features:
+- Graph data structure
+- Node relationships
+- Knowledge explorer panel
+- Data linking between modules
 
-• Spatial system maps  
-• AI agent avatars  
-• Simulation panels inside the environment  
-• Mixed reality workspace integrated with the physical environment  
+Purpose:
+Give Stephanos a persistent memory of ideas,
+projects, experiments, and system relationships.
 
-Outcome:
+--------------------------------------------------
 
-Stephanos OS becomes a spatial thinking environment.
+Stage 3 — Agent Runtime
 
----
+Status: Implemented
 
-# Long Term Vision
+Features:
+- Agent runtime
+- Event-driven agents
+- Agent registry
+- Assistant Agent
 
-Stephanos OS evolves into:
+Purpose:
+Allow autonomous agents to monitor and interact
+with the Stephanos system.
 
-• A persistent thinking surface  
-• A collaborative environment for humans and AI  
-• A spatial workspace accessible from multiple devices  
-• A system for designing and simulating complex ideas  
+--------------------------------------------------
 
-The system will continue to evolve as new technologies and capabilities become available through the human–AI flywheel.
+Stage 4 — Task Orchestrator
+
+Status: Implemented
+
+Features:
+- Task queue
+- Task scheduler
+- Agent coordination
+- Event-driven automation
+
+Purpose:
+Allow agents and modules to coordinate complex workflows.
+
+--------------------------------------------------
+
+Stage 4.5 — Multi-Agent Coordination
+
+Status: Current Phase
+
+Features:
+- Assistant Agent
+- System diagnostics
+- Module manager
+- Event monitor
+
+Purpose:
+Create a collaborative environment where multiple
+agents can coordinate system tasks.
+
+--------------------------------------------------
+
+Stage 5 — Simulation Host
+
+Planned
+
+Features:
+- Simulation runtime
+- Simulation registry
+- Simulation control API
+- Agent-driven experiments
+
+Purpose:
+Allow Stephanos to launch and control simulations
+like Galaxians and the Wealth App.
+
+--------------------------------------------------
+
+Stage 6 — Experiment Framework
+
+Future
+
+Features:
+- Automated experiment runner
+- Result analysis
+- Knowledge graph integration
+- Strategy testing
+
+Purpose:
+Turn Stephanos into a simulation research laboratory.
+
+--------------------------------------------------
+
+Stage 7 — Spatial Interface
+
+Future
+
+Features:
+- 3D workspace
+- VR Command Deck
+- Spatial modules
+- Multi-room environments
+
+Purpose:
+Transform Stephanos into a spatial computing platform.
+
+--------------------------------------------------
+
+End of Roadmap
