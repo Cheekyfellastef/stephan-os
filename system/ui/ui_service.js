@@ -4,6 +4,29 @@ export function createUIRenderer() {
 
     createPanel(id, title) {
 
+      let container = document.getElementById("stephanos-panel-stack");
+
+      if (!container) {
+
+        container = document.createElement("div");
+
+        container.id = "stephanos-panel-stack";
+
+        container.style.position = "fixed";
+        container.style.top = "80px";
+        container.style.right = "20px";
+
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+
+        container.style.gap = "10px";
+
+        container.style.zIndex = "2000";
+
+        document.body.appendChild(container);
+
+      }
+
       let panel = document.getElementById(id);
 
       if (!panel) {
@@ -25,19 +48,9 @@ export function createUIRenderer() {
 
         panel.appendChild(header);
 
-        const leftModules = [
-          "command-console-panel",
-          "task-monitor-panel"
-        ];
+        panel.style.display = "none";
 
-        const left = document.getElementById("left-column");
-        const right = document.getElementById("right-column");
-
-        if (leftModules.includes(id)) {
-          left.appendChild(panel);
-        } else {
-          right.appendChild(panel);
-        }
+        container.appendChild(panel);
 
       }
 

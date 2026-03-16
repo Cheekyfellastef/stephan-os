@@ -79,18 +79,28 @@ async function renderModuleList(context) {
     }
 
     const isModuleManager = definition.id === moduleDefinition.id;
-    const status = moduleEntry?.status === "active" ? "active" : "disabled";
+    let status = "DISABLED";
+
+    if (moduleEntry?.status === "active") {
+      status = "ACTIVE";
+    } else if (moduleEntry?.status === "failed") {
+      status = "FAILED";
+    } else if (moduleEntry?.status === "loading") {
+      status = "LOADING";
+    }
+
     const version = definition.version || "unknown";
 
     const row = document.createElement("div");
     row.className = "module-entry";
 
     const details = document.createElement("span");
-    details.textContent = `${definition.id} ${version} ${status}`;
+    details.classList.add(status);
+    details.textContent = `${definition.id} v${version} ${status}`;
 
     const actions = document.createElement("span");
 
-    if (status === "active") {
+    if (status === "ACTIVE") {
       const reloadButton = document.createElement("button");
       reloadButton.textContent = "reload";
       reloadButton.disabled = false;
