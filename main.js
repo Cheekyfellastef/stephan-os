@@ -1,3 +1,5 @@
+import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
+
 function log(message) {
   const consoleDiv = document.getElementById("dev-console");
   if (!consoleDiv) return;
@@ -116,7 +118,6 @@ async function startStephanos() {
   const { createAgentRegistry } = await import("./system/agents/agent_registry.js");
   const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
   const { sampleAgent } = await import("./system/agents/sample_agent.js");
-  const { assistantAgent } = await import("./system/agents/assistant_agent/assistant_agent.js");
 
   const eventBus = createEventBus();
   const systemState = createSystemState();

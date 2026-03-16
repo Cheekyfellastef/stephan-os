@@ -1,6 +1,10 @@
 export const assistantAgent = {
   id: "assistant-agent",
 
+  init() {
+    console.log("Assistant agent started");
+  },
+
   subscribeEvents: ["console:command"],
 
   async handleEvent(payload, context) {
