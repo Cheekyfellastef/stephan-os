@@ -5,8 +5,13 @@ export const moduleDefinition = {
 };
 
 const PANEL_ID = "system-diagnostics-panel";
+const DEVELOPER_MODE_EVENT = "stephanos:developer-mode-changed";
+
+let developerModeListener = null;
 
 export function init(context) {
+  unsubscribeFromDeveloperModeChanges();
+
   const ui = context?.services?.getService?.("ui");
   if (!ui) {
     return;
@@ -25,13 +30,45 @@ export function init(context) {
     );
   }
 
-  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
-  panel.style.display = developerModeEnabled ? "block" : "none";
+  updatePanelVisibility();
+  subscribeToDeveloperModeChanges();
 
   updateDiagnostics(context);
 }
 
+function updatePanelVisibility(panel = document.getElementById(PANEL_ID)) {
+  if (!panel) {
+    return;
+  }
+
+  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
+  panel.style.display = developerModeEnabled ? "block" : "none";
+}
+
+function subscribeToDeveloperModeChanges() {
+  if (developerModeListener) {
+    return;
+  }
+
+  developerModeListener = () => {
+    updatePanelVisibility();
+  };
+
+  window.addEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
+}
+
+function unsubscribeFromDeveloperModeChanges() {
+  if (!developerModeListener) {
+    return;
+  }
+
+  window.removeEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
+  developerModeListener = null;
+}
+
 export function dispose(context) {
+  unsubscribeFromDeveloperModeChanges();
+
   const ui = context?.services?.getService?.("ui");
   if (!ui) {
     return;
