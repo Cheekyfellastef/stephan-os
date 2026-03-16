@@ -1,8 +1,26 @@
-let panelOffset = 0;
-
 export function createUIRenderer() {
   return {
     createPanel(id, title) {
+      let container = document.getElementById("stephanos-panel-container");
+
+      if (!container) {
+        container = document.createElement("div");
+
+        container.id = "stephanos-panel-container";
+
+        container.style.position = "fixed";
+        container.style.right = "20px";
+        container.style.top = "80px";
+
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+        container.style.gap = "10px";
+
+        container.style.zIndex = "2000";
+
+        document.body.appendChild(container);
+      }
+
       let panel = document.getElementById(id);
 
       if (!panel) {
@@ -12,9 +30,6 @@ export function createUIRenderer() {
 
         panel.style.position = "fixed";
         panel.style.right = "20px";
-        panel.style.top = (80 + panelOffset) + "px";
-
-        panelOffset += 220;
 
         const header = document.createElement("div");
         header.textContent = title;
@@ -23,7 +38,7 @@ export function createUIRenderer() {
 
         panel.appendChild(header);
 
-        document.body.appendChild(panel);
+        container.appendChild(panel);
       }
 
       return panel;
