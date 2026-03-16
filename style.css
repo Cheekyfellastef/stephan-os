@@ -43,6 +43,36 @@ h1 {
 
 }
 
+.module-entry span:first-child {
+
+  font-weight: bold;
+
+}
+
+.module-entry .ACTIVE {
+
+  color: #0f0;
+
+}
+
+.module-entry .FAILED {
+
+  color: #f33;
+
+}
+
+.module-entry .DISABLED {
+
+  color: #aaa;
+
+}
+
+.module-entry .LOADING {
+
+  color: #ffb300;
+
+}
+
 .module-entry button {
   margin-left: 4px;
 }
