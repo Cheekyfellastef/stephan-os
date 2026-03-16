@@ -4,6 +4,15 @@ console.log("Stephanos OS booting");
 
 window.openSystemPanel = function() {};
 
+window.togglePanel = function(panelId) {
+  const panel = document.getElementById(panelId);
+
+  if (!panel) return;
+
+  panel.style.display =
+    panel.style.display === "none" ? "block" : "none";
+};
+
 function log(message) {
   const consoleDiv = document.getElementById("dev-console");
   if (!consoleDiv) return;
@@ -21,7 +30,6 @@ function applyDeveloperModeVisibility() {
     "developer-console-title",
     "dev-console",
     "system-diagnostics-panel",
-    "module-manager-panel",
     "module-installer-panel",
     "event-monitor-panel"
   ];

@@ -31,41 +31,38 @@ export function init(context) {
   panel.style.display = "none";
 
   panel.innerHTML = `
-    <h3 style="margin-top:0">Stephanos System</h3>
+    <h3>Stephanos System</h3>
 
-    <button id="dev-toggle">Toggle Developer Mode</button><br><br>
+    <button onclick="togglePanel('module-manager-panel')">
+      Toggle Modules
+    </button><br><br>
 
-    <button id="debug-toggle">Toggle Debug Console</button><br><br>
+    <button onclick="togglePanel('agent-console-panel')">
+      Toggle Agents
+    </button><br><br>
 
-    <button id="reload-stephanos">Reload Stephanos</button><br><br>
+    <button onclick="togglePanel('command-console-panel')">
+      Toggle Console
+    </button><br><br>
 
-    <button id="exit-stephanos">Exit to Browser</button>
+    <button onclick="togglePanel('task-monitor-panel')">
+      Toggle Task Monitor
+    </button><br><br>
+
+    <button onclick="togglePanel('dev-console')">
+      Toggle Debug Console
+    </button><br><br>
+
+    <button onclick="reloadStephanos()">
+      Reload Stephanos
+    </button><br><br>
+
+    <button onclick="exitStephanos()">
+      Exit to Browser
+    </button>
   `;
 
   document.body.appendChild(panel);
-
-  document.getElementById("dev-toggle").onclick = () => {
-    const current = window.isDeveloperModeEnabled?.() ?? false;
-
-    window.toggleDeveloperMode?.(!current);
-  };
-
-  document.getElementById("debug-toggle").onclick = () => {
-    const debug = document.getElementById("dev-console");
-
-    if (!debug) return;
-
-    debug.style.display =
-      debug.style.display === "none" ? "block" : "none";
-  };
-
-  document.getElementById("reload-stephanos").onclick = () => {
-    location.reload();
-  };
-
-  document.getElementById("exit-stephanos").onclick = () => {
-    window.location.href = "/";
-  };
 
   window.openSystemPanel = function() {
     panel.style.display =

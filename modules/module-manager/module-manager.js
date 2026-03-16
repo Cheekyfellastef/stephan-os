@@ -1,9 +1,6 @@
 const PANEL_ID = "module-manager-panel";
 const LIST_ID = "module-list";
-const DEVELOPER_MODE_EVENT = "stephanos:developer-mode-changed";
-
 let eventBusUnsubscribers = [];
-let developerModeListener = null;
 
 export const moduleDefinition = {
   id: "module-manager",
@@ -23,8 +20,6 @@ export async function init(context) {
     panel.insertAdjacentHTML("beforeend", `<div id="${LIST_ID}"></div>`);
   }
 
-  updatePanelVisibility();
-
   subscribeToRuntimeUpdates(context);
 
   await renderModuleList(context);
@@ -41,15 +36,6 @@ export function dispose(context) {
   ui.removePanel(PANEL_ID);
 }
 
-function updatePanelVisibility(panel = document.getElementById(PANEL_ID)) {
-  if (!panel) {
-    return;
-  }
-
-  const developerModeEnabled = window.isDeveloperModeEnabled?.() ?? false;
-  panel.style.display = developerModeEnabled ? "block" : "none";
-}
-
 function subscribeToRuntimeUpdates(context) {
   unsubscribeFromRuntimeUpdates();
 
@@ -64,11 +50,6 @@ function subscribeToRuntimeUpdates(context) {
     ].filter((unsubscribe) => typeof unsubscribe === "function");
   }
 
-  developerModeListener = () => {
-    updatePanelVisibility();
-  };
-
-  window.addEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
 }
 
 function unsubscribeFromRuntimeUpdates() {
@@ -78,10 +59,6 @@ function unsubscribeFromRuntimeUpdates() {
 
   eventBusUnsubscribers = [];
 
-  if (developerModeListener) {
-    window.removeEventListener(DEVELOPER_MODE_EVENT, developerModeListener);
-    developerModeListener = null;
-  }
 }
 
 async function renderModuleList(context) {
