@@ -8,7 +8,7 @@
     {
       "name": "Wealth App",
       "icon": "📈",
-      "entry": "apps/wealthapp/index.html"
+      "entry": "apps/wealthapp/dist/index.html"
     },
     {
       "name": "Stephanos OS",
