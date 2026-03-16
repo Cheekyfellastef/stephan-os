@@ -32,9 +32,15 @@ h1 {
 
 }
 .module-entry {
+
   display: flex;
   justify-content: space-between;
-  margin-bottom: 6px;
+  align-items: center;
+
+  padding: 4px 0;
+
+  border-bottom: 1px solid #222;
+
 }
 
 .module-entry button {
@@ -67,9 +73,7 @@ h1 {
 
   font-family: monospace;
 
-  z-index: 2000;
-
-  max-height: 300px;
+  max-height: 350px;
 
   overflow-y: auto;
 
