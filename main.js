@@ -191,6 +191,14 @@ window.exitStephanos = exitStephanos;
 window.toggleDeveloperMode = toggleDeveloperMode;
 window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
-window.onload = function() {
+window.addEventListener("load", () => {
   startStephanos();
-};
+});
+
+window.addEventListener("load", () => {
+  const panels = document.querySelectorAll(".stephanos-panel");
+
+  panels.forEach(panel => {
+    panel.style.display = "none";
+  });
+});
