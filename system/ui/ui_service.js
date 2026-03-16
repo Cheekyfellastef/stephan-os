@@ -14,6 +14,7 @@ export function createUIRenderer() {
 
         panel.id = id;
 
+        panel.style.display = "none";
 
         const header = document.createElement("div");
 
