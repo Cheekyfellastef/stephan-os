@@ -4,13 +4,12 @@ console.log("Stephanos OS booting");
 
 window.openSystemPanel = function() {};
 
-window.togglePanel = function(panelId) {
+window.setPanelState = function(panelId, enabled) {
   const panel = document.getElementById(panelId);
 
   if (!panel) return;
 
-  panel.style.display =
-    panel.style.display === "none" ? "block" : "none";
+  panel.style.display = enabled ? "block" : "none";
 };
 
 function log(message) {
