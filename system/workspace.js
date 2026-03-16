@@ -70,14 +70,33 @@ export const workspace = {
         window.returnToCommandDeck();
       };
 
+      const container = document.createElement("div");
+      container.style.display = "flex";
+      container.style.flexDirection = "column";
+      container.style.gap = "8px";
+
       const iframe = document.createElement("iframe");
       iframe.src = project.entry;
       iframe.style.width = "100%";
       iframe.style.height = "700px";
       iframe.style.border = "none";
 
+      iframe.onerror = () => {
+        const errorMessage = document.createElement("div");
+        errorMessage.style.color = "red";
+        errorMessage.innerText =
+          "Simulation failed to load. Check console for missing files.";
+        container.appendChild(errorMessage);
+      };
+
+      iframe.addEventListener("load", () => {
+        console.log("Simulation loaded:", project.name);
+      });
+
+      container.appendChild(iframe);
+
       content.appendChild(backButton);
-      content.appendChild(iframe);
+      content.appendChild(container);
     } else {
       content.textContent = `Workspace for ${project?.name || "project"}`;
     }

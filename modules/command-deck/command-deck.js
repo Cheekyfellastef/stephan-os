@@ -20,6 +20,8 @@ export const moduleDefinition = {
   description: "Renders project tiles and routes launches into the workspace runtime."
 };
 
+let cleanupSimulationStart = null;
+
 export function init(context) {
   const container = document.getElementById("project-registry");
   if (!container) {
@@ -44,4 +46,40 @@ export function init(context) {
     tile.onclick = () => context.workspace.open(safeProject, context);
     container.appendChild(tile);
   });
+
+
+  cleanupSimulationStart = context.eventBus.on("simulation:start", (simulationName) => {
+    const normalized = String(simulationName || "").trim().toLowerCase();
+
+    const project = projects.find((projectItem) => {
+      const name = String(projectItem?.name || "").trim().toLowerCase();
+      return (
+        name === normalized ||
+        name.replace(/\s+/g, "") === normalized.replace(/\s+/g, "")
+      );
+    });
+
+    if (!project && normalized === "wealth") {
+      const wealthProject = projects.find((projectItem) =>
+        String(projectItem?.name || "").trim().toLowerCase() === "wealth app"
+      );
+
+      if (wealthProject) {
+        context.workspace.open(normaliseProject(wealthProject), context);
+      }
+
+      return;
+    }
+
+    if (project) {
+      context.workspace.open(normaliseProject(project), context);
+    }
+  });
+}
+
+export function dispose() {
+  if (typeof cleanupSimulationStart === "function") {
+    cleanupSimulationStart();
+    cleanupSimulationStart = null;
+  }
 }
