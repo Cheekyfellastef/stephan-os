@@ -100,3 +100,8 @@ h1 {
   box-sizing: border-box;
   margin-bottom: 8px;
 }
+
+#workspace {
+  max-width: 1000px;
+  margin: auto;
+}

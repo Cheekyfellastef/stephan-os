@@ -10,9 +10,7 @@ export const assistantAgent = {
 
     const interpreted = interpretLocally(userInput);
 
-    if (interpreted) {
-      executeStephanosCommand(interpreted, context);
-    }
+    executeStephanosCommand(interpreted, context);
   }
 };
 

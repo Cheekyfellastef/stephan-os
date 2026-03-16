@@ -30,17 +30,25 @@ export function init(context) {
 
       console.log("Console command:", command);
 
-      // send command to assistant agent
+      // Send command to assistant agent
       context.eventBus.emit("console:command", {
         text: command
       });
 
-      // fallback to local command parser
+      // Run built-in command parser as fallback
       executeCommand(command, context, output);
 
       input.value = "";
     }
   });
+
+  const unlistenConsoleList = context.eventBus.on("console:list", (target) => {
+    executeCommand(`list ${target}`, context, output);
+  });
+
+  panel.__cleanup = () => {
+    unlistenConsoleList();
+  };
 }
 
 function executeCommand(command, context, output) {
@@ -61,7 +69,7 @@ function executeCommand(command, context, output) {
     const target = parts[1];
 
     if (target === "modules") {
-      const modules = context.activeModules || [];
+      const modules = Object.values(context.activeModules || {});
 
       modules.forEach((m) => {
         log(output, m.moduleDefinition.id);
@@ -110,6 +118,11 @@ function log(output, text) {
 
 export function dispose(context) {
   const ui = context.services.getService("ui");
+  const panel = document.getElementById("command-console-panel");
+
+  if (panel?.__cleanup) {
+    panel.__cleanup();
+  }
 
   ui.removePanel("command-console-panel");
 }
