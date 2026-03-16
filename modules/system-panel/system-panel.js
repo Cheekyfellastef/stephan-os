@@ -37,31 +37,31 @@ export function init(context) {
 <label>
 Modules
 <input type="checkbox"
-  onchange="togglePanel('module-manager-panel')">
+  onchange="setPanelState('module-manager-panel', this.checked)">
 </label><br><br>
 
 <label>
 Agents
 <input type="checkbox"
-  onchange="togglePanel('agent-console-panel')">
+  onchange="setPanelState('agent-console-panel', this.checked)">
 </label><br><br>
 
 <label>
 Console
 <input type="checkbox"
-  onchange="togglePanel('command-console-panel')">
+  onchange="setPanelState('command-console-panel', this.checked)">
 </label><br><br>
 
 <label>
 Task Monitor
 <input type="checkbox"
-  onchange="togglePanel('task-monitor-panel')">
+  onchange="setPanelState('task-monitor-panel', this.checked)">
 </label><br><br>
 
 <label>
 Debug Console
 <input type="checkbox"
-  onchange="togglePanel('dev-console')">
+  onchange="setPanelState('dev-console', this.checked)">
 </label>
 
 <hr>
