@@ -26,6 +26,10 @@ export function init(context) {
     if (e.key === "Enter") {
       const command = input.value.trim();
 
+      if (!command) return;
+
+      console.log("Console emitted command:", command);
+
       context.eventBus.emit("console:command", {
         text: command
       });
