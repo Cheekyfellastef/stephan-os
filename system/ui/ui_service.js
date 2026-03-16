@@ -14,9 +14,6 @@ export function createUIRenderer() {
 
         panel.id = id;
 
-        panel.style.position = "fixed";
-        panel.style.right = "20px";
-        panel.style.top = "80px";
 
         const header = document.createElement("div");
 
@@ -27,7 +24,19 @@ export function createUIRenderer() {
 
         panel.appendChild(header);
 
-        document.body.appendChild(panel);
+        const leftModules = [
+          "command-console-panel",
+          "task-monitor-panel"
+        ];
+
+        const left = document.getElementById("left-column");
+        const right = document.getElementById("right-column");
+
+        if (leftModules.includes(id)) {
+          left.appendChild(panel);
+        } else {
+          right.appendChild(panel);
+        }
 
       }
 
