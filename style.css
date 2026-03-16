@@ -105,3 +105,22 @@ h1 {
   max-width: 1000px;
   margin: auto;
 }
+
+
+.stephanos-panel {
+
+  position: fixed;
+  right: 20px;
+  top: 80px;
+  width: 300px;
+
+  background: #111;
+  color: #0f0;
+
+  border: 1px solid #333;
+  border-radius: 6px;
+
+  padding: 10px;
+  z-index: 2000;
+
+}
