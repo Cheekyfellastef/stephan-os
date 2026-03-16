@@ -203,33 +203,26 @@ window.onload = function() {
 };
 
 
-window.reloadStephanos = function () {
-
-  console.log("Reloading Stephanos...");
-
-  location.reload();
-
-};
-
 window.openSystemPanel = function () {
-
-  console.log("Toggling system panels");
 
   const panels = document.querySelectorAll(".stephanos-panel");
 
-  if (!panels.length) {
-    console.warn("No panels found");
-    return;
-  }
-
   panels.forEach(panel => {
 
-    if (panel.style.display === "none" || !panel.style.display) {
+    if (panel.style.display === "none") {
       panel.style.display = "block";
     } else {
       panel.style.display = "none";
     }
 
   });
+
+};
+
+window.reloadStephanos = function () {
+
+  console.log("Reloading Stephanos");
+
+  location.reload();
 
 };
