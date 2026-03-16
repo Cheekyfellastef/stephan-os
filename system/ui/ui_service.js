@@ -44,13 +44,13 @@ export function createUIRenderer() {
         header.style.fontWeight = "bold";
         header.style.marginBottom = "8px";
 
-        panel.style.display = "none";
-
         panel.appendChild(header);
 
         container.appendChild(panel);
 
       }
+
+      panel.style.display = "none";
 
       return panel;
 
