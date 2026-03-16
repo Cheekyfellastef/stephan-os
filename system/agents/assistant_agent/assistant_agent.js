@@ -4,7 +4,10 @@ export const assistantAgent = {
   subscribeEvents: ["console:command"],
 
   async handleEvent(payload, context) {
-    const userInput = payload?.text || "";
+    const userInput = payload.text;
+
+    console.log("Assistant received:", userInput);
+
     const command = await interpretCommand(userInput);
 
     executeStephanosCommand(command, context);
