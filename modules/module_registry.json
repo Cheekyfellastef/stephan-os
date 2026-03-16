@@ -9,6 +9,7 @@
     "./modules/module-map/module-map.js",
     "./modules/knowledge-graph/knowledge-graph.js",
     "./modules/agent-console/agent-console.js",
-    "./modules/task-monitor/task-monitor.js"
+    "./modules/task-monitor/task-monitor.js",
+    "./modules/command-console/command-console.js"
   ]
 }
