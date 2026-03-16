@@ -8,6 +8,7 @@
     "./modules/service-inspector/service-inspector.js",
     "./modules/module-map/module-map.js",
     "./modules/knowledge-graph/knowledge-graph.js",
-    "./modules/agent-console/agent-console.js"
+    "./modules/agent-console/agent-console.js",
+    "./modules/task-monitor/task-monitor.js"
   ]
 }

@@ -1,0 +1,6 @@
+{
+  "id": "task-monitor",
+  "name": "Task Monitor",
+  "version": "1.0",
+  "description": "Displays tasks executed by agents."
+}
