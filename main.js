@@ -1,5 +1,7 @@
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
 
+console.log("Stephanos OS booting");
+
 function log(message) {
   const consoleDiv = document.getElementById("dev-console");
   if (!consoleDiv) return;
@@ -159,6 +161,7 @@ async function startStephanos() {
     reloadModules: () => reloadModules(context)
   };
 
+  console.log("modules loading");
   await loadModules(context);
 
   applyDeveloperModeVisibility();
@@ -178,6 +181,7 @@ async function startStephanos() {
   }
 
   log("System ready");
+  console.log("system ready");
 
   const boot = document.getElementById("boot-screen");
   if (boot) {
@@ -196,4 +200,29 @@ window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.onload = function() {
   startStephanos();
+};
+
+
+window.reloadStephanos = function () {
+
+  console.log("Reloading Stephanos...");
+
+  location.reload();
+
+};
+
+window.openSystemPanel = function () {
+
+  console.log("Opening system panel");
+
+  const panel = document.getElementById("dev-console");
+
+  if (!panel) return;
+
+  if (panel.style.display === "none") {
+    panel.style.display = "block";
+  } else {
+    panel.style.display = "none";
+  }
+
 };
