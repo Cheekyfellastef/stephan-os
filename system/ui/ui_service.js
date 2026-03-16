@@ -37,8 +37,6 @@ export function createUIRenderer() {
 
         panel.id = id;
 
-        panel.style.display = "none";
-
         const header = document.createElement("div");
 
         header.textContent = title;
@@ -46,9 +44,9 @@ export function createUIRenderer() {
         header.style.fontWeight = "bold";
         header.style.marginBottom = "8px";
 
-        panel.appendChild(header);
-
         panel.style.display = "none";
+
+        panel.appendChild(header);
 
         container.appendChild(panel);
 

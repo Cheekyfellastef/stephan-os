@@ -31,35 +31,45 @@ export function init(context) {
   panel.style.display = "none";
 
   panel.innerHTML = `
-    <h3>Stephanos System</h3>
 
-    <button onclick="togglePanel('module-manager-panel')">
-      Toggle Modules
-    </button><br><br>
+<h3>Stephanos System</h3>
 
-    <button onclick="togglePanel('agent-console-panel')">
-      Toggle Agents
-    </button><br><br>
+<label>
+Modules
+<input type="checkbox"
+  onchange="togglePanel('module-manager-panel')">
+</label><br><br>
 
-    <button onclick="togglePanel('command-console-panel')">
-      Toggle Console
-    </button><br><br>
+<label>
+Agents
+<input type="checkbox"
+  onchange="togglePanel('agent-console-panel')">
+</label><br><br>
 
-    <button onclick="togglePanel('task-monitor-panel')">
-      Toggle Task Monitor
-    </button><br><br>
+<label>
+Console
+<input type="checkbox"
+  onchange="togglePanel('command-console-panel')">
+</label><br><br>
 
-    <button onclick="togglePanel('dev-console')">
-      Toggle Debug Console
-    </button><br><br>
+<label>
+Task Monitor
+<input type="checkbox"
+  onchange="togglePanel('task-monitor-panel')">
+</label><br><br>
 
-    <button onclick="reloadStephanos()">
-      Reload Stephanos
-    </button><br><br>
+<label>
+Debug Console
+<input type="checkbox"
+  onchange="togglePanel('dev-console')">
+</label>
 
-    <button onclick="exitStephanos()">
-      Exit to Browser
-    </button>
+<hr>
+
+<button onclick="openSystemPanel()">
+Close Panel
+</button>
+
   `;
 
   document.body.appendChild(panel);
