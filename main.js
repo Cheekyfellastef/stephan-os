@@ -2,6 +2,8 @@ import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.
 
 console.log("Stephanos OS booting");
 
+window.openSystemPanel = function() {};
+
 function log(message) {
   const consoleDiv = document.getElementById("dev-console");
   if (!consoleDiv) return;
@@ -38,20 +40,6 @@ function applyDeveloperModeVisibility() {
   }));
 }
 
-function openSystemPanel() {
-  const panel = document.getElementById("system-panel");
-  if (!panel) return;
-
-  panel.style.display = "flex";
-}
-
-function closeSystemPanel() {
-  const panel = document.getElementById("system-panel");
-  if (!panel) return;
-
-  panel.style.display = "none";
-}
-
 async function reloadStephanos() {
   if (window.__stephanosRuntime?.disposeModules) {
     await window.__stephanosRuntime.disposeModules(window.__stephanosRuntime.context);
@@ -61,7 +49,7 @@ async function reloadStephanos() {
 }
 
 function exitStephanos() {
-  window.location.href = "https://google.com";
+  window.location.href = "/";
 }
 
 function toggleDeveloperMode() {
@@ -191,8 +179,6 @@ async function startStephanos() {
   }
 }
 
-window.openSystemPanel = openSystemPanel;
-window.closeSystemPanel = closeSystemPanel;
 window.reloadStephanos = reloadStephanos;
 window.exitStephanos = exitStephanos;
 window.toggleDeveloperMode = toggleDeveloperMode;
@@ -200,29 +186,4 @@ window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.onload = function() {
   startStephanos();
-};
-
-
-window.openSystemPanel = function () {
-
-  const panels = document.querySelectorAll(".stephanos-panel");
-
-  panels.forEach(panel => {
-
-    if (panel.style.display === "none") {
-      panel.style.display = "block";
-    } else {
-      panel.style.display = "none";
-    }
-
-  });
-
-};
-
-window.reloadStephanos = function () {
-
-  console.log("Reloading Stephanos");
-
-  location.reload();
-
 };

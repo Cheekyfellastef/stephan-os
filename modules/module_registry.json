@@ -10,6 +10,7 @@
     "./modules/knowledge-graph/knowledge-graph.js",
     "./modules/agent-console/agent-console.js",
     "./modules/task-monitor/task-monitor.js",
-    "./modules/command-console/command-console.js"
+    "./modules/command-console/command-console.js",
+    "./modules/system-panel/system-panel.js"
   ]
 }

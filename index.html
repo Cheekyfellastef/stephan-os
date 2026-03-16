@@ -85,42 +85,6 @@ cursor: pointer;
 background: rgba(70, 70, 70, 0.95);
 }
 
-#system-panel {
-position: fixed;
-top: 0;
-left: 0;
-width: 100%;
-height: 100%;
-background: rgba(0,0,0,0.8);
-display: none;
-align-items: center;
-justify-content: center;
-z-index: 20000;
-}
-
-#system-panel-content {
-background: #111;
-color: white;
-padding: 30px;
-border-radius: 10px;
-display: flex;
-flex-direction: column;
-gap: 10px;
-}
-
-#system-panel-content button {
-padding: 10px;
-background: #222;
-border: none;
-color: white;
-border-radius: 6px;
-cursor: pointer;
-}
-
-#system-panel-content button:hover {
-background: #444;
-}
-
 #dev-console{
 display:none;
 margin-top:20px;
@@ -183,18 +147,6 @@ margin-bottom:20px;
 <button onclick="openSystemPanel()" title="Open System Panel" aria-label="Open System Panel">⚙</button>
 <button onclick="reloadStephanos()" title="Reload Stephanos OS" aria-label="Reload Stephanos OS">⟳</button>
 <button onclick="exitStephanos()" title="Exit fullscreen web app" aria-label="Exit fullscreen web app">⏻</button>
-</div>
-
-<div id="system-panel">
-  <div id="system-panel-content">
-    <h2>Stephanos System</h2>
-
-    <button onclick="reloadStephanos()">Restart System</button>
-    <button onclick="toggleDeveloperMode()">Toggle Developer Console</button>
-    <button onclick="closeSystemPanel()">Close</button>
-    <button onclick="exitStephanos()">Exit</button>
-
-  </div>
 </div>
 
 <div id="boot-screen">
