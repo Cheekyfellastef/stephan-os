@@ -1,5 +1,5 @@
 export const workspace = {
-  open(project, context = {}) {
+  async open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
     const content = document.getElementById("workspace-content");
     const projectsPanel = document.getElementById("projects");
@@ -15,7 +15,15 @@ export const workspace = {
 
     title.textContent = project?.name || "Workspace";
 
-    if (project?.entry) {
+    if (project?.entry && project.entry.endsWith(".md")) {
+      const response = await fetch(project.entry);
+      const text = await response.text();
+      const pre = document.createElement("pre");
+
+      pre.textContent = text;
+      content.innerHTML = "";
+      content.appendChild(pre);
+    } else if (project?.entry) {
       content.innerHTML = `<iframe src="${project.entry}" width="100%" height="600" style="border:0;"></iframe>`;
     } else {
       content.textContent = `Workspace for ${project?.name || "project"}`;
