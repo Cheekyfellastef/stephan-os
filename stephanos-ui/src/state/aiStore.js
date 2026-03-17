@@ -1,0 +1,40 @@
+import { createContext, useContext, useMemo, useState } from 'react';
+
+const AIStoreContext = createContext(null);
+
+export function AIStoreProvider({ children }) {
+  const [chatHistory, setChatHistory] = useState([]);
+  const [status, setStatus] = useState('idle');
+  const [isBusy, setIsBusy] = useState(false);
+  const [lastRoute, setLastRoute] = useState('assistant');
+  const [debugVisible, setDebugVisible] = useState(false);
+  const [debugData, setDebugData] = useState({});
+
+  const value = useMemo(
+    () => ({
+      chatHistory,
+      setChatHistory,
+      status,
+      setStatus,
+      isBusy,
+      setIsBusy,
+      lastRoute,
+      setLastRoute,
+      debugVisible,
+      setDebugVisible,
+      debugData,
+      setDebugData,
+    }),
+    [chatHistory, status, isBusy, lastRoute, debugVisible, debugData],
+  );
+
+  return <AIStoreContext.Provider value={value}>{children}</AIStoreContext.Provider>;
+}
+
+export function useAIStore() {
+  const context = useContext(AIStoreContext);
+  if (!context) {
+    throw new Error('useAIStore must be used inside AIStoreProvider');
+  }
+  return context;
+}
