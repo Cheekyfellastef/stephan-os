@@ -1,7 +1,7 @@
 {
   "name": "Stephanos OS",
   "icon": "🧠",
-  "entry": "../../ROADMAP.md",
+  "entry": "dist/index.html",
   "type": "system",
-  "packaging": "document"
+  "packaging": "vite"
 }
