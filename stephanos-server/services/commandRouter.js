@@ -6,9 +6,9 @@ const slashMap = {
   clear: { route: 'system', action: 'clear' },
 };
 
-function parseFlagValue(tokens, flagName) {
-  const flag = `--${flagName}`;
-  const index = tokens.indexOf(flag);
+function parseFlagValue(tokens, ...flagNames) {
+  const allFlags = flagNames.map((name) => `--${name}`);
+  const index = tokens.findIndex((token) => allFlags.includes(token));
   if (index < 0) return null;
 
   const values = [];
@@ -83,6 +83,52 @@ function parseKgArgs(args = []) {
   return { action: 'invalid_kg_subcommand' };
 }
 
+function parseSimulateArgs(args = []) {
+  const [subcommand = '', simulationId = '', ...rest] = args;
+  const normalizedSub = subcommand.toLowerCase();
+
+  if (!subcommand || normalizedSub === 'help') {
+    return { action: 'simulate_help' };
+  }
+
+  if (normalizedSub === 'list') {
+    return { tool: 'simList' };
+  }
+
+  if (normalizedSub === 'status') {
+    return { tool: 'simGetStatus' };
+  }
+
+  if (normalizedSub === 'run') {
+    const normalizedId = simulationId.toLowerCase();
+    if (!normalizedId) {
+      return { action: 'invalid_simulate_subcommand' };
+    }
+
+    if (normalizedId === 'trajectory-demo') {
+      return {
+        tool: 'simRun',
+        args: {
+          simulationId: normalizedId,
+          input: {
+            startValue: parseFlagValue(rest, 'start', 'startValue'),
+            monthlyContribution: parseFlagValue(rest, 'monthly', 'monthlyContribution'),
+            annualRate: parseFlagValue(rest, 'rate', 'annualRate'),
+            years: parseFlagValue(rest, 'years'),
+          },
+        },
+      };
+    }
+
+    return {
+      tool: 'simRun',
+      args: { simulationId: normalizedId, input: {} },
+    };
+  }
+
+  return { action: 'invalid_simulate_subcommand' };
+}
+
 export function parseCommand(input = '') {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -112,6 +158,17 @@ export function parseCommand(input = '') {
         command: 'kg',
         args,
         kg: parseKgArgs(args),
+        raw: input,
+      };
+    }
+
+    if (lowerCommand === 'simulate') {
+      return {
+        kind: 'slash',
+        isSlash: true,
+        command: 'simulate',
+        args,
+        simulate: parseSimulateArgs(args),
         raw: input,
       };
     }
@@ -191,6 +248,25 @@ export function resolveRoute(parsed, input) {
         tool: parsed.kg.tool,
         args: parsed.kg.args,
         reason: `Knowledge graph command mapped to ${parsed.kg.tool}`,
+      };
+    }
+  }
+
+  if (parsed.command === 'simulate') {
+    if (parsed.simulate?.action === 'simulate_help') {
+      return { route: 'simulation', action: 'simulate_help', reason: 'Simulation help command' };
+    }
+
+    if (parsed.simulate?.action === 'invalid_simulate_subcommand') {
+      return { route: 'simulation', action: 'invalid_simulate_subcommand', reason: 'Unknown simulate subcommand' };
+    }
+
+    if (parsed.simulate?.tool) {
+      return {
+        route: 'simulation',
+        tool: parsed.simulate.tool,
+        args: parsed.simulate.args,
+        reason: `Simulation command mapped to ${parsed.simulate.tool}`,
       };
     }
   }

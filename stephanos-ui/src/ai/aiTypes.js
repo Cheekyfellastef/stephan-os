@@ -2,6 +2,7 @@ export const RESPONSE_TYPE = {
   ASSISTANT: 'assistant_response',
   TOOL: 'tool_result',
   MEMORY: 'memory_result',
+  SIMULATION: 'simulation_result',
   ERROR: 'error_result',
 };
 
@@ -10,6 +11,7 @@ export const ROUTE_TYPE = {
   SYSTEM: 'system',
   MEMORY: 'memory',
   KG: 'kg',
+  SIMULATION: 'simulation',
 };
 
 export const EMPTY_RESPONSE = {

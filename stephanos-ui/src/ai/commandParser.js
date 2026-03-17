@@ -8,7 +8,7 @@ export function parseCommand(input = '') {
   if (trimmed.startsWith('/')) {
     const [commandRaw, ...args] = trimmed.slice(1).split(' ');
     const command = commandRaw.toLowerCase();
-    const subcommand = command === 'memory' || command === 'kg' ? (args[0] ?? '').toLowerCase() : null;
+    const subcommand = command === 'memory' || command === 'kg' || command === 'simulate' ? (args[0] ?? '').toLowerCase() : null;
     return {
       kind: 'slash',
       isSlash: true,

@@ -1,6 +1,9 @@
 import { memoryService } from './memoryService.js';
 import { listRegisteredAgents } from './agentRegistry.js';
 import { knowledgeGraphService } from './knowledgeGraphService.js';
+import { simulationEngine } from './simulationEngine.js';
+import { listSimulations } from './simulationRegistry.js';
+import { getPresetStatus, listPresets } from './simulationPresets.js';
 
 const tools = [
   {
@@ -17,6 +20,8 @@ const tools = [
           ai_service: context.aiAvailable ? 'available' : 'unavailable',
           memory_service: memoryService.getStatus(),
           knowledge_graph_service: knowledgeGraphService.getStatus(),
+          simulation_engine: simulationEngine.getStatus(),
+          simulation_presets: getPresetStatus(),
           registered_tools: tools.length,
           registered_agents: listRegisteredAgents().length,
           app_version: process.env.APP_VERSION ?? '0.1.0',
@@ -214,6 +219,75 @@ const tools = [
       return {
         output_text: `Graph stats: ${stats.totals.nodes} node(s), ${stats.totals.edges} edge(s).`,
         data: { stats },
+      };
+    },
+  },
+  {
+    name: 'simList',
+    description: 'Lists all registered simulations.',
+    category: 'simulation',
+    state: 'live',
+    async execute() {
+      const simulations = listSimulations();
+      return {
+        output_text: `Registered simulations: ${simulations.length}`,
+        data: { simulations },
+      };
+    },
+  },
+  {
+    name: 'simRun',
+    description: 'Runs a simulation by ID with validated input.',
+    category: 'simulation',
+    state: 'live',
+    async execute(args = {}) {
+      const simulationId = (args.simulationId ?? '').trim();
+      if (!simulationId) {
+        throw new Error('Simulation run requires simulationId. Usage: /simulate run <simulationId>');
+      }
+
+      const normalizedInput = Object.entries(args.input ?? {}).reduce((acc, [key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          acc[key] = value;
+        }
+        return acc;
+      }, {});
+
+      const run = simulationEngine.runSimulation(simulationId, normalizedInput, {
+        appVersion: process.env.APP_VERSION ?? '0.1.0',
+        toolCount: tools.length,
+      });
+
+      return {
+        output_text: `Simulation '${simulationId}' completed successfully.`,
+        data: {
+          simulationId,
+          simulationName: run.simulation.name,
+          category: run.simulation.category,
+          input: run.validatedInput,
+          result: run.result,
+          execution_ms: run.timingMs,
+        },
+      };
+    },
+  },
+  {
+    name: 'simGetStatus',
+    description: 'Returns simulation subsystem and preset status.',
+    category: 'simulation',
+    state: 'live',
+    async execute() {
+      return {
+        output_text: 'Simulation Core status available.',
+        data: {
+          engine: simulationEngine.getStatus(),
+          presets: getPresetStatus(),
+          available_presets: listPresets().map((preset) => ({
+            name: preset.name,
+            simulationId: preset.simulationId,
+            updated_at: preset.updated_at,
+          })),
+        },
       };
     },
   },

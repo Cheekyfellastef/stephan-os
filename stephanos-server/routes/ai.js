@@ -20,6 +20,9 @@ function isUserInputError(message = '') {
     'already exists',
     'not allowed',
     'Unknown /memory subcommand',
+    'Unknown simulation',
+    "Simulation '",
+    '\'startValue\' is required',
   ].some((fragment) => message.includes(fragment));
 }
 
@@ -48,9 +51,9 @@ router.post('/chat', async (req, res) => {
         type: 'tool_result',
         route: decision.route,
         command: '/help',
-        output_text: 'Commands: /help /status /tools /agents /memory /memory list /memory save <text> /memory find <query> /kg /kg status /kg stats /kg list nodes /kg list edges /kg add node <label> --type <type> --description <text> --tags <comma tags> /kg add edge <from> <to> --type <type> --label <label> /kg search <query> /kg related <nodeId> /kg help /clear',
+        output_text: 'Commands: /help /status /tools /agents /memory /memory list /memory save <text> /memory find <query> /kg /kg status /kg stats /kg list nodes /kg list edges /kg add node <label> --type <type> --description <text> --tags <comma tags> /kg add edge <from> <to> --type <type> --label <label> /kg search <query> /kg related <nodeId> /kg help /simulate /simulate list /simulate run <simulationId> /simulate help /clear',
         data: {
-          commands: ['/help', '/status', '/tools', '/agents', '/memory', '/memory list', '/memory save <text>', '/memory find <query>', '/kg', '/kg status', '/kg stats', '/kg list nodes', '/kg list edges', '/kg add node <label> --type <type> --description <text> --tags <comma tags>', '/kg add edge <from> <to> --type <type> --label <label>', '/kg search <query>', '/kg related <nodeId>', '/kg help', '/clear'],
+          commands: ['/help', '/status', '/tools', '/agents', '/memory', '/memory list', '/memory save <text>', '/memory find <query>', '/kg', '/kg status', '/kg stats', '/kg list nodes', '/kg list edges', '/kg add node <label> --type <type> --description <text> --tags <comma tags>', '/kg add edge <from> <to> --type <type> --label <label>', '/kg search <query>', '/kg related <nodeId>', '/kg help', '/simulate', '/simulate list', '/simulate run <simulationId>', '/simulate run trajectory-demo --start 1000 --monthly 100 --rate 0.05 --years 10', '/simulate run system-health-snapshot', '/simulate help', '/clear'],
         },
         timing_ms: Date.now() - startedAt,
         debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
@@ -84,6 +87,20 @@ router.post('/chat', async (req, res) => {
       }));
     }
 
+    if (decision.action === 'simulate_help') {
+      return res.json(buildSuccessResponse({
+        type: 'simulation_result',
+        route: 'simulation',
+        command: '/simulate help',
+        output_text: 'Simulation commands: /simulate list /simulate status /simulate run <simulationId> /simulate run trajectory-demo --start <value> --monthly <value> --rate <value> --years <value> /simulate run system-health-snapshot.',
+        data: {
+          commands: ['list', 'status', 'run <simulationId>', 'run trajectory-demo --start 1000 --monthly 100 --rate 0.05 --years 10', 'run system-health-snapshot'],
+        },
+        timing_ms: Date.now() - startedAt,
+        debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
+      }));
+    }
+
     if (decision.action === 'clear') {
       return res.json(buildSuccessResponse({
         type: 'tool_result',
@@ -99,12 +116,15 @@ router.post('/chat', async (req, res) => {
       decision.action === 'invalid_memory_subcommand'
       || decision.action === 'invalid_command'
       || decision.action === 'invalid_kg_subcommand'
+      || decision.action === 'invalid_simulate_subcommand'
     ) {
       const errorMessage = decision.action === 'invalid_memory_subcommand'
         ? 'Unknown /memory subcommand. Use list, save, or find.'
         : decision.action === 'invalid_kg_subcommand'
           ? 'Unknown /kg subcommand. Use /kg help.'
-          : `Unknown command /${parsedCommand.command}. Use /help.`;
+          : decision.action === 'invalid_simulate_subcommand'
+            ? 'Unknown /simulate subcommand. Use /simulate help.'
+            : `Unknown command /${parsedCommand.command}. Use /help.`;
 
       return res.status(400).json(buildErrorResponse({
         route: decision.route,
@@ -124,7 +144,7 @@ router.post('/chat', async (req, res) => {
       });
 
       return res.json(buildSuccessResponse({
-        type: decision.route === 'memory' ? 'memory_result' : 'tool_result',
+        type: decision.route === 'memory' ? 'memory_result' : decision.route === 'simulation' ? 'simulation_result' : 'tool_result',
         route: decision.route,
         command: parsedCommand.raw,
         output_text: result.output_text,
@@ -140,6 +160,7 @@ router.post('/chat', async (req, res) => {
           tool_state: tool.state,
           tool_args: decision.args ?? null,
           graph_action: tool.category === 'knowledge_graph' ? tool.name : null,
+          simulation_action: tool.category === 'simulation' ? tool.name : null,
           result_summary: {
             output_text: result.output_text,
             keys: Object.keys(result.data ?? {}),

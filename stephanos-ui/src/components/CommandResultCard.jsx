@@ -2,6 +2,7 @@ import { formatResultTitle, getResultTone } from '../ai/commandFormatter';
 import GraphNodeCard from './GraphNodeCard';
 import GraphEdgeCard from './GraphEdgeCard';
 import GraphStatsCard from './GraphStatsCard';
+import SimulationResultCard from './SimulationResultCard';
 
 function GraphPayload({ payload }) {
   const stats = payload.stats;
@@ -53,6 +54,7 @@ export default function CommandResultCard({ entry }) {
       <p className="result-input">{entry.raw_input}</p>
       <p>{entry.output_text}</p>
       {entry.error && <p className="error-text">Error: {entry.error}</p>}
+      {entry.data_payload?.result && <SimulationResultCard payload={entry.data_payload} />}
       {entry.data_payload && <GraphPayload payload={entry.data_payload} />}
       {entry.data_payload && Object.keys(entry.data_payload).length > 0 && (
         <details>

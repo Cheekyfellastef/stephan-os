@@ -3,7 +3,7 @@ import { RESPONSE_TYPE } from './aiTypes';
 export function getResultTone(responseType) {
   if (responseType === RESPONSE_TYPE.ERROR) return 'error';
   if (responseType === RESPONSE_TYPE.MEMORY) return 'memory';
-  if (responseType === RESPONSE_TYPE.TOOL) return 'tool';
+  if (responseType === RESPONSE_TYPE.TOOL || responseType === RESPONSE_TYPE.SIMULATION) return 'tool';
   return 'assistant';
 }
 
