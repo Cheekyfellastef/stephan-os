@@ -6,6 +6,83 @@ const slashMap = {
   clear: { route: 'system', action: 'clear' },
 };
 
+function parseFlagValue(tokens, flagName) {
+  const flag = `--${flagName}`;
+  const index = tokens.indexOf(flag);
+  if (index < 0) return null;
+
+  const values = [];
+  for (let i = index + 1; i < tokens.length; i += 1) {
+    if (tokens[i].startsWith('--')) break;
+    values.push(tokens[i]);
+  }
+
+  return values.join(' ').trim();
+}
+
+function parseKgArgs(args = []) {
+  const [subcommand = '', second = '', ...rest] = args;
+  const normalizedSub = subcommand.toLowerCase();
+  const normalizedSecond = second.toLowerCase();
+
+  if (!subcommand || subcommand === 'help') {
+    return { action: 'kg_help' };
+  }
+
+  if (normalizedSub === 'status') {
+    return { tool: 'kgGetStatus' };
+  }
+
+  if (normalizedSub === 'stats') {
+    return { tool: 'kgGetStats' };
+  }
+
+  if (normalizedSub === 'list' && normalizedSecond === 'nodes') {
+    return { tool: 'kgListNodes' };
+  }
+
+  if (normalizedSub === 'list' && normalizedSecond === 'edges') {
+    return { tool: 'kgListEdges' };
+  }
+
+  if (normalizedSub === 'add' && normalizedSecond === 'node') {
+    const label = rest.filter((token) => !token.startsWith('--')).join(' ').trim();
+    return {
+      tool: 'kgCreateNode',
+      args: {
+        label,
+        type: parseFlagValue(rest, 'type'),
+        description: parseFlagValue(rest, 'description'),
+        tags: parseFlagValue(rest, 'tags'),
+      },
+    };
+  }
+
+  if (normalizedSub === 'add' && normalizedSecond === 'edge') {
+    const from = rest[0] ?? '';
+    const to = rest[1] ?? '';
+    return {
+      tool: 'kgCreateEdge',
+      args: {
+        from,
+        to,
+        type: parseFlagValue(rest, 'type'),
+        label: parseFlagValue(rest, 'label'),
+      },
+    };
+  }
+
+  if (normalizedSub === 'search') {
+    return { tool: 'kgSearch', args: { query: [second, ...rest].join(' ').trim() } };
+  }
+
+  if (normalizedSub === 'related') {
+    return { tool: 'kgFindRelated', args: { nodeId: second } };
+  }
+
+  return { action: 'invalid_kg_subcommand' };
+}
+
 export function parseCommand(input = '') {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -24,6 +101,17 @@ export function parseCommand(input = '') {
         command: 'memory',
         subcommand: subcommand.toLowerCase(),
         args: rest,
+        raw: input,
+      };
+    }
+
+    if (lowerCommand === 'kg') {
+      return {
+        kind: 'slash',
+        isSlash: true,
+        command: 'kg',
+        args,
+        kg: parseKgArgs(args),
         raw: input,
       };
     }
@@ -86,6 +174,25 @@ export function resolveRoute(parsed, input) {
     }
 
     return { route: 'memory', action: 'invalid_memory_subcommand', reason: 'Unknown memory subcommand' };
+  }
+
+  if (parsed.command === 'kg') {
+    if (parsed.kg?.action === 'kg_help') {
+      return { route: 'kg', action: 'kg_help', reason: 'Knowledge graph help command' };
+    }
+
+    if (parsed.kg?.action === 'invalid_kg_subcommand') {
+      return { route: 'kg', action: 'invalid_kg_subcommand', reason: 'Unknown kg subcommand' };
+    }
+
+    if (parsed.kg?.tool) {
+      return {
+        route: 'kg',
+        tool: parsed.kg.tool,
+        args: parsed.kg.args,
+        reason: `Knowledge graph command mapped to ${parsed.kg.tool}`,
+      };
+    }
   }
 
   if (slashMap[parsed.command]) {
