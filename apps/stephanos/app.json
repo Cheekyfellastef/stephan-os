@@ -2,5 +2,6 @@
   "name": "Stephanos OS",
   "icon": "🧠",
   "entry": "../../ROADMAP.md",
-  "type": "system"
+  "type": "system",
+  "packaging": "document"
 }

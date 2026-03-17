@@ -1,20 +1,8 @@
-const STEPHANOS_SYSTEM_ENTRY = {
-  name: "Stephanos OS",
-  icon: "🧠",
-  entry: "ROADMAP.md",
-  type: "system"
-};
-
 const REQUIRED_MANIFEST_FIELDS = ["name", "entry"];
+const VALID_DISCOVERY_ID = /^[a-z0-9][a-z0-9-_]*$/i;
 
 function ensureStephanosEntry(apps) {
-  const hasStephanos = apps.some(
-    (app) => String(app?.name || "").trim().toLowerCase() === "stephanos os"
-  );
-
-  if (!hasStephanos) {
-    apps.push({ ...STEPHANOS_SYSTEM_ENTRY });
-  }
+  return apps;
 }
 
 function normaliseManifestApp(folder, manifest) {
@@ -25,8 +13,28 @@ function normaliseManifestApp(folder, manifest) {
     icon: manifest.icon || "🧩",
     entry: `apps/${folder}/${manifest.entry}`,
     type: manifest.type || "app",
+    packaging: resolvePackagingMode(manifest),
+    requiredPaths: Array.isArray(manifest.requiredPaths) ? manifest.requiredPaths : [],
     dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : []
   };
+}
+
+function resolvePackagingMode(manifest) {
+  const mode = String(manifest?.packaging || "").trim().toLowerCase();
+
+  if (mode) {
+    return mode;
+  }
+
+  if (String(manifest?.entry || "").toLowerCase().endsWith(".md")) {
+    return "document";
+  }
+
+  return "classic-static";
+}
+
+function isValidDiscoveryFolderName(entry) {
+  return typeof entry === "string" && VALID_DISCOVERY_ID.test(entry.trim());
 }
 
 function hasRequiredManifestFields(manifest) {
@@ -192,6 +200,13 @@ export async function discoverApps(context = {}) {
   }
 
   for (const folder of indexResult.json) {
+    if (!isValidDiscoveryFolderName(folder)) {
+      const issue = `apps/index.json contains invalid app id: ${String(folder)}`;
+      discoveryIssues.push(issue);
+      context?.eventBus?.emit("app:discovery_issue", { issue });
+      continue;
+    }
+
     const validation = await validateAppRegistration(folder);
 
     discoveredApps.push(validation.app);
