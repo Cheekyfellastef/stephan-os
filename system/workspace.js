@@ -96,7 +96,7 @@ export const workspace = {
         console.error("App preflight failed:", project?.name, err);
         renderAppLoadError(
           container,
-          "Simulation failed to load. Check browser console."
+          "Simulation failed to load. Check console for details."
         );
 
         content.appendChild(backButton);
@@ -111,10 +111,12 @@ export const workspace = {
       iframe.style.border = "none";
 
       iframe.onerror = () => {
-        renderAppLoadError(
-          container,
-          "Simulation failed to load. Check browser console."
-        );
+        const warning = document.createElement("div");
+        warning.style.color = "red";
+        warning.style.padding = "20px";
+        warning.innerText =
+          "Simulation failed to load. Check console for details.";
+        container.appendChild(warning);
       };
 
       iframe.addEventListener("load", () => {

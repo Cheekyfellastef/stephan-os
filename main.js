@@ -1,5 +1,6 @@
 import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
+import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
 
 console.log("Stephanos OS booting");
 
@@ -142,6 +143,7 @@ async function startStephanos() {
 
   agentRuntime.startAgent(sampleAgent);
   agentRuntime.startAgent(assistantAgent);
+  agentRuntime.startAgent(selfRepairAgent);
 
   context.moduleLoader = {
     getLoadedModules: () => getLoadedModules(),
