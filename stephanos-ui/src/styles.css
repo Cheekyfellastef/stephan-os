@@ -245,6 +245,34 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
   margin-top: 0.6rem;
   display: flex;
   justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.custom-provider-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.provider-draft-status {
+  margin: 0 0 0.65rem;
+  color: #9fd5ff;
+  font-size: 0.8rem;
+}
+
+.field-error {
+  color: #ff9aaa;
+}
+
+.provider-draft-message {
+  margin: 0.6rem 0 0;
+  color: #9df7c4;
+  font-size: 0.82rem;
+}
+
+.provider-draft-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  opacity: 0.8;
 }
 
 @media (max-width: 900px) {

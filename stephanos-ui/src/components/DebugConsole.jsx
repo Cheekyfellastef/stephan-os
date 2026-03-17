@@ -1,8 +1,17 @@
 import { useAIStore } from '../state/aiStore';
 
 export default function DebugConsole() {
-  const { debugVisible, debugData, provider, uiDiagnostics } = useAIStore();
+  const {
+    debugVisible,
+    debugData,
+    provider,
+    providerDraftStatus,
+    getActiveProviderConfig,
+    uiDiagnostics,
+  } = useAIStore();
   if (!debugVisible) return null;
+
+  const activeConfig = getActiveProviderConfig();
 
   return (
     <section className="debug-console panel">
@@ -17,7 +26,16 @@ export default function DebugConsole() {
       </div>
 
       <div className="debug-grid">
-        <div><strong>Provider Runtime</strong><pre>{JSON.stringify({ provider, providerToggleMounted: uiDiagnostics.providerToggleMounted, appRootRendered: uiDiagnostics.appRootRendered, aiConsoleRendered: uiDiagnostics.aiConsoleRendered, componentMarker: uiDiagnostics.componentMarker, providerToggleMarker: uiDiagnostics.providerToggleMarker }, null, 2)}</pre></div>
+        <div><strong>Provider Runtime</strong><pre>{JSON.stringify({
+          provider,
+          configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
+          activeConfig,
+          providerToggleMounted: uiDiagnostics.providerToggleMounted,
+          appRootRendered: uiDiagnostics.appRootRendered,
+          aiConsoleRendered: uiDiagnostics.aiConsoleRendered,
+          componentMarker: uiDiagnostics.componentMarker,
+          providerToggleMarker: uiDiagnostics.providerToggleMarker,
+        }, null, 2)}</pre></div>
       </div>
 
       <details>

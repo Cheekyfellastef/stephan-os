@@ -1,38 +1,45 @@
 import { createContext, createElement, useContext, useMemo, useState } from 'react';
+import {
+  PROVIDER_DEFINITIONS,
+  PROVIDER_KEYS,
+  createDefaultSavedProviderConfigs,
+  normalizeProviderDraft,
+  validateProviderDraft,
+} from '../ai/providerConfig';
 
 const AIStoreContext = createContext(null);
 
 const PROVIDER_STORAGE_KEY = 'stephanos.ai.provider';
 const CUSTOM_PROVIDER_STORAGE_KEY = 'stephanos.ai.customConfig';
 
-const DEFAULT_CUSTOM_PROVIDER_CONFIG = {
-  label: 'Custom LLM',
-  baseUrl: '',
-  chatEndpoint: '/v1/chat/completions',
-  model: '',
-  apiKey: '',
-  headersJson: '',
-};
-
 function getStoredProvider() {
   if (typeof window === 'undefined') return 'openai';
   const stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
-  return ['openai', 'ollama', 'custom'].includes(stored) ? stored : 'openai';
+  return PROVIDER_KEYS.includes(stored) ? stored : 'openai';
 }
 
-function getStoredCustomConfig() {
-  if (typeof window === 'undefined') return DEFAULT_CUSTOM_PROVIDER_CONFIG;
+function getStoredSavedProviderConfigs() {
+  const defaults = createDefaultSavedProviderConfigs();
+  if (typeof window === 'undefined') return defaults;
 
   try {
     const parsed = JSON.parse(localStorage.getItem(CUSTOM_PROVIDER_STORAGE_KEY) || '{}');
-    return {
-      ...DEFAULT_CUSTOM_PROVIDER_CONFIG,
+    defaults.custom = {
+      ...defaults.custom,
       ...parsed,
       apiKey: '',
     };
   } catch {
-    return DEFAULT_CUSTOM_PROVIDER_CONFIG;
+    // noop: fallback to defaults
   }
+
+  return defaults;
+}
+
+function persistCustomSavedConfig(savedConfig) {
+  if (typeof window === 'undefined') return;
+  const { apiKey: _apiKey, ...safeToPersist } = savedConfig;
+  localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
 }
 
 export function AIStoreProvider({ children }) {
@@ -43,7 +50,18 @@ export function AIStoreProvider({ children }) {
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(getStoredProvider);
-  const [customProviderConfig, setCustomProviderConfig] = useState(getStoredCustomConfig);
+  const [savedProviderConfigs, setSavedProviderConfigs] = useState(getStoredSavedProviderConfigs);
+  const [draftProviderConfigs, setDraftProviderConfigs] = useState(() => ({
+    custom: { ...getStoredSavedProviderConfigs().custom },
+  }));
+  const [providerDraftStatus, setProviderDraftStatus] = useState({
+    custom: {
+      mode: 'saved',
+      message: '',
+      savedAt: null,
+      errors: {},
+    },
+  });
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
@@ -62,29 +80,148 @@ export function AIStoreProvider({ children }) {
   });
 
   const setProvider = (nextProvider) => {
+    if (!PROVIDER_DEFINITIONS[nextProvider]) return;
     setProviderState(nextProvider);
     if (typeof window !== 'undefined') {
       localStorage.setItem(PROVIDER_STORAGE_KEY, nextProvider);
     }
   };
 
-  const updateCustomProviderConfig = (patch) => {
-    setCustomProviderConfig((prev) => {
-      const next = { ...prev, ...patch };
-      if (typeof window !== 'undefined') {
-        const { apiKey: _apiKey, ...safeToPersist } = next;
-        localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
-      }
-      return next;
-    });
+  const getDraftProviderConfig = (providerKey) => {
+    if (PROVIDER_DEFINITIONS[providerKey]?.editable) {
+      return draftProviderConfigs[providerKey] || { ...savedProviderConfigs[providerKey] };
+    }
+    return savedProviderConfigs[providerKey];
   };
 
-  const resetCustomProviderConfig = () => {
-    setCustomProviderConfig(DEFAULT_CUSTOM_PROVIDER_CONFIG);
-    if (typeof window !== 'undefined') {
-      const { apiKey: _apiKey, ...safeToPersist } = DEFAULT_CUSTOM_PROVIDER_CONFIG;
-      localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
+  const getActiveProviderConfig = () => {
+    const providerConfig = PROVIDER_DEFINITIONS[provider]?.editable
+      ? getDraftProviderConfig(provider)
+      : savedProviderConfigs[provider];
+
+    return normalizeProviderDraft(provider, providerConfig);
+  };
+
+  const updateDraftProviderConfig = (providerKey, patch) => {
+    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
+
+    setDraftProviderConfigs((prev) => ({
+      ...prev,
+      [providerKey]: {
+        ...getDraftProviderConfig(providerKey),
+        ...patch,
+      },
+    }));
+
+    setProviderDraftStatus((prev) => ({
+      ...prev,
+      [providerKey]: {
+        ...prev[providerKey],
+        mode: 'draft',
+        message: '',
+        errors: {},
+      },
+    }));
+  };
+
+  const saveDraftProviderConfig = (providerKey) => {
+    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) {
+      return { ok: true };
     }
+
+    const normalizedDraft = normalizeProviderDraft(providerKey, getDraftProviderConfig(providerKey));
+    const validation = validateProviderDraft(providerKey, normalizedDraft);
+    if (!validation.isValid) {
+      setProviderDraftStatus((prev) => ({
+        ...prev,
+        [providerKey]: {
+          ...prev[providerKey],
+          mode: 'draft',
+          message: 'Fix validation errors before saving.',
+          errors: validation.errors,
+        },
+      }));
+      return { ok: false, errors: validation.errors };
+    }
+
+    const savedAt = new Date().toISOString();
+    setSavedProviderConfigs((prev) => ({
+      ...prev,
+      [providerKey]: normalizedDraft,
+    }));
+    setDraftProviderConfigs((prev) => ({
+      ...prev,
+      [providerKey]: normalizedDraft,
+    }));
+
+    if (providerKey === 'custom') {
+      persistCustomSavedConfig(normalizedDraft);
+    }
+
+    setProviderDraftStatus((prev) => ({
+      ...prev,
+      [providerKey]: {
+        mode: 'saved',
+        message: 'Custom provider settings saved.',
+        savedAt,
+        errors: {},
+      },
+    }));
+
+    return { ok: true, savedAt };
+  };
+
+  const revertDraftProviderConfig = (providerKey) => {
+    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
+    const savedConfig = savedProviderConfigs[providerKey];
+    setDraftProviderConfigs((prev) => ({
+      ...prev,
+      [providerKey]: { ...savedConfig, apiKey: '' },
+    }));
+    setProviderDraftStatus((prev) => ({
+      ...prev,
+      [providerKey]: {
+        ...prev[providerKey],
+        mode: 'saved',
+        message: 'Draft reverted to last saved values.',
+        errors: {},
+      },
+    }));
+  };
+
+  const resetProviderConfig = (providerKey) => {
+    const defaultConfig = { ...PROVIDER_DEFINITIONS[providerKey].defaults, apiKey: '' };
+
+    setSavedProviderConfigs((prev) => ({
+      ...prev,
+      [providerKey]: defaultConfig,
+    }));
+
+    if (PROVIDER_DEFINITIONS[providerKey]?.editable) {
+      setDraftProviderConfigs((prev) => ({
+        ...prev,
+        [providerKey]: defaultConfig,
+      }));
+    }
+
+    if (providerKey === 'custom') {
+      persistCustomSavedConfig(defaultConfig);
+    }
+
+    setProviderDraftStatus((prev) => ({
+      ...prev,
+      [providerKey]: {
+        ...prev[providerKey],
+        mode: 'saved',
+        message: `${PROVIDER_DEFINITIONS[providerKey].label} settings reset to defaults.`,
+        errors: {},
+      },
+    }));
+  };
+
+  const isDraftDirty = (providerKey) => {
+    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return false;
+    return JSON.stringify(getDraftProviderConfig(providerKey)) !== JSON.stringify(savedProviderConfigs[providerKey]);
   };
 
   const value = useMemo(
@@ -103,15 +240,35 @@ export function AIStoreProvider({ children }) {
       setDebugData,
       provider,
       setProvider,
-      customProviderConfig,
-      updateCustomProviderConfig,
-      resetCustomProviderConfig,
+      savedProviderConfigs,
+      draftProviderConfigs,
+      providerDraftStatus,
+      getDraftProviderConfig,
+      getActiveProviderConfig,
+      updateDraftProviderConfig,
+      saveDraftProviderConfig,
+      revertDraftProviderConfig,
+      resetProviderConfig,
+      isDraftDirty,
       apiStatus,
       setApiStatus,
       uiDiagnostics,
       setUiDiagnostics,
     }),
-    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, provider, customProviderConfig, apiStatus, uiDiagnostics],
+    [
+      commandHistory,
+      status,
+      isBusy,
+      lastRoute,
+      debugVisible,
+      debugData,
+      provider,
+      savedProviderConfigs,
+      draftProviderConfigs,
+      providerDraftStatus,
+      apiStatus,
+      uiDiagnostics,
+    ],
   );
 
   return createElement(AIStoreContext.Provider, { value }, children);
