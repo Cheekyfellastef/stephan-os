@@ -4,6 +4,7 @@ import {
   SimulationExecutionError,
   SimulationInputError,
 } from './simulationTypes.js';
+import { ERROR_CODES } from './errors.js';
 import { getSimulation, listSimulations, validateSimulationInput } from './simulationRegistry.js';
 
 export class SimulationEngine {
@@ -24,7 +25,9 @@ export class SimulationEngine {
   runSimulation(id, input = {}, context = {}) {
     const simulation = getSimulation(id);
     if (!simulation) {
-      throw new SimulationInputError(`Unknown simulation '${id}'.`, { simulationId: id });
+      const err = new SimulationInputError(`Unknown simulation '${id}'.`, { simulationId: id });
+      err.code = ERROR_CODES.SIM_NOT_FOUND;
+      throw err;
     }
 
     const validatedInput = validateSimulationInput(id, input);

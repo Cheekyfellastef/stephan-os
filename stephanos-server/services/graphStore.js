@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createLogger } from '../utils/logger.js';
+import { createError, ERROR_CODES } from './errors.js';
 
 const logger = createLogger('graph-store');
 const KG_DIR = path.resolve(process.cwd(), 'data', 'knowledge-graph');
@@ -45,7 +46,7 @@ export class GraphStore {
       return collection;
     } catch (error) {
       logger.error(`Failed to read ${key}`, { filePath, message: error.message });
-      throw new Error(`Graph storage read failed for ${key}: ${error.message}`);
+      throw createError(ERROR_CODES.KG_STORAGE_FAILURE, `Graph storage read failed for ${key}: ${error.message}`, { status: 500 });
     }
   }
 
@@ -58,7 +59,7 @@ export class GraphStore {
       return { ok: true, filePath, key, count: items.length };
     } catch (error) {
       logger.error(`Failed to persist ${key}`, { filePath, message: error.message });
-      throw new Error(`Graph storage write failed for ${key}: ${error.message}`);
+      throw createError(ERROR_CODES.KG_STORAGE_FAILURE, `Graph storage write failed for ${key}: ${error.message}`, { status: 500 });
     }
   }
 

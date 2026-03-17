@@ -1,6 +1,7 @@
 import { trajectoryDemoSimulation } from './simulations/trajectoryDemo.js';
 import { systemHealthSnapshotSimulation } from './simulations/systemHealthSnapshot.js';
 import { SimulationInputError, SIMULATION_STATES } from './simulationTypes.js';
+import { ERROR_CODES } from './errors.js';
 
 const simulations = [
   systemHealthSnapshotSimulation,
@@ -31,7 +32,9 @@ export function getSimulation(id) {
 export function validateSimulationInput(id, input) {
   const simulation = getSimulation(id);
   if (!simulation) {
-    throw new SimulationInputError(`Unknown simulation '${id}'.`, { simulationId: id });
+    const err = new SimulationInputError(`Unknown simulation '${id}'.`, { simulationId: id });
+    err.code = ERROR_CODES.SIM_NOT_FOUND;
+    throw err;
   }
 
   if (!getCallable(simulation)) {
