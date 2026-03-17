@@ -16,12 +16,15 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { useAIStore } from './state/aiStore';
 
-const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-dock-v3';
+const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-dock-v4';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
-  const { provider, setUiDiagnostics } = useAIStore();
+  const { provider, providerDraftStatus, getActiveProviderConfig, setUiDiagnostics } = useAIStore();
   useDebugConsole();
+
+  const activeConfig = getActiveProviderConfig();
+  const configMode = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
 
   useEffect(() => {
     console.log('[App] mounted from', APP_COMPONENT_MARKER);
@@ -41,7 +44,7 @@ export default function App() {
       <section className="provider-dock panel">
         <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
-          PROVIDER TOGGLE MOUNTED · Active provider: <strong>{provider}</strong> · Marker: {APP_COMPONENT_MARKER}
+          Active provider: <strong>{provider}</strong> · Config mode: <strong>{configMode}</strong> · Base URL: <strong>{activeConfig.baseUrl || 'n/a'}</strong> · Endpoint: <strong>{activeConfig.chatEndpoint || 'n/a'}</strong>
         </p>
         <ProviderToggle />
         {provider === 'custom' ? <CustomProviderPanel /> : null}

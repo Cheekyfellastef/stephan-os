@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, sendPrompt } from '../ai/aiClient';
+import { buildProviderDisplayLabel } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
 function transportErrorToUi(error) {
@@ -57,7 +58,8 @@ export function useAIConsole() {
     apiStatus,
     setApiStatus,
     provider,
-    customProviderConfig,
+    providerDraftStatus,
+    getActiveProviderConfig,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -107,10 +109,11 @@ export function useAIConsole() {
     setStatus('processing');
 
     try {
+      const activeProviderConfig = getActiveProviderConfig();
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
-        providerConfig: provider === 'custom' ? customProviderConfig : null,
+        providerConfig: provider === 'openai' ? null : activeProviderConfig,
       });
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -128,11 +131,9 @@ export function useAIConsole() {
         response: data,
       };
 
-      const activeProviderLabel = provider === 'custom'
-        ? (customProviderConfig.label?.trim() || 'Custom LLM')
-        : provider;
+      const activeProviderLabel = buildProviderDisplayLabel(provider, getActiveProviderConfig());
       const providerSpecificDetail = provider === 'ollama' && !data.success
-        ? 'Local Ollama not reachable. Start Ollama with: ollama serve'
+        ? 'Local Ollama not reachable at http://localhost:11434. Start Ollama with: ollama serve'
         : data.output_text;
 
       setCommandHistory((prev) => [...prev, entry]);
@@ -147,6 +148,7 @@ export function useAIConsole() {
         detail: data.success
           ? `Backend reachable. Active provider: ${activeProviderLabel}.`
           : `Active provider (${activeProviderLabel}) error: ${providerSpecificDetail}`,
+        configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
         lastCheckedAt: new Date().toISOString(),
       }));
       setDebugData({
@@ -176,6 +178,7 @@ export function useAIConsole() {
         state: 'offline',
         label: 'Backend offline',
         detail: uiError.output,
+        configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
         lastCheckedAt: new Date().toISOString(),
       }));
 
