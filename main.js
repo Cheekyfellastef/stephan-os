@@ -95,7 +95,7 @@ async function startStephanos() {
   log("Stephanos OS starting...");
 
   const eventBus = createEventBus();
-  const projects = await discoverApps();
+  const { apps: projects, validationReport } = await discoverApps({ eventBus });
 
   const { workspace } = await import("./system/workspace.js");
   const {
@@ -138,6 +138,16 @@ async function startStephanos() {
     workspace,
     projects
   };
+
+  systemState.set("appValidationReport", validationReport);
+
+  log(
+    `App discovery: ${validationReport.loaded} apps loaded, ${validationReport.invalid} app${validationReport.invalid === 1 ? "" : "s"} with errors`
+  );
+
+  validationReport.issues.forEach((issue) => {
+    log(`⚠ ${issue}`);
+  });
 
   createSelfHealingService(context);
 

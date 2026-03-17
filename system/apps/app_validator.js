@@ -2,6 +2,10 @@ export async function validateApps(apps, context = {}) {
   const results = [];
 
   for (const app of apps) {
+    if (app?.disabled) {
+      continue;
+    }
+
     const issues = [];
 
     try {

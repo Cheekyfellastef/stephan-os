@@ -3,14 +3,18 @@ function normaliseProject(project) {
     return {
       name: project,
       icon: "🧩",
-      entry: ""
+      entry: "",
+      disabled: false,
+      validationIssues: []
     };
   }
 
   return {
     name: project?.name || "Unnamed Project",
     icon: project?.icon || "🧩",
-    entry: project?.entry || ""
+    entry: project?.entry || "",
+    disabled: Boolean(project?.disabled),
+    validationIssues: Array.isArray(project?.validationIssues) ? project.validationIssues : []
   };
 }
 
@@ -37,12 +41,28 @@ function renderProjectRegistry(projects, context) {
     const tile = document.createElement("div");
 
     tile.className = "app-tile";
+
+    if (safeProject.disabled) {
+      tile.classList.add("app-tile-error");
+    }
+
+    const issueLabel = safeProject.disabled
+      ? `<div class="app-tile-issue">${safeProject.validationIssues[0] || "App failed validation"}</div>`
+      : "";
+
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
       <div style="margin-top:8px;">${safeProject.name}</div>
+      ${issueLabel}
     `;
 
-    tile.onclick = () => context.workspace.open(safeProject, context);
+    if (safeProject.disabled) {
+      tile.title = safeProject.validationIssues.join("\n") || "App failed validation";
+      tile.setAttribute("aria-disabled", "true");
+    } else {
+      tile.onclick = () => context.workspace.open(safeProject, context);
+    }
+
     container.appendChild(tile);
   });
 }
@@ -76,14 +96,14 @@ export function init(context) {
         String(projectItem?.name || "").trim().toLowerCase() === "wealth app"
       );
 
-      if (wealthProject) {
+      if (wealthProject && !wealthProject?.disabled) {
         context.workspace.open(normaliseProject(wealthProject), context);
       }
 
       return;
     }
 
-    if (project) {
+    if (project && !project?.disabled) {
       context.workspace.open(normaliseProject(project), context);
     }
   });
