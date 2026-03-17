@@ -95,6 +95,12 @@ async function startStephanos() {
   log("Stephanos OS starting...");
 
   const eventBus = createEventBus();
+  eventBus.on("app:diagnostic", (payload) => {
+    if (payload?.message) {
+      log(`ℹ ${payload.message}`);
+    }
+  });
+
   const { apps: projects, validationReport } = await discoverApps({ eventBus });
 
   const { workspace } = await import("./system/workspace.js");

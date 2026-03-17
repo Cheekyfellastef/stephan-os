@@ -1,11 +1,14 @@
 const REQUIRED_MANIFEST_FIELDS = ["name", "entry"];
 const VALID_DISCOVERY_ID = /^[a-z0-9][a-z0-9-_]*$/i;
+const VALID_PACKAGING_MODES = new Set(["classic", "classic-static", "vite", "document"]);
 
 function ensureStephanosEntry(apps) {
   return apps;
 }
 
 function normaliseManifestApp(folder, manifest) {
+  const packaging = resolvePackagingMode(manifest);
+
   return {
     id: folder,
     folder,
@@ -13,16 +16,21 @@ function normaliseManifestApp(folder, manifest) {
     icon: manifest.icon || "🧩",
     entry: `apps/${folder}/${manifest.entry}`,
     type: manifest.type || "app",
-    packaging: resolvePackagingMode(manifest),
+    appType: packaging,
+    packaging,
     requiredPaths: Array.isArray(manifest.requiredPaths) ? manifest.requiredPaths : [],
     dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : []
   };
 }
 
 function resolvePackagingMode(manifest) {
-  const mode = String(manifest?.packaging || "").trim().toLowerCase();
+  const mode = String(manifest?.packaging || manifest?.appType || "").trim().toLowerCase();
 
   if (mode) {
+    if (mode === "classic") {
+      return "classic-static";
+    }
+
     return mode;
   }
 
@@ -31,6 +39,10 @@ function resolvePackagingMode(manifest) {
   }
 
   return "classic-static";
+}
+
+function emitDiagnostic(context, message) {
+  context?.eventBus?.emit("app:diagnostic", { message });
 }
 
 function isValidDiscoveryFolderName(entry) {
@@ -118,9 +130,14 @@ async function validateAppRegistration(folder) {
 
   const manifest = manifestResult.json;
   const missingFields = hasRequiredManifestFields(manifest);
+  const packaging = resolvePackagingMode(manifest);
 
   if (missingFields.length > 0) {
     issues.push(`${folder}: missing required fields (${missingFields.join(", ")})`);
+  }
+
+  if (!VALID_PACKAGING_MODES.has(packaging)) {
+    issues.push(`${folder}: unsupported app packaging '${packaging}'`);
   }
 
   let normalisedApp = {
@@ -201,9 +218,10 @@ export async function discoverApps(context = {}) {
 
   for (const folder of indexResult.json) {
     if (!isValidDiscoveryFolderName(folder)) {
-      const issue = `apps/index.json contains invalid app id: ${String(folder)}`;
+      const issue = `${String(folder).toLowerCase()}: skipped, not an app folder`;
       discoveryIssues.push(issue);
       context?.eventBus?.emit("app:discovery_issue", { issue });
+      emitDiagnostic(context, issue);
       continue;
     }
 
@@ -213,6 +231,10 @@ export async function discoverApps(context = {}) {
 
     if (!validation.valid) {
       discoveryIssues.push(...validation.issues);
+
+      for (const issue of validation.issues) {
+        emitDiagnostic(context, issue);
+      }
 
       context?.eventBus?.emit("app:validation_failed", {
         name: validation.app?.name || folder,

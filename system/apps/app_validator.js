@@ -1,7 +1,17 @@
-const VALID_PACKAGING_MODES = new Set(["classic-static", "vite", "document"]);
+const VALID_PACKAGING_MODES = new Set(["classic", "classic-static", "vite", "document"]);
 
 function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
+}
+
+function normalizePackaging(value) {
+  const mode = String(value || "").trim().toLowerCase();
+
+  if (mode === "classic") {
+    return "classic-static";
+  }
+
+  return mode;
 }
 
 async function fetchJson(path) {
@@ -56,6 +66,28 @@ function extractLocalHtmlReferences(html) {
   return Array.from(refs);
 }
 
+function toRuntimePath(basePath, ref) {
+  const cleaned = String(ref || "").trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  if (cleaned.startsWith("./")) {
+    return `${basePath}/${cleaned.slice(2)}`;
+  }
+
+  if (cleaned.startsWith("../")) {
+    return `${basePath}/${cleaned}`;
+  }
+
+  if (cleaned.startsWith("/")) {
+    return cleaned.slice(1);
+  }
+
+  return `${basePath}/${cleaned}`;
+}
+
 function resolveManifestPath(app, manifest) {
   const appRoot = getAppRoot(app);
   const entryInManifest = String(manifest?.entry || "").trim();
@@ -68,7 +100,7 @@ function resolveManifestPath(app, manifest) {
 }
 
 function resolvePackagingMode(app, manifest) {
-  const declared = String(manifest?.packaging || app?.packaging || "").trim().toLowerCase();
+  const declared = normalizePackaging(manifest?.packaging || manifest?.appType || app?.packaging || app?.appType);
 
   if (declared) {
     return declared;
@@ -81,6 +113,10 @@ function resolvePackagingMode(app, manifest) {
   }
 
   return "classic-static";
+}
+
+function emitDiagnostic(context, message) {
+  context?.eventBus?.emit("app:diagnostic", { message });
 }
 
 async function validateAppManifest(app, issues) {
@@ -130,8 +166,7 @@ async function validateHtmlReferences(basePath, html, issues, label) {
   const refs = extractLocalHtmlReferences(html);
 
   for (const ref of refs) {
-    const cleaned = ref.replace(/^\//, "");
-    const absolute = `${basePath}/${cleaned}`;
+    const absolute = toRuntimePath(basePath, ref);
     const exists = await fileExists(absolute);
 
     if (!exists) {
@@ -214,6 +249,8 @@ export async function validateApps(apps, context = {}) {
       }
     }
 
+    const appId = String(app?.folder || app?.id || app?.name || "unknown").toLowerCase();
+
     if (issues.length > 0) {
       context?.eventBus?.emit("app:validation_failed", {
         name: app?.name,
@@ -222,11 +259,17 @@ export async function validateApps(apps, context = {}) {
         issues
       });
 
+      emitDiagnostic(context, `${appId}: ${issues[0]}`);
+
       results.push({
         app: app.name,
         issues
       });
+
+      continue;
     }
+
+    emitDiagnostic(context, `${appId}: valid ${packaging === "classic-static" ? "classic" : packaging} app`);
   }
 
   return results;
