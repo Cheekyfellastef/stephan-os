@@ -1,5 +1,7 @@
 import { useAIStore } from '../state/aiStore';
 import CommandResultCard from './CommandResultCard';
+import ProviderToggle from './ProviderToggle';
+import CustomProviderPanel from './CustomProviderPanel';
 
 export default function AIConsole({ input, setInput, submitPrompt, commandHistory }) {
   const { isBusy, apiStatus } = useAIStore();
@@ -13,6 +15,8 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   return (
     <section className="panel">
       <h1>Stephanos Mission Console</h1>
+      <ProviderToggle />
+      <CustomProviderPanel />
       <div className={`api-connection-banner ${apiStatus.state}`}>
         <strong>{apiStatus.label}</strong>
         <span>{apiStatus.detail}</span>

@@ -1,10 +1,20 @@
 import { useAIStore } from '../state/aiStore';
 
+const providerModeLabels = {
+  openai: 'OpenAI Cloud',
+  ollama: 'Local Ollama',
+  custom: 'Custom LLM',
+};
+
 export default function StatusPanel() {
-  const { status, isBusy, lastRoute, commandHistory, apiStatus } = useAIStore();
+  const { status, isBusy, lastRoute, commandHistory, apiStatus, provider, customProviderConfig } = useAIStore();
   const latest = commandHistory[commandHistory.length - 1];
   const proposalStats = commandHistory.findLast((entry) => entry.data_payload?.stats)?.data_payload?.stats;
   const roadmapSummary = commandHistory.findLast((entry) => entry.data_payload?.summary)?.data_payload?.summary;
+
+  const providerLabel = provider === 'custom'
+    ? (customProviderConfig.label?.trim() || 'Custom LLM')
+    : providerModeLabels[provider];
 
   return (
     <aside className="status-panel panel">
@@ -13,6 +23,8 @@ export default function StatusPanel() {
         <li>Backend: {apiStatus.label}</li>
         <li>API URL: {apiStatus.baseUrl || 'n/a'}</li>
         <li>API Health: {apiStatus.state}</li>
+        <li>Provider: {provider}</li>
+        <li>Provider Mode: {providerLabel}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>

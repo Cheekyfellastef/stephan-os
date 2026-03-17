@@ -2,6 +2,39 @@ import { createContext, createElement, useContext, useMemo, useState } from 'rea
 
 const AIStoreContext = createContext(null);
 
+const PROVIDER_STORAGE_KEY = 'stephanos.ai.provider';
+const CUSTOM_PROVIDER_STORAGE_KEY = 'stephanos.ai.customConfig';
+
+const DEFAULT_CUSTOM_PROVIDER_CONFIG = {
+  label: 'Custom LLM',
+  baseUrl: '',
+  chatEndpoint: '/v1/chat/completions',
+  model: '',
+  apiKey: '',
+  headersJson: '',
+};
+
+function getStoredProvider() {
+  if (typeof window === 'undefined') return 'openai';
+  const stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
+  return ['openai', 'ollama', 'custom'].includes(stored) ? stored : 'openai';
+}
+
+function getStoredCustomConfig() {
+  if (typeof window === 'undefined') return DEFAULT_CUSTOM_PROVIDER_CONFIG;
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CUSTOM_PROVIDER_STORAGE_KEY) || '{}');
+    return {
+      ...DEFAULT_CUSTOM_PROVIDER_CONFIG,
+      ...parsed,
+      apiKey: '',
+    };
+  } catch {
+    return DEFAULT_CUSTOM_PROVIDER_CONFIG;
+  }
+}
+
 export function AIStoreProvider({ children }) {
   const [commandHistory, setCommandHistory] = useState([]);
   const [status, setStatus] = useState('idle');
@@ -9,6 +42,8 @@ export function AIStoreProvider({ children }) {
   const [lastRoute, setLastRoute] = useState('assistant');
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState({});
+  const [provider, setProviderState] = useState(getStoredProvider);
+  const [customProviderConfig, setCustomProviderConfig] = useState(getStoredCustomConfig);
   const [apiStatus, setApiStatus] = useState({
     state: 'checking',
     label: 'Checking backend...',
@@ -17,6 +52,32 @@ export function AIStoreProvider({ children }) {
     baseUrl: '',
     lastCheckedAt: null,
   });
+
+  const setProvider = (nextProvider) => {
+    setProviderState(nextProvider);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(PROVIDER_STORAGE_KEY, nextProvider);
+    }
+  };
+
+  const updateCustomProviderConfig = (patch) => {
+    setCustomProviderConfig((prev) => {
+      const next = { ...prev, ...patch };
+      if (typeof window !== 'undefined') {
+        const { apiKey: _apiKey, ...safeToPersist } = next;
+        localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
+      }
+      return next;
+    });
+  };
+
+  const resetCustomProviderConfig = () => {
+    setCustomProviderConfig(DEFAULT_CUSTOM_PROVIDER_CONFIG);
+    if (typeof window !== 'undefined') {
+      const { apiKey: _apiKey, ...safeToPersist } = DEFAULT_CUSTOM_PROVIDER_CONFIG;
+      localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
+    }
+  };
 
   const value = useMemo(
     () => ({
@@ -32,10 +93,15 @@ export function AIStoreProvider({ children }) {
       setDebugVisible,
       debugData,
       setDebugData,
+      provider,
+      setProvider,
+      customProviderConfig,
+      updateCustomProviderConfig,
+      resetCustomProviderConfig,
       apiStatus,
       setApiStatus,
     }),
-    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, apiStatus],
+    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, provider, customProviderConfig, apiStatus],
   );
 
   return createElement(AIStoreContext.Provider, { value }, children);

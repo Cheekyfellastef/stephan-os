@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAIResponse, isAIServiceAvailable } from '../services/openaiService.js';
+import { isAIServiceAvailable } from '../services/openaiService.js';
 import { memoryService } from '../services/memoryService.js';
 import { executeTool } from '../services/toolRegistry.js';
 import { parseCommand, resolveRoute } from '../services/commandRouter.js';
@@ -7,6 +7,7 @@ import { buildErrorResponse, buildSuccessResponse } from '../services/responseBu
 import { createLogger } from '../utils/logger.js';
 import { ERROR_CODES, normalizeError } from '../services/errors.js';
 import { assistantContextService } from '../services/assistantContextService.js';
+import { routeLLMRequest } from '../services/llm/providerRouter.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -15,7 +16,7 @@ const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /me
 
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt } = req.body || {};
+  const { prompt, provider = 'openai', providerConfig = {} } = req.body || {};
   const requestId = req.headers['x-request-id'];
 
   if (!prompt || typeof prompt !== 'string') {
@@ -63,8 +64,39 @@ router.post('/chat', async (req, res) => {
     }
 
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
-    const aiResult = await getAIResponse({ userInput: prompt, context: { route: decision.route, parsed_command: parsedCommand, memory_hits: memoryHits, subsystem_context: contextBundle } });
-    return res.json(buildSuccessResponse({ type: 'assistant_response', route: decision.route, command: parsedCommand.isSlash ? parsedCommand.raw : null, output_text: aiResult.outputText, data: { openai_response_id: aiResult.responseId, usage: aiResult.usage, assistant_context: contextBundle, suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }] }, memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId } }));
+    const llmResult = await routeLLMRequest({
+      prompt,
+      provider,
+      providerConfig,
+      context: {
+        route: decision.route,
+        parsed_command: parsedCommand,
+        memory_hits: memoryHits,
+        subsystem_context: contextBundle,
+      },
+    });
+    return res.json(buildSuccessResponse({
+      type: 'assistant_response',
+      route: decision.route,
+      command: parsedCommand.isSlash ? parsedCommand.raw : null,
+      output_text: llmResult.output_text,
+      data: {
+        provider: llmResult.provider,
+        provider_model: llmResult.model,
+        provider_raw: llmResult.raw,
+        assistant_context: contextBundle,
+        suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
+      },
+      memory_hits: memoryHits,
+      timing_ms: Date.now() - startedAt,
+      debug: {
+        parsed_command: parsedCommand,
+        route_reason: decision.reason,
+        request_id: requestId,
+        llm_provider: llmResult.provider,
+        llm_model: llmResult.model,
+      },
+    }));
   } catch (error) {
     const appError = normalizeError(error);
     logger.error('Failed to process /api/ai/chat', { message: appError.message, code: appError.code });

@@ -67,8 +67,12 @@ async function requestJson(path, options = {}) {
   }
 }
 
-export async function sendPrompt({ prompt }) {
-  const payload = { prompt };
+export async function sendPrompt({ prompt, provider = 'openai', providerConfig = null }) {
+  const payload = { prompt, provider };
+
+  if (provider === 'custom' && providerConfig) {
+    payload.providerConfig = providerConfig;
+  }
   const result = await requestJson('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
