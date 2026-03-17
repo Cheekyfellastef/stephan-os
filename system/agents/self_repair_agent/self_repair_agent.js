@@ -15,6 +15,48 @@ export const selfRepairAgent = {
     const projects = context.projects || [];
 
     for (const project of projects) {
+      const appMatch = project.entry.match(/^apps\/([^/]+)\/(?:dist\/)?index\.html$/);
+
+      if (appMatch) {
+        const appName = appMatch[1];
+        const rootIndex = `apps/${appName}/index.html`;
+        const distIndex = `apps/${appName}/dist/index.html`;
+
+        if (project.entry === distIndex) {
+          console.warn(
+            "SelfRepair: app entry should prefer root index.html",
+            project.name,
+            rootIndex
+          );
+        }
+
+        let foundReachableEntry = false;
+
+        for (const candidate of [rootIndex, distIndex]) {
+          try {
+            const res = await fetch(candidate);
+
+            if (res.ok) {
+              foundReachableEntry = true;
+              break;
+            }
+          } catch (err) {
+            // Continue checking remaining candidates.
+          }
+        }
+
+        if (!foundReachableEntry) {
+          console.warn(
+            "SelfRepair: failed to load app from root or dist index",
+            project.name,
+            rootIndex,
+            distIndex
+          );
+        }
+
+        continue;
+      }
+
       try {
         const res = await fetch(project.entry);
 
@@ -30,16 +72,6 @@ export const selfRepairAgent = {
           "SelfRepair: failed to load app",
           project.name
         );
-      }
-
-      if (project.entry.includes("wealthapp")) {
-        const indexCheck = project.entry.includes("apps/wealthapp/index.html");
-
-        if (!indexCheck) {
-          console.warn(
-            "SelfRepair: WealthApp should use apps/wealthapp/index.html"
-          );
-        }
       }
     }
   }
