@@ -94,7 +94,7 @@ async function executeCommand(command, context, output) {
     }
 
     if (target === "apps") {
-      const apps = context.systemState.get("projects") || [];
+      const apps = context.systemState.get("projects") || context.projects || [];
 
       apps.forEach((a) => log(output, a.name));
     }
@@ -103,7 +103,7 @@ async function executeCommand(command, context, output) {
   }
 
   if (cmd === "export" && parts[1] === "apps") {
-    const apps = context.systemState.get("projects") || [];
+    const apps = context.systemState.get("projects") || context.projects || [];
     const exportPayload = {
       projects: apps
     };

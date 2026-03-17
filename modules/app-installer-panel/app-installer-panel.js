@@ -1,7 +1,7 @@
 export const moduleDefinition = {
   id: "app-installer-panel",
   version: "1.0",
-  description: "Displays recent app installation activity"
+  description: "Displays installed Stephanos apps"
 };
 
 const PANEL_ID = "app-installer-panel";
