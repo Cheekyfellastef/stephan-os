@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: stephanos-ui
-        run: npm install
+        run: npm ci
 
       - name: Build Stephanos UI into apps/stephanos/dist
         working-directory: stephanos-ui
