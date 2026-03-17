@@ -2,12 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wealthapp</title>
+    <title>Wealth App</title>
+    <link rel="stylesheet" href="./styles/style.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <h2>Wealth Projection</h2>
+
+    <label>
+      Starting Assets (£)
+      <input id="starting-assets" type="range" min="0" max="500000" step="1000" value="10000" />
+    </label>
+
+    <label>
+      Monthly Contribution (£)
+      <input id="monthly-contribution" type="range" min="0" max="5000" step="50" value="200" />
+    </label>
+
+    <div id="projection-output"></div>
+
+    <script type="module" src="./scripts/wealthapp.js"></script>
   </body>
 </html>

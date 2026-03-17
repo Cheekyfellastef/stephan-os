@@ -2,17 +2,17 @@
   "projects": [
     {
       "name": "Galaxians",
-      "icon": "🚀",
+      "icon": "\ud83d\ude80",
       "entry": "apps/galaxians/index.html"
     },
     {
       "name": "Wealth App",
-      "icon": "📈",
-      "entry": "apps/wealthapp/dist/index.html"
+      "icon": "\ud83d\udcc8",
+      "entry": "apps/wealthapp/index.html"
     },
     {
       "name": "Stephanos OS",
-      "icon": "🧠",
+      "icon": "\ud83e\udde0",
       "entry": "ROADMAP.md"
     }
   ]
