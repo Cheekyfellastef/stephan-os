@@ -15,8 +15,10 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   return (
     <section className="panel">
       <h1>Stephanos Mission Console</h1>
-      <ProviderToggle />
-      <CustomProviderPanel />
+      <div className="provider-switch-block">
+        <ProviderToggle />
+        <CustomProviderPanel />
+      </div>
       <div className={`api-connection-banner ${apiStatus.state}`}>
         <strong>{apiStatus.label}</strong>
         <span>{apiStatus.detail}</span>

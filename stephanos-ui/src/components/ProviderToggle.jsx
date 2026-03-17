@@ -11,20 +11,24 @@ export default function ProviderToggle() {
 
   return (
     <div className="provider-toggle-block">
-      <span className="provider-toggle-label">AI Provider</span>
+      <span className="provider-switch-label">AI Provider</span>
       <div className="provider-toggle" role="tablist" aria-label="AI Provider">
-        {PROVIDERS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={provider === item.id}
-            className={provider === item.id ? 'is-active' : ''}
-            onClick={() => setProvider(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
+        {PROVIDERS.map((item) => {
+          const isActive = provider === item.id;
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`provider-toggle-button${isActive ? ' active' : ''}`}
+              onClick={() => setProvider(item.id)}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
