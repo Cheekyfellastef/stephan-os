@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createLogger } from '../utils/logger.js';
 import { createError, ERROR_CODES } from './errors.js';
+import { activityLogService } from './activityLogService.js';
 
 const logger = createLogger('simulation-presets');
 const PRESET_DIR = path.resolve(process.cwd(), 'data', 'simulations');
@@ -38,6 +39,7 @@ export function savePreset(name, simulationId, input) {
   else presets.push(entry);
   writePresetsFile(presets);
   logger.info('Simulation preset saved', { name: presetName, simulationId });
+  activityLogService.record({ type: 'simulation_preset_saved', subsystem: 'simulation_core', summary: `Saved simulation preset ${presetName}.`, payload: { name: presetName, simulationId } });
   return entry;
 }
 
@@ -57,6 +59,7 @@ export function deletePreset(name) {
   if (idx < 0) throw createError(ERROR_CODES.SIM_PRESET_NOT_FOUND, `Simulation preset '${name}' was not found.`, { status: 404 });
   const [deleted] = presets.splice(idx, 1);
   writePresetsFile(presets);
+  activityLogService.record({ type: 'simulation_preset_deleted', subsystem: 'simulation_core', summary: `Deleted simulation preset ${deleted.name}.`, payload: { name: deleted.name } });
   return deleted;
 }
 

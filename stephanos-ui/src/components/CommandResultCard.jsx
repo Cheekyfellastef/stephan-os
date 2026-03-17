@@ -45,8 +45,10 @@ function GraphPayload({ payload }) {
 export default function CommandResultCard({ entry }) {
   const tone = getResultTone(entry.response?.type);
 
+  const suggestedActions = entry.data_payload?.suggested_actions ?? [];
+
   return (
-    <article className={`result-card ${tone}`}>
+    <article className={`result-card ${tone} ${entry.response?.type === 'assistant_response' ? 'assistant' : ''}`}>
       <header>
         <strong>{formatResultTitle(entry)}</strong>
         <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
@@ -57,6 +59,14 @@ export default function CommandResultCard({ entry }) {
       <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>
       {entry.data_payload?.result && <SimulationResultCard payload={entry.data_payload} />}
       {entry.data_payload && <GraphPayload payload={entry.data_payload} />}
+      {suggestedActions.length > 0 && (
+        <div className="suggested-actions">
+          <strong>Suggested actions</strong>
+          <ul className="compact-list">
+            {suggestedActions.map((action) => <li key={action.command}><code>{action.command}</code> — {action.label}</li>)}
+          </ul>
+        </div>
+      )}
       {entry.data_payload && Object.keys(entry.data_payload).length > 0 && (
         <details>
           <summary>Structured data</summary>

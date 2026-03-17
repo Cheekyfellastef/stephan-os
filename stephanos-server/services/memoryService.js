@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createLogger } from '../utils/logger.js';
+import { createError, ERROR_CODES } from './errors.js';
+import { activityLogService } from './activityLogService.js';
 
 const logger = createLogger('memory-service');
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -42,6 +44,13 @@ class MemoryService {
     return [...this.memory];
   }
 
+  getById(id) {
+    this.load();
+    const item = this.memory.find((entry) => entry.id === id);
+    if (!item) throw createError(ERROR_CODES.MEMORY_NOT_FOUND, `Memory item '${id}' was not found.`, { status: 404 });
+    return item;
+  }
+
   saveMemory(item) {
     this.load();
     const now = new Date().toISOString();
@@ -49,7 +58,7 @@ class MemoryService {
     const entry = {
       id: item.id ?? nextId,
       text: item.text,
-      tags: item.tags ?? [],
+      tags: Array.isArray(item.tags) ? item.tags : (String(item.tags ?? '').split(',').map((v) => v.trim()).filter(Boolean)),
       created_at: item.created_at ?? now,
       updated_at: now,
     };
@@ -57,6 +66,7 @@ class MemoryService {
     this.memory.push(entry);
     this.persist();
     logger.info('Saved memory entry', { id: entry.id });
+    activityLogService.record({ type: 'memory_item_saved', subsystem: 'memory_service', summary: `Saved memory ${entry.id}.`, payload: { id: entry.id, tags: entry.tags } });
     return entry;
   }
 

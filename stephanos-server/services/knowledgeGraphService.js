@@ -6,6 +6,7 @@ import {
   sanitizeNodeInput,
 } from './graphTypes.js';
 import { createError, ERROR_CODES } from './errors.js';
+import { activityLogService } from './activityLogService.js';
 
 function includesText(value = '', query = '') {
   return String(value).toLowerCase().includes(String(query).toLowerCase());
@@ -44,6 +45,7 @@ class KnowledgeGraphService {
       embedding_ref: input.embedding_ref ?? null,
     };
     graphStore.writeNodes([...nodes, node]);
+    activityLogService.record({ type: 'graph_node_created', subsystem: 'knowledge_graph_core', summary: `Created node ${node.id}.`, payload: { node_id: node.id } });
     return node;
   }
 
@@ -59,9 +61,10 @@ class KnowledgeGraphService {
     const duplicate = nodes.some((node, idx) => idx !== index && node.label.toLowerCase() === cleanPatch.label.toLowerCase() && node.type === cleanPatch.type);
     if (duplicate) throw createError(ERROR_CODES.KG_DUPLICATE_NODE, `Node '${cleanPatch.label}' already exists for type '${cleanPatch.type}'.`);
 
-    const updated = { ...nodes[index], ...cleanPatch, id, updated_at: new Date().toISOString() };
+    const updated = { ...nodes[index], ...cleanPatch, id, metadata: { ...(nodes[index].metadata ?? {}), ...(cleanPatch.metadata ?? {}) }, updated_at: new Date().toISOString() };
     nodes[index] = updated;
     graphStore.writeNodes(nodes);
+    activityLogService.record({ type: 'graph_node_updated', subsystem: 'knowledge_graph_core', summary: `Updated node ${id}.`, payload: { node_id: id } });
     return updated;
   }
 
@@ -73,6 +76,7 @@ class KnowledgeGraphService {
     const nextEdges = edges.filter((edge) => edge.from !== id && edge.to !== id);
     graphStore.writeNodes(nodes.filter((node) => node.id !== id));
     graphStore.writeEdges(nextEdges);
+    activityLogService.record({ type: 'graph_node_deleted', subsystem: 'knowledge_graph_core', summary: `Deleted node ${id}.`, payload: { node_id: id } });
     return { deleted_node_id: id, removed_edge_count: edges.length - nextEdges.length, linkage_cleanup: 'auto_cascade_edges' };
   }
 
@@ -107,6 +111,7 @@ class KnowledgeGraphService {
       provenance: input.provenance ?? null,
     };
     graphStore.writeEdges([...edges, edge]);
+    activityLogService.record({ type: 'graph_edge_created', subsystem: 'knowledge_graph_core', summary: `Created edge ${edge.id}.`, payload: { edge_id: edge.id } });
     return edge;
   }
 
@@ -115,6 +120,7 @@ class KnowledgeGraphService {
     const edges = this.listEdges();
     if (!edges.some((edge) => edge.id === id)) throw createError(ERROR_CODES.KG_EDGE_INVALID, `Edge '${id}' was not found.`, { status: 404 });
     graphStore.writeEdges(edges.filter((edge) => edge.id !== id));
+    activityLogService.record({ type: 'graph_edge_deleted', subsystem: 'knowledge_graph_core', summary: `Deleted edge ${id}.`, payload: { edge_id: id } });
     return { deleted_edge_id: id };
   }
 
