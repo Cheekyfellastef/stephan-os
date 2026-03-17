@@ -32,12 +32,10 @@ export function init(context) {
 
       console.log("Console command:", command);
 
-      // Send command to assistant agent
       context.eventBus.emit("console:command", {
         text: command
       });
 
-      // Run built-in command parser as fallback
       executeCommand(command, context, output);
 
       input.value = "";
@@ -51,14 +49,16 @@ export function init(context) {
 
 async function executeCommand(command, context, output) {
   const parts = command.split(" ");
-
   const cmd = parts[0];
 
   if (cmd === "help") {
     log(output, "Commands:");
+    log(output, "install <github url>");
     log(output, "list modules");
     log(output, "list agents");
     log(output, "list services");
+    log(output, "list apps");
+    log(output, "export apps");
     log(output, "repair apps");
     log(output, "repair modules");
     log(output, "repair system");
@@ -93,6 +93,22 @@ async function executeCommand(command, context, output) {
       });
     }
 
+    if (target === "apps") {
+      const apps = context.systemState.get("projects") || [];
+
+      apps.forEach((a) => log(output, a.name));
+    }
+
+    return;
+  }
+
+  if (cmd === "export" && parts[1] === "apps") {
+    const apps = context.systemState.get("projects") || [];
+    const exportPayload = {
+      projects: apps
+    };
+
+    log(output, JSON.stringify(exportPayload, null, 2));
     return;
   }
 
@@ -147,6 +163,18 @@ async function executeCommand(command, context, output) {
 
     log(output, "Starting simulation: " + simulation);
 
+    return;
+  }
+
+  if (cmd === "install") {
+    const repoUrl = parts.slice(1).join(" ").trim();
+
+    if (!repoUrl) {
+      log(output, "Usage: install <github url>");
+      return;
+    }
+
+    log(output, `Install request sent: ${repoUrl}`);
     return;
   }
 

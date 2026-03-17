@@ -12,6 +12,7 @@
     "./modules/task-monitor/task-monitor.js",
     "./modules/command-console/command-console.js",
     "./modules/system-panel/system-panel.js",
-    "./modules/self-healing-panel/self-healing-panel.js"
+    "./modules/self-healing-panel/self-healing-panel.js",
+    "./modules/app-installer-panel/app-installer-panel.js"
   ]
 }
