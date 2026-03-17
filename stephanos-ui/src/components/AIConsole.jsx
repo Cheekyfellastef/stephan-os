@@ -2,7 +2,7 @@ import { useAIStore } from '../state/aiStore';
 import CommandResultCard from './CommandResultCard';
 
 export default function AIConsole({ input, setInput, submitPrompt, commandHistory }) {
-  const { isBusy } = useAIStore();
+  const { isBusy, apiStatus } = useAIStore();
 
   const onSubmit = (event) => {
     event.preventDefault();
@@ -13,6 +13,10 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   return (
     <section className="panel">
       <h1>Stephanos Mission Console</h1>
+      <div className={`api-connection-banner ${apiStatus.state}`}>
+        <strong>{apiStatus.label}</strong>
+        <span>{apiStatus.detail}</span>
+      </div>
       <div className="output-panel">
         {commandHistory.length === 0 ? (
           <p className="muted">Ready. Try /status, /tools, /simulate list, /simulate run trajectory-demo --start 1000 --monthly 100 --rate 0.05 --years 10</p>
