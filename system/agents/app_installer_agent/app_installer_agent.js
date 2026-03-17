@@ -7,11 +7,9 @@ export const appInstallerAgent = {
     const text = String(payload?.text || "").trim();
     const normalizedText = text.toLowerCase();
 
-    if (!normalizedText.startsWith("install ")) {
-      return;
-    }
+    if (!normalizedText.startsWith("install ")) return;
 
-    const repoUrl = text.slice("install ".length).trim();
+    const repoUrl = text.replace(/^install\s+/i, "").trim();
 
     if (!repoUrl) {
       console.warn("Installer: missing repository URL");

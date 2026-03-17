@@ -15,16 +15,15 @@ function normaliseProject(project) {
 }
 
 function getRuntimeProjects(context) {
-  const stateProjects = context.systemState.get("projects");
+  const projects =
+    context.systemState.get("projects")?.length
+      ? context.systemState.get("projects")
+      : context.projects;
 
-  if (Array.isArray(stateProjects) && stateProjects.length > 0) {
-    return stateProjects;
-  }
-
-  return Array.isArray(context?.projects) ? context.projects : [];
+  return Array.isArray(projects) ? projects : [];
 }
 
-function renderProjects(context) {
+function renderProjectRegistry(projects, context) {
   const container = document.getElementById("project-registry");
   if (!container) {
     console.error("Command Deck: #project-registry not found");
@@ -32,8 +31,6 @@ function renderProjects(context) {
   }
 
   container.innerHTML = "";
-
-  const projects = getRuntimeProjects(context);
 
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
@@ -60,7 +57,7 @@ let cleanupSimulationStart = null;
 let cleanupAppInstalled = null;
 
 export function init(context) {
-  renderProjects(context);
+  renderProjectRegistry(getRuntimeProjects(context), context);
 
   cleanupSimulationStart = context.eventBus.on("simulation:start", (simulationName) => {
     const normalized = String(simulationName || "").trim().toLowerCase();
@@ -92,7 +89,10 @@ export function init(context) {
   });
 
   cleanupAppInstalled = context.eventBus.on("app:installed", () => {
-    renderProjects(context);
+    renderProjectRegistry(
+      context.systemState.get("projects") || context.projects,
+      context
+    );
   });
 }
 
