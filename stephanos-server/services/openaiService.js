@@ -25,8 +25,7 @@ function buildInput(userInput, context = {}) {
           text: JSON.stringify({
             prompt: userInput,
             context,
-            instruction:
-              'Respond with concise actionable guidance. Include a request_category field in plain text summary when useful.',
+            instruction: 'Provide concise, practical guidance for Stephanos OS operation.',
           }),
         },
       ],
@@ -34,8 +33,12 @@ function buildInput(userInput, context = {}) {
   ];
 }
 
+export function isAIServiceAvailable() {
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
 export async function getAIResponse({ userInput, context = {} }) {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!isAIServiceAvailable()) {
     throw new Error('OPENAI_API_KEY is missing. Configure stephanos-server/.env first.');
   }
 

@@ -1,15 +1,26 @@
-export const COMMAND_TYPE = {
-  NATURAL: 'natural',
-  SLASH: 'slash_command',
-  SYSTEM: 'system_command',
+export const RESPONSE_TYPE = {
+  ASSISTANT: 'assistant_response',
+  TOOL: 'tool_result',
+  MEMORY: 'memory_result',
+  ERROR: 'error_result',
 };
 
 export const ROUTE_TYPE = {
   ASSISTANT: 'assistant',
-  CHAT: 'chat',
-  COMMAND: 'command',
-  SIMULATION: 'simulation',
-  RESEARCH: 'research',
-  KNOWLEDGE_GRAPH: 'knowledge_graph',
-  VR_LAB: 'vr_lab',
+  SYSTEM: 'system',
+  MEMORY: 'memory',
+};
+
+export const EMPTY_RESPONSE = {
+  success: false,
+  type: RESPONSE_TYPE.ERROR,
+  route: ROUTE_TYPE.ASSISTANT,
+  command: null,
+  output_text: '',
+  data: {},
+  tools_used: [],
+  memory_hits: [],
+  timing_ms: 0,
+  error: 'No response payload',
+  debug: {},
 };

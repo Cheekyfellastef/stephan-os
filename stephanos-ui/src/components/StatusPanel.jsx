@@ -1,17 +1,19 @@
 import { useAIStore } from '../state/aiStore';
 
 export default function StatusPanel() {
-  const { status, isBusy, lastRoute, chatHistory } = useAIStore();
+  const { status, isBusy, lastRoute, commandHistory } = useAIStore();
+  const latest = commandHistory[commandHistory.length - 1];
 
   return (
     <aside className="status-panel panel">
       <h2>Status</h2>
       <ul>
         <li>Backend: {status === 'error' ? 'degraded' : 'online'}</li>
-        <li>State: {isBusy ? 'busy' : status}</li>
+        <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
-        <li>Messages: {chatHistory.length}</li>
-        <li>Debug Console: press F1</li>
+        <li>Commands: {commandHistory.length}</li>
+        <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>
+        <li>Debug Console: F1</li>
       </ul>
     </aside>
   );

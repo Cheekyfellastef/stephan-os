@@ -7,7 +7,20 @@ export default function DebugConsole() {
   return (
     <section className="debug-console panel">
       <h2>Developer Debug Console</h2>
-      <pre>{JSON.stringify(debugData, null, 2)}</pre>
+      <div className="debug-grid">
+        <div><strong>Parsed Command</strong><pre>{JSON.stringify(debugData.parsed_command, null, 2)}</pre></div>
+        <div><strong>Route / Tool</strong><pre>{JSON.stringify({ route: debugData.selected_route, tool: debugData.selected_tool, tool_state: debugData.tool_state }, null, 2)}</pre></div>
+        <div><strong>Timing / Memory</strong><pre>{JSON.stringify({ timing_ms: debugData.timing_ms, memory_hits: debugData.memory_hits }, null, 2)}</pre></div>
+        <div><strong>Errors</strong><pre>{JSON.stringify({ error: debugData.error }, null, 2)}</pre></div>
+      </div>
+      <details>
+        <summary>Latest Request Payload</summary>
+        <pre>{JSON.stringify(debugData.request_payload, null, 2)}</pre>
+      </details>
+      <details>
+        <summary>Latest Response Payload</summary>
+        <pre>{JSON.stringify(debugData.response_payload, null, 2)}</pre>
+      </details>
     </section>
   );
 }

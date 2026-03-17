@@ -3,7 +3,7 @@ import { createContext, useContext, useMemo, useState } from 'react';
 const AIStoreContext = createContext(null);
 
 export function AIStoreProvider({ children }) {
-  const [chatHistory, setChatHistory] = useState([]);
+  const [commandHistory, setCommandHistory] = useState([]);
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState('assistant');
@@ -12,8 +12,8 @@ export function AIStoreProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      chatHistory,
-      setChatHistory,
+      commandHistory,
+      setCommandHistory,
       status,
       setStatus,
       isBusy,
@@ -25,7 +25,7 @@ export function AIStoreProvider({ children }) {
       debugData,
       setDebugData,
     }),
-    [chatHistory, status, isBusy, lastRoute, debugVisible, debugData],
+    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData],
   );
 
   return <AIStoreContext.Provider value={value}>{children}</AIStoreContext.Provider>;

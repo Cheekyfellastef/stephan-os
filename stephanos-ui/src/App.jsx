@@ -1,11 +1,13 @@
 import AIConsole from './components/AIConsole';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
+import ToolsPanel from './components/ToolsPanel';
+import MemoryPanel from './components/MemoryPanel';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 
 export default function App() {
-  const { input, setInput, submitPrompt, clearConsole, chatHistory } = useAIConsole();
+  const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
   useDebugConsole();
 
   return (
@@ -14,10 +16,13 @@ export default function App() {
         input={input}
         setInput={setInput}
         submitPrompt={submitPrompt}
-        clearConsole={clearConsole}
-        chatHistory={chatHistory}
+        commandHistory={commandHistory}
       />
-      <StatusPanel />
+      <div className="side-stack">
+        <StatusPanel />
+        <ToolsPanel commandHistory={commandHistory} />
+        <MemoryPanel commandHistory={commandHistory} />
+      </div>
       <DebugConsole />
     </main>
   );
