@@ -44,6 +44,14 @@ export function AIStoreProvider({ children }) {
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(getStoredProvider);
   const [customProviderConfig, setCustomProviderConfig] = useState(getStoredCustomConfig);
+  const [uiDiagnostics, setUiDiagnostics] = useState({
+    appRootRendered: false,
+    aiConsoleRendered: false,
+    providerToggleMounted: false,
+    componentMarker: 'uninitialized',
+    aiConsoleMarker: 'uninitialized',
+    providerToggleMarker: 'uninitialized',
+  });
   const [apiStatus, setApiStatus] = useState({
     state: 'checking',
     label: 'Checking backend...',
@@ -100,8 +108,10 @@ export function AIStoreProvider({ children }) {
       resetCustomProviderConfig,
       apiStatus,
       setApiStatus,
+      uiDiagnostics,
+      setUiDiagnostics,
     }),
-    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, provider, customProviderConfig, apiStatus],
+    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, provider, customProviderConfig, apiStatus, uiDiagnostics],
   );
 
   return createElement(AIStoreContext.Provider, { value }, children);

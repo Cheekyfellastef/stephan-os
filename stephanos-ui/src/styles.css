@@ -10,13 +10,16 @@ body {
   background: radial-gradient(circle at top, #132237, #070b12 60%);
 }
 
+.app-shell-root {
+  padding: 1rem 2rem 2rem;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 1rem;
-  padding: 2rem;
-  max-width: 1280px;
-  margin: 0 auto;
 }
 
 .side-stack { display: grid; gap: 1rem; }
@@ -26,6 +29,34 @@ body {
   border: 1px solid rgba(91, 124, 168, 0.35);
   border-radius: 12px;
   padding: 1rem;
+}
+
+.render-debug-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 2px solid #ff4d4d;
+  border-radius: 8px;
+  background: #420000;
+  color: #ffe0e0;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.provider-dock {
+  margin-bottom: 1rem;
+  border: 3px solid #ff3b3b;
+  background: linear-gradient(180deg, rgba(57, 3, 3, 0.96), rgba(33, 8, 2, 0.94));
+  position: relative;
+  z-index: 20;
+  min-height: 120px;
+}
+
+.provider-dock h2 { margin: 0 0 0.4rem; }
+
+.provider-dock-status {
+  margin: 0 0 0.75rem;
+  color: #ffd8a6;
+  font-size: 0.86rem;
 }
 
 .output-panel {
@@ -62,13 +93,6 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
   background: rgba(7, 16, 28, 0.65);
 }
 .graph-card h4 { margin: 0 0 0.35rem 0; font-size: 0.95rem; }
-
-@media (max-width: 900px) {
-  .app-shell { grid-template-columns: 1fr; }
-  .graph-grid { grid-template-columns: 1fr; }
-  .provider-switch-block { padding: 0.8rem; }
-  .provider-toggle-button { flex-basis: 100%; }
-}
 
 .simulation-result-card {
   border: 1px solid rgba(99, 173, 204, 0.35);
@@ -146,6 +170,12 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
   color: #9fd5ff;
 }
 
+.provider-mounted-text {
+  margin: 0 0 0.6rem;
+  font-weight: 700;
+  color: #ffd8d8;
+}
+
 .provider-toggle {
   display: flex;
   flex-wrap: wrap;
@@ -215,4 +245,12 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
   margin-top: 0.6rem;
   display: flex;
   justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .app-shell-root { padding: 1rem; }
+  .graph-grid { grid-template-columns: 1fr; }
+  .provider-switch-block { padding: 0.8rem; }
+  .provider-toggle-button { flex-basis: 100%; }
 }

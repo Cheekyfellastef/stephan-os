@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDERS = [
@@ -6,12 +7,31 @@ const PROVIDERS = [
   { id: 'custom', label: '🛠 Custom LLM' },
 ];
 
+const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::v3';
+
 export default function ProviderToggle() {
-  const { provider, setProvider } = useAIStore();
+  const { provider, setProvider, setUiDiagnostics } = useAIStore();
+
+  useEffect(() => {
+    console.log('[ProviderToggle] mounted from', PROVIDER_COMPONENT_MARKER);
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      providerToggleMounted: true,
+      providerToggleMarker: PROVIDER_COMPONENT_MARKER,
+    }));
+
+    return () => {
+      setUiDiagnostics((prev) => ({
+        ...prev,
+        providerToggleMounted: false,
+      }));
+    };
+  }, [setUiDiagnostics]);
 
   return (
-    <div className="provider-toggle-block">
+    <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
       <span className="provider-switch-label">AI Provider</span>
+      <p className="provider-mounted-text">PROVIDER TOGGLE MOUNTED</p>
       <div className="provider-toggle" role="tablist" aria-label="AI Provider">
         {PROVIDERS.map((item) => {
           const isActive = provider === item.id;

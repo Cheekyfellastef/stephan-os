@@ -1,7 +1,7 @@
 import { useAIStore } from '../state/aiStore';
 
 export default function DebugConsole() {
-  const { debugVisible, debugData } = useAIStore();
+  const { debugVisible, debugData, provider, uiDiagnostics } = useAIStore();
   if (!debugVisible) return null;
 
   return (
@@ -15,6 +15,11 @@ export default function DebugConsole() {
         <div><strong>Memory</strong><pre>{JSON.stringify({ memory_hits: debugData.memory_hits }, null, 2)}</pre></div>
         <div><strong>Errors</strong><pre>{JSON.stringify({ error_code: debugData.error_code, error: debugData.error }, null, 2)}</pre></div>
       </div>
+
+      <div className="debug-grid">
+        <div><strong>Provider Runtime</strong><pre>{JSON.stringify({ provider, providerToggleMounted: uiDiagnostics.providerToggleMounted, appRootRendered: uiDiagnostics.appRootRendered, aiConsoleRendered: uiDiagnostics.aiConsoleRendered, componentMarker: uiDiagnostics.componentMarker, providerToggleMarker: uiDiagnostics.providerToggleMarker }, null, 2)}</pre></div>
+      </div>
+
       <details>
         <summary>Latest Request Payload</summary>
         <pre>{JSON.stringify(debugData.request_payload, null, 2)}</pre>
