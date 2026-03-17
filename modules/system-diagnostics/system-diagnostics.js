@@ -8,9 +8,11 @@ const PANEL_ID = "system-diagnostics-panel";
 const DEVELOPER_MODE_EVENT = "stephanos:developer-mode-changed";
 
 let developerModeListener = null;
+let diagnosticsUnsubscribers = [];
 
 export function init(context) {
   unsubscribeFromDeveloperModeChanges();
+  unsubscribeFromDiagnosticsEvents();
 
   const ui = context?.services?.getService?.("ui");
   if (!ui) {
@@ -26,12 +28,15 @@ export function init(context) {
     <div id="diag-modules"></div>
     <div id="diag-services"></div>
     <div id="diag-events"></div>
+    <div id="diag-app-summary"></div>
+    <div id="diag-app-issues"></div>
   `
     );
   }
 
   updatePanelVisibility();
   subscribeToDeveloperModeChanges();
+  subscribeToDiagnosticsEvents(context);
 
   updateDiagnostics(context);
 }
@@ -66,8 +71,37 @@ function unsubscribeFromDeveloperModeChanges() {
   developerModeListener = null;
 }
 
+function subscribeToDiagnosticsEvents(context) {
+  const eventBus = context?.eventBus;
+
+  if (!eventBus?.on) {
+    return;
+  }
+
+  diagnosticsUnsubscribers = [
+    eventBus.on("app:discovery_complete", (report) => {
+      context?.systemState?.set?.("appValidationReport", report);
+      updateDiagnostics(context);
+    }),
+    eventBus.on("app:validation_failed", () => {
+      updateDiagnostics(context);
+    })
+  ];
+}
+
+function unsubscribeFromDiagnosticsEvents() {
+  for (const unsubscribe of diagnosticsUnsubscribers) {
+    if (typeof unsubscribe === "function") {
+      unsubscribe();
+    }
+  }
+
+  diagnosticsUnsubscribers = [];
+}
+
 export function dispose(context) {
   unsubscribeFromDeveloperModeChanges();
+  unsubscribeFromDiagnosticsEvents();
 
   const ui = context?.services?.getService?.("ui");
   if (!ui) {
@@ -90,4 +124,26 @@ function updateDiagnostics(context) {
 
   document.getElementById("diag-events").innerText =
     "Event bus active: true";
+
+  const report = context?.systemState?.get?.("appValidationReport") || {
+    loaded: 0,
+    invalid: 0,
+    issues: []
+  };
+
+  const summary = document.getElementById("diag-app-summary");
+  if (summary) {
+    summary.innerText = `Apps loaded: ${report.loaded || 0}, Apps with errors: ${report.invalid || 0}`;
+  }
+
+  const issues = document.getElementById("diag-app-issues");
+  if (issues) {
+    if (Array.isArray(report.issues) && report.issues.length > 0) {
+      issues.innerHTML = `<strong>App discovery issues</strong><br>${report.issues
+        .map((issue) => `• ${issue}`)
+        .join("<br>")}`;
+    } else {
+      issues.innerText = "App discovery issues: none";
+    }
+  }
 }
