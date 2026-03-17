@@ -1,3 +1,13 @@
+import { loadDependencies } from "./apps/dependency_loader.js";
+
+function renderAppLoadError(container, message) {
+  const error = document.createElement("div");
+  error.style.color = "red";
+  error.style.padding = "20px";
+  error.innerText = message;
+  container.appendChild(error);
+}
+
 export const workspace = {
   async open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
@@ -75,6 +85,25 @@ export const workspace = {
       container.style.flexDirection = "column";
       container.style.gap = "8px";
 
+      try {
+        await loadDependencies(project);
+
+        const entryResponse = await fetch(project.entry, { method: "HEAD" });
+        if (!entryResponse.ok) {
+          throw new Error(`Entry file unavailable (${entryResponse.status})`);
+        }
+      } catch (err) {
+        console.error("App preflight failed:", project?.name, err);
+        renderAppLoadError(
+          container,
+          "Simulation failed to load. Check browser console."
+        );
+
+        content.appendChild(backButton);
+        content.appendChild(container);
+        return;
+      }
+
       const iframe = document.createElement("iframe");
       iframe.src = project.entry;
       iframe.style.width = "100%";
@@ -82,11 +111,10 @@ export const workspace = {
       iframe.style.border = "none";
 
       iframe.onerror = () => {
-        const errorMessage = document.createElement("div");
-        errorMessage.style.color = "red";
-        errorMessage.innerText =
-          "Simulation failed to load. Check console for missing files.";
-        container.appendChild(errorMessage);
+        renderAppLoadError(
+          container,
+          "Simulation failed to load. Check browser console."
+        );
       };
 
       iframe.addEventListener("load", () => {

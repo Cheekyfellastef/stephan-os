@@ -1,3 +1,20 @@
+const STEPHANOS_SYSTEM_ENTRY = {
+  name: "Stephanos OS",
+  icon: "🧠",
+  entry: "ROADMAP.md",
+  type: "system"
+};
+
+function ensureStephanosEntry(apps) {
+  const hasStephanos = apps.some(
+    (app) => String(app?.name || "").trim().toLowerCase() === "stephanos os"
+  );
+
+  if (!hasStephanos) {
+    apps.push({ ...STEPHANOS_SYSTEM_ENTRY });
+  }
+}
+
 export async function discoverApps() {
   const apps = [];
 
@@ -13,12 +30,14 @@ export async function discoverApps() {
         name: manifest.name,
         icon: manifest.icon,
         entry: `apps/${folder}/${manifest.entry}`,
-        type: manifest.type || "app"
+        type: manifest.type || "app",
+        dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : []
       });
     } catch (err) {
       console.warn("Skipping app:", folder);
     }
   }
 
+  ensureStephanosEntry(apps);
   return apps;
 }
