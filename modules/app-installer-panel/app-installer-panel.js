@@ -29,6 +29,10 @@ export function init(context) {
   renderInstalledApps(context);
 
   unsubscribers = [
+    context.eventBus.on("app:installing", (payload) => {
+      setStatus(`Status: Installing ${payload?.repoUrl || "repository"}`);
+      setError("");
+    }),
     context.eventBus.on("app:installed", (app) => {
       setStatus(`Status: Installed ${app?.name || "unknown"}`);
       setError("");

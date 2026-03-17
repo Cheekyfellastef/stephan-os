@@ -23,6 +23,9 @@ export const appInstallerAgent = {
     }
 
     console.log("Installer: attempting install from", repoUrl);
+    context.eventBus.emit("app:installing", {
+      repoUrl
+    });
 
     const segments = repoUrl.split("/").filter(Boolean);
     const rawName = segments.pop() || "";
