@@ -15,7 +15,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       <h1>Stephanos Mission Console</h1>
       <div className="output-panel">
         {commandHistory.length === 0 ? (
-          <p className="muted">Ready. Try /status, /tools, /agents, or /memory.</p>
+          <p className="muted">Ready. Try /status, /tools, /simulate list, /simulate run trajectory-demo --start 1000 --monthly 100 --rate 0.05 --years 10</p>
         ) : (
           commandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)
         )}

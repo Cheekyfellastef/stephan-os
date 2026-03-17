@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, createElement, useContext, useMemo, useState } from 'react';
 
 const AIStoreContext = createContext(null);
 
@@ -28,7 +28,7 @@ export function AIStoreProvider({ children }) {
     [commandHistory, status, isBusy, lastRoute, debugVisible, debugData],
   );
 
-  return <AIStoreContext.Provider value={value}>{children}</AIStoreContext.Provider>;
+  return createElement(AIStoreContext.Provider, { value }, children);
 }
 
 export function useAIStore() {

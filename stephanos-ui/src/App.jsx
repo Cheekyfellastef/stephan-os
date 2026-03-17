@@ -4,6 +4,7 @@ import DebugConsole from './components/DebugConsole';
 import ToolsPanel from './components/ToolsPanel';
 import MemoryPanel from './components/MemoryPanel';
 import KnowledgeGraphPanel from './components/KnowledgeGraphPanel';
+import SimulationPanel from './components/SimulationPanel';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 
@@ -24,6 +25,7 @@ export default function App() {
         <ToolsPanel commandHistory={commandHistory} />
         <MemoryPanel commandHistory={commandHistory} />
         <KnowledgeGraphPanel commandHistory={commandHistory} />
+        <SimulationPanel commandHistory={commandHistory} />
       </div>
       <DebugConsole />
     </main>
