@@ -80,5 +80,6 @@ app.use((error, _req, res, next) => {
 });
 app.listen(PORT, () => {
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);
-  logger.info(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+  logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

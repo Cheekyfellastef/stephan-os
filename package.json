@@ -1,0 +1,13 @@
+{
+  "name": "stephan-os",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "stephanos": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
+    "dev:server": "npm --prefix stephanos-server run dev",
+    "dev:ui": "npm --prefix stephanos-ui run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
