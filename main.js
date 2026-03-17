@@ -1,5 +1,6 @@
 import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
+import { appInstallerAgent } from "./system/agents/app_installer_agent/app_installer_agent.js";
 import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
 import { validateApps } from "./system/apps/app_validator.js";
 import { createEventBus } from "./system/core/event_bus.js";
@@ -118,6 +119,7 @@ async function startStephanos() {
   const { sampleAgent } = await import("./system/agents/sample_agent.js");
 
   const systemState = createSystemState();
+  systemState.set("projects", projects);
   const services = createServiceRegistry();
   const uiRenderer = createUIRenderer();
   const taskQueue = createTaskQueue();
@@ -158,6 +160,7 @@ async function startStephanos() {
   agentRuntime.startAgent(sampleAgent);
   agentRuntime.startAgent(assistantAgent);
   agentRuntime.startAgent(selfRepairAgent);
+  agentRuntime.startAgent(appInstallerAgent);
 
   context.moduleLoader = {
     getLoadedModules: () => getLoadedModules(),

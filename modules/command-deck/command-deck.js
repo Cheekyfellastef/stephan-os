@@ -14,15 +14,17 @@ function normaliseProject(project) {
   };
 }
 
-export const moduleDefinition = {
-  id: "command-deck",
-  version: "1.0",
-  description: "Renders project tiles and routes launches into the workspace runtime."
-};
+function getRuntimeProjects(context) {
+  const stateProjects = context.systemState.get("projects");
 
-let cleanupSimulationStart = null;
+  if (Array.isArray(stateProjects) && stateProjects.length > 0) {
+    return stateProjects;
+  }
 
-export function init(context) {
+  return Array.isArray(context?.projects) ? context.projects : [];
+}
+
+function renderProjects(context) {
   const container = document.getElementById("project-registry");
   if (!container) {
     console.error("Command Deck: #project-registry not found");
@@ -31,7 +33,7 @@ export function init(context) {
 
   container.innerHTML = "";
 
-  const projects = Array.isArray(context?.projects) ? context.projects : [];
+  const projects = getRuntimeProjects(context);
 
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
@@ -46,10 +48,23 @@ export function init(context) {
     tile.onclick = () => context.workspace.open(safeProject, context);
     container.appendChild(tile);
   });
+}
 
+export const moduleDefinition = {
+  id: "command-deck",
+  version: "1.0",
+  description: "Renders project tiles and routes launches into the workspace runtime."
+};
+
+let cleanupSimulationStart = null;
+let cleanupAppInstalled = null;
+
+export function init(context) {
+  renderProjects(context);
 
   cleanupSimulationStart = context.eventBus.on("simulation:start", (simulationName) => {
     const normalized = String(simulationName || "").trim().toLowerCase();
+    const projects = getRuntimeProjects(context);
 
     const project = projects.find((projectItem) => {
       const name = String(projectItem?.name || "").trim().toLowerCase();
@@ -75,11 +90,20 @@ export function init(context) {
       context.workspace.open(normaliseProject(project), context);
     }
   });
+
+  cleanupAppInstalled = context.eventBus.on("app:installed", () => {
+    renderProjects(context);
+  });
 }
 
 export function dispose() {
   if (typeof cleanupSimulationStart === "function") {
     cleanupSimulationStart();
     cleanupSimulationStart = null;
+  }
+
+  if (typeof cleanupAppInstalled === "function") {
+    cleanupAppInstalled();
+    cleanupAppInstalled = null;
   }
 }
