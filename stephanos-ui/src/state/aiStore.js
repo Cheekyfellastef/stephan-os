@@ -9,6 +9,14 @@ export function AIStoreProvider({ children }) {
   const [lastRoute, setLastRoute] = useState('assistant');
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState({});
+  const [apiStatus, setApiStatus] = useState({
+    state: 'checking',
+    label: 'Checking backend...',
+    detail: 'Waiting for health check.',
+    target: 'local',
+    baseUrl: '',
+    lastCheckedAt: null,
+  });
 
   const value = useMemo(
     () => ({
@@ -24,8 +32,10 @@ export function AIStoreProvider({ children }) {
       setDebugVisible,
       debugData,
       setDebugData,
+      apiStatus,
+      setApiStatus,
     }),
-    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData],
+    [commandHistory, status, isBusy, lastRoute, debugVisible, debugData, apiStatus],
   );
 
   return createElement(AIStoreContext.Provider, { value }, children);

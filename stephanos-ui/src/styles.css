@@ -83,3 +83,41 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
 
 .result-card.assistant { border-color: #7a5bd8; background: rgba(30, 14, 45, 0.45); }
 .suggested-actions code { color: #9ad7ff; }
+
+.api-connection-banner {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid rgba(91, 124, 168, 0.35);
+  font-size: 0.9rem;
+}
+
+.api-connection-banner.online,
+.api-banner.online {
+  border-color: rgba(94, 191, 141, 0.55);
+  background: rgba(13, 50, 34, 0.4);
+}
+
+.api-connection-banner.offline,
+.api-banner.offline {
+  border-color: rgba(199, 103, 128, 0.65);
+  background: rgba(68, 18, 31, 0.45);
+}
+
+.api-connection-banner.checking,
+.api-banner.checking,
+.api-connection-banner.error,
+.api-banner.error {
+  border-color: rgba(191, 165, 94, 0.55);
+  background: rgba(58, 45, 17, 0.45);
+}
+
+.api-banner {
+  margin-top: 0.75rem;
+  border: 1px solid rgba(91, 124, 168, 0.35);
+  border-radius: 8px;
+  padding: 0.5rem;
+  font-size: 0.82rem;
+}

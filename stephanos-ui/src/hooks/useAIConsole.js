@@ -1,7 +1,49 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
-import { sendPrompt } from '../ai/aiClient';
+import { checkApiHealth, getApiRuntimeConfig, sendPrompt } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
+
+function transportErrorToUi(error) {
+  if (!error?.code) {
+    return {
+      error: 'Unexpected transport error.',
+      errorCode: 'UNKNOWN_TRANSPORT_ERROR',
+      output: 'Unable to process request due to an unknown network issue.',
+    };
+  }
+
+  const fallback = {
+    error: error.message,
+    errorCode: error.code,
+    output: error.message,
+  };
+
+  if (error.code === 'BACKEND_OFFLINE') {
+    return {
+      error: error.message,
+      errorCode: error.code,
+      output: 'Backend offline: start stephanos-server or update VITE_API_BASE_URL to a reachable API.',
+    };
+  }
+
+  if (error.code === 'TIMEOUT') {
+    return {
+      error: error.message,
+      errorCode: error.code,
+      output: 'Request timed out. Try again or increase VITE_API_TIMEOUT_MS.',
+    };
+  }
+
+  if (error.code === 'INVALID_JSON') {
+    return {
+      error: error.message,
+      errorCode: error.code,
+      output: 'Backend responded with invalid JSON. Check server logs for serialization issues.',
+    };
+  }
+
+  return fallback;
+}
 
 export function useAIConsole() {
   const [input, setInput] = useState('');
@@ -12,7 +54,40 @@ export function useAIConsole() {
     setStatus,
     setLastRoute,
     setDebugData,
+    apiStatus,
+    setApiStatus,
   } = useAIStore();
+
+  const runtimeConfig = getApiRuntimeConfig();
+
+  const refreshHealth = useCallback(async () => {
+    try {
+      const health = await checkApiHealth();
+      setApiStatus({
+        state: health.ok ? 'online' : 'error',
+        label: `Connected to ${health.target} API`,
+        target: health.target,
+        baseUrl: health.baseUrl,
+        lastCheckedAt: new Date().toISOString(),
+        detail: health.ok ? 'Backend reachable.' : `Health check failed (${health.status}).`,
+        meta: health.data,
+      });
+    } catch (error) {
+      const uiError = transportErrorToUi(error);
+      setApiStatus({
+        state: 'offline',
+        label: 'Backend offline',
+        target: runtimeConfig.target,
+        baseUrl: runtimeConfig.baseUrl,
+        lastCheckedAt: new Date().toISOString(),
+        detail: uiError.output,
+      });
+    }
+  }, [runtimeConfig.baseUrl, runtimeConfig.target, setApiStatus]);
+
+  useEffect(() => {
+    refreshHealth();
+  }, [refreshHealth]);
 
   async function submitPrompt(rawPrompt) {
     const prompt = rawPrompt.trim();
@@ -50,6 +125,15 @@ export function useAIConsole() {
       setCommandHistory((prev) => [...prev, entry]);
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? 'ok' : 'error');
+      setApiStatus((prev) => ({
+        ...prev,
+        state: 'online',
+        label: `Connected to ${runtimeConfig.target} API`,
+        target: runtimeConfig.target,
+        baseUrl: runtimeConfig.baseUrl,
+        detail: data.success ? 'Backend reachable.' : 'Backend reachable, request reported an error.',
+        lastCheckedAt: new Date().toISOString(),
+      }));
       setDebugData({
         request_payload: requestPayload,
         response_payload: data,
@@ -70,8 +154,41 @@ export function useAIConsole() {
         error_code: data.error_code ?? data.debug?.error_code ?? null,
       });
     } catch (error) {
+      const uiError = transportErrorToUi(error);
       setStatus('error');
-      setDebugData({ parsed_command: parsed, error: error.message });
+      setApiStatus((prev) => ({
+        ...prev,
+        state: 'offline',
+        label: 'Backend offline',
+        detail: uiError.output,
+        lastCheckedAt: new Date().toISOString(),
+      }));
+
+      const failureEntry = {
+        id: `cmd_${Date.now()}`,
+        raw_input: prompt,
+        parsed_command: parsed,
+        route: 'assistant',
+        tool_used: null,
+        success: false,
+        output_text: uiError.output,
+        data_payload: null,
+        timing_ms: Math.round(performance.now() - startedAt),
+        timestamp: new Date().toISOString(),
+        error: uiError.error,
+        error_code: uiError.errorCode,
+        response: {
+          type: 'assistant_response',
+          route: 'assistant',
+          success: false,
+          output_text: uiError.output,
+          error: uiError.error,
+          error_code: uiError.errorCode,
+        },
+      };
+
+      setCommandHistory((prev) => [...prev, failureEntry]);
+      setDebugData({ parsed_command: parsed, error: uiError.error, error_code: uiError.errorCode });
     } finally {
       setIsBusy(false);
     }
@@ -91,5 +208,7 @@ export function useAIConsole() {
     commandHistory,
     submitPrompt,
     clearConsole,
+    refreshHealth,
+    apiStatus,
   };
 }
