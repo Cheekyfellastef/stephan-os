@@ -59,7 +59,7 @@ export function useAIConsole() {
     setApiStatus,
     provider,
     providerDraftStatus,
-    getActiveProviderConfig,
+    getRequestProviderConfig,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -109,11 +109,11 @@ export function useAIConsole() {
     setStatus('processing');
 
     try {
-      const activeProviderConfig = getActiveProviderConfig();
+      const requestProviderConfig = getRequestProviderConfig(provider);
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
-        providerConfig: provider === 'openai' ? null : activeProviderConfig,
+        providerConfig: provider === 'openai' ? null : requestProviderConfig,
       });
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -131,7 +131,7 @@ export function useAIConsole() {
         response: data,
       };
 
-      const activeProviderLabel = buildProviderDisplayLabel(provider, getActiveProviderConfig());
+      const activeProviderLabel = buildProviderDisplayLabel(provider, requestProviderConfig);
       const providerSpecificDetail = provider === 'ollama' && !data.success
         ? 'Local Ollama not reachable at http://localhost:11434. Start Ollama with: ollama serve'
         : data.output_text;

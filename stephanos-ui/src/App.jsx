@@ -16,18 +16,26 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { useAIStore } from './state/aiStore';
 
-const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-dock-v4';
+const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-dock-live-audit-v1';
+const BUILD_MARKER = 'STEPHANOS BUILD MARKER: provider-fix-live-audit-v1';
+const BUILD_TIMESTAMP = '2026-03-17T18:10:00Z';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
-  const { provider, providerDraftStatus, getActiveProviderConfig, setUiDiagnostics } = useAIStore();
+  const {
+    provider,
+    providerDraftStatus,
+    getSavedProviderConfig,
+    setUiDiagnostics,
+  } = useAIStore();
   useDebugConsole();
 
-  const activeConfig = getActiveProviderConfig();
+  const savedConfig = getSavedProviderConfig(provider);
   const configMode = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
 
   useEffect(() => {
     console.log('[App] mounted from', APP_COMPONENT_MARKER);
+    console.log(`${BUILD_MARKER} | ${BUILD_TIMESTAMP}`);
     setUiDiagnostics((prev) => ({
       ...prev,
       appRootRendered: true,
@@ -41,11 +49,20 @@ export default function App() {
         DEBUG: APP ROOT RENDERED · DEBUG: AI CONSOLE RENDERED · DEBUG: PROVIDER TOGGLE RENDERED
       </div>
 
+      <section className="build-marker-banner panel" role="status" aria-live="polite">
+        <strong>{BUILD_MARKER}</strong> | {BUILD_TIMESTAMP}
+      </section>
+
       <section className="provider-dock panel">
         <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
-          Active provider: <strong>{provider}</strong> · Config mode: <strong>{configMode}</strong> · Base URL: <strong>{activeConfig.baseUrl || 'n/a'}</strong> · Endpoint: <strong>{activeConfig.chatEndpoint || 'n/a'}</strong>
+          Current provider: <strong>{provider}</strong> · Active base URL: <strong>{savedConfig.baseUrl || 'n/a'}</strong> · Active endpoint: <strong>{savedConfig.chatEndpoint || 'n/a'}</strong> · Active model: <strong>{savedConfig.model || 'n/a'}</strong> · Config mode: <strong>{configMode}</strong>
         </p>
+        {provider === 'custom' && configMode === 'draft' ? (
+          <p className="provider-dock-status">
+            Draft changes are visible in form fields, but live requests still use the saved custom config until Save / Apply is pressed.
+          </p>
+        ) : null}
         <ProviderToggle />
         {provider === 'custom' ? <CustomProviderPanel /> : null}
       </section>
