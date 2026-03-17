@@ -1,10 +1,20 @@
+import { useEffect } from 'react';
 import { useAIStore } from '../state/aiStore';
 import CommandResultCard from './CommandResultCard';
-import ProviderToggle from './ProviderToggle';
-import CustomProviderPanel from './CustomProviderPanel';
+
+const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::v3';
 
 export default function AIConsole({ input, setInput, submitPrompt, commandHistory }) {
-  const { isBusy, apiStatus } = useAIStore();
+  const { isBusy, apiStatus, setUiDiagnostics } = useAIStore();
+
+  useEffect(() => {
+    console.log('[AIConsole] mounted from', AICONSOLE_COMPONENT_MARKER);
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      aiConsoleRendered: true,
+      aiConsoleMarker: AICONSOLE_COMPONENT_MARKER,
+    }));
+  }, [setUiDiagnostics]);
 
   const onSubmit = (event) => {
     event.preventDefault();
@@ -15,10 +25,6 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   return (
     <section className="panel">
       <h1>Stephanos Mission Console</h1>
-      <div className="provider-switch-block">
-        <ProviderToggle />
-        <CustomProviderPanel />
-      </div>
       <div className={`api-connection-banner ${apiStatus.state}`}>
         <strong>{apiStatus.label}</strong>
         <span>{apiStatus.detail}</span>

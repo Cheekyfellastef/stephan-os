@@ -7,7 +7,7 @@ const providerModeLabels = {
 };
 
 export default function StatusPanel() {
-  const { status, isBusy, lastRoute, commandHistory, apiStatus, provider, customProviderConfig } = useAIStore();
+  const { status, isBusy, lastRoute, commandHistory, apiStatus, provider, customProviderConfig, uiDiagnostics } = useAIStore();
   const latest = commandHistory[commandHistory.length - 1];
   const proposalStats = commandHistory.findLast((entry) => entry.data_payload?.stats)?.data_payload?.stats;
   const roadmapSummary = commandHistory.findLast((entry) => entry.data_payload?.summary)?.data_payload?.summary;
@@ -31,6 +31,8 @@ export default function StatusPanel() {
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>
         <li>Pending Proposals: {proposalStats?.pending ?? 'n/a'}</li>
         <li>Roadmap Open: {roadmapSummary?.open ?? 'n/a'}</li>
+        <li>Provider Toggle Mounted: {uiDiagnostics.providerToggleMounted ? 'yes' : 'no'}</li>
+        <li>UI Marker: {uiDiagnostics.componentMarker}</li>
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${apiStatus.state}`}>{apiStatus.detail}</p>
