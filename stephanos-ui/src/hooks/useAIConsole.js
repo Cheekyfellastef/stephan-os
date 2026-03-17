@@ -56,6 +56,8 @@ export function useAIConsole() {
     setDebugData,
     apiStatus,
     setApiStatus,
+    provider,
+    customProviderConfig,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -105,7 +107,11 @@ export function useAIConsole() {
     setStatus('processing');
 
     try {
-      const { data, requestPayload } = await sendPrompt({ prompt });
+      const { data, requestPayload } = await sendPrompt({
+        prompt,
+        provider,
+        providerConfig: provider === 'custom' ? customProviderConfig : null,
+      });
       const entry = {
         id: `cmd_${Date.now()}`,
         raw_input: prompt,
@@ -122,6 +128,13 @@ export function useAIConsole() {
         response: data,
       };
 
+      const activeProviderLabel = provider === 'custom'
+        ? (customProviderConfig.label?.trim() || 'Custom LLM')
+        : provider;
+      const providerSpecificDetail = provider === 'ollama' && !data.success
+        ? 'Local Ollama not reachable. Start Ollama with: ollama serve'
+        : data.output_text;
+
       setCommandHistory((prev) => [...prev, entry]);
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? 'ok' : 'error');
@@ -131,7 +144,9 @@ export function useAIConsole() {
         label: `Connected to ${runtimeConfig.target} API`,
         target: runtimeConfig.target,
         baseUrl: runtimeConfig.baseUrl,
-        detail: data.success ? 'Backend reachable.' : 'Backend reachable, request reported an error.',
+        detail: data.success
+          ? `Backend reachable. Active provider: ${activeProviderLabel}.`
+          : `Active provider (${activeProviderLabel}) error: ${providerSpecificDetail}`,
         lastCheckedAt: new Date().toISOString(),
       }));
       setDebugData({
