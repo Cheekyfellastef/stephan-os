@@ -1,14 +1,13 @@
-import { createLogger } from '../utils/logger';
+import { EMPTY_RESPONSE } from './aiTypes';
 
-const logger = createLogger('ai-client');
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 30000);
 
-export async function sendPrompt({ prompt, parsedCommand }) {
+export async function sendPrompt({ prompt }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-  const payload = { prompt, parsedCommand };
+  const payload = { prompt };
 
   try {
     const response = await fetch(`${BASE_URL}/api/ai/chat`, {
@@ -20,15 +19,11 @@ export async function sendPrompt({ prompt, parsedCommand }) {
 
     const json = await response.json();
 
-    if (!response.ok || !json?.success) {
-      throw new Error(json?.error || `Request failed with HTTP ${response.status}`);
+    if (!response.ok) {
+      return { data: { ...EMPTY_RESPONSE, ...json }, requestPayload: payload };
     }
 
-    logger.info('AI response received', json);
-    return { data: json, requestPayload: payload };
-  } catch (error) {
-    logger.error('AI request failed', { message: error.message });
-    throw error;
+    return { data: { ...EMPTY_RESPONSE, ...json }, requestPayload: payload };
   } finally {
     clearTimeout(timeout);
   }

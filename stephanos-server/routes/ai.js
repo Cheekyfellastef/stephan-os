@@ -1,114 +1,151 @@
 import express from 'express';
-import { getAIResponse } from '../services/openaiService.js';
+import { getAIResponse, isAIServiceAvailable } from '../services/openaiService.js';
 import { memoryService } from '../services/memoryService.js';
-import { listAvailableAgents, runTool } from '../services/toolRouter.js';
+import { executeTool } from '../services/toolRegistry.js';
+import { parseCommand, resolveRoute } from '../services/commandRouter.js';
+import { buildErrorResponse, buildSuccessResponse } from '../services/responseBuilder.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
 
-function classifyRoute(input = '') {
-  const normalized = input.toLowerCase();
-  if (normalized.includes('/simulate') || normalized.includes('simulation')) return 'simulation';
-  if (normalized.includes('/kg') || normalized.includes('knowledge graph')) return 'knowledge_graph';
-  if (normalized.includes('/vrlab') || normalized.includes('vr')) return 'vr_lab';
-  if (normalized.includes('research')) return 'research';
-  if (normalized.startsWith('/')) return 'command';
-  return 'assistant';
-}
-
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, parsedCommand } = req.body || {};
+  const { prompt } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ success: false, error: 'Prompt is required.' });
+    return res.status(400).json(buildErrorResponse({
+      route: 'assistant',
+      output_text: 'Prompt is required.',
+      error: 'Prompt is required.',
+      timing_ms: Date.now() - startedAt,
+      debug: { route_reason: 'Input validation failed' },
+    }));
   }
 
-  const route = classifyRoute(prompt);
-  const toolsUsed = [];
+  const parsedCommand = parseCommand(prompt);
+  const decision = resolveRoute(parsedCommand, prompt);
   const memoryHits = memoryService.getRelevantMemory(prompt);
+  const requestId = req.headers['x-request-id'];
 
   try {
-    if (parsedCommand?.name === 'status') {
-      toolsUsed.push('getSystemStatus');
-      const toolResult = await runTool('getSystemStatus');
-      return res.json({
-        success: true,
-        output_text: `System status: ${toolResult.status}`,
-        route,
-        tools_used: toolsUsed,
-        memory_hits: memoryHits,
-        debug: {
-          parsedCommand,
-          selected_route: route,
-          tool_results: [toolResult],
-          timing_ms: Date.now() - startedAt,
+    if (decision.action === 'help') {
+      return res.json(buildSuccessResponse({
+        type: 'tool_result',
+        route: decision.route,
+        command: '/help',
+        output_text: 'Commands: /help /status /tools /agents /memory /memory list /memory save <text> /memory find <query> /clear',
+        data: {
+          commands: ['/help', '/status', '/tools', '/agents', '/memory', '/memory list', '/memory save <text>', '/memory find <query>', '/clear'],
         },
-      });
+        timing_ms: Date.now() - startedAt,
+        debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
+      }));
     }
 
-    if (parsedCommand?.name === 'agents') {
-      toolsUsed.push('listAvailableAgents');
-      const agents = await listAvailableAgents();
-      return res.json({
-        success: true,
-        output_text: `Available agents: ${agents.map((a) => a.id).join(', ')}`,
-        route,
-        tools_used: toolsUsed,
+    if (decision.action === 'memory_help') {
+      return res.json(buildSuccessResponse({
+        type: 'memory_result',
+        route: decision.route,
+        command: '/memory',
+        output_text: 'Memory commands: /memory list, /memory save <text>, /memory find <query>.',
+        data: { commands: ['list', 'save', 'find'] },
         memory_hits: memoryHits,
-        debug: {
-          parsedCommand,
-          selected_route: route,
-          tool_results: [{ agents }],
-          timing_ms: Date.now() - startedAt,
-        },
+        timing_ms: Date.now() - startedAt,
+        debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
+      }));
+    }
+
+    if (decision.action === 'clear') {
+      return res.json(buildSuccessResponse({
+        type: 'tool_result',
+        route: decision.route,
+        command: '/clear',
+        output_text: 'Console clear acknowledged on backend.',
+        timing_ms: Date.now() - startedAt,
+        debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
+      }));
+    }
+
+    if (decision.action === 'invalid_memory_subcommand' || decision.action === 'invalid_command') {
+      return res.status(400).json(buildErrorResponse({
+        route: decision.route,
+        command: parsedCommand.isSlash ? `/${parsedCommand.command}` : null,
+        output_text: 'Invalid command.',
+        error: decision.action === 'invalid_memory_subcommand'
+          ? 'Unknown /memory subcommand. Use list, save, or find.'
+          : `Unknown command /${parsedCommand.command}. Use /help.`,
+        memory_hits: memoryHits,
+        timing_ms: Date.now() - startedAt,
+        debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId },
+      }));
+    }
+
+    if (decision.tool) {
+      const { tool, result } = await executeTool(decision.tool, decision.args, {
+        aiAvailable: isAIServiceAvailable(),
       });
+
+      return res.json(buildSuccessResponse({
+        type: decision.route === 'memory' ? 'memory_result' : 'tool_result',
+        route: decision.route,
+        command: parsedCommand.raw,
+        output_text: result.output_text,
+        data: result.data,
+        tools_used: [tool.name],
+        memory_hits: decision.route === 'memory' ? [] : memoryHits,
+        timing_ms: Date.now() - startedAt,
+        debug: {
+          parsed_command: parsedCommand,
+          route_reason: decision.reason,
+          request_id: requestId,
+          selected_tool: tool.name,
+          tool_state: tool.state,
+        },
+      }));
     }
 
     const aiResult = await getAIResponse({
       userInput: prompt,
       context: {
-        route,
-        parsedCommand,
-        memoryHits,
+        route: decision.route,
+        parsed_command: parsedCommand,
+        memory_hits: memoryHits,
       },
     });
 
-    memoryService.saveMemory({ content: prompt, tags: [route] });
-
-    return res.json({
-      success: true,
+    return res.json(buildSuccessResponse({
+      type: 'assistant_response',
+      route: decision.route,
+      command: parsedCommand.isSlash ? parsedCommand.raw : null,
       output_text: aiResult.outputText,
-      route,
-      tools_used: toolsUsed,
-      memory_hits: memoryHits,
-      debug: {
-        parsedCommand,
-        selected_route: route,
-        tool_results: [],
+      data: {
         openai_response_id: aiResult.responseId,
         usage: aiResult.usage,
-        timing_ms: Date.now() - startedAt,
       },
-    });
+      memory_hits: memoryHits,
+      timing_ms: Date.now() - startedAt,
+      debug: {
+        parsed_command: parsedCommand,
+        route_reason: decision.reason,
+        request_id: requestId,
+      },
+    }));
   } catch (error) {
     logger.error('Failed to process /api/ai/chat', { message: error.message });
-    return res.status(500).json({
-      success: false,
-      error: 'AI request failed.',
-      output_text: 'The AI Core encountered an error. Check debug console for details.',
-      route,
-      tools_used: toolsUsed,
+    return res.status(500).json(buildErrorResponse({
+      route: decision.route,
+      command: parsedCommand.isSlash ? parsedCommand.raw : null,
+      output_text: 'The AI Core encountered an error.',
+      error: error.message,
       memory_hits: memoryHits,
+      timing_ms: Date.now() - startedAt,
       debug: {
-        parsedCommand,
-        selected_route: route,
-        tool_results: [],
-        error: error.message,
-        timing_ms: Date.now() - startedAt,
+        parsed_command: parsedCommand,
+        route_reason: decision.reason,
+        request_id: requestId,
       },
-    });
+    }));
   }
 });
 
