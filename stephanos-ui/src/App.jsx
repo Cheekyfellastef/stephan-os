@@ -5,6 +5,10 @@ import ToolsPanel from './components/ToolsPanel';
 import MemoryPanel from './components/MemoryPanel';
 import KnowledgeGraphPanel from './components/KnowledgeGraphPanel';
 import SimulationPanel from './components/SimulationPanel';
+import ProposalPanel from './components/ProposalPanel';
+import ActivityPanel from './components/ActivityPanel';
+import RoadmapPanel from './components/RoadmapPanel';
+import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 
@@ -26,6 +30,10 @@ export default function App() {
         <MemoryPanel commandHistory={commandHistory} />
         <KnowledgeGraphPanel commandHistory={commandHistory} />
         <SimulationPanel commandHistory={commandHistory} />
+        <SimulationHistoryPanel commandHistory={commandHistory} />
+        <ProposalPanel commandHistory={commandHistory} />
+        <ActivityPanel commandHistory={commandHistory} />
+        <RoadmapPanel commandHistory={commandHistory} />
       </div>
       <DebugConsole />
     </main>

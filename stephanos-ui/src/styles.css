@@ -80,3 +80,6 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
 .chart-row { display: grid; grid-template-columns: 42px 1fr 90px; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
 .chart-bar-wrap { background: rgba(255, 255, 255, 0.08); border-radius: 999px; height: 8px; overflow: hidden; }
 .chart-bar { background: linear-gradient(90deg, #3cc0ff, #7e9eff); height: 100%; }
+
+.result-card.assistant { border-color: #7a5bd8; background: rgba(30, 14, 45, 0.45); }
+.suggested-actions code { color: #9ad7ff; }
