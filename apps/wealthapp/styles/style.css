@@ -1,0 +1,9 @@
+body {
+  font-family: Arial;
+  padding: 30px;
+}
+
+label {
+  display: block;
+  margin: 15px 0;
+}
