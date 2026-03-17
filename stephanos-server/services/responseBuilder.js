@@ -44,6 +44,7 @@ export function buildErrorResponse({
   command = null,
   output_text = 'Request failed.',
   error = 'Unknown error',
+  error_code = null,
   data = {},
   tools_used = [],
   memory_hits = [],
@@ -61,6 +62,7 @@ export function buildErrorResponse({
     memory_hits,
     timing_ms,
     error,
+    error_code,
     debug: buildDebug(debug),
   };
 }

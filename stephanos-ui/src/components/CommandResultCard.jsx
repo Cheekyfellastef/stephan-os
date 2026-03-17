@@ -53,7 +53,8 @@ export default function CommandResultCard({ entry }) {
       </header>
       <p className="result-input">{entry.raw_input}</p>
       <p>{entry.output_text}</p>
-      {entry.error && <p className="error-text">Error: {entry.error}</p>}
+      {entry.error && <p className="error-text">Error [{entry.error_code ?? 'N/A'}]: {entry.error}</p>}
+      <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>
       {entry.data_payload?.result && <SimulationResultCard payload={entry.data_payload} />}
       {entry.data_payload && <GraphPayload payload={entry.data_payload} />}
       {entry.data_payload && Object.keys(entry.data_payload).length > 0 && (

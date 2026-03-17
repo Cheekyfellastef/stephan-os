@@ -43,6 +43,7 @@ export function useAIConsole() {
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
         timestamp: new Date().toISOString(),
         error: data.error,
+        error_code: data.error_code ?? data.debug?.error_code ?? null,
         response: data,
       };
 
@@ -54,19 +55,19 @@ export function useAIConsole() {
         response_payload: data,
         parsed_command: parsed,
         selected_route: data.route,
-        selected_tool: data.tools_used?.[0] ?? null,
-        tool_state: data.debug?.tool_state,
-        graph_action: data.debug?.graph_action,
-        simulation_action: data.debug?.simulation_action,
+        selected_subsystem: data.debug?.selected_subsystem,
+        selected_tool: data.debug?.selected_tool ?? data.tools_used?.[0] ?? null,
+        execution_payload: data.debug?.execution_payload,
         simulation_id: data.data?.simulationId ?? null,
         validated_input: data.data?.input ?? null,
-        tool_args: data.debug?.tool_args,
         result_summary: data.debug?.result_summary,
         storage_outcome: data.debug?.storage_outcome,
         memory_hits: data.memory_hits,
         timing_ms: entry.timing_ms,
-        tool_timing_ms: data.debug?.tool_timing_ms,
+        tool_timing_ms: data.debug?.timing?.tool_ms,
+        subsystem_state: data.debug?.subsystem_state,
         error: data.error,
+        error_code: data.error_code ?? data.debug?.error_code ?? null,
       });
     } catch (error) {
       setStatus('error');
