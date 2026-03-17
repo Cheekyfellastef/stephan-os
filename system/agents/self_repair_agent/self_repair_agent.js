@@ -33,11 +33,11 @@ export const selfRepairAgent = {
       }
 
       if (project.entry.includes("wealthapp")) {
-        const distCheck = project.entry.includes("dist");
+        const indexCheck = project.entry.includes("apps/wealthapp/index.html");
 
-        if (!distCheck) {
+        if (!indexCheck) {
           console.warn(
-            "SelfRepair: WealthApp should use dist/index.html"
+            "SelfRepair: WealthApp should use apps/wealthapp/index.html"
           );
         }
       }

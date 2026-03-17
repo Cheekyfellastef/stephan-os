@@ -1,6 +1,6 @@
 {
   "name": "Wealth App",
   "icon": "📈",
-  "entry": "dist/index.html",
+  "entry": "index.html",
   "type": "tool"
 }

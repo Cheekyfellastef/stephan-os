@@ -17,7 +17,7 @@ export async function validateApps(apps) {
     const basePath = app.entry.replace("/index.html", "");
 
     try {
-      const assetsCheck = await fetch(basePath + "/assets");
+      const assetsCheck = await fetch(basePath + "/assets/");
 
       if (!assetsCheck.ok) {
         issues.push("Assets folder missing");
@@ -27,13 +27,23 @@ export async function validateApps(apps) {
     }
 
     try {
-      const scriptsCheck = await fetch(basePath + "/scripts");
+      const scriptsCheck = await fetch(basePath + "/scripts/");
 
       if (!scriptsCheck.ok) {
         issues.push("Scripts folder missing");
       }
     } catch {
       issues.push("Scripts folder missing");
+    }
+
+    try {
+      const stylesCheck = await fetch(basePath + "/styles/");
+
+      if (!stylesCheck.ok) {
+        issues.push("Styles folder missing");
+      }
+    } catch {
+      issues.push("Styles folder missing");
     }
 
     if (issues.length > 0) {
