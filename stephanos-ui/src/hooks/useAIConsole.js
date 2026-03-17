@@ -56,8 +56,13 @@ export function useAIConsole() {
         selected_route: data.route,
         selected_tool: data.tools_used?.[0] ?? null,
         tool_state: data.debug?.tool_state,
+        graph_action: data.debug?.graph_action,
+        tool_args: data.debug?.tool_args,
+        result_summary: data.debug?.result_summary,
+        storage_outcome: data.debug?.storage_outcome,
         memory_hits: data.memory_hits,
         timing_ms: entry.timing_ms,
+        tool_timing_ms: data.debug?.tool_timing_ms,
         error: data.error,
       });
     } catch (error) {

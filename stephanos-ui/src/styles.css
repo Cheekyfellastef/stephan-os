@@ -53,7 +53,17 @@ button { background: #2f5eaf; color: white; border: none; border-radius: 8px; pa
 pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 8px; }
 .debug-console { grid-column: 1 / -1; }
 .debug-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.graph-structured { display: grid; gap: 0.5rem; margin: 0.5rem 0; }
+.graph-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.graph-card {
+  border: 1px solid rgba(91, 124, 168, 0.35);
+  border-radius: 8px;
+  padding: 0.6rem;
+  background: rgba(7, 16, 28, 0.65);
+}
+.graph-card h4 { margin: 0 0 0.35rem 0; font-size: 0.95rem; }
 
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 1fr; }
+  .graph-grid { grid-template-columns: 1fr; }
 }

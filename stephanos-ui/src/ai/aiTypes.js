@@ -9,6 +9,7 @@ export const ROUTE_TYPE = {
   ASSISTANT: 'assistant',
   SYSTEM: 'system',
   MEMORY: 'memory',
+  KG: 'kg',
 };
 
 export const EMPTY_RESPONSE = {

@@ -1,5 +1,6 @@
 import { memoryService } from './memoryService.js';
 import { listRegisteredAgents } from './agentRegistry.js';
+import { knowledgeGraphService } from './knowledgeGraphService.js';
 
 const tools = [
   {
@@ -15,6 +16,7 @@ const tools = [
           backend_status: 'online',
           ai_service: context.aiAvailable ? 'available' : 'unavailable',
           memory_service: memoryService.getStatus(),
+          knowledge_graph_service: knowledgeGraphService.getStatus(),
           registered_tools: tools.length,
           registered_agents: listRegisteredAgents().length,
           app_version: process.env.APP_VERSION ?? '0.1.0',
@@ -103,6 +105,115 @@ const tools = [
           ? `Found ${matches.length} memory item(s).`
           : 'No memory matches found.',
         data: { query, matches },
+      };
+    },
+  },
+  {
+    name: 'kgGetStatus',
+    description: 'Returns knowledge graph subsystem status.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute() {
+      return {
+        output_text: 'Knowledge graph core is available.',
+        data: { status: knowledgeGraphService.getStatus() },
+      };
+    },
+  },
+  {
+    name: 'kgListNodes',
+    description: 'Lists all knowledge graph nodes.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute() {
+      const nodes = knowledgeGraphService.listNodes();
+      return {
+        output_text: `Knowledge graph nodes: ${nodes.length}`,
+        data: { nodes },
+      };
+    },
+  },
+  {
+    name: 'kgListEdges',
+    description: 'Lists all knowledge graph edges.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute() {
+      const edges = knowledgeGraphService.listEdges();
+      return {
+        output_text: `Knowledge graph edges: ${edges.length}`,
+        data: { edges },
+      };
+    },
+  },
+  {
+    name: 'kgCreateNode',
+    description: 'Creates a knowledge graph node.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute(args) {
+      const node = knowledgeGraphService.createNode(args);
+      return {
+        output_text: `Created node ${node.id}.`,
+        data: { node },
+      };
+    },
+  },
+  {
+    name: 'kgCreateEdge',
+    description: 'Creates a knowledge graph edge.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute(args) {
+      const edge = knowledgeGraphService.createEdge(args);
+      return {
+        output_text: `Created edge ${edge.id}.`,
+        data: { edge },
+      };
+    },
+  },
+  {
+    name: 'kgSearch',
+    description: 'Searches graph nodes and edges by text.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute(args) {
+      const query = (args?.query ?? '').trim();
+      const results = knowledgeGraphService.searchGraph(query);
+      return {
+        output_text: `Search found ${results.node_matches.length} node(s) and ${results.edge_matches.length} edge(s).`,
+        data: results,
+      };
+    },
+  },
+  {
+    name: 'kgFindRelated',
+    description: 'Finds nodes related to a given node ID.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute(args) {
+      const nodeId = (args?.nodeId ?? '').trim();
+      if (!nodeId) {
+        throw new Error('Usage: /kg related <nodeId>');
+      }
+
+      const result = knowledgeGraphService.findRelatedNodes(nodeId);
+      return {
+        output_text: `Found ${result.related.length} related node(s) for ${nodeId}.`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: 'kgGetStats',
+    description: 'Returns aggregate statistics for the knowledge graph.',
+    category: 'knowledge_graph',
+    state: 'live',
+    async execute() {
+      const stats = knowledgeGraphService.getGraphStats();
+      return {
+        output_text: `Graph stats: ${stats.totals.nodes} node(s), ${stats.totals.edges} edge(s).`,
+        data: { stats },
       };
     },
   },
