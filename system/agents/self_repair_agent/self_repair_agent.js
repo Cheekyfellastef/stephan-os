@@ -1,3 +1,25 @@
+import { resolvePackagingMode, validateEntryForPackaging } from "../../apps/entry_rules.js";
+
+async function fetchManifestForProject(project) {
+  const appFolder = String(project?.folder || "").trim();
+
+  if (!appFolder) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`apps/${appFolder}/app.json`);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 export const selfRepairAgent = {
   id: "self-repair-agent",
 
@@ -15,46 +37,22 @@ export const selfRepairAgent = {
     const projects = context.projects || [];
 
     for (const project of projects) {
-      const appMatch = project.entry.match(/^apps\/([^/]+)\/(?:dist\/)?index\.html$/);
-
-      if (appMatch) {
-        const appName = appMatch[1];
-        const rootIndex = `apps/${appName}/index.html`;
-        const distIndex = `apps/${appName}/dist/index.html`;
-
-        if (project.entry === distIndex) {
-          console.warn(
-            "SelfRepair: app entry should prefer root index.html",
-            project.name,
-            rootIndex
-          );
+      const manifest = await fetchManifestForProject(project);
+      const packaging = resolvePackagingMode({
+        app: project,
+        manifest: manifest || {
+          entry: String(project?.entry || "").replace(/^apps\/[^/]+\//, "")
         }
+      });
 
-        let foundReachableEntry = false;
+      const manifestEntry = manifest?.entry || String(project?.entry || "").replace(/^apps\/[^/]+\//, "");
+      const entryValidation = validateEntryForPackaging({
+        packaging,
+        entry: manifestEntry
+      });
 
-        for (const candidate of [rootIndex, distIndex]) {
-          try {
-            const res = await fetch(candidate);
-
-            if (res.ok) {
-              foundReachableEntry = true;
-              break;
-            }
-          } catch (err) {
-            // Continue checking remaining candidates.
-          }
-        }
-
-        if (!foundReachableEntry) {
-          console.warn(
-            "SelfRepair: failed to load app from root or dist index",
-            project.name,
-            rootIndex,
-            distIndex
-          );
-        }
-
-        continue;
+      if (!entryValidation.ok) {
+        console.warn("SelfRepair: invalid entry configuration", project?.name || project?.id || "unknown", entryValidation.message);
       }
 
       try {

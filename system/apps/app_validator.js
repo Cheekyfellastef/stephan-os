@@ -1,17 +1,11 @@
-const VALID_PACKAGING_MODES = new Set(["classic", "classic-static", "vite", "document"]);
+import {
+  isSupportedPackagingMode,
+  resolvePackagingMode,
+  validateEntryForPackaging
+} from "./entry_rules.js";
 
 function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
-}
-
-function normalizePackaging(value) {
-  const mode = String(value || "").trim().toLowerCase();
-
-  if (mode === "classic") {
-    return "classic-static";
-  }
-
-  return mode;
 }
 
 async function fetchJson(path) {
@@ -97,22 +91,6 @@ function resolveManifestPath(app, manifest) {
   }
 
   return `${appRoot}/${entryInManifest}`;
-}
-
-function resolvePackagingMode(app, manifest) {
-  const declared = normalizePackaging(manifest?.packaging || manifest?.appType || app?.packaging || app?.appType);
-
-  if (declared) {
-    return declared;
-  }
-
-  const entry = String(manifest?.entry || app?.entry || "").toLowerCase();
-
-  if (entry.endsWith(".md")) {
-    return "document";
-  }
-
-  return "classic-static";
 }
 
 function emitDiagnostic(context, message) {
@@ -234,12 +212,19 @@ export async function validateApps(apps, context = {}) {
     }
 
     const entryPath = resolveManifestPath(app, manifest) || app?.entry || "";
-    const entryExists = await validateEntryExists(entryPath, issues);
-    const packaging = resolvePackagingMode(app, manifest);
+    const packaging = resolvePackagingMode({ app, manifest });
+    const packagingValidation = validateEntryForPackaging({ packaging, entry: manifest?.entry });
 
-    if (!VALID_PACKAGING_MODES.has(packaging)) {
+    if (!packagingValidation.ok) {
+      issues.push(packagingValidation.message);
+    }
+
+    const entryExists = await validateEntryExists(entryPath, issues);
+    const packagingSupported = isSupportedPackagingMode(packaging);
+
+    if (!packagingSupported && packagingValidation.code !== "unsupported-packaging") {
       issues.push(`Unsupported packaging mode: ${packaging}`);
-    } else if (entryExists) {
+    } else if (packagingSupported && entryExists) {
       if (packaging === "vite") {
         await validateViteApp(entryPath, issues);
       }
