@@ -1,4 +1,4 @@
-export async function validateApps(apps) {
+export async function validateApps(apps, context = {}) {
   const results = [];
 
   for (const app of apps) {
@@ -9,6 +9,13 @@ export async function validateApps(apps) {
 
       if (!res.ok) {
         issues.push("Entry file not found: " + app.entry);
+
+        if (res.status === 404) {
+          context?.eventBus?.emit("app:validation_failed", {
+            name: app.name,
+            entry: app.entry
+          });
+        }
       }
     } catch (err) {
       issues.push("Failed to load entry file");

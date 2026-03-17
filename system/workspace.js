@@ -94,6 +94,7 @@ export const workspace = {
         }
       } catch (err) {
         console.error("App preflight failed:", project?.name, err);
+        context?.eventBus?.emit("workspace:launch_failed", project);
         renderAppLoadError(
           container,
           "Simulation failed to load. Check console for details."
@@ -111,6 +112,7 @@ export const workspace = {
       iframe.style.border = "none";
 
       iframe.onerror = () => {
+        context?.eventBus?.emit("workspace:launch_failed", project);
         const warning = document.createElement("div");
         warning.style.color = "red";
         warning.style.padding = "20px";
