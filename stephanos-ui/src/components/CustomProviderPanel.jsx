@@ -7,7 +7,7 @@ export default function CustomProviderPanel() {
 
   return (
     <section className="custom-provider-panel">
-      <h3>Custom Provider Configuration</h3>
+      <h3>Custom Provider Settings</h3>
       <div className="custom-provider-grid">
         <label>
           Provider Label

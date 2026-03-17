@@ -23,8 +23,8 @@ export default function StatusPanel() {
         <li>Backend: {apiStatus.label}</li>
         <li>API URL: {apiStatus.baseUrl || 'n/a'}</li>
         <li>API Health: {apiStatus.state}</li>
-        <li>Provider: {provider}</li>
-        <li>Provider Mode: {providerLabel}</li>
+        <li>Current Provider: {providerLabel}</li>
+        <li>Provider Key: {provider}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>
