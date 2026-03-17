@@ -2,6 +2,8 @@ import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
 import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
 import { validateApps } from "./system/apps/app_validator.js";
+import { createEventBus } from "./system/core/event_bus.js";
+import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 
 console.log("Stephanos OS booting");
 
@@ -91,17 +93,8 @@ async function startStephanos() {
 
   log("Stephanos OS starting...");
 
+  const eventBus = createEventBus();
   const projects = await discoverApps();
-
-  const validationResults = await validateApps(projects);
-
-  for (const result of validationResults) {
-    console.warn("App Validator:", result.app);
-
-    result.issues.forEach(issue => {
-      console.warn(" - " + issue);
-    });
-  }
 
   const { workspace } = await import("./system/workspace.js");
   const {
@@ -115,7 +108,6 @@ async function startStephanos() {
     disableModule,
     enableModule
   } = await import("./system/module_loader.js");
-  const { createEventBus } = await import("./system/core/event_bus.js");
   const { createSystemState } = await import("./system/core/system_state.js");
   const { createServiceRegistry } = await import("./system/core/service_registry.js");
   const { createUIRenderer } = await import("./system/ui_renderer.js");
@@ -125,7 +117,6 @@ async function startStephanos() {
   const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
   const { sampleAgent } = await import("./system/agents/sample_agent.js");
 
-  const eventBus = createEventBus();
   const systemState = createSystemState();
   const services = createServiceRegistry();
   const uiRenderer = createUIRenderer();
@@ -145,6 +136,18 @@ async function startStephanos() {
     workspace,
     projects
   };
+
+  createSelfHealingService(context);
+
+  const validationResults = await validateApps(projects, { eventBus });
+
+  for (const result of validationResults) {
+    console.warn("App Validator:", result.app);
+
+    result.issues.forEach(issue => {
+      console.warn(" - " + issue);
+    });
+  }
 
   const agentRuntime = createAgentRuntime(context);
   services.registerService("agentRuntime", agentRuntime);

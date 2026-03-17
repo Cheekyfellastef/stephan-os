@@ -1,0 +1,6 @@
+{
+  "id": "self-healing-panel",
+  "name": "Self-Healing Panel",
+  "version": "1.0",
+  "description": "Displays self-healing detections and repair outcomes."
+}

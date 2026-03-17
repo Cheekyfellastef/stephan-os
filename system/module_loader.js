@@ -160,6 +160,11 @@ export async function loadModules(context) {
       await loadModuleFromPath(modulePath, context);
     } catch (err) {
       console.error("Module load error:", modulePath, err);
+      context?.eventBus?.emit("module:failed", {
+        id: modulePath,
+        path: modulePath,
+        reason: err?.message || "Module load failed"
+      });
     }
   }
 }
@@ -218,6 +223,11 @@ export async function reloadModule(moduleId, context) {
     return true;
   } catch (err) {
     console.error("Module reload error:", loadedEntry.modulePath, err);
+    context?.eventBus?.emit("module:failed", {
+      id: moduleId,
+      path: loadedEntry.modulePath,
+      reason: err?.message || "Module reload failed"
+    });
     return false;
   }
 }
@@ -239,6 +249,11 @@ export async function enableModule(moduleId, context) {
     return true;
   } catch (err) {
     console.error("Module enable error:", state.modulePath, err);
+    context?.eventBus?.emit("module:failed", {
+      id: moduleId,
+      path: state.modulePath,
+      reason: err?.message || "Module enable failed"
+    });
     return false;
   }
 }

@@ -49,7 +49,7 @@ export function init(context) {
   });
 }
 
-function executeCommand(command, context, output) {
+async function executeCommand(command, context, output) {
   const parts = command.split(" ");
 
   const cmd = parts[0];
@@ -59,6 +59,9 @@ function executeCommand(command, context, output) {
     log(output, "list modules");
     log(output, "list agents");
     log(output, "list services");
+    log(output, "repair apps");
+    log(output, "repair modules");
+    log(output, "repair system");
 
     return;
   }
@@ -90,6 +93,45 @@ function executeCommand(command, context, output) {
       });
     }
 
+    return;
+  }
+
+  if (cmd === "repair") {
+    const target = parts[1];
+
+    if (target === "apps") {
+      for (const app of context.projects || []) {
+        context.eventBus.emit("app:validation_failed", {
+          name: app.name,
+          entry: app.entry
+        });
+      }
+
+      log(output, "Repair apps: runtime registry revalidated.");
+      return;
+    }
+
+    if (target === "modules") {
+      if (context.moduleLoader?.reloadModules) {
+        await context.moduleLoader.reloadModules();
+        log(output, "Repair modules: reload requested.");
+      } else {
+        log(output, "Repair modules unavailable.");
+      }
+      return;
+    }
+
+    if (target === "system") {
+      if (typeof window.reloadStephanos === "function") {
+        await window.reloadStephanos();
+      } else {
+        window.location.reload();
+      }
+      log(output, "Repair system: reload requested.");
+      return;
+    }
+
+    log(output, "Usage: repair <apps|modules|system>");
     return;
   }
 
