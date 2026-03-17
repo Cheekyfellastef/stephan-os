@@ -1,6 +1,7 @@
 import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
 import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
+import { validateApps } from "./system/apps/app_validator.js";
 
 console.log("Stephanos OS booting");
 
@@ -91,6 +92,16 @@ async function startStephanos() {
   log("Stephanos OS starting...");
 
   const projects = await discoverApps();
+
+  const validationResults = await validateApps(projects);
+
+  for (const result of validationResults) {
+    console.warn("App Validator:", result.app);
+
+    result.issues.forEach(issue => {
+      console.warn(" - " + issue);
+    });
+  }
 
   const { workspace } = await import("./system/workspace.js");
   const {
