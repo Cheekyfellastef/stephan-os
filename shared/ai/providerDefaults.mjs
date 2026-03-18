@@ -1,4 +1,4 @@
-export const DEFAULT_PROVIDER_KEY = 'mock';
+export const DEFAULT_PROVIDER_KEY = 'ollama';
 export const PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama', 'openrouter'];
 export const FALLBACK_PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama'];
 

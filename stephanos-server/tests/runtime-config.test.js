@@ -40,7 +40,7 @@ test('health diagnostics expose backend target endpoint and visible CORS origins
 
   assert.equal(diagnostics.backend_base_url, 'http://localhost:9090');
   assert.equal(diagnostics.backend_target_endpoint, 'http://localhost:9090/api/ai/chat');
-  assert.equal(diagnostics.default_provider, 'mock');
+  assert.equal(diagnostics.default_provider, 'ollama');
   assert.equal(diagnostics.ollama_endpoint, 'http://localhost:11434/api/chat');
   assert.deepEqual(diagnostics.cors.allowed_origins, [
     'http://localhost:5173',
