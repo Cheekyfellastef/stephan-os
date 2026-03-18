@@ -6,8 +6,8 @@
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-  "runtimeMarker": "stephanos-ui/runtime::dist-synced-v2",
-  "gitCommit": "a220380",
-  "buildTimestamp": "2026-03-18T18:05:05.136Z",
+  "runtimeMarker": "antifriction-live-v3::e9180cc::fb4c6ac9c9c9",
+  "gitCommit": "e9180cc",
+  "buildTimestamp": "2026-03-18T18:35:21.985Z",
   "sourceTruth": "sourceFingerprint"
 }

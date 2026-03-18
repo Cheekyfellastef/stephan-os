@@ -149,6 +149,17 @@ export function resolveOllamaConfig(config = {}) {
   };
 }
 
+async function fetchOllamaTags(resolved) {
+  const response = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
+  const raw = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
+  return {
+    ok: response.ok,
+    status: response.status,
+    raw,
+    models: Array.isArray(raw?.models) ? raw.models.map((item) => item?.name).filter(Boolean) : [],
+  };
+}
+
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -162,8 +173,12 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 export async function checkOllamaHealth(config = {}) {
   const resolved = resolveOllamaConfig(config);
   try {
-    const response = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
-    return buildOllamaHealthState({ resolved, ok: response.ok, responseStatus: response.ok ? null : response.status });
+    const tags = await fetchOllamaTags(resolved);
+    return {
+      ...buildOllamaHealthState({ resolved, ok: tags.ok, responseStatus: tags.ok ? null : tags.status }),
+      models: tags.models,
+      requestedModel: resolved.model,
+    };
   } catch (error) {
     return buildOllamaHealthState({ resolved, ok: false, failure: classifyOllamaFailure(error) });
   }
@@ -177,11 +192,27 @@ export async function runOllamaProvider(request, config = {}) {
   }
 
   try {
+    const tags = await fetchOllamaTags(resolved);
+    const availableModels = tags.models;
+    const requestedModel = request.model || resolved.model;
+    const modelToUse = availableModels.includes(requestedModel)
+      ? requestedModel
+      : (availableModels[0] || requestedModel);
+    const autoSelectedModel = modelToUse !== requestedModel;
+
+    console.log('[BACKEND LIVE] Ollama provider request starting', {
+      baseURL: resolved.baseURL,
+      requestedModel,
+      selectedModel: modelToUse,
+      autoSelectedModel,
+      availableModels,
+    });
+
     const response = await fetchWithTimeout(resolved.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: request.model || resolved.model,
+        model: modelToUse,
         stream: false,
         messages: [
           ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
@@ -195,16 +226,41 @@ export async function runOllamaProvider(request, config = {}) {
     if (!response.ok) {
       const message = raw?.error || `Ollama request failed with HTTP ${response.status}.`;
       const code = /model/i.test(message) ? ERROR_CODES.LLM_OLLAMA_MODEL_MISSING : ERROR_CODES.LLM_OLLAMA_UNREACHABLE;
+      console.error('[BACKEND LIVE] Ollama provider request failed', {
+        baseURL: resolved.baseURL,
+        requestedModel,
+        selectedModel: modelToUse,
+        availableModels,
+        status: response.status,
+        error: message,
+      });
       return { ok: false, provider: 'ollama', model: resolved.model, outputText: '', raw, error: { code, message, retryable: code === ERROR_CODES.LLM_OLLAMA_UNREACHABLE } };
     }
+
+    console.log('[BACKEND LIVE] Ollama provider request succeeded', {
+      baseURL: resolved.baseURL,
+      requestedModel,
+      selectedModel: modelToUse,
+      availableModels,
+      responseModel: raw?.model || modelToUse,
+    });
 
     return {
       ok: true,
       provider: 'ollama',
-      model: raw?.model || resolved.model,
+      model: raw?.model || modelToUse,
       outputText: raw?.message?.content?.trim() || '',
       usage: raw?.prompt_eval_count ? { prompt_eval_count: raw.prompt_eval_count, eval_count: raw.eval_count } : undefined,
       raw,
+      diagnostics: {
+        ollama: {
+          baseURL: resolved.baseURL,
+          requestedModel,
+          selectedModel: modelToUse,
+          availableModels,
+          autoSelectedModel,
+        },
+      },
     };
   } catch (error) {
     const failure = classifyOllamaFailure(error);
@@ -215,6 +271,13 @@ export async function runOllamaProvider(request, config = {}) {
         : failure.failureType === 'network_error'
           ? 'Cannot connect to Ollama: that device could not be reached.'
           : 'Ollama connection failed.';
+
+    console.error('[BACKEND LIVE] Ollama provider request threw', {
+      baseURL: resolved.baseURL,
+      requestedModel: request.model || resolved.model,
+      error: message,
+      details: failure,
+    });
 
     return {
       ok: false,

@@ -26,7 +26,12 @@ const env = {
 };
 
 try {
-  console.log('Starting Stephanos UI build...');
+  console.log('[BUILD LIVE] Starting Stephanos UI build');
+  console.log(`[BUILD LIVE] Source truth: ${buildMetadata.sourceIdentifier}`);
+  console.log(`[BUILD LIVE] Build target: ${buildMetadata.buildTarget}`);
+  console.log(`[BUILD LIVE] Runtime marker: ${buildMetadata.runtimeMarker}`);
+  console.log(`[BUILD LIVE] Git commit: ${buildMetadata.gitCommit}`);
+  console.log(`[BUILD LIVE] Build timestamp: ${buildMetadata.buildTimestamp}`);
 
   cleanStephanosDist();
 
@@ -49,17 +54,17 @@ try {
     throw new Error(`Stephanos build completed without creating ${buildMetadata.buildTarget}/index.html`);
   }
 
-  console.log('Vite build completed');
+  console.log('[BUILD LIVE] Vite build completed');
 
   prependDistBannerIfNeeded();
   writeStephanosDistMetadata(buildMetadata);
 
-  console.log('Stephanos dist written to apps/stephanos/dist');
-  console.log(`Stephanos UI built from ${buildMetadata.sourceIdentifier} into ${buildMetadata.buildTarget}.`);
-  console.log(`Runtime proof written to apps/stephanos/dist/stephanos-build.json from repo ${repoRoot}.`);
-  console.log(`Build metadata: ${JSON.stringify(buildMetadata)}`);
+  console.log('[BUILD LIVE] Stephanos dist written to apps/stephanos/dist');
+  console.log(`[BUILD LIVE] Stephanos UI built from ${buildMetadata.sourceIdentifier} into ${buildMetadata.buildTarget}.`);
+  console.log(`[BUILD LIVE] Runtime proof written to apps/stephanos/dist/stephanos-build.json from repo ${repoRoot}.`);
+  console.log(`[BUILD LIVE] Build metadata: ${JSON.stringify(buildMetadata)}`);
 } catch (error) {
-  console.error('Stephanos UI build failed.');
+  console.error('[BUILD LIVE] Stephanos UI build failed.');
   console.error(error);
   process.exit(1);
 }

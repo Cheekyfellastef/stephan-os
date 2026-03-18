@@ -4,6 +4,7 @@ import { extname, join, normalize, relative, resolve } from 'node:path';
 import {
   repoRoot,
   stephanosDistIndexPath,
+  readDistMetadataJson,
   stephanosDistMetadataPath,
 } from './stephanos-build-utils.mjs';
 
@@ -68,6 +69,7 @@ function readRuntimeStatus() {
 function buildHealthPayload() {
   const distEntryExists = existsSync(stephanosDistIndexPath);
   const distMetadataExists = existsSync(stephanosDistMetadataPath);
+  const buildMetadata = distMetadataExists ? readDistMetadataJson() : null;
 
   return {
     ok: distEntryExists,
@@ -83,6 +85,9 @@ function buildHealthPayload() {
     distEntryExists,
     distMetadataPath: 'apps/stephanos/dist/stephanos-build.json',
     distMetadataExists,
+    runtimeMarker: buildMetadata?.runtimeMarker || null,
+    gitCommit: buildMetadata?.gitCommit || null,
+    buildTimestamp: buildMetadata?.buildTimestamp || null,
     launcherStatus: readRuntimeStatus(),
     checkedAt: new Date().toISOString(),
   };
@@ -201,7 +206,7 @@ const server = createServer((request, response) => {
 
 server.on('error', async (error) => {
   if (error?.code !== 'EADDRINUSE') {
-    console.error('[stephanos serve] Failed to start static server.');
+    console.error('[DIST SERVER LIVE] Failed to start static server.');
     console.error(error);
     process.exit(1);
     return;
@@ -209,31 +214,37 @@ server.on('error', async (error) => {
 
   const existingServer = await probeExistingStephanosServer();
   if (existingServer.reusable) {
-    console.log(`Stephanos dist server already running on ${port}, reusing`);
-    console.log(`Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
-    console.log(`Open the built runtime at ${existingServer.runtimeUrl}`);
-    console.log(`Open the launcher shell at ${launcherShellUrl}`);
+    console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing`);
+    console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
+    console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
+    console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
     process.exit(0);
     return;
   }
 
-  console.error(`Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
+  console.error(`[DIST SERVER LIVE] Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
   process.exit(1);
 });
 
 server.listen(port, host, async () => {
   const readiness = await verifyServedRuntime(runtimeUrl);
   if (!readiness.ready) {
-    console.error('[stephanos serve] Static server started but the declared runtime URL did not return HTTP 200.');
-    console.error(`Health URL ready: ${readiness.healthOk}`);
-    console.error(`Runtime URL ready: ${readiness.runtimeOk}`);
+    console.error('[DIST SERVER LIVE] Static server started but the declared runtime URL did not return HTTP 200.');
+    console.error(`[DIST SERVER LIVE] Health URL ready: ${readiness.healthOk}`);
+    console.error(`[DIST SERVER LIVE] Runtime URL ready: ${readiness.runtimeOk}`);
     process.exit(1);
     return;
   }
 
-  console.log(`Stephanos static server running at http://${host}:${port}/`);
-  console.log(`Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
-  console.log(`Stephanos health endpoint: ${healthUrl}`);
-  console.log(`Open the built runtime at ${runtimeUrl}`);
-  console.log(`Open the launcher shell at ${launcherShellUrl}`);
+  const buildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
+  console.log(`[DIST SERVER LIVE] Stephanos static server running at http://${host}:${port}/`);
+  console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
+  console.log(`[DIST SERVER LIVE] Stephanos health endpoint: ${healthUrl}`);
+  console.log(`[DIST SERVER LIVE] Built runtime URL: ${runtimeUrl}`);
+  console.log(`[DIST SERVER LIVE] Launcher shell URL: ${launcherShellUrl}`);
+  if (buildMetadata) {
+    console.log(`[DIST SERVER LIVE] Runtime marker: ${buildMetadata.runtimeMarker}`);
+    console.log(`[DIST SERVER LIVE] Git commit: ${buildMetadata.gitCommit}`);
+    console.log(`[DIST SERVER LIVE] Build timestamp: ${buildMetadata.buildTimestamp}`);
+  }
 });

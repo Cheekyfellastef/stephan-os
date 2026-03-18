@@ -101,6 +101,12 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     fallbackEnabled: routerConfig.fallbackEnabled,
     attemptOrder,
   });
+  console.log('[BACKEND LIVE] Provider router request', {
+    requested_provider: requestedProvider,
+    selected_provider: selectedProvider,
+    fallback_enabled: routerConfig.fallbackEnabled,
+    attempt_order: attemptOrder,
+  });
 
   for (const provider of attemptOrder) {
     if (provider === 'openrouter' && (!routerConfig.providerConfigs?.openrouter?.enabled || routerConfig.provider !== 'openrouter')) {
@@ -111,6 +117,11 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       requestedProvider,
       selectedProvider,
       provider,
+    });
+    console.log('[BACKEND LIVE] Provider attempt starting', {
+      requested_provider: requestedProvider,
+      selected_provider: selectedProvider,
+      actual_provider_attempt: provider,
     });
 
     const attempt = await executeProvider(provider, request, routerConfig);
@@ -131,6 +142,14 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       outputTextPresent: Boolean(attempt.result.outputText),
       fallbackTriggerReason: failureReason,
     });
+    console.log('[BACKEND LIVE] Provider attempt completed', {
+      requested_provider: requestedProvider,
+      selected_provider: selectedProvider,
+      actual_provider_attempt: provider,
+      ok: attempt.result.ok,
+      output_text_present: Boolean(attempt.result.outputText),
+      fallback_trigger_reason: failureReason,
+    });
 
     if (attempt.result.ok && attempt.result.outputText) {
       const failedAttempts = attempts.slice(0, -1);
@@ -145,6 +164,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         fallbackUsed,
         fallbackReason,
         diagnostics: {
+          ...(attempt.result.diagnostics || {}),
           requestedProvider,
           selectedProvider,
           resolvedProvider: provider,
@@ -180,6 +200,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       retryable: false,
     },
     diagnostics: {
+      ...(lastAttempt?.result?.diagnostics || {}),
       requestedProvider,
       selectedProvider,
       resolvedProvider: lastAttempt?.provider || selectedProvider,

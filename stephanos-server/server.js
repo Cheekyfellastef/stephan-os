@@ -92,6 +92,7 @@ const server = http.createServer(app);
 server.on('error', async (error) => {
   if (error?.code !== 'EADDRINUSE') {
     logger.error('Stephanos server failed to start.', error);
+    console.error('[BACKEND LIVE] Stephanos server failed to start.', error);
     process.exit(1);
     return;
   }
@@ -99,11 +100,13 @@ server.on('error', async (error) => {
   const existingServer = await probeExistingStephanosServer();
   if (existingServer.reusable) {
     logger.info(`Stephanos server already running on http://localhost:${PORT}, reusing`);
+    console.log(`[BACKEND LIVE] Stephanos server already running on http://localhost:${PORT}, reusing`);
     process.exit(0);
     return;
   }
 
   logger.error(`Port ${PORT} is occupied by a non-Stephanos process, cannot continue.`);
+  console.error(`[BACKEND LIVE] Port ${PORT} is occupied by a non-Stephanos process, cannot continue.`);
   process.exit(1);
 });
 
@@ -112,4 +115,8 @@ server.listen(PORT, () => {
   logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Default provider router target: ${DEFAULT_PROVIDER_KEY} (free-tier default)`);
+  console.log(`[BACKEND LIVE] Stephanos server listening on http://localhost:${PORT}`);
+  console.log(`[BACKEND LIVE] Health endpoint: ${healthUrl}`);
+  console.log(`[BACKEND LIVE] Allowed origins: ${allowedOrigins.join(', ')}`);
+  console.log(`[BACKEND LIVE] Default provider router target: ${DEFAULT_PROVIDER_KEY}`);
 });

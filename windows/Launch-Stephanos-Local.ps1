@@ -8,6 +8,7 @@ $uiSourcePath = Join-Path $repoRoot 'stephanos-ui\src'
 $builtRuntimePath = Join-Path $repoRoot 'apps\stephanos\dist'
 $builtRuntimeIndexPath = Join-Path $builtRuntimePath 'index.html'
 $runtimeStatusPath = Join-Path $repoRoot 'apps\stephanos\runtime-status.json'
+$distMetadataPath = Join-Path $builtRuntimePath 'stephanos-build.json'
 $serverUrl = 'http://127.0.0.1:8787/api/health'
 $appUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/'
 $distHealthUrl = 'http://127.0.0.1:4173/__stephanos/health'
@@ -17,6 +18,10 @@ $global:Host.UI.RawUI.WindowTitle = $launcherWindowTitle
 
 function Write-Step([string]$Message) {
   Write-Host "`n==> $Message" -ForegroundColor Cyan
+}
+
+function Write-LiveLog([string]$Marker, [string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
+  Write-Host "[$Marker] $Message" -ForegroundColor $Color
 }
 
 function Test-CommandAvailable([string]$Name) {
@@ -96,6 +101,19 @@ function Get-Json([string]$Url, [int]$TimeoutSeconds = 2) {
   }
 }
 
+function Get-DistMetadata() {
+  if (-not (Test-Path $distMetadataPath)) {
+    return $null
+  }
+
+  try {
+    return Get-Content $distMetadataPath -Raw | ConvertFrom-Json
+  }
+  catch {
+    return $null
+  }
+}
+
 function Test-BackendHealthy() {
   $payload = Get-Json -Url $serverUrl -TimeoutSeconds 2
   return $null -ne $payload -and $payload.service -eq 'stephanos-server' -and $payload.ok -eq $true
@@ -149,6 +167,7 @@ function Start-WindowedProcess([string]$Title, [string]$Command, [string]$Workin
   $escapedWorkingDirectory = $WorkingDirectory.Replace("'", "''")
   $escapedCommand = $Command.Replace("'", "''")
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location '$escapedWorkingDirectory'; $escapedCommand"
+  Write-LiveLog 'LAUNCHER LIVE' "Starting windowed process '$Title' in '$WorkingDirectory' with command: $Command" Cyan
   Start-Process powershell.exe -WorkingDirectory $WorkingDirectory -ArgumentList @(
     '-NoExit',
     '-ExecutionPolicy', 'Bypass',
@@ -219,6 +238,7 @@ function Get-SubsystemSnapshot() {
 }
 
 function Write-StatusFile([string]$State, [string]$Message, [hashtable]$Extra = @{}) {
+  $distMetadata = Get-DistMetadata
   $payload = [ordered]@{
     appId = 'stephanos'
     launcherTitle = $launcherWindowTitle
@@ -228,6 +248,9 @@ function Write-StatusFile([string]$State, [string]$Message, [hashtable]$Extra = 
     distEntryPath = 'apps/stephanos/dist/index.html'
     backendUrl = 'http://localhost:8787'
     browserUrl = $appUrl
+    runtimeMarker = if ($distMetadata) { $distMetadata.runtimeMarker } else { $null }
+    gitCommit = if ($distMetadata) { $distMetadata.gitCommit } else { $null }
+    buildTimestamp = if ($distMetadata) { $distMetadata.buildTimestamp } else { $null }
     subsystems = Get-SubsystemSnapshot
     updatedAt = (Get-Date).ToUniversalTime().ToString('o')
   }
@@ -305,6 +328,7 @@ function Update-RepoIfSafe() {
 function Ensure-StephanosBuildReady() {
   Write-Step 'Checking whether the built Stephanos runtime is already current'
   Write-StatusFile -State 'verifying-build' -Message 'Checking the Stephanos build output.'
+  Write-LiveLog 'LAUNCHER LIVE' 'Build verification script: npm run stephanos:verify -> node scripts/verify-stephanos-dist.mjs' Cyan
 
   try {
     Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:verify') -FailureMessage 'Stephanos dist verify failed'
@@ -313,6 +337,7 @@ function Ensure-StephanosBuildReady() {
   catch {
     Write-Step 'Building Stephanos because the current dist output is missing or stale'
     Write-StatusFile -State 'building' -Message 'Building Stephanos from stephanos-ui/src.'
+    Write-LiveLog 'BUILD LIVE' 'Build script invoked: npm run stephanos:build -> node scripts/build-stephanos-ui.mjs' Cyan
     Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:build') -FailureMessage 'Stephanos build failed'
     Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:verify') -FailureMessage 'Stephanos dist verify failed after build'
   }
@@ -322,6 +347,12 @@ function Ensure-StephanosBuildReady() {
   }
 
   Write-Host 'Verified build output: apps/stephanos/dist/index.html' -ForegroundColor Green
+  $distMetadata = Get-DistMetadata
+  if ($distMetadata) {
+    Write-LiveLog 'BUILD LIVE' "Runtime marker: $($distMetadata.runtimeMarker)" Green
+    Write-LiveLog 'BUILD LIVE' "Git commit: $($distMetadata.gitCommit)" Green
+    Write-LiveLog 'BUILD LIVE' "Build timestamp: $($distMetadata.buildTimestamp)" Green
+  }
   Write-StatusFile -State 'build-ready' -Message 'Stephanos build is ready.'
 }
 
@@ -339,6 +370,7 @@ function Ensure-BackendRunning() {
 
   Write-Step 'Starting the local Stephanos API server'
   Write-StatusFile -State 'starting-backend' -Message 'Starting the Stephanos backend on port 8787.'
+  Write-LiveLog 'BACKEND LIVE' "Backend script invoked from $(Join-Path $repoRoot 'stephanos-server'): npm run start" Cyan
   Start-WindowedProcess -Title 'Stephanos Local API' -WorkingDirectory (Join-Path $repoRoot 'stephanos-server') -Command 'npm run start'
   return 'started'
 }
@@ -357,6 +389,7 @@ function Ensure-DistServerRunning() {
 
   Write-Step 'Starting the local Stephanos runtime server'
   Write-StatusFile -State 'starting-dist' -Message 'Starting the Stephanos dist server on port 4173.'
+  Write-LiveLog 'DIST SERVER LIVE' "Static server script invoked: node scripts/serve-stephanos-dist.mjs" Cyan
   Start-WindowedProcess -Title 'Stephanos Local Runtime' -WorkingDirectory $repoRoot -Command 'node scripts/serve-stephanos-dist.mjs'
   return 'started'
 }
@@ -374,18 +407,26 @@ function Wait-ForStephanosReadiness([int]$TimeoutSeconds = 10) {
 }
 
 function Open-BrowserUrl([string]$Url) {
-  Write-Host "Opening browser at: $Url"
+  Write-LiveLog 'BROWSER OPEN LIVE' "Preparing to open browser URL: $Url" Cyan
 
   try {
+    Write-LiveLog 'BROWSER OPEN LIVE' "Calling Start-Process with URL: $Url" Cyan
     Start-Process $Url -ErrorAction Stop | Out-Null
+    Write-LiveLog 'BROWSER OPEN LIVE' "Start-Process succeeded for URL: $Url" Green
     return $true
   }
   catch {
+    $primaryMessage = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { $_ | Out-String }
+    Write-LiveLog 'BROWSER OPEN LIVE' "Start-Process failed: $primaryMessage" Yellow
     try {
+      Write-LiveLog 'BROWSER OPEN LIVE' "Attempting fallback: cmd.exe /c start \"\" \"$Url\"" Cyan
       Start-Process 'cmd.exe' -ArgumentList '/c', 'start', '', $Url -ErrorAction Stop -WindowStyle Hidden | Out-Null
+      Write-LiveLog 'BROWSER OPEN LIVE' "Fallback cmd.exe start succeeded for URL: $Url" Green
       return $true
     }
     catch {
+      $fallbackMessage = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { $_ | Out-String }
+      Write-LiveLog 'BROWSER OPEN LIVE' "Fallback cmd.exe start failed: $fallbackMessage" Red
       Write-Host "Stephanos is running. Open this URL manually: $Url" -ForegroundColor Yellow
       return $false
     }
@@ -402,9 +443,14 @@ try {
   }
 
   Write-Step 'Using the real live Stephanos paths'
-  Write-Host "Source: $uiSourcePath"
-  Write-Host "Built runtime: $builtRuntimePath"
-  Write-Host 'Default Ollama target: http://localhost:11434'
+  Write-LiveLog 'LAUNCHER LIVE' "PS1 path: $PSCommandPath" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Repo root: $repoRoot" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Source: $uiSourcePath" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Built runtime: $builtRuntimePath" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Backend health URL: $serverUrl" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Dist health URL: $distHealthUrl" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' "Browser target URL: $appUrl" Cyan
+  Write-LiveLog 'LAUNCHER LIVE' 'Default Ollama target: http://localhost:11434' Cyan
   Write-StatusFile -State 'starting' -Message 'Stephanos local launch has started.'
 
   Write-Step 'Verifying repository paths'
@@ -433,10 +479,19 @@ try {
     throw "Stephanos readiness check failed. Build, backend, and browser URL did not all become reachable within 20 seconds."
   }
 
+  $distMetadata = Get-DistMetadata
   Write-StatusFile -State 'ready' -Message 'Stephanos running normally' -Extra @{
     updateResult = $updateResult
     backendAction = $backendAction
     uiAction = $distAction
+    launcherCmdPath = 'windows/Launch-Stephanos-Local.cmd'
+    launcherPs1Path = 'windows/Launch-Stephanos-Local.ps1'
+    buildScript = 'scripts/build-stephanos-ui.mjs'
+    distServerScript = 'scripts/serve-stephanos-dist.mjs'
+    backendScript = 'stephanos-server/server.js'
+    runtimeMarker = if ($distMetadata) { $distMetadata.runtimeMarker } else { $null }
+    gitCommit = if ($distMetadata) { $distMetadata.gitCommit } else { $null }
+    buildTimestamp = if ($distMetadata) { $distMetadata.buildTimestamp } else { $null }
   }
 
   Write-Step 'Opening Stephanos Local in your default browser'

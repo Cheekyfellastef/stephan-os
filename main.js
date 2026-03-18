@@ -9,6 +9,7 @@ import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 
 console.log("Stephanos OS booting");
+console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
 
 window.openSystemPanel = function() {};
 
