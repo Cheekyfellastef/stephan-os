@@ -4,7 +4,7 @@ import { executeTool } from '../services/toolRegistry.js';
 import { parseCommand, resolveRoute } from '../services/commandRouter.js';
 import { buildErrorResponse, buildSuccessResponse } from '../services/responseBuilder.js';
 import { createLogger } from '../utils/logger.js';
-import { ERROR_CODES, createError, normalizeError } from '../services/errors.js';
+import { ERROR_CODES, normalizeError } from '../services/errors.js';
 import { assistantContextService } from '../services/assistantContextService.js';
 import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
@@ -39,6 +39,7 @@ router.post('/chat', async (req, res) => {
 
   logger.info('Incoming /api/ai/chat request', {
     requestId,
+    uiRequestedProvider: provider,
     requestedProvider: providerResolution.requestedProvider,
     resolvedProvider: providerResolution.resolvedProvider,
     fallbackApplied: providerResolution.fallbackApplied,
@@ -99,9 +100,50 @@ router.post('/chat', async (req, res) => {
       },
     });
 
+    const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
+    const executionMetadata = {
+      requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
+      actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
+      model_used: llmResult.modelUsed || llmResult.model || '',
+      fallback_used: Boolean(llmResult.fallbackUsed),
+      fallback_reason: llmResult.fallbackReason || null,
+    };
+
     if (!llmResult.ok) {
-      throw createError(llmResult.error?.code || ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE, llmResult.error?.message || 'AI provider failed.', { status: 502 });
+      return res.status(502).json(buildErrorResponse({
+        route: decision.route,
+        command: parsedCommand.isSlash ? parsedCommand.raw : null,
+        output_text: llmResult.error?.message || 'AI provider failed.',
+        error: llmResult.error?.message || 'AI provider failed.',
+        error_code: llmResult.error?.code || ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE,
+        data: {
+          provider: llmResult.provider,
+          provider_model: llmResult.model,
+          provider_raw: llmResult.raw,
+          provider_diagnostics: llmResult.diagnostics,
+          provider_health: providerHealthSnapshot,
+          execution_metadata: executionMetadata,
+          requested_provider: executionMetadata.requested_provider,
+          actual_provider_used: executionMetadata.actual_provider_used,
+          model_used: executionMetadata.model_used,
+          fallback_used: executionMetadata.fallback_used,
+          fallback_reason: executionMetadata.fallback_reason,
+          assistant_context: contextBundle,
+        },
+        memory_hits: memoryHits,
+        timing_ms: Date.now() - startedAt,
+        debug: {
+          parsed_command: parsedCommand,
+          route_reason: decision.reason,
+          request_id: requestId,
+          llm_provider: llmResult.provider,
+          llm_model: llmResult.model,
+          provider_router: llmResult.diagnostics,
+          execution_metadata: executionMetadata,
+        },
+      }));
     }
+
     return res.json(buildSuccessResponse({
       type: 'assistant_response',
       route: decision.route,
@@ -112,7 +154,13 @@ router.post('/chat', async (req, res) => {
         provider_model: llmResult.model,
         provider_raw: llmResult.raw,
         provider_diagnostics: llmResult.diagnostics,
-        provider_health: await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode }),
+        provider_health: providerHealthSnapshot,
+        execution_metadata: executionMetadata,
+        requested_provider: executionMetadata.requested_provider,
+        actual_provider_used: executionMetadata.actual_provider_used,
+        model_used: executionMetadata.model_used,
+        fallback_used: executionMetadata.fallback_used,
+        fallback_reason: executionMetadata.fallback_reason,
         assistant_context: contextBundle,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
       },
@@ -125,6 +173,7 @@ router.post('/chat', async (req, res) => {
         llm_provider: llmResult.provider,
         llm_model: llmResult.model,
         provider_router: llmResult.diagnostics,
+        execution_metadata: executionMetadata,
       },
     }));
   } catch (error) {

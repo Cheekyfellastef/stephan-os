@@ -1,17 +1,16 @@
 import { DEFAULT_PROVIDER_KEY, PROVIDER_DEFINITIONS } from '../../../../shared/ai/providerDefaults.mjs';
 import { ERROR_CODES } from '../../errors.js';
+import { createLogger } from '../../../utils/logger.js';
 import { PROVIDER_HEALTH_CHECKS, PROVIDER_RUNNERS } from '../providers/index.js';
 import { buildAIRequest, buildRouterConfig, redactSecrets, sanitizeProviderConfig } from '../utils/providerUtils.js';
+
+const logger = createLogger('llm-router');
 
 function resolveAttemptOrder(config) {
   const selected = config.provider || DEFAULT_PROVIDER_KEY;
   const order = [selected];
 
   if (!config.fallbackEnabled) return order;
-
-  if (config.devMode && selected !== 'mock') {
-    order.push('mock');
-  }
 
   for (const provider of config.fallbackOrder) {
     if (provider !== 'openrouter' && provider !== selected && !order.includes(provider)) {
@@ -20,6 +19,21 @@ function resolveAttemptOrder(config) {
   }
 
   return order.filter((provider) => PROVIDER_DEFINITIONS[provider]);
+}
+
+function summarizeAttemptFailure(provider, attempt) {
+  if (!attempt) return null;
+  if (attempt.result?.ok && attempt.result?.outputText) return null;
+  if (attempt.result?.ok && !attempt.result?.outputText) return `Provider "${provider}" returned an empty response.`;
+  return attempt.result?.error?.message || attempt.health?.reason || attempt.health?.detail || `Provider "${provider}" failed.`;
+}
+
+function buildFallbackReason(failedAttempts = []) {
+  const reasons = failedAttempts
+    .map(({ provider, failureReason }) => failureReason ? `${provider}: ${failureReason}` : null)
+    .filter(Boolean);
+
+  return reasons.length > 0 ? reasons.join(' | ') : null;
 }
 
 async function executeProvider(provider, request, routerConfig) {
@@ -78,26 +92,66 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const routerConfig = buildRouterConfig(configInput);
   const attempts = [];
   const attemptOrder = resolveAttemptOrder(routerConfig);
+  const requestedProvider = configInput.provider || DEFAULT_PROVIDER_KEY;
+  const selectedProvider = routerConfig.provider;
+
+  logger.info('Routing LLM request', {
+    requestedProvider,
+    selectedProvider,
+    fallbackEnabled: routerConfig.fallbackEnabled,
+    attemptOrder,
+  });
 
   for (const provider of attemptOrder) {
     if (provider === 'openrouter' && (!routerConfig.providerConfigs?.openrouter?.enabled || routerConfig.provider !== 'openrouter')) {
       continue;
     }
 
+    logger.info('Executing provider attempt', {
+      requestedProvider,
+      selectedProvider,
+      provider,
+    });
+
     const attempt = await executeProvider(provider, request, routerConfig);
+    const failureReason = summarizeAttemptFailure(provider, attempt);
+
     attempts.push({
       provider,
       health: attempt.health,
+      failureReason,
       result: attempt.result.ok ? { ...attempt.result, raw: undefined } : attempt.result,
     });
 
+    logger.info('Provider attempt completed', {
+      requestedProvider,
+      selectedProvider,
+      provider,
+      ok: attempt.result.ok,
+      outputTextPresent: Boolean(attempt.result.outputText),
+      fallbackTriggerReason: failureReason,
+    });
+
     if (attempt.result.ok && attempt.result.outputText) {
+      const failedAttempts = attempts.slice(0, -1);
+      const fallbackUsed = provider !== selectedProvider;
+      const fallbackReason = fallbackUsed ? buildFallbackReason(failedAttempts) : null;
+
       return {
         ...attempt.result,
+        requestedProvider,
+        actualProviderUsed: provider,
+        modelUsed: attempt.result.model || '',
+        fallbackUsed,
+        fallbackReason,
         diagnostics: {
-          requestedProvider: configInput.provider || DEFAULT_PROVIDER_KEY,
+          requestedProvider,
+          selectedProvider,
           resolvedProvider: provider,
-          fallbackUsed: provider !== routerConfig.provider,
+          actualProviderUsed: provider,
+          modelUsed: attempt.result.model || '',
+          fallbackUsed,
+          fallbackReason,
           attemptOrder,
           attempts,
           routerConfig: redactSecrets(routerConfig),
@@ -107,20 +161,32 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   }
 
   const lastAttempt = attempts[attempts.length - 1];
+  const fallbackUsed = attempts.length > 1;
+  const fallbackReason = buildFallbackReason(attempts.slice(0, -1)) || lastAttempt?.failureReason || 'No provider returned a usable response.';
+
   return {
     ok: false,
-    provider: lastAttempt?.provider || routerConfig.provider,
+    provider: lastAttempt?.provider || selectedProvider,
+    requestedProvider,
+    actualProviderUsed: lastAttempt?.provider || selectedProvider,
     model: lastAttempt?.result?.model || '',
+    modelUsed: lastAttempt?.result?.model || '',
     outputText: '',
+    fallbackUsed,
+    fallbackReason,
     error: lastAttempt?.result?.error || {
       code: ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE,
-      message: 'No AI provider is currently available. Use Mock instead.',
+      message: 'No AI provider is currently available.',
       retryable: false,
     },
     diagnostics: {
-      requestedProvider: configInput.provider || DEFAULT_PROVIDER_KEY,
-      resolvedProvider: lastAttempt?.provider || routerConfig.provider,
-      fallbackUsed: attempts.length > 1,
+      requestedProvider,
+      selectedProvider,
+      resolvedProvider: lastAttempt?.provider || selectedProvider,
+      actualProviderUsed: lastAttempt?.provider || selectedProvider,
+      modelUsed: lastAttempt?.result?.model || '',
+      fallbackUsed,
+      fallbackReason,
       attemptOrder,
       attempts,
       routerConfig: redactSecrets(routerConfig),

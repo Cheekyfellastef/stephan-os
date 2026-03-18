@@ -16,14 +16,15 @@ export default function DebugConsole() {
   if (!debugVisible) return null;
 
   const activeConfig = getActiveProviderConfig();
+  const executionMetadata = debugData.execution_metadata || {};
 
   return (
     <section className="debug-console panel">
       <h2>Developer Debug Console</h2>
       <div className="debug-grid">
-        <div><strong>Request</strong><pre>{JSON.stringify({ request_id: debugData.response_payload?.debug?.request_id, parsed_command: debugData.parsed_command }, null, 2)}</pre></div>
+        <div><strong>Request</strong><pre>{JSON.stringify({ request_id: debugData.response_payload?.debug?.request_id, parsed_command: debugData.parsed_command, requested_provider: debugData.requested_provider || debugData.request_payload?.provider }, null, 2)}</pre></div>
         <div><strong>Routing</strong><pre>{JSON.stringify({ provider, provider_router: debugData.provider_diagnostics, health: providerHealth[provider] }, null, 2)}</pre></div>
-        <div><strong>Execution</strong><pre>{JSON.stringify({ timing_ms: debugData.timing_ms, error: debugData.error, error_code: debugData.error_code }, null, 2)}</pre></div>
+        <div><strong>Execution</strong><pre>{JSON.stringify({ requested_provider: executionMetadata.requested_provider, actual_provider_used: executionMetadata.actual_provider_used, model_used: executionMetadata.model_used, fallback_used: executionMetadata.fallback_used, fallback_reason: executionMetadata.fallback_reason, timing_ms: debugData.timing_ms, error: debugData.error, error_code: debugData.error_code }, null, 2)}</pre></div>
         <div><strong>Connectivity</strong><pre>{JSON.stringify({ backendReachable: apiStatus.backendReachable, backendTargetEndpoint: apiStatus.backendTargetEndpoint, backendHealthEndpoint: apiStatus.healthEndpoint, backendDefaultProvider: apiStatus.backendDefaultProvider }, null, 2)}</pre></div>
       </div>
 
