@@ -36,6 +36,7 @@ function runRealViteBuild() {
     const child = spawn(viteBuildCommand[0], viteBuildCommand.slice(1), {
       cwd: stephanosUiRoot,
       env,
+      shell: process.platform === 'win32',
       stdio: 'inherit',
     });
 
