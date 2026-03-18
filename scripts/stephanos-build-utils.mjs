@@ -7,17 +7,30 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { resolve, relative, dirname, join } from 'node:path';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-export const repoRoot = resolve(new URL('..', import.meta.url).pathname);
-export const stephanosUiRoot = resolve(repoRoot, 'stephanos-ui');
-export const stephanosUiSrcRoot = resolve(repoRoot, 'stephanos-ui/src');
-export const stephanosDistRoot = resolve(repoRoot, 'apps/stephanos/dist');
-export const stephanosDistIndexPath = resolve(stephanosDistRoot, 'index.html');
-export const stephanosDistMetadataPath = resolve(stephanosDistRoot, 'stephanos-build.json');
-export const stephanosUiPackagePath = resolve(stephanosUiRoot, 'package.json');
-export const stephanosUiPackage = JSON.parse(readFileSync(stephanosUiPackagePath, 'utf8'));
+function resolveFsPath(...segments) {
+  return path.normalize(path.resolve(...segments));
+}
+
+function readFileSyncWithDebug(filePath, options) {
+  const normalizedPath = path.normalize(filePath);
+  console.log(`[stephanos debug] Reading filesystem path: ${normalizedPath}`);
+  return readFileSync(normalizedPath, options);
+}
+
+const buildUtilsDir = path.dirname(fileURLToPath(import.meta.url));
+
+export const repoRoot = resolveFsPath(buildUtilsDir, '..');
+export const stephanosUiRoot = resolveFsPath(repoRoot, 'stephanos-ui');
+export const stephanosUiSrcRoot = resolveFsPath(stephanosUiRoot, 'src');
+export const stephanosDistRoot = resolveFsPath(repoRoot, 'apps', 'stephanos', 'dist');
+export const stephanosDistIndexPath = resolveFsPath(stephanosDistRoot, 'index.html');
+export const stephanosDistMetadataPath = resolveFsPath(stephanosDistRoot, 'stephanos-build.json');
+export const stephanosUiPackagePath = resolveFsPath(stephanosUiRoot, 'package.json');
+export const stephanosUiPackage = JSON.parse(readFileSyncWithDebug(stephanosUiPackagePath, 'utf8'));
 
 export const DIST_WARNING_BANNER = [
   '<!-- GENERATED FILE: apps/stephanos/dist/index.html -->',
@@ -34,7 +47,7 @@ const FINGERPRINT_INPUTS = [
 function walkFiles(rootDir) {
   const results = [];
   for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
-    const absolutePath = join(rootDir, entry.name);
+    const absolutePath = path.normalize(path.join(rootDir, entry.name));
     if (entry.isDirectory()) {
       results.push(...walkFiles(absolutePath));
       continue;
@@ -62,14 +75,14 @@ export function getGitCommit() {
 export function computeStephanosSourceFingerprint() {
   const hash = createHash('sha256');
   const files = [
-    ...FINGERPRINT_INPUTS.map((filePath) => resolve(repoRoot, filePath)),
+    ...FINGERPRINT_INPUTS.map((filePath) => resolveFsPath(repoRoot, filePath)),
     ...walkFiles(stephanosUiSrcRoot),
   ].sort((left, right) => left.localeCompare(right));
 
   for (const absolutePath of files) {
-    const relPath = relative(repoRoot, absolutePath).replace(/\\/g, '/');
+    const relPath = path.relative(repoRoot, absolutePath).replace(/\\/g, '/');
     hash.update(`FILE:${relPath}\n`);
-    hash.update(readFileSync(absolutePath));
+    hash.update(readFileSyncWithDebug(absolutePath));
     hash.update('\n');
   }
 
@@ -102,7 +115,7 @@ export function prependDistBannerIfNeeded() {
     return;
   }
 
-  const html = readFileSync(stephanosDistIndexPath, 'utf8');
+  const html = readFileSyncWithDebug(stephanosDistIndexPath, 'utf8');
   if (!html.startsWith(DIST_WARNING_BANNER)) {
     writeFileSync(stephanosDistIndexPath, `${DIST_WARNING_BANNER}\n${html}`);
   }
@@ -117,7 +130,7 @@ export function readDistMetadataJson() {
     return null;
   }
 
-  return JSON.parse(readFileSync(stephanosDistMetadataPath, 'utf8'));
+  return JSON.parse(readFileSyncWithDebug(stephanosDistMetadataPath, 'utf8'));
 }
 
 export function extractEmbeddedHtmlMetadata(html) {
@@ -138,7 +151,7 @@ export function getDistAssetReferences(indexHtml) {
 }
 
 export function resolveDistAssetPath(assetPath) {
-  return resolve(dirname(stephanosDistIndexPath), assetPath);
+  return resolveFsPath(path.dirname(stephanosDistIndexPath), assetPath);
 }
 
 export function getDistAgeMs() {
