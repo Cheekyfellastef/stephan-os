@@ -1,5 +1,6 @@
 import { buildProviderStatusSummary } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
+import { STEPHANOS_UI_BUILD_TARGET, STEPHANOS_UI_SOURCE, STEPHANOS_UI_VERSION } from '../runtimeInfo';
 
 export default function StatusPanel() {
   const {
@@ -43,6 +44,9 @@ export default function StatusPanel() {
         <li>Commands: {commandHistory.length}</li>
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>
         <li>UI Marker: {uiDiagnostics.componentMarker}</li>
+        <li>UI Version: {STEPHANOS_UI_VERSION}</li>
+        <li>UI Build Target: {STEPHANOS_UI_BUILD_TARGET}</li>
+        <li>UI Source: {STEPHANOS_UI_SOURCE}</li>
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${apiStatus.state}`}>{apiStatus.detail}</p>

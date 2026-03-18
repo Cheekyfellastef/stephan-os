@@ -15,8 +15,9 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
+import { STEPHANOS_UI_BUILD_TARGET, STEPHANOS_UI_RUNTIME_LABEL, STEPHANOS_UI_SOURCE } from './runtimeInfo';
 
-const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::free-tier-router-v1';
+const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::live-vite-shell-v2';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
@@ -59,6 +60,13 @@ export default function App() {
           <RoadmapPanel commandHistory={commandHistory} />
         </div>
       </section>
+
+      <footer className="runtime-diagnostic" aria-label="runtime diagnostic">
+        <span>{STEPHANOS_UI_RUNTIME_LABEL}</span>
+        <span>launcher: root index.html → apps/stephanos/dist/index.html</span>
+        <span>build target: {STEPHANOS_UI_BUILD_TARGET}</span>
+        <span>source: {STEPHANOS_UI_SOURCE}</span>
+      </footer>
 
       <DebugConsole />
     </main>
