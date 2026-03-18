@@ -1,50 +1,79 @@
-export const DEFAULT_PROVIDER_KEY = 'ollama';
-export const PROVIDER_KEYS = ['ollama', 'openai', 'custom'];
+export const DEFAULT_PROVIDER_KEY = 'mock';
+export const PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama', 'openrouter'];
+export const FALLBACK_PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama'];
 
 export const PROVIDER_DEFINITIONS = {
+  mock: {
+    key: 'mock',
+    label: 'Mock (Free Dev Mode)',
+    kind: 'mock',
+    editable: true,
+    paid: false,
+    canAutoFallback: true,
+    targetSummary: 'zero-cost local mock responses',
+    defaults: {
+      enabled: true,
+      latencyMs: 500,
+      failRate: 0,
+      mode: 'echo',
+      model: 'stephanos-mock-v1',
+    },
+  },
+  groq: {
+    key: 'groq',
+    label: 'Groq',
+    kind: 'cloud',
+    editable: true,
+    paid: false,
+    canAutoFallback: true,
+    targetSummary: 'free-tier cloud via Groq',
+    defaults: {
+      baseURL: 'https://api.groq.com/openai/v1',
+      model: 'openai/gpt-oss-20b',
+      apiKey: '',
+    },
+  },
+  gemini: {
+    key: 'gemini',
+    label: 'Gemini',
+    kind: 'cloud',
+    editable: true,
+    paid: false,
+    canAutoFallback: true,
+    targetSummary: 'free-tier cloud via Gemini API',
+    defaults: {
+      model: 'gemini-2.5-flash',
+      apiKey: '',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
+    },
+  },
   ollama: {
     key: 'ollama',
-    label: 'Local Ollama',
+    label: 'Ollama',
     kind: 'local',
-    editable: false,
-    targetSummary: 'routed via Stephanos backend',
-    defaults: {
-      label: 'Local Ollama',
-      baseUrl: 'http://127.0.0.1:11434',
-      chatEndpoint: '/api/chat',
-      model: 'llama3',
-      apiKey: '',
-      headersJson: '',
-    },
-  },
-  openai: {
-    key: 'openai',
-    label: 'OpenAI Cloud',
-    kind: 'cloud',
-    editable: false,
-    targetSummary: 'routed via Stephanos backend',
-    defaults: {
-      label: 'OpenAI Cloud',
-      baseUrl: '',
-      chatEndpoint: '',
-      model: '',
-      apiKey: '',
-      headersJson: '',
-    },
-  },
-  custom: {
-    key: 'custom',
-    label: 'Custom LLM',
-    kind: 'custom',
     editable: true,
-    targetSummary: 'routed via Stephanos backend',
+    paid: false,
+    canAutoFallback: true,
+    targetSummary: 'local/offline model engine',
     defaults: {
-      label: 'Custom LLM',
-      baseUrl: '',
-      chatEndpoint: '/v1/chat/completions',
-      model: '',
+      baseURL: 'http://localhost:11434',
+      model: 'gpt-oss:20b',
+      timeoutMs: 8000,
+    },
+  },
+  openrouter: {
+    key: 'openrouter',
+    label: 'OpenRouter (Optional Paid)',
+    kind: 'cloud',
+    editable: true,
+    paid: true,
+    canAutoFallback: false,
+    targetSummary: 'optional paid/fallback cloud routing',
+    defaults: {
+      baseURL: 'https://openrouter.ai/api/v1',
+      model: 'openai/gpt-oss-20b',
       apiKey: '',
-      headersJson: '',
+      enabled: false,
     },
   },
 };
@@ -55,15 +84,30 @@ export function createDefaultSavedProviderConfigs() {
   );
 }
 
+export function createDefaultRouterSettings() {
+  return {
+    provider: DEFAULT_PROVIDER_KEY,
+    devMode: true,
+    fallbackEnabled: true,
+    fallbackOrder: [...FALLBACK_PROVIDER_KEYS],
+    providerConfigs: createDefaultSavedProviderConfigs(),
+  };
+}
+
 export function normalizeProviderSelection(providerKey) {
   return PROVIDER_DEFINITIONS[providerKey] ? providerKey : DEFAULT_PROVIDER_KEY;
 }
 
-export function buildProviderDisplayLabel(providerKey, config) {
-  if (providerKey === 'custom') {
-    return config?.label?.trim() || PROVIDER_DEFINITIONS.custom.label;
-  }
+export function normalizeFallbackOrder(order = []) {
+  const filtered = Array.isArray(order)
+    ? order.filter((key) => PROVIDER_KEYS.includes(key) && key !== 'openrouter')
+    : [];
 
+  return [...new Set([...filtered, ...FALLBACK_PROVIDER_KEYS])];
+}
+
+export function buildProviderDisplayLabel(providerKey, config) {
+  if (providerKey === 'openrouter') return PROVIDER_DEFINITIONS.openrouter.label;
   return PROVIDER_DEFINITIONS[providerKey]?.label || providerKey;
 }
 

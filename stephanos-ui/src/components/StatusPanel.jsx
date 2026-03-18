@@ -9,59 +9,39 @@ export default function StatusPanel() {
     commandHistory,
     apiStatus,
     provider,
-    providerDraftStatus,
     providerSelectionSource,
+    devMode,
+    fallbackEnabled,
+    providerHealth,
     getActiveProviderConfig,
     getActiveProviderConfigSource,
     uiDiagnostics,
   } = useAIStore();
-  const latest = commandHistory[commandHistory.length - 1];
-  const proposalStats = commandHistory.findLast((entry) => entry.data_payload?.stats)?.data_payload?.stats;
-  const roadmapSummary = commandHistory.findLast((entry) => entry.data_payload?.summary)?.data_payload?.summary;
 
+  const latest = commandHistory[commandHistory.length - 1];
   const activeConfig = getActiveProviderConfig();
-  const configState = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
-  const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl);
-  const backendDefaults = apiStatus.meta?.provider_defaults;
-  const corsAllowedOrigins = apiStatus.corsAllowedOrigins?.length
-    ? apiStatus.corsAllowedOrigins.join(', ')
-    : 'n/a';
+  const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl, providerHealth[provider]);
 
   return (
     <aside className="status-panel panel">
       <h2>Status</h2>
       <ul>
         <li>Backend: {apiStatus.label}</li>
-        <li>Frontend Origin: {apiStatus.frontendOrigin || 'n/a'}</li>
-        <li>Frontend API Base URL: {statusSummary.apiBaseUrl}</li>
-        <li>Frontend API Strategy: {apiStatus.strategy || 'n/a'}</li>
         <li>Backend Reachable: {apiStatus.backendReachable ? 'yes' : 'no'}</li>
-        <li>Backend Target Endpoint: {apiStatus.backendTargetEndpoint || 'n/a'}</li>
-        <li>Backend Health Endpoint: {apiStatus.healthEndpoint || 'n/a'}</li>
-        <li>API Health: {apiStatus.state}</li>
-        <li>Backend Default Provider: {apiStatus.backendDefaultProvider || apiStatus.meta?.default_provider || 'n/a'}</li>
+        <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Active Provider: {statusSummary.providerLabel}</li>
-        <li>Provider Key: {provider}</li>
-        <li>Provider Target: {statusSummary.providerTarget}</li>
+        <li>Provider Health: {statusSummary.healthBadge}</li>
+        <li>Provider Detail: {statusSummary.healthDetail}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
-        <li>Config Mode: {configState}</li>
-        <li>Provider Base URL: {activeConfig.baseUrl || 'n/a'}</li>
-        <li>Provider Chat Endpoint: {activeConfig.chatEndpoint || 'n/a'}</li>
-        <li>Provider Endpoint Summary: {statusSummary.providerEndpoint}</li>
+        <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
+        <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
+        <li>Provider Endpoint: {statusSummary.providerEndpoint}</li>
         <li>Provider Model: {statusSummary.model}</li>
-        <li>Resolved Ollama Endpoint: {apiStatus.resolvedOllamaEndpoint || 'n/a'}</li>
-        <li>Backend Default Ollama Endpoint: {backendDefaults ? `${backendDefaults.ollama.baseUrl}${backendDefaults.ollama.chatEndpoint}` : 'n/a'}</li>
-        <li>CORS Allowed Origins: {corsAllowedOrigins}</li>
-        <li>Provider Router Path: {apiStatus.providerRouterPath || 'n/a'}</li>
-        <li>Last Provider Save: {providerDraftStatus.custom.savedAt || 'n/a'}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>
-        <li>Pending Proposals: {proposalStats?.pending ?? 'n/a'}</li>
-        <li>Roadmap Open: {roadmapSummary?.open ?? 'n/a'}</li>
-        <li>Provider Toggle Mounted: {uiDiagnostics.providerToggleMounted ? 'yes' : 'no'}</li>
         <li>UI Marker: {uiDiagnostics.componentMarker}</li>
         <li>Debug Console: F1</li>
       </ul>

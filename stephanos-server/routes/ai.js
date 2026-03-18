@@ -1,13 +1,12 @@
 import express from 'express';
-import { isAIServiceAvailable } from '../services/openaiService.js';
 import { memoryService } from '../services/memoryService.js';
 import { executeTool } from '../services/toolRegistry.js';
 import { parseCommand, resolveRoute } from '../services/commandRouter.js';
 import { buildErrorResponse, buildSuccessResponse } from '../services/responseBuilder.js';
 import { createLogger } from '../utils/logger.js';
-import { ERROR_CODES, normalizeError } from '../services/errors.js';
+import { ERROR_CODES, createError, normalizeError } from '../services/errors.js';
 import { assistantContextService } from '../services/assistantContextService.js';
-import { routeLLMRequest, resolveProviderRequest } from '../services/llm/providerRouter.js';
+import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 
 const logger = createLogger('ai-route');
@@ -15,11 +14,20 @@ const router = express.Router();
 
 const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /memory list /memory save <text> /memory find <query> /memory propose <id|recent> /proposals /proposals list /proposals stats /proposals show <id> /proposals accept <id> /proposals reject <id> /activity /activity list /activity recent /activity show <id> /roadmap /roadmap list /roadmap add <text> /roadmap done <id> /roadmap show <id> /kg help /simulate help /simulate history list /simulate history show <runId> /simulate history clear /simulate compare <runIdA> <runIdB> /clear';
 
+
+router.post('/providers/health', async (req, res) => {
+  const { provider = DEFAULT_PROVIDER_KEY, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true } = req.body || {};
+  const snapshot = await getProviderHealthSnapshot({ provider, providerConfigs, fallbackEnabled, fallbackOrder, devMode });
+  res.json({ success: true, data: snapshot });
+});
+
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = {} } = req.body || {};
+  const { prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = {}, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true } = req.body || {};
   const requestId = req.headers['x-request-id'];
-  const providerResolution = resolveProviderRequest(provider, providerConfig);
+  const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
+  const mergedProviderConfigs = { ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) };
+  const providerResolution = resolveProviderRequest(provider, effectiveProviderConfig, { fallbackEnabled, fallbackOrder, devMode });
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json(buildErrorResponse({ route: 'assistant', output_text: 'Prompt is required.', error: 'Prompt is required.', error_code: ERROR_CODES.CMD_INVALID, timing_ms: Date.now() - startedAt, debug: { route_reason: 'Input validation failed', request_id: requestId } }));
@@ -59,7 +67,7 @@ router.post('/chat', async (req, res) => {
 
     if (decision.tool) {
       const toolStart = Date.now();
-      const { tool, result } = await executeTool(decision.tool, decision.args, { aiAvailable: isAIServiceAvailable() });
+      const { tool, result } = await executeTool(decision.tool, decision.args, { aiAvailable: true });
       return res.json(buildSuccessResponse({
         type: decision.route === 'memory' ? 'memory_result' : decision.route === 'simulation' ? 'simulation_result' : 'tool_result',
         route: decision.route,
@@ -75,9 +83,14 @@ router.post('/chat', async (req, res) => {
 
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
     const llmResult = await routeLLMRequest({
-      prompt,
+      messages: [{ role: 'user', content: prompt }],
+      systemPrompt: 'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+    }, {
       provider,
-      providerConfig,
+      providerConfigs: mergedProviderConfigs,
+      fallbackEnabled,
+      fallbackOrder,
+      devMode,
       context: {
         route: decision.route,
         parsed_command: parsedCommand,
@@ -85,16 +98,21 @@ router.post('/chat', async (req, res) => {
         subsystem_context: contextBundle,
       },
     });
+
+    if (!llmResult.ok) {
+      throw createError(llmResult.error?.code || ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE, llmResult.error?.message || 'AI provider failed.', { status: 502 });
+    }
     return res.json(buildSuccessResponse({
       type: 'assistant_response',
       route: decision.route,
       command: parsedCommand.isSlash ? parsedCommand.raw : null,
-      output_text: llmResult.output_text,
+      output_text: llmResult.outputText,
       data: {
         provider: llmResult.provider,
         provider_model: llmResult.model,
         provider_raw: llmResult.raw,
         provider_diagnostics: llmResult.diagnostics,
+        provider_health: await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode }),
         assistant_context: contextBundle,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
       },
@@ -117,7 +135,7 @@ router.post('/chat', async (req, res) => {
       requestedProvider: providerResolution.requestedProvider,
       resolvedProvider: providerResolution.resolvedProvider,
     });
-    return res.status(appError.status ?? 500).json(buildErrorResponse({ route: decision.route, command: parsedCommand.isSlash ? parsedCommand.raw : null, output_text: 'The AI Core encountered an error.', error: appError.message, error_code: appError.code, memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, parsed_command: parsedCommand, selected_subsystem: decision.route, selected_tool: decision.tool ?? null, execution_payload: decision.args ?? null, error_code: appError.code, provider_router: providerResolution } }));
+    return res.status(appError.status ?? 500).json(buildErrorResponse({ route: decision.route, command: parsedCommand.isSlash ? parsedCommand.raw : null, output_text: appError.message, error: appError.message, error_code: appError.code, memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, parsed_command: parsedCommand, selected_subsystem: decision.route, selected_tool: decision.tool ?? null, execution_payload: decision.args ?? null, error_code: appError.code, provider_router: providerResolution } }));
   }
 });
 

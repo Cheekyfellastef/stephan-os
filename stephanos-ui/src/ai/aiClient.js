@@ -7,13 +7,7 @@ function normalizeResponse(json) {
 }
 
 function createTransportError({ code, message, details }) {
-  return {
-    ok: false,
-    code,
-    message,
-    details,
-    isTransportError: true,
-  };
+  return { ok: false, code, message, details, isTransportError: true };
 }
 
 async function requestJson(path, options = {}) {
@@ -21,77 +15,45 @@ async function requestJson(path, options = {}) {
   const timeout = setTimeout(() => controller.abort(), API_CONFIG.timeoutMs);
 
   try {
-    const response = await fetch(buildApiUrl(path), {
-      ...options,
-      signal: controller.signal,
-    });
-
+    const response = await fetch(buildApiUrl(path), { ...options, signal: controller.signal });
     const raw = await response.text();
     let json = {};
 
     if (raw) {
-      try {
-        json = JSON.parse(raw);
-      } catch {
-        throw createTransportError({
-          code: 'INVALID_JSON',
-          message: 'Backend returned malformed JSON.',
-          details: { status: response.status, raw },
-        });
+      try { json = JSON.parse(raw); } catch {
+        throw createTransportError({ code: 'INVALID_JSON', message: 'Backend returned malformed JSON.', details: { status: response.status, raw } });
       }
     }
 
-    return {
-      ok: response.ok,
-      status: response.status,
-      data: json,
-    };
+    return { ok: response.ok, status: response.status, data: json };
   } catch (error) {
-    if (error?.isTransportError) {
-      throw error;
-    }
-
-    if (error?.name === 'AbortError') {
-      throw createTransportError({
-        code: 'TIMEOUT',
-        message: `Request timed out after ${API_CONFIG.timeoutMs}ms.`,
-      });
-    }
-
-    throw createTransportError({
-      code: 'BACKEND_OFFLINE',
-      message: 'Unable to reach backend API. Check that the server is running and reachable.',
-      details: { reason: error?.message },
-    });
+    if (error?.isTransportError) throw error;
+    if (error?.name === 'AbortError') throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${API_CONFIG.timeoutMs}ms.` });
+    throw createTransportError({ code: 'BACKEND_OFFLINE', message: 'Unable to reach backend API. Check that the server is running and reachable.', details: { reason: error?.message } });
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = null }) {
-  const payload = { prompt, provider };
+export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true }) {
+  const payload = {
+    prompt,
+    provider,
+    providerConfig: providerConfigs?.[provider] || {},
+    providerConfigs,
+    fallbackEnabled,
+    fallbackOrder,
+    devMode,
+  };
 
-  if (providerConfig) {
-    payload.providerConfig = providerConfig;
-  }
   const result = await requestJson('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
-  if (!result.ok) {
-    return {
-      ok: false,
-      transportError: null,
-      data: normalizeResponse(result.data),
-      requestPayload: payload,
-      status: result.status,
-    };
-  }
-
   return {
-    ok: true,
+    ok: result.ok,
     transportError: null,
     data: normalizeResponse(result.data),
     requestPayload: payload,
@@ -99,16 +61,20 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, prov
   };
 }
 
+
+export async function getProviderHealth(payload) {
+  const result = await requestJson('/api/ai/providers/health', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  return { ok: result.ok, status: result.status, data: result.data?.data || {} };
+}
+
 export async function checkApiHealth() {
   const result = await requestJson('/api/health');
-
-  return {
-    ok: result.ok,
-    status: result.status,
-    target: getApiTargetLabel(),
-    baseUrl: API_CONFIG.baseUrl,
-    data: result.data,
-  };
+  return { ok: result.ok, status: result.status, target: getApiTargetLabel(), baseUrl: API_CONFIG.baseUrl, data: result.data };
 }
 
 export { getApiRuntimeConfig };

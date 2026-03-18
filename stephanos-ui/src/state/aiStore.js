@@ -3,102 +3,70 @@ import {
   DEFAULT_PROVIDER_KEY,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
-  createDefaultSavedProviderConfigs,
+  createDefaultRouterSettings,
+  normalizeFallbackOrder,
   normalizeProviderDraft,
   normalizeProviderSelection,
+  sanitizeConfigForStorage,
   validateProviderDraft,
 } from '../ai/providerConfig';
 
 const AIStoreContext = createContext(null);
+const SETTINGS_STORAGE_KEY = 'stephanos.ai.freeTierSettings';
 
-const PROVIDER_STORAGE_KEY = 'stephanos.ai.provider';
-const CUSTOM_PROVIDER_STORAGE_KEY = 'stephanos.ai.customConfig';
-
-function getStoredProviderState() {
-  if (typeof window === 'undefined') {
-    return {
-      provider: DEFAULT_PROVIDER_KEY,
-      source: 'default:ssr',
-    };
-  }
-
-  const stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
-  if (PROVIDER_KEYS.includes(stored)) {
-    return {
-      provider: stored,
-      source: 'saved:localStorage',
-    };
-  }
-
-  return {
-    provider: DEFAULT_PROVIDER_KEY,
-    source: 'default:fresh-start',
-  };
-}
-
-function getStoredSavedProviderConfigs() {
-  const defaults = createDefaultSavedProviderConfigs();
-  if (typeof window === 'undefined') {
-    return {
-      savedProviderConfigs: defaults,
-      customConfigSource: 'default:ssr',
-    };
-  }
+function getStoredSettings() {
+  const defaults = createDefaultRouterSettings();
+  if (typeof window === 'undefined') return defaults;
 
   try {
-    const parsed = JSON.parse(localStorage.getItem(CUSTOM_PROVIDER_STORAGE_KEY) || '{}');
-    const hasCustomOverrides = Object.keys(parsed || {}).length > 0;
-
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
     return {
-      savedProviderConfigs: {
-        ...defaults,
-        custom: {
-          ...defaults.custom,
-          ...parsed,
+      ...defaults,
+      provider: normalizeProviderSelection(parsed.provider),
+      devMode: parsed.devMode !== false,
+      fallbackEnabled: parsed.fallbackEnabled !== false,
+      fallbackOrder: normalizeFallbackOrder(parsed.fallbackOrder),
+      providerConfigs: Object.fromEntries(
+        PROVIDER_KEYS.map((key) => [key, normalizeProviderDraft(key, {
+          ...defaults.providerConfigs[key],
+          ...(parsed.providerConfigs?.[key] || {}),
           apiKey: '',
-        },
-      },
-      customConfigSource: hasCustomOverrides ? 'saved:localStorage' : 'default:fresh-start',
+        })]),
+      ),
     };
   } catch {
-    return {
-      savedProviderConfigs: defaults,
-      customConfigSource: 'default:parse-fallback',
-    };
+    return defaults;
   }
 }
 
-function persistCustomSavedConfig(savedConfig) {
+function persistSettings(state) {
   if (typeof window === 'undefined') return;
-  const { apiKey: _apiKey, ...safeToPersist } = savedConfig;
-  localStorage.setItem(CUSTOM_PROVIDER_STORAGE_KEY, JSON.stringify(safeToPersist));
+  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+    provider: state.provider,
+    devMode: state.devMode,
+    fallbackEnabled: state.fallbackEnabled,
+    fallbackOrder: state.fallbackOrder,
+    providerConfigs: sanitizeConfigForStorage(state.providerConfigs),
+  }));
 }
 
 export function AIStoreProvider({ children }) {
-  const initialProviderState = getStoredProviderState();
-  const initialSavedConfigState = getStoredSavedProviderConfigs();
-
+  const initialSettings = getStoredSettings();
   const [commandHistory, setCommandHistory] = useState([]);
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState('assistant');
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState({});
-  const [provider, setProviderState] = useState(initialProviderState.provider);
-  const [providerSelectionSource, setProviderSelectionSource] = useState(initialProviderState.source);
-  const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSavedConfigState.savedProviderConfigs);
-  const [customConfigSource, setCustomConfigSource] = useState(initialSavedConfigState.customConfigSource);
-  const [draftProviderConfigs, setDraftProviderConfigs] = useState(() => ({
-    custom: { ...initialSavedConfigState.savedProviderConfigs.custom },
-  }));
-  const [providerDraftStatus, setProviderDraftStatus] = useState({
-    custom: {
-      mode: 'saved',
-      message: '',
-      savedAt: null,
-      errors: {},
-    },
-  });
+  const [provider, setProviderState] = useState(initialSettings.provider);
+  const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
+  const [devMode, setDevModeState] = useState(initialSettings.devMode);
+  const [fallbackEnabled, setFallbackEnabledState] = useState(initialSettings.fallbackEnabled);
+  const [fallbackOrder, setFallbackOrderState] = useState(initialSettings.fallbackOrder);
+  const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSettings.providerConfigs);
+  const [draftProviderConfigs, setDraftProviderConfigs] = useState(initialSettings.providerConfigs);
+  const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }])));
+  const [providerHealth, setProviderHealth] = useState({});
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
@@ -118,234 +86,161 @@ export function AIStoreProvider({ children }) {
     backendTargetEndpoint: '',
     healthEndpoint: '',
     backendReachable: false,
-    backendDefaultProvider: 'unknown',
-    resolvedOllamaEndpoint: 'http://127.0.0.1:11434/api/chat',
-    corsAllowedOrigins: [],
-    providerRouterPath: 'browser -> /api/ai/chat -> provider router -> ollama/openai/custom',
+    backendDefaultProvider: DEFAULT_PROVIDER_KEY,
     lastCheckedAt: null,
     meta: null,
   });
 
+  const persistCurrentState = (next = {}) => persistSettings({
+    provider,
+    devMode,
+    fallbackEnabled,
+    fallbackOrder,
+    providerConfigs: savedProviderConfigs,
+    ...next,
+  });
+
   const setProvider = (nextProvider) => {
-    const resolvedProvider = normalizeProviderSelection(nextProvider);
-    if (!PROVIDER_DEFINITIONS[resolvedProvider]) return;
-
-    setProviderState(resolvedProvider);
+    const resolved = normalizeProviderSelection(nextProvider);
+    setProviderState(resolved);
     setProviderSelectionSource('saved:user-selection');
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(PROVIDER_STORAGE_KEY, resolvedProvider);
-    }
+    persistCurrentState({ provider: resolved });
   };
 
-  const getDraftProviderConfig = (providerKey) => {
-    if (PROVIDER_DEFINITIONS[providerKey]?.editable) {
-      return draftProviderConfigs[providerKey] || { ...savedProviderConfigs[providerKey] };
-    }
-    return savedProviderConfigs[providerKey];
+  const setDevMode = (next) => {
+    setDevModeState(Boolean(next));
+    persistCurrentState({ devMode: Boolean(next) });
   };
 
-  const getActiveProviderConfig = () => {
-    const providerConfig = savedProviderConfigs[provider];
-    return normalizeProviderDraft(provider, providerConfig);
+  const setFallbackEnabled = (next) => {
+    setFallbackEnabledState(Boolean(next));
+    persistCurrentState({ fallbackEnabled: Boolean(next) });
   };
 
-  const getSavedProviderConfig = (providerKey) => normalizeProviderDraft(
-    providerKey,
-    savedProviderConfigs[providerKey],
-  );
-
-  const getActiveProviderConfigSource = () => {
-    if (provider === 'custom') {
-      return customConfigSource;
-    }
-
-    return 'default:canonical';
+  const resetToFreeMode = () => {
+    const defaults = createDefaultRouterSettings();
+    const sessionSafe = Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { ...defaults.providerConfigs[key], apiKey: '' }]));
+    setProviderState(defaults.provider);
+    setDevModeState(defaults.devMode);
+    setFallbackEnabledState(defaults.fallbackEnabled);
+    setFallbackOrderState(defaults.fallbackOrder);
+    setSavedProviderConfigs(sessionSafe);
+    setDraftProviderConfigs(sessionSafe);
+    persistSettings({ ...defaults, providerConfigs: sessionSafe });
   };
+
+  const getDraftProviderConfig = (providerKey) => draftProviderConfigs[providerKey];
+  const getSavedProviderConfig = (providerKey) => savedProviderConfigs[providerKey];
+  const getActiveProviderConfig = () => savedProviderConfigs[provider];
+  const getActiveProviderConfigSource = () => 'saved:session';
 
   const updateDraftProviderConfig = (providerKey, patch) => {
-    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
-
     setDraftProviderConfigs((prev) => ({
       ...prev,
-      [providerKey]: {
-        ...getDraftProviderConfig(providerKey),
-        ...patch,
-      },
+      [providerKey]: normalizeProviderDraft(providerKey, { ...prev[providerKey], ...patch }),
     }));
-
-    setProviderDraftStatus((prev) => ({
-      ...prev,
-      [providerKey]: {
-        ...prev[providerKey],
-        mode: 'draft',
-        message: '',
-        errors: {},
-      },
-    }));
+    setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'draft', message: '', errors: {} } }));
   };
 
   const saveDraftProviderConfig = (providerKey) => {
-    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) {
-      return { ok: true };
-    }
-
-    const normalizedDraft = normalizeProviderDraft(providerKey, getDraftProviderConfig(providerKey));
-    const validation = validateProviderDraft(providerKey, normalizedDraft);
+    const draft = normalizeProviderDraft(providerKey, draftProviderConfigs[providerKey]);
+    const validation = validateProviderDraft(providerKey, draft);
     if (!validation.isValid) {
-      setProviderDraftStatus((prev) => ({
-        ...prev,
-        [providerKey]: {
-          ...prev[providerKey],
-          mode: 'draft',
-          message: 'Fix validation errors before saving.',
-          errors: validation.errors,
-        },
-      }));
+      setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'draft', message: 'Fix validation errors before saving.', errors: validation.errors } }));
       return { ok: false, errors: validation.errors };
     }
 
+    const nextSaved = { ...savedProviderConfigs, [providerKey]: draft };
+    setSavedProviderConfigs(nextSaved);
+    setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: draft }));
     const savedAt = new Date().toISOString();
-    setSavedProviderConfigs((prev) => ({
-      ...prev,
-      [providerKey]: normalizedDraft,
-    }));
-    setDraftProviderConfigs((prev) => ({
-      ...prev,
-      [providerKey]: normalizedDraft,
-    }));
-
-    if (providerKey === 'custom') {
-      persistCustomSavedConfig(normalizedDraft);
-      setCustomConfigSource('saved:user-config');
-    }
-
-    setProviderDraftStatus((prev) => ({
-      ...prev,
-      [providerKey]: {
-        mode: 'saved',
-        message: 'Custom provider settings saved.',
-        savedAt,
-        errors: {},
-      },
-    }));
-
+    setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { mode: 'saved', message: `${PROVIDER_DEFINITIONS[providerKey].label} settings applied.`, savedAt, errors: {} } }));
+    persistCurrentState({ providerConfigs: nextSaved });
     return { ok: true, savedAt };
   };
 
   const revertDraftProviderConfig = (providerKey) => {
-    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
-    const savedConfig = savedProviderConfigs[providerKey];
-    setDraftProviderConfigs((prev) => ({
-      ...prev,
-      [providerKey]: { ...savedConfig, apiKey: '' },
-    }));
-    setProviderDraftStatus((prev) => ({
-      ...prev,
-      [providerKey]: {
-        ...prev[providerKey],
-        mode: 'saved',
-        message: 'Draft reverted to last saved values.',
-        errors: {},
-      },
-    }));
+    setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: savedProviderConfigs[providerKey] }));
+    setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'saved', message: 'Draft reverted.', errors: {} } }));
   };
 
   const resetProviderConfig = (providerKey) => {
-    const defaultConfig = { ...PROVIDER_DEFINITIONS[providerKey].defaults, apiKey: '' };
-
-    setSavedProviderConfigs((prev) => ({
-      ...prev,
-      [providerKey]: defaultConfig,
-    }));
-
-    if (PROVIDER_DEFINITIONS[providerKey]?.editable) {
-      setDraftProviderConfigs((prev) => ({
-        ...prev,
-        [providerKey]: defaultConfig,
-      }));
-    }
-
-    if (providerKey === 'custom') {
-      persistCustomSavedConfig(defaultConfig);
-      setCustomConfigSource('default:reset');
-    }
-
-    setProviderDraftStatus((prev) => ({
-      ...prev,
-      [providerKey]: {
-        ...prev[providerKey],
-        mode: 'saved',
-        message: `${PROVIDER_DEFINITIONS[providerKey].label} settings reset to defaults.`,
-        errors: {},
-      },
-    }));
+    const nextConfig = { ...PROVIDER_DEFINITIONS[providerKey].defaults, apiKey: '' };
+    const nextSaved = { ...savedProviderConfigs, [providerKey]: nextConfig };
+    setSavedProviderConfigs(nextSaved);
+    setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: nextConfig }));
+    setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'saved', message: `${PROVIDER_DEFINITIONS[providerKey].label} reset.`, errors: {} } }));
+    persistCurrentState({ providerConfigs: nextSaved });
   };
 
-  const isDraftDirty = (providerKey) => {
-    if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return false;
-    return JSON.stringify(getDraftProviderConfig(providerKey)) !== JSON.stringify(savedProviderConfigs[providerKey]);
-  };
+  const isDraftDirty = (providerKey) => JSON.stringify(draftProviderConfigs[providerKey]) !== JSON.stringify(savedProviderConfigs[providerKey]);
 
-  const value = useMemo(
-    () => ({
-      commandHistory,
-      setCommandHistory,
-      status,
-      setStatus,
-      isBusy,
-      setIsBusy,
-      lastRoute,
-      setLastRoute,
-      debugVisible,
-      setDebugVisible,
-      debugData,
-      setDebugData,
-      provider,
-      setProvider,
-      providerSelectionSource,
-      savedProviderConfigs,
-      draftProviderConfigs,
-      providerDraftStatus,
-      customConfigSource,
-      getDraftProviderConfig,
-      getActiveProviderConfig,
-      getSavedProviderConfig,
-      getActiveProviderConfigSource,
-      updateDraftProviderConfig,
-      saveDraftProviderConfig,
-      revertDraftProviderConfig,
-      resetProviderConfig,
-      isDraftDirty,
-      apiStatus,
-      setApiStatus,
-      uiDiagnostics,
-      setUiDiagnostics,
-    }),
-    [
-      commandHistory,
-      status,
-      isBusy,
-      lastRoute,
-      debugVisible,
-      debugData,
-      provider,
-      providerSelectionSource,
-      savedProviderConfigs,
-      draftProviderConfigs,
-      providerDraftStatus,
-      customConfigSource,
-      apiStatus,
-      uiDiagnostics,
-    ],
-  );
+  const value = useMemo(() => ({
+    commandHistory,
+    setCommandHistory,
+    status,
+    setStatus,
+    isBusy,
+    setIsBusy,
+    lastRoute,
+    setLastRoute,
+    debugVisible,
+    setDebugVisible,
+    debugData,
+    setDebugData,
+    provider,
+    setProvider,
+    providerSelectionSource,
+    devMode,
+    setDevMode,
+    fallbackEnabled,
+    setFallbackEnabled,
+    fallbackOrder,
+    setFallbackOrderState,
+    savedProviderConfigs,
+    draftProviderConfigs,
+    providerDraftStatus,
+    providerHealth,
+    setProviderHealth,
+    getDraftProviderConfig,
+    getActiveProviderConfig,
+    getSavedProviderConfig,
+    getActiveProviderConfigSource,
+    updateDraftProviderConfig,
+    saveDraftProviderConfig,
+    revertDraftProviderConfig,
+    resetProviderConfig,
+    resetToFreeMode,
+    isDraftDirty,
+    apiStatus,
+    setApiStatus,
+    uiDiagnostics,
+    setUiDiagnostics,
+  }), [
+    commandHistory,
+    status,
+    isBusy,
+    lastRoute,
+    debugVisible,
+    debugData,
+    provider,
+    providerSelectionSource,
+    devMode,
+    fallbackEnabled,
+    fallbackOrder,
+    savedProviderConfigs,
+    draftProviderConfigs,
+    providerDraftStatus,
+    providerHealth,
+    apiStatus,
+    uiDiagnostics,
+  ]);
 
   return createElement(AIStoreContext.Provider, { value }, children);
 }
 
 export function useAIStore() {
   const context = useContext(AIStoreContext);
-  if (!context) {
-    throw new Error('useAIStore must be used inside AIStoreProvider');
-  }
+  if (!context) throw new Error('useAIStore must be used inside AIStoreProvider');
   return context;
 }
