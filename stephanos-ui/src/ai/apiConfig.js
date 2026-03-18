@@ -40,6 +40,22 @@ function detectTarget(baseUrl) {
   return 'remote';
 }
 
+function getFrontendOrigin() {
+  if (typeof window === 'undefined' || !window.location?.origin) {
+    return 'http://localhost';
+  }
+
+  return window.location.origin;
+}
+
+function getApiBaseUrlStrategy() {
+  if (import.meta.env.VITE_API_BASE_URL?.trim()) {
+    return 'env:VITE_API_BASE_URL';
+  }
+
+  return 'default:local-stephanos-backend';
+}
+
 export const API_CONFIG = {
   baseUrl: normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL),
   timeoutMs: resolveTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS),
@@ -52,4 +68,16 @@ export function buildApiUrl(pathname) {
 
 export function getApiTargetLabel() {
   return detectTarget(API_CONFIG.baseUrl);
+}
+
+export function getApiRuntimeConfig() {
+  return {
+    frontendOrigin: getFrontendOrigin(),
+    baseUrl: API_CONFIG.baseUrl,
+    timeoutMs: API_CONFIG.timeoutMs,
+    target: getApiTargetLabel(),
+    strategy: getApiBaseUrlStrategy(),
+    backendTargetEndpoint: buildApiUrl('/api/ai/chat'),
+    healthEndpoint: buildApiUrl('/api/health'),
+  };
 }

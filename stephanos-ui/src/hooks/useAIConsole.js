@@ -4,6 +4,8 @@ import { checkApiHealth, getApiRuntimeConfig, sendPrompt } from '../ai/aiClient'
 import { buildProviderDisplayLabel, buildProviderEndpoint } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
+const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
+
 function transportErrorToUi(error) {
   if (!error?.code) {
     return {
@@ -23,7 +25,7 @@ function transportErrorToUi(error) {
     return {
       error: error.message,
       errorCode: error.code,
-      output: 'Backend offline: start stephanos-server or update VITE_API_BASE_URL to a reachable API.',
+      output: `${BACKEND_UNREACHABLE_MESSAGE} Start stephanos-server or update VITE_API_BASE_URL to a reachable API.`,
     };
   }
 
@@ -79,9 +81,18 @@ export function useAIConsole() {
         label: `Connected to ${health.target} API`,
         target: health.target,
         baseUrl: health.baseUrl,
+        frontendOrigin: runtimeConfig.frontendOrigin,
+        strategy: runtimeConfig.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || runtimeConfig.backendTargetEndpoint,
+        healthEndpoint: runtimeConfig.healthEndpoint,
+        backendReachable: health.ok,
+        backendDefaultProvider: health.data?.default_provider || 'unknown',
+        resolvedOllamaEndpoint: health.data?.ollama_endpoint || defaultOllamaEndpoint,
+        corsAllowedOrigins: health.data?.cors?.allowed_origins || [],
+        providerRouterPath: health.data?.provider_router_path || 'browser -> /api/ai/chat -> provider router -> ollama/openai/custom',
         lastCheckedAt: new Date().toISOString(),
         detail: health.ok
-          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'unknown'}. Ollama target: ${defaultOllamaEndpoint}.`
+          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'unknown'}. Ollama target: ${health.data?.ollama_endpoint || defaultOllamaEndpoint}.`
           : `Health check failed (${health.status}).`,
         meta: health.data,
       });
@@ -92,12 +103,21 @@ export function useAIConsole() {
         label: 'Backend offline',
         target: runtimeConfig.target,
         baseUrl: runtimeConfig.baseUrl,
+        frontendOrigin: runtimeConfig.frontendOrigin,
+        strategy: runtimeConfig.strategy,
+        backendTargetEndpoint: runtimeConfig.backendTargetEndpoint,
+        healthEndpoint: runtimeConfig.healthEndpoint,
+        backendReachable: false,
+        backendDefaultProvider: 'unknown',
+        resolvedOllamaEndpoint: 'http://127.0.0.1:11434/api/chat',
+        corsAllowedOrigins: [],
+        providerRouterPath: 'browser -> /api/ai/chat -> provider router -> ollama/openai/custom',
         lastCheckedAt: new Date().toISOString(),
         detail: uiError.output,
         meta: null,
       });
     }
-  }, [runtimeConfig.baseUrl, runtimeConfig.target, setApiStatus]);
+  }, [runtimeConfig, setApiStatus]);
 
   useEffect(() => {
     refreshHealth();
@@ -156,8 +176,17 @@ export function useAIConsole() {
         label: `Connected to ${runtimeConfig.target} API`,
         target: runtimeConfig.target,
         baseUrl: runtimeConfig.baseUrl,
+        frontendOrigin: runtimeConfig.frontendOrigin,
+        strategy: runtimeConfig.strategy,
+        backendTargetEndpoint: prev.backendTargetEndpoint || runtimeConfig.backendTargetEndpoint,
+        healthEndpoint: runtimeConfig.healthEndpoint,
+        backendReachable: true,
+        backendDefaultProvider: prev.backendDefaultProvider || prev.meta?.default_provider || 'unknown',
+        resolvedOllamaEndpoint: prev.resolvedOllamaEndpoint || prev.meta?.ollama_endpoint || 'http://127.0.0.1:11434/api/chat',
+        corsAllowedOrigins: prev.corsAllowedOrigins || prev.meta?.cors?.allowed_origins || [],
+        providerRouterPath: prev.providerRouterPath || prev.meta?.provider_router_path || 'browser -> /api/ai/chat -> provider router -> ollama/openai/custom',
         detail: data.success
-          ? `Backend reachable. Active provider: ${activeProviderLabel}. Backend target: ${providerDiagnostics?.endpoint || 'n/a'}.`
+          ? `Backend reachable. Active provider: ${activeProviderLabel}. Backend target: ${prev.backendTargetEndpoint || runtimeConfig.backendTargetEndpoint}.`
           : `Active provider (${activeProviderLabel}) error: ${providerSpecificDetail}`,
         configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
         lastCheckedAt: new Date().toISOString(),
@@ -184,6 +213,10 @@ export function useAIConsole() {
         activeProviderConfigSource: getActiveProviderConfigSource(),
         provider_diagnostics: providerDiagnostics,
         backend_provider_router: data.debug?.provider_router ?? null,
+        frontend_origin: runtimeConfig.frontendOrigin,
+        frontend_api_base_url: runtimeConfig.baseUrl,
+        backend_target_endpoint: runtimeConfig.backendTargetEndpoint,
+        backend_health_endpoint: runtimeConfig.healthEndpoint,
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
@@ -192,6 +225,11 @@ export function useAIConsole() {
         ...prev,
         state: 'offline',
         label: 'Backend offline',
+        frontendOrigin: runtimeConfig.frontendOrigin,
+        strategy: runtimeConfig.strategy,
+        backendTargetEndpoint: runtimeConfig.backendTargetEndpoint,
+        healthEndpoint: runtimeConfig.healthEndpoint,
+        backendReachable: false,
         detail: uiError.output,
         configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
         lastCheckedAt: new Date().toISOString(),
@@ -227,6 +265,10 @@ export function useAIConsole() {
         error_code: uiError.errorCode,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
+        frontend_origin: runtimeConfig.frontendOrigin,
+        frontend_api_base_url: runtimeConfig.baseUrl,
+        backend_target_endpoint: runtimeConfig.backendTargetEndpoint,
+        backend_health_endpoint: runtimeConfig.healthEndpoint,
       });
     } finally {
       setIsBusy(false);

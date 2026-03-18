@@ -30,6 +30,21 @@ export default function DebugConsole() {
       </div>
 
       <div className="debug-grid">
+        <div><strong>Connectivity</strong><pre>{JSON.stringify({
+          frontendOrigin: apiStatus.frontendOrigin || debugData.frontend_origin,
+          frontendApiBaseUrl: apiStatus.baseUrl || debugData.frontend_api_base_url,
+          apiBaseUrlStrategy: apiStatus.strategy,
+          backendReachable: apiStatus.backendReachable,
+          backendTargetEndpoint: apiStatus.backendTargetEndpoint || debugData.backend_target_endpoint,
+          backendHealthEndpoint: apiStatus.healthEndpoint || debugData.backend_health_endpoint,
+          backendDefaultProvider: apiStatus.backendDefaultProvider || apiStatus.meta?.default_provider,
+          activeProvider: provider,
+          providerTarget: 'browser -> Stephanos backend only',
+          resolvedOllamaEndpoint: apiStatus.resolvedOllamaEndpoint || apiStatus.meta?.ollama_endpoint,
+          corsAllowedOrigins: apiStatus.corsAllowedOrigins,
+          providerRouterPath: apiStatus.providerRouterPath,
+          backendHealthMeta: apiStatus.meta,
+        }, null, 2)}</pre></div>
         <div><strong>Provider Runtime</strong><pre>{JSON.stringify({
           provider,
           providerSelectionSource,

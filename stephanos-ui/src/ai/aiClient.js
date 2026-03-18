@@ -1,5 +1,5 @@
 import { EMPTY_RESPONSE } from './aiTypes';
-import { API_CONFIG, buildApiUrl, getApiTargetLabel } from './apiConfig';
+import { API_CONFIG, buildApiUrl, getApiRuntimeConfig, getApiTargetLabel } from './apiConfig';
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 
 function normalizeResponse(json) {
@@ -111,10 +111,4 @@ export async function checkApiHealth() {
   };
 }
 
-export function getApiRuntimeConfig() {
-  return {
-    baseUrl: API_CONFIG.baseUrl,
-    timeoutMs: API_CONFIG.timeoutMs,
-    target: getApiTargetLabel(),
-  };
-}
+export { getApiRuntimeConfig };
