@@ -10,15 +10,18 @@ const buildMetadata = {
   appName: 'Stephanos UI',
   version: process.env.STEPHANOS_BUILD_VERSION || packageJson.version,
   sourceIdentifier: process.env.STEPHANOS_BUILD_SOURCE_IDENTIFIER || 'stephanos-ui/src',
+  sourceFingerprint: process.env.STEPHANOS_BUILD_SOURCE_FINGERPRINT || 'fingerprint-unavailable',
   buildTarget: process.env.STEPHANOS_BUILD_TARGET || 'apps/stephanos/dist',
-  runtimeMarker: process.env.STEPHANOS_BUILD_RUNTIME_MARKER || 'stephanos-ui/runtime::dist-synced-v1',
+  buildTargetIdentifier: process.env.STEPHANOS_BUILD_TARGET_IDENTIFIER || 'apps/stephanos/dist',
+  runtimeId: process.env.STEPHANOS_BUILD_RUNTIME_ID || 'live-vite-shell',
+  runtimeMarker: process.env.STEPHANOS_BUILD_RUNTIME_MARKER || 'stephanos-ui/runtime::dist-synced-v2',
   gitCommit: process.env.STEPHANOS_BUILD_GIT_COMMIT || 'git-unavailable',
   buildTimestamp: process.env.STEPHANOS_BUILD_TIMESTAMP || new Date().toISOString(),
 };
 
 const generatedAssetBanner = [
   '/* GENERATED FILE: Stephanos dist asset. */',
-  '/* Do not edit manually. Source lives in stephanos-ui/src/** and is published via npm run build. */',
+  '/* Do not edit manually. Live source lives in stephanos-ui/src/** and is rebuilt with npm run stephanos:build. */',
 ].join('\n');
 
 function stephanosBuildMetadataPlugin(metadata) {
@@ -43,7 +46,27 @@ function stephanosBuildMetadataPlugin(metadata) {
           {
             tag: 'meta',
             injectTo: 'head',
+            attrs: { name: 'stephanos-build-source-fingerprint', content: metadata.sourceFingerprint },
+          },
+          {
+            tag: 'meta',
+            injectTo: 'head',
             attrs: { name: 'stephanos-build-target', content: metadata.buildTarget },
+          },
+          {
+            tag: 'meta',
+            injectTo: 'head',
+            attrs: { name: 'stephanos-build-target-identifier', content: metadata.buildTargetIdentifier },
+          },
+          {
+            tag: 'meta',
+            injectTo: 'head',
+            attrs: { name: 'stephanos-build-runtime-id', content: metadata.runtimeId },
+          },
+          {
+            tag: 'meta',
+            injectTo: 'head',
+            attrs: { name: 'stephanos-build-runtime-marker', content: metadata.runtimeMarker },
           },
           {
             tag: 'meta',
@@ -65,6 +88,12 @@ function stephanosBuildMetadataPlugin(metadata) {
       };
     },
     generateBundle(_options, bundle) {
+      bundle['stephanos-build.json'] = {
+        type: 'asset',
+        fileName: 'stephanos-build.json',
+        source: `${JSON.stringify(metadata, null, 2)}\n`,
+      };
+
       for (const chunk of Object.values(bundle)) {
         if (chunk.type === 'asset' && chunk.fileName.endsWith('.css')) {
           const cssSource = String(chunk.source);
@@ -86,7 +115,10 @@ export default defineConfig({
   define: {
     __STEPHANOS_UI_VERSION__: JSON.stringify(buildMetadata.version),
     __STEPHANOS_UI_SOURCE__: JSON.stringify(buildMetadata.sourceIdentifier),
+    __STEPHANOS_UI_SOURCE_FINGERPRINT__: JSON.stringify(buildMetadata.sourceFingerprint),
     __STEPHANOS_UI_BUILD_TARGET__: JSON.stringify(buildMetadata.buildTarget),
+    __STEPHANOS_UI_BUILD_TARGET_IDENTIFIER__: JSON.stringify(buildMetadata.buildTargetIdentifier),
+    __STEPHANOS_UI_RUNTIME_ID__: JSON.stringify(buildMetadata.runtimeId),
     __STEPHANOS_UI_BUILD_METADATA__: JSON.stringify(buildMetadata),
   },
   build: {

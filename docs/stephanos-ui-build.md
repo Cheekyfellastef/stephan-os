@@ -2,47 +2,57 @@
 
 ## Source of truth
 
-- Edit the live Stephanos UI only in `stephanos-ui/src/**`.
-- Production is served from `apps/stephanos/dist/**`.
-- `apps/stephanos/dist/**` is generated output, not hand-edited source.
+- Live editable Stephanos UI: `stephanos-ui/src/**`
+- Generated served runtime: `apps/stephanos/dist/**`
+- Root launcher files (`index.html`, `main.js`) are real, but they are only the launcher shell and app loader.
+- Do **not** hand-edit `apps/stephanos/dist/**`.
 
-## Build and verification commands
+## Commands
 
-From the repository root:
+Run these from the repository root:
 
-- `npm run dev` — starts the Stephanos server plus the Vite UI dev server.
-- `npm run build` — rebuilds `apps/stephanos/dist/**` from `stephanos-ui/src/**`.
-- `npm run verify` — checks for drift by validating:
-  - `apps/stephanos/dist/index.html` exists,
-  - every asset referenced by `dist/index.html` exists,
-  - embedded runtime metadata matches the current source version, source identifier, build target, runtime marker, and current git commit,
-  - a valid build timestamp is present.
+- `npm run stephanos:dev` — start the backend plus the live Vite UI.
+- `npm run stephanos:clean` — remove generated dist output.
+- `npm run stephanos:build` — rebuild `apps/stephanos/dist/**` from the live `stephanos-ui` source.
+- `npm run stephanos:verify` — fail fast if dist is missing, incomplete, stale, or built from the wrong source.
+- `npm run stephanos:serve` — rebuild, verify, and serve the project so the generated runtime can be checked at `/apps/stephanos/dist/`.
+- `npm run deploy` — enforced publish gate; runs build + verify before any publish step.
+- `npm run stephanos:precommit` — lightweight manual pre-commit check for source + dist sync.
 
-## Build metadata written into dist
+## What the build now proves
 
-Each Stephanos UI build writes metadata into the generated app, including:
+Each Stephanos build writes metadata into both `apps/stephanos/dist/index.html` and `apps/stephanos/dist/stephanos-build.json`, including:
 
+- app name,
 - version,
 - source identifier,
-- build target,
-- git commit hash when available,
+- source fingerprint,
 - build timestamp,
-- runtime marker used by the app diagnostics.
+- git commit hash when available,
+- build target identifier,
+- runtime id and runtime marker.
 
-This metadata is surfaced in:
+That same metadata is surfaced in:
 
-- the browser console boot logs,
+- the console boot log,
 - the runtime status panel,
-- the footer diagnostic strip,
-- embedded JSON metadata in `apps/stephanos/dist/index.html`.
+- the runtime footer/status strip,
+- generated dist metadata files.
 
-## Regeneration rule
+## Verification rules
 
-If you change anything in `stephanos-ui/src/**`, the expected next commands are:
+`npm run stephanos:verify` checks that:
 
-```bash
-npm run build
-npm run verify
-```
+1. `apps/stephanos/dist/index.html` exists,
+2. every asset referenced by `dist/index.html` exists,
+3. `apps/stephanos/dist/stephanos-build.json` exists and is valid,
+4. the embedded HTML metadata matches the dist metadata file,
+5. the source identifier proves the build came from `stephanos-ui/src`,
+6. the runtime marker is present,
+7. the current source fingerprint still matches the generated dist.
 
-If `npm run verify` fails, treat `apps/stephanos/dist/**` as stale and rebuild it instead of editing dist manually.
+## Deploy rule
+
+Required order before publish: **build → verify → publish**.
+
+If you edit `stephanos-ui/src/**`, rebuild and verify before commit or deployment. Commit the source change and regenerated dist together so the served runtime cannot drift.

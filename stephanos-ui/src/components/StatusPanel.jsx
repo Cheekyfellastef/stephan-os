@@ -2,10 +2,13 @@ import { buildProviderStatusSummary } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 import {
   STEPHANOS_UI_BUILD_TARGET,
+  STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
   STEPHANOS_UI_BUILD_TIMESTAMP,
   STEPHANOS_UI_GIT_COMMIT,
+  STEPHANOS_UI_RUNTIME_ID,
   STEPHANOS_UI_RUNTIME_MARKER,
   STEPHANOS_UI_SOURCE,
+  STEPHANOS_UI_SOURCE_FINGERPRINT,
   STEPHANOS_UI_VERSION,
 } from '../runtimeInfo';
 
@@ -54,9 +57,12 @@ export default function StatusPanel() {
         <li>UI Version: {STEPHANOS_UI_VERSION}</li>
         <li>UI Git Commit: {STEPHANOS_UI_GIT_COMMIT}</li>
         <li>UI Build Timestamp: {STEPHANOS_UI_BUILD_TIMESTAMP}</li>
+        <li>UI Runtime ID: {STEPHANOS_UI_RUNTIME_ID}</li>
         <li>UI Runtime Marker: {STEPHANOS_UI_RUNTIME_MARKER}</li>
         <li>UI Build Target: {STEPHANOS_UI_BUILD_TARGET}</li>
+        <li>UI Build Target Identifier: {STEPHANOS_UI_BUILD_TARGET_IDENTIFIER}</li>
         <li>UI Source: {STEPHANOS_UI_SOURCE}</li>
+        <li>UI Source Fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</li>
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${apiStatus.state}`}>{apiStatus.detail}</p>

@@ -1,5 +1,5 @@
-// Launcher shell only: do not implement Mission Console/theme/provider UI changes here.
-// The live Stephanos UI source of truth lives in stephanos-ui/src and is served via apps/stephanos/dist.
+// LAUNCHER SHELL ONLY: do not implement Mission Console/theme/provider UI changes here.
+// Live Stephanos UI source of truth: stephanos-ui/src/** → generated runtime: apps/stephanos/dist/**.
 import { discoverApps } from "./system/apps/app_discovery.js";
 import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.js";
 import { appInstallerAgent } from "./system/agents/app_installer_agent/app_installer_agent.js";
