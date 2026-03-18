@@ -23,6 +23,13 @@ jobs:
         with:
           node-version: '20'
 
+
+      - name: Preflight frontend path and lockfile
+        run: |
+          echo "Frontend package path: stephanos-ui"
+          test -f stephanos-ui/package.json || (echo "Missing required file: stephanos-ui/package.json" && exit 1)
+          test -f stephanos-ui/package-lock.json || (echo "Missing required file: stephanos-ui/package-lock.json (run npm install in stephanos-ui and commit lockfile)" && exit 1)
+
       - name: Install dependencies
         working-directory: stephanos-ui
         run: npm ci
