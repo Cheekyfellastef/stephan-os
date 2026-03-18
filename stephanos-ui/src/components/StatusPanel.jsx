@@ -42,7 +42,9 @@ export default function StatusPanel() {
         <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Active Provider: {statusSummary.providerLabel}</li>
         <li>Provider Health: {statusSummary.healthBadge}</li>
+        <li>Provider State: {statusSummary.healthState}</li>
         <li>Provider Detail: {statusSummary.healthDetail}</li>
+        <li>Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>

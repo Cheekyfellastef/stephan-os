@@ -1,12 +1,16 @@
 import { useEffect } from 'react';
+import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import CommandResultCard from './CommandResultCard';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
 export default function AIConsole({ input, setInput, submitPrompt, commandHistory }) {
-  const { isBusy, apiStatus, setUiDiagnostics, provider, providerHealth } = useAIStore();
+  const { isBusy, apiStatus, setUiDiagnostics, provider, providerHealth, getActiveProviderConfig } = useAIStore();
   const activeHealth = providerHealth[provider] || {};
+  const ollamaState = provider === 'ollama'
+    ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: apiStatus.frontendOrigin })
+    : null;
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -27,8 +31,12 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       </div>
       {!activeHealth.ok && provider !== 'mock' ? (
         <div className="api-banner offline">
-          <strong>{activeHealth.detail || 'Selected provider is not ready.'}</strong>
-          <span>Switch to Mock for a zero-cost fallback without leaving the console.</span>
+          <strong>{provider === 'ollama' ? ollamaState.title : (activeHealth.detail || 'Selected provider is not ready.')}</strong>
+          <span>
+            {provider === 'ollama'
+              ? (ollamaState.helpText[0] || 'Switch to Mock Mode if you want a quick working fallback.')
+              : 'Switch to Mock for a zero-cost fallback without leaving the console.'}
+          </span>
         </div>
       ) : null}
       <div className="output-panel">

@@ -1,6 +1,145 @@
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 
+const OLLAMA_STATE = {
+  CONNECTED: 'CONNECTED',
+  LOCALHOST_MISMATCH: 'LOCALHOST_MISMATCH',
+  OFFLINE: 'OFFLINE',
+  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+};
+
+function isLoopbackHostname(hostname = '') {
+  const normalized = String(hostname || '').toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '0.0.0.0' || normalized === '::1';
+}
+
+function classifyOllamaFailure(error) {
+  if (error?.name === 'AbortError') {
+    return { failureType: 'timeout', reason: 'Ollama took too long to respond.' };
+  }
+
+  const causeCode = String(error?.cause?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+
+  if (causeCode === 'ECONNREFUSED' || message.includes('econnrefused')) {
+    return { failureType: 'connection_refused', reason: 'Nothing answered at that Ollama address.' };
+  }
+
+  if (
+    causeCode === 'ETIMEDOUT'
+    || causeCode === 'UND_ERR_CONNECT_TIMEOUT'
+    || message.includes('timed out')
+    || message.includes('timeout')
+  ) {
+    return { failureType: 'timeout', reason: 'Ollama took too long to respond.' };
+  }
+
+  if (
+    causeCode === 'ENOTFOUND'
+    || causeCode === 'EHOSTUNREACH'
+    || causeCode === 'ENETUNREACH'
+    || causeCode === 'ECONNRESET'
+    || message.includes('network')
+    || message.includes('fetch failed')
+  ) {
+    return { failureType: 'network_error', reason: 'Stephanos could not reach that device over the network.' };
+  }
+
+  return {
+    failureType: 'unknown_error',
+    reason: error?.message ? `Reason: ${error.message}.` : 'Reason unavailable.',
+  };
+}
+
+function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure = null }) {
+  const parsedBaseUrl = new URL(resolved.baseURL);
+  const isLocalhost = isLoopbackHostname(parsedBaseUrl.hostname);
+  const suggestedUrl = `${parsedBaseUrl.protocol}//192.168.1.42:${parsedBaseUrl.port || '11434'}`;
+
+  if (ok) {
+    return {
+      ok: true,
+      provider: 'ollama',
+      badge: 'Ready',
+      state: OLLAMA_STATE.CONNECTED,
+      message: 'Connected to Ollama (Local Machine)',
+      detail: 'Stephanos reached your Ollama server successfully.',
+      helpText: [],
+      reason: null,
+      failureType: null,
+      isLocalhost,
+      likelyWrongDevice: false,
+      suggestedUrl,
+      baseURL: resolved.baseURL,
+      endpoint: resolved.healthEndpoint,
+    };
+  }
+
+  if (responseStatus != null) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      badge: 'Offline',
+      state: OLLAMA_STATE.UNKNOWN_ERROR,
+      message: 'Ollama connection failed',
+      detail: `Ollama responded, but Stephanos could not use it (HTTP ${responseStatus}).`,
+      helpText: [
+        'Make sure your Ollama app is fully started.',
+        'If this keeps happening, switch to Mock Mode (free dev mode).',
+      ],
+      reason: `HTTP ${responseStatus}`,
+      failureType: 'http_error',
+      isLocalhost,
+      likelyWrongDevice: false,
+      suggestedUrl,
+      baseURL: resolved.baseURL,
+      endpoint: resolved.healthEndpoint,
+    };
+  }
+
+  if (isLocalhost) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      badge: 'Offline',
+      state: OLLAMA_STATE.OFFLINE,
+      message: 'Cannot connect to Ollama',
+      detail: 'Stephanos could not reach localhost.',
+      helpText: [
+        'Make sure Ollama is running on your PC.',
+        'Or switch to Mock Mode (free dev mode).',
+      ],
+      reason: failure?.reason || 'Stephanos could not reach localhost.',
+      failureType: failure?.failureType || 'unknown_error',
+      isLocalhost,
+      likelyWrongDevice: true,
+      suggestedUrl,
+      baseURL: resolved.baseURL,
+      endpoint: resolved.healthEndpoint,
+    };
+  }
+
+  return {
+    ok: false,
+    provider: 'ollama',
+    badge: 'Offline',
+    state: OLLAMA_STATE.OFFLINE,
+    message: 'Cannot connect to Ollama',
+    detail: 'Stephanos could not reach your Ollama server.',
+    helpText: [
+      'Make sure Ollama is running on your PC.',
+      'Or switch to Mock Mode (free dev mode).',
+    ],
+    reason: failure?.reason || 'Connection failed.',
+    failureType: failure?.failureType || 'unknown_error',
+    isLocalhost,
+    likelyWrongDevice: false,
+    suggestedUrl,
+    baseURL: resolved.baseURL,
+    endpoint: resolved.healthEndpoint,
+  };
+}
+
 export function resolveOllamaConfig(config = {}) {
   const resolved = sanitizeProviderConfig('ollama', config);
   return {
@@ -24,11 +163,9 @@ export async function checkOllamaHealth(config = {}) {
   const resolved = resolveOllamaConfig(config);
   try {
     const response = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
-    return response.ok
-      ? { ok: true, provider: 'ollama', badge: 'Ready', detail: 'Local Ollama engine responded.' }
-      : { ok: false, provider: 'ollama', badge: 'Offline', detail: `Ollama returned HTTP ${response.status}.` };
-  } catch {
-    return { ok: false, provider: 'ollama', badge: 'Offline', detail: 'Local engine offline.' };
+    return buildOllamaHealthState({ resolved, ok: response.ok, responseStatus: response.ok ? null : response.status });
+  } catch (error) {
+    return buildOllamaHealthState({ resolved, ok: false, failure: classifyOllamaFailure(error) });
   }
 }
 
@@ -70,6 +207,26 @@ export async function runOllamaProvider(request, config = {}) {
       raw,
     };
   } catch (error) {
-    return { ok: false, provider: 'ollama', model: resolved.model, outputText: '', error: { code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE, message: 'Local engine offline.', retryable: true } };
+    const failure = classifyOllamaFailure(error);
+    const message = failure.failureType === 'timeout'
+      ? 'Cannot connect to Ollama: it took too long to respond.'
+      : failure.failureType === 'connection_refused'
+        ? 'Cannot connect to Ollama: nothing answered at that address.'
+        : failure.failureType === 'network_error'
+          ? 'Cannot connect to Ollama: that device could not be reached.'
+          : 'Ollama connection failed.';
+
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: resolved.model,
+      outputText: '',
+      error: {
+        code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+        message,
+        retryable: true,
+        details: failure,
+      },
+    };
   }
 }

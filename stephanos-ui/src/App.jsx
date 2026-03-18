@@ -29,7 +29,7 @@ import {
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
 export default function App() {
-  const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
+  const { input, setInput, submitPrompt, commandHistory, refreshHealth } = useAIConsole();
   const { provider, getActiveProviderConfig, setUiDiagnostics, apiStatus, providerHealth } = useAIStore();
   useDebugConsole();
 
@@ -50,7 +50,7 @@ export default function App() {
           Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
         </p>
         <ProviderToggle
-          onTestProvider={() => submitPrompt('/status')}
+          onTestConnection={refreshHealth}
           onSendTestPrompt={() => submitPrompt('Run a quick Stephanos provider self-test and explain what mode is active.')}
         />
       </section>
