@@ -95,12 +95,15 @@ export function AIStoreProvider({ children }) {
   };
 
   const getActiveProviderConfig = () => {
-    const providerConfig = PROVIDER_DEFINITIONS[provider]?.editable
-      ? getDraftProviderConfig(provider)
-      : savedProviderConfigs[provider];
+    const providerConfig = savedProviderConfigs[provider];
 
     return normalizeProviderDraft(provider, providerConfig);
   };
+
+  const getSavedProviderConfig = (providerKey) => normalizeProviderDraft(
+    providerKey,
+    savedProviderConfigs[providerKey],
+  );
 
   const updateDraftProviderConfig = (providerKey, patch) => {
     if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
@@ -245,6 +248,7 @@ export function AIStoreProvider({ children }) {
       providerDraftStatus,
       getDraftProviderConfig,
       getActiveProviderConfig,
+      getSavedProviderConfig,
       updateDraftProviderConfig,
       saveDraftProviderConfig,
       revertDraftProviderConfig,

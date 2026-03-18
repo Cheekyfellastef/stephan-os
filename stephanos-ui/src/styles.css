@@ -31,7 +31,7 @@ body {
   padding: 1rem;
 }
 
-.render-debug-banner {
+.build-marker-banner {
   margin-bottom: 0.75rem;
   padding: 0.6rem 0.8rem;
   border: 2px solid #ff4d4d;

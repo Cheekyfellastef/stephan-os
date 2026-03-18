@@ -16,7 +16,8 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { useAIStore } from './state/aiStore';
 
-const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-dock-v4';
+const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-live-fix-v2';
+const BUILD_MARKER = 'STEPHANOS BUILD MARKER: provider-live-fix-v2 | 2026-03-18T15:00:00Z';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
@@ -27,6 +28,7 @@ export default function App() {
   const configMode = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
 
   useEffect(() => {
+    console.log(BUILD_MARKER);
     console.log('[App] mounted from', APP_COMPONENT_MARKER);
     setUiDiagnostics((prev) => ({
       ...prev,
@@ -37,14 +39,14 @@ export default function App() {
 
   return (
     <main className="app-shell-root">
-      <div className="render-debug-banner" role="status" aria-live="polite">
-        DEBUG: APP ROOT RENDERED · DEBUG: AI CONSOLE RENDERED · DEBUG: PROVIDER TOGGLE RENDERED
+      <div className="build-marker-banner" role="status" aria-live="polite">
+        {BUILD_MARKER}
       </div>
 
       <section className="provider-dock panel">
         <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
-          Active provider: <strong>{provider}</strong> · Config mode: <strong>{configMode}</strong> · Base URL: <strong>{activeConfig.baseUrl || 'n/a'}</strong> · Endpoint: <strong>{activeConfig.chatEndpoint || 'n/a'}</strong>
+          Current provider: <strong>{provider}</strong> · Active base URL: <strong>{activeConfig.baseUrl || 'n/a'}</strong> · Active endpoint: <strong>{activeConfig.chatEndpoint || 'n/a'}</strong> · Active model: <strong>{activeConfig.model || 'n/a'}</strong> · Config mode: <strong>{configMode}</strong>
         </p>
         <ProviderToggle />
         {provider === 'custom' ? <CustomProviderPanel /> : null}

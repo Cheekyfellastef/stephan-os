@@ -2,9 +2,9 @@ import { useEffect } from 'react';
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDERS = [
-  { id: 'openai', label: '☁ OpenAI Cloud' },
-  { id: 'ollama', label: '🖥 Local Ollama' },
-  { id: 'custom', label: '🛠 Custom LLM' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'ollama', label: 'Ollama' },
+  { id: 'custom', label: 'Custom' },
 ];
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::v3';
@@ -31,7 +31,6 @@ export default function ProviderToggle() {
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
       <span className="provider-switch-label">AI Provider</span>
-      <p className="provider-mounted-text">PROVIDER TOGGLE MOUNTED</p>
       <div className="provider-toggle" role="tablist" aria-label="AI Provider">
         {PROVIDERS.map((item) => {
           const isActive = provider === item.id;
