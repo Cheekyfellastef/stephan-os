@@ -27,13 +27,24 @@ import {
 } from './runtimeInfo';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
+const LOCAL_OLLAMA_URL = 'http://localhost:11434';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory, refreshHealth } = useAIConsole();
-  const { provider, getActiveProviderConfig, setUiDiagnostics, apiStatus, providerHealth } = useAIStore();
+  const {
+    provider,
+    getActiveProviderConfig,
+    setProvider,
+    setUiDiagnostics,
+    apiStatus,
+    providerHealth,
+  } = useAIStore();
   useDebugConsole();
 
   const providerSummary = buildProviderStatusSummary(provider, getActiveProviderConfig(), apiStatus.baseUrl, providerHealth[provider]);
+  const isLocalAiMode = provider === 'ollama';
+  const activeHealth = providerHealth[provider] || {};
+  const showOllamaWarning = isLocalAiMode && activeHealth.ok === false;
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
@@ -42,6 +53,30 @@ export default function App() {
   return (
     <main className="app-shell-root">
       <section className="provider-dock panel">
+        <div className="local-ai-banner-wrap">
+          <div className={`local-ai-banner ${showOllamaWarning ? 'warning' : 'ready'}`}>
+            <div>
+              <span className="local-ai-pill">Local AI Mode</span>
+              <p className="local-ai-text">
+                Stephanos is set to use Ollama on this PC by default at <strong>{LOCAL_OLLAMA_URL}</strong>.
+              </p>
+              <p className="local-ai-text secondary">
+                Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.
+              </p>
+              {showOllamaWarning ? (
+                <p className="local-ai-text friendly-warning">
+                  Ollama is not reachable right now. Start Ollama, then test again — or switch to Mock Mode to keep exploring locally.
+                </p>
+              ) : null}
+            </div>
+            {showOllamaWarning ? (
+              <button type="button" className="ghost-button" onClick={() => setProvider('mock')}>
+                Use Mock Mode
+              </button>
+            ) : null}
+          </div>
+        </div>
+
         <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
           Current Provider: <strong>{providerSummary.providerLabel}</strong> · Health: <strong>{providerSummary.healthBadge}</strong> · Model: <strong>{providerSummary.model}</strong>

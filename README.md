@@ -9,6 +9,31 @@ Core architecture and development of Stephanos OS.
 - **Launcher shell only:** the root `index.html` and `main.js` load apps and launch the built Stephanos runtime, but they are **not** the place for Mission Console/provider/theme logic.
 - **Do not hand-edit dist:** `apps/stephanos/dist/**` is generated output and must be rebuilt from source.
 
+
+## Windows one-click launcher
+
+Stephanos now includes a desktop-shortcut-friendly Windows launcher at `windows/Launch-Stephanos-Local.cmd`.
+
+What it does:
+- Uses the live Stephanos source at `stephanos-ui/src/**` and rebuilds the runtime into `apps/stephanos/dist/**`.
+- Safely updates the current Git branch with `git pull --ff-only` when the repo is clean.
+- Installs dependencies only when `package.json` or `package-lock.json` changed.
+- Starts `stephanos-server` plus the local static runtime server.
+- Opens `http://127.0.0.1:4173/apps/stephanos/dist/` in your browser.
+- Keeps Ollama pointed at `http://localhost:11434` by default, with Mock Mode available in the UI when Ollama is offline.
+
+Run it from Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Local.ps1
+```
+
+Or double-click:
+
+```text
+windows\Launch-Stephanos-Local.cmd
+```
+
 ## Commands
 
 - `npm run stephanos:dev` — run the Stephanos server plus the live Vite UI from `stephanos-ui`.

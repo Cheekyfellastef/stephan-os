@@ -5,16 +5,16 @@ import { DEFAULT_PROVIDER_KEY, PROVIDER_DEFINITIONS } from '../../shared/ai/prov
 import { resolveProviderRequest, routeLLMRequest } from '../services/llm/providerRouter.js';
 import { checkOllamaHealth, resolveOllamaConfig } from '../services/llm/providers/ollamaProvider.js';
 
-test('default provider is mock for zero-cost first load', () => {
-  assert.equal(DEFAULT_PROVIDER_KEY, 'mock');
+test('default provider is ollama for local-first load', () => {
+  assert.equal(DEFAULT_PROVIDER_KEY, 'ollama');
   assert.equal(PROVIDER_DEFINITIONS.mock.defaults.mode, 'echo');
   assert.equal(PROVIDER_DEFINITIONS.openrouter.defaults.enabled, false);
 });
 
-test('provider router falls back invalid selections to mock', () => {
+test('provider router falls back invalid selections to the default local provider', () => {
   const resolved = resolveProviderRequest('not-a-provider', {});
   assert.equal(resolved.requestedProvider, 'not-a-provider');
-  assert.equal(resolved.resolvedProvider, 'mock');
+  assert.equal(resolved.resolvedProvider, 'ollama');
   assert.equal(resolved.fallbackApplied, true);
 });
 
