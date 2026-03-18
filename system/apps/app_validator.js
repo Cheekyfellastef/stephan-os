@@ -16,6 +16,34 @@ function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
 }
 
+function normalizeRuntimePath(path) {
+  const value = String(path || "").trim();
+
+  if (!value) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  return value.replace(/^\.?\//, "");
+}
+
+function toFetchPath(path) {
+  const normalized = normalizeRuntimePath(path);
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `./${normalized}`;
+}
+
 async function fetchJson(path) {
   const response = await fetch(path, {
     cache: "no-store",
@@ -122,6 +150,21 @@ function resolveManifestPath(app, manifest) {
 
 function emitDiagnostic(context, message) {
   context?.eventBus?.emit("app:diagnostic", { message });
+}
+
+function emitStephanosValidationLog(context, details = {}) {
+  const message = [
+    `stephanos validation: manifest entry=${details.manifestEntry || "(missing)"}`,
+    `resolved entry=${details.resolvedEntryPath || "(missing)"}`,
+    `exists=${details.entryExists === true ? "true" : "false"}`,
+    `runtime url=${details.runtimeUrl || STEPHANOS_RUNTIME_URL}`,
+    `runtime reachable=${details.runtimeReachable === true ? "true" : "false"}`,
+    `status state=${details.launcherState || "(unknown)"}`,
+    `cache bypassed=${details.cacheBypassed === true ? "true" : "false"}`,
+    `stale state cleared=${details.staleStateCleared === true ? "true" : "false"}`
+  ].join(", ");
+
+  emitDiagnostic(context, message);
 }
 
 function isStephanosApp(app) {
@@ -303,12 +346,26 @@ async function validateClassicStaticApp(appRoot, entryPath, manifest, issues) {
   await validateHtmlReferences(entryFolder, html, issues, "Classic app");
 }
 
-async function validateStephanosRuntime(entryPath) {
+async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
-  const runtimeReachable = await fileExists(STEPHANOS_RUNTIME_URL);
+  const runtimeUrl = String(
+    statusProbe.ok && statusProbe.json?.runtimeUrl
+      ? statusProbe.json.runtimeUrl
+      : runtimeProbe.ok && runtimeProbe.json?.runtimeUrl
+        ? runtimeProbe.json.runtimeUrl
+        : STEPHANOS_RUNTIME_URL
+  ).trim() || STEPHANOS_RUNTIME_URL;
+  const resolvedEntryPath = normalizeRuntimePath(
+    statusProbe.ok && statusProbe.json?.distEntryPath
+      ? statusProbe.json.distEntryPath
+      : runtimeProbe.ok && runtimeProbe.json?.distEntryPath
+        ? runtimeProbe.json.distEntryPath
+        : entryPath || STEPHANOS_DIST_ENTRY
+  ) || STEPHANOS_DIST_ENTRY;
+  const runtimeReachable = await fileExists(runtimeUrl);
   const backendProbe = await fetchJsonSafely(STEPHANOS_BACKEND_HEALTH_URL);
-  const entryExists = await fileExists(entryPath);
+  const entryExists = await fileExists(toFetchPath(resolvedEntryPath));
   const launcherMessage =
     statusProbe.ok && typeof statusProbe.json?.message === "string"
       ? statusProbe.json.message
@@ -323,6 +380,18 @@ async function validateStephanosRuntime(entryPath) {
   const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.json);
   const healthyRuntime = runtimeProbe.ok && runtimeProbe.json?.service === "stephanos-dist-server";
   const healthyBackend = backendProbe.ok && backendProbe.json?.service === "stephanos-server";
+  const staleStateCleared = Boolean(options.previousValidationState === "error" && entryExists);
+
+  emitStephanosValidationLog(context, {
+    manifestEntry: String(options.manifestEntry || "").trim(),
+    resolvedEntryPath,
+    entryExists,
+    runtimeUrl,
+    runtimeReachable,
+    launcherState: String(launcherStatus?.state || runtimeProbe.json?.state || "").trim(),
+    cacheBypassed: true,
+    staleStateCleared
+  });
 
   if (!entryExists) {
     if (launchInProgress || buildState === "building") {
@@ -334,8 +403,8 @@ async function validateStephanosRuntime(entryPath) {
 
     return {
       state: "error",
-      message: `Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`,
-      issues: [`Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`]
+      message: `Stephanos build missing: ${resolvedEntryPath} not found`,
+      issues: [`Stephanos build missing: ${resolvedEntryPath} not found`]
     };
   }
 
@@ -349,8 +418,8 @@ async function validateStephanosRuntime(entryPath) {
 
     return {
       state: "error",
-      message: `Stephanos dist server not reachable on ${STEPHANOS_RUNTIME_URL}`,
-      issues: [`Stephanos dist server not reachable on ${STEPHANOS_RUNTIME_URL}`]
+      message: `Stephanos dist server not reachable on ${runtimeUrl}`,
+      issues: [`Stephanos dist server not reachable on ${runtimeUrl}`]
     };
   }
 
@@ -408,15 +477,7 @@ export async function validateApps(apps, context = {}) {
       issues.push(packagingValidation.message);
     }
 
-    let entryExists = false;
-    if (stephanosApp) {
-      entryExists = await fileExists(entryPath);
-      if (!entryExists) {
-        issues.push(`Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`);
-      }
-    } else {
-      entryExists = await validateEntryExists(entryPath, issues);
-    }
+    const entryExists = stephanosApp ? Boolean(entryPath) : await validateEntryExists(entryPath, issues);
     const packagingSupported = isSupportedPackagingMode(packaging);
 
     if (!packagingSupported && packagingValidation.code !== "unsupported-packaging") {
@@ -434,7 +495,16 @@ export async function validateApps(apps, context = {}) {
     const appId = String(app?.folder || app?.id || app?.name || "unknown").toLowerCase();
 
     if (stephanosApp && packagingSupported) {
-      const stephanosStatus = await validateStephanosRuntime(entryPath);
+      const previousValidationState = app?.validationState || "unknown";
+      const stephanosStatus = await validateStephanosRuntime(entryPath, context, {
+        manifestEntry: manifest?.entry,
+        previousValidationState
+      });
+
+      if (previousValidationState === "error" && stephanosStatus.state !== "error") {
+        emitDiagnostic(context, "stephanos validation: cleared stale failure state after successful revalidation");
+      }
+
       if (stephanosStatus.state === "healthy") {
         applyAppStatus(app, stephanosStatus, context);
         emitDiagnostic(context, `${appId}: ${stephanosStatus.message}`);
