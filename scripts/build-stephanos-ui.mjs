@@ -1,4 +1,5 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   cleanStephanosDist,
   createStephanosBuildMetadata,
@@ -8,7 +9,6 @@ import {
   stephanosUiRoot,
   writeStephanosDistMetadata,
 } from './stephanos-build-utils.mjs';
-import { existsSync } from 'node:fs';
 
 const buildMetadata = createStephanosBuildMetadata();
 const env = {
@@ -25,6 +25,40 @@ const env = {
   STEPHANOS_BUILD_SOURCE_TRUTH: buildMetadata.sourceTruth,
 };
 
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const viteBuildCommand = [npmCommand, 'exec', '--', 'vite', 'build'];
+
+function runRealViteBuild() {
+  return new Promise((resolve, reject) => {
+    console.log('[BUILD LIVE] Starting real Vite build');
+    console.log(`[BUILD LIVE] Running command: ${viteBuildCommand.join(' ')}`);
+
+    const child = spawn(viteBuildCommand[0], viteBuildCommand.slice(1), {
+      cwd: stephanosUiRoot,
+      env,
+      stdio: 'inherit',
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      if (signal) {
+        reject(new Error(`Vite build terminated by signal ${signal}`));
+        return;
+      }
+
+      if (code !== 0) {
+        reject(new Error(`Vite build exited with code ${code ?? 'unknown'}`));
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
 try {
   console.log('[BUILD LIVE] Starting Stephanos UI build');
   console.log(`[BUILD LIVE] Source truth: ${buildMetadata.sourceIdentifier}`);
@@ -35,20 +69,7 @@ try {
 
   cleanStephanosDist();
 
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const buildResult = spawnSync(npmCommand, ['--prefix', stephanosUiRoot, 'run', 'build'], {
-    cwd: repoRoot,
-    env,
-    stdio: 'inherit',
-  });
-
-  if (buildResult.error) {
-    throw buildResult.error;
-  }
-
-  if (buildResult.status !== 0) {
-    process.exit(buildResult.status ?? 1);
-  }
+  await runRealViteBuild();
 
   if (!existsSync(stephanosDistIndexPath)) {
     throw new Error(`Stephanos build completed without creating ${buildMetadata.buildTarget}/index.html`);
@@ -64,7 +85,8 @@ try {
   console.log(`[BUILD LIVE] Runtime proof written to apps/stephanos/dist/stephanos-build.json from repo ${repoRoot}.`);
   console.log(`[BUILD LIVE] Build metadata: ${JSON.stringify(buildMetadata)}`);
 } catch (error) {
-  console.error('[BUILD LIVE] Stephanos UI build failed.');
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[BUILD LIVE] Build failed: ${message}`);
   console.error(error);
   process.exit(1);
 }
