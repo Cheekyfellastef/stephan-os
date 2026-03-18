@@ -23,15 +23,24 @@ export default function StatusPanel() {
   const configState = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl);
   const backendDefaults = apiStatus.meta?.provider_defaults;
+  const corsAllowedOrigins = apiStatus.corsAllowedOrigins?.length
+    ? apiStatus.corsAllowedOrigins.join(', ')
+    : 'n/a';
 
   return (
     <aside className="status-panel panel">
       <h2>Status</h2>
       <ul>
         <li>Backend: {apiStatus.label}</li>
+        <li>Frontend Origin: {apiStatus.frontendOrigin || 'n/a'}</li>
         <li>Frontend API Base URL: {statusSummary.apiBaseUrl}</li>
+        <li>Frontend API Strategy: {apiStatus.strategy || 'n/a'}</li>
+        <li>Backend Reachable: {apiStatus.backendReachable ? 'yes' : 'no'}</li>
+        <li>Backend Target Endpoint: {apiStatus.backendTargetEndpoint || 'n/a'}</li>
+        <li>Backend Health Endpoint: {apiStatus.healthEndpoint || 'n/a'}</li>
         <li>API Health: {apiStatus.state}</li>
-        <li>Current Provider: {statusSummary.providerLabel}</li>
+        <li>Backend Default Provider: {apiStatus.backendDefaultProvider || apiStatus.meta?.default_provider || 'n/a'}</li>
+        <li>Active Provider: {statusSummary.providerLabel}</li>
         <li>Provider Key: {provider}</li>
         <li>Provider Target: {statusSummary.providerTarget}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
@@ -41,9 +50,10 @@ export default function StatusPanel() {
         <li>Provider Chat Endpoint: {activeConfig.chatEndpoint || 'n/a'}</li>
         <li>Provider Endpoint Summary: {statusSummary.providerEndpoint}</li>
         <li>Provider Model: {statusSummary.model}</li>
-        {provider === 'ollama' ? <li>Ollama Endpoint: {statusSummary.providerEndpoint}</li> : null}
-        <li>Backend Default Provider: {apiStatus.meta?.default_provider || 'n/a'}</li>
+        <li>Resolved Ollama Endpoint: {apiStatus.resolvedOllamaEndpoint || 'n/a'}</li>
         <li>Backend Default Ollama Endpoint: {backendDefaults ? `${backendDefaults.ollama.baseUrl}${backendDefaults.ollama.chatEndpoint}` : 'n/a'}</li>
+        <li>CORS Allowed Origins: {corsAllowedOrigins}</li>
+        <li>Provider Router Path: {apiStatus.providerRouterPath || 'n/a'}</li>
         <li>Last Provider Save: {providerDraftStatus.custom.savedAt || 'n/a'}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
