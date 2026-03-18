@@ -13,6 +13,7 @@ $appUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/'
 $distHealthUrl = 'http://127.0.0.1:4173/__stephanos/health'
 $ollamaHealthUrl = 'http://127.0.0.1:11434/api/tags'
 $launcherWindowTitle = 'Update + Launch Local Stephanos (Ollama)'
+$global:Host.UI.RawUI.WindowTitle = $launcherWindowTitle
 
 function Write-Step([string]$Message) {
   Write-Host "`n==> $Message" -ForegroundColor Cyan
@@ -168,6 +169,20 @@ function Wait-ForCondition([string]$Label, [scriptblock]$Probe, [int]$TimeoutSec
   return $false
 }
 
+function Wait-ForBackendReady([int]$TimeoutSeconds = 20) {
+  Write-StatusFile -State 'waiting-runtime' -Message 'Waiting for the Stephanos backend to answer on port 8787.'
+  return Wait-ForCondition -Label 'Stephanos backend readiness' -TimeoutSeconds $TimeoutSeconds -DelayMilliseconds 1000 -Probe {
+    Test-BackendHealthy
+  }
+}
+
+function Wait-ForDistRuntimeReady([int]$TimeoutSeconds = 20) {
+  Write-StatusFile -State 'waiting-runtime' -Message 'Waiting for the Stephanos browser URL to become reachable.'
+  return Wait-ForCondition -Label 'Stephanos runtime URL readiness' -TimeoutSeconds $TimeoutSeconds -DelayMilliseconds 1000 -Probe {
+    (Test-DistHealthy) -and (Test-DistRuntimeReady)
+  }
+}
+
 function Get-SubsystemSnapshot() {
   $buildPresent = Test-Path $builtRuntimeIndexPath
   $backendReachable = Test-BackendHealthy
@@ -255,9 +270,15 @@ function Update-RepoIfSafe() {
   Push-Location $repoRoot
   try {
     $gitStatus = git status --porcelain --untracked-files=no
-    if ([string]::IsNullOrWhiteSpace(($gitStatus | Out-String))) {
-      Write-Step 'Pulling latest changes with fast-forward only'
-      Write-StatusFile -State 'updating' -Message 'Pulling the latest safe fast-forward updates.'
+    if (-not [string]::IsNullOrWhiteSpace(($gitStatus | Out-String))) {
+      Write-Host 'Skipping GitHub update because local tracked changes are present.' -ForegroundColor Yellow
+      return 'skipped-local-changes'
+    }
+
+    Write-Step 'Pulling latest changes with fast-forward only'
+    Write-StatusFile -State 'updating' -Message 'Pulling the latest safe fast-forward updates.'
+
+    try {
       git fetch --all --prune
       if ($LASTEXITCODE -ne 0) {
         throw 'git fetch failed'
@@ -270,9 +291,11 @@ function Update-RepoIfSafe() {
 
       return 'updated'
     }
-
-    Write-Warning 'Skipping git pull because tracked local changes exist. This protects your work from being overwritten.'
-    return 'skipped-local-changes'
+    catch {
+      $message = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { $_ | Out-String }
+      Write-Host "Continuing with your current local copy because GitHub update was not available: $message" -ForegroundColor Yellow
+      return 'update-unavailable'
+    }
   }
   finally {
     Pop-Location
@@ -351,15 +374,21 @@ function Wait-ForStephanosReadiness([int]$TimeoutSeconds = 10) {
 }
 
 function Open-BrowserUrl([string]$Url) {
-  Write-Host "Opening browser at: $Url" -ForegroundColor Cyan
+  Write-Host "Opening browser at: $Url"
+
   try {
     Start-Process $Url -ErrorAction Stop | Out-Null
     return $true
   }
   catch {
-    Write-Warning "Browser launch failed: $($_.Exception.Message)"
-    Write-Host "Stephanos is running. Open this URL manually: $Url" -ForegroundColor Yellow
-    return $false
+    try {
+      Start-Process 'cmd.exe' -ArgumentList '/c', 'start', '', $Url -ErrorAction Stop -WindowStyle Hidden | Out-Null
+      return $true
+    }
+    catch {
+      Write-Host "Stephanos is running. Open this URL manually: $Url" -ForegroundColor Yellow
+      return $false
+    }
   }
 }
 
@@ -391,15 +420,17 @@ try {
 
   Ensure-StephanosBuildReady
   $backendAction = Ensure-BackendRunning
-  $distAction = Ensure-DistServerRunning
-
-  $distHealth = Sync-DistRuntimeUrl
-  if ($null -eq $distHealth -or -not (Test-DistRuntimeReady)) {
-    throw "Stephanos dist server started, but the printed runtime URL did not return HTTP 200: $appUrl"
+  if (-not (Wait-ForBackendReady -TimeoutSeconds 20)) {
+    throw 'Stephanos backend did not become ready on http://127.0.0.1:8787/api/health within 20 seconds.'
   }
 
-  if (-not (Wait-ForStephanosReadiness -TimeoutSeconds 10)) {
-    throw "Stephanos readiness check failed. Backend and UI did not both become reachable within 10 seconds."
+  $distAction = Ensure-DistServerRunning
+  if (-not (Wait-ForDistRuntimeReady -TimeoutSeconds 20)) {
+    throw "Stephanos dist server started, but the final browser URL did not return HTTP 200: $appUrl"
+  }
+
+  if (-not (Wait-ForStephanosReadiness -TimeoutSeconds 20)) {
+    throw "Stephanos readiness check failed. Build, backend, and browser URL did not all become reachable within 20 seconds."
   }
 
   Write-StatusFile -State 'ready' -Message 'Stephanos running normally' -Extra @{
@@ -427,7 +458,7 @@ try {
     Write-Host 'Ollama status: reachable' -ForegroundColor Green
   }
   else {
-    Write-Host 'Ollama status: unreachable (Stephanos still launched successfully).' -ForegroundColor Yellow
+    Write-Host 'Ollama not reachable. Stephanos still opened. Start Ollama at http://localhost:11434 or pick Mock Mode in Stephanos.' -ForegroundColor Yellow
   }
 }
 catch {

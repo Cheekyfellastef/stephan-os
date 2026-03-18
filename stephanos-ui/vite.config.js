@@ -17,6 +17,7 @@ const buildMetadata = {
   runtimeMarker: process.env.STEPHANOS_BUILD_RUNTIME_MARKER || 'stephanos-ui/runtime::dist-synced-v2',
   gitCommit: process.env.STEPHANOS_BUILD_GIT_COMMIT || 'git-unavailable',
   buildTimestamp: process.env.STEPHANOS_BUILD_TIMESTAMP || new Date().toISOString(),
+  sourceTruth: process.env.STEPHANOS_BUILD_SOURCE_TRUTH || 'sourceFingerprint',
 };
 
 const generatedAssetBanner = [
@@ -79,6 +80,11 @@ function stephanosBuildMetadataPlugin(metadata) {
             attrs: { name: 'stephanos-build-timestamp', content: metadata.buildTimestamp },
           },
           {
+            tag: 'meta',
+            injectTo: 'head',
+            attrs: { name: 'stephanos-build-source-truth', content: metadata.sourceTruth },
+          },
+          {
             tag: 'script',
             injectTo: 'head',
             attrs: { id: 'stephanos-build-metadata', type: 'application/json' },
@@ -119,6 +125,7 @@ export default defineConfig({
     __STEPHANOS_UI_BUILD_TARGET__: JSON.stringify(buildMetadata.buildTarget),
     __STEPHANOS_UI_BUILD_TARGET_IDENTIFIER__: JSON.stringify(buildMetadata.buildTargetIdentifier),
     __STEPHANOS_UI_RUNTIME_ID__: JSON.stringify(buildMetadata.runtimeId),
+    __STEPHANOS_UI_SOURCE_TRUTH__: JSON.stringify(buildMetadata.sourceTruth),
     __STEPHANOS_UI_BUILD_METADATA__: JSON.stringify(buildMetadata),
   },
   build: {

@@ -22,6 +22,7 @@ const env = {
   STEPHANOS_BUILD_RUNTIME_MARKER: buildMetadata.runtimeMarker,
   STEPHANOS_BUILD_GIT_COMMIT: buildMetadata.gitCommit,
   STEPHANOS_BUILD_TIMESTAMP: buildMetadata.buildTimestamp,
+  STEPHANOS_BUILD_SOURCE_TRUTH: buildMetadata.sourceTruth,
 };
 
 try {

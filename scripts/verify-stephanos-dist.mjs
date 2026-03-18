@@ -76,7 +76,7 @@ const expectedFields = [
   'buildTargetIdentifier',
   'runtimeId',
   'runtimeMarker',
-  'gitCommit',
+  'sourceTruth',
 ];
 
 for (const [label, metadata] of metadataSources) {
