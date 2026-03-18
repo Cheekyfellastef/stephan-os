@@ -1,3 +1,4 @@
 @echo off
-set SCRIPT_DIR=%~dp0
-powershell.exe -ExecutionPolicy Bypass -File "%SCRIPT_DIR%Launch-Stephanos-Local.ps1"
+setlocal
+set "SCRIPT_DIR=%~dp0"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%Launch-Stephanos-Local.ps1"
