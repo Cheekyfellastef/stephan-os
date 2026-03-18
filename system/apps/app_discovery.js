@@ -4,6 +4,43 @@ const VALID_PACKAGING_MODES = new Set(["classic", "classic-static", "vite", "doc
 const STEPHANOS_APP_ID = "stephanos";
 
 function ensureStephanosEntry(apps) {
+  const stephanosIndex = apps.findIndex((app) => isStephanosFolder(app?.folder || app?.id || app?.name));
+  const fallbackStephanos = {
+    id: STEPHANOS_APP_ID,
+    folder: STEPHANOS_APP_ID,
+    name: "Stephanos OS",
+    icon: "🧠",
+    entry: "apps/stephanos/dist/index.html",
+    type: "system",
+    appType: "vite",
+    packaging: "vite",
+    disabled: false,
+    discoveryDisabled: false,
+    validationState: "unknown",
+    statusMessage: "Checking Stephanos local runtime.",
+    requiredPaths: [],
+    dependencies: [],
+    validationIssues: []
+  };
+
+  if (stephanosIndex === -1) {
+    apps.push(fallbackStephanos);
+    return apps;
+  }
+
+  const existingStephanos = apps[stephanosIndex] || {};
+  if (existingStephanos.discoveryDisabled || existingStephanos.disabled) {
+    apps[stephanosIndex] = {
+      ...fallbackStephanos,
+      ...existingStephanos,
+      disabled: false,
+      discoveryDisabled: false,
+      validationState: existingStephanos.validationState || "unknown",
+      statusMessage: existingStephanos.statusMessage || fallbackStephanos.statusMessage,
+      validationIssues: Array.isArray(existingStephanos.validationIssues) ? existingStephanos.validationIssues : []
+    };
+  }
+
   return apps;
 }
 

@@ -101,6 +101,7 @@ export function createStephanosBuildMetadata() {
     runtimeMarker: 'stephanos-ui/runtime::dist-synced-v2',
     gitCommit: getGitCommit(),
     buildTimestamp: new Date().toISOString(),
+    sourceTruth: 'sourceFingerprint',
   };
 }
 
