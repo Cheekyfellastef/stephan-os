@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:stephanos": "vite build",
+    "build": "node ../scripts/build-stephanos-ui.mjs",
+    "build:raw": "vite build",
+    "build:stephanos": "node ../scripts/build-stephanos-ui.mjs",
+    "verify": "node ../scripts/verify-stephanos-dist.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
