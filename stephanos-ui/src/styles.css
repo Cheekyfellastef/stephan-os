@@ -584,3 +584,61 @@ pre {
     flex-direction: column;
   }
 }
+
+.provider-help-panel {
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid rgba(84, 162, 236, 0.2);
+  margin-bottom: 0.75rem;
+}
+
+.provider-help-panel p {
+  margin: 0.25rem 0;
+}
+
+.prominent-actions button:first-child {
+  min-width: 180px;
+  font-weight: 700;
+}
+
+.provider-result-badge {
+  display: inline-flex;
+  margin: 0.35rem 0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 214, 167, 0.45);
+  background: rgba(13, 50, 34, 0.4);
+  color: #c5ffe0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.provider-manual-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+  align-items: end;
+}
+
+.provider-manual-address label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.provider-hint-box.searching {
+  border-color: rgba(191, 165, 94, 0.55);
+}
+
+.provider-hint-box.found {
+  border-color: rgba(94, 191, 141, 0.38);
+}
+
+.provider-hint-box.not-found {
+  border-color: rgba(72, 145, 236, 0.45);
+}
+
+@media (max-width: 720px) {
+  .provider-manual-address {
+    grid-template-columns: 1fr;
+  }
+}

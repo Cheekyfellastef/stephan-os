@@ -15,10 +15,29 @@ import {
 
 const AIStoreContext = createContext(null);
 const SETTINGS_STORAGE_KEY = 'stephanos.ai.freeTierSettings';
+const DEFAULT_OLLAMA_CONNECTION = {
+  lastSuccessfulBaseURL: '',
+  lastSuccessfulHost: '',
+  recentHosts: [],
+  pcAddressHint: '',
+  lastSelectedModel: '',
+};
+
+function normalizeOllamaConnection(value = {}) {
+  return {
+    lastSuccessfulBaseURL: String(value.lastSuccessfulBaseURL || ''),
+    lastSuccessfulHost: String(value.lastSuccessfulHost || ''),
+    recentHosts: Array.isArray(value.recentHosts)
+      ? [...new Set(value.recentHosts.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 5)
+      : [],
+    pcAddressHint: String(value.pcAddressHint || ''),
+    lastSelectedModel: String(value.lastSelectedModel || ''),
+  };
+}
 
 function getStoredSettings() {
   const defaults = createDefaultRouterSettings();
-  if (typeof window === 'undefined') return defaults;
+  if (typeof window === 'undefined') return { ...defaults, ollamaConnection: DEFAULT_OLLAMA_CONNECTION };
 
   try {
     const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
@@ -35,9 +54,10 @@ function getStoredSettings() {
           apiKey: '',
         })]),
       ),
+      ollamaConnection: normalizeOllamaConnection(parsed.ollamaConnection || {}),
     };
   } catch {
-    return defaults;
+    return { ...defaults, ollamaConnection: DEFAULT_OLLAMA_CONNECTION };
   }
 }
 
@@ -49,6 +69,7 @@ function persistSettings(state) {
     fallbackEnabled: state.fallbackEnabled,
     fallbackOrder: state.fallbackOrder,
     providerConfigs: sanitizeConfigForStorage(state.providerConfigs),
+    ollamaConnection: normalizeOllamaConnection(state.ollamaConnection),
   }));
 }
 
@@ -67,8 +88,9 @@ export function AIStoreProvider({ children }) {
   const [fallbackOrder, setFallbackOrderState] = useState(initialSettings.fallbackOrder);
   const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSettings.providerConfigs);
   const [draftProviderConfigs, setDraftProviderConfigs] = useState(initialSettings.providerConfigs);
-  const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }])));
+  const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }] )));
   const [providerHealth, setProviderHealth] = useState({});
+  const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
@@ -99,6 +121,7 @@ export function AIStoreProvider({ children }) {
     fallbackEnabled,
     fallbackOrder,
     providerConfigs: savedProviderConfigs,
+    ollamaConnection,
     ...next,
   });
 
@@ -119,6 +142,27 @@ export function AIStoreProvider({ children }) {
     persistCurrentState({ fallbackEnabled: Boolean(next) });
   };
 
+  const setOllamaConnection = (patch = {}) => {
+    const nextConnection = normalizeOllamaConnection({ ...ollamaConnection, ...patch });
+    setOllamaConnectionState(nextConnection);
+    persistCurrentState({ ollamaConnection: nextConnection });
+    return nextConnection;
+  };
+
+  const rememberSuccessfulOllamaConnection = ({ baseURL = '', host = '', model = '' } = {}) => {
+    const normalizedHost = String(host || '').trim();
+    const nextConnection = normalizeOllamaConnection({
+      ...ollamaConnection,
+      lastSuccessfulBaseURL: baseURL || ollamaConnection.lastSuccessfulBaseURL,
+      lastSuccessfulHost: normalizedHost || ollamaConnection.lastSuccessfulHost,
+      lastSelectedModel: model || ollamaConnection.lastSelectedModel,
+      recentHosts: [normalizedHost, ...(ollamaConnection.recentHosts || [])].filter(Boolean),
+    });
+    setOllamaConnectionState(nextConnection);
+    persistCurrentState({ ollamaConnection: nextConnection });
+    return nextConnection;
+  };
+
   const resetToFreeMode = () => {
     const defaults = createDefaultRouterSettings();
     const sessionSafe = Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { ...defaults.providerConfigs[key], apiKey: '' }]));
@@ -128,8 +172,9 @@ export function AIStoreProvider({ children }) {
     setFallbackOrderState(defaults.fallbackOrder);
     setSavedProviderConfigs(sessionSafe);
     setDraftProviderConfigs(sessionSafe);
+    setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
     setProviderSelectionSource('default:free-tier');
-    persistSettings({ ...defaults, providerConfigs: sessionSafe });
+    persistSettings({ ...defaults, providerConfigs: sessionSafe, ollamaConnection: DEFAULT_OLLAMA_CONNECTION });
   };
 
   const getDraftProviderConfig = (providerKey) => draftProviderConfigs[providerKey];
@@ -154,11 +199,21 @@ export function AIStoreProvider({ children }) {
     }
 
     const nextSaved = { ...savedProviderConfigs, [providerKey]: draft };
+    const nextConnection = providerKey === 'ollama'
+      ? normalizeOllamaConnection({
+        ...ollamaConnection,
+        lastSelectedModel: draft.model || ollamaConnection.lastSelectedModel,
+      })
+      : ollamaConnection;
+
     setSavedProviderConfigs(nextSaved);
     setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: draft }));
+    if (providerKey === 'ollama') {
+      setOllamaConnectionState(nextConnection);
+    }
     const savedAt = new Date().toISOString();
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { mode: 'saved', message: `${PROVIDER_DEFINITIONS[providerKey].label} settings applied.`, savedAt, errors: {} } }));
-    persistCurrentState({ providerConfigs: nextSaved });
+    persistCurrentState({ providerConfigs: nextSaved, ollamaConnection: nextConnection });
     return { ok: true, savedAt };
   };
 
@@ -205,6 +260,9 @@ export function AIStoreProvider({ children }) {
     providerDraftStatus,
     providerHealth,
     setProviderHealth,
+    ollamaConnection,
+    setOllamaConnection,
+    rememberSuccessfulOllamaConnection,
     getDraftProviderConfig,
     getActiveProviderConfig,
     getSavedProviderConfig,
@@ -235,6 +293,7 @@ export function AIStoreProvider({ children }) {
     draftProviderConfigs,
     providerDraftStatus,
     providerHealth,
+    ollamaConnection,
     apiStatus,
     uiDiagnostics,
   ]);
