@@ -101,6 +101,21 @@ function emitDiagnostic(context, message) {
   context?.eventBus?.emit("app:diagnostic", { message });
 }
 
+function emitLiveDiscoveryLog(context, details = {}) {
+  const message = [
+    `[VALIDATOR LIVE] discovery app=${details.appId || "(unknown)"}`,
+    `manifest entry=${details.manifestEntry || "(missing)"}`,
+    `resolved entry path=${details.resolvedEntryPath || "(missing)"}`,
+    `entry exists=${details.entryExists === true ? "yes" : "no"}`,
+    `discoveryDisabled=${details.discoveryDisabled === true ? "yes" : "no"}`,
+    `disabled=${details.disabled === true ? "yes" : "no"}`,
+    `reason=${details.reason || "(none)"}`
+  ].join(", ");
+
+  console.log(message);
+  emitDiagnostic(context, message);
+}
+
 function isValidDiscoveryFolderName(entry) {
   return typeof entry === "string" && VALID_DISCOVERY_ID.test(entry.trim());
 }
@@ -238,18 +253,28 @@ async function validateAppRegistration(folder, context = {}) {
   const entryExists = entryPath ? await fileExists(`./${entryPath}`) : false;
 
   if (isStephanosFolder(folder)) {
-    emitDiagnostic(
-      context,
-      `stephanos discovery: manifest entry=${String(manifest?.entry || "").trim() || "(missing)"}, resolved=${entryPath || "(missing)"}, exists=${entryExists}`
-    );
+    emitLiveDiscoveryLog(context, {
+      appId: folder,
+      manifestEntry: String(manifest?.entry || "").trim(),
+      resolvedEntryPath: entryPath,
+      entryExists,
+      discoveryDisabled: false,
+      disabled: false,
+      reason: "initial manifest discovery"
+    });
   }
 
   if (typeof manifest?.entry === "string" && manifest.entry.trim().length > 0 && !entryExists) {
     if (isStephanosFolder(folder)) {
-      emitDiagnostic(
-        context,
-        `stephanos discovery: deferring missing entry check to validator/runtime-status for ${entryPath || manifest.entry}`
-      );
+      emitLiveDiscoveryLog(context, {
+        appId: folder,
+        manifestEntry: String(manifest?.entry || "").trim(),
+        resolvedEntryPath: entryPath,
+        entryExists,
+        discoveryDisabled: false,
+        disabled: false,
+        reason: `deferring missing entry check to validator/runtime-status for ${entryPath || manifest.entry}`
+      });
     } else {
       issues.push(`${folder}: entry file ${manifest.entry} not found`);
     }

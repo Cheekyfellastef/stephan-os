@@ -154,18 +154,25 @@ function emitDiagnostic(context, message) {
 
 function emitStephanosValidationLog(context, details = {}) {
   const message = [
-    `stephanos validation: manifest entry=${details.manifestEntry || "(missing)"}`,
+    `[VALIDATOR LIVE] manifest entry=${details.manifestEntry || "(missing)"}`,
     `resolved file path=${details.resolvedEntryPath || "(missing)"}`,
-    `file exists=${details.entryExists === true ? "true" : "false"}`,
+    `file exists=${details.entryExists === true ? "yes" : "no"}`,
+    `runtime-status path=${details.runtimeStatusPath || STEPHANOS_STATUS_URL}`,
     `runtime URL=${details.runtimeUrl || STEPHANOS_RUNTIME_URL}`,
-    `runtime reachable=${details.runtimeReachable === true ? "true" : "false"}`,
+    `runtime reachable=${details.runtimeReachable === true ? "yes" : "no"}`,
     `backend status=${details.backendStatus || "unknown"}`,
     `static server status=${details.staticServerStatus || "unknown"}`,
-    `status state=${details.launcherState || "(unknown)"}`,
-    `cache bypassed=${details.cacheBypassed === true ? "true" : "false"}`,
-    `stale state cleared=${details.staleStateCleared === true ? "true" : "false"}`
+    `launcher state=${details.launcherState || "(unknown)"}`,
+    `stale state cleared=${details.staleStateCleared === true ? "yes" : "no"}`,
+    `discoveryDisabled=${details.discoveryDisabled === true ? "yes" : "no"}`,
+    `disabled=${details.disabled === true ? "yes" : "no"}`,
+    `reason=${details.reason || "(not-yet-determined)"}`,
+    `runtime marker=${details.runtimeMarker || "(missing)"}`,
+    `git commit=${details.gitCommit || "(missing)"}`,
+    `build timestamp=${details.buildTimestamp || "(missing)"}`
   ].join(", ");
 
+  console.log(message);
   emitDiagnostic(context, message);
 }
 
@@ -393,18 +400,42 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const staleStateCleared = Boolean(
     liveReady && (options.previousValidationState === "error" || launcherState === "error")
   );
+  let validationReason = "validator still evaluating failure branch";
+
+  if (liveReady) {
+    validationReason = "validator observed build+runtime+backend all healthy";
+  } else if (!entryExists) {
+    validationReason = launchInProgress || buildState === "building" || buildState === "verifying-build"
+      ? "entry missing while launcher/build still in progress"
+      : `entry missing at ${resolvedEntryPath}`;
+  } else if (!healthyRuntime) {
+    validationReason = launchInProgress || uiState === "starting" || uiState === "waiting-runtime"
+      ? `runtime still starting at ${runtimeUrl}`
+      : `runtime not reachable at ${runtimeUrl}`;
+  } else if (!healthyBackend) {
+    validationReason = launchInProgress || backendState === "starting" || backendState === "waiting-runtime"
+      ? `backend still starting at ${STEPHANOS_BACKEND_URL}`
+      : `backend not reachable at ${STEPHANOS_BACKEND_URL}`;
+  }
 
   emitStephanosValidationLog(context, {
     manifestEntry: String(options.manifestEntry || "").trim(),
     resolvedEntryPath,
     entryExists,
+    runtimeStatusPath: STEPHANOS_STATUS_URL,
     runtimeUrl,
     runtimeReachable,
     backendStatus: healthyBackend ? "up" : backendState || "down",
     staticServerStatus: healthyRuntime ? "up" : uiState || "down",
     launcherState,
     cacheBypassed: true,
-    staleStateCleared
+    staleStateCleared,
+    discoveryDisabled: Boolean(options.discoveryDisabled),
+    disabled: Boolean(options.disabled),
+    runtimeMarker: launcherStatus?.runtimeMarker || runtimeProbe.json?.runtimeMarker || null,
+    gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || null,
+    buildTimestamp: launcherStatus?.buildTimestamp || runtimeProbe.json?.buildTimestamp || null,
+    reason: validationReason
   });
 
   if (liveReady) {
@@ -520,7 +551,9 @@ export async function validateApps(apps, context = {}) {
       const previousValidationState = app?.validationState || "unknown";
       const stephanosStatus = await validateStephanosRuntime(entryPath, context, {
         manifestEntry: manifest?.entry,
-        previousValidationState
+        previousValidationState,
+        discoveryDisabled: app?.discoveryDisabled,
+        disabled: app?.disabled
       });
 
       if (previousValidationState === "error" && stephanosStatus.state !== "error") {
@@ -542,6 +575,21 @@ export async function validateApps(apps, context = {}) {
       applyAppStatus(app, stephanosStatus, context);
 
       if (stephanosStatus.state === "launching") {
+        emitStephanosValidationLog(context, {
+          manifestEntry: manifest?.entry,
+          resolvedEntryPath: entryPath,
+          entryExists: true,
+          runtimeStatusPath: STEPHANOS_STATUS_URL,
+          runtimeUrl: STEPHANOS_RUNTIME_URL,
+          runtimeReachable: false,
+          backendStatus: "starting",
+          staticServerStatus: "starting",
+          launcherState: "launching",
+          staleStateCleared: false,
+          discoveryDisabled: Boolean(app?.discoveryDisabled),
+          disabled: Boolean(app?.disabled),
+          reason: stephanosStatus.message
+        });
         emitDiagnostic(context, `${appId}: ${stephanosStatus.message}`);
         continue;
       }
@@ -554,6 +602,21 @@ export async function validateApps(apps, context = {}) {
         issues: stephanosIssues
       });
       emitDiagnostic(context, `${appId}: ${stephanosIssues[0]}`);
+      emitStephanosValidationLog(context, {
+        manifestEntry: manifest?.entry,
+        resolvedEntryPath: entryPath,
+        entryExists: true,
+        runtimeStatusPath: STEPHANOS_STATUS_URL,
+        runtimeUrl: STEPHANOS_RUNTIME_URL,
+        runtimeReachable: false,
+        backendStatus: "down",
+        staticServerStatus: "down",
+        launcherState: "error",
+        staleStateCleared: false,
+        discoveryDisabled: Boolean(app?.discoveryDisabled),
+        disabled: Boolean(app?.disabled),
+        reason: stephanosIssues[0]
+      });
       results.push({
         app: app.name,
         issues: stephanosIssues

@@ -90,17 +90,20 @@ export function computeStephanosSourceFingerprint() {
 }
 
 export function createStephanosBuildMetadata() {
+  const gitCommit = getGitCommit();
+  const buildTimestamp = new Date().toISOString();
+  const sourceFingerprint = computeStephanosSourceFingerprint();
   return {
     appName: 'Stephanos UI',
     version: stephanosUiPackage.version,
     sourceIdentifier: 'stephanos-ui/src',
-    sourceFingerprint: computeStephanosSourceFingerprint(),
+    sourceFingerprint,
     buildTarget: 'apps/stephanos/dist',
     buildTargetIdentifier: 'apps/stephanos/dist',
     runtimeId: 'live-vite-shell',
-    runtimeMarker: 'stephanos-ui/runtime::dist-synced-v2',
-    gitCommit: getGitCommit(),
-    buildTimestamp: new Date().toISOString(),
+    runtimeMarker: `antifriction-live-v3::${gitCommit}::${sourceFingerprint.slice(0, 12)}`,
+    gitCommit,
+    buildTimestamp,
     sourceTruth: 'sourceFingerprint',
   };
 }

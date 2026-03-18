@@ -45,6 +45,14 @@ router.post('/chat', async (req, res) => {
     fallbackApplied: providerResolution.fallbackApplied,
     overrideKeys: providerResolution.overrideKeys,
   });
+  console.log('[BACKEND LIVE] Incoming /api/ai/chat', {
+    request_id: requestId || null,
+    ui_requested_provider: provider,
+    requested_provider: providerResolution.requestedProvider,
+    resolved_provider: providerResolution.resolvedProvider,
+    fallback_applied: providerResolution.fallbackApplied,
+    override_keys: providerResolution.overrideKeys,
+  });
 
   try {
     if (decision.action === 'help') return res.json(buildSuccessResponse({ type: 'tool_result', route: decision.route, command: '/help', output_text: helpText, data: {}, timing_ms: Date.now() - startedAt, debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId } }));
@@ -103,11 +111,20 @@ router.post('/chat', async (req, res) => {
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
     const executionMetadata = {
       requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
+      selected_provider: llmResult.diagnostics?.selectedProvider || providerResolution.resolvedProvider,
       actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
       model_used: llmResult.modelUsed || llmResult.model || '',
       fallback_used: Boolean(llmResult.fallbackUsed),
       fallback_reason: llmResult.fallbackReason || null,
+      ollama_base_url: llmResult.diagnostics?.ollama?.baseURL || providerHealthSnapshot?.ollama?.baseURL || null,
+      ollama_model_requested: llmResult.diagnostics?.ollama?.requestedModel || mergedProviderConfigs?.ollama?.model || null,
+      ollama_model_selected: llmResult.diagnostics?.ollama?.selectedModel || null,
+      ollama_available_models: llmResult.diagnostics?.ollama?.availableModels || providerHealthSnapshot?.ollama?.models || [],
+      ollama_request_ok: Boolean(llmResult.ok && (llmResult.actualProviderUsed || llmResult.provider) === 'ollama'),
+      ollama_error: llmResult.error?.message || null,
     };
+
+    console.log('[BACKEND LIVE] Execution metadata', executionMetadata);
 
     if (!llmResult.ok) {
       return res.status(502).json(buildErrorResponse({
