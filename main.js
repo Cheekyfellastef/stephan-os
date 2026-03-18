@@ -100,12 +100,14 @@ function startStephanosHealthMonitor(projects, context) {
     }
   };
 
-  const intervalId = window.setInterval(monitor, 5000);
+  const intervalId = window.setInterval(monitor, 2000);
   window.addEventListener("focus", monitor);
+  window.addEventListener("visibilitychange", monitor);
 
   return () => {
     window.clearInterval(intervalId);
     window.removeEventListener("focus", monitor);
+    window.removeEventListener("visibilitychange", monitor);
   };
 }
 
