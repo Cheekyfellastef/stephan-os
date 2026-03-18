@@ -103,6 +103,13 @@ export function useAIConsole() {
     setIsBusy(true);
     setStatus('processing');
 
+    console.debug('[Stephanos UI] Preparing AI request', {
+      requestedProvider: provider,
+      providerSelectionSource,
+      fallbackEnabled,
+      fallbackOrder,
+    });
+
     try {
       const { data, requestPayload } = await sendPrompt({
         prompt,
@@ -117,6 +124,16 @@ export function useAIConsole() {
       if (Object.keys(providerHealth).length) {
         setProviderHealth(providerHealth);
       }
+
+      const executionMetadata = data.data?.execution_metadata || {
+        requested_provider: requestPayload.provider,
+        actual_provider_used: data.data?.provider || null,
+        model_used: data.data?.provider_model || null,
+        fallback_used: false,
+        fallback_reason: null,
+      };
+
+      console.debug('[Stephanos UI] Received AI response', executionMetadata);
 
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -148,7 +165,7 @@ export function useAIConsole() {
         state: 'online',
         label: `Connected to ${runtimeConfig.target} API`,
         detail: data.success
-          ? `Backend reachable. Active provider: ${activeProviderLabel}.`
+          ? `Backend reachable. Requested: ${executionMetadata.requested_provider}. Executed: ${executionMetadata.actual_provider_used}.`
           : `Provider issue: ${providerMessage}`,
         backendReachable: true,
         lastCheckedAt: new Date().toISOString(),
@@ -158,6 +175,11 @@ export function useAIConsole() {
         request_payload: requestPayload,
         response_payload: data,
         parsed_command: parsed,
+        timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
+        error: data.error,
+        error_code: data.error_code ?? data.debug?.error_code ?? null,
+        requested_provider: requestPayload.provider,
+        execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
         provider_health: providerHealth,

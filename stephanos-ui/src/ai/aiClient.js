@@ -46,6 +46,12 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, prov
     devMode,
   };
 
+  console.debug('[Stephanos UI] Dispatching /api/ai/chat request', {
+    requestedProvider: payload.provider,
+    fallbackEnabled: payload.fallbackEnabled,
+    fallbackOrder: payload.fallbackOrder,
+  });
+
   const result = await requestJson('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

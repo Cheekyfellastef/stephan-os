@@ -28,6 +28,8 @@ test('mock provider answers without any API keys configured', async () => {
   const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'describe the current mode' }] }, { provider: 'mock', providerConfigs: { mock: { mode: 'echo', latencyMs: 0 } } });
   assert.equal(response.ok, true);
   assert.equal(response.provider, 'mock');
+  assert.equal(response.actualProviderUsed, 'mock');
+  assert.equal(response.fallbackUsed, false);
   assert.match(response.outputText, /describe the current mode/i);
 });
 
@@ -35,7 +37,76 @@ test('router falls back to mock when groq is selected without credentials and fa
   const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'test fallback' }] }, { provider: 'groq', devMode: true, fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { groq: { apiKey: '' }, mock: { latencyMs: 0, mode: 'canned' } } });
   assert.equal(response.ok, true);
   assert.equal(response.provider, 'mock');
+  assert.equal(response.actualProviderUsed, 'mock');
+  assert.equal(response.diagnostics.selectedProvider, 'groq');
   assert.equal(response.diagnostics.fallbackUsed, true);
+  assert.match(response.diagnostics.fallbackReason, /groq/i);
+});
+
+test('router executes ollama directly when ollama succeeds', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
+    }
+    if (String(url).endsWith('/api/chat')) {
+      assert.equal(options.method, 'POST');
+      const body = JSON.parse(options.body);
+      assert.equal(body.model, 'gpt-oss:20b');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'gpt-oss:20b', message: { content: 'Ollama real response' } }),
+      };
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  try {
+    const response = await routeLLMRequest(
+      { messages: [{ role: 'user', content: 'use ollama directly' }] },
+      { provider: 'ollama', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.provider, 'ollama');
+    assert.equal(response.actualProviderUsed, 'ollama');
+    assert.equal(response.fallbackUsed, false);
+    assert.equal(response.diagnostics.selectedProvider, 'ollama');
+    assert.equal(response.outputText, 'Ollama real response');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('router surfaces fallback reason when ollama fails and mock is used', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
+    }
+    if (String(url).endsWith('/api/chat')) {
+      return { ok: false, status: 500, json: async () => ({ error: 'Ollama internal error' }) };
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  try {
+    const response = await routeLLMRequest(
+      { messages: [{ role: 'user', content: 'fallback if ollama fails' }] },
+      { provider: 'ollama', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.provider, 'mock');
+    assert.equal(response.actualProviderUsed, 'mock');
+    assert.equal(response.fallbackUsed, true);
+    assert.match(response.fallbackReason, /ollama/i);
+    assert.match(response.fallbackReason, /internal error/i);
+    assert.equal(response.diagnostics.attemptOrder[0], 'ollama');
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('ollama config resolves canonical endpoint and model by default', () => {
