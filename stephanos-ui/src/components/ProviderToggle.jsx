@@ -1,13 +1,13 @@
 import { useEffect } from 'react';
+import { PROVIDER_KEYS, PROVIDER_DEFINITIONS } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
-const PROVIDERS = [
-  { id: 'openai', label: 'OpenAI' },
-  { id: 'ollama', label: 'Ollama' },
-  { id: 'custom', label: 'Custom' },
-];
+const PROVIDERS = PROVIDER_KEYS.map((id) => ({
+  id,
+  label: PROVIDER_DEFINITIONS[id].label,
+}));
 
-const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::v3';
+const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::ollama-default-v1';
 
 export default function ProviderToggle() {
   const { provider, setProvider, setUiDiagnostics } = useAIStore();

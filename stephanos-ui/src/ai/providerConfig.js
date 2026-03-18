@@ -1,57 +1,22 @@
-export const PROVIDER_KEYS = ['openai', 'ollama', 'custom'];
+import {
+  DEFAULT_PROVIDER_KEY,
+  PROVIDER_DEFINITIONS,
+  PROVIDER_KEYS,
+  buildProviderDisplayLabel,
+  buildProviderEndpoint,
+  createDefaultSavedProviderConfigs,
+  normalizeProviderSelection,
+} from '../../../shared/ai/providerDefaults.mjs';
 
-export const PROVIDER_DEFINITIONS = {
-  openai: {
-    key: 'openai',
-    label: 'OpenAI Cloud',
-    kind: 'cloud',
-    editable: false,
-    defaults: {
-      label: 'OpenAI Cloud',
-      baseUrl: '',
-      chatEndpoint: '',
-      model: '',
-      apiKey: '',
-      headersJson: '',
-    },
-  },
-  ollama: {
-    key: 'ollama',
-    label: 'Local Ollama',
-    kind: 'local',
-    editable: false,
-    defaults: {
-      label: 'Local Ollama',
-      baseUrl: 'http://localhost:11434',
-      chatEndpoint: '/api/chat',
-      model: 'llama3',
-      apiKey: '',
-      headersJson: '',
-    },
-  },
-  custom: {
-    key: 'custom',
-    label: 'Custom LLM',
-    kind: 'custom',
-    editable: true,
-    defaults: {
-      label: 'Custom LLM',
-      baseUrl: '',
-      chatEndpoint: '/v1/chat/completions',
-      model: '',
-      apiKey: '',
-      headersJson: '',
-    },
-  },
+export {
+  DEFAULT_PROVIDER_KEY,
+  PROVIDER_DEFINITIONS,
+  PROVIDER_KEYS,
+  buildProviderDisplayLabel,
+  buildProviderEndpoint,
+  createDefaultSavedProviderConfigs,
+  normalizeProviderSelection,
 };
-
-export function createDefaultSavedProviderConfigs() {
-  return {
-    openai: { ...PROVIDER_DEFINITIONS.openai.defaults },
-    ollama: { ...PROVIDER_DEFINITIONS.ollama.defaults },
-    custom: { ...PROVIDER_DEFINITIONS.custom.defaults },
-  };
-}
 
 export function validateProviderDraft(providerKey, draftConfig) {
   if (providerKey !== 'custom') {
@@ -100,26 +65,39 @@ export function validateProviderDraft(providerKey, draftConfig) {
   };
 }
 
-export function normalizeProviderDraft(providerKey, draftConfig) {
+export function normalizeProviderDraft(providerKey, draftConfig = {}) {
+  const defaults = PROVIDER_DEFINITIONS[providerKey]?.defaults || {};
+
   if (providerKey !== 'custom') {
-    return { ...draftConfig };
+    return {
+      ...defaults,
+      ...draftConfig,
+    };
   }
 
   return {
+    ...defaults,
     ...draftConfig,
-    label: draftConfig.label?.trim() || PROVIDER_DEFINITIONS.custom.defaults.label,
+    label: draftConfig.label?.trim() || defaults.label,
     baseUrl: draftConfig.baseUrl?.trim() || '',
-    chatEndpoint: draftConfig.chatEndpoint?.trim() || PROVIDER_DEFINITIONS.custom.defaults.chatEndpoint,
+    chatEndpoint: draftConfig.chatEndpoint?.trim() || defaults.chatEndpoint,
     model: draftConfig.model?.trim() || '',
     apiKey: draftConfig.apiKey || '',
     headersJson: draftConfig.headersJson?.trim() || '',
   };
 }
 
-export function buildProviderDisplayLabel(providerKey, config) {
-  if (providerKey === 'custom') {
-    return config?.label?.trim() || PROVIDER_DEFINITIONS.custom.label;
-  }
+export function buildProviderStatusSummary(providerKey, config, apiBaseUrl) {
+  const providerLabel = buildProviderDisplayLabel(providerKey, config);
+  const providerDefinition = PROVIDER_DEFINITIONS[providerKey];
+  const endpoint = buildProviderEndpoint(config?.baseUrl || '', config?.chatEndpoint || '');
 
-  return PROVIDER_DEFINITIONS[providerKey]?.label || providerKey;
+  return {
+    providerLabel,
+    providerKey,
+    providerTarget: providerDefinition?.targetSummary || 'routed via Stephanos backend',
+    providerEndpoint: endpoint,
+    apiBaseUrl: apiBaseUrl || 'n/a',
+    model: config?.model || 'server default',
+  };
 }
