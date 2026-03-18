@@ -1,5 +1,6 @@
 import { EMPTY_RESPONSE } from './aiTypes';
 import { API_CONFIG, buildApiUrl, getApiTargetLabel } from './apiConfig';
+import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -67,7 +68,7 @@ async function requestJson(path, options = {}) {
   }
 }
 
-export async function sendPrompt({ prompt, provider = 'openai', providerConfig = null }) {
+export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = null }) {
   const payload = { prompt, provider };
 
   if (providerConfig) {

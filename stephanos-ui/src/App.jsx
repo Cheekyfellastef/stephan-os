@@ -14,18 +14,28 @@ import ProviderToggle from './components/ProviderToggle';
 import CustomProviderPanel from './components/CustomProviderPanel';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
+import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
 
-const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::provider-live-fix-v2';
-const BUILD_MARKER = 'STEPHANOS BUILD MARKER: provider-live-fix-v2 | 2026-03-18T15:00:00Z';
+const APP_COMPONENT_MARKER = 'stephanos-ui/App.jsx::ollama-default-router-v1';
+const BUILD_MARKER = 'STEPHANOS BUILD MARKER: ollama-default-router-v1 | 2026-03-18T18:00:00Z';
 
 export default function App() {
   const { input, setInput, submitPrompt, commandHistory } = useAIConsole();
-  const { provider, providerDraftStatus, getActiveProviderConfig, setUiDiagnostics } = useAIStore();
+  const {
+    provider,
+    providerDraftStatus,
+    providerSelectionSource,
+    getActiveProviderConfig,
+    getActiveProviderConfigSource,
+    setUiDiagnostics,
+    apiStatus,
+  } = useAIStore();
   useDebugConsole();
 
   const activeConfig = getActiveProviderConfig();
   const configMode = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
+  const providerSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl);
 
   useEffect(() => {
     console.log(BUILD_MARKER);
@@ -46,8 +56,19 @@ export default function App() {
       <section className="provider-dock panel">
         <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
-          Current provider: <strong>{provider}</strong> · Active base URL: <strong>{activeConfig.baseUrl || 'n/a'}</strong> · Active endpoint: <strong>{activeConfig.chatEndpoint || 'n/a'}</strong> · Active model: <strong>{activeConfig.model || 'n/a'}</strong> · Config mode: <strong>{configMode}</strong>
+          Current Provider: <strong>{providerSummary.providerLabel}</strong> · Provider Key: <strong>{provider}</strong> · Frontend API Base URL: <strong>{providerSummary.apiBaseUrl}</strong>
         </p>
+        <p className="provider-dock-status">
+          Provider Target: <strong>{providerSummary.providerTarget}</strong> · Provider Endpoint Summary: <strong>{providerSummary.providerEndpoint}</strong> · Active Model: <strong>{providerSummary.model}</strong>
+        </p>
+        <p className="provider-dock-status">
+          Provider Selection Source: <strong>{providerSelectionSource}</strong> · Active Config Source: <strong>{getActiveProviderConfigSource()}</strong> · Config Mode: <strong>{configMode}</strong>
+        </p>
+        {provider === 'ollama' ? (
+          <p className="provider-dock-status">
+            Ollama Endpoint: <strong>{providerSummary.providerEndpoint}</strong> · Browser traffic still posts only to <strong>{providerSummary.apiBaseUrl}</strong>
+          </p>
+        ) : null}
         <ProviderToggle />
         {provider === 'custom' ? <CustomProviderPanel /> : null}
       </section>

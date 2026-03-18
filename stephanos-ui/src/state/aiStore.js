@@ -1,9 +1,11 @@
 import { createContext, createElement, useContext, useMemo, useState } from 'react';
 import {
+  DEFAULT_PROVIDER_KEY,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   createDefaultSavedProviderConfigs,
   normalizeProviderDraft,
+  normalizeProviderSelection,
   validateProviderDraft,
 } from '../ai/providerConfig';
 
@@ -12,28 +14,58 @@ const AIStoreContext = createContext(null);
 const PROVIDER_STORAGE_KEY = 'stephanos.ai.provider';
 const CUSTOM_PROVIDER_STORAGE_KEY = 'stephanos.ai.customConfig';
 
-function getStoredProvider() {
-  if (typeof window === 'undefined') return 'openai';
+function getStoredProviderState() {
+  if (typeof window === 'undefined') {
+    return {
+      provider: DEFAULT_PROVIDER_KEY,
+      source: 'default:ssr',
+    };
+  }
+
   const stored = localStorage.getItem(PROVIDER_STORAGE_KEY);
-  return PROVIDER_KEYS.includes(stored) ? stored : 'openai';
+  if (PROVIDER_KEYS.includes(stored)) {
+    return {
+      provider: stored,
+      source: 'saved:localStorage',
+    };
+  }
+
+  return {
+    provider: DEFAULT_PROVIDER_KEY,
+    source: 'default:fresh-start',
+  };
 }
 
 function getStoredSavedProviderConfigs() {
   const defaults = createDefaultSavedProviderConfigs();
-  if (typeof window === 'undefined') return defaults;
+  if (typeof window === 'undefined') {
+    return {
+      savedProviderConfigs: defaults,
+      customConfigSource: 'default:ssr',
+    };
+  }
 
   try {
     const parsed = JSON.parse(localStorage.getItem(CUSTOM_PROVIDER_STORAGE_KEY) || '{}');
-    defaults.custom = {
-      ...defaults.custom,
-      ...parsed,
-      apiKey: '',
+    const hasCustomOverrides = Object.keys(parsed || {}).length > 0;
+
+    return {
+      savedProviderConfigs: {
+        ...defaults,
+        custom: {
+          ...defaults.custom,
+          ...parsed,
+          apiKey: '',
+        },
+      },
+      customConfigSource: hasCustomOverrides ? 'saved:localStorage' : 'default:fresh-start',
     };
   } catch {
-    // noop: fallback to defaults
+    return {
+      savedProviderConfigs: defaults,
+      customConfigSource: 'default:parse-fallback',
+    };
   }
-
-  return defaults;
 }
 
 function persistCustomSavedConfig(savedConfig) {
@@ -43,16 +75,21 @@ function persistCustomSavedConfig(savedConfig) {
 }
 
 export function AIStoreProvider({ children }) {
+  const initialProviderState = getStoredProviderState();
+  const initialSavedConfigState = getStoredSavedProviderConfigs();
+
   const [commandHistory, setCommandHistory] = useState([]);
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState('assistant');
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState({});
-  const [provider, setProviderState] = useState(getStoredProvider);
-  const [savedProviderConfigs, setSavedProviderConfigs] = useState(getStoredSavedProviderConfigs);
+  const [provider, setProviderState] = useState(initialProviderState.provider);
+  const [providerSelectionSource, setProviderSelectionSource] = useState(initialProviderState.source);
+  const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSavedConfigState.savedProviderConfigs);
+  const [customConfigSource, setCustomConfigSource] = useState(initialSavedConfigState.customConfigSource);
   const [draftProviderConfigs, setDraftProviderConfigs] = useState(() => ({
-    custom: { ...getStoredSavedProviderConfigs().custom },
+    custom: { ...initialSavedConfigState.savedProviderConfigs.custom },
   }));
   const [providerDraftStatus, setProviderDraftStatus] = useState({
     custom: {
@@ -77,13 +114,17 @@ export function AIStoreProvider({ children }) {
     target: 'local',
     baseUrl: '',
     lastCheckedAt: null,
+    meta: null,
   });
 
   const setProvider = (nextProvider) => {
-    if (!PROVIDER_DEFINITIONS[nextProvider]) return;
-    setProviderState(nextProvider);
+    const resolvedProvider = normalizeProviderSelection(nextProvider);
+    if (!PROVIDER_DEFINITIONS[resolvedProvider]) return;
+
+    setProviderState(resolvedProvider);
+    setProviderSelectionSource('saved:user-selection');
     if (typeof window !== 'undefined') {
-      localStorage.setItem(PROVIDER_STORAGE_KEY, nextProvider);
+      localStorage.setItem(PROVIDER_STORAGE_KEY, resolvedProvider);
     }
   };
 
@@ -96,7 +137,6 @@ export function AIStoreProvider({ children }) {
 
   const getActiveProviderConfig = () => {
     const providerConfig = savedProviderConfigs[provider];
-
     return normalizeProviderDraft(provider, providerConfig);
   };
 
@@ -104,6 +144,14 @@ export function AIStoreProvider({ children }) {
     providerKey,
     savedProviderConfigs[providerKey],
   );
+
+  const getActiveProviderConfigSource = () => {
+    if (provider === 'custom') {
+      return customConfigSource;
+    }
+
+    return 'default:canonical';
+  };
 
   const updateDraftProviderConfig = (providerKey, patch) => {
     if (!PROVIDER_DEFINITIONS[providerKey]?.editable) return;
@@ -159,6 +207,7 @@ export function AIStoreProvider({ children }) {
 
     if (providerKey === 'custom') {
       persistCustomSavedConfig(normalizedDraft);
+      setCustomConfigSource('saved:user-config');
     }
 
     setProviderDraftStatus((prev) => ({
@@ -209,6 +258,7 @@ export function AIStoreProvider({ children }) {
 
     if (providerKey === 'custom') {
       persistCustomSavedConfig(defaultConfig);
+      setCustomConfigSource('default:reset');
     }
 
     setProviderDraftStatus((prev) => ({
@@ -243,12 +293,15 @@ export function AIStoreProvider({ children }) {
       setDebugData,
       provider,
       setProvider,
+      providerSelectionSource,
       savedProviderConfigs,
       draftProviderConfigs,
       providerDraftStatus,
+      customConfigSource,
       getDraftProviderConfig,
       getActiveProviderConfig,
       getSavedProviderConfig,
+      getActiveProviderConfigSource,
       updateDraftProviderConfig,
       saveDraftProviderConfig,
       revertDraftProviderConfig,
@@ -267,9 +320,11 @@ export function AIStoreProvider({ children }) {
       debugVisible,
       debugData,
       provider,
+      providerSelectionSource,
       savedProviderConfigs,
       draftProviderConfigs,
       providerDraftStatus,
+      customConfigSource,
       apiStatus,
       uiDiagnostics,
     ],

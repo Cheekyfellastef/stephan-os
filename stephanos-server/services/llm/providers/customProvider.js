@@ -1,5 +1,8 @@
 import { createError, ERROR_CODES } from '../../errors.js';
+import { createLogger } from '../../../utils/logger.js';
+import { buildProviderEndpoint } from '../../../../shared/ai/providerDefaults.mjs';
 
+const logger = createLogger('custom-provider');
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
 function parseOptionalHeaders(headersJson) {
@@ -47,9 +50,18 @@ export async function runCustomProvider({ prompt, context, providerConfig }) {
     );
   }
 
-  const endpoint = `${baseUrl.replace(/\/$/, '')}${chatEndpoint.startsWith('/') ? '' : '/'}${chatEndpoint}`;
+  const endpoint = buildProviderEndpoint(baseUrl, chatEndpoint);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  logger.info('Resolved custom provider config', {
+    provider: 'custom',
+    label,
+    baseUrl,
+    chatEndpoint,
+    endpoint,
+    model,
+  });
 
   try {
     const optionalHeaders = parseOptionalHeaders(providerConfig?.headersJson || '');
@@ -100,6 +112,15 @@ export async function runCustomProvider({ prompt, context, providerConfig }) {
       provider: 'custom',
       model: payload?.model || model,
       raw: payload,
+      diagnostics: {
+        provider: 'custom',
+        label,
+        baseUrl,
+        chatEndpoint,
+        endpoint,
+        model: payload?.model || model,
+        configSource: 'request-config',
+      },
     };
   } catch (error) {
     if (error?.name === 'AbortError') {

@@ -7,7 +7,8 @@ import { buildErrorResponse, buildSuccessResponse } from '../services/responseBu
 import { createLogger } from '../utils/logger.js';
 import { ERROR_CODES, normalizeError } from '../services/errors.js';
 import { assistantContextService } from '../services/assistantContextService.js';
-import { routeLLMRequest } from '../services/llm/providerRouter.js';
+import { routeLLMRequest, resolveProviderRequest } from '../services/llm/providerRouter.js';
+import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -16,8 +17,9 @@ const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /me
 
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, provider = 'openai', providerConfig = {} } = req.body || {};
+  const { prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = {} } = req.body || {};
   const requestId = req.headers['x-request-id'];
+  const providerResolution = resolveProviderRequest(provider, providerConfig);
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json(buildErrorResponse({ route: 'assistant', output_text: 'Prompt is required.', error: 'Prompt is required.', error_code: ERROR_CODES.CMD_INVALID, timing_ms: Date.now() - startedAt, debug: { route_reason: 'Input validation failed', request_id: requestId } }));
@@ -26,6 +28,14 @@ router.post('/chat', async (req, res) => {
   const parsedCommand = parseCommand(prompt);
   const decision = resolveRoute(parsedCommand, prompt);
   const memoryHits = memoryService.getRelevantMemory(prompt);
+
+  logger.info('Incoming /api/ai/chat request', {
+    requestId,
+    requestedProvider: providerResolution.requestedProvider,
+    resolvedProvider: providerResolution.resolvedProvider,
+    fallbackApplied: providerResolution.fallbackApplied,
+    overrideKeys: providerResolution.overrideKeys,
+  });
 
   try {
     if (decision.action === 'help') return res.json(buildSuccessResponse({ type: 'tool_result', route: decision.route, command: '/help', output_text: helpText, data: {}, timing_ms: Date.now() - startedAt, debug: { parsed_command: parsedCommand, route_reason: decision.reason, request_id: requestId } }));
@@ -84,6 +94,7 @@ router.post('/chat', async (req, res) => {
         provider: llmResult.provider,
         provider_model: llmResult.model,
         provider_raw: llmResult.raw,
+        provider_diagnostics: llmResult.diagnostics,
         assistant_context: contextBundle,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
       },
@@ -95,12 +106,18 @@ router.post('/chat', async (req, res) => {
         request_id: requestId,
         llm_provider: llmResult.provider,
         llm_model: llmResult.model,
+        provider_router: llmResult.diagnostics,
       },
     }));
   } catch (error) {
     const appError = normalizeError(error);
-    logger.error('Failed to process /api/ai/chat', { message: appError.message, code: appError.code });
-    return res.status(appError.status ?? 500).json(buildErrorResponse({ route: decision.route, command: parsedCommand.isSlash ? parsedCommand.raw : null, output_text: 'The AI Core encountered an error.', error: appError.message, error_code: appError.code, memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, parsed_command: parsedCommand, selected_subsystem: decision.route, selected_tool: decision.tool ?? null, execution_payload: decision.args ?? null, error_code: appError.code } }));
+    logger.error('Failed to process /api/ai/chat', {
+      message: appError.message,
+      code: appError.code,
+      requestedProvider: providerResolution.requestedProvider,
+      resolvedProvider: providerResolution.resolvedProvider,
+    });
+    return res.status(appError.status ?? 500).json(buildErrorResponse({ route: decision.route, command: parsedCommand.isSlash ? parsedCommand.raw : null, output_text: 'The AI Core encountered an error.', error: appError.message, error_code: appError.code, memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, parsed_command: parsedCommand, selected_subsystem: decision.route, selected_tool: decision.tool ?? null, execution_payload: decision.args ?? null, error_code: appError.code, provider_router: providerResolution } }));
   }
 });
 

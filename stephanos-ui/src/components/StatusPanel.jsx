@@ -1,4 +1,4 @@
-import { buildProviderDisplayLabel } from '../ai/providerConfig';
+import { buildProviderStatusSummary } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
 export default function StatusPanel() {
@@ -10,7 +10,9 @@ export default function StatusPanel() {
     apiStatus,
     provider,
     providerDraftStatus,
+    providerSelectionSource,
     getActiveProviderConfig,
+    getActiveProviderConfigSource,
     uiDiagnostics,
   } = useAIStore();
   const latest = commandHistory[commandHistory.length - 1];
@@ -18,23 +20,30 @@ export default function StatusPanel() {
   const roadmapSummary = commandHistory.findLast((entry) => entry.data_payload?.summary)?.data_payload?.summary;
 
   const activeConfig = getActiveProviderConfig();
-  const providerLabel = buildProviderDisplayLabel(provider, activeConfig);
   const configState = provider === 'custom' ? providerDraftStatus.custom.mode : 'saved';
+  const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl);
+  const backendDefaults = apiStatus.meta?.provider_defaults;
 
   return (
     <aside className="status-panel panel">
       <h2>Status</h2>
       <ul>
         <li>Backend: {apiStatus.label}</li>
-        <li>API URL: {apiStatus.baseUrl || 'n/a'}</li>
+        <li>Frontend API Base URL: {statusSummary.apiBaseUrl}</li>
         <li>API Health: {apiStatus.state}</li>
-        <li>Current Provider: {providerLabel}</li>
+        <li>Current Provider: {statusSummary.providerLabel}</li>
         <li>Provider Key: {provider}</li>
+        <li>Provider Target: {statusSummary.providerTarget}</li>
+        <li>Provider Selection Source: {providerSelectionSource}</li>
+        <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
         <li>Config Mode: {configState}</li>
-        <li>Active Base URL: {activeConfig.baseUrl || 'n/a'}</li>
-        <li>Active Chat Endpoint: {activeConfig.chatEndpoint || 'n/a'}</li>
-        <li>Active Model: {activeConfig.model || 'server default'}</li>
-        {provider === 'ollama' ? <li>Ollama Default Port: 11434</li> : null}
+        <li>Provider Base URL: {activeConfig.baseUrl || 'n/a'}</li>
+        <li>Provider Chat Endpoint: {activeConfig.chatEndpoint || 'n/a'}</li>
+        <li>Provider Endpoint Summary: {statusSummary.providerEndpoint}</li>
+        <li>Provider Model: {statusSummary.model}</li>
+        {provider === 'ollama' ? <li>Ollama Endpoint: {statusSummary.providerEndpoint}</li> : null}
+        <li>Backend Default Provider: {apiStatus.meta?.default_provider || 'n/a'}</li>
+        <li>Backend Default Ollama Endpoint: {backendDefaults ? `${backendDefaults.ollama.baseUrl}${backendDefaults.ollama.chatEndpoint}` : 'n/a'}</li>
         <li>Last Provider Save: {providerDraftStatus.custom.savedAt || 'n/a'}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>

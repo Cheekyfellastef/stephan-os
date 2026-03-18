@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, sendPrompt } from '../ai/aiClient';
-import { buildProviderDisplayLabel } from '../ai/providerConfig';
+import { buildProviderDisplayLabel, buildProviderEndpoint } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
 function transportErrorToUi(error) {
@@ -55,11 +55,12 @@ export function useAIConsole() {
     setStatus,
     setLastRoute,
     setDebugData,
-    apiStatus,
     setApiStatus,
     provider,
     providerDraftStatus,
+    providerSelectionSource,
     getActiveProviderConfig,
+    getActiveProviderConfigSource,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -67,13 +68,21 @@ export function useAIConsole() {
   const refreshHealth = useCallback(async () => {
     try {
       const health = await checkApiHealth();
+      const backendDefaults = health.data?.provider_defaults;
+      const defaultOllamaEndpoint = buildProviderEndpoint(
+        backendDefaults?.ollama?.baseUrl,
+        backendDefaults?.ollama?.chatEndpoint,
+      );
+
       setApiStatus({
         state: health.ok ? 'online' : 'error',
         label: `Connected to ${health.target} API`,
         target: health.target,
         baseUrl: health.baseUrl,
         lastCheckedAt: new Date().toISOString(),
-        detail: health.ok ? 'Backend reachable.' : `Health check failed (${health.status}).`,
+        detail: health.ok
+          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'unknown'}. Ollama target: ${defaultOllamaEndpoint}.`
+          : `Health check failed (${health.status}).`,
         meta: health.data,
       });
     } catch (error) {
@@ -85,6 +94,7 @@ export function useAIConsole() {
         baseUrl: runtimeConfig.baseUrl,
         lastCheckedAt: new Date().toISOString(),
         detail: uiError.output,
+        meta: null,
       });
     }
   }, [runtimeConfig.baseUrl, runtimeConfig.target, setApiStatus]);
@@ -132,8 +142,9 @@ export function useAIConsole() {
       };
 
       const activeProviderLabel = buildProviderDisplayLabel(provider, getActiveProviderConfig());
+      const providerDiagnostics = data.data?.provider_diagnostics || null;
       const providerSpecificDetail = provider === 'ollama' && !data.success
-        ? 'Local Ollama not reachable at http://localhost:11434. Start Ollama with: ollama serve'
+        ? `Local Ollama not reachable at ${activeProviderConfig.baseUrl || 'http://127.0.0.1:11434'}. Start Ollama with: ollama serve`
         : data.output_text;
 
       setCommandHistory((prev) => [...prev, entry]);
@@ -146,7 +157,7 @@ export function useAIConsole() {
         target: runtimeConfig.target,
         baseUrl: runtimeConfig.baseUrl,
         detail: data.success
-          ? `Backend reachable. Active provider: ${activeProviderLabel}.`
+          ? `Backend reachable. Active provider: ${activeProviderLabel}. Backend target: ${providerDiagnostics?.endpoint || 'n/a'}.`
           : `Active provider (${activeProviderLabel}) error: ${providerSpecificDetail}`,
         configMode: provider === 'custom' ? providerDraftStatus.custom.mode : 'saved',
         lastCheckedAt: new Date().toISOString(),
@@ -169,6 +180,10 @@ export function useAIConsole() {
         subsystem_state: data.debug?.subsystem_state,
         error: data.error,
         error_code: data.error_code ?? data.debug?.error_code ?? null,
+        providerSelectionSource,
+        activeProviderConfigSource: getActiveProviderConfigSource(),
+        provider_diagnostics: providerDiagnostics,
+        backend_provider_router: data.debug?.provider_router ?? null,
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
@@ -206,7 +221,13 @@ export function useAIConsole() {
       };
 
       setCommandHistory((prev) => [...prev, failureEntry]);
-      setDebugData({ parsed_command: parsed, error: uiError.error, error_code: uiError.errorCode });
+      setDebugData({
+        parsed_command: parsed,
+        error: uiError.error,
+        error_code: uiError.errorCode,
+        providerSelectionSource,
+        activeProviderConfigSource: getActiveProviderConfigSource(),
+      });
     } finally {
       setIsBusy(false);
     }
@@ -227,6 +248,5 @@ export function useAIConsole() {
     submitPrompt,
     clearConsole,
     refreshHealth,
-    apiStatus,
   };
 }

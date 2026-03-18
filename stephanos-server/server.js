@@ -3,6 +3,10 @@ import express from 'express';
 import cors from 'cors';
 import aiRouter from './routes/ai.js';
 import { createLogger } from './utils/logger.js';
+import {
+  DEFAULT_PROVIDER_KEY,
+  PROVIDER_DEFINITIONS,
+} from '../shared/ai/providerDefaults.mjs';
 
 const logger = createLogger('server');
 const app = express();
@@ -20,10 +24,10 @@ function parseAllowedOrigins() {
 }
 
 const allowedOrigins = parseAllowedOrigins();
-const fallbackLocalOrigin = 'http://localhost:5173';
+const fallbackLocalOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
 if (allowedOrigins.length === 0) {
-  allowedOrigins.push(fallbackLocalOrigin);
+  allowedOrigins.push(...fallbackLocalOrigins);
 }
 
 const allowedOriginsSet = new Set(allowedOrigins);
@@ -55,6 +59,16 @@ app.get('/api/health', (_req, res) => {
     service: 'stephanos-server',
     api_status: 'online',
     environment: process.env.NODE_ENV || 'development',
+    default_provider: DEFAULT_PROVIDER_KEY,
+    provider_defaults: Object.fromEntries(
+      Object.entries(PROVIDER_DEFINITIONS).map(([key, definition]) => [key, {
+        label: definition.label,
+        targetSummary: definition.targetSummary,
+        baseUrl: definition.defaults.baseUrl,
+        chatEndpoint: definition.defaults.chatEndpoint,
+        model: definition.defaults.model,
+      }]),
+    ),
     ts: new Date().toISOString(),
     cors: {
       allowed_origin_count: allowedOrigins.length,
@@ -64,7 +78,6 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/ai', aiRouter);
-
 
 app.use((error, _req, res, next) => {
   if (error?.message === 'CORS origin denied') {
@@ -82,4 +95,5 @@ app.listen(PORT, () => {
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);
   logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Default provider router target: ${DEFAULT_PROVIDER_KEY}`);
 });

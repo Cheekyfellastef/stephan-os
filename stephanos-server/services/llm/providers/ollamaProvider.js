@@ -1,34 +1,57 @@
 import { createError, ERROR_CODES } from '../../errors.js';
+import { createLogger } from '../../../utils/logger.js';
+import { PROVIDER_DEFINITIONS, buildProviderEndpoint } from '../../../../shared/ai/providerDefaults.mjs';
 
-const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const DEFAULT_OLLAMA_CHAT_ENDPOINT = process.env.OLLAMA_CHAT_ENDPOINT || '/api/chat';
-const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+const logger = createLogger('ollama-provider');
+const OLLAMA_DEFAULTS = PROVIDER_DEFINITIONS.ollama.defaults;
+const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || OLLAMA_DEFAULTS.baseUrl;
+const DEFAULT_OLLAMA_CHAT_ENDPOINT = process.env.OLLAMA_CHAT_ENDPOINT || OLLAMA_DEFAULTS.chatEndpoint;
+const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || OLLAMA_DEFAULTS.model;
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
-function normalizeEndpoint(baseUrl, chatEndpoint) {
-  const normalizedBaseUrl = (baseUrl || DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, '');
-  const normalizedChatEndpoint = (chatEndpoint || DEFAULT_OLLAMA_CHAT_ENDPOINT).trim();
-  const endpointPath = normalizedChatEndpoint.startsWith('/') ? normalizedChatEndpoint : `/${normalizedChatEndpoint}`;
+function resolveOllamaConfig(providerConfig = {}) {
+  const baseUrlOverride = providerConfig?.baseUrl?.trim();
+  const chatEndpointOverride = providerConfig?.chatEndpoint?.trim();
+  const modelOverride = providerConfig?.model?.trim();
 
-  return `${normalizedBaseUrl}${endpointPath}`;
+  return {
+    baseUrl: baseUrlOverride || DEFAULT_OLLAMA_BASE_URL,
+    chatEndpoint: chatEndpointOverride || DEFAULT_OLLAMA_CHAT_ENDPOINT,
+    model: modelOverride || DEFAULT_OLLAMA_MODEL,
+    endpoint: buildProviderEndpoint(
+      baseUrlOverride || DEFAULT_OLLAMA_BASE_URL,
+      chatEndpointOverride || DEFAULT_OLLAMA_CHAT_ENDPOINT,
+    ),
+    configSource: {
+      baseUrl: baseUrlOverride ? 'request-override' : process.env.OLLAMA_BASE_URL ? 'env-default' : 'canonical-default',
+      chatEndpoint: chatEndpointOverride ? 'request-override' : process.env.OLLAMA_CHAT_ENDPOINT ? 'env-default' : 'canonical-default',
+      model: modelOverride ? 'request-override' : process.env.OLLAMA_MODEL ? 'env-default' : 'canonical-default',
+    },
+  };
 }
 
 export async function runOllamaProvider({ prompt, context, providerConfig = {} }) {
-  const baseUrl = providerConfig?.baseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL;
-  const chatEndpoint = providerConfig?.chatEndpoint?.trim() || DEFAULT_OLLAMA_CHAT_ENDPOINT;
-  const model = providerConfig?.model?.trim() || DEFAULT_OLLAMA_MODEL;
-  const endpoint = normalizeEndpoint(baseUrl, chatEndpoint);
+  const resolved = resolveOllamaConfig(providerConfig);
+
+  logger.info('Resolved Ollama provider config', {
+    provider: 'ollama',
+    baseUrl: resolved.baseUrl,
+    chatEndpoint: resolved.chatEndpoint,
+    endpoint: resolved.endpoint,
+    model: resolved.model,
+    configSource: resolved.configSource,
+  });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(resolved.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
-        model,
+        model: resolved.model,
         stream: false,
         messages: [
           {
@@ -64,12 +87,20 @@ export async function runOllamaProvider({ prompt, context, providerConfig = {} }
     return {
       output_text: outputText,
       provider: 'ollama',
-      model: payload.model || model,
+      model: payload.model || resolved.model,
       raw: payload,
+      diagnostics: {
+        provider: 'ollama',
+        baseUrl: resolved.baseUrl,
+        chatEndpoint: resolved.chatEndpoint,
+        endpoint: resolved.endpoint,
+        model: payload.model || resolved.model,
+        configSource: resolved.configSource,
+      },
     };
   } catch (error) {
     if (error?.name === 'AbortError') {
-      throw createError(ERROR_CODES.LLM_OLLAMA_UNREACHABLE, 'Local Ollama timed out. Start Ollama with: ollama serve', { status: 504 });
+      throw createError(ERROR_CODES.LLM_OLLAMA_UNREACHABLE, `Local Ollama timed out at ${resolved.endpoint}. Start Ollama with: ollama serve`, { status: 504 });
     }
 
     if (error?.code) {
@@ -78,10 +109,12 @@ export async function runOllamaProvider({ prompt, context, providerConfig = {} }
 
     throw createError(
       ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
-      `Local Ollama not reachable at ${baseUrl}. Start Ollama with: ollama serve`,
+      `Local Ollama not reachable at ${resolved.endpoint}. Start Ollama with: ollama serve`,
       { status: 502, details: { reason: error?.message } },
     );
   } finally {
     clearTimeout(timeout);
   }
 }
+
+export { resolveOllamaConfig };
