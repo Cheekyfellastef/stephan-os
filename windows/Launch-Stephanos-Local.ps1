@@ -93,6 +93,20 @@ function Wait-ForHttpReady([string]$Url, [int]$TimeoutSeconds = 60) {
   return $false
 }
 
+function Open-BrowserUrl([string]$Url) {
+  Write-Host "Opening browser at: $Url" -ForegroundColor Cyan
+  try {
+    Start-Process -FilePath $Url -ErrorAction Stop | Out-Null
+    return $true
+  }
+  catch {
+    $reason = $_.Exception.Message
+    Write-Warning "Browser launch failed: $reason"
+    Write-Host "Stephanos is running. Open this URL manually: $Url" -ForegroundColor Yellow
+    return $false
+  }
+}
+
 function Start-WindowedProcess([string]$Title, [string]$Command, [string]$WorkingDirectory) {
   $escapedWorkingDirectory = $WorkingDirectory.Replace("'", "''")
   $escapedCommand = $Command.Replace("'", "''")
@@ -173,10 +187,16 @@ if (-not (Wait-ForHttpReady -Url $appUrl -TimeoutSeconds 60)) {
 }
 
 Write-Step 'Opening Stephanos Local in your default browser'
-Start-Process $appUrl | Out-Null
+$browserOpened = Open-BrowserUrl -Url $appUrl
 
 Write-Host "`nStephanos Local is ready." -ForegroundColor Green
-Write-Host "Browser URL: $appUrl"
+if ($browserOpened) {
+  Write-Host "Browser URL: $appUrl"
+}
+else {
+  Write-Host "Browser auto-open: failed"
+  Write-Host "Manual URL: $appUrl"
+}
 Write-Host "Backend health URL: $serverUrl"
 Write-Host "Local AI Mode default: Ollama at http://localhost:11434"
 Write-Host "If Ollama is offline, use the in-app Mock Mode button for a friendly local fallback."
