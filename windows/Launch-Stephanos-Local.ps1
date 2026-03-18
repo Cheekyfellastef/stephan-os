@@ -100,9 +100,32 @@ function Test-BackendHealthy() {
   return $null -ne $payload -and $payload.service -eq 'stephanos-server' -and $payload.ok -eq $true
 }
 
+function Get-DistHealthPayload() {
+  return Get-Json -Url $distHealthUrl -TimeoutSeconds 2
+}
+
+function Sync-DistRuntimeUrl() {
+  $payload = Get-DistHealthPayload
+  if ($null -ne $payload -and -not [string]::IsNullOrWhiteSpace($payload.runtimeUrl)) {
+    $script:appUrl = $payload.runtimeUrl
+  }
+
+  return $payload
+}
+
 function Test-DistHealthy() {
-  $payload = Get-Json -Url $distHealthUrl -TimeoutSeconds 2
+  $payload = Get-DistHealthPayload
   return $null -ne $payload -and $payload.service -eq 'stephanos-dist-server' -and $payload.distEntryExists -eq $true
+}
+
+function Test-DistRuntimeReady() {
+  $payload = Sync-DistRuntimeUrl
+  if ($null -eq $payload -or $payload.service -ne 'stephanos-dist-server') {
+    return $false
+  }
+
+  $runtimeUrlToTest = if (-not [string]::IsNullOrWhiteSpace($payload.runtimeUrl)) { $payload.runtimeUrl } else { $appUrl }
+  return Test-HttpReady -Url $runtimeUrlToTest -TimeoutSeconds 2
 }
 
 function Test-OllamaReachable() {
@@ -148,8 +171,9 @@ function Wait-ForCondition([string]$Label, [scriptblock]$Probe, [int]$TimeoutSec
 function Get-SubsystemSnapshot() {
   $buildPresent = Test-Path $builtRuntimeIndexPath
   $backendReachable = Test-BackendHealthy
-  $uiHealthReachable = Test-DistHealthy
-  $uiReachable = $uiHealthReachable -and (Test-HttpReady -Url $appUrl -TimeoutSeconds 2)
+  $uiHealthPayload = Sync-DistRuntimeUrl
+  $uiHealthReachable = $null -ne $uiHealthPayload -and $uiHealthPayload.service -eq 'stephanos-dist-server' -and $uiHealthPayload.distEntryExists -eq $true
+  $uiReachable = $uiHealthReachable -and (Test-DistRuntimeReady)
   $ollamaReachable = Test-OllamaReachable
 
   return [ordered]@{
@@ -322,7 +346,7 @@ function Wait-ForStephanosReadiness([int]$TimeoutSeconds = 10) {
     (Test-Path $builtRuntimeIndexPath) -and
     (Test-BackendHealthy) -and
     (Test-DistHealthy) -and
-    (Test-HttpReady -Url $appUrl -TimeoutSeconds 2)
+    (Test-DistRuntimeReady)
   }
 }
 
@@ -368,6 +392,11 @@ try {
   Ensure-StephanosBuildReady
   $backendAction = Ensure-BackendRunning
   $distAction = Ensure-DistServerRunning
+
+  $distHealth = Sync-DistRuntimeUrl
+  if ($null -eq $distHealth -or -not (Test-DistRuntimeReady)) {
+    throw "Stephanos dist server started, but the printed runtime URL did not return HTTP 200: $appUrl"
+  }
 
   if (-not (Wait-ForStephanosReadiness -TimeoutSeconds 10)) {
     throw "Stephanos readiness check failed. Backend and UI did not both become reachable within 10 seconds."
