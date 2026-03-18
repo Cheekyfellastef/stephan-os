@@ -282,3 +282,195 @@ pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: rgba
   .provider-switch-block { padding: 0.8rem; }
   .provider-toggle-button { flex-basis: 100%; }
 }
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: radial-gradient(circle at top, #0f2743 0%, #050912 38%, #010309 100%);
+  color: #dff4ff;
+}
+
+.app-shell-root {
+  background: linear-gradient(180deg, rgba(1, 6, 14, 0.98), rgba(3, 8, 18, 0.98));
+}
+
+.panel,
+.provider-dock,
+.result-card,
+.graph-card,
+.simulation-result-card,
+.api-banner,
+.api-connection-banner,
+.custom-provider-panel {
+  background: linear-gradient(180deg, rgba(8, 20, 38, 0.94), rgba(4, 12, 24, 0.94));
+  border-color: rgba(70, 153, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(38, 108, 190, 0.18), 0 20px 40px rgba(0, 0, 0, 0.25);
+}
+
+.result-card.error,
+.api-connection-banner.offline,
+.api-banner.offline {
+  border-color: rgba(72, 145, 236, 0.55);
+  background: linear-gradient(180deg, rgba(12, 26, 46, 0.96), rgba(7, 14, 28, 0.96));
+}
+
+button,
+.provider-card-button,
+.provider-toggle-button {
+  background: linear-gradient(180deg, #1a66c6, #114b95);
+  color: #eef9ff;
+  border: 1px solid rgba(114, 196, 255, 0.45);
+  cursor: pointer;
+}
+
+button:hover,
+.provider-card-button:hover,
+.provider-toggle-button:hover {
+  background: linear-gradient(180deg, #2380f0, #165ab5);
+}
+
+.ghost-button,
+.inline-link-button {
+  background: transparent;
+  color: #97d6ff;
+  border: 1px solid rgba(92, 176, 255, 0.35);
+}
+
+.inline-link-button {
+  padding: 0.45rem 0.65rem;
+}
+
+input,
+textarea,
+select {
+  background: rgba(3, 10, 20, 0.95);
+  border: 1px solid rgba(68, 138, 212, 0.5);
+  color: #dff4ff;
+  border-radius: 8px;
+  padding: 0.7rem;
+}
+
+.provider-switch-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.provider-switch-subtitle {
+  margin: 0.35rem 0 0;
+  color: #97cfff;
+}
+
+.provider-switch-actions,
+.toggle-row,
+.provider-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(82, 156, 230, 0.35);
+  background: rgba(6, 16, 31, 0.85);
+}
+
+.provider-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.provider-card {
+  border: 1px solid rgba(69, 138, 221, 0.35);
+  border-radius: 14px;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(7, 18, 34, 0.92), rgba(4, 10, 20, 0.92));
+}
+
+.provider-card.active {
+  border-color: rgba(98, 205, 255, 0.85);
+  box-shadow: 0 0 0 2px rgba(53, 173, 255, 0.18), 0 0 24px rgba(53, 173, 255, 0.18);
+}
+
+.provider-card-button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-radius: 12px;
+  padding: 0.9rem;
+  text-align: left;
+}
+
+.provider-card-button h3,
+.provider-card-button p,
+.provider-card-detail {
+  margin: 0;
+}
+
+.provider-card-button p,
+.provider-card-detail,
+.provider-draft-meta {
+  color: #9bcfff;
+}
+
+.provider-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+  margin: 0.85rem 0;
+}
+
+.provider-form-grid label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  border: 1px solid rgba(94, 184, 255, 0.35);
+  background: rgba(4, 13, 24, 0.9);
+}
+
+.health-badge.ready,
+.health-badge.active { color: #8ef7bb; }
+.health-badge.missing-key,
+.health-badge.optional-paid,
+.health-badge.unknown { color: #ffe08a; }
+.health-badge.offline { color: #93c8ff; }
+.health-badge.fallback { color: #8bd2ff; }
+
+.output-panel {
+  background: rgba(2, 8, 18, 0.96);
+  border: 1px solid rgba(60, 126, 200, 0.25);
+}
+
+.result-card.assistant {
+  border-color: rgba(82, 170, 255, 0.55);
+  background: rgba(8, 24, 46, 0.65);
+}
+
+.error-text,
+.field-error {
+  color: #9fd4ff;
+}
+
+@media (max-width: 900px) {
+  .provider-switch-header {
+    flex-direction: column;
+  }
+}

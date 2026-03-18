@@ -2,52 +2,45 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DEFAULT_PROVIDER_KEY, PROVIDER_DEFINITIONS } from '../../shared/ai/providerDefaults.mjs';
-import { resolveProviderRequest } from '../services/llm/providerRouter.js';
+import { resolveProviderRequest, routeLLMRequest } from '../services/llm/providerRouter.js';
 import { resolveOllamaConfig } from '../services/llm/providers/ollamaProvider.js';
 
-test('default provider is ollama everywhere canonical defaults are read', () => {
-  assert.equal(DEFAULT_PROVIDER_KEY, 'ollama');
-  assert.equal(PROVIDER_DEFINITIONS.ollama.defaults.baseUrl, 'http://127.0.0.1:11434');
-  assert.equal(PROVIDER_DEFINITIONS.ollama.defaults.chatEndpoint, '/api/chat');
-  assert.equal(PROVIDER_DEFINITIONS.ollama.defaults.model, 'llama3');
+test('default provider is mock for zero-cost first load', () => {
+  assert.equal(DEFAULT_PROVIDER_KEY, 'mock');
+  assert.equal(PROVIDER_DEFINITIONS.mock.defaults.mode, 'echo');
+  assert.equal(PROVIDER_DEFINITIONS.openrouter.defaults.enabled, false);
 });
 
-test('provider router falls back invalid selections to ollama', () => {
+test('provider router falls back invalid selections to mock', () => {
   const resolved = resolveProviderRequest('not-a-provider', {});
   assert.equal(resolved.requestedProvider, 'not-a-provider');
-  assert.equal(resolved.resolvedProvider, 'ollama');
+  assert.equal(resolved.resolvedProvider, 'mock');
   assert.equal(resolved.fallbackApplied, true);
 });
 
-test('provider router preserves valid non-default selections', () => {
-  const resolved = resolveProviderRequest('custom', {
-    baseUrl: 'http://example.test:1234',
-    chatEndpoint: '/v1/chat/completions',
-    model: 'mixtral',
-  });
+test('provider router preserves valid groq selection', () => {
+  const resolved = resolveProviderRequest('groq', { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1' });
+  assert.equal(resolved.resolvedProvider, 'groq');
+  assert.deepEqual(resolved.overrideKeys.sort(), ['baseURL', 'model']);
+});
 
-  assert.equal(resolved.resolvedProvider, 'custom');
-  assert.deepEqual(resolved.overrideKeys.sort(), ['baseUrl', 'chatEndpoint', 'model']);
+test('mock provider answers without any API keys configured', async () => {
+  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'describe the current mode' }] }, { provider: 'mock', providerConfigs: { mock: { mode: 'echo', latencyMs: 0 } } });
+  assert.equal(response.ok, true);
+  assert.equal(response.provider, 'mock');
+  assert.match(response.outputText, /describe the current mode/i);
+});
+
+test('router falls back to mock when groq is selected without credentials and fallback enabled', async () => {
+  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'test fallback' }] }, { provider: 'groq', devMode: true, fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { groq: { apiKey: '' }, mock: { latencyMs: 0, mode: 'canned' } } });
+  assert.equal(response.ok, true);
+  assert.equal(response.provider, 'mock');
+  assert.equal(response.diagnostics.fallbackUsed, true);
 });
 
 test('ollama config resolves canonical endpoint and model by default', () => {
   const resolved = resolveOllamaConfig({});
-  assert.equal(resolved.baseUrl, 'http://127.0.0.1:11434');
-  assert.equal(resolved.chatEndpoint, '/api/chat');
-  assert.equal(resolved.endpoint, 'http://127.0.0.1:11434/api/chat');
-  assert.equal(resolved.model, 'llama3');
-  assert.equal(resolved.configSource.baseUrl, 'canonical-default');
-});
-
-test('ollama config respects per-request overrides without changing provider routing architecture', () => {
-  const resolved = resolveOllamaConfig({
-    baseUrl: 'http://localhost:11434',
-    chatEndpoint: '/api/chat',
-    model: 'phi3',
-  });
-
+  assert.equal(resolved.baseURL, 'http://localhost:11434');
   assert.equal(resolved.endpoint, 'http://localhost:11434/api/chat');
-  assert.equal(resolved.model, 'phi3');
-  assert.equal(resolved.configSource.baseUrl, 'request-override');
-  assert.equal(resolved.configSource.model, 'request-override');
+  assert.equal(resolved.model, 'gpt-oss:20b');
 });

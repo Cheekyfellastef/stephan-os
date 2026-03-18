@@ -64,5 +64,5 @@ app.listen(PORT, () => {
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);
   logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`Default provider router target: ${DEFAULT_PROVIDER_KEY}`);
+  logger.info(`Default provider router target: ${DEFAULT_PROVIDER_KEY} (free-tier default)`);
 });

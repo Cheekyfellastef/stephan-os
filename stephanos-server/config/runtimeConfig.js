@@ -40,7 +40,6 @@ export function buildServerBaseUrl(env = process.env) {
 export function buildHealthDiagnostics(env = process.env) {
   const allowedOrigins = resolveAllowedOrigins(env);
   const backendBaseUrl = buildServerBaseUrl(env);
-  const ollamaDefaults = PROVIDER_DEFINITIONS.ollama.defaults;
 
   return {
     ok: true,
@@ -53,14 +52,14 @@ export function buildHealthDiagnostics(env = process.env) {
     provider_defaults: Object.fromEntries(
       Object.entries(PROVIDER_DEFINITIONS).map(([key, definition]) => [key, {
         label: definition.label,
+        kind: definition.kind,
         targetSummary: definition.targetSummary,
-        baseUrl: definition.defaults.baseUrl,
-        chatEndpoint: definition.defaults.chatEndpoint,
-        model: definition.defaults.model,
+        defaults: definition.defaults,
+        endpoint: definition.defaults.baseURL ? buildProviderEndpoint(definition.defaults.baseURL, '') : null,
       }]),
     ),
-    provider_router_path: 'browser -> /api/ai/chat -> provider router -> ollama/openai/custom',
-    ollama_endpoint: buildProviderEndpoint(ollamaDefaults.baseUrl, ollamaDefaults.chatEndpoint),
+    provider_router_path: 'browser -> /api/ai/chat -> routeLLMRequest -> mock/groq/gemini/ollama/openrouter',
+    ollama_endpoint: buildProviderEndpoint(PROVIDER_DEFINITIONS.ollama.defaults.baseURL, '/api/chat'),
     ts: new Date().toISOString(),
     cors: {
       configured_via: ['FRONTEND_ORIGIN', 'FRONTEND_ORIGINS'],

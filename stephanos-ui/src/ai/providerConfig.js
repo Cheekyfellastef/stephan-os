@@ -1,103 +1,91 @@
 import {
   DEFAULT_PROVIDER_KEY,
+  FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   buildProviderDisplayLabel,
   buildProviderEndpoint,
   createDefaultSavedProviderConfigs,
+  createDefaultRouterSettings,
+  normalizeFallbackOrder,
   normalizeProviderSelection,
 } from '../../../shared/ai/providerDefaults.mjs';
 
 export {
   DEFAULT_PROVIDER_KEY,
+  FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   buildProviderDisplayLabel,
   buildProviderEndpoint,
   createDefaultSavedProviderConfigs,
+  createDefaultRouterSettings,
+  normalizeFallbackOrder,
   normalizeProviderSelection,
 };
 
-export function validateProviderDraft(providerKey, draftConfig) {
-  if (providerKey !== 'custom') {
-    return { isValid: true, errors: {} };
-  }
+export const NON_SECRET_PROVIDER_FIELDS = {
+  mock: ['enabled', 'latencyMs', 'failRate', 'mode', 'model'],
+  groq: ['baseURL', 'model'],
+  gemini: ['baseURL', 'model'],
+  ollama: ['baseURL', 'model', 'timeoutMs'],
+  openrouter: ['baseURL', 'model', 'enabled'],
+};
 
-  const errors = {};
-  const baseUrl = draftConfig.baseUrl?.trim();
-  const chatEndpoint = draftConfig.chatEndpoint?.trim();
-
-  if (!baseUrl) {
-    errors.baseUrl = 'Base URL is required.';
-  } else {
-    try {
-      const parsed = new URL(baseUrl);
-      if (!parsed.protocol.startsWith('http')) {
-        errors.baseUrl = 'Base URL must start with http:// or https://.';
-      }
-    } catch {
-      errors.baseUrl = 'Base URL must be a valid URL (example: http://localhost:1234).';
-    }
-  }
-
-  if (draftConfig.headersJson?.trim()) {
-    try {
-      const parsed = JSON.parse(draftConfig.headersJson);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        errors.headersJson = 'Headers JSON must be an object.';
-      }
-    } catch (error) {
-      errors.headersJson = `Headers JSON is invalid: ${error.message}`;
-    }
-  }
-
-  if (chatEndpoint && !chatEndpoint.startsWith('/')) {
-    errors.chatEndpoint = 'Chat endpoint must start with / (example: /v1/chat/completions).';
-  }
-
-  if (!draftConfig.model?.trim()) {
-    errors.model = 'Model name is required.';
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-  };
+export function sanitizeConfigForStorage(providerConfigs = {}) {
+  return Object.fromEntries(
+    Object.entries(providerConfigs).map(([provider, config]) => [
+      provider,
+      Object.fromEntries(
+        (NON_SECRET_PROVIDER_FIELDS[provider] || []).map((field) => [field, config?.[field] ?? PROVIDER_DEFINITIONS[provider]?.defaults?.[field]]),
+      ),
+    ]),
+  );
 }
 
 export function normalizeProviderDraft(providerKey, draftConfig = {}) {
   const defaults = PROVIDER_DEFINITIONS[providerKey]?.defaults || {};
-
-  if (providerKey !== 'custom') {
-    return {
-      ...defaults,
-      ...draftConfig,
-    };
-  }
-
   return {
     ...defaults,
     ...draftConfig,
-    label: draftConfig.label?.trim() || defaults.label,
-    baseUrl: draftConfig.baseUrl?.trim() || '',
-    chatEndpoint: draftConfig.chatEndpoint?.trim() || defaults.chatEndpoint,
-    model: draftConfig.model?.trim() || '',
     apiKey: draftConfig.apiKey || '',
-    headersJson: draftConfig.headersJson?.trim() || '',
   };
 }
 
-export function buildProviderStatusSummary(providerKey, config, apiBaseUrl) {
-  const providerLabel = buildProviderDisplayLabel(providerKey, config);
-  const providerDefinition = PROVIDER_DEFINITIONS[providerKey];
-  const endpoint = buildProviderEndpoint(config?.baseUrl || '', config?.chatEndpoint || '');
+export function validateProviderDraft(providerKey, draftConfig = {}) {
+  const errors = {};
+  const draft = normalizeProviderDraft(providerKey, draftConfig);
 
+  if (['groq', 'ollama', 'openrouter'].includes(providerKey) && draft.baseURL) {
+    try { new URL(draft.baseURL); } catch { errors.baseURL = 'Base URL must be a valid URL.'; }
+  }
+
+  if (providerKey === 'gemini' && draft.baseURL) {
+    try { new URL(draft.baseURL); } catch { errors.baseURL = 'Gemini base URL must be a valid URL.'; }
+  }
+
+  if (providerKey === 'mock') {
+    if (draft.failRate < 0 || draft.failRate > 1) errors.failRate = 'Fail rate must be between 0 and 1.';
+    if (draft.latencyMs < 0) errors.latencyMs = 'Latency must be 0 or higher.';
+  }
+
+  if (['groq', 'gemini', 'ollama', 'openrouter'].includes(providerKey) && !String(draft.model || '').trim()) {
+    errors.model = 'Model is required.';
+  }
+
+  return { isValid: Object.keys(errors).length === 0, errors };
+}
+
+export function buildProviderStatusSummary(providerKey, config, apiBaseUrl, health = null) {
+  const providerDefinition = PROVIDER_DEFINITIONS[providerKey];
   return {
-    providerLabel,
+    providerLabel: buildProviderDisplayLabel(providerKey, config),
     providerKey,
     providerTarget: providerDefinition?.targetSummary || 'routed via Stephanos backend',
-    providerEndpoint: endpoint,
+    providerEndpoint: config?.baseURL || 'Handled by Stephanos backend',
     apiBaseUrl: apiBaseUrl || 'n/a',
-    model: config?.model || 'server default',
+    model: config?.model || providerDefinition?.defaults?.model || 'default',
+    healthBadge: health?.badge || 'Unknown',
+    healthDetail: health?.detail || 'Health not checked yet.',
   };
 }
