@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getApiRuntimeConfig } from '../ai/aiClient';
+import { deriveOllamaCandidates, detectOllamaHost, normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
@@ -24,7 +25,6 @@ const FIELD_MAP = {
     { key: 'apiKey', label: 'API key', type: 'password' },
   ],
   ollama: [
-    { key: 'model', label: 'Model', type: 'text' },
     { key: 'baseURL', label: 'Base URL', type: 'text' },
     { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number' },
   ],
@@ -35,6 +35,24 @@ const FIELD_MAP = {
     { key: 'apiKey', label: 'API key', type: 'password' },
   ],
 };
+
+function renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }) {
+  return (
+    <label key={field.key}>
+      <span>{field.label}</span>
+      {field.type === 'select' ? (
+        <select value={draft[field.key]} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: event.target.value })}>
+          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      ) : field.type === 'checkbox' ? (
+        <input type="checkbox" checked={Boolean(draft[field.key])} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: event.target.checked })} />
+      ) : (
+        <input type={field.type} step={field.step} value={draft[field.key] ?? ''} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: field.type === 'number' ? Number(event.target.value) : event.target.value })} />
+      )}
+      {draftState.errors?.[field.key] ? <span className="field-error">{draftState.errors[field.key]}</span> : null}
+    </label>
+  );
+}
 
 export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const {
@@ -54,14 +72,129 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     resetToFreeMode,
     isDraftDirty,
     setUiDiagnostics,
+    ollamaConnection,
+    setOllamaConnection,
+    rememberSuccessfulOllamaConnection,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
+  const [isAutoFindingOllama, setIsAutoFindingOllama] = useState(false);
+  const [ollamaDiscovery, setOllamaDiscovery] = useState(null);
+  const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: true, providerToggleMarker: PROVIDER_COMPONENT_MARKER }));
     return () => setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: false }));
   }, [setUiDiagnostics]);
+
+  const ollamaModelOptions = useMemo(() => {
+    const draft = getDraftProviderConfig('ollama');
+    const savedModels = availableOllamaModels.filter(Boolean);
+    if (draft.model && !savedModels.includes(draft.model)) {
+      return [draft.model, ...savedModels];
+    }
+    return savedModels;
+  }, [availableOllamaModels, getDraftProviderConfig]);
+
+  const applyOllamaDetection = (result) => {
+    const draft = getDraftProviderConfig('ollama');
+    const nextModel = result.models.includes(draft.model)
+      ? draft.model
+      : (result.models[0] || draft.model || ollamaConnection.lastSelectedModel || '');
+
+    updateDraftProviderConfig('ollama', {
+      baseURL: result.baseURL,
+      model: nextModel,
+    });
+
+    if (result.host || result.baseURL || nextModel) {
+      rememberSuccessfulOllamaConnection({ baseURL: result.baseURL, host: result.host, model: nextModel });
+    }
+  };
+
+  const runOllamaDiscovery = async ({ manualAddress = '' } = {}) => {
+    const draft = getDraftProviderConfig('ollama');
+    const normalizedHint = manualAddress ? normalizeOllamaBaseUrl(manualAddress) : '';
+    const nextHintValue = manualAddress || ollamaConnection.pcAddressHint;
+    if (manualAddress) {
+      setOllamaConnection({ pcAddressHint: manualAddress });
+    }
+
+    const candidates = manualAddress
+      ? [{
+        baseURL: normalizedHint,
+        host: new URL(normalizedHint).hostname,
+        source: 'manual-hint',
+        badge: 'Network PC',
+      }]
+      : deriveOllamaCandidates({
+        frontendOrigin: runtimeConfig.frontendOrigin,
+        lastSuccessfulBaseURL: ollamaConnection.lastSuccessfulBaseURL,
+        lastSuccessfulHost: ollamaConnection.lastSuccessfulHost,
+        pcAddressHint: nextHintValue,
+        recentHosts: ollamaConnection.recentHosts,
+      });
+
+    const frontendHost = (() => { try { return new URL(runtimeConfig.frontendOrigin).hostname; } catch { return ''; } })();
+    const localhostAttemptWillMismatch = !manualAddress && frontendHost && frontendHost !== 'localhost' && frontendHost !== '127.0.0.1';
+    setIsAutoFindingOllama(true);
+    setOllamaDiscovery({
+      status: 'searching',
+      detail: manualAddress
+        ? 'Stephanos is trying the address you entered.'
+        : 'Stephanos is checking localhost first, then a few likely PC addresses.',
+      helpText: localhostAttemptWillMismatch
+        ? ['localhost only works when Stephanos and Ollama are on the same computer. Stephanos will now try likely network addresses.']
+        : [],
+      attempts: candidates,
+    });
+
+    try {
+      const result = await detectOllamaHost(candidates, { timeoutMs: Math.min(Number(draft.timeoutMs) || 1800, 2500) });
+      if (result.success) {
+        setAvailableOllamaModels(result.models || []);
+        applyOllamaDetection(result);
+        setOllamaDiscovery({ status: 'found', ...result });
+        return result;
+      }
+
+      setOllamaDiscovery({
+        status: 'not_found',
+        failureBucket: result.failureBucket,
+        reason: result.reason,
+        attempts: result.attempts,
+      });
+      return result;
+    } finally {
+      setIsAutoFindingOllama(false);
+    }
+  };
+
+  const handleTryManualOllamaAddress = async () => {
+    const manualAddress = String(ollamaConnection.pcAddressHint || '').trim();
+    if (!manualAddress) {
+      setOllamaDiscovery({
+        status: 'not_found',
+        failureBucket: 'wrong_address',
+        reason: 'Enter your PC address first, such as 192.168.1.42.',
+        attempts: [],
+      });
+      return;
+    }
+
+    const normalized = normalizeOllamaBaseUrl(manualAddress);
+    if (!normalized) {
+      setOllamaDiscovery({
+        status: 'not_found',
+        failureBucket: 'wrong_address',
+        reason: 'That address does not look valid yet. Try something like 192.168.1.42.',
+        attempts: [],
+      });
+      return;
+    }
+
+    await runOllamaDiscovery({ manualAddress: normalized });
+  };
 
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
@@ -92,7 +225,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           const dirty = isDraftDirty(providerKey);
           const suggestedFallback = !health.ok && providerKey !== 'mock';
           const ollamaState = providerKey === 'ollama'
-            ? getOllamaUiState({ health, config: draft, frontendOrigin: runtimeConfig.frontendOrigin })
+            ? getOllamaUiState({ health, config: draft, frontendOrigin: runtimeConfig.frontendOrigin, discovery: ollamaDiscovery })
             : null;
 
           return (
@@ -111,12 +244,26 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
               <p className="provider-card-detail">{providerKey === 'ollama' ? ollamaState.title : (health.detail || 'No health data yet.')}</p>
               {providerKey === 'ollama' ? (
                 <div className={`provider-hint-box ${ollamaState.state.toLowerCase().replace(/_/g, '-')}`}>
-                  <strong>How Ollama works</strong>
-                  <p><strong>Same device = localhost works</strong></p>
-                  <p><strong>Different device = use your PC&apos;s IP address</strong></p>
+                  <div className="provider-help-panel">
+                    <strong>How this works</strong>
+                    <p>Same computer: localhost usually works.</p>
+                    <p>Different device: Stephanos needs your PC’s address.</p>
+                  </div>
+
                   <div className="provider-status-box">
-                    <strong>{ollamaState.title}</strong>
-                    <p>{ollamaState.detail}</p>
+                    <strong>{ollamaState.resultTitle || ollamaState.title}</strong>
+                    <p>{ollamaState.resultBody || ollamaState.detail}</p>
+                    {ollamaState.resultBadge ? <span className="provider-result-badge">{ollamaState.resultBadge}</span> : null}
+                    {ollamaState.detectedAddress ? <p><strong>Detected address:</strong> {ollamaState.detectedAddress}</p> : null}
+                    {ollamaState.models.length ? (
+                      <div>
+                        <strong>Available models</strong>
+                        <ul>
+                          {ollamaState.models.map((modelName) => <li key={modelName}>{modelName}</li>)}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {ollamaState.emptyModels ? <p>Stephanos found Ollama, but no local models are installed yet.</p> : null}
                     {ollamaState.helpText.length ? (
                       <ul>
                         {ollamaState.helpText.map((item) => item ? <li key={item}>{item}</li> : null)}
@@ -124,39 +271,72 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     ) : null}
                     {ollamaState.reason ? <p className="provider-status-reason">{ollamaState.reason}</p> : null}
                   </div>
-                  <div className="provider-quick-actions">
+
+                  <div className="provider-quick-actions prominent-actions">
+                    <button type="button" onClick={() => runOllamaDiscovery()} disabled={isAutoFindingOllama}>
+                      {isAutoFindingOllama ? 'Finding Ollama…' : 'Auto-Find Ollama'}
+                    </button>
                     <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>
                     <button type="button" className="ghost-button" onClick={() => setProvider('mock')}>Switch to Mock Mode</button>
-                    {ollamaState.showAutoDetect ? (
+                    {ollamaState.showUseConnection ? (
                       <button
                         type="button"
                         className="ghost-button"
-                        onClick={() => updateDraftProviderConfig('ollama', { baseURL: ollamaState.autoDetectBaseUrl })}
+                        onClick={() => {
+                          saveDraftProviderConfig('ollama');
+                          setProvider('ollama');
+                        }}
                       >
-                        Auto-detect IP
+                        Use This Connection
                       </button>
                     ) : null}
+                  </div>
+
+                  <div className="provider-manual-address">
+                    <label>
+                      <span>PC Address (optional)</span>
+                      <input
+                        type="text"
+                        placeholder="192.168.1.42"
+                        value={ollamaConnection.pcAddressHint}
+                        onChange={(event) => setOllamaConnection({ pcAddressHint: event.target.value })}
+                      />
+                    </label>
+                    <button type="button" className="ghost-button" onClick={handleTryManualOllamaAddress} disabled={isAutoFindingOllama}>Try This Address</button>
                   </div>
                 </div>
               ) : null}
               {suggestedFallback && providerKey !== 'ollama' ? <button type="button" className="inline-link-button" onClick={() => setProvider('mock')}>Use Mock instead</button> : null}
 
               <div className="provider-form-grid">
-                {FIELD_MAP[providerKey].map((field) => (
-                  <label key={field.key}>
-                    <span>{field.label}</span>
-                    {field.type === 'select' ? (
-                      <select value={draft[field.key]} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: event.target.value })}>
-                        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                {providerKey === 'ollama' ? (
+                  <label key="ollama-model">
+                    <span>Model</span>
+                    {ollamaModelOptions.length ? (
+                      <select
+                        value={draft.model || ollamaModelOptions[0] || ''}
+                        onChange={(event) => {
+                          updateDraftProviderConfig('ollama', { model: event.target.value });
+                          setOllamaConnection({ lastSelectedModel: event.target.value });
+                        }}
+                      >
+                        {ollamaModelOptions.map((modelName) => <option key={modelName} value={modelName}>{modelName}</option>)}
                       </select>
-                    ) : field.type === 'checkbox' ? (
-                      <input type="checkbox" checked={Boolean(draft[field.key])} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: event.target.checked })} />
                     ) : (
-                      <input type={field.type} step={field.step} value={draft[field.key] ?? ''} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: field.type === 'number' ? Number(event.target.value) : event.target.value })} />
+                      <input
+                        type="text"
+                        value={draft.model ?? ''}
+                        onChange={(event) => {
+                          updateDraftProviderConfig('ollama', { model: event.target.value });
+                          setOllamaConnection({ lastSelectedModel: event.target.value });
+                        }}
+                      />
                     )}
-                    {draftState.errors?.[field.key] ? <span className="field-error">{draftState.errors[field.key]}</span> : null}
+                    {draftState.errors?.model ? <span className="field-error">{draftState.errors.model}</span> : null}
                   </label>
-                ))}
+                ) : null}
+
+                {FIELD_MAP[providerKey].map((field) => renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }))}
               </div>
 
               <div className="custom-provider-actions">
