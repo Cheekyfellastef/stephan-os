@@ -1,91 +1,115 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { execFileSync } from 'node:child_process';
-
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
-const distIndexPath = resolve(repoRoot, 'apps/stephanos/dist/index.html');
-const uiPackagePath = resolve(repoRoot, 'stephanos-ui/package.json');
-const uiPackage = JSON.parse(readFileSync(uiPackagePath, 'utf8'));
-
-function getGitCommit() {
-  try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return 'git-unavailable';
-  }
-}
+import {
+  createStephanosBuildMetadata,
+  DIST_WARNING_BANNER,
+  extractEmbeddedHtmlMetadata,
+  formatDurationMs,
+  getDistAgeMs,
+  getDistAssetReferences,
+  readDistMetadataJson,
+  resolveDistAssetPath,
+  stephanosDistIndexPath,
+  stephanosDistMetadataPath,
+} from './stephanos-build-utils.mjs';
 
 function fail(message) {
   console.error(`\n[stephanos verify] ${message}`);
   process.exit(1);
 }
 
-if (!existsSync(distIndexPath)) {
-  fail('Missing apps/stephanos/dist/index.html. Rebuild with: npm run build');
+const expectedMetadata = createStephanosBuildMetadata();
+
+if (!existsSync(stephanosDistIndexPath)) {
+  fail('Stephanos dist is missing: apps/stephanos/dist/index.html. Rebuild with: npm run stephanos:build');
 }
 
-const html = readFileSync(distIndexPath, 'utf8');
-const requiredBannerLines = [
-  'GENERATED FILE: apps/stephanos/dist/index.html',
-  'Do not edit manually. Source lives in stephanos-ui/src/**',
-];
-for (const line of requiredBannerLines) {
-  if (!html.includes(line)) {
-    fail(`dist/index.html is missing the generated-file warning banner (${line}). Rebuild with: npm run build`);
+const indexHtml = readFileSync(stephanosDistIndexPath, 'utf8');
+for (const requiredLine of DIST_WARNING_BANNER.split('\n')) {
+  if (!indexHtml.includes(requiredLine)) {
+    fail(`Stephanos dist is missing its generated-file warning banner (${requiredLine}). Rebuild with: npm run stephanos:build`);
   }
 }
 
-const assetMatches = [
-  ...html.matchAll(/<(?:script|link)\b[^>]+(?:src|href)=["']([^"']+)["'][^>]*>/g),
-].map((match) => match[1]).filter((assetPath) => /^\.?\//.test(assetPath));
-
-if (assetMatches.length === 0) {
-  fail('No relative dist assets were referenced by apps/stephanos/dist/index.html. Rebuild with: npm run build');
+const assetReferences = getDistAssetReferences(indexHtml);
+if (assetReferences.length === 0) {
+  fail('Stephanos dist is incomplete: dist/index.html does not reference any relative runtime assets. Rebuild with: npm run stephanos:build');
 }
 
-const distDir = dirname(distIndexPath);
-for (const assetPath of assetMatches) {
-  const resolvedPath = resolve(distDir, assetPath);
-  if (!existsSync(resolvedPath)) {
-    fail(`dist/index.html references missing asset ${assetPath}. Dist looks stale; run: npm run build`);
-  }
+const missingAssets = assetReferences.filter((assetPath) => !existsSync(resolveDistAssetPath(assetPath)));
+if (missingAssets.length > 0) {
+  fail(`Stephanos dist references missing assets: ${missingAssets.join(', ')}. Dist looks stale; run: npm run stephanos:build`);
 }
 
-const metadataMatch = html.match(/<script id="stephanos-build-metadata" type="application\/json">([\s\S]*?)<\/script>/);
-if (!metadataMatch) {
-  fail('Missing embedded build metadata in dist/index.html. Dist looks stale; run: npm run build');
+if (!existsSync(stephanosDistMetadataPath)) {
+  fail('Stephanos dist metadata is missing: apps/stephanos/dist/stephanos-build.json was not generated. Rebuild with: npm run stephanos:build');
 }
 
-let distMetadata;
+let fileMetadata;
+let htmlMetadata;
 try {
-  distMetadata = JSON.parse(metadataMatch[1]);
+  fileMetadata = readDistMetadataJson();
 } catch {
-  fail('Embedded build metadata in dist/index.html is invalid JSON. Rebuild with: npm run build');
+  fail('Stephanos dist metadata file is invalid JSON. Rebuild with: npm run stephanos:build');
 }
 
-const expectedMetadata = {
-  version: uiPackage.version,
-  sourceIdentifier: 'stephanos-ui/src',
-  buildTarget: 'apps/stephanos/dist',
-  runtimeMarker: 'stephanos-ui/runtime::dist-synced-v1',
-  gitCommit: getGitCommit(),
-};
+try {
+  htmlMetadata = extractEmbeddedHtmlMetadata(indexHtml);
+} catch {
+  fail('Embedded Stephanos dist metadata in dist/index.html is invalid JSON. Rebuild with: npm run stephanos:build');
+}
 
-for (const [field, expectedValue] of Object.entries(expectedMetadata)) {
-  const actualValue = distMetadata?.[field];
-  if (actualValue !== expectedValue) {
-    fail(`Dist metadata mismatch for ${field}: expected "${expectedValue}", found "${actualValue}". Dist looks stale; run: npm run build`);
+if (!htmlMetadata) {
+  fail('Stephanos dist metadata is missing from dist/index.html. Dist looks stale; run: npm run stephanos:build');
+}
+
+const metadataSources = [
+  ['dist metadata file', fileMetadata],
+  ['dist index.html metadata', htmlMetadata],
+];
+
+const expectedFields = [
+  'appName',
+  'version',
+  'sourceIdentifier',
+  'sourceFingerprint',
+  'buildTarget',
+  'buildTargetIdentifier',
+  'runtimeId',
+  'runtimeMarker',
+  'gitCommit',
+];
+
+for (const [label, metadata] of metadataSources) {
+  for (const field of expectedFields) {
+    if (metadata?.[field] !== expectedMetadata[field]) {
+      const message = field === 'sourceIdentifier'
+        ? 'Stephanos dist was not generated from the live Vite source'
+        : field === 'sourceFingerprint'
+          ? 'Stephanos dist metadata is stale'
+          : `Stephanos dist metadata mismatch for ${field}`;
+      fail(`${message}: expected "${expectedMetadata[field]}", found "${metadata?.[field]}" in ${label}. Rebuild with: npm run stephanos:build`);
+    }
+  }
+
+  if (!metadata?.buildTimestamp || Number.isNaN(Date.parse(metadata.buildTimestamp))) {
+    fail(`Stephanos dist metadata is stale: ${label} is missing a valid buildTimestamp. Rebuild with: npm run stephanos:build`);
   }
 }
 
-if (!distMetadata?.buildTimestamp || Number.isNaN(Date.parse(distMetadata.buildTimestamp))) {
-  fail('Dist metadata is missing a valid buildTimestamp. Dist looks stale; run: npm run build');
+if (htmlMetadata.runtimeMarker !== fileMetadata.runtimeMarker || htmlMetadata.sourceIdentifier !== fileMetadata.sourceIdentifier) {
+  fail('Stephanos dist metadata is inconsistent between dist/index.html and stephanos-build.json. Rebuild with: npm run stephanos:build');
 }
 
-console.log('[stephanos verify] Dist metadata and referenced assets match the current source build expectations.');
-console.log(`[stephanos verify] Verified assets: ${assetMatches.join(', ')}`);
-console.log(`[stephanos verify] Build metadata: ${JSON.stringify(distMetadata)}`);
+if (!indexHtml.includes(expectedMetadata.runtimeMarker)) {
+  fail('Stephanos dist runtime marker is missing from dist/index.html. Dist was not generated from the live Vite source. Rebuild with: npm run stephanos:build');
+}
+
+if (!indexHtml.includes(expectedMetadata.sourceIdentifier)) {
+  fail('Stephanos dist source identifier is missing from dist/index.html. Dist was not generated from the live Vite source. Rebuild with: npm run stephanos:build');
+}
+
+const distAgeMs = getDistAgeMs();
+console.log('[stephanos verify] Dist metadata and referenced assets match the current live Stephanos source.');
+console.log(`[stephanos verify] Verified assets: ${assetReferences.join(', ')}`);
+console.log(`[stephanos verify] Build metadata age: ${formatDurationMs(distAgeMs)}`);
+console.log(`[stephanos verify] Build metadata: ${JSON.stringify(fileMetadata)}`);

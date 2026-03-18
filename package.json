@@ -5,15 +5,20 @@
   "scripts": {
     "dev": "npm run stephanos:dev",
     "build": "npm run stephanos:build",
-    "verify": "node scripts/verify-stephanos-dist.mjs",
+    "verify": "npm run stephanos:verify",
     "stephanos": "npm run stephanos:dev",
     "stephanos:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "stephanos:build": "node scripts/build-stephanos-ui.mjs",
-    "stephanos:verify": "npm run verify",
+    "stephanos:verify": "node scripts/verify-stephanos-dist.mjs",
     "dev:server": "npm --prefix stephanos-server run dev",
     "dev:ui": "npm --prefix stephanos-ui run dev",
     "build:ui": "npm run stephanos:build",
-    "prepublishOnly": "npm run build && npm run verify"
+    "prepublishOnly": "npm run stephanos:build && npm run stephanos:verify",
+    "stephanos:clean": "node scripts/clean-stephanos-dist.mjs",
+    "stephanos:serve": "npm run stephanos:build && npm run stephanos:verify && node scripts/serve-stephanos-dist.mjs",
+    "stephanos:precommit": "npm run stephanos:build && npm run stephanos:verify",
+    "predeploy": "npm run stephanos:build && npm run stephanos:verify",
+    "deploy": "npm run predeploy && echo \"Stephanos dist is verified and ready to publish from apps/stephanos/dist\""
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
