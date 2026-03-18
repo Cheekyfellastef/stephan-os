@@ -1,3 +1,5 @@
+// LIVE SOURCE OF TRUTH: this store backs the served Stephanos AI router/settings UI.
+// Update provider state here, then rebuild stephanos-ui to refresh apps/stephanos/dist.
 import { createContext, createElement, useContext, useMemo, useState } from 'react';
 import {
   DEFAULT_PROVIDER_KEY,
@@ -126,6 +128,7 @@ export function AIStoreProvider({ children }) {
     setFallbackOrderState(defaults.fallbackOrder);
     setSavedProviderConfigs(sessionSafe);
     setDraftProviderConfigs(sessionSafe);
+    setProviderSelectionSource('default:free-tier');
     persistSettings({ ...defaults, providerConfigs: sessionSafe });
   };
 

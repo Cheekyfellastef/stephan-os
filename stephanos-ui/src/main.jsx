@@ -4,8 +4,12 @@ import App from './App';
 import { AIStoreProvider } from './state/aiStore';
 import { buildApiUrl } from './ai/apiConfig';
 import './styles.css';
+import { STEPHANOS_UI_BOOT_LOG } from './runtimeInfo';
 
+// LIVE SOURCE OF TRUTH: this Vite entry boots the Stephanos Mission Console UI from stephanos-ui/src.
+// Production output is generated into apps/stephanos/dist and embedded by the root launcher.
 async function logDevStartupHealthCheck() {
+  console.info(STEPHANOS_UI_BOOT_LOG);
   console.info('Stephanos UI running on http://localhost:5173');
   console.info('Waiting for backend health check...');
 
