@@ -6,8 +6,11 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $uiSourcePath = Join-Path $repoRoot 'stephanos-ui\src'
 $builtRuntimePath = Join-Path $repoRoot 'apps\stephanos\dist'
+$builtRuntimeIndexPath = Join-Path $builtRuntimePath 'index.html'
+$runtimeStatusPath = Join-Path $repoRoot 'apps\stephanos\runtime-status.json'
 $serverUrl = 'http://127.0.0.1:8787/api/health'
 $appUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/'
+$distHealthUrl = 'http://127.0.0.1:4173/__stephanos/health'
 $launcherWindowTitle = 'Stephanos Local Launcher'
 
 function Write-Step([string]$Message) {
@@ -74,11 +77,60 @@ function Ensure-NpmDependencies([string]$WorkingDirectory, [string]$Label) {
 
 function Test-HttpReady([string]$Url, [int]$TimeoutSeconds = 2) {
   try {
-    $null = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSeconds
+    $null = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSeconds -Headers @{ 'Cache-Control' = 'no-cache' }
     return $true
   }
   catch {
     return $false
+  }
+}
+
+function Get-Json([string]$Url, [int]$TimeoutSeconds = 2) {
+  try {
+    return Invoke-RestMethod -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSeconds -Headers @{ 'Cache-Control' = 'no-cache' }
+  }
+  catch {
+    return $null
+  }
+}
+
+function Write-StatusFile([string]$State, [string]$Message) {
+  $payload = [ordered]@{
+    appId = 'stephanos'
+    state = $State
+    message = $Message
+    runtimeUrl = $appUrl
+    distEntryPath = 'apps/stephanos/dist/index.html'
+    backendUrl = 'http://localhost:8787'
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+
+  $folder = Split-Path -Parent $runtimeStatusPath
+  if (-not (Test-Path $folder)) {
+    New-Item -Path $folder -ItemType Directory -Force | Out-Null
+  }
+
+  $payload | ConvertTo-Json | Set-Content -Path $runtimeStatusPath -Encoding utf8
+}
+
+function Test-BackendHealthy() {
+  $payload = Get-Json -Url $serverUrl -TimeoutSeconds 2
+  return $null -ne $payload -and $payload.service -eq 'stephanos-server' -and $payload.ok -eq $true
+}
+
+function Test-DistHealthy() {
+  $payload = Get-Json -Url $distHealthUrl -TimeoutSeconds 2
+  return $null -ne $payload -and $payload.service -eq 'stephanos-dist-server' -and $payload.distEntryExists -eq $true
+}
+
+function Get-ProcessUsingPort([int]$Port) {
+  try {
+    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1
+    if (-not $connection) { return $null }
+    return Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
+  }
+  catch {
+    return $null
   }
 }
 
@@ -118,6 +170,37 @@ function Start-WindowedProcess([string]$Title, [string]$Command, [string]$Workin
   ) | Out-Null
 }
 
+function Wait-ForLocalService([string]$Label, [scriptblock]$Probe, [int]$TimeoutSeconds = 60) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if (& $Probe) {
+      return $true
+    }
+    Start-Sleep -Seconds 2
+  }
+  Write-Warning "$Label did not become healthy within $TimeoutSeconds seconds."
+  return $false
+}
+
+function Ensure-ExpectedPath([string]$Path, [string]$Label) {
+  if (-not (Test-Path $Path)) {
+    throw "$Label not found at $Path"
+  }
+}
+
+function Invoke-NpmScript([string]$WorkingDirectory, [string[]]$Arguments, [string]$FailureMessage) {
+  Push-Location $WorkingDirectory
+  try {
+    & npm @Arguments
+    if ($LASTEXITCODE -ne 0) {
+      throw $FailureMessage
+    }
+  }
+  finally {
+    Pop-Location
+  }
+}
+
 if (-not (Test-CommandAvailable git)) {
   throw 'Git is required but was not found in PATH.'
 }
@@ -130,6 +213,12 @@ Write-Step "Using the real live Stephanos paths"
 Write-Host "Source: $uiSourcePath"
 Write-Host "Built runtime: $builtRuntimePath"
 Write-Host "Default Ollama target: http://localhost:11434"
+Write-StatusFile -State 'starting' -Message 'Stephanos local launch has started.'
+
+Write-Step 'Verifying repository paths'
+Ensure-ExpectedPath -Path $repoRoot -Label 'Repo root'
+Ensure-ExpectedPath -Path $uiSourcePath -Label 'Stephanos UI source'
+Ensure-ExpectedPath -Path (Join-Path $repoRoot 'stephanos-server') -Label 'Stephanos backend'
 
 Push-Location $repoRoot
 try {
@@ -151,43 +240,83 @@ Ensure-NpmDependencies -WorkingDirectory $repoRoot -Label 'root launcher'
 Ensure-NpmDependencies -WorkingDirectory (Join-Path $repoRoot 'stephanos-server') -Label 'Stephanos server'
 Ensure-NpmDependencies -WorkingDirectory (Join-Path $repoRoot 'stephanos-ui') -Label 'Stephanos UI'
 
-Write-Step 'Rebuilding the real Stephanos runtime from stephanos-ui/src into apps/stephanos/dist'
-Push-Location $repoRoot
+Write-Step 'Checking whether the built Stephanos runtime is already current'
+Write-StatusFile -State 'building' -Message 'Checking the Stephanos build output.'
 try {
-  npm run stephanos:build
-  npm run stephanos:verify
+  Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:verify') -FailureMessage 'Stephanos dist verify failed'
+  Write-Host 'Stephanos build output is already current.' -ForegroundColor DarkGray
 }
-finally {
-  Pop-Location
+catch {
+  Write-Step 'Building Stephanos because the current dist output is missing or stale'
+  Write-StatusFile -State 'building' -Message 'Building Stephanos from stephanos-ui/src.'
+  Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:build') -FailureMessage 'Stephanos build failed'
+  Invoke-NpmScript -WorkingDirectory $repoRoot -Arguments @('run', 'stephanos:verify') -FailureMessage 'Stephanos dist verify failed after build'
 }
 
-if (-not (Test-HttpReady -Url $serverUrl)) {
+if (-not (Test-Path $builtRuntimeIndexPath)) {
+  Write-StatusFile -State 'error' -Message 'Stephanos build missing: apps/stephanos/dist/index.html not found'
+  throw 'Stephanos build missing: apps/stephanos/dist/index.html not found'
+}
+
+Write-Host 'Verified build output: apps/stephanos/dist/index.html' -ForegroundColor Green
+Write-StatusFile -State 'build-ready' -Message 'Stephanos build is ready.'
+
+$backendHealthy = Test-BackendHealthy
+if ($backendHealthy) {
+  Write-Host 'Stephanos backend already running on 8787, reusing' -ForegroundColor DarkGray
+}
+else {
+  $existingBackendProcess = Get-ProcessUsingPort -Port 8787
+  if ($existingBackendProcess) {
+    $message = "Port 8787 is occupied by non-Stephanos process '$($existingBackendProcess.ProcessName)', cannot continue"
+    Write-StatusFile -State 'error' -Message $message
+    throw $message
+  }
+
   Write-Step 'Starting the local Stephanos API server'
+  Write-StatusFile -State 'starting-backend' -Message 'Starting the Stephanos backend on port 8787.'
   Start-WindowedProcess -Title 'Stephanos Local API' -WorkingDirectory (Join-Path $repoRoot 'stephanos-server') -Command 'npm run start'
 }
-else {
-  Write-Host 'Stephanos API server is already running.' -ForegroundColor DarkGray
+
+if (-not (Wait-ForLocalService -Label 'Stephanos backend' -Probe { Test-BackendHealthy } -TimeoutSeconds 60)) {
+  Write-StatusFile -State 'error' -Message 'Stephanos backend not reachable on http://localhost:8787'
+  throw 'Stephanos backend not reachable on http://localhost:8787'
 }
 
-if (-not (Test-HttpReady -Url $appUrl)) {
-  Write-Step 'Starting the local Stephanos runtime server'
-  Start-WindowedProcess -Title 'Stephanos Local Runtime' -WorkingDirectory $repoRoot -Command 'node scripts/serve-stephanos-dist.mjs'
+Write-StatusFile -State 'backend-ready' -Message 'Stephanos backend is ready.'
+
+$distHealthy = Test-DistHealthy
+if ($distHealthy) {
+  Write-Host 'Stephanos dist server already running on 4173, reusing' -ForegroundColor DarkGray
 }
 else {
-  Write-Host 'Stephanos runtime server is already running.' -ForegroundColor DarkGray
+  $existingDistProcess = Get-ProcessUsingPort -Port 4173
+  if ($existingDistProcess) {
+    $message = "Port 4173 is occupied by non-Stephanos process '$($existingDistProcess.ProcessName)', cannot continue"
+    Write-StatusFile -State 'error' -Message $message
+    throw $message
+  }
+
+  Write-Step 'Starting the local Stephanos runtime server'
+  Write-StatusFile -State 'starting-dist' -Message 'Starting the Stephanos dist server on port 4173.'
+  Start-WindowedProcess -Title 'Stephanos Local Runtime' -WorkingDirectory $repoRoot -Command 'node scripts/serve-stephanos-dist.mjs'
 }
 
 Write-Step 'Waiting for Stephanos Local to become ready'
-if (-not (Wait-ForHttpReady -Url $serverUrl -TimeoutSeconds 60)) {
-  Write-Warning 'The backend did not answer within 60 seconds. The browser will still open so you can inspect the app.'
+Write-StatusFile -State 'waiting-runtime' -Message 'Waiting for the Stephanos runtime URL to become reachable.'
+if (-not (Wait-ForLocalService -Label 'Stephanos dist server' -Probe { Test-DistHealthy } -TimeoutSeconds 60)) {
+  Write-StatusFile -State 'error' -Message "Stephanos dist server not reachable on $appUrl"
+  throw "Stephanos dist server not reachable on $appUrl"
 }
 
 if (-not (Wait-ForHttpReady -Url $appUrl -TimeoutSeconds 60)) {
-  throw 'The built Stephanos runtime did not become reachable within 60 seconds.'
+  Write-StatusFile -State 'error' -Message "Stephanos dist server not reachable on $appUrl"
+  throw "Stephanos dist server not reachable on $appUrl"
 }
 
 Write-Step 'Opening Stephanos Local in your default browser'
 $browserOpened = Open-BrowserUrl -Url $appUrl
+Write-StatusFile -State 'ready' -Message 'Stephanos running normally'
 
 Write-Host "`nStephanos Local is ready." -ForegroundColor Green
 if ($browserOpened) {
@@ -198,5 +327,6 @@ else {
   Write-Host "Manual URL: $appUrl"
 }
 Write-Host "Backend health URL: $serverUrl"
+Write-Host "Dist health URL: $distHealthUrl"
 Write-Host "Local AI Mode default: Ollama at http://localhost:11434"
 Write-Host "If Ollama is offline, use the in-app Mock Mode button for a friendly local fallback."

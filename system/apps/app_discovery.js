@@ -18,6 +18,8 @@ function normaliseManifestApp(folder, manifest) {
     type: manifest.type || "app",
     appType: packaging,
     packaging,
+    validationState: "unknown",
+    statusMessage: "",
     requiredPaths: Array.isArray(manifest.requiredPaths) ? manifest.requiredPaths : [],
     dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : []
   };
@@ -123,6 +125,8 @@ async function validateAppRegistration(folder) {
         entry: "",
         type: "app",
         disabled: true,
+        validationState: "error",
+        statusMessage: issues[0] || "App failed discovery",
         validationIssues: issues
       }
     };
@@ -148,6 +152,8 @@ async function validateAppRegistration(folder) {
     entry: "",
     type: manifest?.type || "app",
     disabled: true,
+    validationState: "error",
+    statusMessage: issues[0] || "App failed discovery",
     validationIssues: issues
   };
 
@@ -183,6 +189,8 @@ async function validateAppRegistration(folder) {
       ...normalisedApp,
       icon: manifest?.icon || "⚠️",
       entry: typeof manifest?.entry === "string" ? `${appRoot.replace("./", "")}/${manifest.entry}` : "",
+      validationState: "error",
+      statusMessage: issues[0] || "App failed discovery",
       validationIssues: issues
     },
     issues

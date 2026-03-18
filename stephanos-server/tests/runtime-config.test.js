@@ -12,6 +12,8 @@ test('allowed origins keep local development fallbacks and hosted frontend suppo
   assert.deepEqual(allowedOrigins, [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
     'https://cheekyfellastef.github.io',
   ]);
 });
@@ -25,6 +27,8 @@ test('allowed origins merge FRONTEND_ORIGIN and FRONTEND_ORIGINS without duplica
   assert.deepEqual(allowedOrigins, [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
     'https://cheekyfellastef.github.io',
     'https://one.example',
     'https://two.example',
@@ -45,6 +49,8 @@ test('health diagnostics expose backend target endpoint and visible CORS origins
   assert.deepEqual(diagnostics.cors.allowed_origins, [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
     'https://cheekyfellastef.github.io',
     'https://example.test',
   ]);

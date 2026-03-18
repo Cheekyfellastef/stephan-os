@@ -4,6 +4,14 @@ import {
   validateEntryForPackaging
 } from "./entry_rules.js";
 
+const STEPHANOS_APP_ID = "stephanos";
+const STEPHANOS_DIST_ENTRY = "apps/stephanos/dist/index.html";
+const STEPHANOS_RUNTIME_URL = "http://127.0.0.1:4173/apps/stephanos/dist/";
+const STEPHANOS_HEALTH_URL = "http://127.0.0.1:4173/__stephanos/health";
+const STEPHANOS_STATUS_URL = "http://127.0.0.1:4173/apps/stephanos/runtime-status.json";
+const STEPHANOS_BACKEND_URL = "http://localhost:8787";
+const STEPHANOS_BACKEND_HEALTH_URL = "http://localhost:8787/api/health";
+
 function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
 }
@@ -21,6 +29,14 @@ async function fetchJson(path) {
     return { ok: true, json: JSON.parse(raw) };
   } catch {
     return { ok: false, parseError: true };
+  }
+}
+
+async function fetchJsonSafely(path) {
+  try {
+    return await fetchJson(path);
+  } catch {
+    return { ok: false, networkError: true };
   }
 }
 
@@ -95,6 +111,72 @@ function resolveManifestPath(app, manifest) {
 
 function emitDiagnostic(context, message) {
   context?.eventBus?.emit("app:diagnostic", { message });
+}
+
+function isStephanosApp(app) {
+  const identifier = String(app?.folder || app?.id || app?.name || "").trim().toLowerCase();
+  return identifier === STEPHANOS_APP_ID || identifier === "stephanos os";
+}
+
+function isLaunchInProgress(statusPayload) {
+  const state = String(
+    statusPayload?.state ||
+      statusPayload?.launcherStatus?.state ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  return ["starting", "building", "starting-backend", "starting-dist", "waiting-runtime"].includes(state);
+}
+
+function applyAppStatus(app, nextStatus, context = {}) {
+  const previousSnapshot = JSON.stringify({
+    disabled: Boolean(app?.disabled),
+    validationIssues: Array.isArray(app?.validationIssues) ? app.validationIssues : [],
+    validationState: app?.validationState || "unknown",
+    statusMessage: app?.statusMessage || ""
+  });
+
+  app.disabled = nextStatus.state === "error" || nextStatus.state === "launching";
+  app.validationState = nextStatus.state;
+  app.statusMessage = nextStatus.message;
+  app.validationIssues = Array.isArray(nextStatus.issues) ? nextStatus.issues : [];
+
+  const nextSnapshot = JSON.stringify({
+    disabled: Boolean(app?.disabled),
+    validationIssues: Array.isArray(app?.validationIssues) ? app.validationIssues : [],
+    validationState: app?.validationState || "unknown",
+    statusMessage: app?.statusMessage || ""
+  });
+
+  if (previousSnapshot !== nextSnapshot) {
+    context?.eventBus?.emit("app:status_changed", {
+      name: app?.name,
+      folder: app?.folder,
+      entry: app?.entry,
+      disabled: app?.disabled,
+      validationState: app?.validationState,
+      validationIssues: app?.validationIssues,
+      statusMessage: app?.statusMessage
+    });
+  }
+}
+
+function syncValidationReport(apps, context = {}) {
+  const report = {
+    total: apps.length,
+    loaded: apps.filter((app) => !app?.disabled).length,
+    invalid: apps.filter((app) => app?.validationState === "error").length,
+    launching: apps.filter((app) => app?.validationState === "launching").length,
+    issues: apps
+      .filter((app) => Array.isArray(app?.validationIssues) && app.validationIssues.length > 0)
+      .map((app) => app.validationIssues[0])
+  };
+
+  context?.systemState?.set?.("appValidationReport", report);
+  context?.eventBus?.emit("app:validation_report_updated", report);
+  return report;
 }
 
 async function validateAppManifest(app, issues) {
@@ -194,6 +276,64 @@ async function validateClassicStaticApp(appRoot, entryPath, manifest, issues) {
   await validateHtmlReferences(entryFolder, html, issues, "Classic app");
 }
 
+async function validateStephanosRuntime(entryPath) {
+  const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
+  const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
+  const runtimeReachable = await fileExists(STEPHANOS_RUNTIME_URL);
+  const backendProbe = await fetchJsonSafely(STEPHANOS_BACKEND_HEALTH_URL);
+  const entryExists = await fileExists(entryPath);
+  const launcherMessage =
+    statusProbe.ok && typeof statusProbe.json?.message === "string"
+      ? statusProbe.json.message
+      : runtimeProbe.ok && typeof runtimeProbe.json?.launcherStatus?.message === "string"
+        ? runtimeProbe.json.launcherStatus.message
+        : "";
+
+  if (!entryExists) {
+    if (isLaunchInProgress(statusProbe.json) || isLaunchInProgress(runtimeProbe.json)) {
+      return {
+        state: "launching",
+        message: launcherMessage || "Stephanos is still building locally."
+      };
+    }
+
+    return {
+      state: "error",
+      message: `Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`,
+      issues: [`Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`]
+    };
+  }
+
+  if (!runtimeReachable) {
+    if (isLaunchInProgress(statusProbe.json) || isLaunchInProgress(runtimeProbe.json)) {
+      return {
+        state: "launching",
+        message: launcherMessage || `Stephanos is still starting the local runtime at ${STEPHANOS_RUNTIME_URL}`
+      };
+    }
+
+    return {
+      state: "error",
+      message: `Stephanos dist server not reachable on ${STEPHANOS_RUNTIME_URL}`,
+      issues: [`Stephanos dist server not reachable on ${STEPHANOS_RUNTIME_URL}`]
+    };
+  }
+
+  if (!backendProbe.ok || backendProbe.json?.service !== "stephanos-server") {
+    return {
+      state: "error",
+      message: `Stephanos backend not reachable on ${STEPHANOS_BACKEND_URL}`,
+      issues: [`Stephanos backend not reachable on ${STEPHANOS_BACKEND_URL}`]
+    };
+  }
+
+  return {
+    state: "healthy",
+    message: "Stephanos running normally",
+    issues: []
+  };
+}
+
 export async function validateApps(apps, context = {}) {
   const results = [];
 
@@ -214,17 +354,26 @@ export async function validateApps(apps, context = {}) {
     const entryPath = resolveManifestPath(app, manifest) || app?.entry || "";
     const packaging = resolvePackagingMode({ app, manifest });
     const packagingValidation = validateEntryForPackaging({ packaging, entry: manifest?.entry });
+    const stephanosApp = isStephanosApp(app);
 
     if (!packagingValidation.ok) {
       issues.push(packagingValidation.message);
     }
 
-    const entryExists = await validateEntryExists(entryPath, issues);
+    let entryExists = false;
+    if (stephanosApp) {
+      entryExists = await fileExists(entryPath);
+      if (!entryExists) {
+        issues.push(`Stephanos build missing: ${STEPHANOS_DIST_ENTRY} not found`);
+      }
+    } else {
+      entryExists = await validateEntryExists(entryPath, issues);
+    }
     const packagingSupported = isSupportedPackagingMode(packaging);
 
     if (!packagingSupported && packagingValidation.code !== "unsupported-packaging") {
       issues.push(`Unsupported packaging mode: ${packaging}`);
-    } else if (packagingSupported && entryExists) {
+    } else if (packagingSupported && entryExists && !stephanosApp) {
       if (packaging === "vite") {
         await validateViteApp(entryPath, issues);
       }
@@ -236,7 +385,49 @@ export async function validateApps(apps, context = {}) {
 
     const appId = String(app?.folder || app?.id || app?.name || "unknown").toLowerCase();
 
+    if (stephanosApp && packagingSupported) {
+      const stephanosStatus = await validateStephanosRuntime(entryPath);
+      if (stephanosStatus.state === "healthy") {
+        applyAppStatus(app, stephanosStatus, context);
+        emitDiagnostic(context, `${appId}: ${stephanosStatus.message}`);
+        context?.eventBus?.emit("app:validation_passed", {
+          name: app?.name,
+          folder: app?.folder,
+          entry: entryPath,
+          message: stephanosStatus.message
+        });
+        continue;
+      }
+
+      applyAppStatus(app, stephanosStatus, context);
+
+      if (stephanosStatus.state === "launching") {
+        emitDiagnostic(context, `${appId}: ${stephanosStatus.message}`);
+        continue;
+      }
+
+      const stephanosIssues = stephanosStatus.issues || [];
+      context?.eventBus?.emit("app:validation_failed", {
+        name: app?.name,
+        folder: app?.folder,
+        entry: entryPath,
+        issues: stephanosIssues
+      });
+      emitDiagnostic(context, `${appId}: ${stephanosIssues[0]}`);
+      results.push({
+        app: app.name,
+        issues: stephanosIssues
+      });
+      continue;
+    }
+
     if (issues.length > 0) {
+      applyAppStatus(app, {
+        state: "error",
+        message: issues[0] || "App failed validation",
+        issues
+      }, context);
+
       context?.eventBus?.emit("app:validation_failed", {
         name: app?.name,
         folder: app?.folder,
@@ -254,8 +445,22 @@ export async function validateApps(apps, context = {}) {
       continue;
     }
 
+    applyAppStatus(app, {
+      state: "healthy",
+      message: "App ready",
+      issues: []
+    }, context);
+
+    context?.eventBus?.emit("app:validation_passed", {
+      name: app?.name,
+      folder: app?.folder,
+      entry: entryPath,
+      message: "App ready"
+    });
+
     emitDiagnostic(context, `${appId}: valid ${packaging === "classic-static" ? "classic" : packaging} app`);
   }
 
+  syncValidationReport(apps, context);
   return results;
 }
