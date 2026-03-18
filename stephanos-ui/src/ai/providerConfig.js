@@ -86,6 +86,8 @@ export function buildProviderStatusSummary(providerKey, config, apiBaseUrl, heal
     apiBaseUrl: apiBaseUrl || 'n/a',
     model: config?.model || providerDefinition?.defaults?.model || 'default',
     healthBadge: health?.badge || 'Unknown',
-    healthDetail: health?.detail || 'Health not checked yet.',
+    healthDetail: health?.message || health?.detail || 'Health not checked yet.',
+    healthReason: health?.reason || '',
+    healthState: health?.state || 'UNKNOWN',
   };
 }

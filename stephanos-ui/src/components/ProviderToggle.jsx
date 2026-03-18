@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { getApiRuntimeConfig } from '../ai/aiClient';
+import { getOllamaUiState } from '../ai/ollamaUx';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
@@ -34,7 +36,7 @@ const FIELD_MAP = {
   ],
 };
 
-export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
+export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const {
     provider,
     setProvider,
@@ -43,7 +45,6 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
     fallbackEnabled,
     setFallbackEnabled,
     providerHealth,
-    savedProviderConfigs,
     providerDraftStatus,
     getDraftProviderConfig,
     updateDraftProviderConfig,
@@ -54,6 +55,8 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
     isDraftDirty,
     setUiDiagnostics,
   } = useAIStore();
+
+  const runtimeConfig = getApiRuntimeConfig();
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: true, providerToggleMarker: PROVIDER_COMPONENT_MARKER }));
@@ -69,7 +72,7 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
         </div>
         <div className="provider-switch-actions">
           <button type="button" className="ghost-button" onClick={resetToFreeMode}>Reset to Free Mode</button>
-          <button type="button" className="ghost-button" onClick={onTestProvider}>Test Provider</button>
+          <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>
           <button type="button" onClick={onSendTestPrompt}>Send Test Prompt</button>
         </div>
       </div>
@@ -88,6 +91,9 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
           const draftState = providerDraftStatus[providerKey];
           const dirty = isDraftDirty(providerKey);
           const suggestedFallback = !health.ok && providerKey !== 'mock';
+          const ollamaState = providerKey === 'ollama'
+            ? getOllamaUiState({ health, config: draft, frontendOrigin: runtimeConfig.frontendOrigin })
+            : null;
 
           return (
             <section key={providerKey} className={`provider-card${isActive ? ' active' : ''}`}>
@@ -102,8 +108,38 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
                 </div>
               </button>
 
-              <p className="provider-card-detail">{health.detail || 'No health data yet.'}</p>
-              {suggestedFallback ? <button type="button" className="inline-link-button" onClick={() => setProvider('mock')}>Use Mock instead</button> : null}
+              <p className="provider-card-detail">{providerKey === 'ollama' ? ollamaState.title : (health.detail || 'No health data yet.')}</p>
+              {providerKey === 'ollama' ? (
+                <div className={`provider-hint-box ${ollamaState.state.toLowerCase().replace(/_/g, '-')}`}>
+                  <strong>How Ollama works</strong>
+                  <p><strong>Same device = localhost works</strong></p>
+                  <p><strong>Different device = use your PC&apos;s IP address</strong></p>
+                  <div className="provider-status-box">
+                    <strong>{ollamaState.title}</strong>
+                    <p>{ollamaState.detail}</p>
+                    {ollamaState.helpText.length ? (
+                      <ul>
+                        {ollamaState.helpText.map((item) => item ? <li key={item}>{item}</li> : null)}
+                      </ul>
+                    ) : null}
+                    {ollamaState.reason ? <p className="provider-status-reason">{ollamaState.reason}</p> : null}
+                  </div>
+                  <div className="provider-quick-actions">
+                    <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>
+                    <button type="button" className="ghost-button" onClick={() => setProvider('mock')}>Switch to Mock Mode</button>
+                    {ollamaState.showAutoDetect ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => updateDraftProviderConfig('ollama', { baseURL: ollamaState.autoDetectBaseUrl })}
+                      >
+                        Auto-detect IP
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              {suggestedFallback && providerKey !== 'ollama' ? <button type="button" className="inline-link-button" onClick={() => setProvider('mock')}>Use Mock instead</button> : null}
 
               <div className="provider-form-grid">
                 {FIELD_MAP[providerKey].map((field) => (
@@ -118,17 +154,19 @@ export default function ProviderToggle({ onTestProvider, onSendTestPrompt }) {
                     ) : (
                       <input type={field.type} step={field.step} value={draft[field.key] ?? ''} onChange={(event) => updateDraftProviderConfig(providerKey, { [field.key]: field.type === 'number' ? Number(event.target.value) : event.target.value })} />
                     )}
-                    {draftState?.errors?.[field.key] ? <small className="field-error">{draftState.errors[field.key]}</small> : null}
+                    {draftState.errors?.[field.key] ? <span className="field-error">{draftState.errors[field.key]}</span> : null}
                   </label>
                 ))}
               </div>
 
               <div className="custom-provider-actions">
-                <button type="button" onClick={() => saveDraftProviderConfig(providerKey)} disabled={!dirty}>Save</button>
+                <button type="button" className="ghost-button" onClick={() => saveDraftProviderConfig(providerKey)} disabled={!dirty}>Save</button>
                 <button type="button" className="ghost-button" onClick={() => revertDraftProviderConfig(providerKey)} disabled={!dirty}>Revert</button>
                 <button type="button" className="ghost-button" onClick={() => resetProviderConfig(providerKey)}>Reset</button>
               </div>
-              <p className="provider-draft-meta">{draftState?.message || 'API keys stay in session only and are never written to localStorage.'}</p>
+
+              {draftState.message ? <p className="provider-draft-message">{draftState.message}</p> : null}
+              {draftState.savedAt ? <p className="provider-draft-meta">Saved {new Date(draftState.savedAt).toLocaleTimeString()}</p> : null}
             </section>
           );
         })}

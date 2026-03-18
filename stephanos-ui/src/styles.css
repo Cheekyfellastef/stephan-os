@@ -330,6 +330,70 @@ pre {
   margin-bottom: 0.85rem;
 }
 
+.provider-switch-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.provider-hint-box {
+  margin-top: 0.85rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(103, 182, 255, 0.28);
+  background: rgba(5, 15, 30, 0.86);
+}
+
+.provider-hint-box > strong,
+.provider-status-box > strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.provider-hint-box p,
+.provider-status-box p,
+.provider-status-box ul {
+  margin: 0.35rem 0;
+}
+
+.provider-status-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: rgba(3, 11, 22, 0.85);
+  border: 1px solid rgba(84, 162, 236, 0.24);
+}
+
+.provider-hint-box.connected,
+.provider-status-box.connected {
+  border-color: rgba(94, 191, 141, 0.38);
+}
+
+.provider-hint-box.localhost-mismatch,
+.provider-hint-box.offline,
+.provider-hint-box.unknown-error {
+  border-color: rgba(72, 145, 236, 0.45);
+}
+
+.provider-status-box ul {
+  padding-left: 1.15rem;
+  color: #dff4ff;
+}
+
+.provider-status-reason {
+  color: #9fd3ff;
+  font-size: 0.82rem;
+}
+
+.provider-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
 .provider-switch-label {
   display: block;
   margin-bottom: 0.65rem;
