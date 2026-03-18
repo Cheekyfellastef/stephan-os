@@ -8,6 +8,11 @@ function renderAppLoadError(container, message) {
   container.appendChild(error);
 }
 
+function isStephanosProject(project) {
+  const identifier = String(project?.folder || project?.id || project?.name || "").trim().toLowerCase();
+  return identifier === "stephanos" || identifier === "stephanos os";
+}
+
 export const workspace = {
   async open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
@@ -123,6 +128,12 @@ export const workspace = {
 
       iframe.addEventListener("load", () => {
         console.log("Simulation loaded:", project.name);
+        if (isStephanosProject(project)) {
+          context?.eventBus?.emit("app:revalidate_requested", {
+            appId: "stephanos",
+            reason: "workspace iframe load"
+          });
+        }
       });
 
       container.appendChild(iframe);

@@ -190,6 +190,18 @@ async function startStephanos() {
   const validationContext = { eventBus, systemState };
   const validationResults = await validateApps(projects, validationContext);
 
+  eventBus.on("app:revalidate_requested", async (payload) => {
+    if (payload?.appId) {
+      log(`ℹ revalidating ${payload.appId}: ${payload.reason || "manual request"}`);
+    }
+
+    try {
+      await validateApps(projects, validationContext);
+    } catch (error) {
+      console.warn("Stephanos revalidation failed.", error);
+    }
+  });
+
   for (const result of validationResults) {
     console.warn("App Validator:", result.app);
 

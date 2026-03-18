@@ -1,9 +1,24 @@
 const REQUIRED_MANIFEST_FIELDS = ["name", "entry"];
 const VALID_DISCOVERY_ID = /^[a-z0-9][a-z0-9-_]*$/i;
 const VALID_PACKAGING_MODES = new Set(["classic", "classic-static", "vite", "document"]);
+const STEPHANOS_APP_ID = "stephanos";
 
 function ensureStephanosEntry(apps) {
   return apps;
+}
+
+function isStephanosFolder(folder) {
+  return String(folder || "").trim().toLowerCase() === STEPHANOS_APP_ID;
+}
+
+function resolveManifestEntryPath(folder, manifest) {
+  const entry = String(manifest?.entry || "").trim();
+
+  if (!entry) {
+    return "";
+  }
+
+  return `apps/${folder}/${entry}`;
 }
 
 function normaliseManifestApp(folder, manifest) {
@@ -69,7 +84,12 @@ function looksLikeIconFile(icon) {
 }
 
 async function fetchJsonSafely(path) {
-  const response = await fetch(path);
+  const response = await fetch(path, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache"
+    }
+  });
 
   if (!response.ok) {
     return {
@@ -97,7 +117,23 @@ async function fetchJsonSafely(path) {
   }
 }
 
-async function validateAppRegistration(folder) {
+async function fileExists(path) {
+  try {
+    const response = await fetch(path, {
+      method: "HEAD",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function validateAppRegistration(folder, context = {}) {
   const issues = [];
   const appRoot = `./apps/${folder}`;
   const manifestPath = `${appRoot}/app.json`;
@@ -161,9 +197,23 @@ async function validateAppRegistration(folder) {
     validationIssues: issues
   };
 
-  if (typeof manifest?.entry === "string" && manifest.entry.trim().length > 0) {
-    const entryProbe = await fetch(`${appRoot}/${manifest.entry}`);
-    if (!entryProbe.ok) {
+  const entryPath = resolveManifestEntryPath(folder, manifest);
+  const entryExists = entryPath ? await fileExists(`./${entryPath}`) : false;
+
+  if (isStephanosFolder(folder)) {
+    emitDiagnostic(
+      context,
+      `stephanos discovery: manifest entry=${String(manifest?.entry || "").trim() || "(missing)"}, resolved=${entryPath || "(missing)"}, exists=${entryExists}`
+    );
+  }
+
+  if (typeof manifest?.entry === "string" && manifest.entry.trim().length > 0 && !entryExists) {
+    if (isStephanosFolder(folder)) {
+      emitDiagnostic(
+        context,
+        `stephanos discovery: deferring missing entry check to validator/runtime-status for ${entryPath || manifest.entry}`
+      );
+    } else {
       issues.push(`${folder}: entry file ${manifest.entry} not found`);
     }
   }
@@ -192,7 +242,7 @@ async function validateAppRegistration(folder) {
     app: {
       ...normalisedApp,
       icon: manifest?.icon || "⚠️",
-      entry: typeof manifest?.entry === "string" ? `${appRoot.replace("./", "")}/${manifest.entry}` : "",
+      entry: entryPath || (typeof manifest?.entry === "string" ? `${appRoot.replace("./", "")}/${manifest.entry}` : ""),
       validationState: "error",
       statusMessage: issues[0] || "App failed discovery",
       validationIssues: issues
@@ -237,7 +287,7 @@ export async function discoverApps(context = {}) {
       continue;
     }
 
-    const validation = await validateAppRegistration(folder);
+    const validation = await validateAppRegistration(folder, context);
 
     discoveredApps.push(validation.app);
 
