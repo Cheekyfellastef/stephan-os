@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import http from 'node:http';
 import aiRouter from './routes/ai.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
@@ -16,6 +17,7 @@ const app = express();
 const PORT = getServerPort();
 const allowedOrigins = resolveAllowedOrigins();
 const allowedOriginsSet = new Set(allowedOrigins);
+const healthUrl = `http://127.0.0.1:${PORT}/api/health`;
 
 app.use(
   cors({
@@ -60,7 +62,52 @@ app.use((error, _req, res, next) => {
 
   next(error);
 });
-app.listen(PORT, () => {
+async function probeExistingStephanosServer() {
+  try {
+    const response = await fetch(healthUrl, {
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+    });
+
+    if (!response.ok) {
+      return { reusable: false };
+    }
+
+    const payload = await response.json();
+    return {
+      reusable:
+        payload?.service === 'stephanos-server' &&
+        payload?.backend_base_url === `http://localhost:${PORT}`,
+      payload,
+    };
+  } catch {
+    return { reusable: false };
+  }
+}
+
+const server = http.createServer(app);
+
+server.on('error', async (error) => {
+  if (error?.code !== 'EADDRINUSE') {
+    logger.error('Stephanos server failed to start.', error);
+    process.exit(1);
+    return;
+  }
+
+  const existingServer = await probeExistingStephanosServer();
+  if (existingServer.reusable) {
+    logger.info(`Stephanos server already running on http://localhost:${PORT}, reusing`);
+    process.exit(0);
+    return;
+  }
+
+  logger.error(`Port ${PORT} is occupied by a non-Stephanos process, cannot continue.`);
+  process.exit(1);
+});
+
+server.listen(PORT, () => {
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);
   logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);

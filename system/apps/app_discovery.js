@@ -18,6 +18,8 @@ function normaliseManifestApp(folder, manifest) {
     type: manifest.type || "app",
     appType: packaging,
     packaging,
+    disabled: false,
+    discoveryDisabled: false,
     validationState: "unknown",
     statusMessage: "",
     requiredPaths: Array.isArray(manifest.requiredPaths) ? manifest.requiredPaths : [],
@@ -125,6 +127,7 @@ async function validateAppRegistration(folder) {
         entry: "",
         type: "app",
         disabled: true,
+        discoveryDisabled: true,
         validationState: "error",
         statusMessage: issues[0] || "App failed discovery",
         validationIssues: issues
@@ -152,6 +155,7 @@ async function validateAppRegistration(folder) {
     entry: "",
     type: manifest?.type || "app",
     disabled: true,
+    discoveryDisabled: true,
     validationState: "error",
     statusMessage: issues[0] || "App failed discovery",
     validationIssues: issues

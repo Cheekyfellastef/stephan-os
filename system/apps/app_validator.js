@@ -8,7 +8,7 @@ const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_DIST_ENTRY = "apps/stephanos/dist/index.html";
 const STEPHANOS_RUNTIME_URL = "http://127.0.0.1:4173/apps/stephanos/dist/";
 const STEPHANOS_HEALTH_URL = "http://127.0.0.1:4173/__stephanos/health";
-const STEPHANOS_STATUS_URL = "http://127.0.0.1:4173/apps/stephanos/runtime-status.json";
+const STEPHANOS_STATUS_URL = "./apps/stephanos/runtime-status.json";
 const STEPHANOS_BACKEND_URL = "http://localhost:8787";
 const STEPHANOS_BACKEND_HEALTH_URL = "http://localhost:8787/api/health";
 
@@ -17,7 +17,12 @@ function getAppRoot(app) {
 }
 
 async function fetchJson(path) {
-  const response = await fetch(path);
+  const response = await fetch(path, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache"
+    }
+  });
 
   if (!response.ok) {
     return { ok: false, status: response.status };
@@ -42,7 +47,13 @@ async function fetchJsonSafely(path) {
 
 async function fileExists(path) {
   try {
-    const response = await fetch(path, { method: "HEAD" });
+    const response = await fetch(path, {
+      method: "HEAD",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
     return response.ok;
   } catch {
     return false;
@@ -127,7 +138,23 @@ function isLaunchInProgress(statusPayload) {
     .trim()
     .toLowerCase();
 
-  return ["starting", "building", "starting-backend", "starting-dist", "waiting-runtime"].includes(state);
+  return [
+    "starting",
+    "checking-repo",
+    "updating",
+    "building",
+    "verifying-build",
+    "starting-backend",
+    "starting-dist",
+    "waiting-runtime",
+    "waiting-ready"
+  ].includes(state);
+}
+
+function getSubsystemState(statusPayload, key) {
+  return String(statusPayload?.subsystems?.[key]?.state || "")
+    .trim()
+    .toLowerCase();
 }
 
 function applyAppStatus(app, nextStatus, context = {}) {
@@ -138,7 +165,7 @@ function applyAppStatus(app, nextStatus, context = {}) {
     statusMessage: app?.statusMessage || ""
   });
 
-  app.disabled = nextStatus.state === "error" || nextStatus.state === "launching";
+  app.disabled = Boolean(app?.discoveryDisabled);
   app.validationState = nextStatus.state;
   app.statusMessage = nextStatus.message;
   app.validationIssues = Array.isArray(nextStatus.issues) ? nextStatus.issues : [];
@@ -166,8 +193,8 @@ function applyAppStatus(app, nextStatus, context = {}) {
 function syncValidationReport(apps, context = {}) {
   const report = {
     total: apps.length,
-    loaded: apps.filter((app) => !app?.disabled).length,
-    invalid: apps.filter((app) => app?.validationState === "error").length,
+    loaded: apps.filter((app) => !app?.discoveryDisabled).length,
+    invalid: apps.filter((app) => app?.discoveryDisabled || app?.validationState === "error").length,
     launching: apps.filter((app) => app?.validationState === "launching").length,
     issues: apps
       .filter((app) => Array.isArray(app?.validationIssues) && app.validationIssues.length > 0)
@@ -288,9 +315,17 @@ async function validateStephanosRuntime(entryPath) {
       : runtimeProbe.ok && typeof runtimeProbe.json?.launcherStatus?.message === "string"
         ? runtimeProbe.json.launcherStatus.message
         : "";
+  const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
+  const buildState = getSubsystemState(launcherStatus, "build");
+  const uiState = getSubsystemState(launcherStatus, "ui");
+  const backendState = getSubsystemState(launcherStatus, "backend");
+  const ollamaState = getSubsystemState(launcherStatus, "ollama");
+  const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.json);
+  const healthyRuntime = runtimeProbe.ok && runtimeProbe.json?.service === "stephanos-dist-server";
+  const healthyBackend = backendProbe.ok && backendProbe.json?.service === "stephanos-server";
 
   if (!entryExists) {
-    if (isLaunchInProgress(statusProbe.json) || isLaunchInProgress(runtimeProbe.json)) {
+    if (launchInProgress || buildState === "building") {
       return {
         state: "launching",
         message: launcherMessage || "Stephanos is still building locally."
@@ -304,8 +339,8 @@ async function validateStephanosRuntime(entryPath) {
     };
   }
 
-  if (!runtimeReachable) {
-    if (isLaunchInProgress(statusProbe.json) || isLaunchInProgress(runtimeProbe.json)) {
+  if (!runtimeReachable || !healthyRuntime) {
+    if (launchInProgress || uiState === "starting") {
       return {
         state: "launching",
         message: launcherMessage || `Stephanos is still starting the local runtime at ${STEPHANOS_RUNTIME_URL}`
@@ -319,7 +354,14 @@ async function validateStephanosRuntime(entryPath) {
     };
   }
 
-  if (!backendProbe.ok || backendProbe.json?.service !== "stephanos-server") {
+  if (!healthyBackend) {
+    if (launchInProgress || backendState === "starting") {
+      return {
+        state: "launching",
+        message: launcherMessage || `Stephanos is still starting the local backend at ${STEPHANOS_BACKEND_URL}`
+      };
+    }
+
     return {
       state: "error",
       message: `Stephanos backend not reachable on ${STEPHANOS_BACKEND_URL}`,
@@ -327,9 +369,15 @@ async function validateStephanosRuntime(entryPath) {
     };
   }
 
+  const healthyMessage = ollamaState === "reachable"
+    ? "Stephanos running normally (backend, UI, and Ollama reachable)"
+    : ollamaState === "unreachable"
+      ? "Stephanos running normally (backend/UI ready, Ollama unreachable)"
+      : "Stephanos running normally";
+
   return {
     state: "healthy",
-    message: "Stephanos running normally",
+    message: launcherMessage || healthyMessage,
     issues: []
   };
 }
@@ -338,7 +386,7 @@ export async function validateApps(apps, context = {}) {
   const results = [];
 
   for (const app of apps) {
-    if (app?.disabled) {
+    if (app?.discoveryDisabled) {
       continue;
     }
 
