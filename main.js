@@ -63,6 +63,10 @@ function applyDeveloperModeVisibility() {
 }
 
 async function reloadStephanos() {
+  if (window.__stephanosRuntime?.disposeHealthMonitor) {
+    window.__stephanosRuntime.disposeHealthMonitor();
+  }
+
   if (window.__stephanosRuntime?.disposeModules) {
     await window.__stephanosRuntime.disposeModules(window.__stephanosRuntime.context);
   }
@@ -71,6 +75,10 @@ async function reloadStephanos() {
 }
 
 function exitStephanos() {
+  if (window.__stephanosRuntime?.disposeHealthMonitor) {
+    window.__stephanosRuntime.disposeHealthMonitor();
+  }
+
   window.location.href = "/";
 }
 
@@ -81,6 +89,24 @@ function toggleDeveloperMode() {
 
 function isDeveloperModeEnabled() {
   return developerMode;
+}
+
+function startStephanosHealthMonitor(projects, context) {
+  const monitor = async () => {
+    try {
+      await validateApps(projects, context);
+    } catch (error) {
+      console.warn("Stephanos app health monitor failed.", error);
+    }
+  };
+
+  const intervalId = window.setInterval(monitor, 5000);
+  window.addEventListener("focus", monitor);
+
+  return () => {
+    window.clearInterval(intervalId);
+    window.removeEventListener("focus", monitor);
+  };
 }
 
 async function startStephanos() {
@@ -159,7 +185,8 @@ async function startStephanos() {
 
   createSelfHealingService(context);
 
-  const validationResults = await validateApps(projects, { eventBus });
+  const validationContext = { eventBus, systemState };
+  const validationResults = await validateApps(projects, validationContext);
 
   for (const result of validationResults) {
     console.warn("App Validator:", result.app);
@@ -209,7 +236,8 @@ async function startStephanos() {
 
   window.__stephanosRuntime = {
     context,
-    disposeModules
+    disposeModules,
+    disposeHealthMonitor: startStephanosHealthMonitor(projects, validationContext)
   };
 
   window.returnToCommandDeck = function() {

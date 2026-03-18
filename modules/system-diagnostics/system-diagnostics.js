@@ -83,7 +83,14 @@ function subscribeToDiagnosticsEvents(context) {
       context?.systemState?.set?.("appValidationReport", report);
       updateDiagnostics(context);
     }),
+    eventBus.on("app:validation_report_updated", (report) => {
+      context?.systemState?.set?.("appValidationReport", report);
+      updateDiagnostics(context);
+    }),
     eventBus.on("app:validation_failed", () => {
+      updateDiagnostics(context);
+    }),
+    eventBus.on("app:validation_passed", () => {
       updateDiagnostics(context);
     })
   ];
@@ -133,7 +140,7 @@ function updateDiagnostics(context) {
 
   const summary = document.getElementById("diag-app-summary");
   if (summary) {
-    summary.innerText = `Apps loaded: ${report.loaded || 0}, Apps with errors: ${report.invalid || 0}`;
+    summary.innerText = `Apps loaded: ${report.loaded || 0}, Apps with errors: ${report.invalid || 0}, Apps starting: ${report.launching || 0}`;
   }
 
   const issues = document.getElementById("diag-app-issues");

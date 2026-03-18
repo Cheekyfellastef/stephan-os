@@ -16,6 +16,15 @@ function normalizeDistEntry(entry) {
   return typeof entry === "string" ? entry.replace("/dist/", "/") : entry;
 }
 
+function shouldSkipEntryRewrite(app) {
+  const appId = String(app?.folder || app?.name || "")
+    .trim()
+    .toLowerCase();
+  const entry = String(app?.entry || "").trim().toLowerCase();
+
+  return appId === "stephanos" || appId === "stephanos os" || entry.endsWith("apps/stephanos/dist/index.html");
+}
+
 export function createSelfHealingService(context) {
   const { eventBus } = context;
 
@@ -27,13 +36,15 @@ export function createSelfHealingService(context) {
   eventBus.on("app:validation_failed", async (app) => {
     const fixedEntry = normalizeDistEntry(app?.entry);
 
-    if (!app || !app.entry || app.entry === fixedEntry) {
+    if (!app || !app.entry || app.entry === fixedEntry || shouldSkipEntryRewrite(app)) {
       logRepairEvent(context, {
         type: "app",
         target: app?.name || "unknown-app",
         action: "no-op",
         status: "failed",
-        reason: "No runtime-safe repair available"
+        reason: shouldSkipEntryRewrite(app)
+          ? "Stephanos keeps its dist entry and now relies on revalidation instead of entry rewrites"
+          : "No runtime-safe repair available"
       });
       return;
     }

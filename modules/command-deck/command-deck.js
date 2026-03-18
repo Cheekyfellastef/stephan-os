@@ -14,6 +14,8 @@ function normaliseProject(project) {
     icon: project?.icon || "🧩",
     entry: project?.entry || "",
     disabled: Boolean(project?.disabled),
+    validationState: project?.validationState || (project?.disabled ? "error" : "healthy"),
+    statusMessage: project?.statusMessage || "",
     validationIssues: Array.isArray(project?.validationIssues) ? project.validationIssues : []
   };
 }
@@ -42,12 +44,16 @@ function renderProjectRegistry(projects, context) {
 
     tile.className = "app-tile";
 
-    if (safeProject.disabled) {
+    if (safeProject.validationState === "error") {
       tile.classList.add("app-tile-error");
     }
 
-    const issueLabel = safeProject.disabled
-      ? `<div class="app-tile-issue">${safeProject.validationIssues[0] || "App failed validation"}</div>`
+    if (safeProject.validationState === "launching") {
+      tile.classList.add("app-tile-pending");
+    }
+
+    const issueLabel = safeProject.validationState === "error" || safeProject.validationState === "launching"
+      ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || "App status unavailable"}</div>`
       : "";
 
     tile.innerHTML = `
@@ -56,8 +62,8 @@ function renderProjectRegistry(projects, context) {
       ${issueLabel}
     `;
 
-    if (safeProject.disabled) {
-      tile.title = safeProject.validationIssues.join("\n") || "App failed validation";
+    if (safeProject.validationState === "error" || safeProject.validationState === "launching") {
+      tile.title = safeProject.statusMessage || safeProject.validationIssues.join("\n") || "App status unavailable";
       tile.setAttribute("aria-disabled", "true");
     } else {
       tile.onclick = () => context.workspace.open(safeProject, context);
@@ -75,6 +81,10 @@ export const moduleDefinition = {
 
 let cleanupSimulationStart = null;
 let cleanupAppInstalled = null;
+let cleanupStatusChanged = null;
+let cleanupValidationPassed = null;
+let cleanupValidationFailed = null;
+let cleanupAppRepaired = null;
 
 export function init(context) {
   renderProjectRegistry(getRuntimeProjects(context), context);
@@ -114,6 +124,22 @@ export function init(context) {
       context
     );
   });
+
+  cleanupStatusChanged = context.eventBus.on("app:status_changed", () => {
+    renderProjectRegistry(getRuntimeProjects(context), context);
+  });
+
+  cleanupValidationPassed = context.eventBus.on("app:validation_passed", () => {
+    renderProjectRegistry(getRuntimeProjects(context), context);
+  });
+
+  cleanupValidationFailed = context.eventBus.on("app:validation_failed", () => {
+    renderProjectRegistry(getRuntimeProjects(context), context);
+  });
+
+  cleanupAppRepaired = context.eventBus.on("app:repaired", () => {
+    renderProjectRegistry(getRuntimeProjects(context), context);
+  });
 }
 
 export function dispose() {
@@ -125,5 +151,25 @@ export function dispose() {
   if (typeof cleanupAppInstalled === "function") {
     cleanupAppInstalled();
     cleanupAppInstalled = null;
+  }
+
+  if (typeof cleanupStatusChanged === "function") {
+    cleanupStatusChanged();
+    cleanupStatusChanged = null;
+  }
+
+  if (typeof cleanupValidationPassed === "function") {
+    cleanupValidationPassed();
+    cleanupValidationPassed = null;
+  }
+
+  if (typeof cleanupValidationFailed === "function") {
+    cleanupValidationFailed();
+    cleanupValidationFailed = null;
+  }
+
+  if (typeof cleanupAppRepaired === "function") {
+    cleanupAppRepaired();
+    cleanupAppRepaired = null;
   }
 }

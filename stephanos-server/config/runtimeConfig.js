@@ -5,7 +5,12 @@ import {
 } from '../../shared/ai/providerDefaults.mjs';
 
 export const DEFAULT_SERVER_PORT = 8787;
-export const DEFAULT_LOCAL_FRONTEND_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+export const DEFAULT_LOCAL_FRONTEND_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+];
 export const DEFAULT_HOSTED_FRONTEND_ORIGINS = ['https://cheekyfellastef.github.io'];
 
 function parseOriginList(rawValue) {
