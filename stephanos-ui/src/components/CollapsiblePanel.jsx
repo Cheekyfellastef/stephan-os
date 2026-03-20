@@ -14,6 +14,8 @@ export default function CollapsiblePanel({
   const rootClassName = ['panel', 'collapsible-panel', className, isOpen ? 'is-open' : 'is-collapsed']
     .filter(Boolean)
     .join(' ');
+  const bodyId = `${panelId}-body`;
+  const toggleLabel = `${isOpen ? 'Collapse' : 'Expand'} ${title}`;
 
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
@@ -24,7 +26,9 @@ export default function CollapsiblePanel({
             className="panel-collapse-toggle"
             onClick={onToggle}
             aria-expanded={isOpen}
-            aria-controls={`${panelId}-body`}
+            aria-controls={bodyId}
+            aria-label={toggleLabel}
+            title={toggleLabel}
           >
             <span className={`panel-chevron ${isOpen ? 'open' : ''}`} aria-hidden="true">⌄</span>
             <span className="panel-heading-copy">
@@ -35,7 +39,7 @@ export default function CollapsiblePanel({
         </div>
         {actions ? <div className="panel-header-actions">{actions}</div> : null}
       </div>
-      <div id={`${panelId}-body`} className="panel-body" hidden={!isOpen}>
+      <div id={bodyId} className="panel-body" hidden={!isOpen} aria-hidden={!isOpen}>
         {children}
       </div>
     </Component>
