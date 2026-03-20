@@ -110,6 +110,8 @@ router.post('/chat', async (req, res) => {
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
     const executionMetadata = {
+      ui_requested_provider: provider,
+      backend_default_provider: DEFAULT_PROVIDER_KEY,
       requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
       selected_provider: llmResult.diagnostics?.selectedProvider || providerResolution.resolvedProvider,
       actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
@@ -125,6 +127,7 @@ router.post('/chat', async (req, res) => {
     };
     const requestTrace = {
       ui_requested_provider: provider,
+      backend_default_provider: DEFAULT_PROVIDER_KEY,
       requested_provider: executionMetadata.requested_provider,
       selected_provider: executionMetadata.selected_provider,
       actual_provider_used: executionMetadata.actual_provider_used,

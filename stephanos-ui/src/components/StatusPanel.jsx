@@ -47,6 +47,18 @@ export default function StatusPanel() {
     preferAuto: typeof window !== 'undefined' && window.innerWidth <= 820,
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
+  const executionTruth = isBusy
+    ? 'busy'
+    : !lastExecutionMetadata?.actual_provider_used
+      ? status
+      : lastExecutionMetadata.fallback_used
+        ? `fallback via ${lastExecutionMetadata.actual_provider_used}`
+        : lastExecutionMetadata.actual_provider_used === 'mock'
+          ? 'mock response'
+          : `${lastExecutionMetadata.actual_provider_used} answered`;
+  const responseTruth = lastExecutionMetadata?.actual_provider_used
+    ? (lastExecutionMetadata.actual_provider_used === 'mock' ? 'mock' : 'live')
+    : 'n/a';
 
   return (
     <aside className="status-panel panel">
@@ -63,23 +75,27 @@ export default function StatusPanel() {
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
         <li>Dependency Summary: {runtimeStatus.dependencySummary}</li>
         <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
-        <li>Provider Health: {statusSummary.healthBadge}</li>
-        <li>Provider State: {statusSummary.healthState}</li>
-        <li>Provider Detail: {statusSummary.healthDetail}</li>
-        <li>Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
+        <li>Selected Provider Health: {statusSummary.healthBadge}</li>
+        <li>Selected Provider State: {statusSummary.healthState}</li>
+        <li>Selected Provider Detail: {statusSummary.healthDetail}</li>
+        <li>Selected Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
         <li>Provider Endpoint: {statusSummary.providerEndpoint}</li>
         <li>Provider Model: {statusSummary.model}</li>
+        <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
+        <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || apiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Last Requested Provider: {lastExecutionMetadata?.requested_provider || 'n/a'}</li>
         <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
         <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
         <li>Last Model Used: {lastExecutionMetadata?.model_used || 'n/a'}</li>
+        <li>Last Response Truth: {responseTruth}</li>
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
-        <li>Execution: {isBusy ? 'busy' : status}</li>
+        <li>Execution Truth: {executionTruth}</li>
+        <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>

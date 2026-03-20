@@ -6,6 +6,51 @@ import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
+function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
+  const executionMetadata = data.data?.execution_metadata || {};
+  const requestTrace = data.data?.request_trace || {};
+  const actualProviderUsed = executionMetadata.actual_provider_used || data.data?.actual_provider_used || data.data?.provider || null;
+  const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
+
+  return {
+    ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
+    backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
+    requested_provider: executionMetadata.requested_provider || requestTrace.requested_provider || requestPayload.provider,
+    selected_provider: executionMetadata.selected_provider || requestTrace.selected_provider || requestPayload.provider,
+    actual_provider_used: actualProviderUsed,
+    model_used: modelUsed,
+    fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
+    fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
+  };
+}
+
+function deriveExecutionStatus(executionMetadata) {
+  if (!executionMetadata?.actual_provider_used) {
+    return 'ok';
+  }
+
+  if (executionMetadata.actual_provider_used === 'mock') {
+    return executionMetadata.fallback_used ? 'mock-fallback' : 'mock';
+  }
+
+  return executionMetadata.fallback_used ? `fallback:${executionMetadata.actual_provider_used}` : `ok:${executionMetadata.actual_provider_used}`;
+}
+
+function buildExecutionSummary(executionMetadata) {
+  const summaryPrefix = `UI requested ${executionMetadata.ui_requested_provider}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
+  const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
+
+  if (executionMetadata.fallback_used) {
+    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}`;
+  }
+
+  if (executionMetadata.actual_provider_used === 'mock') {
+    return `${summaryPrefix}${modelSuffix}. Mock answered directly.`;
+  }
+
+  return `${summaryPrefix}${modelSuffix}.`;
+}
+
 function transportErrorToUi(error) {
   if (!error?.code) {
     return { error: 'Unexpected transport error.', errorCode: 'UNKNOWN_TRANSPORT_ERROR', output: 'Unable to process request due to an unknown network issue.' };
@@ -248,14 +293,11 @@ export function useAIConsole() {
         setProviderHealth(providerHealth);
       }
 
-      const executionMetadata = data.data?.execution_metadata || {
-        requested_provider: requestPayload.provider,
-        selected_provider: requestPayload.provider,
-        actual_provider_used: data.data?.provider || null,
-        model_used: data.data?.provider_model || null,
-        fallback_used: false,
-        fallback_reason: null,
-      };
+      const executionMetadata = normalizeExecutionMetadata({
+        data,
+        requestPayload,
+        backendDefaultProvider: apiStatus.backendDefaultProvider,
+      });
 
       console.debug('[Stephanos UI] Received AI response', executionMetadata);
 
@@ -277,14 +319,12 @@ export function useAIConsole() {
 
       setCommandHistory((prev) => [...prev, entry]);
       setLastRoute(data.route || 'assistant');
-      setStatus(data.success ? 'ok' : 'error');
+      setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 
       const providerMessage = !data.success && provider !== 'mock'
         ? `${data.error || 'Provider failed.'} Use Mock instead if you want a zero-cost response.`
         : data.output_text;
-      const executionSummary = executionMetadata.fallback_used
-        ? `Fallback executed: requested ${executionMetadata.requested_provider}, selected ${executionMetadata.selected_provider}, used ${executionMetadata.actual_provider_used}${executionMetadata.fallback_reason ? ` (${executionMetadata.fallback_reason})` : ''}.`
-        : `Backend reachable. Requested: ${executionMetadata.requested_provider}. Selected: ${executionMetadata.selected_provider}. Executed: ${executionMetadata.actual_provider_used}${executionMetadata.model_used ? ` (${executionMetadata.model_used})` : ''}.`;
+      const executionSummary = buildExecutionSummary(executionMetadata);
 
       setApiStatus((prev) => ({
         ...prev,
@@ -294,6 +334,7 @@ export function useAIConsole() {
           ? executionSummary
           : `Provider issue: ${providerMessage}`,
         backendReachable: true,
+        backendDefaultProvider: executionMetadata.backend_default_provider || prev.backendDefaultProvider,
         lastCheckedAt: new Date().toISOString(),
       }));
 
@@ -306,6 +347,8 @@ export function useAIConsole() {
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
         error: data.error,
         error_code: data.error_code ?? data.debug?.error_code ?? null,
+        ui_requested_provider: executionMetadata.ui_requested_provider,
+        backend_default_provider: executionMetadata.backend_default_provider,
         requested_provider: requestPayload.provider,
         selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,
