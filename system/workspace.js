@@ -1,5 +1,5 @@
 import { loadDependencies } from "./apps/dependency_loader.js";
-import { createStephanosLocalUrls } from "../shared/runtime/stephanosLocalUrls.mjs";
+import { createStephanosRuntimeTargets, getStephanosPreferredRuntimeTarget } from "../shared/runtime/stephanosLocalUrls.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -9,7 +9,8 @@ function renderAppLoadError(container, message) {
   container.appendChild(error);
 }
 
-const { runtimeUrl: STEPHANOS_RUNTIME_URL } = createStephanosLocalUrls();
+const STEPHANOS_RUNTIME_TARGETS = createStephanosRuntimeTargets();
+const STEPHANOS_RUNTIME_URL = getStephanosPreferredRuntimeTarget(STEPHANOS_RUNTIME_TARGETS)?.url || STEPHANOS_RUNTIME_TARGETS[0]?.url || "http://localhost:5173/";
 
 function buildWorkspaceLoadErrorMessage(project) {
   if (isStephanosProject(project)) {
