@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import aiRouter from './routes/ai.js';
+import memoryRouter from './routes/memory.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -10,6 +11,7 @@ import {
   getServerPort,
   resolveAllowedOrigins,
 } from './config/runtimeConfig.js';
+import { memoryService } from './services/memoryService.js';
 
 const logger = createLogger('server');
 const app = express();
@@ -45,7 +47,10 @@ app.get('/api/health', (_req, res) => {
   res.json(buildHealthDiagnostics());
 });
 
+memoryService.load();
+
 app.use('/api/ai', aiRouter);
+app.use('/api/memory', memoryRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
