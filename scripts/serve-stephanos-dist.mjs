@@ -7,14 +7,18 @@ import {
   readDistMetadataJson,
   stephanosDistMetadataPath,
 } from './stephanos-build-utils.mjs';
+import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
 
 const host = process.env.STEPHANOS_SERVE_HOST || '0.0.0.0';
 const port = Number(process.env.STEPHANOS_SERVE_PORT || 4173);
-const distMountPath = '/apps/stephanos/dist/';
-const runtimeUrl = `http://127.0.0.1:${port}${distMountPath}`;
-const runtimeIndexUrl = `${runtimeUrl}index.html`;
-const launcherShellUrl = `http://127.0.0.1:${port}/`;
-const healthUrl = `http://127.0.0.1:${port}/__stephanos/health`;
+const {
+  distMountPath,
+  runtimeUrl,
+  runtimeIndexUrl,
+  launcherShellUrl,
+  healthUrl,
+  distEntryPath,
+} = createStephanosLocalUrls({ port });
 const runtimeStatusPath = resolve(repoRoot, 'apps', 'stephanos', 'runtime-status.json');
 const staticRootPath = repoRoot;
 
@@ -81,7 +85,7 @@ function buildHealthPayload() {
     launcherShellUrl,
     distMountPath,
     healthUrl,
-    distEntryPath: 'apps/stephanos/dist/index.html',
+    distEntryPath,
     distEntryExists,
     distMetadataPath: 'apps/stephanos/dist/stephanos-build.json',
     distMetadataExists,
