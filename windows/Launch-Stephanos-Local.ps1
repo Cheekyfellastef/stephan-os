@@ -96,10 +96,12 @@ function Ensure-NpmDependencies([string]$RelativePath, [hashtable]$LauncherState
   $needsInstall = -not (Test-Path $nodeModulesPath) -or [string]::IsNullOrWhiteSpace($currentFingerprint) -or $currentFingerprint -ne $previousFingerprint
 
   if (-not $needsInstall) {
+    Write-LiveLog "dependencies unchanged ($displayPath); reusing existing node_modules"
     return
   }
 
-  Write-LiveLog "installing dependencies ($displayPath)"
+  $reason = if (-not (Test-Path $nodeModulesPath)) { 'node_modules missing' } else { 'package metadata changed' }
+  Write-LiveLog "installing dependencies ($displayPath) - $reason"
   Push-Location $repoRoot
   try {
     if ([string]::IsNullOrWhiteSpace($RelativePath)) {
@@ -146,26 +148,31 @@ function Update-RepoIfSafe {
 
   $branchName = Get-GitBranchName
   if ([string]::IsNullOrWhiteSpace($repoStatus.Trim())) {
+    Write-LiveLog 'repo clean'
     Write-LiveLog "repo clean on branch $branchName"
   }
   else {
+    Write-LiveLog 'repo dirty'
     Write-LiveLog "repo dirty on branch $branchName"
-    Write-LiveLog 'skipping pull because local changes are present; no files were overwritten'
+    Write-LiveLog 'update skipped to protect local changes'
     Write-LiveLog 'blocked update details:'
     Write-Host ($repoStatus.TrimEnd())
     return
   }
 
-  Write-LiveLog 'pulling latest'
+  Write-LiveLog 'running git fetch --all --prune'
   & git -C $repoRoot fetch --all --prune
   if ($LASTEXITCODE -ne 0) {
-    throw 'git fetch failed'
+    throw 'git fetch --all --prune failed'
   }
 
+  Write-LiveLog 'running git pull --ff-only'
   & git -C $repoRoot pull --ff-only
   if ($LASTEXITCODE -ne 0) {
     throw 'git pull --ff-only failed'
   }
+
+  Write-LiveLog 'latest code pulled'
 }
 
 function Start-DevWindow([string]$Title, [string]$Command) {

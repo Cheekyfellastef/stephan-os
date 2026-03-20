@@ -1,4 +1,8 @@
+import { useAIStore } from '../state/aiStore';
+import CollapsiblePanel from './CollapsiblePanel';
+
 export default function ToolsPanel({ commandHistory }) {
+  const { uiLayout, togglePanel } = useAIStore();
   const latestTools = [...commandHistory]
     .reverse()
     .find((entry) => Array.isArray(entry.response?.data?.grouped_tools));
@@ -6,8 +10,15 @@ export default function ToolsPanel({ commandHistory }) {
   const groups = latestTools?.response?.data?.grouped_tools ?? [];
 
   return (
-    <section className="panel">
-      <h2>Tools</h2>
+    <CollapsiblePanel
+      as="aside"
+      panelId="toolsPanel"
+      title="Tools"
+      description="Tool registry groups and live subsystem readiness."
+      className="tools-panel"
+      isOpen={uiLayout.toolsPanel}
+      onToggle={() => togglePanel('toolsPanel')}
+    >
       {groups.length === 0 ? (
         <p className="muted">Run /tools to inspect registry.</p>
       ) : (
@@ -24,6 +35,6 @@ export default function ToolsPanel({ commandHistory }) {
           ))}
         </div>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }

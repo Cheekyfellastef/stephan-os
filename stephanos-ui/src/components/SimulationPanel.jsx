@@ -1,15 +1,23 @@
-import SimulationListPanel from './SimulationListPanel';
+import { useAIStore } from '../state/aiStore';
 import SimulationResultCard from './SimulationResultCard';
+import CollapsiblePanel from './CollapsiblePanel';
 
 export default function SimulationPanel({ commandHistory }) {
+  const { uiLayout, togglePanel } = useAIStore();
   const latestResult = [...commandHistory]
     .reverse()
     .find((entry) => entry.route === 'simulation' && entry.response?.data?.result);
 
   return (
-    <section className="panel">
-      <h2>Simulation Core</h2>
-      <SimulationListPanel commandHistory={commandHistory} />
+    <CollapsiblePanel
+      as="aside"
+      panelId="simulationPanel"
+      title="Simulation Core"
+      description="Latest simulation run output and execution summary."
+      className="simulation-panel"
+      isOpen={uiLayout.simulationPanel}
+      onToggle={() => togglePanel('simulationPanel')}
+    >
       <div>
         <h3>Latest Result</h3>
         {!latestResult ? (
@@ -18,6 +26,6 @@ export default function SimulationPanel({ commandHistory }) {
           <SimulationResultCard payload={latestResult.response.data} />
         )}
       </div>
-    </section>
+    </CollapsiblePanel>
   );
 }

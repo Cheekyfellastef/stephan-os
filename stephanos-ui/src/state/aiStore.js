@@ -17,10 +17,18 @@ import {
 const AIStoreContext = createContext(null);
 const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
 const DEFAULT_UI_LAYOUT = {
-  memoryPanel: true,
-  statusPanel: true,
-  debugConsole: false,
   commandDeck: true,
+  statusPanel: true,
+  toolsPanel: true,
+  memoryPanel: true,
+  knowledgeGraphPanel: true,
+  simulationListPanel: true,
+  simulationPanel: true,
+  simulationHistoryPanel: true,
+  proposalPanel: true,
+  activityPanel: true,
+  roadmapPanel: true,
+  debugConsole: false,
 };
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
@@ -31,12 +39,12 @@ const DEFAULT_OLLAMA_CONNECTION = {
 };
 
 function normalizeUiLayout(value = {}) {
-  return {
-    memoryPanel: value.memoryPanel !== false,
-    statusPanel: value.statusPanel !== false,
-    debugConsole: value.debugConsole === true,
-    commandDeck: value.commandDeck !== false,
-  };
+  return Object.fromEntries(
+    Object.entries(DEFAULT_UI_LAYOUT).map(([key, defaultValue]) => [
+      key,
+      defaultValue ? value[key] !== false : value[key] === true,
+    ]),
+  );
 }
 
 function readLocalStorageJson(key, fallback) {
