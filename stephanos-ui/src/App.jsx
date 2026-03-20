@@ -12,6 +12,7 @@ import ActivityPanel from './components/ActivityPanel';
 import RoadmapPanel from './components/RoadmapPanel';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import ProviderToggle from './components/ProviderToggle';
+import CollapsiblePanel from './components/CollapsiblePanel';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
@@ -42,6 +43,8 @@ export default function App() {
     fallbackEnabled,
     fallbackOrder,
     lastExecutionMetadata,
+    uiLayout,
+    togglePanel,
   } = useAIStore();
   useDebugConsole();
 
@@ -66,7 +69,19 @@ export default function App() {
 
   return (
     <main className="app-shell-root">
-      <section className="provider-dock panel">
+      <CollapsiblePanel
+        panelId="providerControlsPanel"
+        title="AI Provider Controls"
+        description="Configure providers, health checks, models, and routing without losing your layout preference after restart."
+        className="provider-dock"
+        isOpen={uiLayout.providerControlsPanel}
+        onToggle={() => togglePanel('providerControlsPanel')}
+        actions={showCloudFallbackAction ? (
+          <button type="button" className="ghost-button" onClick={() => setProvider(runtimeStatus.activeProvider)}>
+            Use {runtimeStatus.activeProvider}
+          </button>
+        ) : null}
+      >
         <div className="local-ai-banner-wrap">
           <div className={`local-ai-banner ${runtimeStatus.statusTone}`}>
             <div>
@@ -81,15 +96,9 @@ export default function App() {
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.
               </p>
             </div>
-            {showCloudFallbackAction ? (
-              <button type="button" className="ghost-button" onClick={() => setProvider(runtimeStatus.activeProvider)}>
-                Use {runtimeStatus.activeProvider}
-              </button>
-            ) : null}
           </div>
         </div>
 
-        <h2>AI Provider Controls</h2>
         <p className="provider-dock-status">
           Current Provider: <strong>{providerSummary.providerLabel}</strong> · Route Mode: <strong>{runtimeStatus.providerMode}</strong> · Launch State: <strong>{runtimeStatus.appLaunchState}</strong>
         </p>
@@ -100,7 +109,7 @@ export default function App() {
           onTestConnection={refreshHealth}
           onSendTestPrompt={() => submitPrompt('Run a quick Stephanos provider self-test and explain what route is active right now.')}
         />
-      </section>
+      </CollapsiblePanel>
 
       <section className="app-shell">
         <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />

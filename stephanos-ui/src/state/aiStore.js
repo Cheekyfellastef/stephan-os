@@ -17,6 +17,7 @@ import {
 const AIStoreContext = createContext(null);
 const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
 const DEFAULT_UI_LAYOUT = {
+  providerControlsPanel: true,
   commandDeck: true,
   statusPanel: true,
   toolsPanel: true,
