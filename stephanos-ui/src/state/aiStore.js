@@ -15,6 +15,13 @@ import {
 } from '../ai/providerConfig';
 
 const AIStoreContext = createContext(null);
+const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
+const DEFAULT_UI_LAYOUT = {
+  memoryPanel: true,
+  statusPanel: true,
+  debugConsole: false,
+  commandDeck: true,
+};
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
   lastSuccessfulHost: '',
@@ -22,6 +29,37 @@ const DEFAULT_OLLAMA_CONNECTION = {
   pcAddressHint: '',
   lastSelectedModel: '',
 };
+
+function normalizeUiLayout(value = {}) {
+  return {
+    memoryPanel: value.memoryPanel !== false,
+    statusPanel: value.statusPanel !== false,
+    debugConsole: value.debugConsole === true,
+    commandDeck: value.commandDeck !== false,
+  };
+}
+
+function readLocalStorageJson(key, fallback) {
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalStorageJson(key, value) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures so the UI remains usable in restricted contexts.
+  }
+}
 
 function normalizeOllamaConnection(value = {}) {
   return {
@@ -61,16 +99,23 @@ function getStoredSettings() {
   }
 }
 
+function getStoredUiLayout() {
+  return normalizeUiLayout(readLocalStorageJson(STEPHANOS_UI_LAYOUT_STORAGE_KEY, DEFAULT_UI_LAYOUT));
+}
+
 function persistSettings(state) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify({
+  writeLocalStorageJson(AI_SETTINGS_STORAGE_KEY, {
     provider: state.provider,
     devMode: state.devMode,
     fallbackEnabled: state.fallbackEnabled,
     fallbackOrder: state.fallbackOrder,
     providerConfigs: sanitizeConfigForStorage(state.providerConfigs),
     ollamaConnection: normalizeOllamaConnection(state.ollamaConnection),
-  }));
+  });
+}
+
+function persistUiLayout(uiLayout) {
+  writeLocalStorageJson(STEPHANOS_UI_LAYOUT_STORAGE_KEY, normalizeUiLayout(uiLayout));
 }
 
 export function AIStoreProvider({ children }) {
@@ -79,7 +124,9 @@ export function AIStoreProvider({ children }) {
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState('assistant');
-  const [debugVisible, setDebugVisible] = useState(false);
+  const initialUiLayout = getStoredUiLayout();
+  const [uiLayout, setUiLayout] = useState(initialUiLayout);
+  const [debugVisible, setDebugVisibleState] = useState(initialUiLayout.debugConsole);
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(initialSettings.provider);
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
@@ -126,6 +173,36 @@ export function AIStoreProvider({ children }) {
     ...next,
   });
 
+  const updateUiLayout = (updater) => {
+    const candidate = typeof updater === 'function' ? updater(uiLayout) : updater;
+    const resolvedLayout = normalizeUiLayout(candidate);
+    setUiLayout(resolvedLayout);
+    persistUiLayout(resolvedLayout);
+    setDebugVisibleState(resolvedLayout.debugConsole);
+    return resolvedLayout;
+  };
+
+  const setDebugVisible = (nextVisible) => {
+    updateUiLayout((prev) => ({
+      ...prev,
+      debugConsole: typeof nextVisible === 'function' ? nextVisible(prev.debugConsole) : nextVisible,
+    }));
+  };
+
+  const setPanelState = (panelId, isOpen) => {
+    if (!(panelId in DEFAULT_UI_LAYOUT)) return;
+
+    updateUiLayout((prev) => ({
+      ...prev,
+      [panelId]: typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen,
+    }));
+  };
+
+  const togglePanel = (panelId) => {
+    if (!(panelId in DEFAULT_UI_LAYOUT)) return;
+    setPanelState(panelId, (prev) => !prev);
+  };
+
   const setProvider = (nextProvider) => {
     const resolved = normalizeProviderSelection(nextProvider);
     setProviderState(resolved);
@@ -167,6 +244,7 @@ export function AIStoreProvider({ children }) {
   const resetToFreeMode = () => {
     const defaults = createDefaultRouterSettings();
     const sessionSafe = Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { ...defaults.providerConfigs[key], apiKey: '' }]));
+    const nextUiLayout = { ...DEFAULT_UI_LAYOUT };
     setProviderState(defaults.provider);
     setDevModeState(defaults.devMode);
     setFallbackEnabledState(defaults.fallbackEnabled);
@@ -175,7 +253,10 @@ export function AIStoreProvider({ children }) {
     setDraftProviderConfigs(sessionSafe);
     setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
     setProviderSelectionSource('default:free-tier');
+    setUiLayout(nextUiLayout);
+    setDebugVisibleState(nextUiLayout.debugConsole);
     persistSettings({ ...defaults, providerConfigs: sessionSafe, ollamaConnection: DEFAULT_OLLAMA_CONNECTION });
+    persistUiLayout(nextUiLayout);
   };
 
   const getDraftProviderConfig = (providerKey) => draftProviderConfigs[providerKey];
@@ -253,6 +334,9 @@ export function AIStoreProvider({ children }) {
     setDebugVisible,
     debugData,
     setDebugData,
+    uiLayout,
+    togglePanel,
+    setPanelState,
     provider,
     setProvider,
     providerSelectionSource,
@@ -295,6 +379,7 @@ export function AIStoreProvider({ children }) {
     lastRoute,
     debugVisible,
     debugData,
+    uiLayout,
     provider,
     providerSelectionSource,
     devMode,

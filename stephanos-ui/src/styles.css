@@ -60,6 +60,104 @@ body {
   padding: 1rem;
 }
 
+.collapsible-panel {
+  overflow: hidden;
+}
+
+.panel-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.panel-heading-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.panel-collapse-toggle {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.panel-collapse-toggle:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.panel-collapse-toggle:focus-visible {
+  outline: 2px solid rgba(136, 210, 255, 0.78);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.panel-heading-copy {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.panel-heading-copy h1,
+.panel-heading-copy h2,
+.panel-heading-copy h3 {
+  margin: 0;
+}
+
+.panel-description {
+  color: #9fd3ff;
+  font-size: 0.86rem;
+}
+
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(92, 176, 255, 0.35);
+  color: #97d6ff;
+  transform: rotate(-90deg);
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.panel-chevron.open {
+  transform: rotate(0deg);
+}
+
+.panel-collapse-toggle:hover .panel-chevron {
+  background: rgba(14, 38, 70, 0.65);
+  border-color: rgba(150, 214, 255, 0.62);
+}
+
+.panel-body {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.9rem;
+}
+
+.collapsible-panel.is-collapsed {
+  min-height: 0;
+}
+
+.collapsible-panel.is-collapsed .panel-header-row {
+  align-items: center;
+}
+
 .provider-dock {
   margin-bottom: 1rem;
   position: relative;
@@ -69,8 +167,7 @@ body {
   background: linear-gradient(180deg, rgba(10, 25, 46, 0.98), rgba(4, 14, 28, 0.98));
 }
 
-.provider-dock h2,
-.status-panel h2 {
+.provider-dock h2 {
   margin: 0 0 0.5rem;
 }
 

@@ -3,6 +3,7 @@ import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import CommandResultCard from './CommandResultCard';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
@@ -17,6 +18,8 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     fallbackEnabled,
     fallbackOrder,
     lastExecutionMetadata,
+    uiLayout,
+    togglePanel,
   } = useAIStore();
   const activeHealth = providerHealth[provider] || {};
   const ollamaState = provider === 'ollama'
@@ -46,8 +49,15 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   };
 
   return (
-    <section className="panel mission-console">
-      <h1>Stephanos Mission Console</h1>
+    <CollapsiblePanel
+      panelId="commandDeck"
+      title="Stephanos Mission Console"
+      description="Command deck for prompts, command execution, and route feedback."
+      className="mission-console"
+      titleAs="h1"
+      isOpen={uiLayout.commandDeck}
+      onToggle={() => togglePanel('commandDeck')}
+    >
       <div className={`api-connection-banner ${apiStatus.state}`}>
         <strong>{apiStatus.label}</strong>
         <span>{apiStatus.detail}</span>
@@ -76,6 +86,6 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
         <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />
         <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
       </form>
-    </section>
+    </CollapsiblePanel>
   );
 }

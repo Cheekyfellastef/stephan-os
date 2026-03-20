@@ -12,6 +12,7 @@ import {
   STEPHANOS_UI_SOURCE_FINGERPRINT,
   STEPHANOS_UI_VERSION,
 } from '../runtimeInfo';
+import CollapsiblePanel from './CollapsiblePanel';
 
 export default function StatusPanel() {
   const {
@@ -30,6 +31,8 @@ export default function StatusPanel() {
     getActiveProviderConfigSource,
     uiDiagnostics,
     lastExecutionMetadata,
+    uiLayout,
+    togglePanel,
   } = useAIStore();
 
   const latest = commandHistory[commandHistory.length - 1];
@@ -61,8 +64,15 @@ export default function StatusPanel() {
     : 'n/a';
 
   return (
-    <aside className="status-panel panel">
-      <h2>Status</h2>
+    <CollapsiblePanel
+      as="aside"
+      panelId="statusPanel"
+      title="Status"
+      description="Live routing, backend, and runtime diagnostics."
+      className="status-panel"
+      isOpen={uiLayout.statusPanel}
+      onToggle={() => togglePanel('statusPanel')}
+    >
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Route Mode: {runtimeStatus.providerMode}</li>
@@ -112,6 +122,6 @@ export default function StatusPanel() {
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary}</p>
-    </aside>
+    </CollapsiblePanel>
   );
 }

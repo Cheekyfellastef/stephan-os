@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createMemoryItem, listMemoryItems, searchMemoryItems } from '../ai/aiClient';
+import { useAIStore } from '../state/aiStore';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const CATEGORY_OPTIONS = ['project', 'preference', 'troubleshooting', 'architecture', 'workflow'];
 const EMPTY_FORM = {
@@ -16,6 +18,7 @@ function formatTags(tags = []) {
 }
 
 export default function MemoryPanel() {
+  const { uiLayout, togglePanel } = useAIStore();
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(EMPTY_FORM);
@@ -74,17 +77,19 @@ export default function MemoryPanel() {
   }
 
   return (
-    <section className="panel memory-panel">
-      <div className="memory-panel-header">
-        <div>
-          <h2>Memory</h2>
-          <p className="muted">Local persistent notes for project facts, preferences, and fixes.</p>
-        </div>
+    <CollapsiblePanel
+      panelId="memoryPanel"
+      title="Memory"
+      description="Local persistent notes for project facts, preferences, and fixes."
+      className="memory-panel"
+      isOpen={uiLayout.memoryPanel}
+      onToggle={() => togglePanel('memoryPanel')}
+      actions={(
         <button type="button" className="ghost-button" onClick={() => loadItems(search)} disabled={isLoading}>
           Refresh
         </button>
-      </div>
-
+      )}
+    >
       <form className="memory-search-form" onSubmit={handleSearchSubmit}>
         <input
           type="search"
@@ -171,6 +176,6 @@ export default function MemoryPanel() {
           ))}
         </ul>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }
