@@ -37,6 +37,7 @@ export default function App() {
     provider,
     getActiveProviderConfig,
     setProvider,
+    routeMode,
     setUiDiagnostics,
     apiStatus,
     providerHealth,
@@ -54,11 +55,12 @@ export default function App() {
     appName: 'Stephanos Mission Console',
     validationState: 'healthy',
     selectedProvider: provider,
+    routeMode,
     fallbackEnabled,
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    preferAuto: typeof window !== 'undefined' && window.innerWidth <= 820,
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
@@ -85,12 +87,12 @@ export default function App() {
         <div className="local-ai-banner-wrap">
           <div className={`local-ai-banner ${runtimeStatus.statusTone}`}>
             <div>
-              <span className="local-ai-pill">{runtimeStatus.providerMode} route</span>
+              <span className="local-ai-pill">{runtimeStatus.effectiveRouteMode} route</span>
               <p className="local-ai-text">
                 {runtimeStatus.headline}. <strong>{runtimeStatus.dependencySummary}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
+                Requested mode: <strong>{routeMode}</strong> · Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
               </p>
               <p className="local-ai-text secondary">
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.
@@ -100,10 +102,10 @@ export default function App() {
         </div>
 
         <p className="provider-dock-status">
-          Current Provider: <strong>{providerSummary.providerLabel}</strong> · Route Mode: <strong>{runtimeStatus.providerMode}</strong> · Launch State: <strong>{runtimeStatus.appLaunchState}</strong>
+          Current Provider: <strong>{providerSummary.providerLabel}</strong> · Requested Route Mode: <strong>{runtimeStatus.requestedRouteMode}</strong> · Effective Route Mode: <strong>{runtimeStatus.effectiveRouteMode}</strong> · Launch State: <strong>{runtimeStatus.appLaunchState}</strong>
         </p>
         <p className="provider-dock-status">
-          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Active Route: <strong>{runtimeStatus.activeProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
+          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{runtimeStatus.activeProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
         </p>
         <ProviderToggle
           onTestConnection={refreshHealth}

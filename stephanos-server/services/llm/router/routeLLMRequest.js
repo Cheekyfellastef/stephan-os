@@ -2,24 +2,15 @@ import { DEFAULT_PROVIDER_KEY, PROVIDER_DEFINITIONS } from '../../../../shared/a
 import { ERROR_CODES } from '../../errors.js';
 import { createLogger } from '../../../utils/logger.js';
 import { PROVIDER_HEALTH_CHECKS, PROVIDER_RUNNERS } from '../providers/index.js';
-import { buildAIRequest, buildRouterConfig, redactSecrets, sanitizeProviderConfig } from '../utils/providerUtils.js';
+import {
+  buildAIRequest,
+  buildRouterConfig,
+  redactSecrets,
+  resolveRoutingPlan,
+  sanitizeProviderConfig,
+} from '../utils/providerUtils.js';
 
 const logger = createLogger('llm-router');
-
-function resolveAttemptOrder(config) {
-  const selected = config.provider || DEFAULT_PROVIDER_KEY;
-  const order = [selected];
-
-  if (!config.fallbackEnabled) return order;
-
-  for (const provider of config.fallbackOrder) {
-    if (provider !== 'openrouter' && provider !== selected && !order.includes(provider)) {
-      order.push(provider);
-    }
-  }
-
-  return order.filter((provider) => PROVIDER_DEFINITIONS[provider]);
-}
 
 function summarizeAttemptFailure(provider, attempt) {
   if (!attempt) return null;
@@ -64,20 +55,39 @@ export async function getProviderHealthSnapshot(routerConfigInput = {}) {
     };
   }
 
-  return snapshot;
+  const routing = resolveRoutingPlan(routerConfig, snapshot);
+
+  return {
+    ...snapshot,
+    routing: {
+      requestedProvider: routing.requestedProvider,
+      requestedRouteMode: routing.requestedRouteMode,
+      effectiveRouteMode: routing.effectiveRouteMode,
+      selectedProvider: routing.selectedProvider,
+      attemptOrder: routing.attemptOrder,
+      readyLocalProviders: routing.readyLocalProviders,
+      readyCloudProviders: routing.readyCloudProviders,
+      localAvailable: routing.localAvailable,
+      cloudAvailable: routing.cloudAvailable,
+      runtimeContext: routing.runtimeContext,
+    },
+  };
 }
 
 export function resolveProviderRequest(provider, providerConfig = {}, options = {}) {
   const routerConfig = buildRouterConfig({
     provider,
+    routeMode: options.routeMode,
     providerConfigs: { [provider]: providerConfig },
     fallbackEnabled: options.fallbackEnabled,
     fallbackOrder: options.fallbackOrder,
     devMode: options.devMode,
+    runtimeContext: options.runtimeContext,
   });
 
   return {
     requestedProvider: provider || DEFAULT_PROVIDER_KEY,
+    requestedRouteMode: routerConfig.routeMode,
     resolvedProvider: routerConfig.provider,
     fallbackApplied: routerConfig.provider !== (provider || DEFAULT_PROVIDER_KEY),
     overrideKeys: Object.keys(providerConfig || {}).filter((key) => {
@@ -90,36 +100,43 @@ export function resolveProviderRequest(provider, providerConfig = {}, options = 
 export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const request = buildAIRequest(requestInput);
   const routerConfig = buildRouterConfig(configInput);
+  const providerHealthSnapshot = await getProviderHealthSnapshot(routerConfig);
+  const routing = providerHealthSnapshot.routing;
   const attempts = [];
-  const attemptOrder = resolveAttemptOrder(routerConfig);
+  const attemptOrder = routing.attemptOrder;
   const requestedProvider = configInput.provider || DEFAULT_PROVIDER_KEY;
-  const selectedProvider = routerConfig.provider;
+  const requestedRouteMode = routing.requestedRouteMode;
+  const selectedProvider = routing.selectedProvider;
 
   logger.info('Routing LLM request', {
     requestedProvider,
+    requestedRouteMode,
+    effectiveRouteMode: routing.effectiveRouteMode,
     selectedProvider,
     fallbackEnabled: routerConfig.fallbackEnabled,
     attemptOrder,
   });
   console.log('[BACKEND LIVE] Provider router request', {
     requested_provider: requestedProvider,
+    requested_route_mode: requestedRouteMode,
+    effective_route_mode: routing.effectiveRouteMode,
     selected_provider: selectedProvider,
     fallback_enabled: routerConfig.fallbackEnabled,
     attempt_order: attemptOrder,
+    runtime_context: routing.runtimeContext,
   });
 
   for (const provider of attemptOrder) {
-    if (provider === 'openrouter' && (!routerConfig.providerConfigs?.openrouter?.enabled || routerConfig.provider !== 'openrouter')) {
-      continue;
-    }
-
     logger.info('Executing provider attempt', {
       requestedProvider,
+      requestedRouteMode,
       selectedProvider,
       provider,
     });
     console.log('[BACKEND LIVE] Provider attempt starting', {
       requested_provider: requestedProvider,
+      requested_route_mode: requestedRouteMode,
+      effective_route_mode: routing.effectiveRouteMode,
       selected_provider: selectedProvider,
       actual_provider_attempt: provider,
     });
@@ -136,6 +153,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
 
     logger.info('Provider attempt completed', {
       requestedProvider,
+      requestedRouteMode,
       selectedProvider,
       provider,
       ok: attempt.result.ok,
@@ -144,6 +162,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     });
     console.log('[BACKEND LIVE] Provider attempt completed', {
       requested_provider: requestedProvider,
+      requested_route_mode: requestedRouteMode,
+      effective_route_mode: routing.effectiveRouteMode,
       selected_provider: selectedProvider,
       actual_provider_attempt: provider,
       ok: attempt.result.ok,
@@ -165,6 +185,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         diagnostics: {
           ...(attempt.result.diagnostics || {}),
           requestedProvider,
+          requestedRouteMode,
+          effectiveRouteMode: routing.effectiveRouteMode,
           selectedProvider,
           resolvedProvider: provider,
           actualProviderUsed: provider,
@@ -173,12 +195,16 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           fallbackReason,
           attemptOrder,
           attempts,
+          runtimeContext: routing.runtimeContext,
+          routing,
           routerConfig: redactSecrets(routerConfig),
         },
       };
 
       console.log('[BACKEND LIVE] Provider router resolved', {
         requested_provider: requestedProvider,
+        requested_route_mode: requestedRouteMode,
+        effective_route_mode: routing.effectiveRouteMode,
         selected_provider: selectedProvider,
         actual_provider_used: finalResult.actualProviderUsed,
         model_used: finalResult.modelUsed,
@@ -212,6 +238,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     diagnostics: {
       ...(lastAttempt?.result?.diagnostics || {}),
       requestedProvider,
+      requestedRouteMode,
+      effectiveRouteMode: routing.effectiveRouteMode,
       selectedProvider,
       resolvedProvider: lastAttempt?.provider || selectedProvider,
       actualProviderUsed: lastAttempt?.provider || selectedProvider,
@@ -220,12 +248,16 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       fallbackReason,
       attemptOrder,
       attempts,
+      runtimeContext: routing.runtimeContext,
+      routing,
       routerConfig: redactSecrets(routerConfig),
     },
   };
 
   console.log('[BACKEND LIVE] Provider router exhausted attempts', {
     requested_provider: requestedProvider,
+    requested_route_mode: requestedRouteMode,
+    effective_route_mode: routing.effectiveRouteMode,
     selected_provider: selectedProvider,
     actual_provider_used: failedResult.actualProviderUsed,
     model_used: failedResult.modelUsed,

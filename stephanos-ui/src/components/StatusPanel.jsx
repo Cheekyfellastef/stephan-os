@@ -23,6 +23,7 @@ export default function StatusPanel() {
     apiStatus,
     provider,
     providerSelectionSource,
+    routeMode,
     devMode,
     fallbackEnabled,
     fallbackOrder,
@@ -43,11 +44,12 @@ export default function StatusPanel() {
     appName: 'Stephanos Mission Console',
     validationState: 'healthy',
     selectedProvider: provider,
+    routeMode,
     fallbackEnabled,
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    preferAuto: typeof window !== 'undefined' && window.innerWidth <= 820,
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
   const executionTruth = isBusy
@@ -75,14 +77,20 @@ export default function StatusPanel() {
     >
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
-        <li>Route Mode: {runtimeStatus.providerMode}</li>
-        <li>Selected Provider: {runtimeStatus.selectedProvider}</li>
+        <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
+        <li>Effective Route Mode: {runtimeStatus.effectiveRouteMode}</li>
+        <li>Requested Provider: {runtimeStatus.selectedProvider}</li>
+        <li>Route Selected Provider: {runtimeStatus.routeSelectedProvider}</li>
         <li>Active Provider: {runtimeStatus.activeProvider}</li>
+        <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {apiStatus.label}</li>
+        <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
         <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
+        <li>Ready Cloud Providers: {runtimeStatus.readyCloudProviders.join(', ') || 'none'}</li>
+        <li>Ready Local Providers: {runtimeStatus.readyLocalProviders.join(', ') || 'none'}</li>
         <li>Dependency Summary: {runtimeStatus.dependencySummary}</li>
         <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Selected Provider Health: {statusSummary.healthBadge}</li>
@@ -90,6 +98,7 @@ export default function StatusPanel() {
         <li>Selected Provider Detail: {statusSummary.healthDetail}</li>
         <li>Selected Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
+        <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
@@ -97,6 +106,8 @@ export default function StatusPanel() {
         <li>Provider Model: {statusSummary.model}</li>
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
         <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || apiStatus.backendDefaultProvider || 'n/a'}</li>
+        <li>Last Route Mode: {lastExecutionMetadata?.route_mode || 'n/a'}</li>
+        <li>Last Effective Route Mode: {lastExecutionMetadata?.effective_route_mode || 'n/a'}</li>
         <li>Last Requested Provider: {lastExecutionMetadata?.requested_provider || 'n/a'}</li>
         <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
         <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
@@ -105,6 +116,7 @@ export default function StatusPanel() {
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
+        <li>Attempt Order: {runtimeStatus.attemptOrder.join(' → ')}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>

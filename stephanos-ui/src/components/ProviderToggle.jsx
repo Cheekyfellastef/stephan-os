@@ -3,10 +3,10 @@ import { getApiRuntimeConfig } from '../ai/aiClient';
 import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
-import { PROVIDER_KEYS, PROVIDER_DEFINITIONS } from '../ai/providerConfig';
+import { PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
-const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::free-tier-router-v1';
+const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
 
 const FIELD_MAP = {
   mock: [
@@ -18,7 +18,6 @@ const FIELD_MAP = {
   groq: [
     { key: 'model', label: 'Model', type: 'text' },
     { key: 'baseURL', label: 'Base URL', type: 'text' },
-    { key: 'apiKey', label: 'API key', type: 'password' },
   ],
   gemini: [
     { key: 'model', label: 'Model', type: 'text' },
@@ -35,6 +34,25 @@ const FIELD_MAP = {
     { key: 'baseURL', label: 'Base URL', type: 'text' },
     { key: 'apiKey', label: 'API key', type: 'password' },
   ],
+};
+
+const ROUTE_MODE_COPY = {
+  'auto': {
+    label: 'Auto',
+    detail: 'Stephanos picks the most sensible route from current runtime truth.',
+  },
+  'local-first': {
+    label: 'Local First',
+    detail: 'Prefer Ollama first, then Groq/cloud fallbacks.',
+  },
+  'cloud-first': {
+    label: 'Cloud First',
+    detail: 'Prefer Groq first for hosted or other-device access.',
+  },
+  'explicit': {
+    label: 'Explicit Provider',
+    detail: 'Use the selected provider directly without route-mode auto-selection.',
+  },
 };
 
 function renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }) {
@@ -59,6 +77,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const {
     provider,
     setProvider,
+    routeMode,
+    setRouteMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -135,7 +155,6 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       const { result, searchingState, discoveryState } = await discoveryRun;
       setOllamaDiscovery(searchingState);
 
-
       if (result.success) {
         setAvailableOllamaModels(result.models || []);
         handleDetectedOllamaConnection(result);
@@ -178,15 +197,33 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
       <div className="provider-switch-header">
         <div>
-          <span className="provider-switch-label">Adaptive AI Router</span>
-          <p className="provider-switch-subtitle">Stephanos prefers local Ollama when it is reachable, then falls through to configured cloud providers, with Mock reserved as a dev-safe fallback.</p>
+          <span className="provider-switch-label">Unified Stephanos Provider Router</span>
+          <p className="provider-switch-subtitle">One Stephanos UI, one backend router: local Ollama for nearby desktop use, cloud Groq for hosted or other-device sessions, with truthful fallback reporting.</p>
         </div>
         <div className="provider-switch-actions">
-          <button type="button" className="ghost-button" onClick={resetToFreeMode}>Reset to Local Defaults</button>
-          <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>
+          <button type="button" className="ghost-button" onClick={resetToFreeMode}>Reset Router Defaults</button>
+          <button type="button" className="ghost-button" onClick={onTestConnection}>Refresh Status</button>
           <button type="button" onClick={onSendTestPrompt}>Send Test Prompt</button>
         </div>
       </div>
+
+      <div className="provider-mode-grid">
+        {ROUTE_MODE_KEYS.map((modeKey) => (
+          <button
+            key={modeKey}
+            type="button"
+            className={`provider-mode-card${routeMode === modeKey ? ' active' : ''}`}
+            onClick={() => setRouteMode(modeKey)}
+          >
+            <strong>{ROUTE_MODE_COPY[modeKey].label}</strong>
+            <span>{ROUTE_MODE_COPY[modeKey].detail}</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="provider-dock-status">
+        Requested Route Mode: <strong>{routeMode}</strong> · Explicit Provider Target: <strong>{provider}</strong> · Backend Target: <strong>{runtimeConfig.baseUrl}</strong>
+      </p>
 
       <div className="toggle-row">
         <label className="toggle-chip"><input type="checkbox" checked={devMode} onChange={(event) => setDevMode(event.target.checked)} /> Dev-safe mode</label>
@@ -214,12 +251,28 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                   <p>{definition.targetSummary}</p>
                 </div>
                 <div className="provider-badges">
-                  <span className={`health-badge ${String(health.badge || 'unknown').toLowerCase().replace(/\s+/g, '-')}`}>{isActive ? 'Active' : health.badge || 'Unknown'}</span>
-                  {fallbackEnabled && providerKey !== provider && providerKey !== 'openrouter' ? <span className="health-badge fallback">Fallback</span> : null}
+                  <span className={`health-badge ${String(health.badge || 'unknown').toLowerCase().replace(/\s+/g, '-')}`}>{isActive ? 'Selected' : health.badge || 'Unknown'}</span>
+                  {fallbackEnabled && providerKey !== provider && routeMode !== 'explicit' && providerKey !== 'openrouter' ? <span className="health-badge fallback">Route candidate</span> : null}
                 </div>
               </button>
 
               <p className="provider-card-detail">{providerKey === 'ollama' ? ollamaState.title : (health.detail || 'No health data yet.')}</p>
+              {providerKey === 'groq' ? (
+                <div className="provider-hint-box found">
+                  <div className="provider-help-panel">
+                    <strong>Cloud-backed Groq</strong>
+                    <p>Groq credentials stay on the server only.</p>
+                    <p>Configure <code>GROQ_API_KEY</code> in the backend environment; only model/base URL preferences are kept in the browser.</p>
+                  </div>
+                  <div className="provider-status-box">
+                    <strong>{health.ok ? 'Groq is ready' : 'Groq needs backend configuration'}</strong>
+                    <p>{health.detail || 'Groq health has not been checked yet.'}</p>
+                    <p><strong>Configured via:</strong> {health.configuredVia || 'backend env'}</p>
+                    <p><strong>Resolved model:</strong> {health.model || draft.model || 'n/a'}</p>
+                    <p><strong>Resolved base URL:</strong> {health.baseURL || draft.baseURL || 'n/a'}</p>
+                  </div>
+                </div>
+              ) : null}
               {providerKey === 'ollama' ? (
                 <div className={`provider-hint-box ${ollamaState.state.toLowerCase().replace(/_/g, '-')}`}>
                   <div className="provider-help-panel">
@@ -254,7 +307,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     <button type="button" onClick={() => handleRunOllamaDiscovery()} disabled={isAutoFindingOllama}>
                       {isAutoFindingOllama ? 'Finding Ollama…' : 'Auto-Find Ollama'}
                     </button>
-                    <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>
+                    <button type="button" className="ghost-button" onClick={onTestConnection}>Refresh Status</button>
                     <button type="button" className="ghost-button" onClick={() => setProvider('mock')}>Switch to Mock Mode</button>
                     {ollamaState.showUseConnection ? (
                       <button

@@ -3,7 +3,11 @@ export const DEFAULT_PROVIDER_KEY = 'ollama';
 export const PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama', 'openrouter'];
 export const LOCAL_PROVIDER_KEYS = ['ollama'];
 export const CLOUD_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter'];
+export const ROUTE_MODE_KEYS = ['auto', 'local-first', 'cloud-first', 'explicit'];
+export const DEFAULT_ROUTE_MODE = 'auto';
 export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
+export const LOCAL_FIRST_PROVIDER_KEYS = ['ollama', 'groq', 'gemini', 'mock'];
+export const CLOUD_FIRST_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter', 'mock', 'ollama'];
 
 export const PROVIDER_DEFINITIONS = {
   mock: {
@@ -29,7 +33,7 @@ export const PROVIDER_DEFINITIONS = {
     editable: true,
     paid: false,
     canAutoFallback: true,
-    targetSummary: 'free-tier cloud via Groq',
+    targetSummary: 'cloud-backed Groq routed through the Stephanos backend',
     defaults: {
       baseURL: 'https://api.groq.com/openai/v1',
       model: 'openai/gpt-oss-20b',
@@ -90,6 +94,7 @@ export function createDefaultSavedProviderConfigs() {
 export function createDefaultRouterSettings() {
   return {
     provider: DEFAULT_PROVIDER_KEY,
+    routeMode: DEFAULT_ROUTE_MODE,
     devMode: true,
     fallbackEnabled: true,
     fallbackOrder: [...FALLBACK_PROVIDER_KEYS],
@@ -99,6 +104,10 @@ export function createDefaultRouterSettings() {
 
 export function normalizeProviderSelection(providerKey) {
   return PROVIDER_DEFINITIONS[providerKey] ? providerKey : DEFAULT_PROVIDER_KEY;
+}
+
+export function normalizeRouteMode(routeMode) {
+  return ROUTE_MODE_KEYS.includes(routeMode) ? routeMode : DEFAULT_ROUTE_MODE;
 }
 
 export function normalizeFallbackOrder(order = []) {

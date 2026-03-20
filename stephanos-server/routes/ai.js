@@ -16,18 +16,19 @@ const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /me
 
 
 router.post('/providers/health', async (req, res) => {
-  const { provider = DEFAULT_PROVIDER_KEY, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true } = req.body || {};
-  const snapshot = await getProviderHealthSnapshot({ provider, providerConfigs, fallbackEnabled, fallbackOrder, devMode });
+  const { provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
+  const snapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' } });
   res.json({ success: true, data: snapshot });
 });
 
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, provider = DEFAULT_PROVIDER_KEY, providerConfig = {}, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true } = req.body || {};
+  const { prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfig = {}, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
   const mergedProviderConfigs = { ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) };
-  const providerResolution = resolveProviderRequest(provider, effectiveProviderConfig, { fallbackEnabled, fallbackOrder, devMode });
+  const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
+  const providerResolution = resolveProviderRequest(provider, effectiveProviderConfig, { routeMode, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json(buildErrorResponse({ route: 'assistant', output_text: 'Prompt is required.', error: 'Prompt is required.', error_code: ERROR_CODES.CMD_INVALID, timing_ms: Date.now() - startedAt, debug: { route_reason: 'Input validation failed', request_id: requestId } }));
@@ -104,6 +105,8 @@ Use these memories when they help, but do not repeat them unless they are releva
     }, {
       provider,
       providerConfigs: mergedProviderConfigs,
+      routeMode,
+      runtimeContext: normalizedRuntimeContext,
       fallbackEnabled,
       fallbackOrder,
       devMode,
@@ -116,12 +119,14 @@ Use these memories when they help, but do not repeat them unless they are releva
       },
     });
 
-    const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
+    const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
     const executionMetadata = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
+      route_mode: routeMode,
+      effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
       requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
-      selected_provider: llmResult.diagnostics?.selectedProvider || providerResolution.resolvedProvider,
+      selected_provider: llmResult.diagnostics?.selectedProvider || providerHealthSnapshot?.routing?.selectedProvider || providerResolution.resolvedProvider,
       actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
       model_used: llmResult.modelUsed || llmResult.model || '',
       fallback_used: Boolean(llmResult.fallbackUsed),
@@ -142,6 +147,8 @@ Use these memories when they help, but do not repeat them unless they are releva
       model_used: executionMetadata.model_used,
       fallback_used: executionMetadata.fallback_used,
       fallback_reason: executionMetadata.fallback_reason,
+      route_mode: routeMode,
+      effective_route_mode: executionMetadata.effective_route_mode,
       provider_resolution: providerResolution,
     };
 
