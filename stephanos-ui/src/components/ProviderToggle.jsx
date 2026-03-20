@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getApiRuntimeConfig } from '../ai/aiClient';
-import { deriveOllamaCandidates, detectOllamaHost, normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
+import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
+import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
@@ -96,74 +97,51 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     return savedModels;
   }, [availableOllamaModels, getDraftProviderConfig]);
 
-  const applyOllamaDetection = (result) => {
-    const draft = getDraftProviderConfig('ollama');
-    const nextModel = result.models.includes(draft.model)
-      ? draft.model
-      : (result.models[0] || draft.model || ollamaConnection.lastSelectedModel || '');
+  const handleDetectedOllamaConnection = (result) => applyDetectedOllamaConnection({
+    result,
+    draftConfig: getDraftProviderConfig('ollama'),
+    ollamaConnection,
+    updateDraftProviderConfig,
+    rememberSuccessfulOllamaConnection,
+  });
 
-    updateDraftProviderConfig('ollama', {
-      baseURL: result.baseURL,
-      model: nextModel,
-    });
-
-    if (result.host || result.baseURL || nextModel) {
-      rememberSuccessfulOllamaConnection({ baseURL: result.baseURL, host: result.host, model: nextModel });
-    }
-  };
-
-  const runOllamaDiscovery = async ({ manualAddress = '' } = {}) => {
-    const draft = getDraftProviderConfig('ollama');
-    const normalizedHint = manualAddress ? normalizeOllamaBaseUrl(manualAddress) : '';
-    const nextHintValue = manualAddress || ollamaConnection.pcAddressHint;
+  const handleRunOllamaDiscovery = async ({ manualAddress = '' } = {}) => {
     if (manualAddress) {
       setOllamaConnection({ pcAddressHint: manualAddress });
     }
 
-    const candidates = manualAddress
-      ? [{
-        baseURL: normalizedHint,
-        host: new URL(normalizedHint).hostname,
-        source: 'manual-hint',
-        badge: 'Network PC',
-      }]
-      : deriveOllamaCandidates({
-        frontendOrigin: runtimeConfig.frontendOrigin,
-        lastSuccessfulBaseURL: ollamaConnection.lastSuccessfulBaseURL,
-        lastSuccessfulHost: ollamaConnection.lastSuccessfulHost,
-        pcAddressHint: nextHintValue,
-        recentHosts: ollamaConnection.recentHosts,
-      });
-
-    const frontendHost = (() => { try { return new URL(runtimeConfig.frontendOrigin).hostname; } catch { return ''; } })();
-    const localhostAttemptWillMismatch = !manualAddress && frontendHost && frontendHost !== 'localhost' && frontendHost !== '127.0.0.1';
+    const draft = getDraftProviderConfig('ollama');
     setIsAutoFindingOllama(true);
-    setOllamaDiscovery({
-      status: 'searching',
-      detail: manualAddress
-        ? 'Stephanos is trying the address you entered.'
-        : 'Stephanos is checking localhost first, then a few likely PC addresses.',
-      helpText: localhostAttemptWillMismatch
-        ? ['localhost only works when Stephanos and Ollama are on the same computer. Stephanos will now try likely network addresses.']
-        : [],
-      attempts: candidates,
-    });
 
     try {
-      const result = await detectOllamaHost(candidates, { timeoutMs: Math.min(Number(draft.timeoutMs) || 1800, 2500) });
+      const discoveryRun = runOllamaDiscovery({
+        runtimeConfig,
+        ollamaConnection: {
+          ...ollamaConnection,
+          pcAddressHint: manualAddress || ollamaConnection.pcAddressHint,
+        },
+        draftConfig: draft,
+        manualAddress,
+      });
+      setOllamaDiscovery({
+        status: 'searching',
+        detail: manualAddress
+          ? 'Stephanos is trying the address you entered.'
+          : 'Stephanos is checking localhost first, then a few likely PC addresses.',
+        helpText: [],
+        attempts: [],
+      });
+
+      const { result, searchingState, discoveryState } = await discoveryRun;
+      setOllamaDiscovery(searchingState);
+
+
       if (result.success) {
         setAvailableOllamaModels(result.models || []);
-        applyOllamaDetection(result);
-        setOllamaDiscovery({ status: 'found', ...result });
-        return result;
+        handleDetectedOllamaConnection(result);
       }
 
-      setOllamaDiscovery({
-        status: 'not_found',
-        failureBucket: result.failureBucket,
-        reason: result.reason,
-        attempts: result.attempts,
-      });
+      setOllamaDiscovery(discoveryState);
       return result;
     } finally {
       setIsAutoFindingOllama(false);
@@ -193,7 +171,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       return;
     }
 
-    await runOllamaDiscovery({ manualAddress: normalized });
+    await handleRunOllamaDiscovery({ manualAddress: normalized });
   };
 
   return (
@@ -273,7 +251,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                   </div>
 
                   <div className="provider-quick-actions prominent-actions">
-                    <button type="button" onClick={() => runOllamaDiscovery()} disabled={isAutoFindingOllama}>
+                    <button type="button" onClick={() => handleRunOllamaDiscovery()} disabled={isAutoFindingOllama}>
                       {isAutoFindingOllama ? 'Finding Ollama…' : 'Auto-Find Ollama'}
                     </button>
                     <button type="button" className="ghost-button" onClick={onTestConnection}>Test Connection</button>

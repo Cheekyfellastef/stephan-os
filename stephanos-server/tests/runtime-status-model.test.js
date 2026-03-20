@@ -31,6 +31,25 @@ test('runtime status uses auto mode and cloud fallback when local ollama is offl
   assert.equal(model.dependencySummary, 'Cloud active, local offline');
 });
 
+
+test('runtime status surfaces pending local discovery instead of stale offline', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: false, state: 'SEARCHING' },
+      groq: { ok: false },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+  });
+
+  assert.equal(model.localPending, true);
+  assert.equal(model.localAvailable, false);
+  assert.equal(model.appLaunchState, 'degraded');
+  assert.equal(model.dependencySummary, 'Checking local AI readiness');
+});
+
 test('runtime status keeps launcher ready while backend is offline but runtime is still launchable', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
