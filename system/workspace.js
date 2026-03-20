@@ -1,4 +1,5 @@
 import { loadDependencies } from "./apps/dependency_loader.js";
+import { createStephanosLocalUrls } from "../shared/runtime/stephanosLocalUrls.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -6,6 +7,16 @@ function renderAppLoadError(container, message) {
   error.style.padding = "20px";
   error.innerText = message;
   container.appendChild(error);
+}
+
+const { runtimeUrl: STEPHANOS_RUNTIME_URL } = createStephanosLocalUrls();
+
+function buildWorkspaceLoadErrorMessage(project) {
+  if (isStephanosProject(project)) {
+    return `Stephanos failed to load in the launcher. Try opening ${STEPHANOS_RUNTIME_URL} directly.`;
+  }
+
+  return "Simulation failed to load. Check console for details.";
 }
 
 function isStephanosProject(project) {
@@ -102,7 +113,7 @@ export const workspace = {
         context?.eventBus?.emit("workspace:launch_failed", project);
         renderAppLoadError(
           container,
-          "Simulation failed to load. Check console for details."
+          buildWorkspaceLoadErrorMessage(project)
         );
 
         content.appendChild(backButton);
@@ -121,8 +132,7 @@ export const workspace = {
         const warning = document.createElement("div");
         warning.style.color = "red";
         warning.style.padding = "20px";
-        warning.innerText =
-          "Simulation failed to load. Check console for details.";
+        warning.innerText = buildWorkspaceLoadErrorMessage(project);
         container.appendChild(warning);
       };
 

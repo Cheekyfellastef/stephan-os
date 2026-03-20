@@ -7,12 +7,17 @@ import {
   createRuntimeStatusModel,
   readPersistedProviderPreferences,
 } from "../../shared/runtime/runtimeStatusModel.mjs";
+import {
+  createStephanosLocalUrls,
+  resolveStephanosLocalUrls,
+} from "../../shared/runtime/stephanosLocalUrls.mjs";
 
 const STEPHANOS_APP_ID = "stephanos";
-const STEPHANOS_DIST_ENTRY = "apps/stephanos/dist/index.html";
-const STEPHANOS_RUNTIME_URL = "http://127.0.0.1:4173/apps/stephanos/dist/";
-const STEPHANOS_HEALTH_URL = "http://127.0.0.1:4173/__stephanos/health";
-const STEPHANOS_STATUS_URL = "./apps/stephanos/runtime-status.json";
+const STEPHANOS_LOCAL_URLS = createStephanosLocalUrls();
+const STEPHANOS_DIST_ENTRY = STEPHANOS_LOCAL_URLS.distEntryPath;
+const STEPHANOS_RUNTIME_URL = STEPHANOS_LOCAL_URLS.runtimeUrl;
+const STEPHANOS_HEALTH_URL = STEPHANOS_LOCAL_URLS.healthUrl;
+const STEPHANOS_STATUS_URL = STEPHANOS_LOCAL_URLS.runtimeStatusPath;
 const STEPHANOS_BACKEND_URL = "http://localhost:8787";
 const STEPHANOS_BACKEND_HEALTH_URL = "http://localhost:8787/api/health";
 const STEPHANOS_PROVIDER_HEALTH_URL = "http://localhost:8787/api/ai/providers/health";
@@ -396,13 +401,15 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || "")
     .trim()
     .toLowerCase();
-  const runtimeUrl = String(
-    statusProbe.ok && statusProbe.json?.runtimeUrl
-      ? statusProbe.json.runtimeUrl
-      : runtimeProbe.ok && runtimeProbe.json?.runtimeUrl
-        ? runtimeProbe.json.runtimeUrl
-        : STEPHANOS_RUNTIME_URL
-  ).trim() || STEPHANOS_RUNTIME_URL;
+  const runtimeUrls = resolveStephanosLocalUrls(
+    statusProbe.ok ? statusProbe.json?.port : null,
+    runtimeProbe.ok ? runtimeProbe.json?.port : null,
+    statusProbe.ok ? statusProbe.json?.runtimeUrl : null,
+    runtimeProbe.ok ? runtimeProbe.json?.runtimeUrl : null,
+    statusProbe.ok ? statusProbe.json?.healthUrl : null,
+    runtimeProbe.ok ? runtimeProbe.json?.healthUrl : null
+  );
+  const runtimeUrl = runtimeUrls.runtimeUrl;
   const resolvedEntryPath = normalizeRuntimePath(
     statusProbe.ok && statusProbe.json?.distEntryPath
       ? statusProbe.json.distEntryPath
