@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
-import { buildProviderDisplayLabel } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -36,9 +35,9 @@ export function useAIConsole() {
     devMode,
     fallbackEnabled,
     fallbackOrder,
-    savedProviderConfigs,
     providerSelectionSource,
     getActiveProviderConfigSource,
+    getEffectiveProviderConfigs,
     setProviderHealth,
     setLastExecutionMetadata,
   } = useAIStore();
@@ -46,9 +45,10 @@ export function useAIConsole() {
   const runtimeConfig = getApiRuntimeConfig();
 
   const refreshHealth = useCallback(async () => {
+    const effectiveProviderConfigs = getEffectiveProviderConfigs();
     try {
       const health = await checkApiHealth();
-      const providerHealth = await getProviderHealth({ provider, providerConfigs: savedProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
+      const providerHealth = await getProviderHealth({ provider, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
       setProviderHealth(providerHealth.data || {});
       setApiStatus({
         state: health.ok ? 'online' : 'error',
@@ -85,7 +85,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, savedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth]);
+  }, [runtimeConfig, setApiStatus, provider, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth]);
 
   useEffect(() => {
     refreshHealth();
@@ -106,16 +106,19 @@ export function useAIConsole() {
 
     console.debug('[Stephanos UI] Preparing AI request', {
       requestedProvider: provider,
+      selectedProvider: provider,
+      providerConfigSource: getActiveProviderConfigSource(),
       providerSelectionSource,
       fallbackEnabled,
       fallbackOrder,
     });
 
     try {
+      const effectiveProviderConfigs = getEffectiveProviderConfigs();
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
-        providerConfigs: savedProviderConfigs,
+        providerConfigs: effectiveProviderConfigs,
         fallbackEnabled,
         fallbackOrder,
         devMode,
@@ -128,6 +131,7 @@ export function useAIConsole() {
 
       const executionMetadata = data.data?.execution_metadata || {
         requested_provider: requestPayload.provider,
+        selected_provider: requestPayload.provider,
         actual_provider_used: data.data?.provider || null,
         model_used: data.data?.provider_model || null,
         fallback_used: false,
@@ -156,17 +160,19 @@ export function useAIConsole() {
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? 'ok' : 'error');
 
-      const activeProviderLabel = buildProviderDisplayLabel(provider, savedProviderConfigs[provider]);
       const providerMessage = !data.success && provider !== 'mock'
         ? `${data.error || 'Provider failed.'} Use Mock instead if you want a zero-cost response.`
         : data.output_text;
+      const executionSummary = executionMetadata.fallback_used
+        ? `Fallback executed: requested ${executionMetadata.requested_provider}, selected ${executionMetadata.selected_provider}, used ${executionMetadata.actual_provider_used}${executionMetadata.fallback_reason ? ` (${executionMetadata.fallback_reason})` : ''}.`
+        : `Backend reachable. Requested: ${executionMetadata.requested_provider}. Selected: ${executionMetadata.selected_provider}. Executed: ${executionMetadata.actual_provider_used}${executionMetadata.model_used ? ` (${executionMetadata.model_used})` : ''}.`;
 
       setApiStatus((prev) => ({
         ...prev,
         state: 'online',
         label: `Connected to ${runtimeConfig.target} API`,
         detail: data.success
-          ? `Backend reachable. Requested: ${executionMetadata.requested_provider}. Executed: ${executionMetadata.actual_provider_used}.`
+          ? executionSummary
           : `Provider issue: ${providerMessage}`,
         backendReachable: true,
         lastCheckedAt: new Date().toISOString(),
@@ -182,6 +188,11 @@ export function useAIConsole() {
         error: data.error,
         error_code: data.error_code ?? data.debug?.error_code ?? null,
         requested_provider: requestPayload.provider,
+        selected_provider: executionMetadata.selected_provider,
+        actual_provider_used: executionMetadata.actual_provider_used,
+        model_used: executionMetadata.model_used,
+        fallback_used: executionMetadata.fallback_used,
+        fallback_reason: executionMetadata.fallback_reason,
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
@@ -191,6 +202,7 @@ export function useAIConsole() {
         frontend_api_base_url: runtimeConfig.baseUrl,
         backend_target_endpoint: runtimeConfig.backendTargetEndpoint,
         backend_health_endpoint: runtimeConfig.healthEndpoint,
+        request_trace: data.data?.request_trace || null,
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);

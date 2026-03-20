@@ -155,8 +155,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       const failedAttempts = attempts.slice(0, -1);
       const fallbackUsed = provider !== selectedProvider;
       const fallbackReason = fallbackUsed ? buildFallbackReason(failedAttempts) : null;
-
-      return {
+      const finalResult = {
         ...attempt.result,
         requestedProvider,
         actualProviderUsed: provider,
@@ -177,6 +176,17 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           routerConfig: redactSecrets(routerConfig),
         },
       };
+
+      console.log('[BACKEND LIVE] Provider router resolved', {
+        requested_provider: requestedProvider,
+        selected_provider: selectedProvider,
+        actual_provider_used: finalResult.actualProviderUsed,
+        model_used: finalResult.modelUsed,
+        fallback_used: finalResult.fallbackUsed,
+        fallback_reason: finalResult.fallbackReason,
+      });
+
+      return finalResult;
     }
   }
 
@@ -184,7 +194,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const fallbackUsed = attempts.length > 1;
   const fallbackReason = buildFallbackReason(attempts.slice(0, -1)) || lastAttempt?.failureReason || 'No provider returned a usable response.';
 
-  return {
+  const failedResult = {
     ok: false,
     provider: lastAttempt?.provider || selectedProvider,
     requestedProvider,
@@ -213,4 +223,15 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       routerConfig: redactSecrets(routerConfig),
     },
   };
+
+  console.log('[BACKEND LIVE] Provider router exhausted attempts', {
+    requested_provider: requestedProvider,
+    selected_provider: selectedProvider,
+    actual_provider_used: failedResult.actualProviderUsed,
+    model_used: failedResult.modelUsed,
+    fallback_used: failedResult.fallbackUsed,
+    fallback_reason: failedResult.fallbackReason,
+  });
+
+  return failedResult;
 }
