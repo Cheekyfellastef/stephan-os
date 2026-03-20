@@ -5,7 +5,9 @@ function normaliseProject(project) {
       icon: "🧩",
       entry: "",
       disabled: false,
-      validationIssues: []
+      validationIssues: [],
+      dependencyState: "ready",
+      runtimeStatusModel: null,
     };
   }
 
@@ -16,7 +18,9 @@ function normaliseProject(project) {
     disabled: Boolean(project?.disabled),
     validationState: project?.validationState || (project?.disabled ? "error" : "healthy"),
     statusMessage: project?.statusMessage || "",
-    validationIssues: Array.isArray(project?.validationIssues) ? project.validationIssues : []
+    validationIssues: Array.isArray(project?.validationIssues) ? project.validationIssues : [],
+    dependencyState: project?.dependencyState || "ready",
+    runtimeStatusModel: project?.runtimeStatusModel || null,
   };
 }
 
@@ -29,6 +33,87 @@ function getRuntimeProjects(context) {
   return Array.isArray(projects) ? projects : [];
 }
 
+function ensureStatusSurface(containerId, className = "") {
+  let node = document.getElementById(containerId);
+  if (node) {
+    return node;
+  }
+
+  const projectsSection = document.getElementById("projects");
+  if (!projectsSection) {
+    return null;
+  }
+
+  node = document.createElement("section");
+  node.id = containerId;
+  node.className = className;
+  projectsSection.insertBefore(node, projectsSection.querySelector("#project-registry"));
+  return node;
+}
+
+function renderLauncherStatusStrip(projects, context) {
+  const strip = ensureStatusSurface("launcher-runtime-strip", "launcher-runtime-strip");
+  if (!strip) return;
+
+  const stephanos = projects.map(normaliseProject).find((project) => String(project.name || "").toLowerCase().includes("stephanos"));
+  const runtime = stephanos?.runtimeStatusModel;
+
+  if (!runtime) {
+    strip.innerHTML = "";
+    return;
+  }
+
+  strip.innerHTML = `
+    <div class="runtime-strip-card ${runtime.statusTone}">
+      <div>
+        <div class="runtime-strip-label">System Route</div>
+        <strong>${runtime.headline}</strong>
+        <div class="runtime-strip-subtext">${runtime.dependencySummary}</div>
+      </div>
+      <div class="runtime-chip-row">
+        <span class="runtime-chip ${runtime.backendAvailable ? 'ready' : 'degraded'}">Backend ${runtime.backendAvailable ? 'Online' : 'Offline'}</span>
+        <span class="runtime-chip ${runtime.cloudAvailable ? 'ready' : 'degraded'}">Cloud AI ${runtime.cloudAvailable ? 'Ready' : 'Not Configured'}</span>
+        <span class="runtime-chip ${runtime.localAvailable ? 'ready' : 'degraded'}">Local Node ${runtime.localAvailable ? 'Ready' : 'Offline'}</span>
+        <span class="runtime-chip neutral">Active ${runtime.activeProvider}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMobileCompanionDeck(projects, context) {
+  const deck = ensureStatusSurface("mobile-companion-deck", "mobile-companion-deck");
+  if (!deck) return;
+
+  const safeProjects = projects.map(normaliseProject);
+  const stephanos = safeProjects.find((project) => String(project.name || "").toLowerCase().includes("stephanos"));
+  const runtime = stephanos?.runtimeStatusModel;
+
+  if (!runtime || runtime.appLaunchState === "unavailable") {
+    deck.innerHTML = "";
+    return;
+  }
+
+  deck.innerHTML = `
+    <div class="companion-deck-card ${runtime.statusTone}">
+      <div>
+        <div class="runtime-strip-label">Companion Deck</div>
+        <strong>${runtime.headline}</strong>
+        <p>${runtime.dependencySummary}</p>
+      </div>
+      <div class="runtime-chip-row">
+        <span class="runtime-chip neutral">Mode ${runtime.providerMode}</span>
+        <span class="runtime-chip neutral">Route ${runtime.activeProvider}</span>
+      </div>
+      <button type="button" class="companion-launch-button">Open Stephanos</button>
+    </div>
+  `;
+
+  const button = deck.querySelector(".companion-launch-button");
+  if (button && stephanos?.entry) {
+    button.onclick = () => context.workspace.open(stephanos, context);
+  }
+}
+
 function renderProjectRegistry(projects, context) {
   const container = document.getElementById("project-registry");
   if (!container) {
@@ -37,6 +122,8 @@ function renderProjectRegistry(projects, context) {
   }
 
   container.innerHTML = "";
+  renderLauncherStatusStrip(projects, context);
+  renderMobileCompanionDeck(projects, context);
 
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
@@ -46,15 +133,18 @@ function renderProjectRegistry(projects, context) {
 
     if (safeProject.validationState === "error") {
       tile.classList.add("app-tile-error");
-    }
-
-    if (safeProject.validationState === "launching") {
+    } else if (safeProject.validationState === "launching") {
       tile.classList.add("app-tile-pending");
+    } else if (safeProject.dependencyState === "degraded") {
+      tile.classList.add("app-tile-degraded");
     }
 
+    const runtimeSummary = safeProject.runtimeStatusModel?.dependencySummary;
     const issueLabel = safeProject.validationState === "error" || safeProject.validationState === "launching"
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || "App status unavailable"}</div>`
-      : "";
+      : runtimeSummary
+        ? `<div class="app-tile-detail">${runtimeSummary}</div>`
+        : "";
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
@@ -66,6 +156,7 @@ function renderProjectRegistry(projects, context) {
       tile.title = safeProject.statusMessage || safeProject.validationIssues.join("\n") || "App status unavailable";
       tile.setAttribute("aria-disabled", "true");
     } else {
+      tile.title = runtimeSummary || safeProject.statusMessage || safeProject.name;
       tile.onclick = () => context.workspace.open(safeProject, context);
     }
 

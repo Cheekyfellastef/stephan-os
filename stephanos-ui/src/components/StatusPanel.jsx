@@ -1,5 +1,6 @@
 import { buildProviderStatusSummary } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
+import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -23,24 +24,45 @@ export default function StatusPanel() {
     providerSelectionSource,
     devMode,
     fallbackEnabled,
+    fallbackOrder,
     providerHealth,
     getActiveProviderConfig,
     getActiveProviderConfigSource,
     uiDiagnostics,
+    lastExecutionMetadata,
   } = useAIStore();
 
   const latest = commandHistory[commandHistory.length - 1];
   const activeConfig = getActiveProviderConfig();
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl, providerHealth[provider]);
+  const runtimeStatus = createRuntimeStatusModel({
+    appId: 'stephanos',
+    appName: 'Stephanos Mission Console',
+    validationState: 'healthy',
+    selectedProvider: provider,
+    fallbackEnabled,
+    fallbackOrder,
+    providerHealth,
+    backendAvailable: apiStatus.backendReachable,
+    preferAuto: typeof window !== 'undefined' && window.innerWidth <= 820,
+    activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
+  });
 
   return (
     <aside className="status-panel panel">
       <h2>Status</h2>
       <ul>
+        <li>Launch State: {runtimeStatus.appLaunchState}</li>
+        <li>Route Mode: {runtimeStatus.providerMode}</li>
+        <li>Selected Provider: {runtimeStatus.selectedProvider}</li>
+        <li>Active Provider: {runtimeStatus.activeProvider}</li>
+        <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {apiStatus.label}</li>
-        <li>Backend Reachable: {apiStatus.backendReachable ? 'yes' : 'no'}</li>
+        <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
+        <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
+        <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
+        <li>Dependency Summary: {runtimeStatus.dependencySummary}</li>
         <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
-        <li>Active Provider: {statusSummary.providerLabel}</li>
         <li>Provider Health: {statusSummary.healthBadge}</li>
         <li>Provider State: {statusSummary.healthState}</li>
         <li>Provider Detail: {statusSummary.healthDetail}</li>
@@ -67,7 +89,7 @@ export default function StatusPanel() {
         <li>UI Source Fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</li>
         <li>Debug Console: F1</li>
       </ul>
-      <p className={`api-banner ${apiStatus.state}`}>{apiStatus.detail}</p>
+      <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary}</p>
     </aside>
   );
 }

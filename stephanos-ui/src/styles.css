@@ -93,8 +93,13 @@ body {
   border-color: rgba(94, 191, 141, 0.48);
 }
 
-.local-ai-banner.warning {
+.local-ai-banner.warning,
+.local-ai-banner.degraded {
   border-color: rgba(72, 145, 236, 0.55);
+}
+
+.local-ai-banner.unavailable {
+  border-color: rgba(139, 73, 73, 0.52);
 }
 
 .local-ai-pill {
@@ -240,6 +245,23 @@ button:active,
 .result-card.error {
   border-color: rgba(72, 145, 236, 0.55);
   background: linear-gradient(180deg, rgba(12, 26, 46, 0.96), rgba(7, 14, 28, 0.96));
+}
+
+.api-banner.ready,
+.api-connection-banner.online {
+  border-color: rgba(94, 191, 141, 0.32);
+}
+
+.api-banner.degraded,
+.api-connection-banner.offline,
+.api-connection-banner.error {
+  border-color: rgba(72, 145, 236, 0.42);
+  color: #dff4ff;
+}
+
+.api-banner.unavailable {
+  border-color: rgba(139, 73, 73, 0.42);
+  color: #ffd7d7;
 }
 
 .result-card.memory {

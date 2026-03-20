@@ -1,6 +1,9 @@
+export const AI_SETTINGS_STORAGE_KEY = 'stephanos.ai.freeTierSettings';
 export const DEFAULT_PROVIDER_KEY = 'ollama';
 export const PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama', 'openrouter'];
-export const FALLBACK_PROVIDER_KEYS = ['mock', 'groq', 'gemini', 'ollama'];
+export const LOCAL_PROVIDER_KEYS = ['ollama'];
+export const CLOUD_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter'];
+export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
 
 export const PROVIDER_DEFINITIONS = {
   mock: {
