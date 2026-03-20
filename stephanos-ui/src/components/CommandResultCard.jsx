@@ -46,6 +46,7 @@ export default function CommandResultCard({ entry }) {
   const tone = getResultTone(entry.response?.type);
   const executionMetadata = entry.data_payload?.execution_metadata || null;
   const suggestedActions = entry.data_payload?.suggested_actions ?? [];
+  const isMockResponse = executionMetadata?.actual_provider_used === 'mock';
 
   return (
     <article className={`result-card ${tone} ${entry.response?.type === 'assistant_response' ? 'assistant' : ''}`}>
@@ -57,11 +58,11 @@ export default function CommandResultCard({ entry }) {
       {executionMetadata ? (
         <div className={`api-banner ${executionMetadata.fallback_used ? 'degraded' : 'online'}`}>
           <strong>
-            Requested {executionMetadata.requested_provider} → selected {executionMetadata.selected_provider} → used {executionMetadata.actual_provider_used}
+            UI requested {executionMetadata.ui_requested_provider || executionMetadata.requested_provider} → backend selected {executionMetadata.selected_provider} → used {executionMetadata.actual_provider_used}
           </strong>
           <span>
-            Model: {executionMetadata.model_used || 'n/a'}
-            {executionMetadata.fallback_used ? ` · Fallback reason: ${executionMetadata.fallback_reason || 'unspecified'}` : ' · No fallback'}
+            Backend default: {executionMetadata.backend_default_provider || 'n/a'} · Model: {executionMetadata.model_used || 'n/a'} · Response truth: {isMockResponse ? 'mock' : 'live'}
+            {executionMetadata.fallback_used ? ` · Fallback reason: ${executionMetadata.fallback_reason || 'unspecified'}` : isMockResponse ? ' · Mock answered directly' : ' · No fallback'}
           </span>
         </div>
       ) : null}
