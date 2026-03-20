@@ -35,7 +35,7 @@ router.post('/chat', async (req, res) => {
 
   const parsedCommand = parseCommand(prompt);
   const decision = resolveRoute(parsedCommand, prompt);
-  const memoryHits = memoryService.getRelevantMemory(prompt);
+  const { relevantItems: memoryHits, summaryText: memorySummary } = memoryService.buildContextSummary(prompt, { limit: 4 });
 
   logger.info('Incoming /api/ai/chat request', {
     requestId,
@@ -91,9 +91,16 @@ router.post('/chat', async (req, res) => {
     }
 
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
+    const memoryAwareSystemPrompt = [
+      'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      memorySummary ? `Relevant local memory:
+${memorySummary}
+Use these memories when they help, but do not repeat them unless they are relevant.` : '',
+    ].filter(Boolean).join('\n\n');
+
     const llmResult = await routeLLMRequest({
       messages: [{ role: 'user', content: prompt }],
-      systemPrompt: 'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      systemPrompt: memoryAwareSystemPrompt,
     }, {
       provider,
       providerConfigs: mergedProviderConfigs,
@@ -105,6 +112,7 @@ router.post('/chat', async (req, res) => {
         parsed_command: parsedCommand,
         memory_hits: memoryHits,
         subsystem_context: contextBundle,
+        relevant_memory: memoryHits,
       },
     });
 
@@ -162,6 +170,7 @@ router.post('/chat', async (req, res) => {
           fallback_used: executionMetadata.fallback_used,
           fallback_reason: executionMetadata.fallback_reason,
           assistant_context: contextBundle,
+          relevant_memory: memoryHits,
         },
         memory_hits: memoryHits,
         timing_ms: Date.now() - startedAt,
@@ -198,6 +207,7 @@ router.post('/chat', async (req, res) => {
         fallback_used: executionMetadata.fallback_used,
         fallback_reason: executionMetadata.fallback_reason,
         assistant_context: contextBundle,
+        relevant_memory: memoryHits,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
       },
       memory_hits: memoryHits,
