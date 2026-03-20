@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
+import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -38,11 +39,18 @@ export function useAIConsole() {
     providerSelectionSource,
     getActiveProviderConfigSource,
     getEffectiveProviderConfigs,
+    getDraftProviderConfig,
+    updateDraftProviderConfig,
+    ollamaConnection,
+    rememberSuccessfulOllamaConnection,
+    providerHealth,
+    apiStatus,
     setProviderHealth,
     setLastExecutionMetadata,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
+  const startupOllamaSyncAttemptedRef = useRef(false);
 
   const refreshHealth = useCallback(async () => {
     const effectiveProviderConfigs = getEffectiveProviderConfigs();
@@ -90,6 +98,117 @@ export function useAIConsole() {
   useEffect(() => {
     refreshHealth();
   }, [refreshHealth]);
+
+  useEffect(() => {
+    if (startupOllamaSyncAttemptedRef.current) return;
+
+    const effectiveProviderConfigs = getEffectiveProviderConfigs();
+    const ollamaConfig = effectiveProviderConfigs.ollama || {};
+    const ollamaHealth = providerHealth.ollama || {};
+
+    if (!shouldAutoSyncOllama({ apiStatus, ollamaHealth, ollamaConfig })) {
+      return;
+    }
+
+    startupOllamaSyncAttemptedRef.current = true;
+
+    const startupSearchingHealth = createSearchingOllamaHealth({
+      frontendOrigin: runtimeConfig.frontendOrigin,
+    });
+
+    setProviderHealth((prev) => ({
+      ...prev,
+      ollama: startupSearchingHealth,
+    }));
+
+    (async () => {
+      const draftConfig = getDraftProviderConfig('ollama');
+      const { result, searchingState } = await runOllamaDiscovery({
+        runtimeConfig,
+        ollamaConnection,
+        draftConfig,
+      });
+
+      setProviderHealth((prev) => ({
+        ...prev,
+        ollama: {
+          ...startupSearchingHealth,
+          attempts: searchingState.attempts || [],
+        },
+      }));
+
+      if (!result.success) {
+        setProviderHealth((prev) => ({
+          ...prev,
+          ollama: {
+            ...(prev.ollama || {}),
+            ok: false,
+            provider: 'ollama',
+            badge: 'Offline',
+            state: 'OFFLINE',
+            message: 'Cannot connect to Ollama',
+            detail: result.reason || 'Stephanos could not reach your Ollama server.',
+            reason: result.reason || '',
+            failureType: result.failureBucket || 'not_running',
+            attempts: result.attempts || [],
+          },
+        }));
+        return;
+      }
+
+      applyDetectedOllamaConnection({
+        result,
+        draftConfig,
+        ollamaConnection,
+        updateDraftProviderConfig,
+        rememberSuccessfulOllamaConnection,
+      });
+
+      const nextModel = result.models.includes(draftConfig.model)
+        ? draftConfig.model
+        : (result.models[0] || draftConfig.model || ollamaConnection.lastSelectedModel || '');
+      const nextProviderConfigs = {
+        ...effectiveProviderConfigs,
+        ollama: {
+          ...ollamaConfig,
+          ...draftConfig,
+          baseURL: result.baseURL,
+          model: nextModel,
+        },
+      };
+
+      const refreshedProviderHealth = await getProviderHealth({
+        provider,
+        providerConfigs: nextProviderConfigs,
+        fallbackEnabled,
+        fallbackOrder,
+        devMode,
+      });
+
+      if (refreshedProviderHealth.data && Object.keys(refreshedProviderHealth.data).length) {
+        setProviderHealth((prev) => ({
+          ...prev,
+          ...refreshedProviderHealth.data,
+        }));
+      }
+    })().catch(() => {
+      startupOllamaSyncAttemptedRef.current = false;
+    });
+  }, [
+    apiStatus,
+    devMode,
+    fallbackEnabled,
+    fallbackOrder,
+    getDraftProviderConfig,
+    getEffectiveProviderConfigs,
+    ollamaConnection,
+    provider,
+    providerHealth,
+    rememberSuccessfulOllamaConnection,
+    runtimeConfig,
+    setProviderHealth,
+    updateDraftProviderConfig,
+  ]);
 
   async function submitPrompt(rawPrompt) {
     const prompt = rawPrompt.trim();

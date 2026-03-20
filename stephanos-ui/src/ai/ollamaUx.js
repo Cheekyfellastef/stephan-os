@@ -127,6 +127,27 @@ export function getOllamaUiState({ health = null, config = {}, frontendOrigin = 
     };
   }
 
+  if (health?.state === 'SEARCHING') {
+    return {
+      state: 'SEARCHING',
+      title: health?.message || 'Looking for Ollama',
+      detail: health?.detail || 'Stephanos is trying a few likely addresses now.',
+      helpText: health?.helpText || [],
+      reason: '',
+      autoDetectBaseUrl,
+      showAutoDetect: false,
+      resultTitle: '',
+      resultBody: '',
+      resultBadge: '',
+      detectedAddress: '',
+      models: [],
+      showUseConnection: false,
+      emptyModels: false,
+      failureBucket: '',
+      attempts: health?.attempts || [],
+    };
+  }
+
   const baseState = health?.state || (health?.ok ? 'CONNECTED' : 'UNKNOWN_ERROR');
   const shouldWarnAboutRemoteLocalhost = isLocalhost && remoteOrigin && !health?.ok && health?.likelyWrongDevice !== false;
   const state = shouldWarnAboutRemoteLocalhost ? 'LOCALHOST_MISMATCH' : baseState;

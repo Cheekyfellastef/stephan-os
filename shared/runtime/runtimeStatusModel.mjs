@@ -76,9 +76,13 @@ export function deriveProviderMode({
   return fallbackEnabled && readyCloudProviders.length > 0 ? 'auto' : 'cloud';
 }
 
-function buildDependencySummary({ backendAvailable, localAvailable, cloudAvailable, providerMode, fallbackActive, activeProvider }) {
+function buildDependencySummary({ backendAvailable, localAvailable, localPending, cloudAvailable, providerMode, fallbackActive, activeProvider }) {
   if (!backendAvailable) {
     return 'Backend offline';
+  }
+
+  if (localPending && !localAvailable) {
+    return 'Checking local AI readiness';
   }
 
   if (providerMode === 'cloud') {
@@ -119,6 +123,7 @@ export function createRuntimeStatusModel({
   const normalizedProvider = normalizeProviderSelection(selectedProvider);
   const health = normalizeProviderHealth(providerHealth);
   const localAvailable = LOCAL_PROVIDER_KEYS.some((providerKey) => health[providerKey]?.ok);
+  const localPending = LOCAL_PROVIDER_KEYS.some((providerKey) => health[providerKey]?.state === 'SEARCHING');
   const readyCloudProviders = getReadyCloudProviders(health, fallbackOrder);
   const cloudAvailable = readyCloudProviders.length > 0;
   const providerMode = deriveProviderMode({
@@ -150,6 +155,7 @@ export function createRuntimeStatusModel({
   const dependencySummary = buildDependencySummary({
     backendAvailable,
     localAvailable,
+    localPending,
     cloudAvailable,
     providerMode,
     fallbackActive,
@@ -160,6 +166,7 @@ export function createRuntimeStatusModel({
   const launchDegraded = !launchUnavailable && (
     validationState === 'launching'
     || !backendAvailable
+    || (localPending && providerMode !== 'cloud')
     || (!localAvailable && providerMode !== 'cloud')
     || fallbackActive
     || (providerMode === 'cloud' && !cloudAvailable)
@@ -179,6 +186,7 @@ export function createRuntimeStatusModel({
     selectedProvider: normalizedProvider,
     activeProvider,
     localAvailable,
+    localPending,
     cloudAvailable,
     backendAvailable,
     fallbackActive,
