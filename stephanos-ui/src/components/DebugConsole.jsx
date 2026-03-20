@@ -1,5 +1,6 @@
 import { buildProviderEndpoint } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
+import CollapsiblePanel from './CollapsiblePanel';
 
 export default function DebugConsole() {
   const {
@@ -12,6 +13,8 @@ export default function DebugConsole() {
     apiStatus,
     uiDiagnostics,
     providerHealth,
+    uiLayout,
+    togglePanel,
   } = useAIStore();
   if (!debugVisible) return null;
 
@@ -19,8 +22,14 @@ export default function DebugConsole() {
   const executionMetadata = debugData.execution_metadata || {};
 
   return (
-    <section className="debug-console panel">
-      <h2>Developer Debug Console</h2>
+    <CollapsiblePanel
+      panelId="debugConsole"
+      title="Developer Debug Console"
+      description="Request, routing, and runtime traces for debugging Stephanos."
+      className="debug-console"
+      isOpen={uiLayout.debugConsole}
+      onToggle={() => togglePanel('debugConsole')}
+    >
       <div className="debug-grid">
         <div><strong>Request</strong><pre>{JSON.stringify({ request_id: debugData.response_payload?.debug?.request_id, parsed_command: debugData.parsed_command, ui_requested_provider: debugData.ui_requested_provider || debugData.request_payload?.provider, backend_default_provider: debugData.backend_default_provider || apiStatus.backendDefaultProvider, requested_provider: debugData.requested_provider || debugData.request_payload?.provider, selected_provider: debugData.selected_provider, actual_provider_used: debugData.actual_provider_used }, null, 2)}</pre></div>
         <div><strong>Routing</strong><pre>{JSON.stringify({ provider, provider_router: debugData.provider_diagnostics, health: providerHealth[provider] }, null, 2)}</pre></div>
@@ -45,6 +54,6 @@ export default function DebugConsole() {
         <summary>Latest Request Trace</summary>
         <pre>{JSON.stringify(debugData.request_trace, null, 2)}</pre>
       </details>
-    </section>
+    </CollapsiblePanel>
   );
 }
