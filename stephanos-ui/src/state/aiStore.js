@@ -1,6 +1,6 @@
 // LIVE SOURCE OF TRUTH: this store backs the served Stephanos AI router/settings UI.
 // Update provider state here, then rebuild stephanos-ui to refresh apps/stephanos/dist.
-import { createContext, createElement, useContext, useMemo, useState } from 'react';
+import { createContext, createElement, useContext, useEffect, useMemo, useState } from 'react';
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
@@ -124,9 +124,8 @@ export function AIStoreProvider({ children }) {
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState('assistant');
-  const initialUiLayout = getStoredUiLayout();
-  const [uiLayout, setUiLayout] = useState(initialUiLayout);
-  const [debugVisible, setDebugVisibleState] = useState(initialUiLayout.debugConsole);
+  const [uiLayout, setUiLayout] = useState(() => getStoredUiLayout());
+  const [debugVisible, setDebugVisibleState] = useState(() => getStoredUiLayout().debugConsole);
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(initialSettings.provider);
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
@@ -173,13 +172,16 @@ export function AIStoreProvider({ children }) {
     ...next,
   });
 
+  useEffect(() => {
+    persistUiLayout(uiLayout);
+    setDebugVisibleState(uiLayout.debugConsole);
+  }, [uiLayout]);
+
   const updateUiLayout = (updater) => {
-    const candidate = typeof updater === 'function' ? updater(uiLayout) : updater;
-    const resolvedLayout = normalizeUiLayout(candidate);
-    setUiLayout(resolvedLayout);
-    persistUiLayout(resolvedLayout);
-    setDebugVisibleState(resolvedLayout.debugConsole);
-    return resolvedLayout;
+    setUiLayout((prev) => {
+      const candidate = typeof updater === 'function' ? updater(prev) : updater;
+      return normalizeUiLayout(candidate);
+    });
   };
 
   const setDebugVisible = (nextVisible) => {

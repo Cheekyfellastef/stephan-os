@@ -15,11 +15,12 @@ Use the Windows launcher named **Update + Launch Local Stephanos (Ollama)** at `
 
 What it does, in plain English:
 
-- Safely checks your local repo and pulls the latest GitHub changes when that is safe.
-- Installs dependencies only when package metadata changed.
-- Rebuilds `apps/stephanos/dist/**` only when the current build is missing or stale.
-- Starts or reuses the local Stephanos backend on `8787` and the local static runtime server on `4173`.
-- Waits for the real browser URL to return HTTP 200, then opens `http://127.0.0.1:4173/apps/stephanos/dist/`.
+- Safely checks your local repo and pulls the latest GitHub changes only when the repo is clean.
+- Skips the pull with a clear message when local changes are present, so nothing gets overwritten.
+- Installs dependencies automatically for the root repo, `stephanos-ui`, and `stephanos-server` when package metadata changed or `node_modules` is missing.
+- Starts or reuses the local Stephanos backend on `8787` and the Vite Mission Console UI on `5173`.
+- Waits for the working dev URLs to answer, then opens `http://localhost:5173/`.
+- Stays on the known-good dev path instead of the old fragile dist-launch flow.
 - Targets local Ollama at `http://localhost:11434` by default, with Mock Mode available inside Stephanos if Ollama is offline.
 
 Mental model:

@@ -119,6 +119,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex: 0 0 auto;
 }
 
 .panel-chevron {
@@ -144,10 +145,19 @@ body {
   border-color: rgba(150, 214, 255, 0.62);
 }
 
+.panel-collapse-toggle:hover .panel-heading-copy,
+.panel-collapse-toggle:focus-visible .panel-heading-copy {
+  color: #eef9ff;
+}
+
 .panel-body {
   display: grid;
   gap: 0.85rem;
   margin-top: 0.9rem;
+}
+
+.panel-body[hidden] {
+  display: none;
 }
 
 .collapsible-panel.is-collapsed {
