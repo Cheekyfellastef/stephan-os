@@ -200,8 +200,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
       <div className="provider-switch-header">
         <div>
-          <span className="provider-switch-label">Local AI Router</span>
-          <p className="provider-switch-subtitle">Stephanos now starts in Local AI Mode with Ollama at http://localhost:11434, with Mock Mode ready as a friendly fallback.</p>
+          <span className="provider-switch-label">Adaptive AI Router</span>
+          <p className="provider-switch-subtitle">Stephanos prefers local Ollama when it is reachable, then falls through to configured cloud providers, with Mock reserved as a dev-safe fallback.</p>
         </div>
         <div className="provider-switch-actions">
           <button type="button" className="ghost-button" onClick={resetToFreeMode}>Reset to Local Defaults</button>

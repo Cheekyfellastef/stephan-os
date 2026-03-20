@@ -2,6 +2,7 @@
 // Update provider state here, then rebuild stephanos-ui to refresh apps/stephanos/dist.
 import { createContext, createElement, useContext, useMemo, useState } from 'react';
 import {
+  AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -14,7 +15,6 @@ import {
 } from '../ai/providerConfig';
 
 const AIStoreContext = createContext(null);
-const SETTINGS_STORAGE_KEY = 'stephanos.ai.freeTierSettings';
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
   lastSuccessfulHost: '',
@@ -40,7 +40,7 @@ function getStoredSettings() {
   if (typeof window === 'undefined') return { ...defaults, ollamaConnection: DEFAULT_OLLAMA_CONNECTION };
 
   try {
-    const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+    const parsed = JSON.parse(localStorage.getItem(AI_SETTINGS_STORAGE_KEY) || '{}');
     return {
       ...defaults,
       provider: normalizeProviderSelection(parsed.provider),
@@ -63,7 +63,7 @@ function getStoredSettings() {
 
 function persistSettings(state) {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+  localStorage.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify({
     provider: state.provider,
     devMode: state.devMode,
     fallbackEnabled: state.fallbackEnabled,
@@ -91,6 +91,7 @@ export function AIStoreProvider({ children }) {
   const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }] )));
   const [providerHealth, setProviderHealth] = useState({});
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
+  const [lastExecutionMetadata, setLastExecutionMetadata] = useState(null);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
@@ -262,6 +263,8 @@ export function AIStoreProvider({ children }) {
     setProviderHealth,
     ollamaConnection,
     setOllamaConnection,
+    lastExecutionMetadata,
+    setLastExecutionMetadata,
     rememberSuccessfulOllamaConnection,
     getDraftProviderConfig,
     getActiveProviderConfig,
@@ -294,6 +297,7 @@ export function AIStoreProvider({ children }) {
     providerDraftStatus,
     providerHealth,
     ollamaConnection,
+    lastExecutionMetadata,
     apiStatus,
     uiDiagnostics,
   ]);

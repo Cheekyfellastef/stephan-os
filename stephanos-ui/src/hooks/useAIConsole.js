@@ -40,6 +40,7 @@ export function useAIConsole() {
     providerSelectionSource,
     getActiveProviderConfigSource,
     setProviderHealth,
+    setLastExecutionMetadata,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -171,6 +172,8 @@ export function useAIConsole() {
         lastCheckedAt: new Date().toISOString(),
       }));
 
+      setLastExecutionMetadata(executionMetadata);
+
       setDebugData({
         request_payload: requestPayload,
         response_payload: data,
@@ -192,6 +195,7 @@ export function useAIConsole() {
     } catch (error) {
       const uiError = transportErrorToUi(error);
       setStatus('error');
+      setLastExecutionMetadata(null);
       setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));
 
       setCommandHistory((prev) => [...prev, {

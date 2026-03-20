@@ -3,6 +3,10 @@ import {
   resolvePackagingMode,
   validateEntryForPackaging
 } from "./entry_rules.js";
+import {
+  createRuntimeStatusModel,
+  readPersistedProviderPreferences,
+} from "../../shared/runtime/runtimeStatusModel.mjs";
 
 const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_DIST_ENTRY = "apps/stephanos/dist/index.html";
@@ -11,6 +15,7 @@ const STEPHANOS_HEALTH_URL = "http://127.0.0.1:4173/__stephanos/health";
 const STEPHANOS_STATUS_URL = "./apps/stephanos/runtime-status.json";
 const STEPHANOS_BACKEND_URL = "http://localhost:8787";
 const STEPHANOS_BACKEND_HEALTH_URL = "http://localhost:8787/api/health";
+const STEPHANOS_PROVIDER_HEALTH_URL = "http://localhost:8787/api/ai/providers/health";
 
 function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
@@ -68,6 +73,34 @@ async function fetchJson(path) {
 async function fetchJsonSafely(path) {
   try {
     return await fetchJson(path);
+  } catch {
+    return { ok: false, networkError: true };
+  }
+}
+
+async function postJsonSafely(path, body) {
+  try {
+    const response = await fetch(path, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body || {})
+    });
+
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+
+    const raw = await response.text();
+
+    try {
+      return { ok: true, json: JSON.parse(raw) };
+    } catch {
+      return { ok: false, parseError: true };
+    }
   } catch {
     return { ok: false, networkError: true };
   }
@@ -396,14 +429,16 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     runtimeReachable;
   const healthyBackend = backendProbe.ok && backendProbe.json?.service === "stephanos-server";
   const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.ok ? runtimeProbe.json : null);
-  const liveReady = entryExists && runtimeReachable && healthyRuntime && healthyBackend;
+  const launchableRuntime = entryExists && runtimeReachable && healthyRuntime;
   const staleStateCleared = Boolean(
-    liveReady && (options.previousValidationState === "error" || launcherState === "error")
+    launchableRuntime && (options.previousValidationState === "error" || launcherState === "error")
   );
   let validationReason = "validator still evaluating failure branch";
 
-  if (liveReady) {
-    validationReason = "validator observed build+runtime+backend all healthy";
+  if (launchableRuntime) {
+    validationReason = healthyBackend
+      ? "validator observed launchable runtime with backend online"
+      : "validator observed launchable runtime while backend dependencies are degraded";
   } else if (!entryExists) {
     validationReason = launchInProgress || buildState === "building" || buildState === "verifying-build"
       ? "entry missing while launcher/build still in progress"
@@ -412,11 +447,28 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     validationReason = launchInProgress || uiState === "starting" || uiState === "waiting-runtime"
       ? `runtime still starting at ${runtimeUrl}`
       : `runtime not reachable at ${runtimeUrl}`;
-  } else if (!healthyBackend) {
-    validationReason = launchInProgress || backendState === "starting" || backendState === "waiting-runtime"
-      ? `backend still starting at ${STEPHANOS_BACKEND_URL}`
-      : `backend not reachable at ${STEPHANOS_BACKEND_URL}`;
   }
+
+  const providerPreferences = readPersistedProviderPreferences();
+  const providerHealthProbe = healthyBackend
+    ? await postJsonSafely(STEPHANOS_PROVIDER_HEALTH_URL, {
+      provider: providerPreferences.selectedProvider,
+      fallbackEnabled: providerPreferences.fallbackEnabled,
+      fallbackOrder: providerPreferences.fallbackOrder,
+    })
+    : { ok: false };
+  const providerHealth = providerHealthProbe.ok ? providerHealthProbe.json?.data || {} : {};
+  const runtimeStatusModel = createRuntimeStatusModel({
+    appId: "stephanos",
+    appName: "Stephanos OS",
+    validationState: launchableRuntime ? "healthy" : (launchInProgress ? "launching" : "error"),
+    selectedProvider: providerPreferences.selectedProvider,
+    fallbackEnabled: providerPreferences.fallbackEnabled,
+    fallbackOrder: providerPreferences.fallbackOrder,
+    providerHealth,
+    backendAvailable: healthyBackend,
+    preferAuto: typeof window !== "undefined" ? window.innerWidth <= 820 : false,
+  });
 
   emitStephanosValidationLog(context, {
     manifestEntry: String(options.manifestEntry || "").trim(),
@@ -435,20 +487,21 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     runtimeMarker: launcherStatus?.runtimeMarker || runtimeProbe.json?.runtimeMarker || null,
     gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || null,
     buildTimestamp: launcherStatus?.buildTimestamp || runtimeProbe.json?.buildTimestamp || null,
-    reason: validationReason
+    reason: `${validationReason}; provider=${runtimeStatusModel.selectedProvider}; launch_state=${runtimeStatusModel.appLaunchState}; dependency=${runtimeStatusModel.dependencySummary}`
   });
 
-  if (liveReady) {
-    const healthyMessage = ollamaState === "reachable"
-      ? "Stephanos running normally (backend, UI, and Ollama reachable)"
-      : ollamaState === "unreachable"
-        ? "Stephanos running normally (backend/UI ready, Ollama unreachable)"
-        : "Stephanos running normally";
+  if (launchableRuntime) {
+    const healthyMessage = healthyBackend
+      ? runtimeStatusModel.dependencySummary
+      : `Launcher ready · ${runtimeStatusModel.dependencySummary.toLowerCase()}`;
 
     return {
       state: "healthy",
       message: launcherState === "ready" && launcherMessage ? launcherMessage : healthyMessage,
-      issues: []
+      issues: [],
+      runtimeStatusModel,
+      dependencyState: runtimeStatusModel.appLaunchState,
+      providerHealth,
     };
   }
 
@@ -456,14 +509,20 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     if (launchInProgress || buildState === "building" || buildState === "verifying-build") {
       return {
         state: "launching",
-        message: launcherMessage || "Stephanos is still building locally."
+        message: launcherMessage || "Stephanos is still building locally.",
+        runtimeStatusModel,
+        dependencyState: "degraded",
+        providerHealth,
       };
     }
 
     return {
       state: "error",
       message: `Stephanos build missing: ${resolvedEntryPath} not found`,
-      issues: [`Stephanos build missing: ${resolvedEntryPath} not found`]
+      issues: [`Stephanos build missing: ${resolvedEntryPath} not found`],
+      runtimeStatusModel,
+      dependencyState: "unavailable",
+      providerHealth,
     };
   }
 
@@ -471,36 +530,30 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     if (launchInProgress || uiState === "starting" || uiState === "waiting-runtime") {
       return {
         state: "launching",
-        message: launcherMessage || `Stephanos is still starting the local runtime at ${runtimeUrl}`
+        message: launcherMessage || `Stephanos is still starting the local runtime at ${runtimeUrl}`,
+        runtimeStatusModel,
+        dependencyState: "degraded",
+        providerHealth,
       };
     }
 
     return {
       state: "error",
       message: `Stephanos dist server not reachable on ${runtimeUrl}`,
-      issues: [`Stephanos dist server not reachable on ${runtimeUrl}`]
-    };
-  }
-
-  if (!healthyBackend) {
-    if (launchInProgress || backendState === "starting" || backendState === "waiting-runtime") {
-      return {
-        state: "launching",
-        message: launcherMessage || `Stephanos is still starting the local backend at ${STEPHANOS_BACKEND_URL}`
-      };
-    }
-
-    return {
-      state: "error",
-      message: `Stephanos backend not reachable on ${STEPHANOS_BACKEND_URL}`,
-      issues: [`Stephanos backend not reachable on ${STEPHANOS_BACKEND_URL}`]
+      issues: [`Stephanos dist server not reachable on ${runtimeUrl}`],
+      runtimeStatusModel,
+      dependencyState: "unavailable",
+      providerHealth,
     };
   }
 
   return {
     state: "launching",
     message: launcherMessage || "Stephanos is still starting locally.",
-    issues: []
+    issues: [],
+    runtimeStatusModel,
+    dependencyState: "degraded",
+    providerHealth,
   };
 }
 
@@ -555,6 +608,10 @@ export async function validateApps(apps, context = {}) {
         discoveryDisabled: app?.discoveryDisabled,
         disabled: app?.disabled
       });
+
+      app.runtimeStatusModel = stephanosStatus.runtimeStatusModel || null;
+      app.providerHealth = stephanosStatus.providerHealth || {};
+      app.dependencyState = stephanosStatus.dependencyState || stephanosStatus.runtimeStatusModel?.appLaunchState || 'ready';
 
       if (previousValidationState === "error" && stephanosStatus.state !== "error") {
         emitDiagnostic(context, "stephanos validation: cleared stale failure state after successful revalidation");
