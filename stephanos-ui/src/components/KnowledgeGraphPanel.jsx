@@ -1,20 +1,30 @@
+import { useAIStore } from '../state/aiStore';
 import GraphNodeCard from './GraphNodeCard';
 import GraphEdgeCard from './GraphEdgeCard';
 import GraphStatsCard from './GraphStatsCard';
+import CollapsiblePanel from './CollapsiblePanel';
 
 export default function KnowledgeGraphPanel({ commandHistory }) {
+  const { uiLayout, togglePanel } = useAIStore();
   const latestGraphEntry = [...commandHistory]
     .reverse()
     .find((entry) => entry.route === 'kg' || entry.tool_used?.startsWith('kg'));
 
   const graphData = latestGraphEntry?.response?.data ?? {};
-  const stats = graphData.stats ?? graphData.status?.stats ? { totals: graphData.status.stats } : null;
+  const stats = graphData.stats || (graphData.status?.stats ? { totals: graphData.status.stats } : null);
   const nodes = graphData.nodes ?? graphData.node_matches ?? graphData.stats?.recent_nodes ?? [];
   const edges = graphData.edges ?? graphData.edge_matches ?? graphData.stats?.recent_edges ?? [];
 
   return (
-    <section className="panel">
-      <h2>Knowledge Graph</h2>
+    <CollapsiblePanel
+      as="aside"
+      panelId="knowledgeGraphPanel"
+      title="Knowledge Graph"
+      description="Graph stats plus the latest node and edge inspection results."
+      className="knowledge-graph-panel"
+      isOpen={uiLayout.knowledgeGraphPanel}
+      onToggle={() => togglePanel('knowledgeGraphPanel')}
+    >
       {!latestGraphEntry ? (
         <p className="muted">Run /kg help to get started.</p>
       ) : (
@@ -33,6 +43,6 @@ export default function KnowledgeGraphPanel({ commandHistory }) {
           </div>
         </>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }

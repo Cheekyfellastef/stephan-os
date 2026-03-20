@@ -5,6 +5,7 @@ import DebugConsole from './components/DebugConsole';
 import ToolsPanel from './components/ToolsPanel';
 import MemoryPanel from './components/MemoryPanel';
 import KnowledgeGraphPanel from './components/KnowledgeGraphPanel';
+import SimulationListPanel from './components/SimulationListPanel';
 import SimulationPanel from './components/SimulationPanel';
 import ProposalPanel from './components/ProposalPanel';
 import ActivityPanel from './components/ActivityPanel';
@@ -108,6 +109,7 @@ export default function App() {
           <ToolsPanel commandHistory={commandHistory} />
           <MemoryPanel commandHistory={commandHistory} />
           <KnowledgeGraphPanel commandHistory={commandHistory} />
+          <SimulationListPanel commandHistory={commandHistory} />
           <SimulationPanel commandHistory={commandHistory} />
           <SimulationHistoryPanel commandHistory={commandHistory} />
           <ProposalPanel commandHistory={commandHistory} />

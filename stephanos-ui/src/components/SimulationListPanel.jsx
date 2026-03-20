@@ -1,4 +1,8 @@
+import { useAIStore } from '../state/aiStore';
+import CollapsiblePanel from './CollapsiblePanel';
+
 export default function SimulationListPanel({ commandHistory }) {
+  const { uiLayout, togglePanel } = useAIStore();
   const latest = [...commandHistory]
     .reverse()
     .find((entry) => Array.isArray(entry.response?.data?.simulations));
@@ -6,8 +10,15 @@ export default function SimulationListPanel({ commandHistory }) {
   const simulations = latest?.response?.data?.simulations ?? [];
 
   return (
-    <section>
-      <h3>Available Simulations</h3>
+    <CollapsiblePanel
+      as="aside"
+      panelId="simulationListPanel"
+      title="Available Simulations"
+      description="Registered simulations and current availability state."
+      className="simulation-list-panel"
+      isOpen={uiLayout.simulationListPanel}
+      onToggle={() => togglePanel('simulationListPanel')}
+    >
       {simulations.length === 0 ? (
         <p className="muted">Run /simulate list to inspect the simulation registry.</p>
       ) : (
@@ -17,6 +28,6 @@ export default function SimulationListPanel({ commandHistory }) {
           ))}
         </ul>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }
