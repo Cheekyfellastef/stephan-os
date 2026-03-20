@@ -35,6 +35,17 @@ async function requestJson(path, options = {}) {
   }
 }
 
+
+async function requestMemory(path, options = {}) {
+  const result = await requestJson(path, options);
+  if (!result.ok) {
+    const message = result.data?.error || `Memory request failed (${result.status}).`;
+    throw new Error(message);
+  }
+
+  return result.data;
+}
+
 export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true }) {
   const payload = {
     prompt,
@@ -84,3 +95,28 @@ export async function checkApiHealth() {
 }
 
 export { getApiRuntimeConfig };
+
+export async function listMemoryItems() {
+  const result = await requestMemory('/api/memory');
+  return result.data?.items || [];
+}
+
+export async function searchMemoryItems(query) {
+  const result = await requestMemory(`/api/memory/search?q=${encodeURIComponent(query)}`);
+  return result.data?.items || [];
+}
+
+export async function createMemoryItem(payload) {
+  const normalizedPayload = {
+    ...payload,
+    tags: Array.isArray(payload.tags) ? payload.tags : String(payload.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean),
+  };
+
+  const result = await requestMemory('/api/memory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(normalizedPayload),
+  });
+
+  return result.data?.item || null;
+}

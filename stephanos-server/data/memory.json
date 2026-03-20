@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-03-20T00:00:00.000Z",
+  "items": [
+    {
+      "id": "mem_launcher_dev_5173",
+      "category": "project",
+      "title": "Launcher uses localhost:5173 dev path",
+      "content": "Stephanos launcher currently targets the Vite development UI at localhost:5173 during local development.",
+      "tags": [
+        "launcher",
+        "vite",
+        "localhost:5173",
+        "dev"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 5,
+      "source": "seed"
+    },
+    {
+      "id": "mem_backend_8787",
+      "category": "architecture",
+      "title": "Backend runs on port 8787",
+      "content": "Stephanos local backend API runs on port 8787.",
+      "tags": [
+        "backend",
+        "port",
+        "8787",
+        "api"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 5,
+      "source": "seed"
+    },
+    {
+      "id": "mem_ollama_11434",
+      "category": "architecture",
+      "title": "Ollama runs on localhost:11434",
+      "content": "Local Ollama is expected at localhost:11434 for Stephanos local-first AI routing.",
+      "tags": [
+        "ollama",
+        "localhost:11434",
+        "llm",
+        "local"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 5,
+      "source": "seed"
+    },
+    {
+      "id": "mem_gpt_oss_timeout",
+      "category": "troubleshooting",
+      "title": "gpt-oss:20b may need a 60000ms timeout",
+      "content": "When routing requests to gpt-oss:20b through Ollama, Stephanos may need a longer timeout such as 60000ms.",
+      "tags": [
+        "ollama",
+        "gpt-oss:20b",
+        "timeout",
+        "60000ms"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 4,
+      "source": "seed"
+    },
+    {
+      "id": "mem_desktop_ignition_switch",
+      "category": "preference",
+      "title": "User wants a desktop ignition switch",
+      "content": "User wants a desktop ignition switch experience that opens Stephanos automatically.",
+      "tags": [
+        "desktop",
+        "ignition-switch",
+        "launcher",
+        "preference"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 4,
+      "source": "seed"
+    },
+    {
+      "id": "mem_local_first_private",
+      "category": "workflow",
+      "title": "User prefers local-first private operation",
+      "content": "Stephanos should stay local-first and privacy-oriented whenever possible, avoiding unnecessary cloud dependencies.",
+      "tags": [
+        "local-first",
+        "privacy",
+        "workflow",
+        "preference"
+      ],
+      "createdAt": "2026-03-20T00:00:00.000Z",
+      "updatedAt": "2026-03-20T00:00:00.000Z",
+      "importance": 5,
+      "source": "seed"
+    }
+  ]
+}
