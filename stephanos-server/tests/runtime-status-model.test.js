@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FALLBACK_PROVIDER_KEYS } from '../../shared/ai/providerDefaults.mjs';
-import { createRuntimeStatusModel, deriveProviderMode, getReadyCloudProviders } from '../../shared/runtime/runtimeStatusModel.mjs';
+import { createRuntimeStatusModel, getReadyCloudProviders } from '../../shared/runtime/runtimeStatusModel.mjs';
 
 test('default fallback order prefers cloud providers before mock', () => {
   assert.deepEqual(FALLBACK_PROVIDER_KEYS, ['groq', 'gemini', 'mock', 'ollama']);
 });
 
-test('runtime status uses auto mode and cloud fallback when local ollama is offline', () => {
+test('runtime status uses cloud-first in hosted auto mode when local ollama is offline', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
+    routeMode: 'auto',
     fallbackEnabled: true,
     providerHealth: {
       ollama: { ok: false },
@@ -19,22 +20,22 @@ test('runtime status uses auto mode and cloud fallback when local ollama is offl
     },
     backendAvailable: true,
     validationState: 'healthy',
-    preferAuto: true,
+    runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
   });
 
-  assert.equal(model.providerMode, 'auto');
+  assert.equal(model.effectiveRouteMode, 'cloud-first');
   assert.equal(model.activeProvider, 'groq');
   assert.equal(model.cloudAvailable, true);
   assert.equal(model.localAvailable, false);
-  assert.equal(model.fallbackActive, true);
-  assert.equal(model.appLaunchState, 'degraded');
-  assert.equal(model.dependencySummary, 'Cloud active, local offline');
+  assert.equal(model.fallbackActive, false);
+  assert.equal(model.appLaunchState, 'ready');
+  assert.equal(model.dependencySummary, 'Groq active for cloud routing');
 });
-
 
 test('runtime status surfaces pending local discovery instead of stale offline', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
+    routeMode: 'local-first',
     fallbackEnabled: true,
     providerHealth: {
       ollama: { ok: false, state: 'SEARCHING' },
@@ -47,12 +48,13 @@ test('runtime status surfaces pending local discovery instead of stale offline',
   assert.equal(model.localPending, true);
   assert.equal(model.localAvailable, false);
   assert.equal(model.appLaunchState, 'degraded');
-  assert.equal(model.dependencySummary, 'Checking local AI readiness');
+  assert.equal(model.dependencySummary, 'Checking local Ollama readiness');
 });
 
 test('runtime status keeps launcher ready while backend is offline but runtime is still launchable', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
+    routeMode: 'local-first',
     fallbackEnabled: true,
     providerHealth: {
       ollama: { ok: true },
@@ -66,16 +68,6 @@ test('runtime status keeps launcher ready while backend is offline but runtime i
   assert.equal(model.dependencySummary, 'Backend offline');
 });
 
-test('deriveProviderMode stays cloud when a cloud provider is selected directly', () => {
-  const providerMode = deriveProviderMode({
-    selectedProvider: 'gemini',
-    fallbackEnabled: true,
-    providerHealth: {
-      gemini: { ok: true },
-      ollama: { ok: false },
-    },
-  });
-
-  assert.equal(providerMode, 'cloud');
+test('ready cloud provider list still filters only healthy cloud providers', () => {
   assert.deepEqual(getReadyCloudProviders({ gemini: { ok: true }, groq: { ok: false } }), ['gemini']);
 });

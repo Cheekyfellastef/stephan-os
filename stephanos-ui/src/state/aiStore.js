@@ -4,10 +4,12 @@ import { createContext, createElement, useContext, useEffect, useMemo, useState 
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
+  DEFAULT_ROUTE_MODE,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   createDefaultRouterSettings,
   normalizeFallbackOrder,
+  normalizeRouteMode,
   normalizeProviderDraft,
   normalizeProviderSelection,
   sanitizeConfigForStorage,
@@ -91,6 +93,7 @@ function getStoredSettings() {
     return {
       ...defaults,
       provider: normalizeProviderSelection(parsed.provider),
+      routeMode: normalizeRouteMode(parsed.routeMode),
       devMode: parsed.devMode !== false,
       fallbackEnabled: parsed.fallbackEnabled !== false,
       fallbackOrder: normalizeFallbackOrder(parsed.fallbackOrder),
@@ -115,6 +118,7 @@ function getStoredUiLayout() {
 function persistSettings(state) {
   writeLocalStorageJson(AI_SETTINGS_STORAGE_KEY, {
     provider: state.provider,
+    routeMode: state.routeMode,
     devMode: state.devMode,
     fallbackEnabled: state.fallbackEnabled,
     fallbackOrder: state.fallbackOrder,
@@ -138,6 +142,7 @@ export function AIStoreProvider({ children }) {
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(initialSettings.provider);
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
+  const [routeMode, setRouteModeState] = useState(initialSettings.routeMode || DEFAULT_ROUTE_MODE);
   const [devMode, setDevModeState] = useState(initialSettings.devMode);
   const [fallbackEnabled, setFallbackEnabledState] = useState(initialSettings.fallbackEnabled);
   const [fallbackOrder, setFallbackOrderState] = useState(initialSettings.fallbackOrder);
@@ -173,6 +178,7 @@ export function AIStoreProvider({ children }) {
 
   const persistCurrentState = (next = {}) => persistSettings({
     provider,
+    routeMode,
     devMode,
     fallbackEnabled,
     fallbackOrder,
@@ -221,6 +227,12 @@ export function AIStoreProvider({ children }) {
     persistCurrentState({ provider: resolved });
   };
 
+  const setRouteMode = (nextRouteMode) => {
+    const resolved = normalizeRouteMode(nextRouteMode);
+    setRouteModeState(resolved);
+    persistCurrentState({ routeMode: resolved });
+  };
+
   const setDevMode = (next) => {
     setDevModeState(Boolean(next));
     persistCurrentState({ devMode: Boolean(next) });
@@ -257,6 +269,7 @@ export function AIStoreProvider({ children }) {
     const sessionSafe = Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { ...defaults.providerConfigs[key], apiKey: '' }]));
     const nextUiLayout = { ...DEFAULT_UI_LAYOUT };
     setProviderState(defaults.provider);
+    setRouteModeState(defaults.routeMode);
     setDevModeState(defaults.devMode);
     setFallbackEnabledState(defaults.fallbackEnabled);
     setFallbackOrderState(defaults.fallbackOrder);
@@ -351,6 +364,8 @@ export function AIStoreProvider({ children }) {
     provider,
     setProvider,
     providerSelectionSource,
+    routeMode,
+    setRouteMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -393,6 +408,7 @@ export function AIStoreProvider({ children }) {
     uiLayout,
     provider,
     providerSelectionSource,
+    routeMode,
     devMode,
     fallbackEnabled,
     fallbackOrder,

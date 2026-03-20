@@ -15,6 +15,8 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   return {
     ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
+    route_mode: executionMetadata.route_mode || requestTrace.route_mode || requestPayload.routeMode || 'auto',
+    effective_route_mode: executionMetadata.effective_route_mode || requestTrace.effective_route_mode || requestPayload.routeMode || 'auto',
     requested_provider: executionMetadata.requested_provider || requestTrace.requested_provider || requestPayload.provider,
     selected_provider: executionMetadata.selected_provider || requestTrace.selected_provider || requestPayload.provider,
     actual_provider_used: actualProviderUsed,
@@ -37,7 +39,7 @@ function deriveExecutionStatus(executionMetadata) {
 }
 
 function buildExecutionSummary(executionMetadata) {
-  const summaryPrefix = `UI requested ${executionMetadata.ui_requested_provider}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
+  const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI requested ${executionMetadata.ui_requested_provider}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
 
   if (executionMetadata.fallback_used) {
@@ -78,6 +80,7 @@ export function useAIConsole() {
     setDebugData,
     setApiStatus,
     provider,
+    routeMode,
     devMode,
     fallbackEnabled,
     fallbackOrder,
@@ -95,13 +98,14 @@ export function useAIConsole() {
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
+  const runtimeContext = runtimeConfig;
   const startupOllamaSyncAttemptedRef = useRef(false);
 
   const refreshHealth = useCallback(async () => {
     const effectiveProviderConfigs = getEffectiveProviderConfigs();
     try {
       const health = await checkApiHealth();
-      const providerHealth = await getProviderHealth({ provider, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode });
+      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext });
       setProviderHealth(providerHealth.data || {});
       setApiStatus({
         state: health.ok ? 'online' : 'error',
@@ -117,6 +121,7 @@ export function useAIConsole() {
         healthEndpoint: runtimeConfig.healthEndpoint,
         backendReachable: health.ok,
         backendDefaultProvider: health.data?.default_provider || 'mock',
+        runtimeContext,
         lastCheckedAt: new Date().toISOString(),
         meta: health.data,
       });
@@ -138,7 +143,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth]);
+  }, [runtimeConfig, runtimeContext, setApiStatus, provider, routeMode, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth]);
 
   useEffect(() => {
     refreshHealth();
@@ -224,10 +229,12 @@ export function useAIConsole() {
 
       const refreshedProviderHealth = await getProviderHealth({
         provider,
+        routeMode,
         providerConfigs: nextProviderConfigs,
         fallbackEnabled,
         fallbackOrder,
         devMode,
+        runtimeContext,
       });
 
       if (refreshedProviderHealth.data && Object.keys(refreshedProviderHealth.data).length) {
@@ -253,6 +260,8 @@ export function useAIConsole() {
     runtimeConfig,
     setProviderHealth,
     updateDraftProviderConfig,
+    routeMode,
+    runtimeContext,
   ]);
 
   async function submitPrompt(rawPrompt) {
@@ -282,6 +291,7 @@ export function useAIConsole() {
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
+        routeMode,
         providerConfigs: effectiveProviderConfigs,
         fallbackEnabled,
         fallbackOrder,

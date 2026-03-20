@@ -13,6 +13,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     apiStatus,
     setUiDiagnostics,
     provider,
+    routeMode,
     providerHealth,
     getActiveProviderConfig,
     fallbackEnabled,
@@ -30,11 +31,12 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     appName: 'Stephanos Mission Console',
     validationState: 'healthy',
     selectedProvider: provider,
+    routeMode,
     fallbackEnabled,
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    preferAuto: typeof window !== 'undefined' && window.innerWidth <= 820,
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
 
@@ -78,7 +80,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       ) : null}
       <div className="output-panel">
         {commandHistory.length === 0 ? (
-          <p className="muted">Ready. Auto routing prefers local Ollama, then cloud when available. Try “Explain current AI mode” or /status.</p>
+          <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
         ) : commandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
       </div>
 

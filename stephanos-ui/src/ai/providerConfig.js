@@ -1,6 +1,7 @@
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
+  DEFAULT_ROUTE_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -10,11 +11,14 @@ import {
   createDefaultRouterSettings,
   normalizeFallbackOrder,
   normalizeProviderSelection,
+  normalizeRouteMode,
+  ROUTE_MODE_KEYS,
 } from '../../../shared/ai/providerDefaults.mjs';
 
 export {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
+  DEFAULT_ROUTE_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -24,6 +28,8 @@ export {
   createDefaultRouterSettings,
   normalizeFallbackOrder,
   normalizeProviderSelection,
+  normalizeRouteMode,
+  ROUTE_MODE_KEYS,
 };
 
 export const NON_SECRET_PROVIDER_FIELDS = {

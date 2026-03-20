@@ -511,6 +511,33 @@ pre {
   margin-bottom: 0.85rem;
 }
 
+
+.provider-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.provider-mode-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.8rem 0.9rem;
+  text-align: left;
+  background: rgba(6, 18, 34, 0.88);
+}
+
+.provider-mode-card span {
+  color: #9fd3ff;
+  font-size: 0.82rem;
+}
+
+.provider-mode-card.active {
+  border-color: rgba(88, 203, 255, 0.95);
+  box-shadow: 0 0 0 2px rgba(88, 203, 255, 0.18), 0 0 24px rgba(88, 203, 255, 0.18);
+}
+
+
 .provider-switch-header {
   display: flex;
   justify-content: space-between;

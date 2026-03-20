@@ -1,4 +1,17 @@
-import { PROVIDER_DEFINITIONS, normalizeFallbackOrder, normalizeProviderSelection } from '../../../../shared/ai/providerDefaults.mjs';
+import {
+  CLOUD_FIRST_PROVIDER_KEYS,
+  CLOUD_PROVIDER_KEYS,
+  DEFAULT_ROUTE_MODE,
+  FALLBACK_PROVIDER_KEYS,
+  LOCAL_FIRST_PROVIDER_KEYS,
+  LOCAL_PROVIDER_KEYS,
+  PROVIDER_DEFINITIONS,
+  normalizeFallbackOrder,
+  normalizeProviderSelection,
+  normalizeRouteMode,
+} from '../../../../shared/ai/providerDefaults.mjs';
+
+const SERVER_ENV_ONLY_PROVIDER_KEYS = ['groq'];
 
 export function normalizeMessages(messages = [], prompt = '') {
   if (Array.isArray(messages) && messages.length > 0) return messages;
@@ -34,9 +47,19 @@ function getEnvBackedDefaults(provider) {
   };
 }
 
+function sanitizeInboundProviderConfig(provider, config = {}) {
+  const draft = { ...(config || {}) };
+
+  if (SERVER_ENV_ONLY_PROVIDER_KEYS.includes(provider) && 'apiKey' in draft) {
+    delete draft.apiKey;
+  }
+
+  return draft;
+}
+
 export function sanitizeProviderConfig(provider, config = {}) {
   const defaults = getEnvBackedDefaults(provider);
-  const merged = { ...defaults, ...(config || {}) };
+  const merged = { ...defaults, ...sanitizeInboundProviderConfig(provider, config) };
 
   if ('apiKey' in merged) merged.apiKey = String(merged.apiKey || '');
   if ('baseURL' in merged) merged.baseURL = String(merged.baseURL || '').trim();
@@ -61,13 +84,106 @@ export function buildProviderStatus(status, detail, extras = {}) {
   return { status, detail, ...extras };
 }
 
+export function normalizeRuntimeContext(runtimeContext = {}) {
+  const frontendOrigin = String(runtimeContext.frontendOrigin || '');
+  const apiBaseUrl = String(runtimeContext.baseUrl || runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || '');
+
+  const parseHostname = (value) => {
+    try {
+      return new URL(value).hostname || '';
+    } catch {
+      return '';
+    }
+  };
+  const isLoopbackHost = (hostname) => ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).toLowerCase());
+
+  const frontendHost = parseHostname(frontendOrigin);
+  const backendHost = parseHostname(apiBaseUrl);
+  const frontendReachability = isLoopbackHost(frontendHost) || !frontendHost ? 'local' : 'hosted';
+  const backendReachability = isLoopbackHost(backendHost) || !backendHost ? 'local' : 'reachable';
+  const sessionKind = frontendReachability === 'local' && backendReachability === 'local'
+    ? 'local-desktop'
+    : 'hosted-web';
+
+  return {
+    frontendOrigin,
+    apiBaseUrl,
+    frontendHost,
+    backendHost,
+    frontendReachability,
+    backendReachability,
+    sessionKind,
+  };
+}
+
+function orderedProviders(primaryOrder = [], fallbackOrder = []) {
+  return [...new Set([
+    ...primaryOrder,
+    ...normalizeFallbackOrder(fallbackOrder),
+    ...Object.keys(PROVIDER_DEFINITIONS),
+  ])].filter((providerKey) => PROVIDER_DEFINITIONS[providerKey]);
+}
+
+function getReadyProviders(providerHealthSnapshot = {}, providerKeys = []) {
+  return providerKeys.filter((providerKey) => providerHealthSnapshot[providerKey]?.ok);
+}
+
+export function resolveRoutingPlan(routerConfig = {}, providerHealthSnapshot = {}) {
+  const requestedProvider = normalizeProviderSelection(routerConfig.provider);
+  const requestedRouteMode = normalizeRouteMode(routerConfig.routeMode);
+  const runtimeContext = normalizeRuntimeContext(routerConfig.runtimeContext);
+  const readyLocalProviders = getReadyProviders(providerHealthSnapshot, LOCAL_PROVIDER_KEYS);
+  const readyCloudProviders = getReadyProviders(providerHealthSnapshot, CLOUD_FIRST_PROVIDER_KEYS.filter((providerKey) => CLOUD_PROVIDER_KEYS.includes(providerKey)));
+  const localAvailable = readyLocalProviders.length > 0;
+  const cloudAvailable = readyCloudProviders.length > 0;
+
+  const effectiveRouteMode = requestedRouteMode === 'auto'
+    ? runtimeContext.sessionKind === 'hosted-web'
+      ? (cloudAvailable ? 'cloud-first' : 'local-first')
+      : (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
+    : requestedRouteMode;
+
+  const preferredOrder = effectiveRouteMode === 'explicit'
+    ? [requestedProvider]
+    : effectiveRouteMode === 'cloud-first'
+      ? CLOUD_FIRST_PROVIDER_KEYS
+      : LOCAL_FIRST_PROVIDER_KEYS;
+
+  const attemptOrder = orderedProviders(preferredOrder, routerConfig.fallbackEnabled === false ? [] : routerConfig.fallbackOrder)
+    .filter((providerKey) => {
+      if (providerKey === 'openrouter') {
+        return Boolean(providerHealthSnapshot.openrouter?.config?.enabled || providerHealthSnapshot.openrouter?.ok);
+      }
+      return true;
+    });
+
+  const selectedProvider = effectiveRouteMode === 'explicit'
+    ? requestedProvider
+    : attemptOrder.find((providerKey) => providerHealthSnapshot[providerKey]?.ok) || attemptOrder[0] || requestedProvider;
+
+  return {
+    requestedProvider,
+    requestedRouteMode,
+    effectiveRouteMode,
+    selectedProvider,
+    attemptOrder: effectiveRouteMode === 'explicit' ? [requestedProvider] : attemptOrder,
+    readyLocalProviders,
+    readyCloudProviders,
+    localAvailable,
+    cloudAvailable,
+    runtimeContext,
+  };
+}
+
 export function buildRouterConfig(config = {}) {
   return {
     provider: normalizeProviderSelection(config.provider),
+    routeMode: normalizeRouteMode(config.routeMode || DEFAULT_ROUTE_MODE),
     devMode: config.devMode !== false,
     fallbackEnabled: config.fallbackEnabled !== false,
-    fallbackOrder: normalizeFallbackOrder(config.fallbackOrder),
+    fallbackOrder: normalizeFallbackOrder(config.fallbackOrder || FALLBACK_PROVIDER_KEYS),
     providerConfigs: config.providerConfigs || {},
+    runtimeContext: normalizeRuntimeContext(config.runtimeContext),
   };
 }
 

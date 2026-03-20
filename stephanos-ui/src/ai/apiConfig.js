@@ -1,21 +1,51 @@
 const DEFAULT_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_TIMEOUT_MS = 30000;
 
+function getFrontendOrigin() {
+  if (typeof window === 'undefined' || !window.location?.origin) {
+    return 'http://localhost';
+  }
+
+  return window.location.origin;
+}
+
+function isLoopbackHost(hostname = '') {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).toLowerCase());
+}
+
+function getHostedDefaultApiBaseUrl() {
+  const origin = getFrontendOrigin();
+  try {
+    const parsed = new URL(origin);
+    if (!isLoopbackHost(parsed.hostname)) {
+      return parsed.origin;
+    }
+  } catch {
+    return DEFAULT_API_BASE_URL;
+  }
+
+  return DEFAULT_API_BASE_URL;
+}
+
 function normalizeBaseUrl(value) {
   if (!value || typeof value !== 'string') {
-    return DEFAULT_API_BASE_URL;
+    return getHostedDefaultApiBaseUrl();
   }
 
   const trimmed = value.trim();
   if (!trimmed) {
-    return DEFAULT_API_BASE_URL;
+    return getHostedDefaultApiBaseUrl();
+  }
+
+  if (trimmed.startsWith('/')) {
+    return `${getFrontendOrigin()}${trimmed === '/' ? '' : trimmed}`.replace(/\/$/, '');
   }
 
   try {
     const parsed = new URL(trimmed);
     return parsed.href.replace(/\/$/, '');
   } catch {
-    return DEFAULT_API_BASE_URL;
+    return getHostedDefaultApiBaseUrl();
   }
 }
 
@@ -30,7 +60,7 @@ function resolveTimeoutMs(rawTimeoutMs) {
 function detectTarget(baseUrl) {
   try {
     const { hostname } = new URL(baseUrl);
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') {
+    if (isLoopbackHost(hostname)) {
       return 'local';
     }
   } catch {
@@ -40,20 +70,14 @@ function detectTarget(baseUrl) {
   return 'remote';
 }
 
-function getFrontendOrigin() {
-  if (typeof window === 'undefined' || !window.location?.origin) {
-    return 'http://localhost';
-  }
-
-  return window.location.origin;
-}
-
 function getApiBaseUrlStrategy() {
   if (import.meta.env.VITE_API_BASE_URL?.trim()) {
     return 'env:VITE_API_BASE_URL';
   }
 
-  return 'default:local-stephanos-backend';
+  return getApiTargetLabel() === 'remote'
+    ? 'default:same-origin-hosted-backend'
+    : 'default:local-stephanos-backend';
 }
 
 export const API_CONFIG = {

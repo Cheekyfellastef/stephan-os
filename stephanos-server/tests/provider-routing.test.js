@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_PROVIDER_KEY, PROVIDER_DEFINITIONS } from '../../shared/ai/providerDefaults.mjs';
-import { resolveProviderRequest, routeLLMRequest } from '../services/llm/providerRouter.js';
+import { DEFAULT_PROVIDER_KEY, DEFAULT_ROUTE_MODE, PROVIDER_DEFINITIONS } from '../../shared/ai/providerDefaults.mjs';
+import { resolveProviderRequest, routeLLMRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
 import { checkOllamaHealth, resolveOllamaConfig } from '../services/llm/providers/ollamaProvider.js';
 
 test('default provider is ollama for local-first load', () => {
   assert.equal(DEFAULT_PROVIDER_KEY, 'ollama');
+  assert.equal(DEFAULT_ROUTE_MODE, 'auto');
   assert.equal(PROVIDER_DEFINITIONS.mock.defaults.mode, 'echo');
   assert.equal(PROVIDER_DEFINITIONS.openrouter.defaults.enabled, false);
 });
@@ -19,13 +20,14 @@ test('provider router falls back invalid selections to the default local provide
 });
 
 test('provider router preserves valid groq selection', () => {
-  const resolved = resolveProviderRequest('groq', { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1' });
+  const resolved = resolveProviderRequest('groq', { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1', apiKey: 'should-be-ignored' }, { routeMode: 'explicit' });
   assert.equal(resolved.resolvedProvider, 'groq');
-  assert.deepEqual(resolved.overrideKeys.sort(), ['baseURL', 'model']);
+  assert.equal(resolved.requestedRouteMode, 'explicit');
+  assert.deepEqual(resolved.overrideKeys.sort(), ['apiKey', 'baseURL', 'model']);
 });
 
 test('mock provider answers without any API keys configured', async () => {
-  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'describe the current mode' }] }, { provider: 'mock', providerConfigs: { mock: { mode: 'echo', latencyMs: 0 } } });
+  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'describe the current mode' }] }, { provider: 'mock', routeMode: 'explicit', providerConfigs: { mock: { mode: 'echo', latencyMs: 0 } } });
   assert.equal(response.ok, true);
   assert.equal(response.provider, 'mock');
   assert.equal(response.actualProviderUsed, 'mock');
@@ -33,14 +35,67 @@ test('mock provider answers without any API keys configured', async () => {
   assert.match(response.outputText, /describe the current mode/i);
 });
 
-test('router falls back to mock when groq is selected without credentials and fallback enabled', async () => {
-  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'test fallback' }] }, { provider: 'groq', devMode: true, fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { groq: { apiKey: '' }, mock: { latencyMs: 0, mode: 'canned' } } });
-  assert.equal(response.ok, true);
-  assert.equal(response.provider, 'mock');
-  assert.equal(response.actualProviderUsed, 'mock');
-  assert.equal(response.diagnostics.selectedProvider, 'groq');
-  assert.equal(response.diagnostics.fallbackUsed, true);
-  assert.match(response.diagnostics.fallbackReason, /groq/i);
+test('cloud-first routing prefers groq for hosted sessions when groq is configured', async () => {
+  const originalGroqKey = process.env.GROQ_API_KEY;
+  process.env.GROQ_API_KEY = 'gsk_test_123';
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    if (String(url).includes('api.groq.com')) {
+      const body = JSON.parse(options.body);
+      assert.equal(body.model, 'openai/gpt-oss-20b');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'openai/gpt-oss-20b', choices: [{ message: { content: 'Groq cloud response' } }] }),
+      };
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  try {
+    const response = await routeLLMRequest(
+      { messages: [{ role: 'user', content: 'use cloud path' }] },
+      {
+        provider: 'ollama',
+        routeMode: 'cloud-first',
+        providerConfigs: { groq: { apiKey: 'client-side-secret-should-not-win' } },
+        runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
+      },
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.provider, 'groq');
+    assert.equal(response.actualProviderUsed, 'groq');
+    assert.equal(response.diagnostics.selectedProvider, 'groq');
+    assert.equal(response.diagnostics.effectiveRouteMode, 'cloud-first');
+    assert.equal(response.diagnostics.runtimeContext.sessionKind, 'hosted-web');
+  } finally {
+    global.fetch = originalFetch;
+    process.env.GROQ_API_KEY = originalGroqKey;
+  }
+});
+
+test('provider health snapshot reports cloud-first routing truth', async () => {
+  const originalGroqKey = process.env.GROQ_API_KEY;
+  process.env.GROQ_API_KEY = 'gsk_test_123';
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
+
+  try {
+    const snapshot = await getProviderHealthSnapshot({
+      provider: 'ollama',
+      routeMode: 'auto',
+      runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
+    });
+
+    assert.equal(snapshot.groq.ok, true);
+    assert.equal(snapshot.groq.configuredVia, 'GROQ_API_KEY');
+    assert.equal(snapshot.routing.effectiveRouteMode, 'cloud-first');
+    assert.equal(snapshot.routing.selectedProvider, 'groq');
+  } finally {
+    global.fetch = originalFetch;
+    process.env.GROQ_API_KEY = originalGroqKey;
+  }
 });
 
 test('router executes ollama directly when ollama succeeds', async () => {
@@ -65,7 +120,7 @@ test('router executes ollama directly when ollama succeeds', async () => {
   try {
     const response = await routeLLMRequest(
       { messages: [{ role: 'user', content: 'use ollama directly' }] },
-      { provider: 'ollama', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
+      { provider: 'ollama', routeMode: 'local-first', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
     );
 
     assert.equal(response.ok, true);
@@ -94,7 +149,7 @@ test('router surfaces fallback reason when ollama fails and mock is used', async
   try {
     const response = await routeLLMRequest(
       { messages: [{ role: 'user', content: 'fallback if ollama fails' }] },
-      { provider: 'ollama', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
+      { provider: 'ollama', routeMode: 'local-first', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
     );
 
     assert.equal(response.ok, true);
