@@ -73,6 +73,12 @@ export default function StatusPanel() {
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
         <li>Provider Endpoint: {statusSummary.providerEndpoint}</li>
         <li>Provider Model: {statusSummary.model}</li>
+        <li>Last Requested Provider: {lastExecutionMetadata?.requested_provider || 'n/a'}</li>
+        <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
+        <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
+        <li>Last Model Used: {lastExecutionMetadata?.model_used || 'n/a'}</li>
+        <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
+        <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution: {isBusy ? 'busy' : status}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>

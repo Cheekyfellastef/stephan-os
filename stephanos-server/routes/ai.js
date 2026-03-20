@@ -123,8 +123,19 @@ router.post('/chat', async (req, res) => {
       ollama_request_ok: Boolean(llmResult.ok && (llmResult.actualProviderUsed || llmResult.provider) === 'ollama'),
       ollama_error: llmResult.error?.message || null,
     };
+    const requestTrace = {
+      ui_requested_provider: provider,
+      requested_provider: executionMetadata.requested_provider,
+      selected_provider: executionMetadata.selected_provider,
+      actual_provider_used: executionMetadata.actual_provider_used,
+      model_used: executionMetadata.model_used,
+      fallback_used: executionMetadata.fallback_used,
+      fallback_reason: executionMetadata.fallback_reason,
+      provider_resolution: providerResolution,
+    };
 
     console.log('[BACKEND LIVE] Execution metadata', executionMetadata);
+    console.log('[BACKEND LIVE] Request trace', requestTrace);
 
     if (!llmResult.ok) {
       return res.status(502).json(buildErrorResponse({
@@ -140,7 +151,9 @@ router.post('/chat', async (req, res) => {
           provider_diagnostics: llmResult.diagnostics,
           provider_health: providerHealthSnapshot,
           execution_metadata: executionMetadata,
+          request_trace: requestTrace,
           requested_provider: executionMetadata.requested_provider,
+          selected_provider: executionMetadata.selected_provider,
           actual_provider_used: executionMetadata.actual_provider_used,
           model_used: executionMetadata.model_used,
           fallback_used: executionMetadata.fallback_used,
@@ -157,6 +170,7 @@ router.post('/chat', async (req, res) => {
           llm_model: llmResult.model,
           provider_router: llmResult.diagnostics,
           execution_metadata: executionMetadata,
+          request_trace: requestTrace,
         },
       }));
     }
@@ -173,7 +187,9 @@ router.post('/chat', async (req, res) => {
         provider_diagnostics: llmResult.diagnostics,
         provider_health: providerHealthSnapshot,
         execution_metadata: executionMetadata,
+        request_trace: requestTrace,
         requested_provider: executionMetadata.requested_provider,
+        selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,
         model_used: executionMetadata.model_used,
         fallback_used: executionMetadata.fallback_used,
@@ -191,6 +207,7 @@ router.post('/chat', async (req, res) => {
         llm_model: llmResult.model,
         provider_router: llmResult.diagnostics,
         execution_metadata: executionMetadata,
+        request_trace: requestTrace,
       },
     }));
   } catch (error) {

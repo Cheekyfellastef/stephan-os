@@ -44,7 +44,7 @@ function GraphPayload({ payload }) {
 
 export default function CommandResultCard({ entry }) {
   const tone = getResultTone(entry.response?.type);
-
+  const executionMetadata = entry.data_payload?.execution_metadata || null;
   const suggestedActions = entry.data_payload?.suggested_actions ?? [];
 
   return (
@@ -54,6 +54,17 @@ export default function CommandResultCard({ entry }) {
         <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
       </header>
       <p className="result-input">{entry.raw_input}</p>
+      {executionMetadata ? (
+        <div className={`api-banner ${executionMetadata.fallback_used ? 'degraded' : 'online'}`}>
+          <strong>
+            Requested {executionMetadata.requested_provider} → selected {executionMetadata.selected_provider} → used {executionMetadata.actual_provider_used}
+          </strong>
+          <span>
+            Model: {executionMetadata.model_used || 'n/a'}
+            {executionMetadata.fallback_used ? ` · Fallback reason: ${executionMetadata.fallback_reason || 'unspecified'}` : ' · No fallback'}
+          </span>
+        </div>
+      ) : null}
       <p>{entry.output_text}</p>
       {entry.error && <p className="error-text">Error [{entry.error_code ?? 'N/A'}]: {entry.error}</p>}
       <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>

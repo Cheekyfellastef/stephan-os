@@ -180,8 +180,14 @@ export function AIStoreProvider({ children }) {
 
   const getDraftProviderConfig = (providerKey) => draftProviderConfigs[providerKey];
   const getSavedProviderConfig = (providerKey) => savedProviderConfigs[providerKey];
-  const getActiveProviderConfig = () => savedProviderConfigs[provider];
-  const getActiveProviderConfigSource = () => 'saved:session';
+  const getEffectiveProviderConfig = (providerKey) => (
+    isDraftDirty(providerKey) ? draftProviderConfigs[providerKey] : savedProviderConfigs[providerKey]
+  );
+  const getEffectiveProviderConfigs = () => Object.fromEntries(
+    PROVIDER_KEYS.map((key) => [key, getEffectiveProviderConfig(key)]),
+  );
+  const getActiveProviderConfig = () => getEffectiveProviderConfig(provider);
+  const getActiveProviderConfigSource = () => (isDraftDirty(provider) ? 'draft:unsaved' : 'saved:session');
 
   const updateDraftProviderConfig = (providerKey, patch) => {
     setDraftProviderConfigs((prev) => ({
@@ -267,6 +273,8 @@ export function AIStoreProvider({ children }) {
     setLastExecutionMetadata,
     rememberSuccessfulOllamaConnection,
     getDraftProviderConfig,
+    getEffectiveProviderConfig,
+    getEffectiveProviderConfigs,
     getActiveProviderConfig,
     getSavedProviderConfig,
     getActiveProviderConfigSource,
