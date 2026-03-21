@@ -76,6 +76,106 @@ export function buildServerBaseUrl(env = process.env) {
   return `http://localhost:${getServerPort(env)}`;
 }
 
+function normalizeConfiguredPublicBaseUrl(env = process.env) {
+  const rawValue = [
+    env.STEPHANOS_PUBLIC_BASE_URL,
+    env.PUBLIC_BASE_URL,
+    env.HOME_NODE_PUBLIC_BASE_URL,
+    env.HOME_NODE_BASE_URL,
+  ].find((value) => String(value || '').trim());
+
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(String(rawValue).trim());
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeForwardedHost(value = '') {
+  return String(value || '')
+    .split(',')[0]
+    .trim();
+}
+
+function inferRequestProtocol(request = null) {
+  const forwardedProto = String(request?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto === 'http' || forwardedProto === 'https') {
+    return `${forwardedProto}:`;
+  }
+
+  if (request?.protocol === 'https' || request?.secure === true) {
+    return 'https:';
+  }
+
+  return 'http:';
+}
+
+function resolveRequestOrigin(request = null) {
+  const host = normalizeForwardedHost(request?.headers?.['x-forwarded-host'] || request?.headers?.host || '');
+  if (!host) {
+    return null;
+  }
+
+  try {
+    return new URL(`${inferRequestProtocol(request)}//${host}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+export function resolvePublishedBackendBaseUrl({ env = process.env, request = null } = {}) {
+  const internalBaseUrl = buildServerBaseUrl(env);
+  const configuredPublicBaseUrl = normalizeConfiguredPublicBaseUrl(env);
+  const requestOrigin = resolveRequestOrigin(request);
+
+  const publishedBaseUrl = configuredPublicBaseUrl
+    || requestOrigin
+    || internalBaseUrl;
+
+  const publishedHost = (() => {
+    try {
+      return new URL(publishedBaseUrl).hostname;
+    } catch {
+      return '';
+    }
+  })();
+
+  const requestHost = (() => {
+    try {
+      return requestOrigin ? new URL(requestOrigin).hostname : '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const requestLooksRemote = Boolean(requestHost && !isLoopbackHost(requestHost));
+  const publishedHostIsLoopback = isLoopbackHost(publishedHost);
+  const clientRouteState = requestLooksRemote && publishedHostIsLoopback
+    ? 'misconfigured'
+    : 'ready';
+
+  return {
+    internalBaseUrl,
+    publishedBaseUrl,
+    requestOrigin,
+    source: configuredPublicBaseUrl
+      ? 'configured-public-base-url'
+      : requestOrigin
+        ? 'request-host'
+        : 'internal-loopback',
+    clientRouteState,
+    clientRouteSafe: clientRouteState === 'ready',
+  };
+}
+
 function buildGroqEnvStatus(env = process.env) {
   return {
     configured: Boolean(env.GROQ_API_KEY),
@@ -85,9 +185,17 @@ function buildGroqEnvStatus(env = process.env) {
   };
 }
 
-export function buildHealthDiagnostics(env = process.env) {
+export function buildHealthDiagnostics(env = process.env, request = null) {
   const allowedOrigins = resolveAllowedOrigins(env);
-  const backendBaseUrl = buildServerBaseUrl(env);
+  const {
+    internalBaseUrl,
+    publishedBaseUrl,
+    source,
+    clientRouteState,
+    clientRouteSafe,
+  } = resolvePublishedBackendBaseUrl({ env, request });
+
+  const backendBaseUrl = publishedBaseUrl;
 
   return {
     ok: true,
@@ -96,6 +204,13 @@ export function buildHealthDiagnostics(env = process.env) {
     environment: env.NODE_ENV || 'development',
     backend_base_url: backendBaseUrl,
     backend_target_endpoint: `${backendBaseUrl}/api/ai/chat`,
+    backend_internal_base_url: internalBaseUrl,
+    backend_internal_target_endpoint: `${internalBaseUrl}/api/ai/chat`,
+    published_backend_base_url: backendBaseUrl,
+    published_backend_target_endpoint: `${backendBaseUrl}/api/ai/chat`,
+    client_route_state: clientRouteState,
+    client_route_safe: clientRouteSafe,
+    client_route_source: source,
     default_provider: DEFAULT_PROVIDER_KEY,
     default_route_mode: DEFAULT_ROUTE_MODE,
     provider_defaults: Object.fromEntries(
@@ -105,14 +220,20 @@ export function buildHealthDiagnostics(env = process.env) {
         targetSummary: definition.targetSummary,
         defaults: {
           ...definition.defaults,
+          baseURL: key === 'ollama' && definition.defaults.baseURL ? '[server-internal-only]' : definition.defaults.baseURL,
           apiKey: definition.defaults.apiKey ? '[server-env-only]' : undefined,
         },
-        endpoint: definition.defaults.baseURL ? buildProviderEndpoint(definition.defaults.baseURL, '') : null,
+        endpoint: key === 'ollama'
+          ? '[server-internal-only]'
+          : (definition.defaults.baseURL ? buildProviderEndpoint(definition.defaults.baseURL, '') : null),
       }]),
     ),
     provider_router_path: 'browser -> /api/ai/chat -> routeLLMRequest -> provider router -> groq/gemini/ollama/mock/openrouter',
     groq: buildGroqEnvStatus(env),
-    ollama_endpoint: buildProviderEndpoint(PROVIDER_DEFINITIONS.ollama.defaults.baseURL, '/api/chat'),
+    ollama_routing: {
+      visibility: 'server-internal-only',
+      summary: 'Stephanos server calls Ollama locally on the PC home node.',
+    },
     ts: new Date().toISOString(),
     cors: {
       configured_via: ['FRONTEND_ORIGIN', 'FRONTEND_ORIGINS'],

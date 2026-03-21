@@ -17,6 +17,8 @@ import {
 } from "../../shared/runtime/stephanosLocalUrls.mjs";
 import {
   discoverStephanosHomeNode,
+  extractHostname,
+  isLoopbackHost,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   isValidStephanosHomeNode,
@@ -542,6 +544,20 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const distTarget = getStephanosRuntimeTargetByKind(probedTargets, 'dist');
   const distLive = Boolean(distTarget?.reachable && runtimeProbe.ok && runtimeProbe.json?.service === 'stephanos-dist-server' && runtimeProbe.json?.distEntryExists === true);
   const healthyBackend = backendProbe.ok && backendProbe.json?.service === 'stephanos-server';
+  const publishedClientRouteState = healthyBackend
+    ? String(backendProbe.json?.client_route_state || '').trim().toLowerCase()
+    : '';
+  const publishedBackendBaseUrl = healthyBackend
+    ? String(backendProbe.json?.published_backend_base_url || backendProbe.json?.backend_base_url || '').trim()
+    : '';
+  const publishedRouteHost = publishedBackendBaseUrl ? extractHostname(publishedBackendBaseUrl) : '';
+  const backendPublishedRouteMisconfigured = healthyBackend && (
+    publishedClientRouteState === 'misconfigured'
+    || (
+      Boolean(preferredHomeNode?.host || (currentOrigin && !isLoopbackHost(extractHostname(currentOrigin))))
+      && isLoopbackHost(publishedRouteHost)
+    )
+  );
   const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.ok ? runtimeProbe.json : null);
   const homeNodeTarget = homeNodeDiscovery.reachable && preferredHomeNode?.host
     ? createStephanosHomeNodeTarget({
@@ -590,6 +606,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       preferredTarget: candidateLaunchUrl || hostedDistUrl || currentOrigin,
       actualTargetUsed: backendBaseUrl,
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || 'unknown',
+      publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unknown'),
     },
   });
 
@@ -611,7 +628,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     launchableRuntime && (options.previousValidationState === 'error' || launcherState === 'error')
   );
   const validationReason = launchableRuntime
-    ? `validator found route=${runtimeStatusModel.routeKind} target=${launchUrl}`
+    ? `validator found route=${runtimeStatusModel.routeKind} target=${launchUrl}${backendPublishedRouteMisconfigured ? '; published-client-route=misconfigured' : ''}`
     : `no route reachable; local=${localPreferredTarget?.url || 'offline'}; home=${homeNodeTarget?.url || 'offline'}; cloud=${runtimeStatusModel.cloudRouteReachable ? 'ready' : 'offline'}`;
 
   emitStephanosValidationLog(context, {

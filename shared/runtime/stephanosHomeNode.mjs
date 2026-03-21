@@ -360,9 +360,24 @@ export async function probeStephanosHomeNode(node, options = {}) {
   }
 
   const seenAt = new Date().toISOString();
+  const publishedBackendUrl = String(
+    health.json?.published_backend_base_url
+    || health.json?.backend_base_url
+    || ''
+  ).trim();
+  const publishedBackendHost = extractHostname(publishedBackendUrl);
+  const shouldIgnorePublishedLoopback = Boolean(
+    candidate.backendUrl
+    && publishedBackendUrl
+    && !isLoopbackHost(candidate.host)
+    && isLoopbackHost(publishedBackendHost)
+  );
+  const resolvedBackendUrl = shouldIgnorePublishedLoopback
+    ? candidate.backendUrl
+    : (publishedBackendUrl || candidate.backendUrl);
   const resolved = normalizeStephanosHomeNode({
     ...candidate,
-    backendUrl: health.json?.backend_base_url || candidate.backendUrl,
+    backendUrl: resolvedBackendUrl,
     backendHealthUrl: candidate.backendHealthUrl,
     lastSeenAt: seenAt,
     reachable: true,
@@ -460,7 +475,7 @@ export function resolveStephanosBackendBaseUrl({
   }
 
   const current = safeUrlParse(currentOrigin);
-  if (current?.hostname && !isLoopbackHost(current.hostname)) {
+  if (current?.hostname && isLikelyLanHost(current.hostname) && !isLoopbackHost(current.hostname)) {
     if (normalizePort(current.port, DEFAULT_HOME_NODE_UI_PORT) === DEFAULT_HOME_NODE_BACKEND_PORT) {
       return current.origin;
     }

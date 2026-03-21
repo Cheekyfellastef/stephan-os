@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildHealthDiagnostics,
+  resolvePublishedBackendBaseUrl,
   resolveAllowedOrigins,
 } from '../config/runtimeConfig.js';
 
@@ -44,8 +45,17 @@ test('health diagnostics expose backend target endpoint and visible CORS origins
 
   assert.equal(diagnostics.backend_base_url, 'http://localhost:9090');
   assert.equal(diagnostics.backend_target_endpoint, 'http://localhost:9090/api/ai/chat');
+  assert.equal(diagnostics.backend_internal_base_url, 'http://localhost:9090');
+  assert.equal(diagnostics.backend_internal_target_endpoint, 'http://localhost:9090/api/ai/chat');
+  assert.equal(diagnostics.client_route_state, 'ready');
+  assert.equal(diagnostics.client_route_source, 'internal-loopback');
   assert.equal(diagnostics.default_provider, 'ollama');
-  assert.equal(diagnostics.ollama_endpoint, 'http://localhost:11434/api/chat');
+  assert.equal(diagnostics.provider_defaults.ollama.defaults.baseURL, '[server-internal-only]');
+  assert.equal(diagnostics.provider_defaults.ollama.endpoint, '[server-internal-only]');
+  assert.deepEqual(diagnostics.ollama_routing, {
+    visibility: 'server-internal-only',
+    summary: 'Stephanos server calls Ollama locally on the PC home node.',
+  });
   assert.deepEqual(diagnostics.cors.allowed_origins, [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
@@ -54,4 +64,46 @@ test('health diagnostics expose backend target endpoint and visible CORS origins
     'https://cheekyfellastef.github.io',
     'https://example.test',
   ]);
+});
+
+test('published backend base url uses inbound LAN host for remote-safe client routing', () => {
+  const diagnostics = buildHealthDiagnostics(
+    { PORT: '8787' },
+    {
+      headers: {
+        host: '192.168.0.198:8787',
+      },
+      protocol: 'http',
+      secure: false,
+    },
+  );
+
+  assert.equal(diagnostics.backend_base_url, 'http://192.168.0.198:8787');
+  assert.equal(diagnostics.backend_target_endpoint, 'http://192.168.0.198:8787/api/ai/chat');
+  assert.equal(diagnostics.backend_internal_base_url, 'http://localhost:8787');
+  assert.equal(diagnostics.client_route_state, 'ready');
+  assert.equal(diagnostics.client_route_source, 'request-host');
+  assert.equal(diagnostics.ok, true);
+});
+
+test('request-aware resolver flags loopback publication as misconfigured for remote access', () => {
+  const resolved = resolvePublishedBackendBaseUrl({
+    env: {
+      PORT: '8787',
+      PUBLIC_BASE_URL: 'http://localhost:8787',
+    },
+    request: {
+      headers: {
+        host: '192.168.0.198:8787',
+      },
+      protocol: 'http',
+      secure: false,
+    },
+  });
+
+  assert.equal(resolved.publishedBaseUrl, 'http://localhost:8787');
+  assert.equal(resolved.internalBaseUrl, 'http://localhost:8787');
+  assert.equal(resolved.clientRouteState, 'misconfigured');
+  assert.equal(resolved.clientRouteSafe, false);
+  assert.equal(resolved.source, 'configured-public-base-url');
 });
