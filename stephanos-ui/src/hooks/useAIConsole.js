@@ -4,6 +4,8 @@ import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } fr
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import {
   discoverStephanosHomeNode,
+  extractHostname,
+  isLoopbackHost,
   summarizeStephanosHomeNode,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
@@ -122,16 +124,27 @@ export function useAIConsole() {
       ].filter(Boolean),
     });
 
+    const localDesktopSession = isLoopbackHost(extractHostname(baseRuntimeConfig.frontendOrigin));
+    const homeNodeConfigured = Boolean(homeNodePreference?.host || homeNodeLastKnown?.host);
+
     setHomeNodeStatus({
-      state: discovery.reachable ? 'ready' : (homeNodePreference?.host || homeNodeLastKnown?.host ? 'unreachable' : 'idle'),
+      state: discovery.reachable
+        ? 'ready'
+        : localDesktopSession
+          ? 'optional'
+          : (homeNodeConfigured ? 'unreachable' : 'idle'),
       detail: discovery.reachable
         ? `Using ${summarizeStephanosHomeNode(discovery.preferredNode)}.`
-        : (homeNodePreference?.host || homeNodeLastKnown?.host
-          ? 'Home PC node unreachable right now.'
-          : 'No home PC node configured yet.'),
+        : localDesktopSession
+          ? (homeNodeConfigured
+            ? 'Home PC node is optional on this local desktop session; local Stephanos routes remain valid when available.'
+            : 'Home PC node is optional on this local desktop session.')
+          : (homeNodeConfigured
+            ? (discovery.message || 'Home PC node unreachable right now.')
+            : 'No home PC node configured yet.'),
       attempts: discovery.attempts,
       node: discovery.preferredNode,
-      source: discovery.source,
+      source: discovery.source || (localDesktopSession ? 'local-browser-session' : 'route-diagnostics'),
     });
 
     if (discovery.preferredNode) {

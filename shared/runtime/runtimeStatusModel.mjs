@@ -13,6 +13,7 @@ import {
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
 import {
+  isLikelyLanHost,
   isLoopbackHost,
   normalizeStephanosHomeNode,
 } from './stephanosHomeNode.mjs';
@@ -38,18 +39,19 @@ function normalizeRuntimeContext(runtimeContext = {}) {
   const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || '');
   const frontendHost = parseHostname(frontendOrigin);
   const backendHost = parseHostname(apiBaseUrl);
-  const frontendReachability = isLoopbackHost(frontendHost) || !frontendHost
-    ? 'local'
-    : 'reachable';
-  const backendReachability = isLoopbackHost(backendHost) || !backendHost
-    ? 'local'
-    : 'reachable';
-  const sessionKind = frontendReachability === 'local' && backendReachability === 'local'
-    ? 'local-desktop'
-    : 'hosted-web';
+  const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
+  const backendLocal = isLoopbackHost(backendHost) || !backendHost;
+  const frontendReachability = frontendLocal ? 'local' : 'reachable';
+  const backendReachability = backendLocal ? 'local' : 'reachable';
   const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
     source: runtimeContext.homeNode?.source || 'manual',
   });
+  const deviceContext = frontendLocal
+    ? 'pc-local-browser'
+    : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
+      ? 'lan-companion'
+      : 'off-network';
+  const sessionKind = frontendLocal ? 'local-desktop' : 'hosted-web';
 
   return {
     frontendOrigin,
@@ -58,13 +60,19 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     backendHost,
     frontendReachability,
     backendReachability,
+    frontendLocal,
+    backendLocal,
+    deviceContext,
     sessionKind,
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
     preferredTarget: runtimeContext.preferredTarget || homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
     actualTargetUsed: runtimeContext.actualTargetUsed || apiBaseUrl || homeNode?.backendUrl || frontendOrigin,
-    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || 'unknown',
+    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
+    routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
+      ? runtimeContext.routeDiagnostics
+      : {},
   };
 }
 
@@ -178,59 +186,192 @@ function deriveRoutePlan({
   };
 }
 
-function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
+
+function buildRoutePreference(runtimeContext = {}) {
+  if (runtimeContext.deviceContext === 'pc-local-browser') {
+    return ['local-desktop', 'dist', 'cloud', 'home-node'];
+  }
+
+  if (runtimeContext.deviceContext === 'lan-companion') {
+    return ['home-node', 'dist', 'cloud', 'local-desktop'];
+  }
+
+  return ['cloud', 'dist', 'home-node', 'local-desktop'];
+}
+
+function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
+  const merged = { ...defaults, ...(override && typeof override === 'object' ? override : {}) };
+  return {
+    kind: routeKey,
+    available: Boolean(merged.available),
+    configured: merged.configured !== false,
+    misconfigured: Boolean(merged.misconfigured),
+    optional: Boolean(merged.optional),
+    source: String(merged.source || 'route-diagnostics'),
+    reason: String(merged.reason || ''),
+  };
+}
+
+function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
+  const diagnostics = runtimeContext.routeDiagnostics || {};
+  const frontendLocal = runtimeContext.frontendLocal === true;
+  const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
-  const localDesktopRuntime = runtimeContext.sessionKind === 'local-desktop';
-  const localNodeReachable = localDesktopRuntime || homeNodeReachable || runtimeContext.localNodeReachableFromSession === true;
+  const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
+  const localDesktopAvailable = frontendLocal && backendAvailable;
+  const localDesktopClassificationFailed = frontendLocal && backendAvailable && diagnostics['local-desktop']?.available === false;
 
-  let routeKind = 'unavailable';
-  if (localDesktopRuntime) {
-    routeKind = 'local-desktop';
-  } else if (homeNodeReachable) {
-    routeKind = 'home-node';
-  } else if (cloudAvailable) {
-    routeKind = 'cloud';
+  const evaluations = {
+    'local-desktop': createRouteEvaluation('local-desktop', {
+      configured: frontendLocal,
+      available: localDesktopAvailable,
+      misconfigured: localDesktopClassificationFailed,
+      optional: runtimeContext.deviceContext !== 'pc-local-browser',
+      source: frontendLocal ? 'local-browser-session' : 'not-applicable',
+      reason: frontendLocal
+        ? (backendAvailable
+          ? 'Backend online from local desktop session'
+          : 'Local desktop browser detected, but the backend is offline')
+        : 'Current session is not a local desktop browser',
+    }, diagnostics['local-desktop']),
+    'home-node': createRouteEvaluation('home-node', {
+      configured: homeNodeConfigured,
+      available: homeNodeReachable,
+      misconfigured: homeNodeMisconfigured,
+      optional: runtimeContext.deviceContext === 'pc-local-browser',
+      source: runtimeContext.homeNode?.source || (homeNodeConfigured ? 'configured-home-node' : 'not-configured'),
+      reason: homeNodeReachable
+        ? (homeNodeMisconfigured
+          ? 'Home PC node is reachable, but the published client route is misconfigured'
+          : 'Home PC node is reachable on the LAN')
+        : (homeNodeConfigured
+          ? 'Home PC node is configured but currently unreachable'
+          : 'Home PC node is not configured'),
+    }, diagnostics['home-node']),
+    dist: createRouteEvaluation('dist', {
+      configured: Boolean(runtimeContext.preferredTarget || diagnostics.dist?.configured),
+      available: Boolean(String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')),
+      misconfigured: false,
+      optional: false,
+      source: String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/') ? 'dist-runtime' : 'dist-entry',
+      reason: String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')
+        ? 'Bundled dist runtime is reachable'
+        : 'Bundled dist runtime is not the active route',
+    }, diagnostics.dist),
+    cloud: createRouteEvaluation('cloud', {
+      configured: cloudAvailable || diagnostics.cloud?.configured === true,
+      available: cloudAvailable,
+      misconfigured: false,
+      optional: false,
+      source: cloudAvailable ? 'cloud-provider-health' : 'cloud-provider-unavailable',
+      reason: cloudAvailable
+        ? 'A cloud-backed Stephanos route is ready'
+        : 'No cloud-backed Stephanos route is currently ready',
+    }, diagnostics.cloud),
+  };
+
+  const preferenceOrder = buildRoutePreference(runtimeContext);
+  const preferredRoute = preferenceOrder.find((routeKey) => evaluations[routeKey]?.available) || null;
+
+  return {
+    evaluations,
+    preferenceOrder,
+    preferredRoute,
+    localDesktopClassificationFailed,
+  };
+}
+
+function summarizeSelectedRoute(routeKey, route, runtimeContext, backendAvailable, validationState) {
+  if (!routeKey || !route) {
+    if (backendAvailable && runtimeContext.frontendLocal) {
+      return {
+        headline: 'Backend online but route classification failed',
+        summary: 'Backend online, but Stephanos could not classify a valid route explicitly',
+      };
+    }
+
+    return {
+      headline: 'No reachable Stephanos route',
+      summary: 'No reachable Stephanos route',
+    };
   }
 
-  const preferredTarget = routeKind === 'home-node'
-    ? runtimeContext.homeNode?.uiUrl || runtimeContext.preferredTarget
-    : runtimeContext.preferredTarget;
-  const actualTargetUsed = routeKind === 'home-node'
-    ? runtimeContext.homeNode?.backendUrl || runtimeContext.actualTargetUsed
-    : runtimeContext.actualTargetUsed;
-
-  let routeSummary = 'No reachable Stephanos route';
-  if (routeKind === 'local-desktop') {
-    routeSummary = backendAvailable
-      ? 'Local desktop runtime ready'
-      : 'Local desktop runtime reachable, but backend is offline';
-  } else if (routeKind === 'home-node') {
-    routeSummary = runtimeContext.publishedClientRouteState === 'misconfigured'
-      ? 'Home PC node reachable, but published client route is misconfigured'
-      : backendAvailable
-        ? 'Home PC node ready'
-        : 'Home PC node reachable, but backend is offline';
-  } else if (routeKind === 'cloud') {
-    routeSummary = cloudAvailable
-      ? 'Cloud route ready'
-      : 'Cloud route unavailable';
+  if (routeKey === 'local-desktop') {
+    return {
+      headline: 'Local desktop runtime ready',
+      summary: !backendAvailable
+        ? 'Local desktop runtime reachable, but backend is offline'
+        : route.reason || 'Local desktop runtime ready',
+    };
   }
 
-  if (validationState === 'launching' && routeKind !== 'home-node') {
-    routeSummary = routeKind === 'local-desktop'
-      ? 'Local desktop runtime starting'
-      : 'Checking reachable Stephanos route';
+  if (routeKey === 'home-node') {
+    return {
+      headline: route.misconfigured ? 'Home PC node reachable with route issues' : 'Home PC node ready',
+      summary: route.reason || 'Home PC node ready',
+    };
+  }
+
+  if (routeKey === 'dist') {
+    return {
+      headline: 'Bundled dist route ready',
+      summary: route.reason || 'Bundled dist runtime is reachable',
+    };
+  }
+
+  if (routeKey === 'cloud') {
+    return {
+      headline: 'Cloud route ready',
+      summary: route.reason || 'Cloud route ready',
+    };
+  }
+
+  if (validationState === 'launching') {
+    return {
+      headline: 'Checking reachable Stephanos route',
+      summary: 'Checking reachable Stephanos route',
+    };
   }
 
   return {
-    routeKind,
-    preferredTarget,
-    actualTargetUsed,
-    localNodeReachable,
-    homeNodeReachable,
-    cloudRouteReachable: cloudAvailable,
-    routeSummary,
-    nodeAddressSource: runtimeContext.nodeAddressSource || runtimeContext.homeNode?.source || 'unknown',
+    headline: 'No reachable Stephanos route',
+    summary: route.reason || 'No reachable Stephanos route',
+  };
+}
+
+function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
+  const routeSelection = deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState });
+  const selectedRouteKey = routeSelection.preferredRoute;
+  const selectedRoute = selectedRouteKey ? routeSelection.evaluations[selectedRouteKey] : null;
+  const selectedSummary = summarizeSelectedRoute(
+    selectedRouteKey,
+    selectedRoute,
+    runtimeContext,
+    backendAvailable,
+    validationState,
+  );
+  const localDesktop = routeSelection.evaluations['local-desktop'];
+  const homeNode = routeSelection.evaluations['home-node'];
+  const cloud = routeSelection.evaluations.cloud;
+
+  return {
+    routeKind: selectedRouteKey || 'unavailable',
+    preferredTarget: selectedRouteKey === 'home-node'
+      ? runtimeContext.homeNode?.uiUrl || runtimeContext.preferredTarget
+      : runtimeContext.preferredTarget,
+    actualTargetUsed: selectedRouteKey === 'home-node'
+      ? runtimeContext.homeNode?.backendUrl || runtimeContext.actualTargetUsed
+      : runtimeContext.actualTargetUsed,
+    localNodeReachable: Boolean(localDesktop.available || homeNode.available || runtimeContext.localNodeReachableFromSession === true),
+    homeNodeReachable: Boolean(homeNode.available),
+    cloudRouteReachable: Boolean(cloud.available),
+    routeSummary: selectedSummary.summary,
+    routeHeadline: selectedSummary.headline,
+    nodeAddressSource: selectedRoute?.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
+    routeEvaluations: routeSelection.evaluations,
+    routePreferenceOrder: routeSelection.preferenceOrder,
+    preferredRoute: selectedRouteKey,
+    classificationFailed: Boolean(routeSelection.localDesktopClassificationFailed || (backendAvailable && !selectedRouteKey)),
   };
 }
 
@@ -245,13 +386,27 @@ function buildDependencySummary({
   runtimeContext,
   nodeRoute,
 }) {
-  if (!backendAvailable && nodeRoute.routeKind === 'unavailable') {
+  const selectedRoute = nodeRoute.preferredRoute ? nodeRoute.routeEvaluations[nodeRoute.preferredRoute] : null;
+
+  if (!selectedRoute) {
+    if (backendAvailable && runtimeContext.frontendLocal) {
+      return 'Backend online, but Stephanos could not classify a valid route explicitly';
+    }
+
+    if (localPending && !localAvailable && effectiveRouteMode !== 'cloud-first') {
+      return 'Checking local Ollama readiness';
+    }
+
     return cloudAvailable ? 'Cloud route ready' : 'No reachable Stephanos route';
   }
 
-  if (nodeRoute.routeKind === 'home-node') {
-    if (runtimeContext.publishedClientRouteState === 'misconfigured') {
+  if (selectedRoute.kind === 'home-node') {
+    if (selectedRoute.misconfigured) {
       return 'Home PC node reachable · published client route misconfigured';
+    }
+
+    if (selectedRoute.optional && nodeRoute.routeEvaluations['local-desktop']?.available) {
+      return 'Home PC node optional on this device · local desktop route is valid';
     }
 
     if (localPending && !localAvailable && effectiveRouteMode !== 'cloud-first') {
@@ -262,27 +417,24 @@ function buildDependencySummary({
       return 'Home PC node ready · cloud route ready';
     }
 
-    if (fallbackActive) {
-      return `Home PC node ready · ${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
-    }
-
-    return 'Home PC node ready';
+    return selectedRoute.reason || 'Home PC node ready';
   }
 
-  if (nodeRoute.routeKind === 'local-desktop') {
+  if (selectedRoute.kind === 'local-desktop') {
     if (!backendAvailable) {
       return 'Local desktop runtime reachable, but backend is offline';
+    }
+
+    if (nodeRoute.routeEvaluations['home-node']?.configured && !nodeRoute.routeEvaluations['home-node']?.available) {
+      return 'Local desktop runtime ready · optional home-node is unavailable';
     }
 
     if (localPending && !localAvailable && effectiveRouteMode !== 'cloud-first') {
       return 'Checking local Ollama readiness';
     }
 
-    if (effectiveRouteMode === 'cloud-first') {
-      if (cloudAvailable) {
-        return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
-      }
-      return 'Cloud route unavailable';
+    if (effectiveRouteMode === 'cloud-first' && cloudAvailable) {
+      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
     }
 
     if (effectiveRouteMode === 'explicit') {
@@ -298,27 +450,29 @@ function buildDependencySummary({
     }
 
     if (!localAvailable && !cloudAvailable) {
-      return 'Local Ollama offline and cloud unavailable';
+      return 'Local desktop route valid, but both local Ollama and cloud routing are unavailable';
     }
 
     if (fallbackActive) {
       return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
     }
 
-    return 'Local desktop runtime ready';
+    return selectedRoute.reason || 'Local desktop runtime ready';
   }
 
-  if (cloudAvailable) {
-    return 'Cloud route ready';
+  if (selectedRoute.kind === 'dist') {
+    return selectedRoute.reason || 'Bundled dist runtime is reachable';
   }
 
-  if (!backendAvailable) {
-    return 'No reachable Stephanos route';
+  if (selectedRoute.kind === 'cloud') {
+    if (fallbackActive) {
+      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
+    }
+
+    return selectedRoute.reason || 'Cloud route ready';
   }
 
-  return runtimeContext.sessionKind === 'hosted-web'
-    ? 'Home PC node unreachable'
-    : 'No reachable Stephanos route';
+  return selectedRoute.reason || 'No reachable Stephanos route';
 }
 
 export function createRuntimeStatusModel({
@@ -397,14 +551,8 @@ export function createRuntimeStatusModel({
   const appLaunchState = launchUnavailable ? 'unavailable' : (launchDegraded ? 'degraded' : 'ready');
 
   const headline = appLaunchState === 'unavailable'
-    ? 'No reachable Stephanos route'
-    : nodeRoute.routeKind === 'local-desktop'
-      ? 'Local desktop runtime ready'
-      : nodeRoute.routeKind === 'home-node'
-        ? 'Home PC node ready'
-        : nodeRoute.routeKind === 'cloud'
-          ? 'Cloud route ready'
-          : `${appName} ready with degraded dependencies`;
+    ? (nodeRoute.classificationFailed ? 'Backend online but route classification failed' : 'No reachable Stephanos route')
+    : nodeRoute.routeHeadline || `${appName} ready with degraded dependencies`;
 
   return {
     appId,
@@ -439,5 +587,9 @@ export function createRuntimeStatusModel({
     cloudRouteReachable: nodeRoute.cloudRouteReachable,
     nodeAddressSource: nodeRoute.nodeAddressSource,
     routeSummary: nodeRoute.routeSummary,
+    routeEvaluations: nodeRoute.routeEvaluations,
+    routePreferenceOrder: nodeRoute.routePreferenceOrder,
+    preferredRoute: nodeRoute.preferredRoute,
+    classificationFailed: nodeRoute.classificationFailed,
   };
 }
