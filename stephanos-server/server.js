@@ -44,8 +44,8 @@ app.use(
 );
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/api/health', (_req, res) => {
-  res.json(buildHealthDiagnostics());
+app.get('/api/health', (req, res) => {
+  res.json(buildHealthDiagnostics(process.env, req));
 });
 
 memoryService.load();
@@ -82,10 +82,15 @@ async function probeExistingStephanosServer() {
     }
 
     const payload = await response.json();
+    const reusableBaseUrls = new Set([
+      `http://localhost:${PORT}`,
+      `http://127.0.0.1:${PORT}`,
+    ]);
     return {
       reusable:
         payload?.service === 'stephanos-server' &&
-        payload?.backend_base_url === `http://localhost:${PORT}`,
+        reusableBaseUrls.has(payload?.backend_base_url) &&
+        reusableBaseUrls.has(payload?.backend_internal_base_url || payload?.backend_base_url),
       payload,
     };
   } catch {

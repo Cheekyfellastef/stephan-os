@@ -61,6 +61,7 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     sessionKind,
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
+    publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
     preferredTarget: runtimeContext.preferredTarget || homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
     actualTargetUsed: runtimeContext.actualTargetUsed || apiBaseUrl || homeNode?.backendUrl || frontendOrigin,
     nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || 'unknown',
@@ -204,9 +205,11 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
       ? 'Local desktop runtime ready'
       : 'Local desktop runtime reachable, but backend is offline';
   } else if (routeKind === 'home-node') {
-    routeSummary = backendAvailable
-      ? 'Home PC node ready'
-      : 'Home PC node reachable, but backend is offline';
+    routeSummary = runtimeContext.publishedClientRouteState === 'misconfigured'
+      ? 'Home PC node reachable, but published client route is misconfigured'
+      : backendAvailable
+        ? 'Home PC node ready'
+        : 'Home PC node reachable, but backend is offline';
   } else if (routeKind === 'cloud') {
     routeSummary = cloudAvailable
       ? 'Cloud route ready'
@@ -247,6 +250,10 @@ function buildDependencySummary({
   }
 
   if (nodeRoute.routeKind === 'home-node') {
+    if (runtimeContext.publishedClientRouteState === 'misconfigured') {
+      return 'Home PC node reachable · published client route misconfigured';
+    }
+
     if (localPending && !localAvailable && effectiveRouteMode !== 'cloud-first') {
       return 'Home PC node ready · checking local Ollama readiness';
     }
