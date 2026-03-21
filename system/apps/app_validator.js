@@ -579,10 +579,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       reachable: true,
     })
     : null;
-  const localPreferredTarget = getStephanosPreferredRuntimeTarget([
-    ...devLiveTargets,
-    ...(distLive && distTarget ? [{ ...distTarget, validStephanosTarget: true }] : []),
-  ], ['dev', 'dist']);
+  const localPreferredTarget = getStephanosPreferredRuntimeTarget(devLiveTargets, ['dev']);
+  const distPreferredTarget = distLive && distTarget ? { ...distTarget, validStephanosTarget: true } : null;
 
   const providerPreferences = readPersistedProviderPreferences();
   const providerHealthProbe = healthyBackend
@@ -596,7 +594,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
 
   const candidateLaunchUrl = localPreferredTarget?.url
     || homeNodeTarget?.url
-    || (distLive && distTarget ? distTarget.url : '')
+    || distPreferredTarget?.url
     || (entryExists ? hostedDistUrl : '');
 
   const runtimeStatusModel = createRuntimeStatusModel({
@@ -619,17 +617,22 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
       routeDiagnostics: {
         'local-desktop': {
-          configured: isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin),
-          available: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin)) && healthyBackend,
-          misconfigured: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin)) && healthyBackend && !localPreferredTarget?.url,
-          source: isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin) ? 'local-browser-session' : 'not-applicable',
-          reason: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin))
+          configured: localDesktopSession,
+          available: localDesktopSession && healthyBackend,
+          misconfigured: false,
+          source: localDesktopSession
+            ? (localPreferredTarget?.url ? 'local-runtime-probe' : 'local-backend-session')
+            : 'not-applicable',
+          reason: localDesktopSession
             ? (healthyBackend
               ? (localPreferredTarget?.url
-                ? 'Backend online and local desktop session can reach Stephanos'
-                : 'Backend online but no local runtime target was selected')
+                ? 'Backend online and local desktop session can reach the live Stephanos UI'
+                : 'Backend online locally; local-desktop stays valid and will use bundled dist UI until a live UI probe is available')
               : 'Local desktop session detected, but the backend is offline')
             : 'Current session is not a local desktop browser',
+          blockedReason: localDesktopSession && healthyBackend && !localPreferredTarget?.url
+            ? 'backend is online locally, but no explicit live UI route was published'
+            : '',
         },
         'home-node': {
           configured: Boolean(preferredHomeNode?.host),
@@ -643,10 +646,13 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
             : (preferredHomeNode?.host
               ? (homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable')
               : 'Home PC node is not configured'),
+          blockedReason: !homeNodeDiscovery.reachable && preferredHomeNode?.host
+            ? (homeNodeDiscovery.message || 'health probe could not confirm the home-node route')
+            : (!preferredHomeNode?.host ? 'home node is not configured' : ''),
         },
         dist: {
-          configured: Boolean(entryExists || distTarget?.url),
-          available: Boolean(distLive || (entryExists && !homeNodeDiscovery.reachable && !localPreferredTarget?.url)),
+          configured: Boolean(entryExists || distPreferredTarget?.url),
+          available: Boolean(distLive || entryExists),
           misconfigured: false,
           source: distLive ? 'dist-runtime-probe' : (entryExists ? 'dist-entry' : 'dist-unavailable'),
           reason: distLive
@@ -670,15 +676,26 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
 
   let launchUrl = '';
   let launchStrategy = 'workspace';
-  if (localPreferredTarget?.url) {
-    launchUrl = localPreferredTarget.url;
-  } else if (homeNodeTarget?.url) {
-    launchUrl = homeNodeTarget.url;
-    launchStrategy = 'navigate';
-  } else if (distLive && distTarget?.url) {
-    launchUrl = distTarget.url;
-  } else if (entryExists && runtimeStatusModel.cloudRouteReachable) {
-    launchUrl = hostedDistUrl;
+  switch (runtimeStatusModel.routeKind) {
+    case 'local-desktop':
+      launchUrl = localPreferredTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      break;
+    case 'home-node':
+      launchUrl = homeNodeTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      launchStrategy = homeNodeTarget?.url ? 'navigate' : 'workspace';
+      break;
+    case 'dist':
+      launchUrl = distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      break;
+    case 'cloud':
+      launchUrl = entryExists ? hostedDistUrl : (distPreferredTarget?.url || '');
+      break;
+    default:
+      launchUrl = localPreferredTarget?.url || homeNodeTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      if (!launchUrl && homeNodeTarget?.url) {
+        launchStrategy = 'navigate';
+      }
+      break;
   }
 
   const launchableRuntime = Boolean(launchUrl);
@@ -725,7 +742,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       ],
       runtimeAvailability: {
         dev: devLiveTargets.map((target) => target.url),
-        dist: [distLive && distTarget ? distTarget.url : hostedDistUrl].filter(Boolean),
+        dist: [distPreferredTarget?.url || hostedDistUrl].filter(Boolean),
         homeNode: homeNodeTarget ? [homeNodeTarget.url] : [],
       },
     };

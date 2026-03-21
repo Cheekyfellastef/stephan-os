@@ -189,14 +189,14 @@ function deriveRoutePlan({
 
 function buildRoutePreference(runtimeContext = {}) {
   if (runtimeContext.deviceContext === 'pc-local-browser') {
-    return ['local-desktop', 'dist', 'cloud', 'home-node'];
+    return ['local-desktop', 'home-node', 'dist', 'cloud'];
   }
 
   if (runtimeContext.deviceContext === 'lan-companion') {
-    return ['home-node', 'dist', 'cloud', 'local-desktop'];
+    return ['home-node', 'local-desktop', 'dist', 'cloud'];
   }
 
-  return ['cloud', 'dist', 'home-node', 'local-desktop'];
+  return ['cloud', 'home-node', 'local-desktop', 'dist'];
 }
 
 function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
@@ -209,7 +209,34 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     optional: Boolean(merged.optional),
     source: String(merged.source || 'route-diagnostics'),
     reason: String(merged.reason || ''),
+    blockedReason: String(merged.blockedReason || ''),
   };
+}
+
+function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder = []) {
+  const preferredLiveRoutes = preferenceOrder
+    .filter((candidate) => candidate !== routeKey && candidate !== 'dist' && candidate !== 'cloud');
+
+  for (const candidate of preferredLiveRoutes) {
+    const evaluation = evaluations[candidate];
+    if (!evaluation?.configured) {
+      continue;
+    }
+
+    if (evaluation.available) {
+      return `${candidate} is a valid live route and outranks ${routeKey}`;
+    }
+
+    if (evaluation.blockedReason) {
+      return `${candidate} unavailable: ${evaluation.blockedReason}`;
+    }
+
+    if (evaluation.reason) {
+      return `${candidate} unavailable: ${evaluation.reason}`;
+    }
+  }
+
+  return '';
 }
 
 function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
@@ -218,8 +245,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
+  const localDesktopProbe = diagnostics['local-desktop'] || {};
+  const homeNodeProbe = diagnostics['home-node'] || {};
+  const distProbe = diagnostics.dist || {};
   const localDesktopAvailable = frontendLocal && backendAvailable;
-  const localDesktopClassificationFailed = frontendLocal && backendAvailable && diagnostics['local-desktop']?.available === false;
+  const localDesktopProbeAvailable = localDesktopProbe.available === true;
+  const localDesktopClassificationFailed = frontendLocal && backendAvailable && localDesktopProbe.available === false;
 
   const evaluations = {
     'local-desktop': createRouteEvaluation('local-desktop', {
@@ -230,10 +261,36 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       source: frontendLocal ? 'local-browser-session' : 'not-applicable',
       reason: frontendLocal
         ? (backendAvailable
-          ? 'Backend online from local desktop session'
+          ? (localDesktopProbeAvailable
+            ? 'Backend online and local desktop route probe succeeded'
+            : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published')
           : 'Local desktop browser detected, but the backend is offline')
         : 'Current session is not a local desktop browser',
-    }, diagnostics['local-desktop']),
+      blockedReason: frontendLocal
+        ? (backendAvailable
+          ? (localDesktopProbe.blockedReason || (localDesktopProbeAvailable
+            ? ''
+            : 'backend is online locally, but no explicit live UI route was published'))
+          : 'backend is offline')
+        : 'not a local desktop session',
+    }, {
+      ...localDesktopProbe,
+      available: localDesktopAvailable,
+      misconfigured: localDesktopClassificationFailed || Boolean(localDesktopProbe.misconfigured),
+      source: localDesktopProbe.source || (frontendLocal ? 'local-browser-session' : 'not-applicable'),
+      reason: localDesktopProbe.reason || (frontendLocal
+        ? (backendAvailable
+          ? (localDesktopProbeAvailable
+            ? 'Backend online and local desktop route probe succeeded'
+            : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published')
+          : 'Local desktop browser detected, but the backend is offline')
+        : 'Current session is not a local desktop browser'),
+      blockedReason: localDesktopProbe.blockedReason || (frontendLocal
+        ? (backendAvailable
+          ? (localDesktopProbeAvailable ? '' : 'backend is online locally, but no explicit live UI route was published')
+          : 'backend is offline')
+        : 'not a local desktop session'),
+    }),
     'home-node': createRouteEvaluation('home-node', {
       configured: homeNodeConfigured,
       available: homeNodeReachable,
@@ -247,9 +304,27 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : (homeNodeConfigured
           ? 'Home PC node is configured but currently unreachable'
           : 'Home PC node is not configured'),
-    }, diagnostics['home-node']),
+      blockedReason: homeNodeConfigured
+        ? (homeNodeProbe.blockedReason || (homeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
+        : 'home node is not configured',
+    }, {
+      ...homeNodeProbe,
+      available: homeNodeReachable,
+      misconfigured: homeNodeMisconfigured || Boolean(homeNodeProbe.misconfigured),
+      source: homeNodeProbe.source || runtimeContext.homeNode?.source || (homeNodeConfigured ? 'configured-home-node' : 'not-configured'),
+      reason: homeNodeProbe.reason || (homeNodeReachable
+        ? (homeNodeMisconfigured
+          ? 'Home PC node is reachable, but the published client route is misconfigured'
+          : 'Home PC node is reachable on the LAN')
+        : (homeNodeConfigured
+          ? 'Home PC node is configured but currently unreachable'
+          : 'Home PC node is not configured')),
+      blockedReason: homeNodeProbe.blockedReason || (homeNodeConfigured
+        ? (homeNodeReachable ? '' : 'health probe could not confirm the home-node route')
+        : 'home node is not configured'),
+    }),
     dist: createRouteEvaluation('dist', {
-      configured: Boolean(runtimeContext.preferredTarget || diagnostics.dist?.configured),
+      configured: Boolean(runtimeContext.preferredTarget || distProbe.configured),
       available: Boolean(String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')),
       misconfigured: false,
       optional: false,
@@ -257,7 +332,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       reason: String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')
         ? 'Bundled dist runtime is reachable'
         : 'Bundled dist runtime is not the active route',
-    }, diagnostics.dist),
+      blockedReason: '',
+    }, distProbe),
     cloud: createRouteEvaluation('cloud', {
       configured: cloudAvailable || diagnostics.cloud?.configured === true,
       available: cloudAvailable,
@@ -267,10 +343,22 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       reason: cloudAvailable
         ? 'A cloud-backed Stephanos route is ready'
         : 'No cloud-backed Stephanos route is currently ready',
+      blockedReason: cloudAvailable ? '' : 'no cloud-backed route is currently ready',
     }, diagnostics.cloud),
   };
 
   const preferenceOrder = buildRoutePreference(runtimeContext);
+  if (evaluations.dist.available && !evaluations.dist.reason) {
+    evaluations.dist.reason = 'Bundled dist runtime is reachable';
+  }
+  if (evaluations.dist.available) {
+    const suppressionReason = deriveFallbackSuppressionReason('dist', evaluations, preferenceOrder);
+    if (suppressionReason) {
+      evaluations.dist.blockedReason = suppressionReason;
+      evaluations.dist.reason = `${evaluations.dist.reason || 'Bundled dist runtime is reachable'} · fallback only because ${suppressionReason}`;
+    }
+  }
+
   const preferredRoute = preferenceOrder.find((routeKey) => evaluations[routeKey]?.available) || null;
 
   return {
@@ -461,6 +549,10 @@ function buildDependencySummary({
   }
 
   if (selectedRoute.kind === 'dist') {
+    if (selectedRoute.blockedReason) {
+      return selectedRoute.reason || `Bundled dist runtime is reachable · fallback only because ${selectedRoute.blockedReason}`;
+    }
+
     return selectedRoute.reason || 'Bundled dist runtime is reachable';
   }
 
