@@ -91,32 +91,57 @@ export function createStephanosHomeNodeUrls({ host = '', uiPort = DEFAULT_HOME_N
   };
 }
 
+function createEmptyStephanosHomeNode(defaults = {}, sourceFallback = 'manual') {
+  return {
+    host: '',
+    ip: '',
+    uiPort: normalizePort(defaults.uiPort, DEFAULT_HOME_NODE_UI_PORT),
+    backendPort: normalizePort(defaults.backendPort, DEFAULT_HOME_NODE_BACKEND_PORT),
+    distPort: normalizePort(defaults.distPort, DEFAULT_HOME_NODE_DIST_PORT),
+    uiUrl: '',
+    backendUrl: '',
+    backendHealthUrl: '',
+    distUrl: '',
+    lastSeenAt: typeof defaults.lastSeenAt === 'string' ? defaults.lastSeenAt : '',
+    source: String(defaults.source || sourceFallback),
+    reachable: Boolean(defaults.reachable),
+    configured: false,
+  };
+}
+
+export function isValidStephanosHomeNode(value) {
+  return Boolean(value && typeof value === 'object' && String(value.host || '').trim());
+}
+
 export function normalizeStephanosHomeNode(value = {}, defaults = {}) {
-  const host = extractHostname(value.host || value.ip || defaults.host || defaults.ip || '');
+  const input = value && typeof value === 'object' ? value : {};
+  const fallback = defaults && typeof defaults === 'object' ? defaults : {};
+  const host = extractHostname(input.host || input.ip || fallback.host || fallback.ip || '');
   if (!host) {
-    return null;
+    return createEmptyStephanosHomeNode({ ...fallback, ...input }, fallback.source || 'manual');
   }
 
   const urls = createStephanosHomeNodeUrls({
     host,
-    uiPort: value.uiPort ?? defaults.uiPort,
-    backendPort: value.backendPort ?? defaults.backendPort,
-    distPort: value.distPort ?? defaults.distPort,
+    uiPort: input.uiPort ?? fallback.uiPort,
+    backendPort: input.backendPort ?? fallback.backendPort,
+    distPort: input.distPort ?? fallback.distPort,
   });
 
   return {
     host: urls.host,
-    ip: value.ip || urls.ip,
+    ip: input.ip || urls.ip,
     uiPort: urls.uiPort,
     backendPort: urls.backendPort,
     distPort: urls.distPort,
-    uiUrl: value.uiUrl || urls.uiUrl,
-    backendUrl: value.backendUrl || urls.backendUrl,
-    backendHealthUrl: value.backendHealthUrl || urls.backendHealthUrl,
-    distUrl: value.distUrl || urls.distUrl,
-    lastSeenAt: typeof value.lastSeenAt === 'string' ? value.lastSeenAt : '',
-    source: String(value.source || defaults.source || 'manual'),
-    reachable: Boolean(value.reachable),
+    uiUrl: input.uiUrl || urls.uiUrl,
+    backendUrl: input.backendUrl || urls.backendUrl,
+    backendHealthUrl: input.backendHealthUrl || urls.backendHealthUrl,
+    distUrl: input.distUrl || urls.distUrl,
+    lastSeenAt: typeof input.lastSeenAt === 'string' ? input.lastSeenAt : '',
+    source: String(input.source || fallback.source || 'manual'),
+    reachable: Boolean(input.reachable),
+    configured: true,
   };
 }
 
@@ -150,16 +175,18 @@ function writeJsonStorage(storage, key, value) {
 }
 
 export function readPersistedStephanosHomeNode(storage = globalThis?.localStorage) {
-  return normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY) || {}, { source: 'manual' });
+  const normalized = normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY), { source: 'manual' });
+  return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
 export function readPersistedStephanosLastKnownNode(storage = globalThis?.localStorage) {
-  return normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY) || {}, { source: 'lastKnown' });
+  const normalized = normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY), { source: 'lastKnown' });
+  return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
 export function persistStephanosHomeNodePreference(node, storage = globalThis?.localStorage) {
-  const normalized = normalizeStephanosHomeNode(node || {}, { source: 'manual' });
-  writeJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY, normalized ? {
+  const normalized = normalizeStephanosHomeNode(node, { source: 'manual' });
+  writeJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY, isValidStephanosHomeNode(normalized) ? {
     host: normalized.host,
     ip: normalized.ip,
     uiPort: normalized.uiPort,
@@ -170,12 +197,12 @@ export function persistStephanosHomeNodePreference(node, storage = globalThis?.l
     distUrl: normalized.distUrl,
     source: 'manual',
   } : null);
-  return normalized;
+  return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
 export function persistStephanosLastKnownNode(node, storage = globalThis?.localStorage) {
-  const normalized = normalizeStephanosHomeNode(node || {}, { source: 'lastKnown' });
-  writeJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY, normalized ? {
+  const normalized = normalizeStephanosHomeNode(node, { source: 'lastKnown' });
+  writeJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY, isValidStephanosHomeNode(normalized) ? {
     host: normalized.host,
     ip: normalized.ip,
     uiPort: normalized.uiPort,
@@ -189,7 +216,7 @@ export function persistStephanosLastKnownNode(node, storage = globalThis?.localS
     source: normalized.source,
     reachable: normalized.reachable,
   } : null);
-  return normalized;
+  return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
 export function clearPersistedStephanosHomeNode(storage = globalThis?.localStorage) {
@@ -205,8 +232,20 @@ function createCandidateMap() {
 }
 
 function addCandidate(candidateMap, value, defaults = {}) {
+  if (!value || (typeof value !== 'object' && typeof value !== 'string')) {
+    return;
+  }
+
+  if (typeof value === 'string' && !value.trim()) {
+    return;
+  }
+
+  if (typeof value === 'object' && !Object.keys(value).length) {
+    return;
+  }
+
   const candidate = normalizeStephanosHomeNode(value, defaults);
-  if (!candidate?.host) {
+  if (!isValidStephanosHomeNode(candidate)) {
     return;
   }
 
@@ -299,8 +338,8 @@ async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeou
 
 export async function probeStephanosHomeNode(node, options = {}) {
   const candidate = normalizeStephanosHomeNode(node, { source: node?.source || 'discovered' });
-  if (!candidate?.backendHealthUrl) {
-    return { ok: false, node: candidate, reason: 'missing-backend-url' };
+  if (!isValidStephanosHomeNode(candidate) || !candidate.backendHealthUrl) {
+    return { ok: false, node: isValidStephanosHomeNode(candidate) ? candidate : null, reason: 'missing-backend-url' };
   }
 
   const health = await fetchJsonWithTimeout(candidate.backendHealthUrl, options);
@@ -346,39 +385,67 @@ export async function discoverStephanosHomeNode({
   timeoutMs = 1500,
   storage = globalThis?.localStorage,
 } = {}) {
-  const candidates = buildStephanosHomeNodeCandidates({ currentOrigin, manualNode, lastKnownNode, recentHosts });
-  const attempts = [];
+  try {
+    const candidates = buildStephanosHomeNodeCandidates({ currentOrigin, manualNode, lastKnownNode, recentHosts });
+    const attempts = [];
 
-  for (const candidate of candidates) {
-    const probe = await probeStephanosHomeNode(candidate, { fetchImpl, timeoutMs });
-    attempts.push({
-      host: candidate.host,
-      uiUrl: candidate.uiUrl,
-      backendUrl: candidate.backendUrl,
-      source: candidate.source,
-      ok: probe.ok,
-      reason: probe.reason || '',
-    });
+    for (const candidate of candidates) {
+      const probe = await probeStephanosHomeNode(candidate, { fetchImpl, timeoutMs });
+      attempts.push({
+        host: candidate.host,
+        uiUrl: candidate.uiUrl,
+        backendUrl: candidate.backendUrl,
+        source: candidate.source,
+        ok: probe.ok,
+        reason: probe.reason || '',
+      });
 
-    if (probe.ok && probe.node) {
-      persistStephanosLastKnownNode({ ...probe.node, source: probe.node.source || candidate.source || 'discovered' }, storage);
-      return {
-        reachable: true,
-        preferredNode: probe.node,
-        node: probe.node,
-        attempts,
-        source: probe.node.source || candidate.source || 'discovered',
-      };
+      if (probe.ok && probe.node && isValidStephanosHomeNode(probe.node)) {
+        persistStephanosLastKnownNode({ ...probe.node, source: probe.node.source || candidate.source || 'discovered' }, storage);
+        return {
+          reachable: true,
+          preferredNode: probe.node,
+          node: probe.node,
+          attempts,
+          source: probe.node.source || candidate.source || 'discovered',
+          status: 'available',
+          message: 'Stephanos home node reachable.',
+        };
+      }
     }
-  }
 
-  return {
-    reachable: false,
-    preferredNode: null,
-    node: null,
-    attempts,
-    source: manualNode?.host ? 'manual' : (lastKnownNode?.host ? 'lastKnown' : 'unknown'),
-  };
+    const preferredNode = isValidStephanosHomeNode(manualNode)
+      ? normalizeStephanosHomeNode(manualNode, { source: 'manual' })
+      : isValidStephanosHomeNode(lastKnownNode)
+        ? normalizeStephanosHomeNode(lastKnownNode, { source: 'lastKnown' })
+        : null;
+    const source = preferredNode?.source || 'unknown';
+    const status = preferredNode ? 'unavailable' : 'not-configured';
+    const message = preferredNode
+      ? 'Stephanos home node is configured but currently unreachable.'
+      : 'Stephanos home node is not configured yet.';
+
+    return {
+      reachable: false,
+      preferredNode,
+      node: null,
+      attempts,
+      source,
+      status,
+      message,
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      preferredNode: null,
+      node: null,
+      attempts: [],
+      source: 'unknown',
+      status: 'searching',
+      message: `Stephanos home node discovery failed softly: ${error?.message || 'unknown-error'}`,
+      error: error?.message || 'unknown-error',
+    };
+  }
 }
 
 export function resolveStephanosBackendBaseUrl({
@@ -400,8 +467,13 @@ export function resolveStephanosBackendBaseUrl({
     return createStephanosHomeNodeUrls({ host: current.hostname, backendPort: DEFAULT_HOME_NODE_BACKEND_PORT }).backendUrl;
   }
 
-  const preferredNode = normalizeStephanosHomeNode(manualNode, { source: 'manual' })
-    || normalizeStephanosHomeNode(lastKnownNode, { source: 'lastKnown' });
+  const manual = normalizeStephanosHomeNode(manualNode, { source: 'manual' });
+  const lastKnown = normalizeStephanosHomeNode(lastKnownNode, { source: 'lastKnown' });
+  const preferredNode = isValidStephanosHomeNode(manual)
+    ? manual
+    : isValidStephanosHomeNode(lastKnown)
+      ? lastKnown
+      : null;
 
   if (preferredNode?.backendUrl) {
     return preferredNode.backendUrl;
@@ -412,7 +484,7 @@ export function resolveStephanosBackendBaseUrl({
 
 export function summarizeStephanosHomeNode(node) {
   const normalized = normalizeStephanosHomeNode(node || {});
-  if (!normalized) {
+  if (!isValidStephanosHomeNode(normalized)) {
     return '';
   }
 

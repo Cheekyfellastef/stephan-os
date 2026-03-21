@@ -19,6 +19,7 @@ import {
   discoverStephanosHomeNode,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
+  isValidStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
 
@@ -485,7 +486,7 @@ function buildStephanosRuntimeStatusMessage({ liveTargets, preferredTarget, heal
     : `Stephanos dist runtime live at ${preferredTarget?.url || liveTargets[0].url}, but backend dependencies are degraded.`;
 }
 
-async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
+export async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const manualNode = readPersistedStephanosHomeNode();
   const lastKnownNode = readPersistedStephanosLastKnownNode();
@@ -494,7 +495,7 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     manualNode,
     lastKnownNode,
   });
-  const preferredHomeNode = homeNodeDiscovery.preferredNode || manualNode || lastKnownNode || null;
+  const preferredHomeNode = [homeNodeDiscovery.preferredNode, manualNode, lastKnownNode].find((node) => isValidStephanosHomeNode(node)) || null;
   const backendBaseUrl = resolveStephanosBackendBaseUrl({
     currentOrigin,
     manualNode,
@@ -585,7 +586,7 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     runtimeContext: {
       frontendOrigin: currentOrigin,
       apiBaseUrl: backendBaseUrl,
-      homeNode: homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false },
+      homeNode: preferredHomeNode ? (homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
       preferredTarget: candidateLaunchUrl || hostedDistUrl || currentOrigin,
       actualTargetUsed: backendBaseUrl,
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || 'unknown',
