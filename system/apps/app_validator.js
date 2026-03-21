@@ -503,11 +503,21 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     manualNode,
     lastKnownNode: homeNodeDiscovery.preferredNode || lastKnownNode,
   });
+  const localDesktopSession = isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin);
+  const localDesktopBackendBaseUrl = 'http://localhost:8787';
   const backendHealthUrl = `${backendBaseUrl}/api/health`;
-  const providerHealthUrl = `${backendBaseUrl}/api/ai/providers/health`;
+  const localDesktopBackendHealthUrl = `${localDesktopBackendBaseUrl}/api/health`;
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
   const backendProbe = await fetchJsonSafely(backendHealthUrl);
+  const localDesktopBackendProbe = localDesktopSession && backendBaseUrl !== localDesktopBackendBaseUrl
+    ? await fetchJsonSafely(localDesktopBackendHealthUrl)
+    : backendProbe;
+  const effectiveBackendProbe = backendProbe.ok ? backendProbe : localDesktopBackendProbe;
+  const effectiveBackendBaseUrl = backendProbe.ok
+    ? backendBaseUrl
+    : (localDesktopBackendProbe.ok ? localDesktopBackendBaseUrl : backendBaseUrl);
+  const providerHealthUrl = `${effectiveBackendBaseUrl}/api/ai/providers/health`;
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
     .trim()
@@ -543,12 +553,12 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const devLiveTargets = probedTargets.filter((target) => target.kind === 'dev' && target.validStephanosTarget);
   const distTarget = getStephanosRuntimeTargetByKind(probedTargets, 'dist');
   const distLive = Boolean(distTarget?.reachable && runtimeProbe.ok && runtimeProbe.json?.service === 'stephanos-dist-server' && runtimeProbe.json?.distEntryExists === true);
-  const healthyBackend = backendProbe.ok && backendProbe.json?.service === 'stephanos-server';
+  const healthyBackend = effectiveBackendProbe.ok && effectiveBackendProbe.json?.service === 'stephanos-server';
   const publishedClientRouteState = healthyBackend
-    ? String(backendProbe.json?.client_route_state || '').trim().toLowerCase()
+    ? String(effectiveBackendProbe.json?.client_route_state || '').trim().toLowerCase()
     : '';
   const publishedBackendBaseUrl = healthyBackend
-    ? String(backendProbe.json?.published_backend_base_url || backendProbe.json?.backend_base_url || '').trim()
+    ? String(effectiveBackendProbe.json?.published_backend_base_url || effectiveBackendProbe.json?.backend_base_url || '').trim()
     : '';
   const publishedRouteHost = publishedBackendBaseUrl ? extractHostname(publishedBackendBaseUrl) : '';
   const backendPublishedRouteMisconfigured = healthyBackend && (
@@ -601,12 +611,60 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     backendAvailable: healthyBackend,
     runtimeContext: {
       frontendOrigin: currentOrigin,
-      apiBaseUrl: backendBaseUrl,
+      apiBaseUrl: effectiveBackendBaseUrl,
       homeNode: preferredHomeNode ? (homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
       preferredTarget: candidateLaunchUrl || hostedDistUrl || currentOrigin,
-      actualTargetUsed: backendBaseUrl,
-      nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || 'unknown',
-      publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unknown'),
+      actualTargetUsed: effectiveBackendBaseUrl,
+      nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
+      publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin),
+          available: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin)) && healthyBackend,
+          misconfigured: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin)) && healthyBackend && !localPreferredTarget?.url,
+          source: isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin) ? 'local-browser-session' : 'not-applicable',
+          reason: (isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin))
+            ? (healthyBackend
+              ? (localPreferredTarget?.url
+                ? 'Backend online and local desktop session can reach Stephanos'
+                : 'Backend online but no local runtime target was selected')
+              : 'Local desktop session detected, but the backend is offline')
+            : 'Current session is not a local desktop browser',
+        },
+        'home-node': {
+          configured: Boolean(preferredHomeNode?.host),
+          available: Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host),
+          misconfigured: Boolean(homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured),
+          source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
+          reason: homeNodeDiscovery.reachable
+            ? (backendPublishedRouteMisconfigured
+              ? 'Home PC node is reachable, but the published client route is misconfigured'
+              : 'Home PC node is reachable on the LAN')
+            : (preferredHomeNode?.host
+              ? (homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable')
+              : 'Home PC node is not configured'),
+        },
+        dist: {
+          configured: Boolean(entryExists || distTarget?.url),
+          available: Boolean(distLive || (entryExists && !homeNodeDiscovery.reachable && !localPreferredTarget?.url)),
+          misconfigured: false,
+          source: distLive ? 'dist-runtime-probe' : (entryExists ? 'dist-entry' : 'dist-unavailable'),
+          reason: distLive
+            ? 'Bundled dist runtime is reachable'
+            : (entryExists
+              ? 'Bundled dist entry exists and can be used as a fallback route'
+              : 'Bundled dist runtime is unavailable'),
+        },
+        cloud: {
+          configured: entryExists,
+          available: Boolean(entryExists),
+          misconfigured: false,
+          source: entryExists ? 'hosted-dist-entry' : 'cloud-route-unavailable',
+          reason: entryExists
+            ? 'Hosted/cloud Stephanos entry is available for fallback'
+            : 'Hosted/cloud Stephanos entry is unavailable',
+        },
+      },
     },
   });
 

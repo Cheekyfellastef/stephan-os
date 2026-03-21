@@ -259,3 +259,117 @@ test('validateStephanosRuntime treats a reachable home node as reachable even wh
     globalThis.localStorage = originalLocalStorage;
   }
 });
+
+
+test('validateStephanosRuntime prefers local-desktop on PC when backend is online and home-node is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    distPort: 4173,
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'http://localhost:4173' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'stephanos_home_node_manual') {
+        return JSON.stringify(manualNode);
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      if (url === 'http://localhost:5173/' || url === 'http://127.0.0.1:5173/' || url === 'http://127.0.0.1:4173/apps/stephanos/dist/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === './apps/stephanos/runtime-status.json' || url === 'http://127.0.0.1:4173/__stephanos/health') {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      return {
+        ok: false,
+        status: 503,
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    if (url === 'http://localhost:8787/api/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+        json: async () => ({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+      };
+    }
+
+    if (url === 'http://localhost:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: { groq: { ok: true }, ollama: { ok: false } } }),
+        json: async () => ({ success: true, data: { groq: { ok: true }, ollama: { ok: false } } }),
+      };
+    }
+
+    if (url === 'http://localhost:5173/' || url === 'http://127.0.0.1:5173/') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => '<html><body>Stephanos UI</body></html>',
+        json: async () => ({}),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.state, 'healthy');
+    assert.equal(status.runtimeStatusModel.routeKind, 'local-desktop');
+    assert.equal(status.runtimeStatusModel.preferredRoute, 'local-desktop');
+    assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].available, true);
+    assert.equal(status.runtimeStatusModel.routeEvaluations['home-node'].available, false);
+    assert.match(status.message, /optional home-node is unavailable/i);
+    assert.doesNotMatch(status.message, /source unknown/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
