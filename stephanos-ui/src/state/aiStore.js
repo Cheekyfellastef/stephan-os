@@ -15,6 +15,14 @@ import {
   sanitizeConfigForStorage,
   validateProviderDraft,
 } from '../ai/providerConfig';
+import {
+  clearPersistedStephanosHomeNode,
+  normalizeStephanosHomeNode,
+  persistStephanosHomeNodePreference,
+  persistStephanosLastKnownNode,
+  readPersistedStephanosHomeNode,
+  readPersistedStephanosLastKnownNode,
+} from '../../../shared/runtime/stephanosHomeNode.mjs';
 
 const AIStoreContext = createContext(null);
 const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
@@ -39,6 +47,11 @@ const DEFAULT_OLLAMA_CONNECTION = {
   recentHosts: [],
   pcAddressHint: '',
   lastSelectedModel: '',
+};
+const DEFAULT_HOME_NODE_STATUS = {
+  state: 'idle',
+  detail: 'Home node not checked yet.',
+  attempts: [],
 };
 
 function normalizeUiLayout(value = {}) {
@@ -151,6 +164,9 @@ export function AIStoreProvider({ children }) {
   const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }] )));
   const [providerHealth, setProviderHealth] = useState({});
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
+  const [homeNodePreference, setHomeNodePreferenceState] = useState(() => readPersistedStephanosHomeNode() || null);
+  const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(() => readPersistedStephanosLastKnownNode() || null);
+  const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [lastExecutionMetadata, setLastExecutionMetadata] = useState(null);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
@@ -276,10 +292,15 @@ export function AIStoreProvider({ children }) {
     setSavedProviderConfigs(sessionSafe);
     setDraftProviderConfigs(sessionSafe);
     setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
+    setHomeNodePreferenceState(null);
+    setHomeNodeLastKnownState(null);
+    setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
     setDebugVisibleState(nextUiLayout.debugConsole);
     persistSettings({ ...defaults, providerConfigs: sessionSafe, ollamaConnection: DEFAULT_OLLAMA_CONNECTION });
+    clearPersistedStephanosHomeNode();
+    persistStephanosLastKnownNode(null);
     persistUiLayout(nextUiLayout);
   };
 
@@ -345,6 +366,35 @@ export function AIStoreProvider({ children }) {
 
   const isDraftDirty = (providerKey) => JSON.stringify(draftProviderConfigs[providerKey]) !== JSON.stringify(savedProviderConfigs[providerKey]);
 
+
+  const setHomeNodePreference = (patch = {}) => {
+    const nextPreference = patch === null
+      ? null
+      : normalizeStephanosHomeNode({ ...(homeNodePreference || {}), ...patch }, { source: 'manual' });
+    setHomeNodePreferenceState(nextPreference);
+    if (nextPreference) {
+      persistStephanosHomeNodePreference(nextPreference);
+    } else {
+      clearPersistedStephanosHomeNode();
+    }
+    return nextPreference;
+  };
+
+  const setHomeNodeLastKnown = (node = null) => {
+    const nextNode = node ? normalizeStephanosHomeNode(node, { source: node.source || 'lastKnown' }) : null;
+    setHomeNodeLastKnownState(nextNode);
+    persistStephanosLastKnownNode(nextNode);
+    return nextNode;
+  };
+
+  const setHomeNodeStatus = (nextStatus = DEFAULT_HOME_NODE_STATUS) => {
+    setHomeNodeStatusState({
+      ...DEFAULT_HOME_NODE_STATUS,
+      ...(nextStatus || {}),
+      attempts: Array.isArray(nextStatus?.attempts) ? nextStatus.attempts : [],
+    });
+  };
+
   const value = useMemo(() => ({
     commandHistory,
     setCommandHistory,
@@ -379,6 +429,12 @@ export function AIStoreProvider({ children }) {
     setProviderHealth,
     ollamaConnection,
     setOllamaConnection,
+    homeNodePreference,
+    setHomeNodePreference,
+    homeNodeLastKnown,
+    setHomeNodeLastKnown,
+    homeNodeStatus,
+    setHomeNodeStatus,
     lastExecutionMetadata,
     setLastExecutionMetadata,
     rememberSuccessfulOllamaConnection,
@@ -417,6 +473,9 @@ export function AIStoreProvider({ children }) {
     providerDraftStatus,
     providerHealth,
     ollamaConnection,
+    homeNodePreference,
+    homeNodeLastKnown,
+    homeNodeStatus,
     lastExecutionMetadata,
     apiStatus,
     uiDiagnostics,

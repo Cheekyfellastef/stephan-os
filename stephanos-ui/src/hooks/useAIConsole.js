@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
+import {
+  discoverStephanosHomeNode,
+  summarizeStephanosHomeNode,
+} from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -91,6 +95,10 @@ export function useAIConsole() {
     updateDraftProviderConfig,
     ollamaConnection,
     rememberSuccessfulOllamaConnection,
+    homeNodePreference,
+    homeNodeLastKnown,
+    setHomeNodeLastKnown,
+    setHomeNodeStatus,
     providerHealth,
     apiStatus,
     setProviderHealth,
@@ -101,11 +109,55 @@ export function useAIConsole() {
   const runtimeContext = runtimeConfig;
   const startupOllamaSyncAttemptedRef = useRef(false);
 
+
+  const resolveRuntimeConfig = useCallback(async () => {
+    const baseRuntimeConfig = getApiRuntimeConfig();
+    const discovery = await discoverStephanosHomeNode({
+      currentOrigin: baseRuntimeConfig.frontendOrigin,
+      manualNode: homeNodePreference,
+      lastKnownNode: homeNodeLastKnown,
+      recentHosts: [
+        ollamaConnection.lastSuccessfulHost,
+        ...(ollamaConnection.recentHosts || []),
+      ].filter(Boolean),
+    });
+
+    setHomeNodeStatus({
+      state: discovery.reachable ? 'ready' : (homeNodePreference?.host || homeNodeLastKnown?.host ? 'unreachable' : 'idle'),
+      detail: discovery.reachable
+        ? `Using ${summarizeStephanosHomeNode(discovery.preferredNode)}.`
+        : (homeNodePreference?.host || homeNodeLastKnown?.host
+          ? 'Home PC node unreachable right now.'
+          : 'No home PC node configured yet.'),
+      attempts: discovery.attempts,
+      node: discovery.preferredNode,
+      source: discovery.source,
+    });
+
+    if (discovery.preferredNode) {
+      setHomeNodeLastKnown(discovery.preferredNode);
+    }
+
+    const nextRuntimeConfig = getApiRuntimeConfig();
+    return {
+      runtimeConfig: {
+        ...nextRuntimeConfig,
+        homeNode: discovery.preferredNode || nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null,
+        nodeAddressSource: discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'unknown',
+        preferredTarget: discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || nextRuntimeConfig.frontendOrigin,
+        actualTargetUsed: discovery.preferredNode?.backendUrl || nextRuntimeConfig.baseUrl,
+      },
+      discovery,
+    };
+  }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus]);
+
+
   const refreshHealth = useCallback(async () => {
     const effectiveProviderConfigs = getEffectiveProviderConfigs();
     try {
-      const health = await checkApiHealth();
-      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext });
+      const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
+      const health = await checkApiHealth(resolvedRuntimeContext);
+      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: resolvedRuntimeContext }, resolvedRuntimeContext);
       setProviderHealth(providerHealth.data || {});
       setApiStatus({
         state: health.ok ? 'online' : 'error',
@@ -115,13 +167,13 @@ export function useAIConsole() {
           : `Health check failed (${health.status}).`,
         target: health.target,
         baseUrl: health.baseUrl,
-        frontendOrigin: runtimeConfig.frontendOrigin,
-        strategy: runtimeConfig.strategy,
-        backendTargetEndpoint: health.data?.backend_target_endpoint || runtimeConfig.backendTargetEndpoint,
-        healthEndpoint: runtimeConfig.healthEndpoint,
+        frontendOrigin: resolvedRuntimeContext.frontendOrigin,
+        strategy: resolvedRuntimeContext.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || resolvedRuntimeContext.backendTargetEndpoint,
+        healthEndpoint: resolvedRuntimeContext.healthEndpoint,
         backendReachable: health.ok,
         backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext,
+        runtimeContext: resolvedRuntimeContext,
         lastCheckedAt: new Date().toISOString(),
         meta: health.data,
       });
@@ -143,7 +195,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, runtimeContext, setApiStatus, provider, routeMode, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth]);
+  }, [runtimeConfig, runtimeContext, setApiStatus, provider, routeMode, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig]);
 
   useEffect(() => {
     refreshHealth();
@@ -227,6 +279,7 @@ export function useAIConsole() {
         },
       };
 
+      const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const refreshedProviderHealth = await getProviderHealth({
         provider,
         routeMode,
@@ -234,8 +287,8 @@ export function useAIConsole() {
         fallbackEnabled,
         fallbackOrder,
         devMode,
-        runtimeContext,
-      });
+        runtimeContext: resolvedRuntimeContext,
+      }, resolvedRuntimeContext);
 
       if (refreshedProviderHealth.data && Object.keys(refreshedProviderHealth.data).length) {
         setProviderHealth((prev) => ({
@@ -257,6 +310,7 @@ export function useAIConsole() {
     provider,
     providerHealth,
     rememberSuccessfulOllamaConnection,
+    resolveRuntimeConfig,
     runtimeConfig,
     setProviderHealth,
     updateDraftProviderConfig,
@@ -288,6 +342,7 @@ export function useAIConsole() {
 
     try {
       const effectiveProviderConfigs = getEffectiveProviderConfigs();
+      const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
@@ -296,6 +351,7 @@ export function useAIConsole() {
         fallbackEnabled,
         fallbackOrder,
         devMode,
+        runtimeConfig: resolvedRuntimeContext,
       });
 
       const providerHealth = data.data?.provider_health || {};
@@ -339,7 +395,7 @@ export function useAIConsole() {
       setApiStatus((prev) => ({
         ...prev,
         state: 'online',
-        label: `Connected to ${runtimeConfig.target} API`,
+        label: `Connected to ${resolvedRuntimeContext.target} API`,
         detail: data.success
           ? executionSummary
           : `Provider issue: ${providerMessage}`,
@@ -370,10 +426,10 @@ export function useAIConsole() {
         activeProviderConfigSource: getActiveProviderConfigSource(),
         provider_health: providerHealth,
         provider_diagnostics: data.data?.provider_diagnostics || null,
-        frontend_origin: runtimeConfig.frontendOrigin,
-        frontend_api_base_url: runtimeConfig.baseUrl,
-        backend_target_endpoint: runtimeConfig.backendTargetEndpoint,
-        backend_health_endpoint: runtimeConfig.healthEndpoint,
+        frontend_origin: resolvedRuntimeContext.frontendOrigin,
+        frontend_api_base_url: resolvedRuntimeContext.baseUrl,
+        backend_target_endpoint: resolvedRuntimeContext.backendTargetEndpoint,
+        backend_health_endpoint: resolvedRuntimeContext.healthEndpoint,
         request_trace: data.data?.request_trace || null,
       });
     } catch (error) {

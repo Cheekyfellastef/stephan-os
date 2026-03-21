@@ -56,6 +56,7 @@ const ROUTE_MODE_COPY = {
 };
 
 function renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }) {
+
   return (
     <label key={field.key}>
       <span>{field.label}</span>
@@ -96,6 +97,10 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     ollamaConnection,
     setOllamaConnection,
     rememberSuccessfulOllamaConnection,
+    homeNodePreference,
+    setHomeNodePreference,
+    homeNodeLastKnown,
+    homeNodeStatus,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -193,6 +198,28 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     await handleRunOllamaDiscovery({ manualAddress: normalized });
   };
 
+
+  const handleSaveHomeNode = () => {
+    if (!homeNodePreference?.host) {
+      setHomeNodePreference(null);
+      onTestConnection();
+      return;
+    }
+
+    setHomeNodePreference({
+      host: homeNodePreference.host,
+      uiPort: homeNodePreference.uiPort,
+      backendPort: homeNodePreference.backendPort,
+      source: 'manual',
+    });
+    onTestConnection();
+  };
+
+  const handleClearHomeNode = () => {
+    setHomeNodePreference(null);
+    onTestConnection();
+  };
+
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
       <div className="provider-switch-header">
@@ -225,6 +252,54 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         Requested Route Mode: <strong>{routeMode}</strong> · Explicit Provider Target: <strong>{provider}</strong> · Backend Target: <strong>{runtimeConfig.baseUrl}</strong>
       </p>
 
+
+      <div className="provider-hint-box found">
+        <div className="provider-help-panel">
+          <strong>Stephanos Home Node</strong>
+          <p>Use this when your main PC hosts Stephanos on home WiFi and companion devices should connect to it automatically.</p>
+          <p>Only non-secret host and port details are stored in the browser.</p>
+        </div>
+        <div className="provider-status-box">
+          <strong>{homeNodeStatus.state === 'ready' ? 'Home PC node ready' : homeNodeStatus.state === 'unreachable' ? 'Home PC node unreachable' : 'Home PC node optional'}</strong>
+          <p>{homeNodeStatus.detail}</p>
+          <p><strong>Preferred source:</strong> {homeNodeStatus.source || homeNodePreference?.source || homeNodeLastKnown?.source || 'none'}</p>
+          <p><strong>Last known node:</strong> {homeNodeLastKnown?.uiUrl || 'none'}</p>
+          <p><strong>Preferred backend:</strong> {runtimeConfig.baseUrl}</p>
+        </div>
+      </div>
+
+      <div className="provider-manual-address">
+        <label>
+          <span>Home PC Host or IP</span>
+          <input
+            type="text"
+            placeholder="192.168.1.42"
+            value={homeNodePreference?.host || ''}
+            onChange={(event) => setHomeNodePreference({ host: event.target.value, source: 'manual' })}
+          />
+        </label>
+        <label>
+          <span>UI Port</span>
+          <input
+            type="number"
+            placeholder="5173"
+            value={homeNodePreference?.uiPort || 5173}
+            onChange={(event) => setHomeNodePreference({ uiPort: Number(event.target.value) || 5173, source: 'manual' })}
+          />
+        </label>
+        <label>
+          <span>Backend Port</span>
+          <input
+            type="number"
+            placeholder="8787"
+            value={homeNodePreference?.backendPort || 8787}
+            onChange={(event) => setHomeNodePreference({ backendPort: Number(event.target.value) || 8787, source: 'manual' })}
+          />
+        </label>
+        <button type="button" className="ghost-button" onClick={handleSaveHomeNode}>Save Home Node</button>
+        <button type="button" className="ghost-button" onClick={onTestConnection}>Find Home Node</button>
+        <button type="button" className="ghost-button" onClick={handleClearHomeNode}>Clear</button>
+      </div>
       <div className="toggle-row">
         <label className="toggle-chip"><input type="checkbox" checked={devMode} onChange={(event) => setDevMode(event.target.checked)} /> Dev-safe mode</label>
         <label className="toggle-chip"><input type="checkbox" checked={fallbackEnabled} onChange={(event) => setFallbackEnabled(event.target.checked)} /> Fallback enabled</label>

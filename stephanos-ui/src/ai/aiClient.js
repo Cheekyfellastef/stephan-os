@@ -1,5 +1,5 @@
 import { EMPTY_RESPONSE } from './aiTypes';
-import { API_CONFIG, buildApiUrl, getApiRuntimeConfig, getApiTargetLabel } from './apiConfig';
+import { buildApiUrl, getApiConfig, getApiRuntimeConfig, getApiTargetLabel } from './apiConfig';
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 
 function normalizeResponse(json) {
@@ -10,12 +10,15 @@ function createTransportError({ code, message, details }) {
   return { ok: false, code, message, details, isTransportError: true };
 }
 
-async function requestJson(path, options = {}) {
+async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig()) {
+  const apiConfig = getApiConfig();
+  const timeoutMs = Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
+  const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_CONFIG.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(buildApiUrl(path), { ...options, signal: controller.signal });
+    const response = await fetch(buildApiUrl(path, baseUrl), { ...options, signal: controller.signal });
     const raw = await response.text();
     let json = {};
 
@@ -28,16 +31,15 @@ async function requestJson(path, options = {}) {
     return { ok: response.ok, status: response.status, data: json };
   } catch (error) {
     if (error?.isTransportError) throw error;
-    if (error?.name === 'AbortError') throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${API_CONFIG.timeoutMs}ms.` });
+    if (error?.name === 'AbortError') throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
     throw createTransportError({ code: 'BACKEND_OFFLINE', message: 'Unable to reach backend API. Check that the server is running and reachable.', details: { reason: error?.message } });
   } finally {
     clearTimeout(timeout);
   }
 }
 
-
-async function requestMemory(path, options = {}) {
-  const result = await requestJson(path, options);
+async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson(path, options, runtimeConfig);
   if (!result.ok) {
     const message = result.data?.error || `Memory request failed (${result.status}).`;
     throw new Error(message);
@@ -46,8 +48,8 @@ async function requestMemory(path, options = {}) {
   return result.data;
 }
 
-export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true }) {
-  const runtimeContext = getApiRuntimeConfig();
+export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true, runtimeConfig = getApiRuntimeConfig() }) {
+  const runtimeContext = runtimeConfig;
   const payload = {
     prompt,
     provider,
@@ -70,7 +72,7 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, rout
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }, runtimeContext);
 
   return {
     ok: result.ok,
@@ -81,35 +83,34 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, rout
   };
 }
 
-
-export async function getProviderHealth(payload) {
+export async function getProviderHealth(payload, runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson('/api/ai/providers/health', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }, runtimeConfig);
 
   return { ok: result.ok, status: result.status, data: result.data?.data || {} };
 }
 
-export async function checkApiHealth() {
-  const result = await requestJson('/api/health');
-  return { ok: result.ok, status: result.status, target: getApiTargetLabel(), baseUrl: API_CONFIG.baseUrl, data: result.data };
+export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/health', {}, runtimeConfig);
+  return { ok: result.ok, status: result.status, target: getApiTargetLabel(runtimeConfig.baseUrl), baseUrl: runtimeConfig.baseUrl, data: result.data };
 }
 
 export { getApiRuntimeConfig };
 
-export async function listMemoryItems() {
-  const result = await requestMemory('/api/memory');
+export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestMemory('/api/memory', {}, runtimeConfig);
   return result.data?.items || [];
 }
 
-export async function searchMemoryItems(query) {
-  const result = await requestMemory(`/api/memory/search?q=${encodeURIComponent(query)}`);
+export async function searchMemoryItems(query, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestMemory(`/api/memory/search?q=${encodeURIComponent(query)}`, {}, runtimeConfig);
   return result.data?.items || [];
 }
 
-export async function createMemoryItem(payload) {
+export async function createMemoryItem(payload, runtimeConfig = getApiRuntimeConfig()) {
   const normalizedPayload = {
     ...payload,
     tags: Array.isArray(payload.tags) ? payload.tags : String(payload.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean),
@@ -119,7 +120,7 @@ export async function createMemoryItem(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(normalizedPayload),
-  });
+  }, runtimeConfig);
 
   return result.data?.item || null;
 }

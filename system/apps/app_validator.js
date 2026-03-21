@@ -8,12 +8,19 @@ import {
   readPersistedProviderPreferences,
 } from "../../shared/runtime/runtimeStatusModel.mjs";
 import {
+  createStephanosHomeNodeTarget,
   createStephanosLocalUrls,
   createStephanosRuntimeTargets,
   getStephanosPreferredRuntimeTarget,
   getStephanosRuntimeTargetByKind,
   resolveStephanosLocalUrls,
 } from "../../shared/runtime/stephanosLocalUrls.mjs";
+import {
+  discoverStephanosHomeNode,
+  readPersistedStephanosHomeNode,
+  readPersistedStephanosLastKnownNode,
+  resolveStephanosBackendBaseUrl,
+} from "../../shared/runtime/stephanosHomeNode.mjs";
 
 const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_LOCAL_URLS = createStephanosLocalUrls();
@@ -21,9 +28,6 @@ const STEPHANOS_DIST_ENTRY = STEPHANOS_LOCAL_URLS.distEntryPath;
 const STEPHANOS_RUNTIME_URL = STEPHANOS_LOCAL_URLS.runtimeUrl;
 const STEPHANOS_HEALTH_URL = STEPHANOS_LOCAL_URLS.healthUrl;
 const STEPHANOS_STATUS_URL = STEPHANOS_LOCAL_URLS.runtimeStatusPath;
-const STEPHANOS_BACKEND_URL = "http://localhost:8787";
-const STEPHANOS_BACKEND_HEALTH_URL = "http://localhost:8787/api/health";
-const STEPHANOS_PROVIDER_HEALTH_URL = "http://localhost:8787/api/ai/providers/health";
 
 function getAppRoot(app) {
   return app?.folder ? `apps/${app.folder}` : "";
@@ -482,11 +486,27 @@ function buildStephanosRuntimeStatusMessage({ liveTargets, preferredTarget, heal
 }
 
 async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const manualNode = readPersistedStephanosHomeNode();
+  const lastKnownNode = readPersistedStephanosLastKnownNode();
+  const homeNodeDiscovery = await discoverStephanosHomeNode({
+    currentOrigin,
+    manualNode,
+    lastKnownNode,
+  });
+  const preferredHomeNode = homeNodeDiscovery.preferredNode || manualNode || lastKnownNode || null;
+  const backendBaseUrl = resolveStephanosBackendBaseUrl({
+    currentOrigin,
+    manualNode,
+    lastKnownNode: homeNodeDiscovery.preferredNode || lastKnownNode,
+  });
+  const backendHealthUrl = `${backendBaseUrl}/api/health`;
+  const providerHealthUrl = `${backendBaseUrl}/api/ai/providers/health`;
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
-  const backendProbe = await fetchJsonSafely(STEPHANOS_BACKEND_HEALTH_URL);
+  const backendProbe = await fetchJsonSafely(backendHealthUrl);
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
-  const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || "")
+  const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
     .trim()
     .toLowerCase();
   const runtimeUrls = resolveStephanosLocalUrls(
@@ -495,7 +515,7 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     statusProbe.ok ? statusProbe.json?.runtimeUrl : null,
     runtimeProbe.ok ? runtimeProbe.json?.runtimeUrl : null,
     statusProbe.ok ? statusProbe.json?.healthUrl : null,
-    runtimeProbe.ok ? runtimeProbe.json?.healthUrl : null
+    runtimeProbe.ok ? runtimeProbe.json?.healthUrl : null,
   );
   const runtimeTargets = createStephanosRuntimeTargets({ distPort: runtimeUrls.port });
   const resolvedEntryPath = normalizeRuntimePath(
@@ -503,89 +523,105 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
       ? statusProbe.json.distEntryPath
       : runtimeProbe.ok && runtimeProbe.json?.distEntryPath
         ? runtimeProbe.json.distEntryPath
-        : entryPath || STEPHANOS_DIST_ENTRY
+        : entryPath || STEPHANOS_DIST_ENTRY,
   ) || STEPHANOS_DIST_ENTRY;
+  const hostedDistUrl = toFetchPath(resolvedEntryPath);
   const launcherMessage =
-    typeof launcherStatus?.message === "string" && launcherStatus.message.trim().length > 0
+    typeof launcherStatus?.message === 'string' && launcherStatus.message.trim().length > 0
       ? launcherStatus.message.trim()
-      : runtimeProbe.ok && typeof runtimeProbe.json?.launcherStatus?.message === "string"
+      : runtimeProbe.ok && typeof runtimeProbe.json?.launcherStatus?.message === 'string'
         ? runtimeProbe.json.launcherStatus.message.trim()
-        : "";
-  const buildState = getSubsystemState(launcherStatus, "build");
-  const uiState = getSubsystemState(launcherStatus, "ui");
-  const backendState = getSubsystemState(launcherStatus, "backend");
-  const entryExists = await fileExists(toFetchPath(resolvedEntryPath));
+        : '';
+  const buildState = getSubsystemState(launcherStatus, 'build');
+  const uiState = getSubsystemState(launcherStatus, 'ui');
+  const backendState = getSubsystemState(launcherStatus, 'backend');
+  const entryExists = await fileExists(hostedDistUrl);
   const probedTargets = await Promise.all(runtimeTargets.map((target) => probeStephanosRuntimeTarget(target)));
-  const devLiveTargets = probedTargets.filter((target) => target.kind === "dev" && target.validStephanosTarget);
-  const distTarget = getStephanosRuntimeTargetByKind(probedTargets, "dist");
-  const devTargetUrls = probedTargets.filter((target) => target.kind === "dev").map((target) => target.url);
-  const healthyDistProbe = runtimeProbe.ok && runtimeProbe.json?.service === "stephanos-dist-server" && runtimeProbe.json?.distEntryExists === true;
-  const distLive = Boolean(distTarget?.reachable && healthyDistProbe);
-  const liveTargets = [
+  const devLiveTargets = probedTargets.filter((target) => target.kind === 'dev' && target.validStephanosTarget);
+  const distTarget = getStephanosRuntimeTargetByKind(probedTargets, 'dist');
+  const distLive = Boolean(distTarget?.reachable && runtimeProbe.ok && runtimeProbe.json?.service === 'stephanos-dist-server' && runtimeProbe.json?.distEntryExists === true);
+  const healthyBackend = backendProbe.ok && backendProbe.json?.service === 'stephanos-server';
+  const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.ok ? runtimeProbe.json : null);
+  const homeNodeTarget = homeNodeDiscovery.reachable && preferredHomeNode?.host
+    ? createStephanosHomeNodeTarget({
+      host: preferredHomeNode.host,
+      uiPort: preferredHomeNode.uiPort,
+      backendPort: preferredHomeNode.backendPort,
+      source: preferredHomeNode.source,
+      lastSeenAt: preferredHomeNode.lastSeenAt,
+      reachable: true,
+    })
+    : null;
+  const localPreferredTarget = getStephanosPreferredRuntimeTarget([
     ...devLiveTargets,
     ...(distLive && distTarget ? [{ ...distTarget, validStephanosTarget: true }] : []),
-  ];
-  const preferredLiveTarget = getStephanosPreferredRuntimeTarget(liveTargets) || liveTargets[0] || null;
-  const runtimeUrl = preferredLiveTarget?.url || runtimeUrls.runtimeUrl;
-  const runtimeReachable = Boolean(preferredLiveTarget?.reachable);
-  const healthyBackend = backendProbe.ok && backendProbe.json?.service === "stephanos-server";
-  const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.ok ? runtimeProbe.json : null);
-  const launchableRuntime = runtimeReachable && liveTargets.length > 0;
-  const staleStateCleared = Boolean(
-    launchableRuntime && (options.previousValidationState === "error" || launcherState === "error")
-  );
-  let validationReason = "validator still evaluating failure branch";
-
-  if (launchableRuntime) {
-    validationReason = healthyBackend
-      ? `validator observed launchable ${preferredLiveTarget?.kind || "runtime"} runtime with backend online`
-      : `validator observed launchable ${preferredLiveTarget?.kind || "runtime"} runtime while backend dependencies are degraded`;
-  } else if (!entryExists && !devLiveTargets.length) {
-    validationReason = launchInProgress || buildState === "building" || buildState === "verifying-build"
-      ? "entry missing while launcher/build still in progress"
-      : `entry missing at ${resolvedEntryPath}`;
-  } else if (!runtimeReachable) {
-    const devSummary = devLiveTargets.length > 0
-      ? `dev runtime live at ${devLiveTargets[0].url}`
-      : "dev runtime offline";
-    const distSummary = distLive
-      ? `dist runtime live at ${distTarget?.url}`
-      : `dist runtime offline at ${distTarget?.url || runtimeUrls.runtimeUrl}`;
-    validationReason = launchInProgress || uiState === "starting" || uiState === "waiting-runtime"
-      ? `runtime still starting; ${devSummary}; ${distSummary}`
-      : `no Stephanos runtime reachable; ${devSummary}; ${distSummary}`;
-  }
+  ], ['dev', 'dist']);
 
   const providerPreferences = readPersistedProviderPreferences();
   const providerHealthProbe = healthyBackend
-    ? await postJsonSafely(STEPHANOS_PROVIDER_HEALTH_URL, {
+    ? await postJsonSafely(providerHealthUrl, {
       provider: providerPreferences.selectedProvider,
       fallbackEnabled: providerPreferences.fallbackEnabled,
       fallbackOrder: providerPreferences.fallbackOrder,
     })
     : { ok: false };
   const providerHealth = providerHealthProbe.ok ? providerHealthProbe.json?.data || {} : {};
+
+  const candidateLaunchUrl = localPreferredTarget?.url
+    || homeNodeTarget?.url
+    || (distLive && distTarget ? distTarget.url : '')
+    || (entryExists ? hostedDistUrl : '');
+
   const runtimeStatusModel = createRuntimeStatusModel({
-    appId: "stephanos",
-    appName: "Stephanos OS",
-    validationState: launchableRuntime ? "healthy" : (launchInProgress ? "launching" : "error"),
+    appId: 'stephanos',
+    appName: 'Stephanos OS',
+    validationState: candidateLaunchUrl ? 'healthy' : (launchInProgress ? 'launching' : 'error'),
     selectedProvider: providerPreferences.selectedProvider,
+    routeMode: providerPreferences.routeMode,
     fallbackEnabled: providerPreferences.fallbackEnabled,
     fallbackOrder: providerPreferences.fallbackOrder,
     providerHealth,
     backendAvailable: healthyBackend,
-    preferAuto: typeof window !== "undefined" ? window.innerWidth <= 820 : false,
+    runtimeContext: {
+      frontendOrigin: currentOrigin,
+      apiBaseUrl: backendBaseUrl,
+      homeNode: homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false },
+      preferredTarget: candidateLaunchUrl || hostedDistUrl || currentOrigin,
+      actualTargetUsed: backendBaseUrl,
+      nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || 'unknown',
+    },
   });
 
+  let launchUrl = '';
+  let launchStrategy = 'workspace';
+  if (localPreferredTarget?.url) {
+    launchUrl = localPreferredTarget.url;
+  } else if (homeNodeTarget?.url) {
+    launchUrl = homeNodeTarget.url;
+    launchStrategy = 'navigate';
+  } else if (distLive && distTarget?.url) {
+    launchUrl = distTarget.url;
+  } else if (entryExists && runtimeStatusModel.cloudRouteReachable) {
+    launchUrl = hostedDistUrl;
+  }
+
+  const launchableRuntime = Boolean(launchUrl);
+  const staleStateCleared = Boolean(
+    launchableRuntime && (options.previousValidationState === 'error' || launcherState === 'error')
+  );
+  const validationReason = launchableRuntime
+    ? `validator found route=${runtimeStatusModel.routeKind} target=${launchUrl}`
+    : `no route reachable; local=${localPreferredTarget?.url || 'offline'}; home=${homeNodeTarget?.url || 'offline'}; cloud=${runtimeStatusModel.cloudRouteReachable ? 'ready' : 'offline'}`;
+
   emitStephanosValidationLog(context, {
-    manifestEntry: String(options.manifestEntry || "").trim(),
+    manifestEntry: String(options.manifestEntry || '').trim(),
     resolvedEntryPath,
     entryExists,
     runtimeStatusPath: STEPHANOS_STATUS_URL,
-    runtimeUrl,
-    runtimeReachable,
-    backendStatus: healthyBackend ? "up" : backendState || "down",
-    staticServerStatus: liveTargets.length > 0 ? `${liveTargets.map((target) => target.kind).join("+")} live` : uiState || "down",
+    runtimeUrl: launchUrl || hostedDistUrl || homeNodeTarget?.url || localPreferredTarget?.url || STEPHANOS_RUNTIME_URL,
+    runtimeReachable: launchableRuntime,
+    backendStatus: healthyBackend ? 'up' : backendState || 'down',
+    staticServerStatus: launchableRuntime ? runtimeStatusModel.routeKind : uiState || 'down',
     launcherState,
     cacheBypassed: true,
     staleStateCleared,
@@ -594,89 +630,55 @@ async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
     runtimeMarker: launcherStatus?.runtimeMarker || runtimeProbe.json?.runtimeMarker || null,
     gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || null,
     buildTimestamp: launcherStatus?.buildTimestamp || runtimeProbe.json?.buildTimestamp || null,
-    reason: `${validationReason}; provider=${runtimeStatusModel.selectedProvider}; launch_state=${runtimeStatusModel.appLaunchState}; dependency=${runtimeStatusModel.dependencySummary}`
+    reason: `${validationReason}; dependency=${runtimeStatusModel.dependencySummary}`,
   });
 
   if (launchableRuntime) {
     return {
-      state: "healthy",
-      message: buildStephanosRuntimeStatusMessage({
-        liveTargets,
-        preferredTarget: preferredLiveTarget,
-        healthyBackend,
-        launcherMessage: launcherState === "ready" ? launcherMessage : "",
-      }),
+      state: healthyBackend || runtimeStatusModel.cloudRouteReachable ? 'healthy' : 'launching',
+      message: runtimeStatusModel.dependencySummary,
       issues: [],
       runtimeStatusModel,
       dependencyState: runtimeStatusModel.appLaunchState,
       providerHealth,
-      launchUrl: preferredLiveTarget?.url || runtimeUrl,
-      runtimeTargets: probedTargets,
+      launchUrl,
+      launchStrategy,
+      runtimeTargets: [
+        ...probedTargets,
+        ...(homeNodeTarget ? [homeNodeTarget] : []),
+      ],
       runtimeAvailability: {
         dev: devLiveTargets.map((target) => target.url),
-        dist: distLive && distTarget ? [distTarget.url] : [],
+        dist: [distLive && distTarget ? distTarget.url : hostedDistUrl].filter(Boolean),
+        homeNode: homeNodeTarget ? [homeNodeTarget.url] : [],
       },
     };
   }
 
-  if (!entryExists && !devLiveTargets.length) {
-    if (launchInProgress || buildState === "building" || buildState === "verifying-build") {
-      return {
-        state: "launching",
-        message: launcherMessage || "Stephanos is still building locally.",
-        runtimeStatusModel,
-        dependencyState: "degraded",
-        providerHealth,
-        runtimeTargets: probedTargets,
-      };
-    }
-
+  if (launchInProgress || buildState === 'building' || buildState === 'verifying-build' || uiState === 'starting') {
     return {
-      state: "error",
-      message: `Stephanos build missing: ${resolvedEntryPath} not found`,
-      issues: [`Stephanos build missing: ${resolvedEntryPath} not found`],
+      state: 'launching',
+      message: launcherMessage || 'Checking reachable Stephanos route.',
       runtimeStatusModel,
-      dependencyState: "unavailable",
+      dependencyState: 'degraded',
       providerHealth,
-      runtimeTargets: probedTargets,
-    };
-  }
-
-  if (!launchableRuntime) {
-    if (launchInProgress || uiState === "starting" || uiState === "waiting-runtime") {
-      return {
-        state: "launching",
-        message: launcherMessage || `Stephanos is still starting locally. Waiting for dev runtime (${devTargetUrls.join(" or ")}) or dist runtime (${distTarget?.url || runtimeUrls.runtimeUrl}).`,
-        runtimeStatusModel,
-        dependencyState: "degraded",
-        providerHealth,
-        runtimeTargets: probedTargets,
-      };
-    }
-
-    return {
-      state: "error",
-      message: `Stephanos unavailable: dev runtime not reachable at ${devTargetUrls.join(" or ")}; dist runtime not reachable at ${distTarget?.url || runtimeUrls.runtimeUrl}`,
-      issues: [`Stephanos unavailable: dev runtime not reachable at ${devTargetUrls.join(" or ")}; dist runtime not reachable at ${distTarget?.url || runtimeUrls.runtimeUrl}`],
-      runtimeStatusModel,
-      dependencyState: "unavailable",
-      providerHealth,
-      runtimeTargets: probedTargets,
-      runtimeAvailability: {
-        dev: [],
-        dist: [],
-      },
+      runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
     };
   }
 
   return {
-    state: "launching",
-    message: launcherMessage || "Stephanos is still starting locally.",
-    issues: [],
+    state: 'error',
+    message: runtimeStatusModel.dependencySummary,
+    issues: [runtimeStatusModel.dependencySummary],
     runtimeStatusModel,
-    dependencyState: "degraded",
+    dependencyState: 'unavailable',
     providerHealth,
-    runtimeTargets: probedTargets,
+    runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
+    runtimeAvailability: {
+      dev: [],
+      dist: entryExists ? [hostedDistUrl] : [],
+      homeNode: [],
+    },
   };
 }
 
@@ -740,6 +742,7 @@ export async function validateApps(apps, context = {}) {
       if (stephanosStatus.launchUrl) {
         app.entry = stephanosStatus.launchUrl;
       }
+      app.launchStrategy = stephanosStatus.launchStrategy || 'workspace';
 
       if (previousValidationState === "error" && stephanosStatus.state !== "error") {
         emitDiagnostic(context, "stephanos validation: cleared stale failure state after successful revalidation");

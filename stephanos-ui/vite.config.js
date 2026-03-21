@@ -128,6 +128,11 @@ export default defineConfig({
     __STEPHANOS_UI_SOURCE_TRUTH__: JSON.stringify(buildMetadata.sourceTruth),
     __STEPHANOS_UI_BUILD_METADATA__: JSON.stringify(buildMetadata),
   },
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: true,
+  },
   build: {
     outDir: '../apps/stephanos/dist',
     emptyOutDir: true,

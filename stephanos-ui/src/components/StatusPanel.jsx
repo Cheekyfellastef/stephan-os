@@ -49,7 +49,7 @@ export default function StatusPanel() {
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
   const executionTruth = isBusy
@@ -86,6 +86,13 @@ export default function StatusPanel() {
         <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {apiStatus.label}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
+        <li>Route Kind: {runtimeStatus.routeKind}</li>
+        <li>Preferred Target: {runtimeStatus.preferredTarget || 'n/a'}</li>
+        <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'n/a'}</li>
+        <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
+        <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
+        <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
+        <li>Node Address Source: {runtimeStatus.nodeAddressSource}</li>
         <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>

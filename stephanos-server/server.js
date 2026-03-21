@@ -9,6 +9,7 @@ import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
   buildHealthDiagnostics,
   getServerPort,
+  isAllowedPrivateFrontendOrigin,
   resolveAllowedOrigins,
 } from './config/runtimeConfig.js';
 import { memoryService } from './services/memoryService.js';
@@ -29,7 +30,7 @@ app.use(
         return;
       }
 
-      if (allowedOriginsSet.has(origin)) {
+      if (allowedOriginsSet.has(origin) || isAllowedPrivateFrontendOrigin(origin)) {
         callback(null, true);
         return;
       }

@@ -20,6 +20,16 @@ function buildWorkspaceLoadErrorMessage(project) {
   return "Simulation failed to load. Check console for details.";
 }
 
+
+function isCrossOriginHttpUrl(value = '') {
+  try {
+    const parsed = new URL(value, window.location.href);
+    return /^https?:$/i.test(parsed.protocol) && parsed.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 function isStephanosProject(project) {
   const identifier = String(project?.folder || project?.id || project?.name || "").trim().toLowerCase();
   return identifier === "stephanos" || identifier === "stephanos os";
@@ -41,6 +51,11 @@ export const workspace = {
     projectsPanel.style.display = "none";
 
     title.textContent = project?.name || "Workspace";
+
+    if (isStephanosProject(project) && isCrossOriginHttpUrl(project?.entry)) {
+      window.location.href = project.entry;
+      return;
+    }
 
     if (project?.entry && project.entry.endsWith(".md")) {
       const response = await fetch(project.entry);
