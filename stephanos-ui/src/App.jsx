@@ -60,7 +60,7 @@ export default function App() {
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
@@ -92,7 +92,10 @@ export default function App() {
                 {runtimeStatus.headline}. <strong>{runtimeStatus.dependencySummary}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Requested mode: <strong>{routeMode}</strong> · Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
+                Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{runtimeStatus.routeKind}</strong> · Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
+              </p>
+              <p className="local-ai-text secondary">
+                Preferred target: <strong>{runtimeStatus.preferredTarget || 'n/a'}</strong> · Actual target: <strong>{runtimeStatus.actualTargetUsed || 'n/a'}</strong> · Node source: <strong>{runtimeStatus.nodeAddressSource}</strong>
               </p>
               <p className="local-ai-text secondary">
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.

@@ -101,6 +101,28 @@ export function createStephanosLocalUrls({ host = DEFAULT_LOCAL_HOST, port = DEF
   };
 }
 
+
+export function createStephanosHomeNodeTarget({ host = '', uiPort = DEFAULT_DEV_PORT, backendPort = 8787, source = 'manual', lastSeenAt = '', reachable = false } = {}) {
+  const urls = createStephanosLocalUrls({ host, port: uiPort });
+
+  return {
+    kind: 'home-node',
+    label: `home node (${host}:${normalizePort(uiPort, DEFAULT_DEV_PORT)})`,
+    host,
+    ip: host,
+    port: normalizePort(uiPort, DEFAULT_DEV_PORT),
+    backendPort: normalizePort(backendPort, 8787),
+    origin: urls.origin,
+    path: '/',
+    url: `${urls.origin}/`,
+    probeUrl: `${urls.origin}/`,
+    healthUrl: `http://${host}:${normalizePort(backendPort, 8787)}/api/health`,
+    source,
+    lastSeenAt,
+    reachable: Boolean(reachable),
+  };
+}
+
 export function createStephanosRuntimeTargets({
   distHost = DEFAULT_LOCAL_HOST,
   distPort = DEFAULT_LOCAL_PORT,
@@ -127,8 +149,15 @@ export function createStephanosRuntimeTargets({
   ];
 }
 
-export function getStephanosPreferredRuntimeTarget(targets = []) {
-  return targets.find((target) => target?.kind === 'dev') || targets[0] || null;
+export function getStephanosPreferredRuntimeTarget(targets = [], preferredKinds = ['dev', 'home-node', 'dist']) {
+  for (const kind of preferredKinds) {
+    const match = targets.find((target) => target?.kind === kind);
+    if (match) {
+      return match;
+    }
+  }
+
+  return targets[0] || null;
 }
 
 export function getStephanosRuntimeTargetByKind(targets = [], kind = '') {

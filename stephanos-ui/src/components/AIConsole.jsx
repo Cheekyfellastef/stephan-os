@@ -36,7 +36,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl },
+    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   });
 
@@ -67,6 +67,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       <div className={`api-banner ${runtimeStatus.statusTone}`}>
         <strong>{runtimeStatus.headline}</strong>
         <span>{runtimeStatus.dependencySummary}</span>
+        <span>Route kind: {runtimeStatus.routeKind} · Preferred target: {runtimeStatus.preferredTarget || 'n/a'} · Source: {runtimeStatus.nodeAddressSource}</span>
       </div>
       {provider === 'ollama' && !runtimeStatus.localAvailable ? (
         <div className="api-banner degraded">

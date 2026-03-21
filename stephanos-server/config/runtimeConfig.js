@@ -14,6 +14,39 @@ export const DEFAULT_LOCAL_FRONTEND_ORIGINS = [
 ];
 export const DEFAULT_HOSTED_FRONTEND_ORIGINS = ['https://cheekyfellastef.github.io'];
 
+
+function isLoopbackHost(hostname = '') {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).toLowerCase());
+}
+
+function isPrivateIpv4Host(hostname = '') {
+  const value = String(hostname || '').trim();
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) {
+    return false;
+  }
+
+  const octets = value.split('.').map((part) => Number.parseInt(part, 10));
+  if (octets.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  return octets[0] === 10
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168);
+}
+
+export function isAllowedPrivateFrontendOrigin(origin = '') {
+  try {
+    const parsed = new URL(origin);
+    const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+    return !isLoopbackHost(parsed.hostname)
+      && isPrivateIpv4Host(parsed.hostname)
+      && [4173, 5173].includes(port);
+  } catch {
+    return false;
+  }
+}
+
 function parseOriginList(rawValue) {
   return String(rawValue || '')
     .split(',')

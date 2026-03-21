@@ -1,3 +1,9 @@
+import {
+  readPersistedStephanosHomeNode,
+  readPersistedStephanosLastKnownNode,
+  resolveStephanosBackendBaseUrl,
+} from '../../../shared/runtime/stephanosHomeNode.mjs';
+
 const DEFAULT_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -13,28 +19,31 @@ function isLoopbackHost(hostname = '') {
   return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).toLowerCase());
 }
 
-function getHostedDefaultApiBaseUrl() {
-  const origin = getFrontendOrigin();
-  try {
-    const parsed = new URL(origin);
-    if (!isLoopbackHost(parsed.hostname)) {
-      return parsed.origin;
-    }
-  } catch {
-    return DEFAULT_API_BASE_URL;
-  }
+function getStoredHomeNodeContext() {
+  return {
+    manualNode: readPersistedStephanosHomeNode(),
+    lastKnownNode: readPersistedStephanosLastKnownNode(),
+  };
+}
 
-  return DEFAULT_API_BASE_URL;
+function getDefaultApiBaseUrl() {
+  const currentOrigin = getFrontendOrigin();
+  const { manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  return resolveStephanosBackendBaseUrl({
+    currentOrigin,
+    manualNode,
+    lastKnownNode,
+  }) || DEFAULT_API_BASE_URL;
 }
 
 function normalizeBaseUrl(value) {
   if (!value || typeof value !== 'string') {
-    return getHostedDefaultApiBaseUrl();
+    return getDefaultApiBaseUrl();
   }
 
   const trimmed = value.trim();
   if (!trimmed) {
-    return getHostedDefaultApiBaseUrl();
+    return getDefaultApiBaseUrl();
   }
 
   if (trimmed.startsWith('/')) {
@@ -45,7 +54,7 @@ function normalizeBaseUrl(value) {
     const parsed = new URL(trimmed);
     return parsed.href.replace(/\/$/, '');
   } catch {
-    return getHostedDefaultApiBaseUrl();
+    return getDefaultApiBaseUrl();
   }
 }
 
@@ -70,38 +79,49 @@ function detectTarget(baseUrl) {
   return 'remote';
 }
 
-function getApiBaseUrlStrategy() {
+function getResolvedApiBaseUrl() {
+  return normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
+}
+
+function getApiBaseUrlStrategy(baseUrl) {
   if (import.meta.env.VITE_API_BASE_URL?.trim()) {
     return 'env:VITE_API_BASE_URL';
   }
 
-  return getApiTargetLabel() === 'remote'
-    ? 'default:same-origin-hosted-backend'
+  return getApiTargetLabel(baseUrl) === 'remote'
+    ? 'default:preferred-home-node-or-current-host'
     : 'default:local-stephanos-backend';
 }
 
-export const API_CONFIG = {
-  baseUrl: normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL),
-  timeoutMs: resolveTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS),
-};
-
-export function buildApiUrl(pathname) {
-  const path = pathname.startsWith('/') ? pathname : `/${pathname}`;
-  return `${API_CONFIG.baseUrl}${path}`;
+export function getApiConfig() {
+  const baseUrl = getResolvedApiBaseUrl();
+  return {
+    baseUrl,
+    timeoutMs: resolveTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS),
+  };
 }
 
-export function getApiTargetLabel() {
-  return detectTarget(API_CONFIG.baseUrl);
+export function buildApiUrl(pathname, baseUrl = getResolvedApiBaseUrl()) {
+  const path = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${baseUrl}${path}`;
+}
+
+export function getApiTargetLabel(baseUrl = getResolvedApiBaseUrl()) {
+  return detectTarget(baseUrl);
 }
 
 export function getApiRuntimeConfig() {
+  const config = getApiConfig();
+  const { manualNode, lastKnownNode } = getStoredHomeNodeContext();
+
   return {
     frontendOrigin: getFrontendOrigin(),
-    baseUrl: API_CONFIG.baseUrl,
-    timeoutMs: API_CONFIG.timeoutMs,
-    target: getApiTargetLabel(),
-    strategy: getApiBaseUrlStrategy(),
-    backendTargetEndpoint: buildApiUrl('/api/ai/chat'),
-    healthEndpoint: buildApiUrl('/api/health'),
+    baseUrl: config.baseUrl,
+    timeoutMs: config.timeoutMs,
+    target: getApiTargetLabel(config.baseUrl),
+    strategy: getApiBaseUrlStrategy(config.baseUrl),
+    backendTargetEndpoint: buildApiUrl('/api/ai/chat', config.baseUrl),
+    healthEndpoint: buildApiUrl('/api/health', config.baseUrl),
+    homeNode: manualNode || lastKnownNode || null,
   };
 }
