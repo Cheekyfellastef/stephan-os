@@ -6,6 +6,7 @@ import {
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_TIMEOUT_MS = 30000;
+const runtimeEnv = import.meta?.env || {};
 
 function getFrontendOrigin() {
   if (typeof window === 'undefined' || !window.location?.origin) {
@@ -80,11 +81,11 @@ function detectTarget(baseUrl) {
 }
 
 function getResolvedApiBaseUrl() {
-  return normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
+  return normalizeBaseUrl(runtimeEnv.VITE_API_BASE_URL);
 }
 
 function getApiBaseUrlStrategy(baseUrl) {
-  if (import.meta.env.VITE_API_BASE_URL?.trim()) {
+  if (runtimeEnv.VITE_API_BASE_URL?.trim()) {
     return 'env:VITE_API_BASE_URL';
   }
 
@@ -97,7 +98,7 @@ export function getApiConfig() {
   const baseUrl = getResolvedApiBaseUrl();
   return {
     baseUrl,
-    timeoutMs: resolveTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS),
+    timeoutMs: resolveTimeoutMs(runtimeEnv.VITE_API_TIMEOUT_MS),
   };
 }
 
@@ -124,4 +125,28 @@ export function getApiRuntimeConfig() {
     healthEndpoint: buildApiUrl('/api/health', config.baseUrl),
     homeNode: manualNode || lastKnownNode || null,
   };
+}
+
+export function getApiRuntimeConfigSnapshotKey(runtimeConfig = getApiRuntimeConfig()) {
+  const homeNode = runtimeConfig?.homeNode || null;
+
+  return JSON.stringify({
+    frontendOrigin: runtimeConfig?.frontendOrigin || '',
+    baseUrl: runtimeConfig?.baseUrl || '',
+    timeoutMs: Number(runtimeConfig?.timeoutMs) || DEFAULT_TIMEOUT_MS,
+    target: runtimeConfig?.target || '',
+    strategy: runtimeConfig?.strategy || '',
+    backendTargetEndpoint: runtimeConfig?.backendTargetEndpoint || '',
+    healthEndpoint: runtimeConfig?.healthEndpoint || '',
+    homeNode: homeNode ? {
+      host: homeNode.host || '',
+      uiPort: Number(homeNode.uiPort) || 0,
+      backendPort: Number(homeNode.backendPort) || 0,
+      uiUrl: homeNode.uiUrl || '',
+      backendUrl: homeNode.backendUrl || '',
+      source: homeNode.source || '',
+      reachable: Boolean(homeNode.reachable),
+      configured: Boolean(homeNode.configured),
+    } : null,
+  });
 }

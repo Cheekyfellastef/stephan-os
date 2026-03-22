@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
+import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import {
   discoverStephanosHomeNode,
   extractHostname,
@@ -107,9 +108,12 @@ export function useAIConsole() {
     setLastExecutionMetadata,
   } = useAIStore();
 
-  const runtimeConfig = getApiRuntimeConfig();
-  const runtimeContext = runtimeConfig;
+  const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
+  const runtimeConfig = useMemo(() => getApiRuntimeConfig(), [runtimeConfigKey]);
   const startupOllamaSyncAttemptedRef = useRef(false);
+  const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
+  const ollamaDraftConfig = effectiveProviderConfigs.ollama || {};
+  const ollamaHealth = providerHealth.ollama || {};
 
 
   const resolveRuntimeConfig = useCallback(async () => {
@@ -166,7 +170,6 @@ export function useAIConsole() {
 
 
   const refreshHealth = useCallback(async () => {
-    const effectiveProviderConfigs = getEffectiveProviderConfigs();
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const health = await checkApiHealth(resolvedRuntimeContext);
@@ -208,7 +211,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, runtimeContext, setApiStatus, provider, routeMode, getEffectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig]);
 
   useEffect(() => {
     refreshHealth();
@@ -217,11 +220,7 @@ export function useAIConsole() {
   useEffect(() => {
     if (startupOllamaSyncAttemptedRef.current) return;
 
-    const effectiveProviderConfigs = getEffectiveProviderConfigs();
-    const ollamaConfig = effectiveProviderConfigs.ollama || {};
-    const ollamaHealth = providerHealth.ollama || {};
-
-    if (!shouldAutoSyncOllama({ apiStatus, ollamaHealth, ollamaConfig })) {
+    if (!shouldAutoSyncOllama({ apiStatus, ollamaHealth, ollamaConfig: ollamaDraftConfig })) {
       return;
     }
 
@@ -315,20 +314,20 @@ export function useAIConsole() {
   }, [
     apiStatus,
     devMode,
+    effectiveProviderConfigs,
     fallbackEnabled,
     fallbackOrder,
     getDraftProviderConfig,
-    getEffectiveProviderConfigs,
     ollamaConnection,
+    ollamaDraftConfig,
+    ollamaHealth,
     provider,
-    providerHealth,
     rememberSuccessfulOllamaConnection,
     resolveRuntimeConfig,
     runtimeConfig,
     setProviderHealth,
     updateDraftProviderConfig,
     routeMode,
-    runtimeContext,
   ]);
 
   async function submitPrompt(rawPrompt) {
@@ -354,7 +353,6 @@ export function useAIConsole() {
     });
 
     try {
-      const effectiveProviderConfigs = getEffectiveProviderConfigs();
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const { data, requestPayload } = await sendPrompt({
         prompt,
