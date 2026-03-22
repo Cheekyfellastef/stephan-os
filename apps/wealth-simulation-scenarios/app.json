@@ -1,0 +1,7 @@
+{
+  "name": "Wealth Simulation Scenarios",
+  "icon": "🧪",
+  "entry": "index.html",
+  "type": "simulation",
+  "packaging": "vite"
+}
