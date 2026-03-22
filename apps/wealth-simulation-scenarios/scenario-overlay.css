@@ -1,16 +1,58 @@
-body {
-  position: relative;
-  display: block;
+:root {
+  --scenario-bg-deep: #02060d;
+  --scenario-bg-shell: #010812;
+  --scenario-panel: linear-gradient(180deg, rgba(8, 19, 37, 0.96), rgba(3, 10, 22, 0.98));
+  --scenario-panel-soft: linear-gradient(180deg, rgba(10, 25, 46, 0.94), rgba(4, 14, 28, 0.96));
+  --scenario-border: rgba(71, 155, 255, 0.34);
+  --scenario-border-strong: rgba(88, 203, 255, 0.82);
+  --scenario-text: #dff4ff;
+  --scenario-text-muted: #9fd3ff;
+  --scenario-text-soft: rgba(223, 244, 255, 0.72);
+  --scenario-accent: #479bff;
+  --scenario-cyan: #58cbff;
+  --scenario-shadow: 0 0 0 1px rgba(31, 98, 181, 0.16), 0 24px 60px rgba(0, 0, 0, 0.42);
 }
 
-#scenario-lab-root {
+body.stephanos-scenario-body {
+  position: relative;
+  display: block;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(29, 90, 170, 0.28), transparent 38%),
+    radial-gradient(circle at right top, rgba(0, 174, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #04070d, #02050a 52%, #010308);
+  color: var(--scenario-text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body.stephanos-scenario-body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(88, 203, 255, 0.12), transparent 0 22%),
+    linear-gradient(180deg, rgba(6, 18, 36, 0.18), rgba(1, 4, 10, 0.42));
+  opacity: 0.95;
+}
+
+#scenario-lab-root,
+#root {
   position: relative;
   z-index: 1;
   width: min(1280px, 100%);
   margin: 0 auto;
-  padding: 20px 20px 0;
   box-sizing: border-box;
-  font-family: Arial, sans-serif;
+}
+
+#scenario-lab-root {
+  padding: 20px 20px 0;
+}
+
+#root {
+  padding: 0 20px 30px;
 }
 
 .scenario-lab-shell {
@@ -30,11 +72,12 @@ body {
   position: sticky;
   top: 20px;
   max-width: none;
-  padding: 14px 18px;
-  border: 1px solid rgba(103, 232, 249, 0.45);
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(2, 8, 23, 0.94), rgba(8, 47, 73, 0.88));
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  padding: 18px 20px;
+  border: 1px solid rgba(94, 184, 255, 0.5);
+  border-radius: 18px;
+  background: var(--scenario-panel-soft);
+  box-shadow: var(--scenario-shadow);
+  backdrop-filter: blur(16px);
 }
 
 .scenario-lab-badge__eyebrow,
@@ -42,7 +85,7 @@ body {
 .scenario-card__eyebrow {
   display: inline-block;
   margin-bottom: 8px;
-  color: #67e8f9;
+  color: var(--scenario-cyan);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -50,9 +93,9 @@ body {
 }
 
 .scenario-lab-badge__title {
-  margin: 0 0 6px;
-  color: #f8fafc;
-  font-size: 22px;
+  margin: 0 0 8px;
+  color: #eef9ff;
+  font-size: 24px;
   line-height: 1.2;
 }
 
@@ -63,9 +106,9 @@ body {
 .scenario-config__value,
 .scenario-lab-toast {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--scenario-text-soft);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .scenario-lab-panel {
@@ -75,16 +118,16 @@ body {
   max-height: calc(100vh - 40px);
   overflow: auto;
   padding: 18px;
-  border: 1px solid rgba(59, 130, 246, 0.4);
+  border: 1px solid var(--scenario-border);
   border-radius: 18px;
-  background: rgba(2, 6, 23, 0.92);
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(10px);
+  background: var(--scenario-panel);
+  box-shadow: var(--scenario-shadow);
+  backdrop-filter: blur(14px);
 }
 
 .scenario-lab-panel__title {
   margin: 0 0 8px;
-  color: #f8fafc;
+  color: #eef9ff;
   font-size: 24px;
 }
 
@@ -97,21 +140,23 @@ body {
 .scenario-card {
   width: 100%;
   padding: 14px;
-  border: 1px solid rgba(71, 85, 105, 0.9);
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(82, 156, 230, 0.26);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(7, 16, 31, 0.92), rgba(3, 10, 20, 0.96));
   color: inherit;
   text-align: left;
+  box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.06);
 }
 
 .scenario-card:hover,
 .scenario-card:focus-visible {
-  border-color: rgba(103, 232, 249, 0.7);
+  border-color: rgba(88, 203, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.2), 0 14px 28px rgba(0, 0, 0, 0.28);
 }
 
 .scenario-card.is-active {
-  border-color: rgba(34, 211, 238, 0.95);
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35);
+  border-color: var(--scenario-border-strong);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.26), 0 0 24px rgba(88, 203, 255, 0.14);
 }
 
 .scenario-card__title-row {
@@ -124,7 +169,7 @@ body {
 
 .scenario-card__title {
   margin: 0;
-  color: #f8fafc;
+  color: #eef9ff;
   font-size: 18px;
 }
 
@@ -132,8 +177,9 @@ body {
   flex: 0 0 auto;
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(8, 145, 178, 0.18);
-  color: #67e8f9;
+  background: rgba(13, 50, 86, 0.92);
+  border: 1px solid rgba(88, 203, 255, 0.24);
+  color: var(--scenario-cyan);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -143,14 +189,14 @@ body {
 .scenario-config {
   margin-top: 18px;
   padding: 16px;
-  border: 1px solid rgba(71, 85, 105, 0.75);
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(82, 156, 230, 0.26);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(5, 15, 30, 0.94), rgba(3, 10, 22, 0.9));
 }
 
 .scenario-config__title {
   margin: 0 0 12px;
-  color: #f8fafc;
+  color: #eef9ff;
   font-size: 18px;
 }
 
@@ -165,7 +211,7 @@ body {
   gap: 16px;
   align-items: center;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(30, 41, 59, 0.95);
+  border-bottom: 1px solid rgba(84, 162, 236, 0.18);
 }
 
 .scenario-config__row:last-child {
@@ -174,7 +220,7 @@ body {
 }
 
 .scenario-config__label {
-  color: #93c5fd;
+  color: #b1dcff;
   font-size: 13px;
   font-weight: 700;
 }
@@ -186,14 +232,211 @@ body {
 .scenario-lab-toast {
   margin-top: 14px;
   padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(12, 28, 47, 0.92), rgba(5, 15, 26, 0.9));
+  border: 1px solid rgba(88, 203, 255, 0.22);
+}
+
+.scenario-sim-app {
+  display: grid;
+  gap: 14px;
+  padding: 28px !important;
+  border: 1px solid var(--scenario-border);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(1, 8, 18, 0.92), rgba(2, 6, 14, 0.96));
+  box-shadow: var(--scenario-shadow);
+}
+
+.scenario-sim-app__title,
+.scenario-sim-app h1 {
+  margin: 0 !important;
+  color: #eef9ff;
+  font-size: clamp(2.1rem, 2vw + 1.4rem, 2.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.scenario-sim-app__section-title,
+.scenario-sim-app h2 {
+  margin: 10px 0 0 !important;
+  color: #9fd5ff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.scenario-sim-app__asset-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.15fr) minmax(180px, 0.85fr) !important;
+  gap: 12px 16px !important;
+  margin-bottom: 8px !important;
+  padding: 18px;
+  border: 1px solid rgba(82, 156, 230, 0.26);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.88), rgba(3, 10, 22, 0.94));
+}
+
+.scenario-sim-app__asset-grid label {
+  align-self: center;
+  color: #cfe8ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.scenario-sim-app__number-input,
+.scenario-sim-app input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(3, 10, 20, 0.95);
+  border: 1px solid rgba(68, 138, 212, 0.46);
   border-radius: 12px;
-  background: rgba(8, 47, 73, 0.66);
-  border: 1px solid rgba(34, 211, 238, 0.28);
+  color: var(--scenario-text);
+  padding: 0.8rem 0.9rem;
+  box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.05);
+}
+
+.scenario-sim-app__slider {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 0 !important;
+  padding: 14px 16px;
+  border: 1px solid rgba(82, 156, 230, 0.22);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.78), rgba(3, 10, 22, 0.88));
+}
+
+.scenario-sim-app__slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #dff4ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.scenario-sim-app__range-input,
+.scenario-sim-app input[type='range'] {
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.9), rgba(88, 203, 255, 0.95));
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.12);
+}
+
+.scenario-sim-app input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(214, 244, 255, 0.96);
+  border-radius: 999px;
+  background: #0d4fd4;
+  box-shadow: 0 0 0 4px rgba(88, 203, 255, 0.18);
+}
+
+.scenario-sim-app input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.9), rgba(88, 203, 255, 0.95));
+}
+
+.scenario-sim-app input[type='range']::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(214, 244, 255, 0.96);
+  border-radius: 999px;
+  background: #0d4fd4;
+  box-shadow: 0 0 0 4px rgba(88, 203, 255, 0.18);
+}
+
+.scenario-sim-app__status {
+  margin: 4px 0 0 !important;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid currentColor;
+  border-left-width: 4px;
+  background: rgba(3, 10, 20, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.scenario-sim-app__chart-shell {
+  margin-top: 4px;
+  padding: 18px 18px 12px !important;
+  border: 1px solid var(--scenario-border);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.95), rgba(3, 10, 22, 0.98));
+  box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.05);
+}
+
+.scenario-sim-app__chart-shell .recharts-wrapper,
+.scenario-sim-app__chart-shell .recharts-surface {
+  overflow: visible;
+}
+
+.scenario-sim-app__chart-shell .recharts-cartesian-grid line {
+  stroke: rgba(126, 167, 219, 0.16) !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-cartesian-axis-line,
+.scenario-sim-app__chart-shell .recharts-cartesian-axis-tick-line {
+  stroke: rgba(143, 198, 255, 0.36) !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-cartesian-axis-tick-value,
+.scenario-sim-app__chart-shell .recharts-text,
+.scenario-sim-app__chart-shell .recharts-label {
+  fill: #d4ecff !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-legend-wrapper {
+  inset: auto 0 0 0 !important;
+  width: 100% !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-default-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 18px;
+  margin-top: 14px !important;
+  padding: 12px 14px;
+  border: 1px solid rgba(82, 156, 230, 0.22);
+  border-radius: 16px;
+  background: rgba(5, 15, 30, 0.84);
+}
+
+.scenario-sim-app__chart-shell .recharts-legend-item-text {
+  color: var(--scenario-text) !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-default-tooltip {
+  border: 1px solid rgba(88, 203, 255, 0.38) !important;
+  border-radius: 14px !important;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.96), rgba(3, 10, 22, 0.98)) !important;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34) !important;
+}
+
+.scenario-sim-app__chart-shell .recharts-tooltip-label,
+.scenario-sim-app__chart-shell .recharts-tooltip-item,
+.scenario-sim-app__chart-shell .recharts-tooltip-item-name,
+.scenario-sim-app__chart-shell .recharts-tooltip-item-value {
+  color: var(--scenario-text) !important;
+}
+
+.scenario-sim-app input:focus-visible,
+.scenario-card:focus-visible {
+  outline: 2px solid rgba(136, 210, 255, 0.86);
+  outline-offset: 3px;
 }
 
 @media (max-width: 960px) {
-  #scenario-lab-root {
-    padding: 16px 16px 0;
+  #scenario-lab-root,
+  #root {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 
   .scenario-lab-shell {
@@ -209,5 +452,22 @@ body {
   .scenario-lab-panel {
     width: auto;
     max-height: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .scenario-sim-app {
+    padding: 20px !important;
+  }
+
+  .scenario-sim-app__asset-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .scenario-card__title-row,
+  .scenario-config__row,
+  .scenario-sim-app__slider-label {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

@@ -5,9 +5,73 @@
   }
 
   const appRoot = document.getElementById('root');
+  document.body.classList.add('stephanos-scenario-body');
+  appRoot?.classList.add('scenario-lab-app-root');
+
   if (appRoot?.parentNode && mountNode !== appRoot.previousElementSibling) {
     appRoot.parentNode.insertBefore(mountNode, appRoot);
   }
+
+  const decorateWealthApp = () => {
+    if (!appRoot) {
+      return;
+    }
+
+    const appShell = appRoot.firstElementChild;
+    if (!appShell) {
+      return;
+    }
+
+    appShell.classList.add('scenario-sim-app');
+
+    const topLevelChildren = Array.from(appShell.children);
+    topLevelChildren.forEach((child, index) => {
+      if (child.tagName === 'H1') {
+        child.classList.add('scenario-sim-app__title');
+      }
+
+      if (child.tagName === 'H2') {
+        child.classList.add('scenario-sim-app__section-title');
+      }
+
+      if (child.tagName === 'H3') {
+        child.classList.add('scenario-sim-app__status');
+      }
+
+      if (child.querySelector?.('input[type="number"]')) {
+        child.classList.add('scenario-sim-app__asset-grid');
+      }
+
+      if (child.querySelector?.('input[type="range"]')) {
+        child.classList.add('scenario-sim-app__slider');
+        child.firstElementChild?.classList.add('scenario-sim-app__slider-label');
+      }
+
+      if (index === topLevelChildren.length - 1 && child.querySelector?.('.recharts-wrapper')) {
+        child.classList.add('scenario-sim-app__chart-shell');
+      }
+    });
+
+    appShell.querySelectorAll('input[type="number"]').forEach((input) => {
+      input.classList.add('scenario-sim-app__number-input');
+    });
+
+    appShell.querySelectorAll('input[type="range"]').forEach((input) => {
+      input.classList.add('scenario-sim-app__range-input');
+    });
+  };
+
+  let decorateFrame = null;
+  const scheduleDecorate = () => {
+    if (decorateFrame) {
+      cancelAnimationFrame(decorateFrame);
+    }
+
+    decorateFrame = requestAnimationFrame(() => {
+      decorateWealthApp();
+      decorateFrame = null;
+    });
+  };
 
   const scenarios = [
     {
@@ -127,7 +191,20 @@
         render();
       });
     });
+
+    scheduleDecorate();
   };
 
+  const observer = appRoot
+    ? new MutationObserver(() => {
+        scheduleDecorate();
+      })
+    : null;
+
+  if (observer && appRoot) {
+    observer.observe(appRoot, { childList: true, subtree: true });
+  }
+
   render();
+  scheduleDecorate();
 })();
