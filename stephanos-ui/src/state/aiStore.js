@@ -1,6 +1,6 @@
 // LIVE SOURCE OF TRUTH: this store backs the served Stephanos AI router/settings UI.
 // Update provider state here, then rebuild stephanos-ui to refresh apps/stephanos/dist.
-import { createContext, createElement, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
@@ -208,65 +208,65 @@ export function AIStoreProvider({ children }) {
     setDebugVisibleState(uiLayout.debugConsole);
   }, [uiLayout]);
 
-  const updateUiLayout = (updater) => {
+  const updateUiLayout = useCallback((updater) => {
     setUiLayout((prev) => {
       const candidate = typeof updater === 'function' ? updater(prev) : updater;
       return normalizeUiLayout(candidate);
     });
-  };
+  }, []);
 
-  const setDebugVisible = (nextVisible) => {
+  const setDebugVisible = useCallback((nextVisible) => {
     updateUiLayout((prev) => ({
       ...prev,
       debugConsole: typeof nextVisible === 'function' ? nextVisible(prev.debugConsole) : nextVisible,
     }));
-  };
+  }, [updateUiLayout]);
 
-  const setPanelState = (panelId, isOpen) => {
+  const setPanelState = useCallback((panelId, isOpen) => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
 
     updateUiLayout((prev) => ({
       ...prev,
       [panelId]: typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen,
     }));
-  };
+  }, [updateUiLayout]);
 
-  const togglePanel = (panelId) => {
+  const togglePanel = useCallback((panelId) => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
     setPanelState(panelId, (prev) => !prev);
-  };
+  }, [setPanelState]);
 
-  const setProvider = (nextProvider) => {
+  const setProvider = useCallback((nextProvider) => {
     const resolved = normalizeProviderSelection(nextProvider);
     setProviderState(resolved);
     setProviderSelectionSource('saved:user-selection');
     persistCurrentState({ provider: resolved });
-  };
+  }, [provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs, ollamaConnection]);
 
-  const setRouteMode = (nextRouteMode) => {
+  const setRouteMode = useCallback((nextRouteMode) => {
     const resolved = normalizeRouteMode(nextRouteMode);
     setRouteModeState(resolved);
     persistCurrentState({ routeMode: resolved });
-  };
+  }, [provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs, ollamaConnection]);
 
-  const setDevMode = (next) => {
+  const setDevMode = useCallback((next) => {
     setDevModeState(Boolean(next));
     persistCurrentState({ devMode: Boolean(next) });
-  };
+  }, [provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs, ollamaConnection]);
 
-  const setFallbackEnabled = (next) => {
+  const setFallbackEnabled = useCallback((next) => {
     setFallbackEnabledState(Boolean(next));
     persistCurrentState({ fallbackEnabled: Boolean(next) });
-  };
+  }, [provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs, ollamaConnection]);
 
-  const setOllamaConnection = (patch = {}) => {
+  const setOllamaConnection = useCallback((patch = {}) => {
     const nextConnection = normalizeOllamaConnection({ ...ollamaConnection, ...patch });
     setOllamaConnectionState(nextConnection);
     persistCurrentState({ ollamaConnection: nextConnection });
     return nextConnection;
-  };
+  }, [ollamaConnection, provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs]);
 
-  const rememberSuccessfulOllamaConnection = ({ baseURL = '', host = '', model = '' } = {}) => {
+  const rememberSuccessfulOllamaConnection = useCallback(({ baseURL = '', host = '', model = '' } = {}) => {
     const normalizedHost = String(host || '').trim();
     const nextConnection = normalizeOllamaConnection({
       ...ollamaConnection,
@@ -278,7 +278,7 @@ export function AIStoreProvider({ children }) {
     setOllamaConnectionState(nextConnection);
     persistCurrentState({ ollamaConnection: nextConnection });
     return nextConnection;
-  };
+  }, [ollamaConnection, provider, routeMode, devMode, fallbackEnabled, fallbackOrder, savedProviderConfigs]);
 
   const resetToFreeMode = () => {
     const defaults = createDefaultRouterSettings();
@@ -304,26 +304,26 @@ export function AIStoreProvider({ children }) {
     persistUiLayout(nextUiLayout);
   };
 
-  const getDraftProviderConfig = (providerKey) => draftProviderConfigs[providerKey];
-  const getSavedProviderConfig = (providerKey) => savedProviderConfigs[providerKey];
-  const getEffectiveProviderConfig = (providerKey) => (
+  const getDraftProviderConfig = useCallback((providerKey) => draftProviderConfigs[providerKey], [draftProviderConfigs]);
+  const getSavedProviderConfig = useCallback((providerKey) => savedProviderConfigs[providerKey], [savedProviderConfigs]);
+  const getEffectiveProviderConfig = useCallback((providerKey) => (
     isDraftDirty(providerKey) ? draftProviderConfigs[providerKey] : savedProviderConfigs[providerKey]
-  );
-  const getEffectiveProviderConfigs = () => Object.fromEntries(
+  ), [draftProviderConfigs, savedProviderConfigs]);
+  const getEffectiveProviderConfigs = useCallback(() => Object.fromEntries(
     PROVIDER_KEYS.map((key) => [key, getEffectiveProviderConfig(key)]),
-  );
-  const getActiveProviderConfig = () => getEffectiveProviderConfig(provider);
-  const getActiveProviderConfigSource = () => (isDraftDirty(provider) ? 'draft:unsaved' : 'saved:session');
+  ), [getEffectiveProviderConfig]);
+  const getActiveProviderConfig = useCallback(() => getEffectiveProviderConfig(provider), [getEffectiveProviderConfig, provider]);
+  const getActiveProviderConfigSource = useCallback(() => (isDraftDirty(provider) ? 'draft:unsaved' : 'saved:session'), [provider, draftProviderConfigs, savedProviderConfigs]);
 
-  const updateDraftProviderConfig = (providerKey, patch) => {
+  const updateDraftProviderConfig = useCallback((providerKey, patch) => {
     setDraftProviderConfigs((prev) => ({
       ...prev,
       [providerKey]: normalizeProviderDraft(providerKey, { ...prev[providerKey], ...patch }),
     }));
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'draft', message: '', errors: {} } }));
-  };
+  }, []);
 
-  const saveDraftProviderConfig = (providerKey) => {
+  const saveDraftProviderConfig = useCallback((providerKey) => {
     const draft = normalizeProviderDraft(providerKey, draftProviderConfigs[providerKey]);
     const validation = validateProviderDraft(providerKey, draft);
     if (!validation.isValid) {
@@ -348,26 +348,26 @@ export function AIStoreProvider({ children }) {
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { mode: 'saved', message: `${PROVIDER_DEFINITIONS[providerKey].label} settings applied.`, savedAt, errors: {} } }));
     persistCurrentState({ providerConfigs: nextSaved, ollamaConnection: nextConnection });
     return { ok: true, savedAt };
-  };
+  }, [draftProviderConfigs, savedProviderConfigs, ollamaConnection, provider, routeMode, devMode, fallbackEnabled, fallbackOrder]);
 
-  const revertDraftProviderConfig = (providerKey) => {
+  const revertDraftProviderConfig = useCallback((providerKey) => {
     setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: savedProviderConfigs[providerKey] }));
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'saved', message: 'Draft reverted.', errors: {} } }));
-  };
+  }, [savedProviderConfigs]);
 
-  const resetProviderConfig = (providerKey) => {
+  const resetProviderConfig = useCallback((providerKey) => {
     const nextConfig = { ...PROVIDER_DEFINITIONS[providerKey].defaults, apiKey: '' };
     const nextSaved = { ...savedProviderConfigs, [providerKey]: nextConfig };
     setSavedProviderConfigs(nextSaved);
     setDraftProviderConfigs((prev) => ({ ...prev, [providerKey]: nextConfig }));
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'saved', message: `${PROVIDER_DEFINITIONS[providerKey].label} reset.`, errors: {} } }));
     persistCurrentState({ providerConfigs: nextSaved });
-  };
+  }, [savedProviderConfigs, provider, routeMode, devMode, fallbackEnabled, fallbackOrder, ollamaConnection]);
 
   const isDraftDirty = (providerKey) => JSON.stringify(draftProviderConfigs[providerKey]) !== JSON.stringify(savedProviderConfigs[providerKey]);
 
 
-  const setHomeNodePreference = (patch = {}) => {
+  const setHomeNodePreference = useCallback((patch = {}) => {
     const nextPreference = patch === null
       ? null
       : normalizeStephanosHomeNode({ ...(homeNodePreference || {}), ...patch }, { source: 'manual' });
@@ -378,22 +378,22 @@ export function AIStoreProvider({ children }) {
       clearPersistedStephanosHomeNode();
     }
     return nextPreference;
-  };
+  }, [homeNodePreference]);
 
-  const setHomeNodeLastKnown = (node = null) => {
+  const setHomeNodeLastKnown = useCallback((node = null) => {
     const nextNode = node ? normalizeStephanosHomeNode(node, { source: node.source || 'lastKnown' }) : null;
     setHomeNodeLastKnownState(nextNode);
     persistStephanosLastKnownNode(nextNode);
     return nextNode;
-  };
+  }, []);
 
-  const setHomeNodeStatus = (nextStatus = DEFAULT_HOME_NODE_STATUS) => {
+  const setHomeNodeStatus = useCallback((nextStatus = DEFAULT_HOME_NODE_STATUS) => {
     setHomeNodeStatusState({
       ...DEFAULT_HOME_NODE_STATUS,
       ...(nextStatus || {}),
       attempts: Array.isArray(nextStatus?.attempts) ? nextStatus.attempts : [],
     });
-  };
+  }, []);
 
   const value = useMemo(() => ({
     commandHistory,
