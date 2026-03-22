@@ -220,6 +220,8 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     configured: merged.configured !== false,
     misconfigured: Boolean(merged.misconfigured),
     optional: Boolean(merged.optional),
+    target: typeof merged.target === 'string' ? merged.target : '',
+    actualTarget: typeof merged.actualTarget === 'string' ? merged.actualTarget : '',
     source: String(merged.source || 'route-diagnostics'),
     reason: String(merged.reason || ''),
     blockedReason: String(merged.blockedReason || ''),
@@ -342,14 +344,14 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : 'home node is not configured'),
     }),
     dist: createRouteEvaluation('dist', {
-      configured: Boolean(runtimeContext.preferredTarget || distProbe.configured),
-      available: Boolean(String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')),
+      configured: Boolean(distProbe.configured),
+      available: Boolean(distProbe.available),
       misconfigured: false,
       optional: false,
-      source: String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/') ? 'dist-runtime' : 'dist-entry',
-      reason: String(runtimeContext.preferredTarget || '').includes('/apps/stephanos/dist/')
-        ? 'Bundled dist runtime is reachable'
-        : 'Bundled dist runtime is not the active route',
+      target: typeof distProbe.target === 'string' ? distProbe.target : '',
+      actualTarget: typeof distProbe.actualTarget === 'string' ? distProbe.actualTarget : '',
+      source: distProbe.source || 'dist-entry',
+      reason: distProbe.reason || 'Bundled dist runtime is not the active route',
       blockedReason: '',
     }, distProbe),
     cloud: createRouteEvaluation('cloud', {
@@ -357,6 +359,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       available: diagnostics.cloud?.available === true,
       misconfigured: false,
       optional: false,
+      target: typeof diagnostics.cloud?.target === 'string' ? diagnostics.cloud.target : '',
+      actualTarget: typeof diagnostics.cloud?.actualTarget === 'string' ? diagnostics.cloud.actualTarget : '',
       source: 'cloud-route-unavailable',
       reason: 'No cloud-backed Stephanos route is currently ready',
       blockedReason: 'no cloud-backed route is currently ready',
@@ -457,15 +461,27 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
   const localDesktop = routeSelection.evaluations['local-desktop'];
   const homeNode = routeSelection.evaluations['home-node'];
   const cloud = routeSelection.evaluations.cloud;
+  let preferredTarget = runtimeContext.preferredTarget;
+  let actualTargetUsed = runtimeContext.actualTargetUsed;
+
+  if (selectedRouteKey === 'local-desktop') {
+    preferredTarget = selectedRoute?.target || runtimeContext.actualTargetUsed || runtimeContext.apiBaseUrl || runtimeContext.preferredTarget;
+    actualTargetUsed = selectedRoute?.actualTarget || runtimeContext.actualTargetUsed || runtimeContext.apiBaseUrl || preferredTarget;
+  } else if (selectedRouteKey === 'home-node') {
+    preferredTarget = selectedRoute?.target || runtimeContext.homeNode?.uiUrl || runtimeContext.preferredTarget;
+    actualTargetUsed = selectedRoute?.actualTarget || runtimeContext.homeNode?.backendUrl || runtimeContext.actualTargetUsed || preferredTarget;
+  } else if (selectedRouteKey === 'dist') {
+    preferredTarget = selectedRoute?.target || runtimeContext.preferredTarget;
+    actualTargetUsed = selectedRoute?.actualTarget || selectedRoute?.target || runtimeContext.actualTargetUsed || preferredTarget;
+  } else if (selectedRouteKey === 'cloud') {
+    preferredTarget = selectedRoute?.target || runtimeContext.preferredTarget;
+    actualTargetUsed = selectedRoute?.actualTarget || selectedRoute?.target || runtimeContext.actualTargetUsed || preferredTarget;
+  }
 
   return {
     routeKind: selectedRouteKey || 'unavailable',
-    preferredTarget: selectedRouteKey === 'home-node'
-      ? runtimeContext.homeNode?.uiUrl || runtimeContext.preferredTarget
-      : runtimeContext.preferredTarget,
-    actualTargetUsed: selectedRouteKey === 'home-node'
-      ? runtimeContext.homeNode?.backendUrl || runtimeContext.actualTargetUsed
-      : runtimeContext.actualTargetUsed,
+    preferredTarget,
+    actualTargetUsed,
     localNodeReachable: Boolean(localDesktop.available || homeNode.available || runtimeContext.localNodeReachableFromSession === true),
     homeNodeReachable: Boolean(homeNode.available),
     cloudRouteReachable: Boolean(cloud.available),

@@ -449,9 +449,16 @@ test('validateStephanosRuntime promotes localhost backend to local-desktop even 
     assert.equal(status.runtimeStatusModel.routeKind, 'local-desktop');
     assert.equal(status.runtimeStatusModel.preferredRoute, 'local-desktop');
     assert.equal(status.runtimeStatusModel.runtimeContext.deviceContext, 'pc-local-browser');
+    assert.equal(status.runtimeStatusModel.preferredTarget, 'http://localhost:8787');
+    assert.equal(status.runtimeStatusModel.actualTargetUsed, 'http://localhost:8787');
+    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'local-backend-session');
+    assert.equal(status.runtimeStatusModel.cloudRouteReachable, false);
     assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].source, 'local-backend-session');
+    assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].target, 'http://localhost:8787');
     assert.match(status.runtimeStatusModel.routeEvaluations['local-desktop'].reason, /backend online locally/i);
     assert.equal(status.runtimeStatusModel.routeEvaluations.dist.available, true);
+    assert.equal(status.runtimeStatusModel.routeEvaluations.dist.target, './apps/stephanos/dist/index.html');
+    assert.equal(status.runtimeStatusModel.routeEvaluations.dist.source, 'dist-entry');
     assert.match(status.runtimeStatusModel.routeEvaluations.dist.blockedReason, /local-desktop is a valid live route and outranks dist/i);
   } finally {
     globalThis.fetch = originalFetch;

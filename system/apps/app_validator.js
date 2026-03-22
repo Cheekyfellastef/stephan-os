@@ -621,6 +621,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           configured: localDesktopCapableSession,
           available: localDesktopCapableSession && healthyBackend,
           misconfigured: false,
+          target: effectiveBackendBaseUrl,
+          actualTarget: effectiveBackendBaseUrl,
           source: localDesktopCapableSession
             ? (localPreferredTarget?.url ? 'local-runtime-probe' : 'local-backend-session')
             : 'not-applicable',
@@ -639,6 +641,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           configured: Boolean(preferredHomeNode?.host),
           available: Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host),
           misconfigured: Boolean(homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured),
+          target: homeNodeTarget?.url || preferredHomeNode?.uiUrl || '',
+          actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
           reason: homeNodeDiscovery.reachable
             ? (backendPublishedRouteMisconfigured
@@ -655,6 +659,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           configured: Boolean(entryExists || distPreferredTarget?.url),
           available: Boolean(distLive || entryExists),
           misconfigured: false,
+          target: distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''),
+          actualTarget: distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''),
           source: distLive ? 'dist-runtime-probe' : (entryExists ? 'dist-entry' : 'dist-unavailable'),
           reason: distLive
             ? 'Bundled dist runtime is reachable'
@@ -666,6 +672,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           configured: false,
           available: false,
           misconfigured: false,
+          target: '',
+          actualTarget: '',
           source: 'cloud-route-unavailable',
           reason: 'No explicit cloud Stephanos runtime route was published',
           blockedReason: 'no cloud-backed route is currently ready',
