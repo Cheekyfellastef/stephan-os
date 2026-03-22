@@ -34,6 +34,8 @@ export default function StatusPanel() {
     lastExecutionMetadata,
     uiLayout,
     togglePanel,
+    workingMemory,
+    projectMemory,
   } = useAIStore();
 
   const latest = commandHistory[commandHistory.length - 1];
@@ -125,6 +127,13 @@ export default function StatusPanel() {
         <li>Execution Truth: {executionTruth}</li>
         <li>Attempt Order: {runtimeStatus.attemptOrder.join(' → ')}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
+        <li>Session Workspace: mission-console</li>
+        <li>Session Subview: {lastRoute || 'assistant'}</li>
+        <li>Remembered Commands: {workingMemory.recentCommands.length}</li>
+        <li>Working Task: {workingMemory.currentTask || 'n/a'}</li>
+        <li>Working Focus: {workingMemory.activeFocusLabel || 'n/a'}</li>
+        <li>Mission Note: {workingMemory.missionNote || 'n/a'}</li>
+        <li>Project Milestone: {projectMemory.currentMilestone || 'n/a'}</li>
         <li>Route: {lastRoute}</li>
         <li>Commands: {commandHistory.length}</li>
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>

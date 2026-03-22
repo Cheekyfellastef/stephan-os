@@ -17,6 +17,7 @@ import {
   isLoopbackHost,
   normalizeStephanosHomeNode,
 } from './stephanosHomeNode.mjs';
+import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -94,6 +95,17 @@ export function readPersistedProviderPreferences(storage = globalThis?.localStor
 
   if (!isBrowserStorageAvailable(storage)) {
     return defaults;
+  }
+
+  const persistedSession = readPersistedStephanosSessionMemory(storage);
+  const persistedProviderPreferences = persistedSession?.session?.providerPreferences;
+  if (persistedProviderPreferences) {
+    return {
+      selectedProvider: normalizeProviderSelection(persistedProviderPreferences.provider),
+      routeMode: normalizeRouteMode(persistedProviderPreferences.routeMode),
+      fallbackEnabled: persistedProviderPreferences.fallbackEnabled !== false,
+      fallbackOrder: normalizeFallbackOrder(persistedProviderPreferences.fallbackOrder),
+    };
   }
 
   try {
