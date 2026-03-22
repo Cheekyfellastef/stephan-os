@@ -276,10 +276,21 @@ body.stephanos-wealthapp-body::before {
 
 .stephanos-wealthapp__actions {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.75rem;
   margin-top: -2px;
+  margin-bottom: 1rem;
 }
 
+.stephanos-wealthapp__action-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.stephanos-wealthapp__action-button,
 .stephanos-wealthapp__reset-button {
   appearance: none;
   border: 1px solid rgba(88, 203, 255, 0.38);
@@ -295,13 +306,35 @@ body.stephanos-wealthapp-body::before {
   transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
+.stephanos-wealthapp__action-button:hover,
 .stephanos-wealthapp__reset-button:hover {
   border-color: rgba(88, 203, 255, 0.72);
   box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.14), 0 12px 28px rgba(0, 0, 0, 0.24);
   transform: translateY(-1px);
 }
 
+.stephanos-wealthapp__action-button:focus-visible,
 .stephanos-wealthapp__reset-button:focus-visible {
   outline: 2px solid rgba(136, 210, 255, 0.86);
   outline-offset: 3px;
+}
+
+.stephanos-wealthapp__import-status {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-align: right;
+}
+
+.stephanos-wealthapp__import-status[data-tone='success'] {
+  color: #58cbff;
+}
+
+.stephanos-wealthapp__import-status[data-tone='error'] {
+  color: #fca5a5;
+}
+
+.stephanos-wealthapp__import-status[data-tone='info'] {
+  color: rgba(226, 232, 240, 0.92);
 }
