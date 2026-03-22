@@ -517,6 +517,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const effectiveBackendBaseUrl = backendProbe.ok
     ? backendBaseUrl
     : (localDesktopBackendProbe.ok ? localDesktopBackendBaseUrl : backendBaseUrl);
+  const localDesktopCapableSession = localDesktopSession || isLoopbackHost(extractHostname(effectiveBackendBaseUrl));
   const providerHealthUrl = `${effectiveBackendBaseUrl}/api/ai/providers/health`;
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
@@ -617,20 +618,20 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
       routeDiagnostics: {
         'local-desktop': {
-          configured: localDesktopSession,
-          available: localDesktopSession && healthyBackend,
+          configured: localDesktopCapableSession,
+          available: localDesktopCapableSession && healthyBackend,
           misconfigured: false,
-          source: localDesktopSession
+          source: localDesktopCapableSession
             ? (localPreferredTarget?.url ? 'local-runtime-probe' : 'local-backend-session')
             : 'not-applicable',
-          reason: localDesktopSession
+          reason: localDesktopCapableSession
             ? (healthyBackend
               ? (localPreferredTarget?.url
                 ? 'Backend online and local desktop session can reach the live Stephanos UI'
                 : 'Backend online locally; local-desktop stays valid and will use bundled dist UI until a live UI probe is available')
               : 'Local desktop session detected, but the backend is offline')
             : 'Current session is not a local desktop browser',
-          blockedReason: localDesktopSession && healthyBackend && !localPreferredTarget?.url
+          blockedReason: localDesktopCapableSession && healthyBackend && !localPreferredTarget?.url
             ? 'backend is online locally, but no explicit live UI route was published'
             : '',
         },
@@ -662,13 +663,12 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
               : 'Bundled dist runtime is unavailable'),
         },
         cloud: {
-          configured: entryExists,
-          available: Boolean(entryExists),
+          configured: false,
+          available: false,
           misconfigured: false,
-          source: entryExists ? 'hosted-dist-entry' : 'cloud-route-unavailable',
-          reason: entryExists
-            ? 'Hosted/cloud Stephanos entry is available for fallback'
-            : 'Hosted/cloud Stephanos entry is unavailable',
+          source: 'cloud-route-unavailable',
+          reason: 'No explicit cloud Stephanos runtime route was published',
+          blockedReason: 'no cloud-backed route is currently ready',
         },
       },
     },
@@ -728,7 +728,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
 
   if (launchableRuntime) {
     return {
-      state: healthyBackend || runtimeStatusModel.cloudRouteReachable ? 'healthy' : 'launching',
+      state: 'healthy',
       message: runtimeStatusModel.dependencySummary,
       issues: [],
       runtimeStatusModel,

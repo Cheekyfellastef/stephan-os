@@ -42,17 +42,18 @@ function normalizeRuntimeContext(runtimeContext = {}) {
   const backendHost = parseHostname(apiBaseUrl);
   const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
   const backendLocal = isLoopbackHost(backendHost) || !backendHost;
+  const launcherLocal = frontendLocal || backendLocal;
   const frontendReachability = frontendLocal ? 'local' : 'reachable';
   const backendReachability = backendLocal ? 'local' : 'reachable';
   const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
     source: runtimeContext.homeNode?.source || 'manual',
   });
-  const deviceContext = frontendLocal
+  const deviceContext = launcherLocal
     ? 'pc-local-browser'
     : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
       ? 'lan-companion'
       : 'off-network';
-  const sessionKind = frontendLocal ? 'local-desktop' : 'hosted-web';
+  const sessionKind = launcherLocal ? 'local-desktop' : 'hosted-web';
 
   return {
     frontendOrigin,
@@ -201,11 +202,11 @@ function deriveRoutePlan({
 
 function buildRoutePreference(runtimeContext = {}) {
   if (runtimeContext.deviceContext === 'pc-local-browser') {
-    return ['local-desktop', 'home-node', 'dist', 'cloud'];
+    return ['local-desktop', 'home-node', 'cloud', 'dist'];
   }
 
   if (runtimeContext.deviceContext === 'lan-companion') {
-    return ['home-node', 'local-desktop', 'dist', 'cloud'];
+    return ['home-node', 'cloud', 'dist', 'local-desktop'];
   }
 
   return ['cloud', 'home-node', 'local-desktop', 'dist'];
@@ -227,7 +228,7 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
 
 function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder = []) {
   const preferredLiveRoutes = preferenceOrder
-    .filter((candidate) => candidate !== routeKey && candidate !== 'dist' && candidate !== 'cloud');
+    .filter((candidate) => candidate !== routeKey && candidate !== 'dist');
 
   for (const candidate of preferredLiveRoutes) {
     const evaluation = evaluations[candidate];
@@ -253,53 +254,58 @@ function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder 
 
 function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
   const diagnostics = runtimeContext.routeDiagnostics || {};
-  const frontendLocal = runtimeContext.frontendLocal === true;
+  const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser' || runtimeContext.sessionKind === 'local-desktop';
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const localDesktopProbe = diagnostics['local-desktop'] || {};
   const homeNodeProbe = diagnostics['home-node'] || {};
   const distProbe = diagnostics.dist || {};
-  const localDesktopAvailable = frontendLocal && backendAvailable;
+  const localDesktopAvailable = localDesktopSession && backendAvailable;
   const localDesktopProbeAvailable = localDesktopProbe.available === true;
-  const localDesktopClassificationFailed = frontendLocal && backendAvailable && localDesktopProbe.available === false;
+  const localDesktopClassificationFailed = localDesktopSession && backendAvailable && localDesktopProbe.available === false;
+  const localDesktopSource = localDesktopProbe.source && localDesktopProbe.source !== 'not-applicable'
+    ? localDesktopProbe.source
+    : (runtimeContext.backendLocal ? 'local-backend-session' : 'local-browser-session');
+  const localDesktopReadyReason = localDesktopProbeAvailable
+    ? 'Backend online and local desktop route probe succeeded'
+    : (runtimeContext.backendLocal
+      ? 'Backend online locally; local-desktop stays valid and will use bundled dist UI until a live UI probe is available'
+      : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published');
+  const localDesktopBlockedReason = localDesktopProbeAvailable
+    ? ''
+    : 'backend is online locally, but no explicit live UI route was published';
 
   const evaluations = {
     'local-desktop': createRouteEvaluation('local-desktop', {
-      configured: frontendLocal,
+      configured: localDesktopSession,
       available: localDesktopAvailable,
       misconfigured: localDesktopClassificationFailed,
       optional: runtimeContext.deviceContext !== 'pc-local-browser',
-      source: frontendLocal ? 'local-browser-session' : 'not-applicable',
-      reason: frontendLocal
+      source: localDesktopSession ? localDesktopSource : 'not-applicable',
+      reason: localDesktopSession
         ? (backendAvailable
-          ? (localDesktopProbeAvailable
-            ? 'Backend online and local desktop route probe succeeded'
-            : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published')
+          ? localDesktopReadyReason
           : 'Local desktop browser detected, but the backend is offline')
         : 'Current session is not a local desktop browser',
-      blockedReason: frontendLocal
+      blockedReason: localDesktopSession
         ? (backendAvailable
-          ? (localDesktopProbe.blockedReason || (localDesktopProbeAvailable
-            ? ''
-            : 'backend is online locally, but no explicit live UI route was published'))
+          ? (localDesktopProbe.blockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session',
     }, {
       ...localDesktopProbe,
       available: localDesktopAvailable,
       misconfigured: localDesktopClassificationFailed || Boolean(localDesktopProbe.misconfigured),
-      source: localDesktopProbe.source || (frontendLocal ? 'local-browser-session' : 'not-applicable'),
-      reason: localDesktopProbe.reason || (frontendLocal
+      source: localDesktopSession ? localDesktopSource : 'not-applicable',
+      reason: localDesktopProbe.reason || (localDesktopSession
         ? (backendAvailable
-          ? (localDesktopProbeAvailable
-            ? 'Backend online and local desktop route probe succeeded'
-            : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published')
+          ? localDesktopReadyReason
           : 'Local desktop browser detected, but the backend is offline')
         : 'Current session is not a local desktop browser'),
-      blockedReason: localDesktopProbe.blockedReason || (frontendLocal
+      blockedReason: localDesktopProbe.blockedReason || (localDesktopSession
         ? (backendAvailable
-          ? (localDesktopProbeAvailable ? '' : 'backend is online locally, but no explicit live UI route was published')
+          ? localDesktopBlockedReason
           : 'backend is offline')
         : 'not a local desktop session'),
     }),
@@ -347,15 +353,13 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       blockedReason: '',
     }, distProbe),
     cloud: createRouteEvaluation('cloud', {
-      configured: cloudAvailable || diagnostics.cloud?.configured === true,
-      available: cloudAvailable,
+      configured: diagnostics.cloud?.configured === true,
+      available: diagnostics.cloud?.available === true,
       misconfigured: false,
       optional: false,
-      source: cloudAvailable ? 'cloud-provider-health' : 'cloud-provider-unavailable',
-      reason: cloudAvailable
-        ? 'A cloud-backed Stephanos route is ready'
-        : 'No cloud-backed Stephanos route is currently ready',
-      blockedReason: cloudAvailable ? '' : 'no cloud-backed route is currently ready',
+      source: 'cloud-route-unavailable',
+      reason: 'No cloud-backed Stephanos route is currently ready',
+      blockedReason: 'no cloud-backed route is currently ready',
     }, diagnostics.cloud),
   };
 
