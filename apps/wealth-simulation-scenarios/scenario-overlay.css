@@ -104,7 +104,8 @@ body.stephanos-scenario-body::before {
 .scenario-card__summary,
 .scenario-config__hint,
 .scenario-config__value,
-.scenario-lab-toast {
+.scenario-lab-toast,
+.scenario-config code {
   margin: 0;
   color: var(--scenario-text-soft);
   font-size: 13px;
@@ -129,6 +130,34 @@ body.stephanos-scenario-body::before {
   margin: 0 0 8px;
   color: #eef9ff;
   font-size: 24px;
+}
+
+.scenario-lab-panel__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scenario-lab-panel__reset {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 203, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(5, 18, 34, 0.92);
+  color: #eef9ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.scenario-lab-panel__reset:hover,
+.scenario-lab-panel__reset:focus-visible {
+  border-color: rgba(88, 203, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.18);
+  transform: translateY(-1px);
 }
 
 .scenario-lab-panel__grid {

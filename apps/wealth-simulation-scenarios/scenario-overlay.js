@@ -4,6 +4,7 @@
     return;
   }
 
+  const persistence = window.ScenarioPersistence;
   const appRoot = document.getElementById('root');
   document.body.classList.add('stephanos-scenario-body');
   appRoot?.classList.add('scenario-lab-app-root');
@@ -11,6 +12,62 @@
   if (appRoot?.parentNode && mountNode !== appRoot.previousElementSibling) {
     appRoot.parentNode.insertBefore(mountNode, appRoot);
   }
+
+  const scenarios = [
+    {
+      id: 'base-case',
+      title: 'Base Case',
+      tag: 'Default',
+      summary: 'Placeholder baseline using the cloned Wealth App assumptions with no extra shocks applied.',
+      config: {
+        'Portfolio return bias': '+0.0% adjustment',
+        'Living cost pressure': 'Baseline placeholder',
+        'Retirement timing': 'Current simulator values',
+      },
+    },
+    {
+      id: 'energy-shock',
+      title: 'Energy Shock',
+      tag: 'Placeholder',
+      summary: 'Local-only scenario preset for future cost-of-living stress tests. No external macro feed is connected.',
+      config: {
+        'Portfolio return bias': '-1.0% placeholder',
+        'Living cost pressure': '+12% placeholder',
+        'Retirement timing': 'No automatic change yet',
+      },
+    },
+    {
+      id: 'early-retirement-push',
+      title: 'Early Retirement Push',
+      tag: 'Placeholder',
+      summary: 'Sandbox preset to explore retiring sooner. Values are illustrative placeholders only for UI scaffolding.',
+      config: {
+        'Portfolio return bias': '-0.5% placeholder',
+        'Living cost pressure': '+4% placeholder',
+        'Retirement timing': 'Bring forward by 2 years',
+      },
+    },
+    {
+      id: 'cash-buffer-defense',
+      title: 'Cash Buffer Defense',
+      tag: 'Placeholder',
+      summary: 'Extra local preset to reserve more cash before drawdown modelling is wired up in future iterations.',
+      config: {
+        'Portfolio return bias': '-0.2% placeholder',
+        'Living cost pressure': '+2% placeholder',
+        'Retirement timing': 'Hold current timing',
+      },
+    },
+  ];
+
+  const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+  const createDefaultState = persistence?.createDefaultState || (() => ({ version: 1, selectedScenario: 'base-case', scenarios: {}, ui: {} }));
+  let persistedState = persistence?.loadState?.() || createDefaultState();
+  let activeScenarioId = scenarioIds.has(persistedState.selectedScenario) ? persistedState.selectedScenario : 'base-case';
+  let defaultInputs = null;
+  let isApplyingSnapshot = false;
+  let decorateFrame = null;
+  let saveTimer = null;
 
   const decorateWealthApp = () => {
     if (!appRoot) {
@@ -61,7 +118,6 @@
     });
   };
 
-  let decorateFrame = null;
   const scheduleDecorate = () => {
     if (decorateFrame) {
       cancelAnimationFrame(decorateFrame);
@@ -73,57 +129,180 @@
     });
   };
 
-  const scenarios = [
-    {
-      id: 'base-case',
-      title: 'Base Case',
-      tag: 'Default',
-      summary: 'Placeholder baseline using the cloned Wealth App assumptions with no extra shocks applied.',
-      config: {
-        'Portfolio return bias': '+0.0% adjustment',
-        'Living cost pressure': 'Baseline placeholder',
-        'Retirement timing': 'Current simulator values',
-      },
-    },
-    {
-      id: 'energy-shock',
-      title: 'Energy Shock',
-      tag: 'Placeholder',
-      summary: 'Local-only scenario preset for future cost-of-living stress tests. No external macro feed is connected.',
-      config: {
-        'Portfolio return bias': '-1.0% placeholder',
-        'Living cost pressure': '+12% placeholder',
-        'Retirement timing': 'No automatic change yet',
-      },
-    },
-    {
-      id: 'early-retirement-push',
-      title: 'Early Retirement Push',
-      tag: 'Placeholder',
-      summary: 'Sandbox preset to explore retiring sooner. Values are illustrative placeholders only for UI scaffolding.',
-      config: {
-        'Portfolio return bias': '-0.5% placeholder',
-        'Living cost pressure': '+4% placeholder',
-        'Retirement timing': 'Bring forward by 2 years',
-      },
-    },
-    {
-      id: 'cash-buffer-defense',
-      title: 'Cash Buffer Defense',
-      tag: 'Placeholder',
-      summary: 'Extra local preset to reserve more cash before drawdown modelling is wired up in future iterations.',
-      config: {
-        'Portfolio return bias': '-0.2% placeholder',
-        'Living cost pressure': '+2% placeholder',
-        'Retirement timing': 'Hold current timing',
-      },
-    },
-  ];
+  const getScenarioById = (scenarioId) => scenarios.find((scenario) => scenario.id === scenarioId) || scenarios[0];
 
-  let activeScenarioId = 'base-case';
+  const getAppInputs = () => Array.from(appRoot?.querySelectorAll('input, select, textarea') || []);
+
+  const normalizeLabel = (value) => value.replace(/\s+/g, ' ').trim();
+
+  const getFieldKey = (input) => {
+    const dataLabel = input.getAttribute('data-persist-key');
+    if (dataLabel) {
+      return dataLabel;
+    }
+
+    let label = '';
+    if (input.type === 'number') {
+      const siblingLabel = input.previousElementSibling;
+      label = siblingLabel?.textContent || input.name || input.id || input.type;
+    } else if (input.type === 'range') {
+      const wrapper = input.closest('div');
+      label = wrapper?.firstElementChild?.textContent || input.name || input.id || input.type;
+      label = label.split(':')[0];
+    } else {
+      label = input.name || input.id || input.getAttribute('aria-label') || input.type || 'field';
+    }
+
+    const normalized = normalizeLabel(label);
+    input.setAttribute('data-persist-key', normalized);
+    return normalized;
+  };
+
+  const coerceInputValue = (input, value) => {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    if (input.type === 'number' || input.type === 'range') {
+      const numericValue = Number(value);
+      return Number.isFinite(numericValue) ? numericValue : null;
+    }
+
+    return String(value);
+  };
+
+  const captureCurrentInputs = () => {
+    const snapshot = {};
+
+    getAppInputs().forEach((input) => {
+      const fieldKey = getFieldKey(input);
+      const coercedValue = coerceInputValue(input, input.value);
+      if (!fieldKey || coercedValue === null) {
+        return;
+      }
+
+      snapshot[fieldKey] = coercedValue;
+    });
+
+    return snapshot;
+  };
+
+  const setReactInputValue = (input, nextValue) => {
+    const prototype = Object.getPrototypeOf(input);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    descriptor?.set?.call(input, String(nextValue));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const getScenarioSnapshot = (scenarioId) => persistedState.scenarios?.[scenarioId]?.inputs || {};
+
+  const ensureDefaultInputs = () => {
+    if (!defaultInputs) {
+      const capturedDefaults = captureCurrentInputs();
+      if (Object.keys(capturedDefaults).length > 0) {
+        defaultInputs = capturedDefaults;
+      }
+    }
+
+    return defaultInputs;
+  };
+
+  const applyScenarioInputs = (scenarioId) => {
+    const defaults = ensureDefaultInputs();
+    if (!defaults) {
+      return;
+    }
+
+    const scenarioInputs = getScenarioSnapshot(scenarioId);
+    const mergedInputs = { ...defaults, ...scenarioInputs };
+    const appInputs = getAppInputs();
+    if (!appInputs.length) {
+      return;
+    }
+
+    isApplyingSnapshot = true;
+    appInputs.forEach((input) => {
+      const fieldKey = getFieldKey(input);
+      if (!Object.prototype.hasOwnProperty.call(mergedInputs, fieldKey)) {
+        return;
+      }
+
+      const nextValue = coerceInputValue(input, mergedInputs[fieldKey]);
+      if (nextValue === null || String(input.value) === String(nextValue)) {
+        return;
+      }
+
+      setReactInputValue(input, nextValue);
+    });
+    isApplyingSnapshot = false;
+  };
+
+  const flushState = () => {
+    persistedState.selectedScenario = activeScenarioId;
+    persistence?.saveState?.(persistedState);
+  };
+
+  const saveStateDebounced = () => {
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      flushState();
+      saveTimer = null;
+    }, 180);
+  };
+
+  const saveCurrentScenarioInputs = () => {
+    const snapshot = captureCurrentInputs();
+    if (!Object.keys(snapshot).length) {
+      return;
+    }
+
+    persistedState.scenarios = persistedState.scenarios || {};
+    persistedState.scenarios[activeScenarioId] = { inputs: snapshot };
+    saveStateDebounced();
+  };
+
+  const waitForAppInputs = (callback, attempts = 0) => {
+    if (getAppInputs().length) {
+      callback();
+      return;
+    }
+
+    if (attempts > 120) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => waitForAppInputs(callback, attempts + 1));
+  };
+
+  const resetToDefaults = () => {
+    const defaults = ensureDefaultInputs();
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    persistedState = createDefaultState();
+    activeScenarioId = 'base-case';
+    if (defaults) {
+      isApplyingSnapshot = true;
+      getAppInputs().forEach((input) => {
+        const fieldKey = getFieldKey(input);
+        if (!Object.prototype.hasOwnProperty.call(defaults, fieldKey)) {
+          return;
+        }
+
+        setReactInputValue(input, defaults[fieldKey]);
+      });
+      isApplyingSnapshot = false;
+    }
+
+    persistence?.clearState?.();
+    render();
+  };
 
   const render = () => {
-    const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) || scenarios[0];
+    const activeScenario = getScenarioById(activeScenarioId);
     mountNode.innerHTML = `
       <div class="scenario-lab-shell">
         <section class="scenario-lab-badge" aria-label="Experimental wealth simulation sandbox banner">
@@ -135,9 +314,14 @@
         </section>
         <aside class="scenario-lab-panel" aria-label="Scenario presets and local configuration scaffold">
           <div class="scenario-lab-panel__eyebrow">Scenario lab</div>
-          <h2 class="scenario-lab-panel__title">Scenario Presets</h2>
+          <div class="scenario-lab-panel__title-row">
+            <h2 class="scenario-lab-panel__title">Scenario Presets</h2>
+            <button type="button" class="scenario-lab-panel__reset" data-reset-scenarios>
+              Reset to Defaults
+            </button>
+          </div>
           <p class="scenario-lab-panel__description">
-            Select a preset to annotate the simulation with sandbox assumptions. The underlying calculator remains the cloned Wealth App for now.
+            Select a preset to annotate the simulation with sandbox assumptions. Each scenario now remembers its own local input state in this browser only.
           </p>
           <div class="scenario-lab-panel__grid">
             ${scenarios
@@ -175,7 +359,7 @@
                 .join('')}
             </div>
             <p class="scenario-config__hint" style="margin-top: 12px;">
-              Placeholder only: these values currently label sandbox assumptions and do not claim backend, macro, or cloud integration.
+              Local persistence stores the selected scenario and simulator inputs under <code>${persistence?.STORAGE_KEY || 'stephanos.wealth.scenarios'}</code>.
             </p>
           </section>
           <div class="scenario-lab-toast">
@@ -187,9 +371,23 @@
 
     mountNode.querySelectorAll('[data-scenario-id]').forEach((button) => {
       button.addEventListener('click', () => {
-        activeScenarioId = button.getAttribute('data-scenario-id') || 'base-case';
+        const nextScenarioId = button.getAttribute('data-scenario-id') || 'base-case';
+        if (nextScenarioId === activeScenarioId) {
+          return;
+        }
+
+        saveCurrentScenarioInputs();
+        activeScenarioId = scenarioIds.has(nextScenarioId) ? nextScenarioId : 'base-case';
         render();
+        waitForAppInputs(() => {
+          applyScenarioInputs(activeScenarioId);
+          saveStateDebounced();
+        });
       });
+    });
+
+    mountNode.querySelector('[data-reset-scenarios]')?.addEventListener('click', () => {
+      resetToDefaults();
     });
 
     scheduleDecorate();
@@ -205,6 +403,35 @@
     observer.observe(appRoot, { childList: true, subtree: true });
   }
 
+  appRoot?.addEventListener('input', (event) => {
+    if (isApplyingSnapshot) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    saveCurrentScenarioInputs();
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (!isApplyingSnapshot) {
+      saveCurrentScenarioInputs();
+      if (saveTimer) {
+        window.clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      flushState();
+    }
+  });
+
   render();
+  waitForAppInputs(() => {
+    ensureDefaultInputs();
+    applyScenarioInputs(activeScenarioId);
+    saveCurrentScenarioInputs();
+  });
   scheduleDecorate();
 })();
