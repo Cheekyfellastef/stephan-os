@@ -35,6 +35,83 @@ function isStephanosProject(project) {
   return identifier === "stephanos" || identifier === "stephanos os";
 }
 
+function rememberDisplayValue(node) {
+  if (!node?.style) {
+    return;
+  }
+
+  if (typeof node.dataset?.workspacePreviousDisplay === "undefined") {
+    node.dataset.workspacePreviousDisplay = node.style.display || "";
+  }
+}
+
+function restoreDisplayValue(node, fallback = "") {
+  if (!node?.style) {
+    return;
+  }
+
+  const nextDisplay = node.dataset?.workspacePreviousDisplay ?? fallback;
+  node.style.display = nextDisplay;
+
+  if (node.dataset && "workspacePreviousDisplay" in node.dataset) {
+    delete node.dataset.workspacePreviousDisplay;
+  }
+}
+
+export function getWorkspaceAncillaryNodes(documentRef = document) {
+  const stephanosLayout = documentRef.getElementById("stephanos-layout");
+  const developerConsole = documentRef.getElementById("dev-console");
+  const developerConsoleSection = typeof developerConsole?.closest === "function"
+    ? developerConsole.closest("section")
+    : null;
+
+  return {
+    stephanosLayout,
+    developerConsole,
+    developerConsoleSection,
+  };
+}
+
+export function setWorkspaceChromeVisibility(isWorkspaceOpen, documentRef = document) {
+  const { stephanosLayout, developerConsole, developerConsoleSection } = getWorkspaceAncillaryNodes(documentRef);
+  const body = documentRef?.body;
+
+  if (isWorkspaceOpen) {
+    if (body?.classList) {
+      body.classList.add("workspace-active");
+    }
+
+    [stephanosLayout, developerConsoleSection, developerConsole].forEach((node) => {
+      if (!node) return;
+      rememberDisplayValue(node);
+      node.style.display = "none";
+    });
+    return;
+  }
+
+  if (body?.classList) {
+    body.classList.remove("workspace-active");
+  }
+
+  restoreDisplayValue(stephanosLayout);
+  restoreDisplayValue(developerConsoleSection);
+  restoreDisplayValue(developerConsole);
+}
+
+export function applyWorkspaceIframeInteractivity(iframe) {
+  if (!iframe?.style) {
+    return iframe;
+  }
+
+  iframe.style.display = "block";
+  iframe.style.position = "relative";
+  iframe.style.zIndex = "1";
+  iframe.style.pointerEvents = "auto";
+  iframe.style.background = "#02060d";
+
+  return iframe;
+}
+
 export const workspace = {
   async open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
@@ -49,6 +126,7 @@ export const workspace = {
 
     workspacePanel.style.display = "block";
     projectsPanel.style.display = "none";
+    setWorkspaceChromeVisibility(true);
 
     title.textContent = project?.name || "Workspace";
 
@@ -142,6 +220,7 @@ export const workspace = {
       iframe.style.width = "100%";
       iframe.style.height = "700px";
       iframe.style.border = "none";
+      applyWorkspaceIframeInteractivity(iframe);
 
       iframe.onerror = () => {
         context?.eventBus?.emit("workspace:launch_failed", project);
@@ -184,6 +263,7 @@ export const workspace = {
 
     workspacePanel.style.display = "none";
     projectsPanel.style.display = "block";
+    setWorkspaceChromeVisibility(false);
 
     context?.eventBus?.emit("workspace:closed");
   }
