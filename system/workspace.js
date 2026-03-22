@@ -11,6 +11,7 @@ function renderAppLoadError(container, message) {
 
 const STEPHANOS_RUNTIME_TARGETS = createStephanosRuntimeTargets();
 const STEPHANOS_RUNTIME_URL = getStephanosPreferredRuntimeTarget(STEPHANOS_RUNTIME_TARGETS)?.url || STEPHANOS_RUNTIME_TARGETS[0]?.url || "http://localhost:5173/";
+const WORKSPACE_EMBED_TIMEOUT_MS = 15000;
 
 function buildWorkspaceLoadErrorMessage(project) {
   if (isStephanosProject(project)) {
@@ -19,7 +20,6 @@ function buildWorkspaceLoadErrorMessage(project) {
 
   return "Simulation failed to load. Check console for details.";
 }
-
 
 function isCrossOriginHttpUrl(value = '') {
   try {
@@ -33,6 +33,12 @@ function isCrossOriginHttpUrl(value = '') {
 function isStephanosProject(project) {
   const identifier = String(project?.folder || project?.id || project?.name || "").trim().toLowerCase();
   return identifier === "stephanos" || identifier === "stephanos os";
+}
+
+function getProjectKey(project) {
+  return String(project?.folder || project?.id || project?.entry || project?.name || "workspace")
+    .trim()
+    .toLowerCase();
 }
 
 function rememberDisplayValue(node) {
@@ -58,6 +64,134 @@ function restoreDisplayValue(node, fallback = "") {
   }
 }
 
+export function createWorkspaceRuntimeState() {
+  return {
+    nextSessionId: 0,
+    activeSessionId: 0,
+    activeProjectKey: "",
+    isOpen: false,
+    isChromeHidden: false,
+    iframeCreationCount: 0,
+    mountCount: 0,
+    closeCount: 0,
+    repeatedLaunchCount: 0,
+    chromeHideCount: 0,
+    chromeShowCount: 0,
+    launchLog: [],
+    activeIframe: null,
+    loadTimeoutId: null,
+  };
+}
+
+const workspaceRuntimeState = createWorkspaceRuntimeState();
+
+function pushWorkspaceLaunchLog(runtimeState, entry) {
+  runtimeState.launchLog.unshift({
+    timestamp: Date.now(),
+    ...entry,
+  });
+
+  if (runtimeState.launchLog.length > 25) {
+    runtimeState.launchLog.length = 25;
+  }
+}
+
+function logWorkspaceEvent(message, details = {}) {
+  if (Object.keys(details).length > 0) {
+    console.log(`[Workspace] ${message}`, details);
+    return;
+  }
+
+  console.log(`[Workspace] ${message}`);
+}
+
+function beginWorkspaceSession(project, runtimeState = workspaceRuntimeState) {
+  const projectKey = getProjectKey(project);
+  const isRepeatedLaunch = runtimeState.isOpen && runtimeState.activeProjectKey === projectKey;
+
+  if (isRepeatedLaunch) {
+    runtimeState.repeatedLaunchCount += 1;
+    pushWorkspaceLaunchLog(runtimeState, {
+      type: "launch-skipped",
+      projectKey,
+      reason: "duplicate-open-request",
+    });
+    logWorkspaceEvent("Repeated launch cycle suppressed", {
+      projectKey,
+      repeatedLaunchCount: runtimeState.repeatedLaunchCount,
+    });
+
+    return {
+      sessionId: runtimeState.activeSessionId,
+      projectKey,
+      isRepeatedLaunch: true,
+    };
+  }
+
+  const sessionId = runtimeState.nextSessionId + 1;
+  runtimeState.nextSessionId = sessionId;
+  runtimeState.activeSessionId = sessionId;
+  runtimeState.activeProjectKey = projectKey;
+  runtimeState.mountCount += 1;
+  runtimeState.isOpen = true;
+
+  pushWorkspaceLaunchLog(runtimeState, {
+    type: "mount",
+    sessionId,
+    projectKey,
+  });
+  logWorkspaceEvent("Workspace mount", {
+    sessionId,
+    projectKey,
+    mountCount: runtimeState.mountCount,
+  });
+
+  return {
+    sessionId,
+    projectKey,
+    isRepeatedLaunch: false,
+  };
+}
+
+function isWorkspaceSessionCurrent(sessionId, runtimeState = workspaceRuntimeState) {
+  return runtimeState.activeSessionId === sessionId;
+}
+
+function clearWorkspaceLoadTimeout(runtimeState = workspaceRuntimeState, windowRef = globalThis.window) {
+  if (runtimeState.loadTimeoutId !== null && typeof windowRef?.clearTimeout === "function") {
+    windowRef.clearTimeout(runtimeState.loadTimeoutId);
+  }
+
+  runtimeState.loadTimeoutId = null;
+}
+
+function recordWorkspaceIframeCreation(project, sessionId, runtimeState = workspaceRuntimeState) {
+  runtimeState.iframeCreationCount += 1;
+  pushWorkspaceLaunchLog(runtimeState, {
+    type: "iframe-created",
+    sessionId,
+    projectKey: getProjectKey(project),
+    iframeCreationCount: runtimeState.iframeCreationCount,
+  });
+  logWorkspaceEvent("Workspace iframe created", {
+    sessionId,
+    project: project?.name || project?.id || "workspace",
+    iframeCreationCount: runtimeState.iframeCreationCount,
+  });
+}
+
+export function getWorkspaceRuntimeDebugState() {
+  return {
+    ...workspaceRuntimeState,
+    launchLog: workspaceRuntimeState.launchLog.map((entry) => ({ ...entry })),
+  };
+}
+
+export function resetWorkspaceRuntimeDebugState() {
+  clearWorkspaceLoadTimeout(workspaceRuntimeState);
+  Object.assign(workspaceRuntimeState, createWorkspaceRuntimeState());
+}
+
 export function getWorkspaceAncillaryNodes(documentRef = document) {
   const stephanosLayout = documentRef.getElementById("stephanos-layout");
   const developerConsole = documentRef.getElementById("dev-console");
@@ -72,7 +206,11 @@ export function getWorkspaceAncillaryNodes(documentRef = document) {
   };
 }
 
-export function setWorkspaceChromeVisibility(isWorkspaceOpen, documentRef = document) {
+export function setWorkspaceChromeVisibility(isWorkspaceOpen, documentRef = document, runtimeState = workspaceRuntimeState) {
+  if (runtimeState.isChromeHidden === isWorkspaceOpen) {
+    return false;
+  }
+
   const { stephanosLayout, developerConsole, developerConsoleSection } = getWorkspaceAncillaryNodes(documentRef);
   const body = documentRef?.body;
 
@@ -85,17 +223,47 @@ export function setWorkspaceChromeVisibility(isWorkspaceOpen, documentRef = docu
       if (!node) return;
       rememberDisplayValue(node);
       node.style.display = "none";
+      if (typeof node.setAttribute === "function") {
+        node.setAttribute("aria-hidden", "true");
+        node.setAttribute("inert", "");
+      }
     });
-    return;
+
+    runtimeState.isChromeHidden = true;
+    runtimeState.chromeHideCount += 1;
+    pushWorkspaceLaunchLog(runtimeState, {
+      type: "chrome-hidden",
+      chromeHideCount: runtimeState.chromeHideCount,
+    });
+    logWorkspaceEvent("Workspace chrome hidden", {
+      chromeHideCount: runtimeState.chromeHideCount,
+    });
+    return true;
   }
 
   if (body?.classList) {
     body.classList.remove("workspace-active");
   }
 
-  restoreDisplayValue(stephanosLayout);
-  restoreDisplayValue(developerConsoleSection);
-  restoreDisplayValue(developerConsole);
+  [stephanosLayout, developerConsoleSection, developerConsole].forEach((node) => {
+    if (!node) return;
+    restoreDisplayValue(node);
+    if (typeof node.removeAttribute === "function") {
+      node.removeAttribute("aria-hidden");
+      node.removeAttribute("inert");
+    }
+  });
+
+  runtimeState.isChromeHidden = false;
+  runtimeState.chromeShowCount += 1;
+  pushWorkspaceLaunchLog(runtimeState, {
+    type: "chrome-restored",
+    chromeShowCount: runtimeState.chromeShowCount,
+  });
+  logWorkspaceEvent("Workspace chrome restored", {
+    chromeShowCount: runtimeState.chromeShowCount,
+  });
+  return true;
 }
 
 export function applyWorkspaceIframeInteractivity(iframe) {
@@ -112,6 +280,28 @@ export function applyWorkspaceIframeInteractivity(iframe) {
   return iframe;
 }
 
+function createWorkspaceBackButton(documentRef, handler) {
+  const backButton = documentRef.createElement("button");
+  backButton.textContent = "◀ Return to Command Deck";
+  backButton.style.marginBottom = "10px";
+  backButton.onclick = handler;
+  return backButton;
+}
+
+function buildWorkspaceFrameContainer(documentRef) {
+  const container = documentRef.createElement("div");
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "8px";
+  container.style.position = "relative";
+  return container;
+}
+
+function showWorkspaceFallback(container, project, context) {
+  context?.eventBus?.emit("workspace:launch_failed", project);
+  renderAppLoadError(container, buildWorkspaceLoadErrorMessage(project));
+}
+
 export const workspace = {
   async open(project, context = {}) {
     const workspacePanel = document.getElementById("workspace");
@@ -124,20 +314,40 @@ export const workspace = {
       return;
     }
 
+    const launch = beginWorkspaceSession(project);
+    if (launch.isRepeatedLaunch) {
+      return;
+    }
+
+    clearWorkspaceLoadTimeout();
+
     workspacePanel.style.display = "block";
     projectsPanel.style.display = "none";
     setWorkspaceChromeVisibility(true);
-
     title.textContent = project?.name || "Workspace";
+    content.innerHTML = "";
+    workspaceRuntimeState.activeIframe = null;
 
     if (isStephanosProject(project) && isCrossOriginHttpUrl(project?.entry)) {
+      logWorkspaceEvent("Stephanos launch escalated to top-level navigation", {
+        sessionId: launch.sessionId,
+        target: project.entry,
+      });
       window.location.href = project.entry;
       return;
     }
 
     if (project?.entry && project.entry.endsWith(".md")) {
       const response = await fetch(project.entry);
+      if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+        return;
+      }
+
       const text = await response.text();
+      if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+        return;
+      }
+
       const container = document.createElement("div");
 
       container.style.whiteSpace = "pre-wrap";
@@ -149,69 +359,47 @@ export const workspace = {
       container.style.color = "#0f0";
       container.style.fontFamily = "monospace";
       container.style.borderRadius = "8px";
-
       container.textContent = text;
-      content.innerHTML = "";
 
-      // TOP LEFT BACK BUTTON
-      const backTop = document.createElement("button");
-      backTop.textContent = "← Back";
-      backTop.style.display = "block";
-      backTop.style.marginBottom = "10px";
-
-      backTop.onclick = () => {
-        document.getElementById("workspace").style.display = "none";
-        document.getElementById("projects").style.display = "block";
-      };
-
-      // BOTTOM LEFT BACK BUTTON
-      const backBottom = document.createElement("button");
-      backBottom.textContent = "← Back";
-      backBottom.style.display = "block";
-      backBottom.style.marginTop = "15px";
-
-      backBottom.onclick = () => {
-        document.getElementById("workspace").style.display = "none";
-        document.getElementById("projects").style.display = "block";
-      };
-
-      content.appendChild(backTop);
-      content.appendChild(container);
-      content.appendChild(backBottom);
-
-      return;
-    } else if (project?.entry) {
-      content.innerHTML = "";
-
-      const backButton = document.createElement("button");
-      backButton.textContent = "◀ Return to Command Deck";
-      backButton.style.marginBottom = "10px";
-      backButton.onclick = () => {
+      const backButton = createWorkspaceBackButton(document, () => {
         window.returnToCommandDeck();
-      };
+      });
 
-      const container = document.createElement("div");
-      container.style.display = "flex";
-      container.style.flexDirection = "column";
-      container.style.gap = "8px";
+      content.appendChild(backButton);
+      content.appendChild(container);
+      context?.eventBus?.emit("workspace:opened", project);
+      return;
+    }
+
+    if (project?.entry) {
+      const backButton = createWorkspaceBackButton(document, () => {
+        window.returnToCommandDeck();
+      });
+      const container = buildWorkspaceFrameContainer(document);
+      content.appendChild(backButton);
+      content.appendChild(container);
 
       try {
         await loadDependencies(project);
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
 
         const entryResponse = await fetch(project.entry, { method: "HEAD" });
         if (!entryResponse.ok) {
           throw new Error(`Entry file unavailable (${entryResponse.status})`);
         }
-      } catch (err) {
-        console.error("App preflight failed:", project?.name, err);
-        context?.eventBus?.emit("workspace:launch_failed", project);
-        renderAppLoadError(
-          container,
-          buildWorkspaceLoadErrorMessage(project)
-        );
 
-        content.appendChild(backButton);
-        content.appendChild(container);
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
+      } catch (err) {
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
+
+        console.error("App preflight failed:", project?.name, err);
+        showWorkspaceFallback(container, project, context);
         return;
       }
 
@@ -220,47 +408,100 @@ export const workspace = {
       iframe.style.width = "100%";
       iframe.style.height = "700px";
       iframe.style.border = "none";
+      iframe.setAttribute("loading", "eager");
+      iframe.setAttribute("referrerpolicy", "no-referrer");
+      iframe.setAttribute("title", `${project?.name || "Workspace"} runtime`);
       applyWorkspaceIframeInteractivity(iframe);
+      recordWorkspaceIframeCreation(project, launch.sessionId);
+      workspaceRuntimeState.activeIframe = iframe;
 
       iframe.onerror = () => {
-        context?.eventBus?.emit("workspace:launch_failed", project);
-        const warning = document.createElement("div");
-        warning.style.color = "red";
-        warning.style.padding = "20px";
-        warning.innerText = buildWorkspaceLoadErrorMessage(project);
-        container.appendChild(warning);
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
+
+        clearWorkspaceLoadTimeout();
+        logWorkspaceEvent("Workspace iframe failed", {
+          sessionId: launch.sessionId,
+          projectKey: launch.projectKey,
+        });
+        showWorkspaceFallback(container, project, context);
       };
 
       iframe.addEventListener("load", () => {
-        console.log("Simulation loaded:", project.name);
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
+
+        clearWorkspaceLoadTimeout();
+        logWorkspaceEvent("Workspace iframe loaded", {
+          sessionId: launch.sessionId,
+          projectKey: launch.projectKey,
+        });
+
         if (isStephanosProject(project)) {
           context?.eventBus?.emit("app:revalidate_requested", {
             appId: "stephanos",
             reason: "workspace iframe load"
           });
         }
-      });
+      }, { once: true });
+
+      clearWorkspaceLoadTimeout();
+      workspaceRuntimeState.loadTimeoutId = window.setTimeout(() => {
+        if (!isWorkspaceSessionCurrent(launch.sessionId)) {
+          return;
+        }
+
+        logWorkspaceEvent("Workspace iframe load timeout", {
+          sessionId: launch.sessionId,
+          projectKey: launch.projectKey,
+          timeoutMs: WORKSPACE_EMBED_TIMEOUT_MS,
+        });
+        iframe.remove();
+        workspaceRuntimeState.activeIframe = null;
+        showWorkspaceFallback(container, project, context);
+      }, WORKSPACE_EMBED_TIMEOUT_MS);
 
       container.appendChild(iframe);
-
-      content.appendChild(backButton);
-      content.appendChild(container);
-    } else {
-      content.textContent = `Workspace for ${project?.name || "project"}`;
+      context?.eventBus?.emit("workspace:opened", project);
+      return;
     }
 
+    content.textContent = `Workspace for ${project?.name || "project"}`;
     context?.eventBus?.emit("workspace:opened", project);
   },
 
   close(context = {}) {
     const workspacePanel = document.getElementById("workspace");
     const projectsPanel = document.getElementById("projects");
+    const content = document.getElementById("workspace-content");
 
-    if (!workspacePanel || !projectsPanel) {
+    if (!workspacePanel || !projectsPanel || !content) {
       console.error("Workspace UI is missing required elements");
       return;
     }
 
+    clearWorkspaceLoadTimeout();
+
+    if (workspaceRuntimeState.activeIframe?.remove) {
+      workspaceRuntimeState.activeIframe.remove();
+    }
+
+    workspaceRuntimeState.activeIframe = null;
+    workspaceRuntimeState.activeSessionId = 0;
+    workspaceRuntimeState.activeProjectKey = "";
+    workspaceRuntimeState.isOpen = false;
+    workspaceRuntimeState.closeCount += 1;
+    pushWorkspaceLaunchLog(workspaceRuntimeState, {
+      type: "close",
+      closeCount: workspaceRuntimeState.closeCount,
+    });
+    logWorkspaceEvent("Workspace close", {
+      closeCount: workspaceRuntimeState.closeCount,
+    });
+
+    content.innerHTML = "";
     workspacePanel.style.display = "none";
     projectsPanel.style.display = "block";
     setWorkspaceChromeVisibility(false);
