@@ -1,0 +1,275 @@
+:root {
+  --stephanos-bg-deep: #02060d;
+  --stephanos-bg-shell: #010812;
+  --stephanos-panel: linear-gradient(180deg, rgba(8, 19, 37, 0.96), rgba(3, 10, 22, 0.98));
+  --stephanos-panel-soft: linear-gradient(180deg, rgba(10, 25, 46, 0.94), rgba(4, 14, 28, 0.96));
+  --stephanos-border: rgba(71, 155, 255, 0.34);
+  --stephanos-border-strong: rgba(88, 203, 255, 0.82);
+  --stephanos-text: #dff4ff;
+  --stephanos-text-muted: #9fd3ff;
+  --stephanos-text-soft: rgba(223, 244, 255, 0.72);
+  --stephanos-accent: #479bff;
+  --stephanos-cyan: #58cbff;
+  --stephanos-shadow: 0 0 0 1px rgba(31, 98, 181, 0.16), 0 24px 60px rgba(0, 0, 0, 0.42);
+}
+
+body.stephanos-wealthapp-body {
+  position: relative;
+  display: block;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(29, 90, 170, 0.28), transparent 38%),
+    radial-gradient(circle at right top, rgba(0, 174, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #04070d, #02050a 52%, #010308);
+  color: var(--stephanos-text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body.stephanos-wealthapp-body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(88, 203, 255, 0.12), transparent 0 22%),
+    linear-gradient(180deg, rgba(6, 18, 36, 0.18), rgba(1, 4, 10, 0.42));
+  opacity: 0.95;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 20px 20px 30px;
+}
+
+.stephanos-wealthapp {
+  display: grid;
+  gap: 14px;
+  padding: 28px !important;
+  border: 1px solid var(--stephanos-border);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(1, 8, 18, 0.92), rgba(2, 6, 14, 0.96)) !important;
+  box-shadow: var(--stephanos-shadow);
+}
+
+.stephanos-wealthapp__title,
+.stephanos-wealthapp h1 {
+  margin: 0 !important;
+  color: #eef9ff;
+  font-size: clamp(2.1rem, 2vw + 1.4rem, 2.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.stephanos-wealthapp__section-title,
+.stephanos-wealthapp h2 {
+  margin: 10px 0 0 !important;
+  color: var(--stephanos-text-muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.stephanos-wealthapp__asset-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.15fr) minmax(180px, 0.85fr) !important;
+  gap: 12px 16px !important;
+  margin-bottom: 8px !important;
+  padding: 18px;
+  border: 1px solid rgba(82, 156, 230, 0.26);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.88), rgba(3, 10, 22, 0.94));
+}
+
+.stephanos-wealthapp__asset-grid label {
+  align-self: center;
+  color: #cfe8ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.stephanos-wealthapp__number-input,
+.stephanos-wealthapp input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(3, 10, 20, 0.95);
+  border: 1px solid rgba(68, 138, 212, 0.46);
+  border-radius: 12px;
+  color: var(--stephanos-text);
+  padding: 0.8rem 0.9rem;
+  box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.05);
+}
+
+.stephanos-wealthapp__slider {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 0 !important;
+  padding: 14px 16px;
+  border: 1px solid rgba(82, 156, 230, 0.22);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.78), rgba(3, 10, 22, 0.88));
+}
+
+.stephanos-wealthapp__slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--stephanos-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.stephanos-wealthapp__range-input,
+.stephanos-wealthapp input[type='range'] {
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.9), rgba(88, 203, 255, 0.95));
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.12);
+}
+
+.stephanos-wealthapp input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(214, 244, 255, 0.96);
+  border-radius: 999px;
+  background: #0d4fd4;
+  box-shadow: 0 0 0 4px rgba(88, 203, 255, 0.18);
+}
+
+.stephanos-wealthapp input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(29, 78, 216, 0.9), rgba(88, 203, 255, 0.95));
+}
+
+.stephanos-wealthapp input[type='range']::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(214, 244, 255, 0.96);
+  border-radius: 999px;
+  background: #0d4fd4;
+  box-shadow: 0 0 0 4px rgba(88, 203, 255, 0.18);
+}
+
+.stephanos-wealthapp__status {
+  margin: 4px 0 0 !important;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid currentColor;
+  border-left-width: 4px;
+  background: rgba(3, 10, 20, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.stephanos-wealthapp__status--alert {
+  color: #f87171 !important;
+}
+
+.stephanos-wealthapp__status--success {
+  color: #4ade80 !important;
+}
+
+.stephanos-wealthapp__chart-wrap {
+  margin-top: 4px;
+}
+
+.stephanos-wealthapp__chart-shell {
+  padding: 18px 18px 12px !important;
+  border: 1px solid var(--stephanos-border);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.95), rgba(3, 10, 22, 0.98));
+  box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.05);
+}
+
+.stephanos-wealthapp__chart-shell .recharts-wrapper,
+.stephanos-wealthapp__chart-shell .recharts-surface {
+  overflow: visible;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-cartesian-grid line {
+  stroke: rgba(126, 167, 219, 0.16) !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-cartesian-axis-line,
+.stephanos-wealthapp__chart-shell .recharts-cartesian-axis-tick-line {
+  stroke: rgba(143, 198, 255, 0.36) !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-cartesian-axis-tick-value,
+.stephanos-wealthapp__chart-shell .recharts-text,
+.stephanos-wealthapp__chart-shell .recharts-label {
+  fill: #d4ecff !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-legend-wrapper {
+  inset: auto 0 0 0 !important;
+  width: 100% !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-default-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 18px;
+  margin-top: 14px !important;
+  padding: 12px 14px;
+  border: 1px solid rgba(82, 156, 230, 0.22);
+  border-radius: 16px;
+  background: rgba(5, 15, 30, 0.84);
+}
+
+.stephanos-wealthapp__chart-shell .recharts-legend-item-text {
+  color: var(--stephanos-text) !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-default-tooltip {
+  border: 1px solid rgba(88, 203, 255, 0.38) !important;
+  border-radius: 14px !important;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.96), rgba(3, 10, 22, 0.98)) !important;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34) !important;
+}
+
+.stephanos-wealthapp__chart-shell .recharts-tooltip-label,
+.stephanos-wealthapp__chart-shell .recharts-tooltip-item,
+.stephanos-wealthapp__chart-shell .recharts-tooltip-item-name,
+.stephanos-wealthapp__chart-shell .recharts-tooltip-item-value {
+  color: var(--stephanos-text) !important;
+}
+
+.stephanos-wealthapp input:focus-visible {
+  outline: 2px solid rgba(136, 210, 255, 0.86);
+  outline-offset: 3px;
+}
+
+@media (max-width: 960px) {
+  #root {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+@media (max-width: 720px) {
+  .stephanos-wealthapp {
+    padding: 20px !important;
+  }
+
+  .stephanos-wealthapp__asset-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .stephanos-wealthapp__slider-label {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
