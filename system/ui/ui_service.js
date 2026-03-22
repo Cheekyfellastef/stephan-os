@@ -1,31 +1,40 @@
 export function createUIRenderer() {
 
+  function ensurePanelContainer(documentRef = document) {
+
+    let container = documentRef.getElementById("stephanos-panel-stack");
+
+    if (container) {
+      return container;
+    }
+
+    container = documentRef.createElement("div");
+
+    container.id = "stephanos-panel-stack";
+    container.style.display = "none";
+    container.style.flexDirection = "column";
+    container.style.gap = "10px";
+
+    const workspacePanel = documentRef.getElementById("workspace");
+    const layout = documentRef.getElementById("stephanos-layout");
+
+    if (layout?.parentNode) {
+      layout.parentNode.insertBefore(container, layout);
+    } else if (workspacePanel?.parentNode) {
+      workspacePanel.parentNode.insertBefore(container, workspacePanel.nextSibling);
+    } else {
+      documentRef.body.appendChild(container);
+    }
+
+    return container;
+
+  }
+
   return {
 
     createPanel(id, title) {
 
-      let container = document.getElementById("stephanos-panel-stack");
-
-      if (!container) {
-
-        container = document.createElement("div");
-
-        container.id = "stephanos-panel-stack";
-
-        container.style.position = "fixed";
-        container.style.top = "80px";
-        container.style.right = "20px";
-
-        container.style.display = "none";
-        container.style.flexDirection = "column";
-
-        container.style.gap = "10px";
-
-        container.style.zIndex = "2000";
-
-        document.body.appendChild(container);
-
-      }
+      const container = ensurePanelContainer();
 
       let panel = document.getElementById(id);
 

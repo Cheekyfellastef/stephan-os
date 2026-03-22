@@ -88,10 +88,16 @@ h1 {
   margin: auto;
 }
 
+#stephanos-panel-stack,
+#stephanos-panel-container {
+  max-width: 1000px;
+  margin: 20px auto 0;
+}
 
 .stephanos-panel {
 
   width: 320px;
+  max-width: 100%;
 
   background: #111;
   color: #0f0;
