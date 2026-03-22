@@ -273,3 +273,35 @@ body.stephanos-wealthapp-body::before {
     flex-direction: column;
   }
 }
+
+.stephanos-wealthapp__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+}
+
+.stephanos-wealthapp__reset-button {
+  appearance: none;
+  border: 1px solid rgba(88, 203, 255, 0.38);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.94), rgba(3, 10, 22, 0.98));
+  color: var(--stephanos-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0.75rem 1rem;
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.stephanos-wealthapp__reset-button:hover {
+  border-color: rgba(88, 203, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.14), 0 12px 28px rgba(0, 0, 0, 0.24);
+  transform: translateY(-1px);
+}
+
+.stephanos-wealthapp__reset-button:focus-visible {
+  outline: 2px solid rgba(136, 210, 255, 0.86);
+  outline-offset: 3px;
+}
