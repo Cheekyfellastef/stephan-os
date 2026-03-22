@@ -68,6 +68,14 @@
   let isApplyingSnapshot = false;
   let decorateFrame = null;
   let saveTimer = null;
+  let statusTimer = null;
+
+  const setUiState = (uiPatch) => {
+    persistedState.ui = {
+      ...(persistedState.ui || {}),
+      ...uiPatch,
+    };
+  };
 
   const decorateWealthApp = () => {
     if (!appRoot) {
@@ -243,6 +251,37 @@
     persistence?.saveState?.(persistedState);
   };
 
+  const setStatus = (message = '', tone = 'info') => {
+    const statusNode = mountNode.querySelector('[data-scenario-status]');
+    if (!statusNode) {
+      return;
+    }
+
+    statusNode.hidden = !message;
+    statusNode.textContent = message;
+    statusNode.dataset.tone = tone;
+  };
+
+  const showTransientStatus = (message, tone = 'info') => {
+    setStatus(message, tone);
+    window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(() => {
+      statusTimer = null;
+      setStatus('', tone);
+    }, 6000);
+  };
+
+  const buildCurrentState = () => {
+    saveCurrentScenarioInputs();
+
+    return persistence?.sanitizePersistedState?.({
+      version: persistence?.STORAGE_VERSION || 1,
+      selectedScenario: activeScenarioId,
+      scenarios: persistedState.scenarios,
+      ui: persistedState.ui,
+    }) || createDefaultState();
+  };
+
   const saveStateDebounced = () => {
     window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
@@ -275,6 +314,65 @@
     window.requestAnimationFrame(() => waitForAppInputs(callback, attempts + 1));
   };
 
+  const handleExport = () => {
+    const payload = persistence?.createExportPayload?.(buildCurrentState()) || buildCurrentState();
+    const didDownload = persistence?.downloadTextFile?.(
+      'wealth-simulation-scenarios-settings.json',
+      `${JSON.stringify(payload, null, 2)}\n`
+    );
+
+    if (didDownload) {
+      showTransientStatus('Scenario settings exported to JSON.', 'success');
+      return;
+    }
+
+    showTransientStatus('Export failed: this browser could not start the download.', 'error');
+  };
+
+  const applyImportedState = (state) => {
+    persistedState = persistence?.sanitizePersistedState?.(state) || createDefaultState();
+    activeScenarioId = scenarioIds.has(persistedState.selectedScenario) ? persistedState.selectedScenario : 'base-case';
+
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    flushState();
+    render();
+    waitForAppInputs(() => {
+      applyScenarioInputs(activeScenarioId);
+      saveCurrentScenarioInputs();
+      flushState();
+    });
+  };
+
+  const handleImportSelection = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await persistence?.readFileAsText?.(file);
+      const importResult = persistence?.parseImportedText?.(text);
+
+      if (!importResult?.ok) {
+        showTransientStatus(importResult?.message || 'Import failed.', 'error');
+        return;
+      }
+
+      applyImportedState(importResult.state);
+      showTransientStatus('Scenario settings imported successfully.', 'success');
+    } catch (error) {
+      showTransientStatus('Import failed: the selected file could not be read.', 'error');
+    } finally {
+      if (event?.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
   const resetToDefaults = () => {
     const defaults = ensureDefaultInputs();
     if (saveTimer) {
@@ -298,11 +396,21 @@
     }
 
     persistence?.clearState?.();
+    setStatus('', 'info');
+    render();
+  };
+
+  const getUiActiveTab = () => persistedState.ui?.activeTab === 'config' ? 'config' : 'presets';
+
+  const setUiActiveTab = (tab) => {
+    setUiState({ activeTab: tab === 'config' ? 'config' : 'presets' });
+    flushState();
     render();
   };
 
   const render = () => {
     const activeScenario = getScenarioById(activeScenarioId);
+    const activeTab = getUiActiveTab();
     mountNode.innerHTML = `
       <div class="scenario-lab-shell">
         <section class="scenario-lab-badge" aria-label="Experimental wealth simulation sandbox banner">
@@ -323,7 +431,18 @@
           <p class="scenario-lab-panel__description">
             Select a preset to annotate the simulation with sandbox assumptions. Each scenario now remembers its own local input state in this browser only.
           </p>
-          <div class="scenario-lab-panel__grid">
+          <div class="scenario-lab-panel__actions" aria-label="Scenario settings actions">
+            <button type="button" class="scenario-lab-panel__action-button" data-export-settings>Export Settings</button>
+            <button type="button" class="scenario-lab-panel__action-button" data-import-settings>Import Settings</button>
+            <input type="file" accept="application/json,.json" hidden data-import-file />
+          </div>
+          <p class="scenario-lab-panel__status" data-scenario-status role="status" aria-live="polite" hidden></p>
+          <div class="scenario-lab-panel__tabs" role="tablist" aria-label="Scenario panel sections">
+            <button type="button" class="scenario-lab-panel__tab${activeTab === 'presets' ? ' is-active' : ''}" data-panel-tab="presets" role="tab" aria-selected="${activeTab === 'presets'}">Presets</button>
+            <button type="button" class="scenario-lab-panel__tab${activeTab === 'config' ? ' is-active' : ''}" data-panel-tab="config" role="tab" aria-selected="${activeTab === 'config'}">Config</button>
+          </div>
+          <div class="scenario-lab-panel__content${activeTab === 'presets' ? ' is-active' : ''}" data-panel-content="presets">
+            <div class="scenario-lab-panel__grid">
             ${scenarios
               .map(
                 (scenario) => `
@@ -342,8 +461,9 @@
                 `
               )
               .join('')}
+            </div>
           </div>
-          <section class="scenario-config" aria-label="Selected scenario configuration scaffold">
+          <section class="scenario-config${activeTab === 'config' ? ' is-active' : ''}" data-panel-content="config" aria-label="Selected scenario configuration scaffold">
             <div class="scenario-lab-panel__eyebrow">Scenario config</div>
             <h3 class="scenario-config__title">${activeScenario.title}</h3>
             <div class="scenario-config__list">
@@ -388,6 +508,27 @@
 
     mountNode.querySelector('[data-reset-scenarios]')?.addEventListener('click', () => {
       resetToDefaults();
+    });
+
+    mountNode.querySelector('[data-export-settings]')?.addEventListener('click', () => {
+      handleExport();
+    });
+
+    const importFileInput = mountNode.querySelector('[data-import-file]');
+    mountNode.querySelector('[data-import-settings]')?.addEventListener('click', () => {
+      importFileInput?.click?.();
+    });
+    importFileInput?.addEventListener('change', handleImportSelection);
+
+    mountNode.querySelectorAll('[data-panel-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextTab = button.getAttribute('data-panel-tab') || 'presets';
+        if (nextTab === getUiActiveTab()) {
+          return;
+        }
+
+        setUiActiveTab(nextTab);
+      });
     });
 
     scheduleDecorate();

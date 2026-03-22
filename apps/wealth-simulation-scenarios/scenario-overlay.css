@@ -166,6 +166,78 @@ body.stephanos-scenario-body::before {
   margin-top: 16px;
 }
 
+.scenario-lab-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.scenario-lab-panel__action-button,
+.scenario-lab-panel__tab {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 203, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(5, 18, 34, 0.92);
+  color: #eef9ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.scenario-lab-panel__action-button:hover,
+.scenario-lab-panel__action-button:focus-visible,
+.scenario-lab-panel__tab:hover,
+.scenario-lab-panel__tab:focus-visible {
+  border-color: rgba(88, 203, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.scenario-lab-panel__status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 203, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(4, 15, 30, 0.72);
+  color: var(--scenario-text);
+}
+
+.scenario-lab-panel__status[data-tone='success'] {
+  border-color: rgba(110, 255, 187, 0.28);
+  color: #b5ffd8;
+}
+
+.scenario-lab-panel__status[data-tone='error'] {
+  border-color: rgba(255, 133, 133, 0.34);
+  color: #ffd2d2;
+}
+
+.scenario-lab-panel__tabs {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.scenario-lab-panel__tab.is-active {
+  border-color: var(--scenario-border-strong);
+  background: rgba(14, 44, 77, 0.92);
+  box-shadow: 0 0 0 1px rgba(88, 203, 255, 0.2);
+}
+
+.scenario-lab-panel__content,
+.scenario-config {
+  display: none;
+}
+
+.scenario-lab-panel__content.is-active,
+.scenario-config.is-active {
+  display: block;
+}
+
 .scenario-card {
   width: 100%;
   padding: 14px;
