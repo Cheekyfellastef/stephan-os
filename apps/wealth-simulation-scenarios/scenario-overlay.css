@@ -1,13 +1,23 @@
 body {
   position: relative;
+  display: block;
 }
 
 #scenario-lab-root {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 20;
+  position: relative;
+  z-index: 1;
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  padding: 20px 20px 0;
+  box-sizing: border-box;
   font-family: Arial, sans-serif;
+}
+
+.scenario-lab-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 20px;
+  align-items: start;
 }
 
 .scenario-lab-badge,
@@ -17,10 +27,9 @@ body {
 }
 
 .scenario-lab-badge {
-  position: fixed;
+  position: sticky;
   top: 20px;
-  left: 20px;
-  max-width: min(420px, calc(100vw - 40px));
+  max-width: none;
   padding: 14px 18px;
   border: 1px solid rgba(103, 232, 249, 0.45);
   border-radius: 14px;
@@ -60,11 +69,10 @@ body {
 }
 
 .scenario-lab-panel {
-  position: fixed;
-  top: 120px;
-  right: 20px;
-  width: min(420px, calc(100vw - 40px));
-  max-height: calc(100vh - 140px);
+  position: sticky;
+  top: 20px;
+  width: auto;
+  max-height: calc(100vh - 40px);
   overflow: auto;
   padding: 18px;
   border: 1px solid rgba(59, 130, 246, 0.4);
@@ -184,17 +192,22 @@ body {
 }
 
 @media (max-width: 960px) {
-  .scenario-lab-badge {
-    right: 20px;
-    max-width: none;
+  #scenario-lab-root {
+    padding: 16px 16px 0;
+  }
+
+  .scenario-lab-shell {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .scenario-lab-badge,
+  .scenario-lab-panel {
+    position: static;
   }
 
   .scenario-lab-panel {
-    top: auto;
-    bottom: 20px;
-    left: 20px;
-    right: 20px;
     width: auto;
-    max-height: min(52vh, 560px);
+    max-height: none;
   }
 }
