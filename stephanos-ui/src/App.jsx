@@ -47,8 +47,17 @@ export default function App() {
   } = useAIStore();
   useDebugConsole();
 
-  const providerSummary = buildProviderStatusSummary(provider, getActiveProviderConfig(), apiStatus.baseUrl, providerHealth[provider]);
+  const safeUiLayout = uiLayout || {};
+  const safeApiStatus = apiStatus || {};
+  const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const providerSummary = buildProviderStatusSummary(
+    provider,
+    getActiveProviderConfig(),
+    safeApiStatus.baseUrl,
+    safeProviderHealth[provider],
+  );
+  const startupDiagnosticsVisible = runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking';
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
 
   useEffect(() => {
@@ -62,7 +71,7 @@ export default function App() {
         title="AI Provider Controls"
         description="Configure providers, health checks, models, and routing without losing your layout preference after restart."
         className="provider-dock"
-        isOpen={uiLayout.providerControlsPanel}
+        isOpen={safeUiLayout.providerControlsPanel !== false}
         onToggle={() => togglePanel('providerControlsPanel')}
         actions={showCloudFallbackAction ? (
           <button type="button" className="ghost-button" onClick={() => setProvider(runtimeStatus.activeProvider)}>
@@ -103,7 +112,15 @@ export default function App() {
       </CollapsiblePanel>
 
       <section className="app-shell">
-        <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />
+        <div className="primary-stack">
+          {startupDiagnosticsVisible ? (
+            <div className="api-banner degraded" role="status" aria-live="polite">
+              <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
+              <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
+            </div>
+          ) : null}
+          <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />
+        </div>
         <div className="side-stack">
           <StatusPanel />
           <ToolsPanel commandHistory={commandHistory} />

@@ -44,9 +44,16 @@ export default function StatusPanel() {
     sessionRestoreDiagnostics,
   } = useAIStore();
 
-  const latest = commandHistory[commandHistory.length - 1];
+  const safeApiStatus = apiStatus || {};
+  const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
+  const safeUiLayout = uiLayout || {};
+  const safeCommandHistory = Array.isArray(commandHistory) ? commandHistory : [];
+  const safeSessionRestoreDiagnostics = sessionRestoreDiagnostics || { message: 'Portable session state restored.', reasons: [], ignoredFields: [] };
+  const safeWorkingMemory = workingMemory || { recentCommands: [], currentTask: '', activeFocusLabel: '', missionNote: '' };
+  const safeProjectMemory = projectMemory || { currentMilestone: '' };
+  const latest = safeCommandHistory[safeCommandHistory.length - 1];
   const activeConfig = getActiveProviderConfig();
-  const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl, providerHealth[provider]);
+  const statusSummary = buildProviderStatusSummary(provider, activeConfig, safeApiStatus.baseUrl, safeProviderHealth[provider]);
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const providerEligibility = finalRoute.providerEligibility ?? {};
@@ -73,7 +80,7 @@ export default function StatusPanel() {
   const readyCloudProviders = runtimeStatus.readyCloudProviders.length > 0 ? runtimeStatus.readyCloudProviders.join(', ') : 'pending';
   const readyLocalProviders = runtimeStatus.readyLocalProviders.length > 0 ? runtimeStatus.readyLocalProviders.join(', ') : 'pending';
   const attemptOrder = runtimeStatus.attemptOrder.length > 0 ? runtimeStatus.attemptOrder.join(' → ') : 'pending';
-  const sessionRestoreReason = sessionRestoreDiagnostics.reasons[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
+  const sessionRestoreReason = safeSessionRestoreDiagnostics.reasons?.[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
 
   return (
     <CollapsiblePanel
@@ -82,7 +89,7 @@ export default function StatusPanel() {
       title="Status"
       description="Live routing, backend, and runtime diagnostics."
       className="status-panel"
-      isOpen={uiLayout.statusPanel}
+      isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
     >
       <ul>
@@ -94,7 +101,7 @@ export default function StatusPanel() {
         <li>Active Provider: {runtimeStatus.activeProvider}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
-        <li>Backend: {apiStatus.label}</li>
+        <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
         <li>Route Kind: {runtimeStatus.routeKind}</li>
         <li>Preferred Target: {runtimeStatus.preferredTarget || 'unavailable'}</li>
@@ -115,7 +122,7 @@ export default function StatusPanel() {
         <li>Ready Cloud Providers: {readyCloudProviders}</li>
         <li>Ready Local Providers: {readyLocalProviders}</li>
         <li>Dependency Summary: {runtimeStatus.dependencySummary || 'pending'}</li>
-        <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
+        <li>Backend Default Provider: {safeApiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Selected Provider Health: {statusSummary.healthBadge}</li>
         <li>Selected Provider State: {statusSummary.healthState}</li>
         <li>Selected Provider Detail: {statusSummary.healthDetail}</li>
@@ -123,14 +130,14 @@ export default function StatusPanel() {
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
-        <li>Session Restore Decision: {sessionRestoreDiagnostics.message}</li>
+        <li>Session Restore Decision: {safeSessionRestoreDiagnostics.message || 'Portable session state restored.'}</li>
         <li>Session Restore Reason: {sessionRestoreReason}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
         <li>Provider Endpoint: {providerEndpointDisplay}</li>
         <li>Provider Model: {statusSummary.model}</li>
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
-        <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || apiStatus.backendDefaultProvider || 'n/a'}</li>
+        <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Last Route Mode: {lastExecutionMetadata?.route_mode || 'n/a'}</li>
         <li>Last Effective Route Mode: {lastExecutionMetadata?.effective_route_mode || 'n/a'}</li>
         <li>Last Requested Provider: {lastExecutionMetadata?.requested_provider || 'n/a'}</li>
@@ -145,13 +152,13 @@ export default function StatusPanel() {
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Session Workspace: mission-console</li>
         <li>Session Subview: {lastRoute || 'assistant'}</li>
-        <li>Remembered Commands: {workingMemory.recentCommands.length}</li>
-        <li>Working Task: {workingMemory.currentTask || 'n/a'}</li>
-        <li>Working Focus: {workingMemory.activeFocusLabel || 'n/a'}</li>
-        <li>Mission Note: {workingMemory.missionNote || 'n/a'}</li>
-        <li>Project Milestone: {projectMemory.currentMilestone || 'n/a'}</li>
+        <li>Remembered Commands: {safeWorkingMemory.recentCommands.length}</li>
+        <li>Working Task: {safeWorkingMemory.currentTask || 'n/a'}</li>
+        <li>Working Focus: {safeWorkingMemory.activeFocusLabel || 'n/a'}</li>
+        <li>Mission Note: {safeWorkingMemory.missionNote || 'n/a'}</li>
+        <li>Project Milestone: {safeProjectMemory.currentMilestone || 'n/a'}</li>
         <li>Route: {lastRoute}</li>
-        <li>Commands: {commandHistory.length}</li>
+        <li>Commands: {safeCommandHistory.length}</li>
         <li>Latest Tool: {latest?.tool_used ?? 'none'}</li>
         <li>UI Marker: {uiDiagnostics.componentMarker}</li>
         <li>UI Version: {STEPHANOS_UI_VERSION}</li>
