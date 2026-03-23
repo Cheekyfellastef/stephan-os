@@ -12,8 +12,6 @@ import {
 } from '../../../../shared/ai/providerDefaults.mjs';
 import { normalizeRuntimeContext as normalizeSharedRuntimeContext } from '../../../../shared/runtime/runtimeStatusModel.mjs';
 
-const SERVER_ENV_ONLY_PROVIDER_KEYS = ['groq'];
-
 export function normalizeMessages(messages = [], prompt = '') {
   if (Array.isArray(messages) && messages.length > 0) return messages;
   return [{ role: 'user', content: prompt || '' }];
@@ -50,11 +48,6 @@ function getEnvBackedDefaults(provider) {
 
 function sanitizeInboundProviderConfig(provider, config = {}) {
   const draft = { ...(config || {}) };
-
-  if (SERVER_ENV_ONLY_PROVIDER_KEYS.includes(provider) && 'apiKey' in draft) {
-    delete draft.apiKey;
-  }
-
   return draft;
 }
 
