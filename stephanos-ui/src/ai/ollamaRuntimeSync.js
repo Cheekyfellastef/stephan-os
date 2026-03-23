@@ -1,4 +1,16 @@
-import { deriveOllamaCandidates, detectOllamaHost, normalizeOllamaBaseUrl } from './ollamaDiscovery';
+import { deriveOllamaCandidates, detectOllamaHost, normalizeOllamaBaseUrl } from './ollamaDiscovery.js';
+
+function isLoopbackHost(hostname = '') {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname || '').trim().toLowerCase());
+}
+
+function extractHostname(value = '') {
+  try {
+    return new URL(String(value || '')).hostname || '';
+  } catch {
+    return '';
+  }
+}
 
 export function createSearchingOllamaHealth({ frontendOrigin = '', attempts = [] } = {}) {
   const frontendHost = (() => {
@@ -30,6 +42,11 @@ export function createSearchingOllamaHealth({ frontendOrigin = '', attempts = []
 export function shouldAutoSyncOllama({ apiStatus, ollamaHealth = {}, ollamaConfig = {} } = {}) {
   if (!apiStatus?.backendReachable) return false;
   if (ollamaHealth?.ok) return false;
+
+  const frontendHost = extractHostname(apiStatus?.frontendOrigin || apiStatus?.runtimeContext?.frontendOrigin || '');
+  if (isLoopbackHost(frontendHost)) {
+    return false;
+  }
 
   const normalizedBaseUrl = normalizeOllamaBaseUrl(ollamaConfig?.baseURL);
   if (!normalizedBaseUrl) return false;
