@@ -4,9 +4,11 @@ import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } fr
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import {
+  createStephanosHomeNodeUrls,
   discoverStephanosHomeNode,
   extractHostname,
   isLoopbackHost,
+  normalizeStephanosHomeNode,
   summarizeStephanosHomeNode,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
@@ -25,6 +27,87 @@ function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback 
   }
 
   return allowLoopback ? (candidate || fallback || '') : '';
+}
+
+
+function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
+  const frontendHost = extractHostname(resolvedRuntimeContext.frontendOrigin);
+  const localDesktopSession = isLoopbackHost(frontendHost);
+  if (localDesktopSession || !health?.ok) {
+    return {
+      homeNode: resolvedRuntimeContext.homeNode || null,
+      nodeAddressSource: resolvedRuntimeContext.nodeAddressSource || '',
+      preferredTarget: resolvedRuntimeContext.preferredTarget || '',
+      actualTargetUsed: resolvedRuntimeContext.actualTargetUsed || resolvedRuntimeContext.baseUrl || '',
+      adopted: false,
+    };
+  }
+
+  const existingHomeNode = resolvedRuntimeContext.homeNode || null;
+  const existingSource = existingHomeNode?.source || '';
+  const publishedClientRoute = String(health.data?.published_client_route || '').trim();
+  const publishedBackendBaseUrl = String(health.data?.published_backend_base_url || health.data?.backend_base_url || '').trim();
+  const backendRequestBaseUrl = String(health.baseUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '').trim();
+  const candidateUrls = [
+    backendRequestBaseUrl,
+    resolvedRuntimeContext.baseUrl,
+    resolvedRuntimeContext.apiBaseUrl,
+    existingHomeNode?.backendUrl,
+    publishedClientRoute,
+    publishedBackendBaseUrl,
+  ].filter(Boolean);
+  const adoptedUrl = candidateUrls.find((candidate) => !isLoopbackHost(extractHostname(candidate))) || '';
+  const adoptedHost = extractHostname(adoptedUrl);
+
+  if (!adoptedHost) {
+    return {
+      homeNode: existingHomeNode,
+      nodeAddressSource: resolvedRuntimeContext.nodeAddressSource || existingSource || '',
+      preferredTarget: resolvedRuntimeContext.preferredTarget || '',
+      actualTargetUsed: resolvedRuntimeContext.actualTargetUsed || backendRequestBaseUrl || '',
+      adopted: false,
+    };
+  }
+
+  const requestOrigin = (() => {
+    try {
+      return backendRequestBaseUrl ? new URL(backendRequestBaseUrl).origin : '';
+    } catch {
+      return '';
+    }
+  })();
+  const publishedClientHost = extractHostname(publishedClientRoute);
+  const preferredUiUrl = publishedClientRoute && !isLoopbackHost(publishedClientHost)
+    ? publishedClientRoute
+    : (existingHomeNode?.uiUrl || createStephanosHomeNodeUrls({ host: adoptedHost }).uiUrl);
+  const fallbackUrls = createStephanosHomeNodeUrls({
+    host: adoptedHost,
+    uiPort: existingHomeNode?.uiPort,
+    backendPort: existingHomeNode?.backendPort,
+    distPort: existingHomeNode?.distPort,
+  });
+  const source = resolvedRuntimeContext.nodeAddressSource
+    || health.data?.client_route_source
+    || existingSource
+    || (existingHomeNode?.configured ? 'manual' : 'discovered');
+
+  const adoptedHomeNode = normalizeStephanosHomeNode({
+    ...(existingHomeNode || {}),
+    host: adoptedHost,
+    backendUrl: requestOrigin || existingHomeNode?.backendUrl || fallbackUrls.backendUrl,
+    backendHealthUrl: `${requestOrigin || existingHomeNode?.backendUrl || fallbackUrls.backendUrl}/api/health`,
+    uiUrl: preferredUiUrl,
+    source,
+    reachable: true,
+  }, { source });
+
+  return {
+    homeNode: adoptedHomeNode,
+    nodeAddressSource: source,
+    preferredTarget: preferredUiUrl || resolvedRuntimeContext.preferredTarget || '',
+    actualTargetUsed: requestOrigin || adoptedHomeNode.backendUrl || resolvedRuntimeContext.actualTargetUsed || '',
+    adopted: true,
+  };
 }
 
 function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
@@ -134,37 +217,41 @@ export function useAIConsole() {
     const frontendHost = extractHostname(resolvedRuntimeContext.frontendOrigin);
     const backendHost = extractHostname(backendBaseUrl);
     const localDesktopSession = isLoopbackHost(frontendHost);
+    const adoptedHomeNode = adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health);
     const compatibleBackendBaseUrl = resolveCompatibleTarget(
       backendBaseUrl,
-      resolvedRuntimeContext.homeNode?.backendUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '',
+      adoptedHomeNode.homeNode?.backendUrl || resolvedRuntimeContext.homeNode?.backendUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '',
       { allowLoopback: localDesktopSession },
     );
     const nodeAddressSource = localDesktopSession
       ? 'local-backend-session'
-      : (resolvedRuntimeContext.nodeAddressSource || health.data?.client_route_source || resolvedRuntimeContext.homeNode?.source || 'route-diagnostics');
+      : (adoptedHomeNode.nodeAddressSource || resolvedRuntimeContext.nodeAddressSource || health.data?.client_route_source || resolvedRuntimeContext.homeNode?.source || 'route-diagnostics');
     const publishedBackendBaseUrl = String(health.data?.published_backend_base_url || '').trim();
     const preferredTarget = localDesktopSession && compatibleBackendBaseUrl
       ? compatibleBackendBaseUrl
       : resolveCompatibleTarget(
-        resolvedRuntimeContext.preferredTarget,
+        adoptedHomeNode.preferredTarget || resolvedRuntimeContext.preferredTarget,
         health.data?.published_client_route
+          || adoptedHomeNode.homeNode?.uiUrl
           || resolvedRuntimeContext.homeNode?.uiUrl
           || resolvedRuntimeContext.frontendOrigin
           || publishedBackendBaseUrl,
         { allowLoopback: localDesktopSession },
       );
+    const actualTargetUsed = resolveCompatibleTarget(
+      adoptedHomeNode.actualTargetUsed || compatibleBackendBaseUrl,
+      resolvedRuntimeContext.actualTargetUsed || adoptedHomeNode.homeNode?.backendUrl || resolvedRuntimeContext.homeNode?.backendUrl || '',
+      { allowLoopback: localDesktopSession },
+    );
 
     return {
       ...resolvedRuntimeContext,
       apiBaseUrl: compatibleBackendBaseUrl,
       backendBaseUrl: compatibleBackendBaseUrl,
       baseUrl: compatibleBackendBaseUrl,
+      homeNode: adoptedHomeNode.homeNode || resolvedRuntimeContext.homeNode || null,
       preferredTarget,
-      actualTargetUsed: resolveCompatibleTarget(
-        compatibleBackendBaseUrl,
-        resolvedRuntimeContext.actualTargetUsed || resolvedRuntimeContext.homeNode?.backendUrl || '',
-        { allowLoopback: localDesktopSession },
-      ),
+      actualTargetUsed,
       nodeAddressSource,
       publishedClientRouteState: health.data?.client_route_state || resolvedRuntimeContext.publishedClientRouteState || 'unknown',
       restoreDecision: !localDesktopSession && isLoopbackHost(backendHost)
@@ -172,6 +259,20 @@ export function useAIConsole() {
         : (resolvedRuntimeContext.restoreDecision || ''),
       routeDiagnostics: {
         ...(resolvedRuntimeContext.routeDiagnostics || {}),
+        ...(!localDesktopSession && adoptedHomeNode.homeNode ? {
+          'home-node': {
+            configured: true,
+            available: Boolean(health.ok),
+            misconfigured: false,
+            target: adoptedHomeNode.preferredTarget || adoptedHomeNode.homeNode.uiUrl || '',
+            actualTarget: actualTargetUsed,
+            source: nodeAddressSource,
+            reason: health.ok
+              ? 'Home PC node is reachable on the LAN'
+              : 'Home PC node is configured but currently unreachable',
+            blockedReason: health.ok ? '' : 'health probe could not confirm the home-node route',
+          },
+        } : {}),
         ...(localDesktopSession ? {
           'local-desktop': {
             configured: true,
@@ -277,6 +378,16 @@ export function useAIConsole() {
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
       const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
       setProviderHealth(providerHealth.data || {});
+      if (hydratedRuntimeContext.homeNode?.reachable && !isLoopbackHost(extractHostname(hydratedRuntimeContext.frontendOrigin))) {
+        setHomeNodeLastKnown(hydratedRuntimeContext.homeNode);
+        setHomeNodeStatus({
+          state: 'ready',
+          detail: `Using ${summarizeStephanosHomeNode(hydratedRuntimeContext.homeNode)}.`,
+          attempts: [],
+          node: hydratedRuntimeContext.homeNode,
+          source: hydratedRuntimeContext.nodeAddressSource || hydratedRuntimeContext.homeNode.source || 'route-diagnostics',
+        });
+      }
       setApiStatus({
         state: health.ok ? 'online' : 'error',
         label: `Connected to ${health.target} API`,
@@ -317,7 +428,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus]);
 
   useEffect(() => {
     refreshHealth();
