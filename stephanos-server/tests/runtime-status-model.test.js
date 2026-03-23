@@ -137,6 +137,50 @@ test('pc/local browser prefers local-desktop when backend is online even if home
   assert.equal(model.nodeAddressSource, 'local-browser-session');
 });
 
+test('provider/router keeps live local-desktop route truth even when mock is the only healthy fallback', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: false },
+      groq: { ok: false },
+      gemini: { ok: false },
+      mock: { ok: true },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+      baseUrl: 'http://localhost:8787',
+      preferredTarget: 'https://cheekyfellastef.github.io',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'unknown',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          source: 'local-backend-session',
+          reason: 'Backend online locally; local-desktop route is live through the active backend session',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.preferredRoute, 'local-desktop');
+  assert.equal(model.activeProvider, 'ollama');
+  assert.equal(model.routeSelectedProvider, 'ollama');
+  assert.equal(model.nodeAddressSource, 'local-backend-session');
+  assert.equal(model.preferredTarget, 'http://localhost:8787');
+  assert.equal(model.actualTargetUsed, 'http://localhost:8787');
+  assert.equal(model.runtimeModeLabel, 'local desktop/dev');
+  assert.equal(model.appLaunchState, 'degraded');
+  assert.match(model.dependencySummary, /local desktop route valid/i);
+});
+
 test('failed optional home-node does not suppress a valid local-desktop route', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
@@ -231,7 +275,39 @@ test('route model does not emit source unknown when structured route status exis
   assert.equal(model.nodeAddressSource, 'hosted-dist-entry');
 });
 
-test('backend online with no selected route reports explicit classification failure', () => {
+test('mock remains the selected provider only when explicitly requested by the user', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'mock',
+    routeMode: 'explicit',
+    fallbackEnabled: true,
+    providerHealth: {
+      mock: { ok: true },
+      ollama: { ok: false },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+      apiBaseUrl: 'http://localhost:8787',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          source: 'local-backend-session',
+          reason: 'Backend online locally; local-desktop route is live through the active backend session',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.activeProvider, 'mock');
+  assert.equal(model.routeSelectedProvider, 'mock');
+});
+
+test('backend online local session keeps local-desktop truth even when explicit route probes are missing', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'groq',
     routeMode: 'auto',
@@ -262,8 +338,8 @@ test('backend online with no selected route reports explicit classification fail
     },
   });
 
-  assert.equal(model.routeKind, 'unavailable');
-  assert.equal(model.headline, 'Backend online but route classification failed');
-  assert.match(model.dependencySummary, /could not classify a valid route explicitly/i);
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.headline, 'Local desktop runtime ready');
+  assert.match(model.dependencySummary, /local desktop route valid/i);
   assert.equal(model.classificationFailed, true);
 });
