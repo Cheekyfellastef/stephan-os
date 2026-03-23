@@ -23,8 +23,9 @@ export default class Game {
 
     constructor(canvas) {
 
+        this.canvas = canvas;
         this.renderer = new Renderer(canvas);
-        this.input = new Input();
+        this.input = new Input(canvas);
 
         this.starfield = new Starfield(Config.width, Config.height);
 
@@ -65,74 +66,76 @@ export default class Game {
             this.enemyBrain = new EnemyBrain(this.enemies);
             this.enemyDive = new EnemyDive(this.enemies);
             this.enemyBullets = new EnemyBulletSystem(this.enemies);
-            
 
         };
 
     }
 
     start() {
+        this.input.resetAllActions();
         this.loop.start();
     }
 
-update(dt) {
+    resetInput() {
+        this.input.resetAllActions();
+    }
 
-    this.input.update();
+    update(dt) {
 
-    this.starfield.update(dt);
+        this.input.update();
 
-    this.player.update(this.input, dt);
+        this.starfield.update(dt);
 
-    // run enemy systems only if enemies exist
-    if (this.enemies) {
+        this.player.update(this.input, dt);
 
+        // run enemy systems only if enemies exist
+        if (this.enemies) {
 
+            this.enemies.update(dt);
 
-this.enemies.update(dt);
+            this.enemyBrain.update(dt, this.player);
 
-this.enemyBrain.update(dt, this.player);
+            this.enemyDive.update(dt);
 
-this.enemyDive.update(dt);
+            this.enemies.enemies.forEach(enemy => {
+                enemy.update(dt);
+            });
 
-this.enemies.enemies.forEach(enemy => {
-    enemy.update(dt);
-});
+            this.enemyBullets.update(dt, this.player);
 
-        this.enemyBullets.update(dt, this.player);
+            this.bullets.update(dt, this.input, this.player);
 
-        this.bullets.update(dt, this.input, this.player);
+            this.waveManager.update(dt);
 
-        this.waveManager.update(dt);
+            this.stageBanner.update(dt);
 
-        this.stageBanner.update(dt);
+            // player bullet collisions
+            this.bullets.bullets.forEach((bullet) => {
 
-        // player bullet collisions
-        this.bullets.bullets.forEach((bullet) => {
+                this.enemies.enemies.forEach((enemy) => {
 
-            this.enemies.enemies.forEach((enemy) => {
+                    if (!enemy.active) return;
 
-                if (!enemy.active) return;
+                    if (Collision.check(bullet, enemy)) {
 
-                if (Collision.check(bullet, enemy)) {
+                        bullet.active = false;
+                        enemy.active = false;
 
-                    bullet.active = false;
-                    enemy.active = false;
+                        this.explosions.spawn(enemy.x, enemy.y);
 
-                    this.explosions.spawn(enemy.x, enemy.y);
+                        this.scoreSystem.add(100);
 
-                    this.scoreSystem.add(100);
+                    }
 
-                }
+                });
 
             });
 
-        });
+        }
+
+        this.explosions.update(dt);
 
     }
-
-    this.explosions.update(dt);
-
-}
 
     render() {
 
