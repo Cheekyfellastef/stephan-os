@@ -18,6 +18,7 @@ import {
   normalizeStephanosHomeNode,
 } from './stephanosHomeNode.mjs';
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
+import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -100,7 +101,7 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
     preferredTarget: compatiblePreferredTarget,
     actualTargetUsed: compatibleActualTarget,
-    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
+    nodeAddressSource: runtimeContext.nodeAddressSource || (homeNode?.configured ? homeNode.source : '') || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
     restoreDecision: String(runtimeContext.restoreDecision || ''),
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
@@ -166,6 +167,12 @@ function getReadyLocalProviders(providerHealth = {}) {
 }
 
 function chooseAutoRouteMode({ runtimeContext, localAvailable, cloudAvailable }) {
+  if (runtimeContext.deviceContext === 'lan-companion') {
+    if (localAvailable) return 'local-first';
+    if (cloudAvailable) return 'cloud-first';
+    return 'local-first';
+  }
+
   if (runtimeContext.sessionKind === 'hosted-web') {
     if (cloudAvailable) return 'cloud-first';
     if (localAvailable) return 'local-first';
@@ -175,6 +182,28 @@ function chooseAutoRouteMode({ runtimeContext, localAvailable, cloudAvailable })
   if (localAvailable) return 'local-first';
   if (cloudAvailable) return 'cloud-first';
   return 'local-first';
+}
+
+function getPreferredLocalFailure(providerHealth = {}) {
+  const health = normalizeProviderHealth(providerHealth);
+  for (const providerKey of LOCAL_PROVIDER_KEYS) {
+    const providerState = health[providerKey];
+    if (!providerState || providerState.ok) {
+      continue;
+    }
+
+    const detail = String(
+      providerState.reason
+      || providerState.detail
+      || providerState.message
+      || providerState.failureReason
+      || '',
+    ).trim();
+    const label = PROVIDER_DEFINITIONS[providerKey]?.label || providerKey;
+    return detail ? `${label} unavailable: ${detail}` : `${label} unavailable`;
+  }
+
+  return 'Local Ollama unavailable';
 }
 
 function deriveRoutePlan({
@@ -516,7 +545,7 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
     preferredTarget = selectedRoute?.target || runtimeContext.actualTargetUsed || runtimeContext.apiBaseUrl || runtimeContext.preferredTarget;
     actualTargetUsed = selectedRoute?.actualTarget || runtimeContext.actualTargetUsed || runtimeContext.apiBaseUrl || preferredTarget;
   } else if (selectedRouteKey === 'home-node') {
-    preferredTarget = selectedRoute?.target || runtimeContext.homeNode?.uiUrl || runtimeContext.preferredTarget;
+    preferredTarget = selectedRoute?.target || runtimeContext.homeNode?.backendUrl || runtimeContext.preferredTarget;
     actualTargetUsed = selectedRoute?.actualTarget || runtimeContext.homeNode?.backendUrl || runtimeContext.actualTargetUsed || preferredTarget;
   } else if (selectedRouteKey === 'dist') {
     preferredTarget = selectedRoute?.target || runtimeContext.preferredTarget;
@@ -529,7 +558,10 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
   const nodeAddressSource = selectedRoute?.kind === 'local-desktop'
     ? (selectedRoute.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'))
     : (runtimeContext.homeNode?.configured || runtimeContext.nodeAddressSource)
-      ? (runtimeContext.nodeAddressSource || runtimeContext.homeNode?.source || selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'))
+      ? ((runtimeContext.nodeAddressSource && runtimeContext.nodeAddressSource !== 'route-diagnostics')
+        || (runtimeContext.homeNode?.configured && runtimeContext.homeNode?.source)
+        ? (runtimeContext.nodeAddressSource || runtimeContext.homeNode?.source || selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'))
+        : (selectedRoute?.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics')))
       : (selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'));
 
   return {
@@ -559,8 +591,10 @@ function buildDependencySummary({
   activeProvider,
   runtimeContext,
   nodeRoute,
+  providerHealth,
 }) {
   const selectedRoute = nodeRoute.preferredRoute ? nodeRoute.routeEvaluations[nodeRoute.preferredRoute] : null;
+  const localFailureSummary = getPreferredLocalFailure(providerHealth);
 
   if (!selectedRoute) {
     if (backendAvailable && runtimeContext.frontendLocal) {
@@ -593,7 +627,7 @@ function buildDependencySummary({
     }
 
     if (cloudAvailable && !localAvailable) {
-      return 'Home PC node ready · cloud route ready';
+      return `Home PC node ready · ${localFailureSummary} · cloud route ready`;
     }
 
     return selectedRoute.reason || 'Home PC node ready';
@@ -612,10 +646,6 @@ function buildDependencySummary({
       return 'Checking local Ollama readiness';
     }
 
-    if (effectiveRouteMode === 'cloud-first' && cloudAvailable) {
-      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
-    }
-
     if (effectiveRouteMode === 'explicit') {
       return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} explicitly selected`;
     }
@@ -625,11 +655,15 @@ function buildDependencySummary({
     }
 
     if (!localAvailable && cloudAvailable) {
-      return 'Cloud active because local Ollama is unavailable';
+      return `${localFailureSummary} · cloud active because local Ollama is unavailable`;
+    }
+
+    if (effectiveRouteMode === 'cloud-first' && cloudAvailable) {
+      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
     }
 
     if (!localAvailable && !cloudAvailable) {
-      return 'Local desktop route valid, but both local Ollama and cloud routing are unavailable';
+      return `Local desktop route valid, but ${localFailureSummary.toLowerCase()}; cloud routing is unavailable`;
     }
 
     if (fallbackActive) {
@@ -725,6 +759,7 @@ export function createRuntimeStatusModel({
     activeProvider,
     runtimeContext: normalizedRuntimeContext,
     nodeRoute,
+    providerHealth: health,
   });
 
   const launchUnavailable = validationState === 'error' && nodeRoute.routeKind === 'unavailable';
@@ -767,6 +802,8 @@ export function createRuntimeStatusModel({
     runtimeModeLabel: nodeRoute.routeKind === 'home-node'
       ? 'home node/lan'
       : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
+    routeAdoptionMarker: STEPHANOS_ROUTE_ADOPTION_MARKER,
+    providerRoutingMarker: STEPHANOS_PROVIDER_ROUTING_MARKER,
     dependencySummary,
     headline,
     statusTone: appLaunchState === 'unavailable' ? 'unavailable' : appLaunchState === 'degraded' ? 'degraded' : 'ready',

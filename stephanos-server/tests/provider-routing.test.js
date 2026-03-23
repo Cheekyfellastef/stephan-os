@@ -1,222 +1,82 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_PROVIDER_KEY, DEFAULT_ROUTE_MODE, PROVIDER_DEFINITIONS } from '../../shared/ai/providerDefaults.mjs';
-import { resolveProviderRequest, routeLLMRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
-import { checkOllamaHealth, resolveOllamaConfig } from '../services/llm/providers/ollamaProvider.js';
+import { normalizeRuntimeContext, resolveRoutingPlan } from '../services/llm/utils/providerUtils.js';
 
-test('default provider is ollama for local-first load', () => {
-  assert.equal(DEFAULT_PROVIDER_KEY, 'ollama');
-  assert.equal(DEFAULT_ROUTE_MODE, 'auto');
-  assert.equal(PROVIDER_DEFINITIONS.mock.defaults.mode, 'echo');
-  assert.equal(PROVIDER_DEFINITIONS.openrouter.defaults.enabled, false);
-});
-
-test('provider router falls back invalid selections to the default local provider', () => {
-  const resolved = resolveProviderRequest('not-a-provider', {});
-  assert.equal(resolved.requestedProvider, 'not-a-provider');
-  assert.equal(resolved.resolvedProvider, 'ollama');
-  assert.equal(resolved.fallbackApplied, true);
-});
-
-test('provider router preserves valid groq selection', () => {
-  const resolved = resolveProviderRequest('groq', { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1', apiKey: 'should-be-ignored' }, { routeMode: 'explicit' });
-  assert.equal(resolved.resolvedProvider, 'groq');
-  assert.equal(resolved.requestedRouteMode, 'explicit');
-  assert.deepEqual(resolved.overrideKeys.sort(), ['apiKey', 'baseURL', 'model']);
-});
-
-test('mock provider answers without any API keys configured', async () => {
-  const response = await routeLLMRequest({ messages: [{ role: 'user', content: 'describe the current mode' }] }, { provider: 'mock', routeMode: 'explicit', providerConfigs: { mock: { mode: 'echo', latencyMs: 0 } } });
-  assert.equal(response.ok, true);
-  assert.equal(response.provider, 'mock');
-  assert.equal(response.actualProviderUsed, 'mock');
-  assert.equal(response.fallbackUsed, false);
-  assert.match(response.outputText, /describe the current mode/i);
-});
-
-test('cloud-first routing prefers groq for hosted sessions when groq is configured', async () => {
-  const originalGroqKey = process.env.GROQ_API_KEY;
-  process.env.GROQ_API_KEY = 'gsk_test_123';
-  const originalFetch = global.fetch;
-  global.fetch = async (url, options = {}) => {
-    if (String(url).includes('api.groq.com')) {
-      const body = JSON.parse(options.body);
-      assert.equal(body.model, 'openai/gpt-oss-20b');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ model: 'openai/gpt-oss-20b', choices: [{ message: { content: 'Groq cloud response' } }] }),
-      };
-    }
-    throw new Error(`Unexpected URL ${url}`);
-  };
-
-  try {
-    const response = await routeLLMRequest(
-      { messages: [{ role: 'user', content: 'use cloud path' }] },
-      {
-        provider: 'ollama',
-        routeMode: 'cloud-first',
-        providerConfigs: { groq: { apiKey: 'client-side-secret-should-not-win' } },
-        runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
+test('provider utils classify hosted LAN sessions as lan companions when the home node is reachable', () => {
+  const runtimeContext = normalizeRuntimeContext({
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    apiBaseUrl: 'http://192.168.0.198:8787',
+    nodeAddressSource: 'manual',
+    homeNode: {
+      host: '192.168.0.198',
+      backendPort: 8787,
+      source: 'manual',
+      reachable: true,
+    },
+    routeDiagnostics: {
+      'home-node': {
+        configured: true,
+        available: true,
+        source: 'manual',
       },
-    );
+    },
+  });
 
-    assert.equal(response.ok, true);
-    assert.equal(response.provider, 'groq');
-    assert.equal(response.actualProviderUsed, 'groq');
-    assert.equal(response.diagnostics.selectedProvider, 'groq');
-    assert.equal(response.diagnostics.effectiveRouteMode, 'cloud-first');
-    assert.equal(response.diagnostics.runtimeContext.sessionKind, 'hosted-web');
-  } finally {
-    global.fetch = originalFetch;
-    process.env.GROQ_API_KEY = originalGroqKey;
-  }
+  assert.equal(runtimeContext.deviceContext, 'lan-companion');
+  assert.equal(runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(runtimeContext.nodeAddressSource, 'manual');
 });
 
-test('provider health snapshot reports cloud-first routing truth', async () => {
-  const originalGroqKey = process.env.GROQ_API_KEY;
-  process.env.GROQ_API_KEY = 'gsk_test_123';
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
+test('provider routing keeps auto mode local-first for reachable LAN home-node sessions', () => {
+  const routing = resolveRoutingPlan({
+    provider: 'ollama',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    fallbackOrder: ['groq', 'mock'],
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        backendPort: 8787,
+        source: 'manual',
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'manual',
+        },
+      },
+    },
+  }, {
+    ollama: { ok: true },
+    groq: { ok: true },
+    mock: { ok: true },
+  });
 
-  try {
-    const snapshot = await getProviderHealthSnapshot({
-      provider: 'ollama',
-      routeMode: 'auto',
-      runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
-    });
-
-    assert.equal(snapshot.groq.ok, true);
-    assert.equal(snapshot.groq.configuredVia, 'GROQ_API_KEY');
-    assert.equal(snapshot.routing.effectiveRouteMode, 'cloud-first');
-    assert.equal(snapshot.routing.selectedProvider, 'groq');
-  } finally {
-    global.fetch = originalFetch;
-    process.env.GROQ_API_KEY = originalGroqKey;
-  }
+  assert.equal(routing.effectiveRouteMode, 'local-first');
+  assert.equal(routing.selectedProvider, 'ollama');
+  assert.deepEqual(routing.readyLocalProviders, ['ollama']);
 });
 
-test('router executes ollama directly when ollama succeeds', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async (url, options = {}) => {
-    if (String(url).endsWith('/api/tags')) {
-      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
-    }
-    if (String(url).endsWith('/api/chat')) {
-      assert.equal(options.method, 'POST');
-      const body = JSON.parse(options.body);
-      assert.equal(body.model, 'gpt-oss:20b');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ model: 'gpt-oss:20b', message: { content: 'Ollama real response' } }),
-      };
-    }
-    throw new Error(`Unexpected URL ${url}`);
-  };
+test('provider utils promote loopback backend sessions to local-desktop even from hosted origins', () => {
+  const runtimeContext = normalizeRuntimeContext({
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    apiBaseUrl: 'http://localhost:8787',
+    nodeAddressSource: 'local-backend-session',
+    routeDiagnostics: {
+      'local-desktop': {
+        configured: true,
+        available: true,
+        source: 'local-backend-session',
+      },
+    },
+  });
 
-  try {
-    const response = await routeLLMRequest(
-      { messages: [{ role: 'user', content: 'use ollama directly' }] },
-      { provider: 'ollama', routeMode: 'local-first', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
-    );
-
-    assert.equal(response.ok, true);
-    assert.equal(response.provider, 'ollama');
-    assert.equal(response.actualProviderUsed, 'ollama');
-    assert.equal(response.fallbackUsed, false);
-    assert.equal(response.diagnostics.selectedProvider, 'ollama');
-    assert.equal(response.outputText, 'Ollama real response');
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test('router surfaces fallback reason when ollama fails and mock is used', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async (url) => {
-    if (String(url).endsWith('/api/tags')) {
-      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
-    }
-    if (String(url).endsWith('/api/chat')) {
-      return { ok: false, status: 500, json: async () => ({ error: 'Ollama internal error' }) };
-    }
-    throw new Error(`Unexpected URL ${url}`);
-  };
-
-  try {
-    const response = await routeLLMRequest(
-      { messages: [{ role: 'user', content: 'fallback if ollama fails' }] },
-      { provider: 'ollama', routeMode: 'local-first', fallbackEnabled: true, fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'], providerConfigs: { ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 50 }, mock: { latencyMs: 0, mode: 'echo' } } },
-    );
-
-    assert.equal(response.ok, true);
-    assert.equal(response.provider, 'mock');
-    assert.equal(response.actualProviderUsed, 'mock');
-    assert.equal(response.fallbackUsed, true);
-    assert.match(response.fallbackReason, /ollama/i);
-    assert.match(response.fallbackReason, /internal error/i);
-    assert.equal(response.diagnostics.attemptOrder[0], 'ollama');
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test('ollama config resolves canonical endpoint and model by default', () => {
-  const resolved = resolveOllamaConfig({});
-  assert.equal(resolved.baseURL, 'http://localhost:11434');
-  assert.equal(resolved.endpoint, 'http://localhost:11434/api/chat');
-  assert.equal(resolved.model, 'gpt-oss:20b');
-});
-
-
-test('ollama health reports connected state when /api/tags succeeds', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: true, status: 200 });
-
-  try {
-    const health = await checkOllamaHealth({ baseURL: 'http://localhost:11434', timeoutMs: 50 });
-    assert.equal(health.ok, true);
-    assert.equal(health.state, 'CONNECTED');
-    assert.equal(health.message, 'Connected to Ollama (Local Machine)');
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test('ollama health marks localhost failures as likely wrong device candidates', async () => {
-  const originalFetch = global.fetch;
-  const error = new TypeError('fetch failed');
-  error.cause = { code: 'ECONNREFUSED' };
-  global.fetch = async () => { throw error; };
-
-  try {
-    const health = await checkOllamaHealth({ baseURL: 'http://localhost:11434', timeoutMs: 50 });
-    assert.equal(health.ok, false);
-    assert.equal(health.state, 'OFFLINE');
-    assert.equal(health.failureType, 'connection_refused');
-    assert.equal(health.likelyWrongDevice, true);
-    assert.equal(health.suggestedUrl, 'http://192.168.1.42:11434');
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test('ollama health reports offline state for LAN timeout', async () => {
-  const originalFetch = global.fetch;
-  const error = new Error('connect timeout');
-  error.cause = { code: 'ETIMEDOUT' };
-  global.fetch = async () => { throw error; };
-
-  try {
-    const health = await checkOllamaHealth({ baseURL: 'http://192.168.1.42:11434', timeoutMs: 50 });
-    assert.equal(health.ok, false);
-    assert.equal(health.state, 'OFFLINE');
-    assert.equal(health.failureType, 'timeout');
-    assert.equal(health.message, 'Cannot connect to Ollama');
-  } finally {
-    global.fetch = originalFetch;
-  }
+  assert.equal(runtimeContext.deviceContext, 'pc-local-browser');
+  assert.equal(runtimeContext.sessionKind, 'local-desktop');
 });

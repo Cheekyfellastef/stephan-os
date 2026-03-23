@@ -12,6 +12,10 @@ import {
   STEPHANOS_UI_SOURCE_FINGERPRINT,
   STEPHANOS_UI_VERSION,
 } from '../runtimeInfo';
+import {
+  STEPHANOS_PROVIDER_ROUTING_MARKER,
+  STEPHANOS_ROUTE_ADOPTION_MARKER,
+} from '../../../shared/runtime/stephanosRouteMarkers.mjs';
 import CollapsiblePanel from './CollapsiblePanel';
 
 export default function StatusPanel() {
@@ -156,6 +160,8 @@ export default function StatusPanel() {
         <li>UI Build Target Identifier: {STEPHANOS_UI_BUILD_TARGET_IDENTIFIER}</li>
         <li>UI Source: {STEPHANOS_UI_SOURCE}</li>
         <li>UI Source Fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</li>
+        <li>Route Adoption Marker: {STEPHANOS_ROUTE_ADOPTION_MARKER}</li>
+        <li>Provider Routing Marker: {STEPHANOS_PROVIDER_ROUTING_MARKER}</li>
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary}</p>

@@ -10,6 +10,11 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
 } from '../../../../shared/ai/providerDefaults.mjs';
+import {
+  isLikelyLanHost,
+  isLoopbackHost,
+  normalizeStephanosHomeNode,
+} from '../../../../shared/runtime/stephanosHomeNode.mjs';
 
 const SERVER_ENV_ONLY_PROVIDER_KEYS = ['groq'];
 
@@ -87,7 +92,6 @@ export function buildProviderStatus(status, detail, extras = {}) {
 export function normalizeRuntimeContext(runtimeContext = {}) {
   const frontendOrigin = String(runtimeContext.frontendOrigin || '');
   const apiBaseUrl = String(runtimeContext.baseUrl || runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || '');
-
   const parseHostname = (value) => {
     try {
       return new URL(value).hostname || '';
@@ -95,15 +99,30 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       return '';
     }
   };
-  const isLoopbackHost = (hostname) => ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).toLowerCase());
 
   const frontendHost = parseHostname(frontendOrigin);
   const backendHost = parseHostname(apiBaseUrl);
-  const frontendReachability = isLoopbackHost(frontendHost) || !frontendHost ? 'local' : 'hosted';
-  const backendReachability = isLoopbackHost(backendHost) || !backendHost ? 'local' : 'reachable';
-  const sessionKind = frontendReachability === 'local' && backendReachability === 'local'
-    ? 'local-desktop'
-    : 'hosted-web';
+  const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
+  const backendLocal = isLoopbackHost(backendHost) || !backendHost;
+  const frontendReachability = frontendLocal ? 'local' : 'hosted';
+  const backendReachability = backendLocal && frontendLocal ? 'local' : 'reachable';
+  const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
+    source: runtimeContext.homeNode?.source || runtimeContext.nodeAddressSource || 'manual',
+  });
+  const routeDiagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
+    ? runtimeContext.routeDiagnostics
+    : {};
+  const localDesktopBackendSession = backendLocal && (
+    runtimeContext.nodeAddressSource === 'local-backend-session'
+    || runtimeContext.nodeAddressSource === 'local-browser-session'
+    || routeDiagnostics['local-desktop']?.configured === true
+  );
+  const deviceContext = frontendLocal || localDesktopBackendSession
+    ? 'pc-local-browser'
+    : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
+      ? 'lan-companion'
+      : 'off-network';
+  const sessionKind = frontendLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
 
   return {
     frontendOrigin,
@@ -112,7 +131,13 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     backendHost,
     frontendReachability,
     backendReachability,
+    frontendLocal,
+    backendLocal,
+    deviceContext,
     sessionKind,
+    homeNode,
+    nodeAddressSource: runtimeContext.nodeAddressSource || (homeNode?.configured ? homeNode.source : '') || (frontendLocal ? 'local-backend-session' : 'route-diagnostics'),
+    routeDiagnostics,
   };
 }
 
@@ -138,9 +163,11 @@ export function resolveRoutingPlan(routerConfig = {}, providerHealthSnapshot = {
   const cloudAvailable = readyCloudProviders.length > 0;
 
   const effectiveRouteMode = requestedRouteMode === 'auto'
-    ? runtimeContext.sessionKind === 'hosted-web'
-      ? (cloudAvailable ? 'cloud-first' : 'local-first')
-      : (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
+    ? runtimeContext.deviceContext === 'lan-companion'
+      ? (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
+      : runtimeContext.sessionKind === 'hosted-web'
+        ? (cloudAvailable ? 'cloud-first' : 'local-first')
+        : (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
     : requestedRouteMode;
 
   const preferredOrder = effectiveRouteMode === 'explicit'

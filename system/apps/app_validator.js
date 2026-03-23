@@ -615,7 +615,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       frontendOrigin: currentOrigin,
       apiBaseUrl: effectiveBackendBaseUrl,
       homeNode: preferredHomeNode ? (homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
-      preferredTarget: candidateLaunchUrl || hostedDistUrl || currentOrigin,
+      preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || currentOrigin,
       actualTargetUsed: effectiveBackendBaseUrl,
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
@@ -644,7 +644,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           configured: Boolean(preferredHomeNode?.host),
           available: Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host),
           misconfigured: Boolean(homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured),
-          target: homeNodeTarget?.url || preferredHomeNode?.uiUrl || '',
+          target: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
           reason: homeNodeDiscovery.reachable

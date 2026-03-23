@@ -556,6 +556,9 @@ test('validateStephanosRuntime prefers reachable home-node over dist fallback on
     assert.equal(status.launchUrl, 'http://192.168.0.198:5173/');
     assert.equal(status.launchStrategy, 'navigate');
     assert.equal(status.runtimeStatusModel.routeEvaluations['home-node'].available, true);
+    assert.equal(status.runtimeStatusModel.preferredTarget, 'http://192.168.0.198:8787');
+    assert.equal(status.runtimeStatusModel.actualTargetUsed, 'http://192.168.0.198:8787');
+    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'manual');
     assert.equal(status.runtimeStatusModel.routeEvaluations.dist.available, true);
     assert.match(status.message, /home pc node is reachable on the lan/i);
   } finally {
@@ -651,8 +654,104 @@ test('validateStephanosRuntime prefers reachable home-node over dist from the ho
     assert.equal(status.runtimeStatusModel.preferredRoute, 'home-node');
     assert.equal(status.runtimeStatusModel.runtimeContext.deviceContext, 'lan-companion');
     assert.equal(status.launchUrl, 'http://192.168.0.198:5173/');
+    assert.equal(status.runtimeStatusModel.preferredTarget, 'http://192.168.0.198:8787');
+    assert.equal(status.runtimeStatusModel.actualTargetUsed, 'http://192.168.0.198:8787');
+    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'manual');
     assert.match(status.runtimeStatusModel.routeEvaluations['home-node'].reason, /published client route is misconfigured|reachable on the lan/i);
     assert.match(status.runtimeStatusModel.routeEvaluations.dist.blockedReason, /home-node is a valid live route and outranks dist/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
+test('validateStephanosRuntime keeps Ollama selected on PC local-desktop when backend and Ollama are both reachable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+
+  globalThis.window = { location: { origin: 'http://localhost:4173' } };
+  globalThis.localStorage = {
+    getItem() {
+      return JSON.stringify({
+        session: {
+          providerPreferences: {
+            provider: 'ollama',
+            routeMode: 'auto',
+            fallbackEnabled: true,
+            fallbackOrder: ['groq', 'mock'],
+          },
+        },
+      });
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      if (url === './apps/stephanos/dist/index.html') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === './apps/stephanos/runtime-status.json' || url === 'http://127.0.0.1:4173/__stephanos/health') {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    if (url === 'http://localhost:8787/api/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+        json: async () => ({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+      };
+    }
+
+    if (url === 'http://localhost:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: { ollama: { ok: true, reason: '' }, groq: { ok: true } } }),
+        json: async () => ({ success: true, data: { ollama: { ok: true, reason: '' }, groq: { ok: true } } }),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.state, 'healthy');
+    assert.equal(status.runtimeStatusModel.routeKind, 'local-desktop');
+    assert.equal(status.runtimeStatusModel.activeProvider, 'ollama');
+    assert.equal(status.runtimeStatusModel.routeSelectedProvider, 'ollama');
+    assert.equal(status.runtimeStatusModel.preferredTarget, 'http://localhost:8787');
+    assert.match(status.message, /Local Ollama ready/i);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;

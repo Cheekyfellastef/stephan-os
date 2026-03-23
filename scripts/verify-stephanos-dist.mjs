@@ -11,6 +11,7 @@ import {
   stephanosDistIndexPath,
   stephanosDistMetadataPath,
 } from './stephanos-build-utils.mjs';
+import { STEPHANOS_DIST_ROUTE_MARKERS } from '../shared/runtime/stephanosRouteMarkers.mjs';
 
 function fail(message) {
   console.error(`\n[stephanos verify] ${message}`);
@@ -38,6 +39,15 @@ if (assetReferences.length === 0) {
 const missingAssets = assetReferences.filter((assetPath) => !existsSync(resolveDistAssetPath(assetPath)));
 if (missingAssets.length > 0) {
   fail(`Stephanos dist references missing assets: ${missingAssets.join(', ')}. Dist looks stale; run: npm run stephanos:build`);
+}
+
+const jsAssets = assetReferences.filter((assetPath) => assetPath.endsWith('.js'));
+const jsAssetContents = jsAssets.map((assetPath) => readFileSync(resolveDistAssetPath(assetPath), 'utf8'));
+for (const marker of STEPHANOS_DIST_ROUTE_MARKERS) {
+  const markerPresent = jsAssetContents.some((content) => content.includes(marker));
+  if (!markerPresent) {
+    fail(`Stephanos dist is stale: route adoption marker "${marker}" is missing from built JS assets. Rebuild with: npm run stephanos:build`);
+  }
 }
 
 if (!existsSync(stephanosDistMetadataPath)) {
