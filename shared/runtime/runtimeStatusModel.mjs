@@ -19,6 +19,7 @@ import {
 } from './stephanosHomeNode.mjs';
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
+import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -842,7 +843,7 @@ export function createRuntimeStatusModel({
     ? (nodeRoute.classificationFailed ? 'Backend online but route classification failed' : 'No reachable Stephanos route')
     : nodeRoute.routeHeadline || `${appName} ready with degraded dependencies`;
 
-  return {
+  const model = {
     appId,
     appName,
     routeMode: routePlan.requestedRouteMode,
@@ -859,6 +860,7 @@ export function createRuntimeStatusModel({
     backendAvailable,
     fallbackActive,
     appLaunchState,
+    validationState,
     readyCloudProviders: routePlan.readyCloudProviders,
     readyLocalProviders: routePlan.readyLocalProviders,
     attemptOrder: routePlan.attemptOrder,
@@ -887,5 +889,10 @@ export function createRuntimeStatusModel({
     routePreferenceOrder: nodeRoute.routePreferenceOrder,
     preferredRoute: nodeRoute.preferredRoute,
     classificationFailed: nodeRoute.classificationFailed,
+  };
+
+  return {
+    ...model,
+    guardrails: evaluateRuntimeGuardrails(model),
   };
 }

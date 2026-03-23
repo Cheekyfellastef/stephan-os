@@ -343,3 +343,39 @@ test('backend online local session keeps local-desktop truth even when explicit 
   assert.match(model.dependencySummary, /local desktop route valid/i);
   assert.equal(model.classificationFailed, true);
 });
+
+
+test('runtime status keeps provider eligibility aligned with finalRoute truth for cloud sessions', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'https://api.stephanos.example',
+      preferredTarget: 'https://stephanos.example',
+      actualTargetUsed: 'https://api.stephanos.example',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://stephanos.example',
+          actualTarget: 'https://api.stephanos.example',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.finalRoute.routeKind, 'cloud');
+  assert.equal(model.finalRoute.providerEligibility.backendMediatedProviders, false);
+  assert.equal(model.finalRoute.providerEligibility.cloudProviders, true);
+  assert.equal(model.guardrails.summary.errors, 0);
+});

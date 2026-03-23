@@ -80,3 +80,43 @@ test('provider utils promote loopback backend sessions to local-desktop even fro
   assert.equal(runtimeContext.deviceContext, 'pc-local-browser');
   assert.equal(runtimeContext.sessionKind, 'local-desktop');
 });
+
+
+test('provider routing leaves home-node adoption semantics untouched while shared runtime truth stays remote-safe', () => {
+  const routing = resolveRoutingPlan({
+    provider: 'ollama',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    fallbackOrder: ['groq', 'mock'],
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        backendPort: 8787,
+        source: 'manual',
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'manual',
+          actualTarget: 'http://192.168.0.198:8787',
+        },
+      },
+    },
+  }, {
+    ollama: { ok: true },
+    groq: { ok: true },
+    mock: { ok: true },
+  });
+
+  assert.equal(routing.effectiveRouteMode, 'local-first');
+  assert.equal(routing.selectedProvider, 'ollama');
+  assert.equal(routing.runtimeContext.actualTargetUsed, 'http://192.168.0.198:8787');
+  assert.equal(routing.runtimeContext.preferredTarget, 'http://192.168.0.198:5173/');
+});

@@ -86,6 +86,24 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     finalRoute,
   };
 
+  const guardrails = candidate.guardrails && typeof candidate.guardrails === 'object'
+    ? {
+      ok: candidate.guardrails.ok !== false,
+      hasErrors: candidate.guardrails.hasErrors === true,
+      hasWarnings: candidate.guardrails.hasWarnings === true,
+      errors: normalizeArray(candidate.guardrails.errors),
+      warnings: normalizeArray(candidate.guardrails.warnings),
+      invariants: normalizeArray(candidate.guardrails.invariants),
+      summary: candidate.guardrails.summary && typeof candidate.guardrails.summary === 'object'
+        ? {
+          total: Number(candidate.guardrails.summary.total) || 0,
+          errors: Number(candidate.guardrails.summary.errors) || 0,
+          warnings: Number(candidate.guardrails.summary.warnings) || 0,
+        }
+        : { total: 0, errors: 0, warnings: 0 },
+    }
+    : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
+
   const routeKind = candidate.routeKind ?? finalRoute.routeKind ?? baseModel.routeKind;
   const preferredTarget = candidate.preferredTarget ?? finalRoute.preferredTarget ?? baseModel.preferredTarget;
   const actualTargetUsed = candidate.actualTargetUsed ?? finalRoute.actualTarget ?? baseModel.actualTargetUsed;
@@ -96,6 +114,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     ...candidate,
     runtimeContext,
     finalRoute,
+    guardrails,
     routeKind,
     preferredTarget,
     actualTargetUsed,

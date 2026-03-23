@@ -340,6 +340,29 @@ export function AIStoreProvider({ children }) {
   const debugVisible = uiLayout.debugConsole === true;
 
   useEffect(() => {
+    if (!devMode || typeof console?.warn !== 'function') {
+      return;
+    }
+
+    if (!runtimeStatusModel?.guardrails?.summary?.total) {
+      return;
+    }
+
+    const issues = [
+      ...(runtimeStatusModel.guardrails.errors || []),
+      ...(runtimeStatusModel.guardrails.warnings || []),
+    ].map((issue) => `${issue.severity.toUpperCase()}: ${issue.message}`);
+
+    if (issues.length > 0) {
+      console.warn('[Stephanos Routing Guardrails]', {
+        summary: runtimeStatusModel.guardrails.summary,
+        issues,
+        finalRoute: runtimeStatusModel.finalRoute,
+      });
+    }
+  }, [devMode, runtimeStatusModel]);
+
+  useEffect(() => {
     persistStephanosSessionMemory({
       session: {
         providerPreferences: {
