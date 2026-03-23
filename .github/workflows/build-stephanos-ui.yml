@@ -44,6 +44,18 @@ jobs:
         working-directory: stephanos-ui
         run: npm ci
 
+      - name: Run Stephanos routing guardrails tests
+        run: |
+          node --test \
+            shared/runtime/runtimeGuardrails.test.mjs \
+            shared/runtime/runtimeStatusModel.test.mjs \
+            shared/runtime/stephanosHomeNode.test.mjs \
+            shared/runtime/stephanosSessionMemory.test.mjs \
+            stephanos-server/tests/runtime-status-model.test.js \
+            stephanos-server/tests/provider-routing.test.js \
+            stephanos-ui/src/components/StatusPanel.render.test.mjs \
+            scripts/stephanos-build-utils.test.mjs
+
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
 

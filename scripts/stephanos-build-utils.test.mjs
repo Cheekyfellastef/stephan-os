@@ -9,6 +9,7 @@ test('Stephanos dist fingerprint includes shared runtime and shared AI source tr
     .map((absolutePath) => path.relative(repoRoot, absolutePath).replace(/\\/g, '/'));
 
   assert.ok(files.includes('shared/runtime/runtimeStatusModel.mjs'));
+  assert.ok(files.includes('shared/runtime/runtimeGuardrails.mjs'));
   assert.ok(files.includes('shared/runtime/stephanosHomeNode.mjs'));
   assert.ok(files.includes('shared/ai/providerDefaults.mjs'));
   assert.ok(files.includes('stephanos-ui/src/App.jsx'));

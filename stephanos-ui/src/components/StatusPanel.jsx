@@ -55,10 +55,13 @@ export default function StatusPanel() {
   const activeConfig = getActiveProviderConfig();
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, safeApiStatus.baseUrl, safeProviderHealth[provider]);
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  // finalRoute is the sole resolved route truth for UI rendering; guardrails report when any projection drifts.
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const providerEligibility = finalRoute.providerEligibility ?? {};
   const reachability = finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
+  const guardrails = runtimeStatus.guardrails ?? { summary: { total: 0, errors: 0, warnings: 0 }, errors: [], warnings: [] };
+  const primaryGuardrailMessage = guardrails.errors?.[0]?.message || guardrails.warnings?.[0]?.message || 'none';
   const executionTruth = isBusy
     ? 'busy'
     : !lastExecutionMetadata?.actual_provider_used
@@ -112,6 +115,9 @@ export default function StatusPanel() {
         <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
         <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
         <li>Mock Fallback Only: {providerEligibility.mockFallbackOnly ? 'yes' : 'pending'}</li>
+        <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
+        <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>
+        <li>Guardrails Detail: {primaryGuardrailMessage}</li>
         <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>

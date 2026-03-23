@@ -360,3 +360,80 @@ test('createRuntimeStatusModel surfaces explicit Ollama failure reasons before t
   assert.match(status.dependencySummary, /Ollama unavailable: Nothing answered at that Ollama address\./i);
   assert.match(status.dependencySummary, /cloud active because local Ollama is unavailable/i);
 });
+
+
+test('createRuntimeStatusModel keeps finalRoute as the sole route truth projection for consumers', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'https://api.stephanos.example',
+      preferredTarget: 'https://stephanos.example',
+      actualTargetUsed: 'https://api.stephanos.example',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://stephanos.example',
+          actualTarget: 'https://api.stephanos.example',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, status.finalRoute.routeKind);
+  assert.equal(status.preferredTarget, status.finalRoute.preferredTarget);
+  assert.equal(status.actualTargetUsed, status.finalRoute.actualTarget);
+  assert.equal(status.nodeAddressSource, status.finalRoute.source);
+  assert.deepEqual(status.runtimeContext.finalRoute, status.finalRoute);
+  assert.equal(status.guardrails.summary.errors, 0);
+});
+
+test('createRuntimeStatusModel guardrails preserve request-host promotion for reachable home-node routes', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.finalRoute.routeKind, 'home-node');
+  assert.equal(status.finalRoute.actualTarget, 'http://192.168.0.198:8787');
+  assert.equal(status.guardrails.summary.errors, 0);
+  assert.equal(status.guardrails.summary.warnings, 0);
+});

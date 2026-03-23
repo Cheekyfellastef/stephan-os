@@ -171,6 +171,8 @@ test('StatusPanel renders when runtimeStatusModel is null or undefined', async (
   assert.match(rendered, /Launch State:/);
   assert.match(rendered, /Dependency Summary: pending/);
   assert.match(rendered, /Final Route Source: unknown/);
+  assert.match(rendered, /Guardrails Errors: 0/);
+  assert.match(rendered, /Guardrails Detail: none/);
 });
 
 test('StatusPanel renders truthful placeholders when finalRoute is missing', async () => {
@@ -196,6 +198,7 @@ test('StatusPanel renders truthful placeholders when finalRoute is missing', asy
   assert.match(rendered, /Final Route Source: unknown/);
   assert.match(rendered, /Final Route Reachable: pending/);
   assert.match(rendered, /Preferred Target: unavailable/);
+  assert.match(rendered, /Guardrails Warnings: 0/);
 });
 
 test('StatusPanel renders truthful placeholders when providerEligibility is missing', async () => {
@@ -275,4 +278,45 @@ test('startup loading state does not blank the page', async () => {
   assert.match(rendered, /Stephanos Mission Console/);
   assert.match(rendered, /Status/);
   assert.match(rendered, /Checking backend\.\.\./);
+});
+
+
+test('StatusPanel renders guardrails diagnostics without crashing on partial runtime data', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      appLaunchState: 'degraded',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'auto',
+      selectedProvider: 'ollama',
+      routeSelectedProvider: 'ollama',
+      activeProvider: 'ollama',
+      activeRouteKind: 'local',
+      finalRoute: {
+        routeKind: 'unavailable',
+        source: 'route-diagnostics',
+        preferredTarget: 'unavailable',
+        actualTarget: 'unavailable',
+        reachability: { selectedRouteReachable: false },
+        providerEligibility: {},
+      },
+      guardrails: {
+        ok: false,
+        hasErrors: true,
+        hasWarnings: false,
+        errors: [{ id: 'loopback-contamination', severity: 'error', message: 'Non-local sessions must never expose loopback or localhost as the client-facing route target.' }],
+        warnings: [],
+        invariants: [],
+        summary: { total: 1, errors: 1, warnings: 0 },
+      },
+      runtimeContext: {},
+      readyCloudProviders: [],
+      readyLocalProviders: [],
+      attemptOrder: [],
+    },
+  });
+  const rendered = renderStatusPanel();
+
+  assert.match(rendered, /Guardrails Errors: 1/);
+  assert.match(rendered, /Guardrails Detail: Non-local sessions must never expose loopback or localhost as the client-facing route target\./);
 });
