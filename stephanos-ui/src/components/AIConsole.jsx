@@ -19,11 +19,17 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     uiLayout,
     togglePanel,
   } = useAIStore();
-  const activeHealth = providerHealth[provider] || {};
+  const safeApiStatus = apiStatus || {};
+  const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
+  const safeUiLayout = uiLayout || {};
+  const safeCommandHistory = Array.isArray(commandHistory) ? commandHistory : [];
+  const activeHealth = safeProviderHealth[provider] || {};
   const ollamaState = provider === 'ollama'
-    ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: apiStatus.frontendOrigin })
+    ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: safeApiStatus.frontendOrigin })
     : null;
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const showStartupPlaceholder = safeCommandHistory.length === 0
+    && (runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking');
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -42,12 +48,12 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       description="Command deck for prompts, command execution, and route feedback."
       className="mission-console"
       titleAs="h1"
-      isOpen={uiLayout.commandDeck}
+      isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div className={`api-connection-banner ${apiStatus.state}`}>
-        <strong>{apiStatus.label}</strong>
-        <span>{apiStatus.detail}</span>
+      <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
+        <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
+        <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
       </div>
       <div className={`api-banner ${runtimeStatus.statusTone}`}>
         <strong>{runtimeStatus.headline}</strong>
@@ -65,9 +71,15 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
         </div>
       ) : null}
       <div className="output-panel">
-        {commandHistory.length === 0 ? (
+        {showStartupPlaceholder ? (
+          <div className="api-banner degraded" role="status" aria-live="polite">
+            <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
+            <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
+          </div>
+        ) : null}
+        {safeCommandHistory.length === 0 ? (
           <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
-        ) : commandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
+        ) : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
       </div>
 
       <form className="command-form" onSubmit={onSubmit}>

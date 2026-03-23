@@ -145,6 +145,23 @@ const appAliases = {
   './components/ProviderToggle': nullComponentPath,
 };
 
+const appWithRealConsoleAliases = {
+  './state/aiStore': storeModulePath,
+  '../state/aiStore': storeModulePath,
+  './hooks/useDebugConsole': useDebugConsoleMockPath,
+  './components/DebugConsole': nullComponentPath,
+  './components/ToolsPanel': nullComponentPath,
+  './components/MemoryPanel': nullComponentPath,
+  './components/KnowledgeGraphPanel': nullComponentPath,
+  './components/SimulationListPanel': nullComponentPath,
+  './components/SimulationPanel': nullComponentPath,
+  './components/ProposalPanel': nullComponentPath,
+  './components/ActivityPanel': nullComponentPath,
+  './components/RoadmapPanel': nullComponentPath,
+  './components/SimulationHistoryPanel': nullComponentPath,
+  './components/ProviderToggle': nullComponentPath,
+};
+
 test('StatusPanel renders when runtimeStatusModel is null or undefined', async () => {
   const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases);
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: null });
@@ -207,6 +224,45 @@ test('StatusPanel renders truthful placeholders when providerEligibility is miss
   assert.match(rendered, /Backend-Mediated Providers Eligible: pending/);
   assert.match(rendered, /Local Providers Eligible: pending/);
   assert.match(rendered, /Cloud Providers Eligible: pending/);
+});
+
+
+test('App render regression guard: real useAIConsole boot path still renders startup diagnostics', async () => {
+  const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appWithRealConsoleAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: undefined,
+    setCommandHistory: () => {},
+    setIsBusy: () => {},
+    setStatus: () => {},
+    setLastRoute: () => {},
+    setDebugData: () => {},
+    setApiStatus: () => {},
+    getActiveProviderConfigSource: () => 'saved:session',
+    getEffectiveProviderConfigs: () => ({ ollama: { baseURL: '', model: '' } }),
+    getDraftProviderConfig: () => ({ baseURL: '', model: '' }),
+    updateDraftProviderConfig: () => {},
+    ollamaConnection: {
+      lastSuccessfulBaseURL: '',
+      lastSuccessfulHost: '',
+      recentHosts: [],
+      pcAddressHint: '',
+      lastSelectedModel: '',
+    },
+    rememberSuccessfulOllamaConnection: () => {},
+    homeNodePreference: null,
+    homeNodeLastKnown: null,
+    setHomeNodeLastKnown: () => {},
+    setHomeNodeStatus: () => {},
+    setProviderHealth: () => {},
+    lastExecutionMetadata: null,
+    setLastExecutionMetadata: () => {},
+  });
+
+  const rendered = renderApp();
+
+  assert.match(rendered, /Stephanos Mission Console/);
+  assert.match(rendered, /Diagnostics pending|Checking reachable Stephanos route/);
+  assert.match(rendered, /Checking backend\.\.\./);
 });
 
 test('startup loading state does not blank the page', async () => {

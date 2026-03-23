@@ -203,6 +203,7 @@ export function useAIConsole() {
     providerHealth,
     apiStatus,
     setProviderHealth,
+    lastExecutionMetadata,
     setLastExecutionMetadata,
   } = useAIStore();
 
