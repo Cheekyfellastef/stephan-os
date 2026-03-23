@@ -10,11 +10,7 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
 } from '../../../../shared/ai/providerDefaults.mjs';
-import {
-  isLikelyLanHost,
-  isLoopbackHost,
-  normalizeStephanosHomeNode,
-} from '../../../../shared/runtime/stephanosHomeNode.mjs';
+import { normalizeRuntimeContext as normalizeSharedRuntimeContext } from '../../../../shared/runtime/runtimeStatusModel.mjs';
 
 const SERVER_ENV_ONLY_PROVIDER_KEYS = ['groq'];
 
@@ -90,54 +86,10 @@ export function buildProviderStatus(status, detail, extras = {}) {
 }
 
 export function normalizeRuntimeContext(runtimeContext = {}) {
-  const frontendOrigin = String(runtimeContext.frontendOrigin || '');
-  const apiBaseUrl = String(runtimeContext.baseUrl || runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || '');
-  const parseHostname = (value) => {
-    try {
-      return new URL(value).hostname || '';
-    } catch {
-      return '';
-    }
-  };
-
-  const frontendHost = parseHostname(frontendOrigin);
-  const backendHost = parseHostname(apiBaseUrl);
-  const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
-  const backendLocal = isLoopbackHost(backendHost) || !backendHost;
-  const frontendReachability = frontendLocal ? 'local' : 'hosted';
-  const backendReachability = backendLocal && frontendLocal ? 'local' : 'reachable';
-  const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
-    source: runtimeContext.homeNode?.source || runtimeContext.nodeAddressSource || 'manual',
-  });
-  const routeDiagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
-    ? runtimeContext.routeDiagnostics
-    : {};
-  const localDesktopBackendSession = backendLocal && (
-    runtimeContext.nodeAddressSource === 'local-backend-session'
-    || runtimeContext.nodeAddressSource === 'local-browser-session'
-    || routeDiagnostics['local-desktop']?.configured === true
-  );
-  const deviceContext = frontendLocal || localDesktopBackendSession
-    ? 'pc-local-browser'
-    : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
-      ? 'lan-companion'
-      : 'off-network';
-  const sessionKind = frontendLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
-
+  const normalized = normalizeSharedRuntimeContext(runtimeContext);
   return {
-    frontendOrigin,
-    apiBaseUrl,
-    frontendHost,
-    backendHost,
-    frontendReachability,
-    backendReachability,
-    frontendLocal,
-    backendLocal,
-    deviceContext,
-    sessionKind,
-    homeNode,
-    nodeAddressSource: runtimeContext.nodeAddressSource || (homeNode?.configured ? homeNode.source : '') || (frontendLocal ? 'local-backend-session' : 'route-diagnostics'),
-    routeDiagnostics,
+    ...normalized,
+    frontendReachability: normalized.frontendReachability === 'reachable' ? 'hosted' : normalized.frontendReachability,
   };
 }
 

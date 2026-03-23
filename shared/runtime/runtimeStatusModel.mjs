@@ -50,7 +50,7 @@ function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = f
   return allowLoopback ? (candidate || fallback || '') : '';
 }
 
-function normalizeRuntimeContext(runtimeContext = {}) {
+export function normalizeRuntimeContext(runtimeContext = {}) {
   const frontendOrigin = String(runtimeContext.frontendOrigin || '');
   const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || runtimeContext.baseUrl || '');
   const frontendHost = parseHostname(frontendOrigin);
@@ -581,6 +581,63 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
   };
 }
 
+function buildProviderEligibility({
+  routeKind,
+  routeEvaluations,
+  backendAvailable,
+  localAvailable,
+  cloudAvailable,
+} = {}) {
+  const selectedRoute = routeKind ? routeEvaluations?.[routeKind] : null;
+  const truthfulBackendReachable = routeKind === 'local-desktop' || routeKind === 'home-node';
+  const fallbackOnlyRoute = routeKind === 'dist' || routeKind === 'unavailable';
+
+  return {
+    truthfulBackendRoute: truthfulBackendReachable,
+    backendMediatedProviders: truthfulBackendReachable && backendAvailable,
+    localProviders: truthfulBackendReachable && backendAvailable && localAvailable,
+    cloudProviders: (truthfulBackendReachable || routeKind === 'cloud') && (backendAvailable || routeKind === 'cloud') && cloudAvailable,
+    distFallbackOnly: routeKind === 'dist',
+    mockFallbackOnly: fallbackOnlyRoute,
+    selectedRouteAvailable: Boolean(selectedRoute?.available),
+  };
+}
+
+export function finalizeRuntimeRouteResolution({
+  runtimeContext,
+  nodeRoute,
+  backendAvailable,
+  localAvailable,
+  cloudAvailable,
+} = {}) {
+  const selectedRoute = nodeRoute?.preferredRoute ? nodeRoute.routeEvaluations?.[nodeRoute.preferredRoute] : null;
+  const actualTarget = nodeRoute?.actualTargetUsed || '';
+  const finalRoute = {
+    routeKind: nodeRoute?.routeKind || 'unavailable',
+    preferredTarget: nodeRoute?.preferredTarget || '',
+    actualTarget,
+    source: nodeRoute?.nodeAddressSource || runtimeContext?.nodeAddressSource || (runtimeContext?.frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
+    reachability: {
+      backendAvailable: Boolean(backendAvailable),
+      localNodeReachable: Boolean(nodeRoute?.localNodeReachable),
+      homeNodeReachable: Boolean(nodeRoute?.homeNodeReachable),
+      cloudRouteReachable: Boolean(nodeRoute?.cloudRouteReachable),
+      selectedRouteReachable: Boolean(selectedRoute?.available),
+    },
+    providerEligibility: buildProviderEligibility({
+      routeKind: nodeRoute?.routeKind || 'unavailable',
+      routeEvaluations: nodeRoute?.routeEvaluations || {},
+      backendAvailable,
+      localAvailable,
+      cloudAvailable,
+    }),
+    summary: nodeRoute?.routeSummary || '',
+    headline: nodeRoute?.routeHeadline || '',
+  };
+
+  return finalRoute;
+}
+
 function buildDependencySummary({
   backendAvailable,
   localAvailable,
@@ -761,6 +818,13 @@ export function createRuntimeStatusModel({
     nodeRoute,
     providerHealth: health,
   });
+  const finalRoute = finalizeRuntimeRouteResolution({
+    runtimeContext: normalizedRuntimeContext,
+    nodeRoute,
+    backendAvailable,
+    localAvailable: routePlan.localAvailable,
+    cloudAvailable: routePlan.cloudAvailable,
+  });
 
   const launchUnavailable = validationState === 'error' && nodeRoute.routeKind === 'unavailable';
   const launchDegraded = !launchUnavailable && (
@@ -798,7 +862,10 @@ export function createRuntimeStatusModel({
     readyCloudProviders: routePlan.readyCloudProviders,
     readyLocalProviders: routePlan.readyLocalProviders,
     attemptOrder: routePlan.attemptOrder,
-    runtimeContext: normalizedRuntimeContext,
+    runtimeContext: {
+      ...normalizedRuntimeContext,
+      finalRoute,
+    },
     runtimeModeLabel: nodeRoute.routeKind === 'home-node'
       ? 'home node/lan'
       : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
@@ -807,13 +874,14 @@ export function createRuntimeStatusModel({
     dependencySummary,
     headline,
     statusTone: appLaunchState === 'unavailable' ? 'unavailable' : appLaunchState === 'degraded' ? 'degraded' : 'ready',
-    routeKind: nodeRoute.routeKind,
-    preferredTarget: nodeRoute.preferredTarget,
-    actualTargetUsed: nodeRoute.actualTargetUsed,
+    finalRoute,
+    routeKind: finalRoute.routeKind,
+    preferredTarget: finalRoute.preferredTarget,
+    actualTargetUsed: finalRoute.actualTarget,
     localNodeReachable: nodeRoute.localNodeReachable,
     homeNodeReachable: nodeRoute.homeNodeReachable,
     cloudRouteReachable: nodeRoute.cloudRouteReachable,
-    nodeAddressSource: nodeRoute.nodeAddressSource,
+    nodeAddressSource: finalRoute.source,
     routeSummary: nodeRoute.routeSummary,
     routeEvaluations: nodeRoute.routeEvaluations,
     routePreferenceOrder: nodeRoute.routePreferenceOrder,

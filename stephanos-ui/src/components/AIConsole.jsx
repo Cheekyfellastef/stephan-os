@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
-import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import CommandResultCard from './CommandResultCard';
 import CollapsiblePanel from './CollapsiblePanel';
 
@@ -13,12 +12,9 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     apiStatus,
     setUiDiagnostics,
     provider,
-    routeMode,
     providerHealth,
     getActiveProviderConfig,
-    fallbackEnabled,
-    fallbackOrder,
-    lastExecutionMetadata,
+    runtimeStatusModel,
     uiLayout,
     togglePanel,
   } = useAIStore();
@@ -26,19 +22,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   const ollamaState = provider === 'ollama'
     ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: apiStatus.frontendOrigin })
     : null;
-  const runtimeStatus = createRuntimeStatusModel({
-    appId: 'stephanos',
-    appName: 'Stephanos Mission Console',
-    validationState: 'healthy',
-    selectedProvider: provider,
-    routeMode,
-    fallbackEnabled,
-    fallbackOrder,
-    providerHealth,
-    backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
-    activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
-  });
+  const runtimeStatus = runtimeStatusModel;
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));

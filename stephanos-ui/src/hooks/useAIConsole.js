@@ -11,6 +11,7 @@ import {
   normalizeStephanosHomeNode,
   summarizeStephanosHomeNode,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
+import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -291,6 +292,35 @@ export function useAIConsole() {
     };
   }, []);
 
+  const finalizeRuntimeContext = useCallback((runtimeContext, nextProviderHealth = providerHealth, backendAvailableOverride = undefined) => {
+    const runtimeStatus = createRuntimeStatusModel({
+      appId: 'stephanos',
+      appName: 'Stephanos Mission Console',
+      validationState: backendAvailableOverride === false ? 'error' : 'healthy',
+      selectedProvider: provider,
+      routeMode,
+      fallbackEnabled,
+      fallbackOrder,
+      providerHealth: nextProviderHealth,
+      backendAvailable: backendAvailableOverride ?? apiStatus.backendReachable,
+      runtimeContext,
+      activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
+    });
+
+    return {
+      runtimeStatus,
+      runtimeContext: runtimeStatus.runtimeContext,
+    };
+  }, [
+    apiStatus.backendReachable,
+    fallbackEnabled,
+    fallbackOrder,
+    lastExecutionMetadata?.actual_provider_used,
+    provider,
+    providerHealth,
+    routeMode,
+  ]);
+
   const resolveRuntimeConfig = useCallback(async () => {
     const baseRuntimeConfig = getApiRuntimeConfig();
     const discovery = await discoverStephanosHomeNode({
@@ -377,15 +407,17 @@ export function useAIConsole() {
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
       const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
-      setProviderHealth(providerHealth.data || {});
-      if (hydratedRuntimeContext.homeNode?.reachable && !isLoopbackHost(extractHostname(hydratedRuntimeContext.frontendOrigin))) {
-        setHomeNodeLastKnown(hydratedRuntimeContext.homeNode);
+      const nextProviderHealth = providerHealth.data || {};
+      setProviderHealth(nextProviderHealth);
+      const finalized = finalizeRuntimeContext(hydratedRuntimeContext, nextProviderHealth, health.ok);
+      if (finalized.runtimeContext.homeNode?.reachable && !isLoopbackHost(extractHostname(finalized.runtimeContext.frontendOrigin))) {
+        setHomeNodeLastKnown(finalized.runtimeContext.homeNode);
         setHomeNodeStatus({
           state: 'ready',
-          detail: `Using ${summarizeStephanosHomeNode(hydratedRuntimeContext.homeNode)}.`,
+          detail: `Using ${summarizeStephanosHomeNode(finalized.runtimeContext.homeNode)}.`,
           attempts: [],
-          node: hydratedRuntimeContext.homeNode,
-          source: hydratedRuntimeContext.nodeAddressSource || hydratedRuntimeContext.homeNode.source || 'route-diagnostics',
+          node: finalized.runtimeContext.homeNode,
+          source: finalized.runtimeContext.nodeAddressSource || finalized.runtimeContext.homeNode.source || 'route-diagnostics',
         });
       }
       setApiStatus({
@@ -396,18 +428,22 @@ export function useAIConsole() {
           : `Health check failed (${health.status}).`,
         target: health.target,
         baseUrl: health.baseUrl,
-        frontendOrigin: hydratedRuntimeContext.frontendOrigin,
-        strategy: hydratedRuntimeContext.strategy,
-        backendTargetEndpoint: health.data?.backend_target_endpoint || hydratedRuntimeContext.backendTargetEndpoint,
-        healthEndpoint: hydratedRuntimeContext.healthEndpoint,
+        frontendOrigin: finalized.runtimeContext.frontendOrigin,
+        strategy: finalized.runtimeContext.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || finalized.runtimeContext.backendTargetEndpoint,
+        healthEndpoint: finalized.runtimeContext.healthEndpoint,
         backendReachable: health.ok,
         backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext: hydratedRuntimeContext,
+        runtimeContext: finalized.runtimeContext,
         lastCheckedAt: new Date().toISOString(),
-        meta: health.data,
+        meta: {
+          ...(health.data || {}),
+          final_route: finalized.runtimeStatus.finalRoute,
+        },
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
+      const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealth, false);
       setApiStatus({
         state: 'offline',
         label: 'Backend offline',
@@ -420,15 +456,12 @@ export function useAIConsole() {
         healthEndpoint: resolvedRuntimeContext.healthEndpoint || runtimeConfig.healthEndpoint,
         backendReachable: false,
         backendDefaultProvider: 'unknown',
-        runtimeContext: {
-          ...resolvedRuntimeContext,
-          restoreDecision: resolvedRuntimeContext.restoreDecision || '',
-        },
+        runtimeContext: finalized.runtimeContext,
         lastCheckedAt: new Date().toISOString(),
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, providerHealth]);
 
   useEffect(() => {
     refreshHealth();
@@ -571,6 +604,7 @@ export function useAIConsole() {
 
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
+      const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
@@ -579,7 +613,7 @@ export function useAIConsole() {
         fallbackEnabled,
         fallbackOrder,
         devMode,
-        runtimeConfig: resolvedRuntimeContext,
+        runtimeConfig: finalizedRequestContext,
       });
 
       const providerHealth = data.data?.provider_health || {};
@@ -654,10 +688,11 @@ export function useAIConsole() {
         activeProviderConfigSource: getActiveProviderConfigSource(),
         provider_health: providerHealth,
         provider_diagnostics: data.data?.provider_diagnostics || null,
-        frontend_origin: resolvedRuntimeContext.frontendOrigin,
-        frontend_api_base_url: resolvedRuntimeContext.baseUrl,
-        backend_target_endpoint: resolvedRuntimeContext.backendTargetEndpoint,
-        backend_health_endpoint: resolvedRuntimeContext.healthEndpoint,
+        frontend_origin: finalizedRequestContext.frontendOrigin,
+        frontend_api_base_url: finalizedRequestContext.baseUrl,
+        backend_target_endpoint: finalizedRequestContext.backendTargetEndpoint,
+        backend_health_endpoint: finalizedRequestContext.healthEndpoint,
+        final_route: finalizedRequestContext.finalRoute || null,
         request_trace: data.data?.request_trace || null,
       });
     } catch (error) {

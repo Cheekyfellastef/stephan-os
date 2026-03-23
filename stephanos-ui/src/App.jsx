@@ -17,7 +17,6 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
-import { createRuntimeStatusModel } from '../../shared/runtime/runtimeStatusModel.mjs';
 import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
@@ -41,28 +40,14 @@ export default function App() {
     setUiDiagnostics,
     apiStatus,
     providerHealth,
-    fallbackEnabled,
-    fallbackOrder,
-    lastExecutionMetadata,
+    runtimeStatusModel,
     uiLayout,
     togglePanel,
   } = useAIStore();
   useDebugConsole();
 
   const providerSummary = buildProviderStatusSummary(provider, getActiveProviderConfig(), apiStatus.baseUrl, providerHealth[provider]);
-  const runtimeStatus = createRuntimeStatusModel({
-    appId: 'stephanos',
-    appName: 'Stephanos Mission Console',
-    validationState: 'healthy',
-    selectedProvider: provider,
-    routeMode,
-    fallbackEnabled,
-    fallbackOrder,
-    providerHealth,
-    backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
-    activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
-  });
+  const runtimeStatus = runtimeStatusModel;
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
 
   useEffect(() => {
