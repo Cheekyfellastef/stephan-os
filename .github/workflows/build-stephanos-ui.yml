@@ -5,10 +5,20 @@ on:
     paths:
       - 'stephanos-ui/**'
       - 'apps/stephanos/app.json'
+      - 'apps/stephanos/dist/**'
+      - 'scripts/build-stephanos-ui.mjs'
+      - 'scripts/stephanos-build-utils.mjs'
+      - 'scripts/verify-stephanos-dist.mjs'
+      - 'package.json'
   pull_request:
     paths:
       - 'stephanos-ui/**'
       - 'apps/stephanos/app.json'
+      - 'apps/stephanos/dist/**'
+      - 'scripts/build-stephanos-ui.mjs'
+      - 'scripts/stephanos-build-utils.mjs'
+      - 'scripts/verify-stephanos-dist.mjs'
+      - 'package.json'
 
 jobs:
   build:
@@ -23,20 +33,24 @@ jobs:
         with:
           node-version: '20'
 
-
       - name: Preflight frontend path and lockfile
         run: |
           echo "Frontend package path: stephanos-ui"
           test -f stephanos-ui/package.json || (echo "Missing required file: stephanos-ui/package.json" && exit 1)
           test -f stephanos-ui/package-lock.json || (echo "Missing required file: stephanos-ui/package-lock.json (run npm install in stephanos-ui and commit lockfile)" && exit 1)
 
-      - name: Install dependencies
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
         working-directory: stephanos-ui
         run: npm ci
 
       - name: Build Stephanos UI into apps/stephanos/dist
-        working-directory: stephanos-ui
-        run: npm run build
+        run: npm run stephanos:build
+
+      - name: Verify generated Stephanos dist
+        run: npm run stephanos:verify
 
       - name: Upload built Stephanos dist artifact
         uses: actions/upload-artifact@v4
