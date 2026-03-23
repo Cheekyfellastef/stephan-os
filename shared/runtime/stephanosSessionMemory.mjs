@@ -6,6 +6,7 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
+import { isLoopbackHost, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
@@ -84,6 +85,18 @@ function normalizeStringList(value = []) {
   }
 
   return [...new Set(value.map((entry) => normalizeString(entry)).filter(Boolean))];
+}
+
+function parseHostname(value = '') {
+  try {
+    return new URL(String(value || '')).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+function isLoopbackUrl(value = '') {
+  return isLoopbackHost(parseHostname(value));
 }
 
 function normalizeProviderConfigs(providerConfigs = {}, defaults = DEFAULT_PROVIDER_PREFERENCES.providerConfigs) {
@@ -191,6 +204,105 @@ function normalizeProviderPreferences(value = {}) {
   };
 }
 
+function summarizeIgnoredSessionFields(ignoredFields = []) {
+  if (!ignoredFields.length) {
+    return 'Portable session state restored.';
+  }
+
+  return `Ignored device-incompatible saved session fields: ${ignoredFields.join(', ')}.`;
+}
+
+export function sanitizeStephanosSessionMemoryForDevice(memory, {
+  currentOrigin = '',
+  manualNode = null,
+  lastKnownNode = null,
+} = {}) {
+  const normalized = normalizeStephanosSessionMemory(memory);
+  const currentHost = parseHostname(currentOrigin);
+  const localDesktopSession = !currentHost || isLoopbackHost(currentHost);
+  const homeNode = normalizeStephanosHomeNode(
+    manualNode || lastKnownNode || {},
+    { source: manualNode?.source || lastKnownNode?.source || 'manual' },
+  );
+  const nonLocalSession = !localDesktopSession && (Boolean(currentHost) || Boolean(homeNode?.configured));
+  const ignoredFields = [];
+  const reasons = [];
+  const sanitizedProviderConfigs = { ...normalized.session.providerPreferences.providerConfigs };
+  const sanitizedOllamaConnection = {
+    ...normalized.session.providerPreferences.ollamaConnection,
+  };
+
+  if (nonLocalSession) {
+    for (const providerKey of PROVIDER_KEYS) {
+      const providerConfig = normalized.session.providerPreferences.providerConfigs?.[providerKey];
+      const baseURL = String(providerConfig?.baseURL || '').trim();
+      if (!baseURL || !isLoopbackUrl(baseURL)) {
+        continue;
+      }
+
+      sanitizedProviderConfigs[providerKey] = {
+        ...providerConfig,
+        baseURL: '',
+      };
+      ignoredFields.push(`providerConfigs.${providerKey}.baseURL`);
+      reasons.push(`Saved ${providerKey} localhost endpoint was ignored for non-local session ${currentHost || homeNode.host || 'remote-device'}.`);
+    }
+
+    if (isLoopbackUrl(sanitizedOllamaConnection.lastSuccessfulBaseURL)) {
+      sanitizedOllamaConnection.lastSuccessfulBaseURL = '';
+      ignoredFields.push('ollamaConnection.lastSuccessfulBaseURL');
+    }
+    if (isLoopbackHost(sanitizedOllamaConnection.lastSuccessfulHost)) {
+      sanitizedOllamaConnection.lastSuccessfulHost = '';
+      ignoredFields.push('ollamaConnection.lastSuccessfulHost');
+    }
+    if (isLoopbackHost(sanitizedOllamaConnection.pcAddressHint)) {
+      sanitizedOllamaConnection.pcAddressHint = '';
+      ignoredFields.push('ollamaConnection.pcAddressHint');
+    }
+
+    const filteredRecentHosts = sanitizedOllamaConnection.recentHosts.filter((host) => !isLoopbackHost(host));
+    if (filteredRecentHosts.length !== sanitizedOllamaConnection.recentHosts.length) {
+      sanitizedOllamaConnection.recentHosts = filteredRecentHosts;
+      ignoredFields.push('ollamaConnection.recentHosts');
+    }
+
+    if (ignoredFields.some((field) => field.startsWith('ollamaConnection.'))) {
+      reasons.push('Saved Ollama discovery memory was reduced to non-loopback hosts so other devices recompute against the current network context.');
+    }
+  }
+
+  const sanitizedMemory = normalizeStephanosSessionMemory({
+    ...normalized,
+    session: {
+      ...normalized.session,
+      providerPreferences: {
+        ...normalized.session.providerPreferences,
+        providerConfigs: sanitizedProviderConfigs,
+        ollamaConnection: sanitizedOllamaConnection,
+      },
+    },
+  });
+
+  const activeProvider = sanitizedMemory.session.providerPreferences.provider;
+  const activeProviderConfigAdjusted = ignoredFields.includes(`providerConfigs.${activeProvider}.baseURL`);
+
+  return {
+    memory: sanitizedMemory,
+    diagnostics: {
+      nonLocalSession,
+      localDesktopSession,
+      currentHost,
+      homeNodeHost: homeNode?.host || '',
+      ignoredFields,
+      reasons,
+      message: summarizeIgnoredSessionFields(ignoredFields),
+      activeProvider,
+      activeProviderConfigAdjusted,
+    },
+  };
+}
+
 export function createDefaultStephanosSessionMemory() {
   return {
     schemaVersion: STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION,
@@ -268,6 +380,18 @@ export function readPersistedStephanosSessionMemory(storage = globalThis?.localS
       ui: readLegacyUiState(storage),
     },
   });
+}
+
+export function restoreStephanosSessionMemoryForDevice({
+  storage = globalThis?.localStorage,
+  currentOrigin = '',
+  manualNode = null,
+  lastKnownNode = null,
+} = {}) {
+  return sanitizeStephanosSessionMemoryForDevice(
+    readPersistedStephanosSessionMemory(storage),
+    { currentOrigin, manualNode, lastKnownNode },
+  );
 }
 
 function createLegacyProviderPreferencesPayload(memory) {

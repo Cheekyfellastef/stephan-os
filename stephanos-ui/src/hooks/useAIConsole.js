@@ -13,6 +13,20 @@ import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
+function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback = false } = {}) {
+  const candidateHost = extractHostname(candidate);
+  if (candidate && (allowLoopback || !isLoopbackHost(candidateHost))) {
+    return candidate;
+  }
+
+  const fallbackHost = extractHostname(fallback);
+  if (fallback && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+    return fallback;
+  }
+
+  return allowLoopback ? (candidate || fallback || '') : '';
+}
+
 function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
@@ -119,23 +133,43 @@ export function useAIConsole() {
     const backendBaseUrl = health.baseUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '';
     const frontendHost = extractHostname(resolvedRuntimeContext.frontendOrigin);
     const backendHost = extractHostname(backendBaseUrl);
-    const localDesktopSession = isLoopbackHost(frontendHost) || isLoopbackHost(backendHost);
+    const localDesktopSession = isLoopbackHost(frontendHost);
+    const compatibleBackendBaseUrl = resolveCompatibleTarget(
+      backendBaseUrl,
+      resolvedRuntimeContext.homeNode?.backendUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '',
+      { allowLoopback: localDesktopSession },
+    );
     const nodeAddressSource = localDesktopSession
       ? 'local-backend-session'
-      : (resolvedRuntimeContext.nodeAddressSource || health.data?.client_route_source || 'route-diagnostics');
-    const preferredTarget = localDesktopSession && backendBaseUrl
-      ? backendBaseUrl
-      : (resolvedRuntimeContext.preferredTarget || health.data?.published_backend_base_url || resolvedRuntimeContext.frontendOrigin);
+      : (resolvedRuntimeContext.nodeAddressSource || health.data?.client_route_source || resolvedRuntimeContext.homeNode?.source || 'route-diagnostics');
+    const publishedBackendBaseUrl = String(health.data?.published_backend_base_url || '').trim();
+    const preferredTarget = localDesktopSession && compatibleBackendBaseUrl
+      ? compatibleBackendBaseUrl
+      : resolveCompatibleTarget(
+        resolvedRuntimeContext.preferredTarget,
+        health.data?.published_client_route
+          || resolvedRuntimeContext.homeNode?.uiUrl
+          || resolvedRuntimeContext.frontendOrigin
+          || publishedBackendBaseUrl,
+        { allowLoopback: localDesktopSession },
+      );
 
     return {
       ...resolvedRuntimeContext,
-      apiBaseUrl: backendBaseUrl,
-      backendBaseUrl,
-      baseUrl: backendBaseUrl,
+      apiBaseUrl: compatibleBackendBaseUrl,
+      backendBaseUrl: compatibleBackendBaseUrl,
+      baseUrl: compatibleBackendBaseUrl,
       preferredTarget,
-      actualTargetUsed: backendBaseUrl || resolvedRuntimeContext.actualTargetUsed,
+      actualTargetUsed: resolveCompatibleTarget(
+        compatibleBackendBaseUrl,
+        resolvedRuntimeContext.actualTargetUsed || resolvedRuntimeContext.homeNode?.backendUrl || '',
+        { allowLoopback: localDesktopSession },
+      ),
       nodeAddressSource,
       publishedClientRouteState: health.data?.client_route_state || resolvedRuntimeContext.publishedClientRouteState || 'unknown',
+      restoreDecision: !localDesktopSession && isLoopbackHost(backendHost)
+        ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
+        : (resolvedRuntimeContext.restoreDecision || ''),
       routeDiagnostics: {
         ...(resolvedRuntimeContext.routeDiagnostics || {}),
         ...(localDesktopSession ? {
@@ -196,21 +230,38 @@ export function useAIConsole() {
     }
 
     const nextRuntimeConfig = getApiRuntimeConfig();
-    const localBackendSession = localDesktopSession || isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl));
+    const compatibleBackendBaseUrl = resolveCompatibleTarget(
+      nextRuntimeConfig.baseUrl,
+      discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
+      { allowLoopback: localDesktopSession },
+    );
+    const localBackendSession = localDesktopSession;
     const preferredTarget = localBackendSession
-      ? nextRuntimeConfig.baseUrl
-      : (discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || nextRuntimeConfig.frontendOrigin);
+      ? compatibleBackendBaseUrl
+      : resolveCompatibleTarget(
+        discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || '',
+        nextRuntimeConfig.frontendOrigin,
+        { allowLoopback: localDesktopSession },
+      );
     return {
       runtimeConfig: {
         ...nextRuntimeConfig,
-        apiBaseUrl: nextRuntimeConfig.baseUrl,
-        backendBaseUrl: nextRuntimeConfig.baseUrl,
+        apiBaseUrl: compatibleBackendBaseUrl,
+        backendBaseUrl: compatibleBackendBaseUrl,
+        baseUrl: compatibleBackendBaseUrl,
         homeNode: discovery.preferredNode || nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null,
         nodeAddressSource: localBackendSession
           ? 'local-backend-session'
           : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
         preferredTarget,
-        actualTargetUsed: discovery.preferredNode?.backendUrl || nextRuntimeConfig.baseUrl,
+        actualTargetUsed: resolveCompatibleTarget(
+          discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
+          compatibleBackendBaseUrl,
+          { allowLoopback: localDesktopSession },
+        ),
+        restoreDecision: !localDesktopSession && isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl))
+          ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
+          : '',
       },
       discovery,
     };

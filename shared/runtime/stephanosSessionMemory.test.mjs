@@ -6,6 +6,8 @@ import {
   createDefaultStephanosSessionMemory,
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
+  restoreStephanosSessionMemoryForDevice,
+  sanitizeStephanosSessionMemoryForDevice,
 } from './stephanosSessionMemory.mjs';
 import { AI_SETTINGS_STORAGE_KEY } from '../ai/providerDefaults.mjs';
 import { readPersistedProviderPreferences } from './runtimeStatusModel.mjs';
@@ -156,4 +158,70 @@ test('readPersistedProviderPreferences uses centralized Stephanos session memory
     fallbackEnabled: false,
     fallbackOrder: ['mock', 'groq', 'gemini', 'ollama'],
   });
+});
+
+test('sanitizeStephanosSessionMemoryForDevice keeps portable provider choice but strips localhost device-local fields for LAN sessions', () => {
+  const { memory, diagnostics } = sanitizeStephanosSessionMemoryForDevice({
+    session: {
+      providerPreferences: {
+        provider: 'ollama',
+        routeMode: 'auto',
+        providerConfigs: {
+          ollama: { baseURL: 'http://localhost:11434', model: 'llama3.2', timeoutMs: 8000 },
+        },
+        ollamaConnection: {
+          lastSuccessfulBaseURL: 'http://localhost:11434',
+          lastSuccessfulHost: 'localhost',
+          recentHosts: ['localhost', '192.168.0.198'],
+          pcAddressHint: 'localhost',
+          lastSelectedModel: 'llama3.2',
+        },
+      },
+      ui: {
+        debugConsoleVisible: true,
+      },
+    },
+    working: {
+      missionNote: 'portable note',
+    },
+  }, {
+    currentOrigin: 'http://192.168.0.55:5173',
+    manualNode: { host: '192.168.0.198', source: 'manual' },
+  });
+
+  assert.equal(memory.session.providerPreferences.provider, 'ollama');
+  assert.equal(memory.session.providerPreferences.providerConfigs.ollama.baseURL, '');
+  assert.equal(memory.session.providerPreferences.providerConfigs.ollama.model, 'llama3.2');
+  assert.equal(memory.session.providerPreferences.ollamaConnection.lastSuccessfulBaseURL, '');
+  assert.equal(memory.session.providerPreferences.ollamaConnection.lastSuccessfulHost, '');
+  assert.deepEqual(memory.session.providerPreferences.ollamaConnection.recentHosts, ['192.168.0.198']);
+  assert.equal(memory.session.ui.debugConsoleVisible, true);
+  assert.equal(memory.working.missionNote, 'portable note');
+  assert.equal(diagnostics.nonLocalSession, true);
+  assert.equal(diagnostics.activeProviderConfigAdjusted, true);
+  assert.match(diagnostics.message, /Ignored device-incompatible saved session fields/);
+});
+
+test('restoreStephanosSessionMemoryForDevice leaves localhost settings intact for PC-local sessions', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: {
+      providerPreferences: {
+        provider: 'ollama',
+        routeMode: 'auto',
+        providerConfigs: {
+          ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 8000 },
+        },
+      },
+    },
+  }, storage);
+
+  const restored = restoreStephanosSessionMemoryForDevice({
+    storage,
+    currentOrigin: 'http://localhost:5173',
+  });
+
+  assert.equal(restored.memory.session.providerPreferences.providerConfigs.ollama.baseURL, 'http://localhost:11434');
+  assert.deepEqual(restored.diagnostics.ignoredFields, []);
+  assert.equal(restored.diagnostics.localDesktopSession, true);
 });

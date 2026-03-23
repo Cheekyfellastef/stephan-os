@@ -35,6 +35,20 @@ function parseHostname(value = '') {
   }
 }
 
+function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
+  const candidateHost = parseHostname(candidate);
+  if (candidate && (allowLoopback || !isLoopbackHost(candidateHost))) {
+    return candidate;
+  }
+
+  const fallbackHost = parseHostname(fallback);
+  if (fallback && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+    return fallback;
+  }
+
+  return allowLoopback ? (candidate || fallback || '') : '';
+}
+
 function normalizeRuntimeContext(runtimeContext = {}) {
   const frontendOrigin = String(runtimeContext.frontendOrigin || '');
   const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || runtimeContext.baseUrl || '');
@@ -42,18 +56,29 @@ function normalizeRuntimeContext(runtimeContext = {}) {
   const backendHost = parseHostname(apiBaseUrl);
   const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
   const backendLocal = isLoopbackHost(backendHost) || !backendHost;
-  const launcherLocal = frontendLocal || backendLocal;
+  const launcherLocal = frontendLocal;
   const frontendReachability = frontendLocal ? 'local' : 'reachable';
-  const backendReachability = backendLocal ? 'local' : 'reachable';
+  const backendReachability = backendLocal && launcherLocal ? 'local' : 'reachable';
   const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
     source: runtimeContext.homeNode?.source || 'manual',
   });
+  const loopbackBackendMismatch = !launcherLocal && backendLocal;
   const deviceContext = launcherLocal
     ? 'pc-local-browser'
     : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
       ? 'lan-companion'
       : 'off-network';
   const sessionKind = launcherLocal ? 'local-desktop' : 'hosted-web';
+  const compatiblePreferredTarget = resolveCompatibleUrl(
+    runtimeContext.preferredTarget,
+    homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
+    { allowLoopback: launcherLocal },
+  );
+  const compatibleActualTarget = resolveCompatibleUrl(
+    runtimeContext.actualTargetUsed,
+    homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : '') || frontendOrigin,
+    { allowLoopback: launcherLocal },
+  );
 
   return {
     frontendOrigin,
@@ -70,12 +95,13 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
-    preferredTarget: runtimeContext.preferredTarget || homeNode?.uiUrl || (backendLocal ? apiBaseUrl : '') || frontendOrigin || apiBaseUrl,
-    actualTargetUsed: runtimeContext.actualTargetUsed || apiBaseUrl || homeNode?.backendUrl || frontendOrigin,
-    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (backendLocal ? 'local-backend-session' : (frontendLocal ? 'local-browser-session' : 'route-diagnostics')),
+    preferredTarget: compatiblePreferredTarget,
+    actualTargetUsed: compatibleActualTarget,
+    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},
+    loopbackBackendMismatch,
   };
 }
 
