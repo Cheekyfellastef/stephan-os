@@ -269,8 +269,10 @@ export function useAIConsole() {
 
 
   const refreshHealth = useCallback(async () => {
+    let resolvedRuntimeContext = runtimeConfig;
+
     try {
-      const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
+      ({ runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig());
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
       const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
@@ -299,14 +301,18 @@ export function useAIConsole() {
         state: 'offline',
         label: 'Backend offline',
         detail: uiError.output,
-        target: runtimeConfig.target,
-        baseUrl: runtimeConfig.baseUrl,
-        frontendOrigin: runtimeConfig.frontendOrigin,
-        strategy: runtimeConfig.strategy,
-        backendTargetEndpoint: runtimeConfig.backendTargetEndpoint,
-        healthEndpoint: runtimeConfig.healthEndpoint,
+        target: resolvedRuntimeContext.target || runtimeConfig.target,
+        baseUrl: resolvedRuntimeContext.baseUrl || runtimeConfig.baseUrl,
+        frontendOrigin: resolvedRuntimeContext.frontendOrigin || runtimeConfig.frontendOrigin,
+        strategy: resolvedRuntimeContext.strategy || runtimeConfig.strategy,
+        backendTargetEndpoint: resolvedRuntimeContext.backendTargetEndpoint || runtimeConfig.backendTargetEndpoint,
+        healthEndpoint: resolvedRuntimeContext.healthEndpoint || runtimeConfig.healthEndpoint,
         backendReachable: false,
         backendDefaultProvider: 'unknown',
+        runtimeContext: {
+          ...resolvedRuntimeContext,
+          restoreDecision: resolvedRuntimeContext.restoreDecision || '',
+        },
         lastCheckedAt: new Date().toISOString(),
         meta: null,
       });

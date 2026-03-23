@@ -98,6 +98,7 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     preferredTarget: compatiblePreferredTarget,
     actualTargetUsed: compatibleActualTarget,
     nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
+    restoreDecision: String(runtimeContext.restoreDecision || ''),
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},

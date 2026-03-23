@@ -13,6 +13,46 @@ export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
 export const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
 export const STEPHANOS_ACTIVE_WORKSPACE = 'mission-console';
 export const STEPHANOS_ACTIVE_SUBVIEW = 'assistant';
+export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
+  'session.providerPreferences.provider',
+  'session.providerPreferences.routeMode',
+  'session.providerPreferences.devMode',
+  'session.providerPreferences.fallbackEnabled',
+  'session.providerPreferences.fallbackOrder',
+  'session.providerPreferences.providerConfigs.*.model',
+  'session.providerPreferences.providerConfigs.*.enabled',
+  'session.providerPreferences.providerConfigs.*.timeoutMs',
+  'session.providerPreferences.ollamaConnection.lastSelectedModel',
+  'session.ui.activeWorkspace',
+  'session.ui.activeSubview',
+  'session.ui.recentRoute',
+  'session.ui.uiLayout',
+  'session.ui.debugConsoleVisible',
+  'working.recentCommands',
+  'working.currentTask',
+  'working.activeFocusLabel',
+  'working.missionNote',
+  'project.currentMilestone',
+  'project.knownConstraints',
+  'project.guardrails',
+  'project.lessonsLearned',
+  'project.repeatedProblemFamilies',
+]);
+export const DEVICE_LOCAL_SESSION_FIELDS = Object.freeze([
+  'session.providerPreferences.providerConfigs.*.baseURL when loopback-only',
+  'session.providerPreferences.ollamaConnection.lastSuccessfulBaseURL when loopback-only',
+  'session.providerPreferences.ollamaConnection.lastSuccessfulHost when loopback-only',
+  'session.providerPreferences.ollamaConnection.pcAddressHint when loopback-only',
+  'session.providerPreferences.ollamaConnection.recentHosts loopback entries',
+  'runtime.preferredTarget',
+  'runtime.actualTargetUsed',
+  'runtime.runtimeMode',
+  'runtime.effectiveRouteMode when environment-derived',
+  'runtime.routeKind',
+  'runtime.selectedLiveRoute',
+  'runtime.backendReachable/localAvailable/homeNodeReachable/cloudReachable',
+  'runtime.nodeAddressSource when derived from current device/network',
+]);
 
 const DEFAULT_PROVIDER_PREFERENCES = Object.freeze({
   ...createDefaultRouterSettings(),
