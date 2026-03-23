@@ -764,7 +764,9 @@ export function createRuntimeStatusModel({
     readyLocalProviders: routePlan.readyLocalProviders,
     attemptOrder: routePlan.attemptOrder,
     runtimeContext: normalizedRuntimeContext,
-    runtimeModeLabel: normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev',
+    runtimeModeLabel: nodeRoute.routeKind === 'home-node'
+      ? 'home node/lan'
+      : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
     dependencySummary,
     headline,
     statusTone: appLaunchState === 'unavailable' ? 'unavailable' : appLaunchState === 'degraded' ? 'degraded' : 'ready',

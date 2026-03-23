@@ -194,3 +194,53 @@ test('createRuntimeStatusModel does not let cloud selection overwrite manual nod
   assert.equal(status.routeKind, 'cloud');
   assert.equal(status.nodeAddressSource, 'manual');
 });
+
+
+test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and labels the runtime accordingly', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      preferredTarget: 'http://192.168.0.198:5173/',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        uiUrl: 'http://192.168.0.198:5173/',
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:5173/',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+          blockedReason: '',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'home-node');
+  assert.equal(status.homeNodeReachable, true);
+  assert.equal(status.nodeAddressSource, 'manual');
+  assert.equal(status.preferredTarget, 'http://192.168.0.198:5173/');
+  assert.equal(status.actualTargetUsed, 'http://192.168.0.198:8787');
+  assert.equal(status.runtimeModeLabel, 'home node/lan');
+  assert.match(status.dependencySummary, /home pc node ready/i);
+});
