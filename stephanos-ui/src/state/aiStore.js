@@ -27,6 +27,7 @@ import {
   clearPersistedStephanosSessionMemory,
   createDefaultStephanosSessionMemory,
   persistStephanosSessionMemory,
+  readPortableStephanosHomeNodePreference,
   restoreStephanosSessionMemoryForDevice,
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
@@ -176,7 +177,8 @@ function createInitialMemorySnapshot() {
   const currentOrigin = typeof window !== 'undefined' && window.location?.origin
     ? window.location.origin
     : '';
-  const homeNodePreference = readPersistedStephanosHomeNode() || null;
+  const portableHomeNodePreference = readPortableStephanosHomeNodePreference() || null;
+  const homeNodePreference = readPersistedStephanosHomeNode() || portableHomeNodePreference || null;
   const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
   const restoredSession = restoreStephanosSessionMemoryForDevice({
     currentOrigin,
@@ -297,6 +299,7 @@ export function AIStoreProvider({ children }) {
           uiLayout: normalizeUiLayout(uiLayout),
           debugConsoleVisible: debugVisible,
         },
+        homeNodePreference,
       },
       working: {
         ...workingMemory,

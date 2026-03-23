@@ -265,22 +265,36 @@ export function buildStephanosHomeNodeCandidates({
   const current = safeUrlParse(currentOrigin);
   const currentHost = current?.hostname || '';
   const currentPort = normalizePort(current?.port, DEFAULT_HOME_NODE_UI_PORT);
+  const allowLoopbackCandidates = !currentHost || isLoopbackHost(currentHost);
 
-  addCandidate(candidateMap, manualNode, { source: 'manual' });
-  addCandidate(candidateMap, lastKnownNode, { source: 'lastKnown' });
+  const addCandidateIfCompatible = (value, defaults = {}) => {
+    const candidate = normalizeStephanosHomeNode(value, defaults);
+    if (!isValidStephanosHomeNode(candidate)) {
+      return;
+    }
+
+    if (!allowLoopbackCandidates && isLoopbackHost(candidate.host)) {
+      return;
+    }
+
+    addCandidate(candidateMap, candidate, defaults);
+  };
+
+  addCandidateIfCompatible(manualNode, { source: 'manual' });
+  addCandidateIfCompatible(lastKnownNode, { source: 'lastKnown' });
 
   if (currentHost && !isLoopbackHost(currentHost)) {
-    addCandidate(candidateMap, {
+    addCandidateIfCompatible({
       host: currentHost,
       uiPort: currentPort,
       source: 'currentOrigin',
     });
-    addCandidate(candidateMap, {
+    addCandidateIfCompatible({
       host: currentHost,
       uiPort: DEFAULT_HOME_NODE_UI_PORT,
       source: 'currentOrigin',
     });
-    addCandidate(candidateMap, {
+    addCandidateIfCompatible({
       host: currentHost,
       uiPort: DEFAULT_HOME_NODE_DIST_PORT,
       distPort: DEFAULT_HOME_NODE_DIST_PORT,
@@ -289,7 +303,7 @@ export function buildStephanosHomeNodeCandidates({
   }
 
   for (const recentHost of recentHosts) {
-    addCandidate(candidateMap, {
+    addCandidateIfCompatible({
       host: recentHost,
       source: 'discovered',
     });
@@ -304,9 +318,121 @@ function createAbortErrorTimeout(timeoutMs) {
   return { controller, timeoutId };
 }
 
+function classifyProbeFailureReason(reason = '') {
+  const normalized = String(reason || '').trim();
+  const lower = normalized.toLowerCase();
+
+  if (!normalized) {
+    return {
+      code: 'unreachable-host',
+      detail: 'unreachable host',
+    };
+  }
+
+  if (lower === 'timeout') {
+    return {
+      code: 'probe-timeout',
+      detail: 'probe timeout',
+    };
+  }
+
+  if (lower === 'invalid-url' || lower === 'missing-backend-url') {
+    return {
+      code: 'invalid-url',
+      detail: 'invalid URL',
+    };
+  }
+
+  if (lower === 'not-stephanos-server') {
+    return {
+      code: 'unexpected-service',
+      detail: 'target did not respond as stephanos-server',
+    };
+  }
+
+  if (/^http-\d+$/.test(lower)) {
+    return {
+      code: 'unreachable-host',
+      detail: `unreachable host (${lower})`,
+    };
+  }
+
+  if (/cors|networkerror|failed to fetch/.test(lower)) {
+    return {
+      code: 'cors-network-failure',
+      detail: 'CORS/network failure',
+    };
+  }
+
+  if (/econnrefused|enotfound|ehostunreach|eai_again|fetch failed|network-error/.test(lower)) {
+    return {
+      code: 'unreachable-host',
+      detail: 'unreachable host',
+    };
+  }
+
+  return {
+    code: 'probe-failed',
+    detail: normalized,
+  };
+}
+
+function describeHomeNodeFailure({
+  source = 'unknown',
+  reason = '',
+  host = '',
+  manualNodePresent = false,
+  manualNodeInvalid = false,
+  manualNodeLoopbackRejected = false,
+} = {}) {
+  if (source === 'manual') {
+    if (manualNodeLoopbackRejected) {
+      return {
+        code: 'invalid-url',
+        detail: 'localhost loopback manual node is invalid on non-local devices',
+        message: 'Manual home-node localhost values are invalid on non-local devices and were ignored.',
+      };
+    }
+
+    if (manualNodeInvalid) {
+      return {
+        code: 'invalid-url',
+        detail: 'invalid URL',
+        message: 'Manual home-node address is invalid.',
+      };
+    }
+
+    if (!manualNodePresent) {
+      return {
+        code: 'missing-manual-node',
+        detail: 'missing manual node',
+        message: 'Manual home-node address is missing.',
+      };
+    }
+  }
+
+  const classified = classifyProbeFailureReason(reason);
+  const sourceLabel = source === 'manual'
+    ? 'Manual home-node'
+    : source === 'lastKnown'
+      ? 'Last known home-node'
+      : 'Home-node';
+  const hostLabel = host ? ` ${host}` : '';
+
+  return {
+    code: classified.code,
+    detail: classified.detail,
+    message: `${sourceLabel}${hostLabel} failed: ${classified.detail}.`,
+  };
+}
+
 async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeoutMs = 1500 } = {}) {
   if (typeof fetchImpl !== 'function' || !url) {
     return { ok: false, reason: 'fetch-unavailable' };
+  }
+
+  if (!safeUrlParse(url)) {
+    return { ok: false, reason: 'invalid-url' };
   }
 
   const { controller, timeoutId } = createAbortErrorTimeout(timeoutMs);
@@ -339,7 +465,7 @@ async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeou
 export async function probeStephanosHomeNode(node, options = {}) {
   const candidate = normalizeStephanosHomeNode(node, { source: node?.source || 'discovered' });
   if (!isValidStephanosHomeNode(candidate) || !candidate.backendHealthUrl) {
-    return { ok: false, node: isValidStephanosHomeNode(candidate) ? candidate : null, reason: 'missing-backend-url' };
+    return { ok: false, node: isValidStephanosHomeNode(candidate) ? candidate : null, reason: 'invalid-url' };
   }
 
   const health = await fetchJsonWithTimeout(candidate.backendHealthUrl, options);
@@ -401,11 +527,30 @@ export async function discoverStephanosHomeNode({
   storage = globalThis?.localStorage,
 } = {}) {
   try {
+    const currentHost = extractHostname(currentOrigin);
+    const nonLocalSession = Boolean(currentHost) && !isLoopbackHost(currentHost);
+    const normalizedManualNode = normalizeStephanosHomeNode(manualNode, { source: 'manual' });
+    const normalizedLastKnownNode = normalizeStephanosHomeNode(lastKnownNode, { source: 'lastKnown' });
+    const manualNodePresent = Boolean(
+      typeof manualNode === 'string'
+        ? manualNode.trim()
+        : (manualNode && typeof manualNode === 'object' && Object.keys(manualNode).length)
+    );
+    const manualNodeInvalid = manualNodePresent && !isValidStephanosHomeNode(normalizedManualNode);
+    const manualNodeLoopbackRejected = nonLocalSession && isValidStephanosHomeNode(normalizedManualNode) && isLoopbackHost(normalizedManualNode.host);
     const candidates = buildStephanosHomeNodeCandidates({ currentOrigin, manualNode, lastKnownNode, recentHosts });
     const attempts = [];
 
     for (const candidate of candidates) {
       const probe = await probeStephanosHomeNode(candidate, { fetchImpl, timeoutMs });
+      const failure = probe.ok ? null : describeHomeNodeFailure({
+        source: candidate.source,
+        reason: probe.reason,
+        host: candidate.host,
+        manualNodePresent,
+        manualNodeInvalid,
+        manualNodeLoopbackRejected,
+      });
       attempts.push({
         host: candidate.host,
         uiUrl: candidate.uiUrl,
@@ -413,6 +558,8 @@ export async function discoverStephanosHomeNode({
         source: candidate.source,
         ok: probe.ok,
         reason: probe.reason || '',
+        failureCode: failure?.code || '',
+        failureDetail: failure?.detail || '',
       });
 
       if (probe.ok && probe.node && isValidStephanosHomeNode(probe.node)) {
@@ -425,29 +572,44 @@ export async function discoverStephanosHomeNode({
           source: probe.node.source || candidate.source || 'discovered',
           status: 'available',
           message: 'Stephanos home node reachable.',
+          failureCode: '',
+          failureReason: '',
         };
       }
     }
 
-    const preferredNode = isValidStephanosHomeNode(manualNode)
-      ? normalizeStephanosHomeNode(manualNode, { source: 'manual' })
-      : isValidStephanosHomeNode(lastKnownNode)
-        ? normalizeStephanosHomeNode(lastKnownNode, { source: 'lastKnown' })
+    const preferredNode = isValidStephanosHomeNode(normalizedManualNode)
+      ? normalizedManualNode
+      : isValidStephanosHomeNode(normalizedLastKnownNode)
+        ? normalizedLastKnownNode
         : null;
-    const source = preferredNode?.source || 'unknown';
-    const status = preferredNode ? 'unavailable' : 'not-configured';
-    const message = preferredNode
-      ? 'Stephanos home node is configured but currently unreachable.'
-      : 'Stephanos home node is not configured yet.';
+    const fallbackSource = manualNodePresent || manualNodeLoopbackRejected || manualNodeInvalid
+      ? 'manual'
+      : preferredNode?.source || 'manual';
+    const prioritizedAttempt = attempts.find((attempt) => attempt.source === 'manual')
+      || attempts.find((attempt) => attempt.source === 'lastKnown')
+      || attempts[0]
+      || null;
+    const failure = describeHomeNodeFailure({
+      source: prioritizedAttempt?.source || fallbackSource,
+      reason: prioritizedAttempt?.reason || '',
+      host: prioritizedAttempt?.host || preferredNode?.host || normalizedManualNode.host || normalizedLastKnownNode.host || '',
+      manualNodePresent,
+      manualNodeInvalid,
+      manualNodeLoopbackRejected,
+    });
+    const configured = Boolean(preferredNode || manualNodePresent || manualNodeLoopbackRejected || manualNodeInvalid);
 
     return {
       reachable: false,
       preferredNode,
       node: null,
       attempts,
-      source,
-      status,
-      message,
+      source: prioritizedAttempt?.source || fallbackSource || 'manual',
+      status: configured ? 'unavailable' : 'not-configured',
+      message: configured ? failure.message : 'Manual home-node address is missing.',
+      failureCode: configured ? failure.code : 'missing-manual-node',
+      failureReason: configured ? failure.detail : 'missing manual node',
     };
   } catch (error) {
     return {
@@ -459,6 +621,8 @@ export async function discoverStephanosHomeNode({
       status: 'searching',
       message: `Stephanos home node discovery failed softly: ${error?.message || 'unknown-error'}`,
       error: error?.message || 'unknown-error',
+      failureCode: 'discovery-error',
+      failureReason: error?.message || 'unknown-error',
     };
   }
 }

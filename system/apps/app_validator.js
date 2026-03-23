@@ -8,6 +8,9 @@ import {
   readPersistedProviderPreferences,
 } from "../../shared/runtime/runtimeStatusModel.mjs";
 import {
+  readPortableStephanosHomeNodePreference,
+} from "../../shared/runtime/stephanosSessionMemory.mjs";
+import {
   createStephanosHomeNodeTarget,
   createStephanosLocalUrls,
   createStephanosRuntimeTargets,
@@ -490,7 +493,7 @@ function buildStephanosRuntimeStatusMessage({ liveTargets, preferredTarget, heal
 
 export async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const manualNode = readPersistedStephanosHomeNode();
+  const manualNode = readPersistedStephanosHomeNode() || readPortableStephanosHomeNodePreference();
   const lastKnownNode = readPersistedStephanosLastKnownNode();
   const homeNodeDiscovery = await discoverStephanosHomeNode({
     currentOrigin,

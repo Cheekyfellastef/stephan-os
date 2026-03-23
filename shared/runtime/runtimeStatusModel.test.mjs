@@ -100,3 +100,97 @@ test('createRuntimeStatusModel preserves explicit discard reasons when loopback 
   assert.equal(status.routeKind, 'unavailable');
   assert.equal(status.preferredTarget, 'http://192.168.0.198:5173/');
 });
+
+
+test('createRuntimeStatusModel keeps manual node source and explicit failure reason when home-node probe fails on hosted web', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: '',
+      preferredTarget: 'https://cheekyfellastef.github.io',
+      actualTargetUsed: 'https://cheekyfellastef.github.io',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        uiUrl: 'http://192.168.0.198:5173/',
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: false,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          source: 'manual',
+          reason: 'Manual home-node 192.168.0.198 failed: probe timeout.',
+          blockedReason: 'Manual home-node 192.168.0.198 failed: probe timeout.',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'unavailable');
+  assert.equal(status.nodeAddressSource, 'manual');
+  assert.match(status.routeSummary, /probe timeout/i);
+  assert.match(status.dependencySummary, /home pc node unavailable/i);
+});
+
+test('createRuntimeStatusModel does not let cloud selection overwrite manual node source on hosted sessions', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://api.example.com',
+      preferredTarget: 'https://cheekyfellastef.github.io',
+      actualTargetUsed: 'https://api.example.com',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        uiUrl: 'http://192.168.0.198:5173/',
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: false,
+      },
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://cheekyfellastef.github.io',
+          actualTarget: 'https://api.example.com',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+        'home-node': {
+          configured: true,
+          available: false,
+          source: 'manual',
+          blockedReason: 'Manual home-node 192.168.0.198 failed: unreachable host.',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.nodeAddressSource, 'manual');
+});

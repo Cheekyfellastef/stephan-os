@@ -6,7 +6,7 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
-import { isLoopbackHost, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
+import { isLoopbackHost, isValidStephanosHomeNode, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
@@ -37,6 +37,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'project.guardrails',
   'project.lessonsLearned',
   'project.repeatedProblemFamilies',
+  'session.homeNodePreference',
 ]);
 export const DEVICE_LOCAL_SESSION_FIELDS = Object.freeze([
   'session.providerPreferences.providerConfigs.*.baseURL when loopback-only',
@@ -231,6 +232,11 @@ function normalizeUiState(value = {}) {
   };
 }
 
+function normalizeHomeNodePreference(value = null) {
+  const normalized = normalizeStephanosHomeNode(value || {}, { source: 'manual' });
+  return isValidStephanosHomeNode(normalized) ? normalized : null;
+}
+
 function normalizeProviderPreferences(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   return {
@@ -312,6 +318,14 @@ export function sanitizeStephanosSessionMemoryForDevice(memory, {
     }
   }
 
+  let sanitizedHomeNodePreference = normalized.session.homeNodePreference;
+
+  if (nonLocalSession && sanitizedHomeNodePreference?.host && isLoopbackHost(sanitizedHomeNodePreference.host)) {
+    sanitizedHomeNodePreference = null;
+    ignoredFields.push('session.homeNodePreference');
+    reasons.push(`Saved manual home-node localhost address was ignored for non-local session ${currentHost || homeNode.host || 'remote-device'}.`);
+  }
+
   const sanitizedMemory = normalizeStephanosSessionMemory({
     ...normalized,
     session: {
@@ -321,6 +335,7 @@ export function sanitizeStephanosSessionMemoryForDevice(memory, {
         providerConfigs: sanitizedProviderConfigs,
         ollamaConnection: sanitizedOllamaConnection,
       },
+      homeNodePreference: sanitizedHomeNodePreference,
     },
   });
 
@@ -350,6 +365,7 @@ export function createDefaultStephanosSessionMemory() {
     session: {
       providerPreferences: normalizeProviderPreferences(DEFAULT_PROVIDER_PREFERENCES),
       ui: normalizeUiState(),
+      homeNodePreference: null,
     },
     working: normalizeWorkingMemory(DEFAULT_WORKING_MEMORY),
     project: normalizeProjectMemory(DEFAULT_PROJECT_MEMORY),
@@ -367,6 +383,7 @@ export function normalizeStephanosSessionMemory(value = {}) {
     session: {
       providerPreferences: normalizeProviderPreferences(session.providerPreferences),
       ui: normalizeUiState(session.ui),
+      homeNodePreference: normalizeHomeNodePreference(session.homeNodePreference),
     },
     working: normalizeWorkingMemory(source.working || defaults.working),
     project: normalizeProjectMemory(source.project || defaults.project),
@@ -420,6 +437,16 @@ export function readPersistedStephanosSessionMemory(storage = globalThis?.localS
       ui: readLegacyUiState(storage),
     },
   });
+}
+
+
+export function readPortableStephanosHomeNodePreference(storage = globalThis?.localStorage) {
+  const persisted = readPersistedStephanosSessionMemory(storage);
+  return normalizeHomeNodePreference(persisted?.session?.homeNodePreference);
+}
+
+export function readPersistedStephanosHomeNodePreference(storage = globalThis?.localStorage) {
+  return readPortableStephanosHomeNodePreference(storage);
 }
 
 export function restoreStephanosSessionMemoryForDevice({
