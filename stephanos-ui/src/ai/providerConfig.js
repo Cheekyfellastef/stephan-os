@@ -99,3 +99,33 @@ export function buildProviderStatusSummary(providerKey, config, apiBaseUrl, heal
     healthState: health?.state || 'UNKNOWN',
   };
 }
+
+function isLoopbackHostname(hostname = '') {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname || '').trim().toLowerCase());
+}
+
+function extractHostname(value = '') {
+  try {
+    return new URL(String(value || '')).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+export function resolveProviderEndpointForDisplay({ providerKey, config, runtimeContext = {}, sessionRestoreDiagnostics = null } = {}) {
+  const endpoint = String(config?.baseURL || '').trim();
+  if (!endpoint) {
+    return 'Handled by Stephanos backend';
+  }
+
+  const remoteSession = runtimeContext?.sessionKind === 'hosted-web' || runtimeContext?.frontendLocal === false;
+  if (remoteSession && isLoopbackHostname(extractHostname(endpoint))) {
+    if (sessionRestoreDiagnostics?.ignoredFields?.includes(`providerConfigs.${providerKey}.baseURL`)) {
+      return 'Handled by Stephanos backend (saved localhost endpoint ignored on this device)';
+    }
+
+    return 'Handled by Stephanos backend (localhost kept server-internal)';
+  }
+
+  return endpoint;
+}

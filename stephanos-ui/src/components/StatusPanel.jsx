@@ -1,4 +1,4 @@
-import { buildProviderStatusSummary } from '../ai/providerConfig';
+import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import {
@@ -36,6 +36,7 @@ export default function StatusPanel() {
     togglePanel,
     workingMemory,
     projectMemory,
+    sessionRestoreDiagnostics,
   } = useAIStore();
 
   const latest = commandHistory[commandHistory.length - 1];
@@ -66,6 +67,12 @@ export default function StatusPanel() {
   const responseTruth = lastExecutionMetadata?.actual_provider_used
     ? (lastExecutionMetadata.actual_provider_used === 'mock' ? 'mock' : 'live')
     : 'n/a';
+  const providerEndpointDisplay = resolveProviderEndpointForDisplay({
+    providerKey: provider,
+    config: activeConfig,
+    runtimeContext: runtimeStatus.runtimeContext,
+    sessionRestoreDiagnostics,
+  });
 
   return (
     <CollapsiblePanel
@@ -109,9 +116,11 @@ export default function StatusPanel() {
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
+        <li>Session Restore Decision: {sessionRestoreDiagnostics.message}</li>
+        <li>Session Restore Reason: {sessionRestoreDiagnostics.reasons[0] || runtimeStatus.runtimeContext.restoreDecision || 'Portable session state restored.'}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
-        <li>Provider Endpoint: {statusSummary.providerEndpoint}</li>
+        <li>Provider Endpoint: {providerEndpointDisplay}</li>
         <li>Provider Model: {statusSummary.model}</li>
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
         <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || apiStatus.backendDefaultProvider || 'n/a'}</li>

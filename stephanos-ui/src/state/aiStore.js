@@ -27,7 +27,7 @@ import {
   clearPersistedStephanosSessionMemory,
   createDefaultStephanosSessionMemory,
   persistStephanosSessionMemory,
-  readPersistedStephanosSessionMemory,
+  restoreStephanosSessionMemoryForDevice,
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 
 const AIStoreContext = createContext(null);
@@ -144,10 +144,21 @@ function normalizeStoredSettings(persistedSession) {
 }
 
 function createInitialMemorySnapshot() {
-  const persistedSession = readPersistedStephanosSessionMemory();
+  const currentOrigin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : '';
+  const homeNodePreference = readPersistedStephanosHomeNode() || null;
+  const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
+  const restoredSession = restoreStephanosSessionMemoryForDevice({
+    currentOrigin,
+    manualNode: homeNodePreference,
+    lastKnownNode: homeNodeLastKnown,
+  });
+  const persistedSession = restoredSession.memory;
   const defaults = createDefaultStephanosSessionMemory();
   return {
     persistedSession,
+    sessionRestoreDiagnostics: restoredSession.diagnostics,
     settings: normalizeStoredSettings(persistedSession),
     uiLayout: normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT),
     lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
@@ -163,6 +174,8 @@ function createInitialMemorySnapshot() {
       ...defaults.project,
       ...(persistedSession?.project || {}),
     },
+    homeNodePreference,
+    homeNodeLastKnown,
   };
 }
 
@@ -188,9 +201,20 @@ export function AIStoreProvider({ children }) {
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
   const [projectMemory] = useState(initialSnapshot.projectMemory);
-  const [homeNodePreference, setHomeNodePreferenceState] = useState(() => readPersistedStephanosHomeNode() || null);
-  const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(() => readPersistedStephanosLastKnownNode() || null);
+  const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
+  const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(initialSnapshot.homeNodeLastKnown);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
+  const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
+    nonLocalSession: false,
+    localDesktopSession: true,
+    currentHost: '',
+    homeNodeHost: '',
+    ignoredFields: [],
+    reasons: [],
+    message: 'Portable session state restored.',
+    activeProvider: initialSettings.provider,
+    activeProviderConfigAdjusted: false,
+  });
   const [lastExecutionMetadata, setLastExecutionMetadata] = useState(null);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
@@ -360,7 +384,17 @@ export function AIStoreProvider({ children }) {
     PROVIDER_KEYS.map((key) => [key, getEffectiveProviderConfig(key)]),
   ), [getEffectiveProviderConfig]);
   const getActiveProviderConfig = useCallback(() => getEffectiveProviderConfig(provider), [getEffectiveProviderConfig, provider]);
-  const getActiveProviderConfigSource = useCallback(() => (isDraftDirty(provider) ? 'draft:unsaved' : 'saved:session'), [provider, draftProviderConfigs, savedProviderConfigs]);
+  const getActiveProviderConfigSource = useCallback(() => {
+    if (isDraftDirty(provider)) {
+      return 'draft:unsaved';
+    }
+
+    if (sessionRestoreDiagnostics.activeProvider === provider && sessionRestoreDiagnostics.activeProviderConfigAdjusted) {
+      return 'saved:portable-session';
+    }
+
+    return 'saved:session';
+  }, [provider, draftProviderConfigs, savedProviderConfigs, sessionRestoreDiagnostics]);
 
   const updateDraftProviderConfig = useCallback((providerKey, patch) => {
     setDraftProviderConfigs((prev) => ({
@@ -482,6 +516,7 @@ export function AIStoreProvider({ children }) {
     setHomeNodeLastKnown,
     homeNodeStatus,
     setHomeNodeStatus,
+    sessionRestoreDiagnostics,
     lastExecutionMetadata,
     setLastExecutionMetadata,
     rememberSuccessfulOllamaConnection,
@@ -525,6 +560,7 @@ export function AIStoreProvider({ children }) {
     homeNodePreference,
     homeNodeLastKnown,
     homeNodeStatus,
+    sessionRestoreDiagnostics,
     lastExecutionMetadata,
     apiStatus,
     uiDiagnostics,
