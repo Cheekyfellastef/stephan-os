@@ -18,6 +18,7 @@ const FIELD_MAP = {
   groq: [
     { key: 'model', label: 'Model', type: 'text' },
     { key: 'baseURL', label: 'Base URL', type: 'text' },
+    { key: 'apiKey', label: 'API key', type: 'password' },
   ],
   gemini: [
     { key: 'model', label: 'Model', type: 'text' },
@@ -336,13 +337,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                 <div className="provider-hint-box found">
                   <div className="provider-help-panel">
                     <strong>Cloud-backed Groq</strong>
-                    <p>Groq credentials stay on the server only.</p>
-                    <p>Configure <code>GROQ_API_KEY</code> in the backend environment; only model/base URL preferences are kept in the browser.</p>
+                    <p>Groq requests still run only through the Stephanos backend.</p>
+                    <p>Paste a Groq API key here for the current UI session, or set <code>GROQ_API_KEY</code> on the backend for shared/server-side configuration.</p>
                   </div>
                   <div className="provider-status-box">
-                    <strong>{health.ok ? 'Groq is ready' : 'Groq needs backend configuration'}</strong>
+                    <strong>{health.ok ? 'Groq is ready' : 'Groq needs a key'}</strong>
                     <p>{health.detail || 'Groq health has not been checked yet.'}</p>
-                    <p><strong>Configured via:</strong> {health.configuredVia || 'backend env'}</p>
+                    <p><strong>Configured via:</strong> {health.configuredVia || 'missing'}</p>
                     <p><strong>Resolved model:</strong> {health.model || draft.model || 'n/a'}</p>
                     <p><strong>Resolved base URL:</strong> {health.baseURL || draft.baseURL || 'n/a'}</p>
                   </div>
