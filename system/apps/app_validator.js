@@ -684,10 +684,11 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       },
     },
   });
+  const finalRoute = runtimeStatusModel.finalRoute;
 
   let launchUrl = '';
   let launchStrategy = 'workspace';
-  switch (runtimeStatusModel.routeKind) {
+  switch (finalRoute.routeKind) {
     case 'local-desktop':
       launchUrl = localPreferredTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
       break;
@@ -714,7 +715,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     launchableRuntime && (options.previousValidationState === 'error' || launcherState === 'error')
   );
   const validationReason = launchableRuntime
-    ? `validator found route=${runtimeStatusModel.routeKind} target=${launchUrl}${backendPublishedRouteMisconfigured ? '; published-client-route=misconfigured' : ''}`
+    ? `validator found route=${finalRoute.routeKind} target=${finalRoute.actualTarget || launchUrl}${backendPublishedRouteMisconfigured ? '; published-client-route=misconfigured' : ''}`
     : `no route reachable; local=${localPreferredTarget?.url || 'offline'}; home=${homeNodeTarget?.url || 'offline'}; cloud=${runtimeStatusModel.cloudRouteReachable ? 'ready' : 'offline'}`;
 
   emitStephanosValidationLog(context, {
@@ -725,7 +726,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     runtimeUrl: launchUrl || hostedDistUrl || homeNodeTarget?.url || localPreferredTarget?.url || STEPHANOS_RUNTIME_URL,
     runtimeReachable: launchableRuntime,
     backendStatus: healthyBackend ? 'up' : backendState || 'down',
-    staticServerStatus: launchableRuntime ? runtimeStatusModel.routeKind : uiState || 'down',
+    staticServerStatus: launchableRuntime ? finalRoute.routeKind : uiState || 'down',
     launcherState,
     cacheBypassed: true,
     staleStateCleared,

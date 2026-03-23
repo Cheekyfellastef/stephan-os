@@ -26,6 +26,8 @@ const buildUtilsDir = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = resolveFsPath(buildUtilsDir, '..');
 export const stephanosUiRoot = resolveFsPath(repoRoot, 'stephanos-ui');
 export const stephanosUiSrcRoot = resolveFsPath(stephanosUiRoot, 'src');
+export const sharedRuntimeRoot = resolveFsPath(repoRoot, 'shared', 'runtime');
+export const sharedAiRoot = resolveFsPath(repoRoot, 'shared', 'ai');
 export const stephanosDistRoot = resolveFsPath(repoRoot, 'apps', 'stephanos', 'dist');
 export const stephanosDistIndexPath = resolveFsPath(stephanosDistRoot, 'index.html');
 export const stephanosDistMetadataPath = resolveFsPath(stephanosDistRoot, 'stephanos-build.json');
@@ -41,7 +43,9 @@ export const DIST_WARNING_BANNER = [
 const FINGERPRINT_INPUTS = [
   'stephanos-ui/index.html',
   'stephanos-ui/package.json',
+  'stephanos-ui/package-lock.json',
   'stephanos-ui/vite.config.js',
+  'package.json',
 ];
 
 function walkFiles(rootDir) {
@@ -60,6 +64,15 @@ function walkFiles(rootDir) {
   return results;
 }
 
+export function getStephanosFingerprintSourceFiles() {
+  return [
+    ...FINGERPRINT_INPUTS.map((filePath) => resolveFsPath(repoRoot, filePath)),
+    ...walkFiles(stephanosUiSrcRoot),
+    ...walkFiles(sharedRuntimeRoot),
+    ...walkFiles(sharedAiRoot),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
 export function getGitCommit() {
   try {
     return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
@@ -74,10 +87,7 @@ export function getGitCommit() {
 
 export function computeStephanosSourceFingerprint() {
   const hash = createHash('sha256');
-  const files = [
-    ...FINGERPRINT_INPUTS.map((filePath) => resolveFsPath(repoRoot, filePath)),
-    ...walkFiles(stephanosUiSrcRoot),
-  ].sort((left, right) => left.localeCompare(right));
+  const files = getStephanosFingerprintSourceFiles();
 
   for (const absolutePath of files) {
     const relPath = path.relative(repoRoot, absolutePath).replace(/\\/g, '/');

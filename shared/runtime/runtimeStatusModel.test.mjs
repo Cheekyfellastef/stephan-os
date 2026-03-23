@@ -62,6 +62,10 @@ test('createRuntimeStatusModel keeps localhost routing for PC-local desktop sess
   assert.equal(status.preferredTarget, 'http://localhost:8787');
   assert.equal(status.actualTargetUsed, 'http://localhost:8787');
   assert.equal(status.nodeAddressSource, 'local-backend-session');
+  assert.equal(status.finalRoute.routeKind, 'local-desktop');
+  assert.equal(status.finalRoute.actualTarget, 'http://localhost:8787');
+  assert.equal(status.finalRoute.providerEligibility.backendMediatedProviders, true);
+  assert.equal(status.runtimeContext.finalRoute.actualTarget, 'http://localhost:8787');
 });
 
 
@@ -287,6 +291,40 @@ test('createRuntimeStatusModel keeps local-first provider routing for reachable 
   assert.equal(status.activeProvider, 'ollama');
   assert.equal(status.preferredTarget, 'http://192.168.0.198:8787');
   assert.equal(status.nodeAddressSource, 'manual');
+  assert.equal(status.finalRoute.routeKind, 'home-node');
+  assert.equal(status.finalRoute.actualTarget, 'http://192.168.0.198:8787');
+  assert.equal(status.finalRoute.providerEligibility.localProviders, true);
+});
+
+test('createRuntimeStatusModel marks dist and mock as fallback-only when no truthful backend route is reachable', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'mock',
+    routeMode: 'auto',
+    providerHealth: {
+      mock: { ok: true },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      preferredTarget: 'https://cheekyfellastef.github.io/apps/stephanos/dist/',
+      actualTargetUsed: 'https://cheekyfellastef.github.io/apps/stephanos/dist/',
+      routeDiagnostics: {
+        dist: {
+          configured: true,
+          available: true,
+          target: 'https://cheekyfellastef.github.io/apps/stephanos/dist/',
+          actualTarget: 'https://cheekyfellastef.github.io/apps/stephanos/dist/',
+          source: 'dist-entry',
+          reason: 'Bundled dist runtime is reachable',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.finalRoute.routeKind, 'dist');
+  assert.equal(status.finalRoute.providerEligibility.distFallbackOnly, true);
+  assert.equal(status.finalRoute.providerEligibility.mockFallbackOnly, true);
+  assert.equal(status.finalRoute.providerEligibility.backendMediatedProviders, false);
 });
 
 test('createRuntimeStatusModel surfaces explicit Ollama failure reasons before truthful fallback', () => {

@@ -30,6 +30,7 @@ import {
   readPortableStephanosHomeNodePreference,
   restoreStephanosSessionMemoryForDevice,
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
+import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
 
 const AIStoreContext = createContext(null);
@@ -82,6 +83,32 @@ function normalizeOllamaConnection(value = {}) {
     pcAddressHint: String(value.pcAddressHint || ''),
     lastSelectedModel: String(value.lastSelectedModel || ''),
   };
+}
+
+function extractHostname(value = '') {
+  try {
+    return new URL(String(value || '')).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+function isLoopbackHostname(hostname = '') {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname || '').trim().toLowerCase());
+}
+
+function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback = false } = {}) {
+  const candidateHost = extractHostname(candidate);
+  if (candidate && (allowLoopback || !isLoopbackHostname(candidateHost))) {
+    return candidate;
+  }
+
+  const fallbackHost = extractHostname(fallback);
+  if (fallback && (allowLoopback || !isLoopbackHostname(fallbackHost))) {
+    return fallback;
+  }
+
+  return allowLoopback ? (candidate || fallback || '') : '';
 }
 
 function truncateText(value, limit = MAX_PERSISTED_OUTPUT_LENGTH) {
@@ -154,10 +181,10 @@ function buildInitialRuntimeContext(initialApiRuntimeConfig, { sessionRestoreDia
   const homeNode = initialApiRuntimeConfig?.homeNode || homeNodePreference || homeNodeLastKnown || null;
   const preferredTarget = localDesktopSession
     ? (initialApiRuntimeConfig?.baseUrl || '')
-    : (homeNode?.uiUrl || frontendOrigin || '');
+    : resolveCompatibleTarget(homeNode?.uiUrl || '', frontendOrigin || '', { allowLoopback: false });
   const actualTargetUsed = localDesktopSession
     ? (initialApiRuntimeConfig?.baseUrl || '')
-    : (homeNode?.backendUrl || initialApiRuntimeConfig?.baseUrl || '');
+    : resolveCompatibleTarget(homeNode?.backendUrl || '', initialApiRuntimeConfig?.baseUrl || '', { allowLoopback: false });
 
   return {
     ...initialApiRuntimeConfig,
@@ -277,6 +304,37 @@ export function AIStoreProvider({ children }) {
     lastCheckedAt: null,
     meta: null,
   });
+  const runtimeStatusModel = useMemo(() => createRuntimeStatusModel({
+    appId: 'stephanos',
+    appName: 'Stephanos Mission Console',
+    validationState: apiStatus.state === 'offline'
+      ? 'error'
+      : (apiStatus.state === 'checking' ? 'launching' : 'healthy'),
+    selectedProvider: provider,
+    routeMode,
+    fallbackEnabled,
+    fallbackOrder,
+    providerHealth,
+    backendAvailable: apiStatus.backendReachable,
+    runtimeContext: apiStatus.runtimeContext || {
+      frontendOrigin: apiStatus.frontendOrigin,
+      apiBaseUrl: apiStatus.baseUrl,
+      homeNode: apiStatus.runtimeContext?.homeNode || null,
+    },
+    activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
+  }), [
+    apiStatus.backendReachable,
+    apiStatus.baseUrl,
+    apiStatus.frontendOrigin,
+    apiStatus.runtimeContext,
+    apiStatus.state,
+    fallbackEnabled,
+    fallbackOrder,
+    lastExecutionMetadata?.actual_provider_used,
+    provider,
+    providerHealth,
+    routeMode,
+  ]);
 
   const debugVisible = uiLayout.debugConsole === true;
 
@@ -577,6 +635,7 @@ export function AIStoreProvider({ children }) {
     isDraftDirty,
     apiStatus,
     setApiStatus,
+    runtimeStatusModel,
     uiDiagnostics,
     setUiDiagnostics,
   }), [
@@ -606,6 +665,7 @@ export function AIStoreProvider({ children }) {
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
     apiStatus,
+    runtimeStatusModel,
     uiDiagnostics,
     setDebugVisible,
     togglePanel,

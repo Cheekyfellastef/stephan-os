@@ -1,6 +1,5 @@
 import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
-import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -36,6 +35,7 @@ export default function StatusPanel() {
     getActiveProviderConfigSource,
     uiDiagnostics,
     lastExecutionMetadata,
+    runtimeStatusModel,
     uiLayout,
     togglePanel,
     workingMemory,
@@ -46,19 +46,7 @@ export default function StatusPanel() {
   const latest = commandHistory[commandHistory.length - 1];
   const activeConfig = getActiveProviderConfig();
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl, providerHealth[provider]);
-  const runtimeStatus = createRuntimeStatusModel({
-    appId: 'stephanos',
-    appName: 'Stephanos Mission Console',
-    validationState: 'healthy',
-    selectedProvider: provider,
-    routeMode,
-    fallbackEnabled,
-    fallbackOrder,
-    providerHealth,
-    backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || { frontendOrigin: apiStatus.frontendOrigin, apiBaseUrl: apiStatus.baseUrl, homeNode: apiStatus.runtimeContext?.homeNode || null },
-    activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
-  });
+  const runtimeStatus = runtimeStatusModel;
   const executionTruth = isBusy
     ? 'busy'
     : !lastExecutionMetadata?.actual_provider_used
@@ -102,6 +90,12 @@ export default function StatusPanel() {
         <li>Route Kind: {runtimeStatus.routeKind}</li>
         <li>Preferred Target: {runtimeStatus.preferredTarget || 'n/a'}</li>
         <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'n/a'}</li>
+        <li>Final Route Source: {runtimeStatus.finalRoute?.source || 'n/a'}</li>
+        <li>Final Route Reachable: {runtimeStatus.finalRoute?.reachability?.selectedRouteReachable ? 'yes' : 'no'}</li>
+        <li>Backend-Mediated Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.backendMediatedProviders ? 'yes' : 'no'}</li>
+        <li>Local Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.localProviders ? 'yes' : 'no'}</li>
+        <li>Cloud Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.cloudProviders ? 'yes' : 'no'}</li>
+        <li>Mock Fallback Only: {runtimeStatus.finalRoute?.providerEligibility?.mockFallbackOnly ? 'yes' : 'no'}</li>
         <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
