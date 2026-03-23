@@ -115,6 +115,46 @@ export function useAIConsole() {
   const ollamaDraftConfig = effectiveProviderConfigs.ollama || {};
   const ollamaHealth = providerHealth.ollama || {};
 
+  const buildRuntimeContextFromHealth = useCallback((resolvedRuntimeContext, health = {}) => {
+    const backendBaseUrl = health.baseUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '';
+    const frontendHost = extractHostname(resolvedRuntimeContext.frontendOrigin);
+    const backendHost = extractHostname(backendBaseUrl);
+    const localDesktopSession = isLoopbackHost(frontendHost) || isLoopbackHost(backendHost);
+    const nodeAddressSource = localDesktopSession
+      ? 'local-backend-session'
+      : (resolvedRuntimeContext.nodeAddressSource || health.data?.client_route_source || 'route-diagnostics');
+    const preferredTarget = localDesktopSession && backendBaseUrl
+      ? backendBaseUrl
+      : (resolvedRuntimeContext.preferredTarget || health.data?.published_backend_base_url || resolvedRuntimeContext.frontendOrigin);
+
+    return {
+      ...resolvedRuntimeContext,
+      apiBaseUrl: backendBaseUrl,
+      backendBaseUrl,
+      baseUrl: backendBaseUrl,
+      preferredTarget,
+      actualTargetUsed: backendBaseUrl || resolvedRuntimeContext.actualTargetUsed,
+      nodeAddressSource,
+      publishedClientRouteState: health.data?.client_route_state || resolvedRuntimeContext.publishedClientRouteState || 'unknown',
+      routeDiagnostics: {
+        ...(resolvedRuntimeContext.routeDiagnostics || {}),
+        ...(localDesktopSession ? {
+          'local-desktop': {
+            configured: true,
+            available: Boolean(health.ok),
+            misconfigured: false,
+            target: backendBaseUrl,
+            actualTarget: backendBaseUrl,
+            source: 'local-backend-session',
+            reason: health.ok
+              ? 'Backend online locally; provider/router is using the live local-desktop backend session'
+              : 'Local desktop session detected, but the backend is offline',
+            blockedReason: health.ok ? '' : 'backend is offline',
+          },
+        } : {}),
+      },
+    };
+  }, []);
 
   const resolveRuntimeConfig = useCallback(async () => {
     const baseRuntimeConfig = getApiRuntimeConfig();
@@ -156,12 +196,20 @@ export function useAIConsole() {
     }
 
     const nextRuntimeConfig = getApiRuntimeConfig();
+    const localBackendSession = localDesktopSession || isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl));
+    const preferredTarget = localBackendSession
+      ? nextRuntimeConfig.baseUrl
+      : (discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || nextRuntimeConfig.frontendOrigin);
     return {
       runtimeConfig: {
         ...nextRuntimeConfig,
+        apiBaseUrl: nextRuntimeConfig.baseUrl,
+        backendBaseUrl: nextRuntimeConfig.baseUrl,
         homeNode: discovery.preferredNode || nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null,
-        nodeAddressSource: discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'unknown',
-        preferredTarget: discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || nextRuntimeConfig.frontendOrigin,
+        nodeAddressSource: localBackendSession
+          ? 'local-backend-session'
+          : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
+        preferredTarget,
         actualTargetUsed: discovery.preferredNode?.backendUrl || nextRuntimeConfig.baseUrl,
       },
       discovery,
@@ -173,7 +221,8 @@ export function useAIConsole() {
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const health = await checkApiHealth(resolvedRuntimeContext);
-      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: resolvedRuntimeContext }, resolvedRuntimeContext);
+      const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
+      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
       setProviderHealth(providerHealth.data || {});
       setApiStatus({
         state: health.ok ? 'online' : 'error',
@@ -183,13 +232,13 @@ export function useAIConsole() {
           : `Health check failed (${health.status}).`,
         target: health.target,
         baseUrl: health.baseUrl,
-        frontendOrigin: resolvedRuntimeContext.frontendOrigin,
-        strategy: resolvedRuntimeContext.strategy,
-        backendTargetEndpoint: health.data?.backend_target_endpoint || resolvedRuntimeContext.backendTargetEndpoint,
-        healthEndpoint: resolvedRuntimeContext.healthEndpoint,
+        frontendOrigin: hydratedRuntimeContext.frontendOrigin,
+        strategy: hydratedRuntimeContext.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || hydratedRuntimeContext.backendTargetEndpoint,
+        healthEndpoint: hydratedRuntimeContext.healthEndpoint,
         backendReachable: health.ok,
         backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext: resolvedRuntimeContext,
+        runtimeContext: hydratedRuntimeContext,
         lastCheckedAt: new Date().toISOString(),
         meta: health.data,
       });
@@ -211,7 +260,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth]);
 
   useEffect(() => {
     refreshHealth();

@@ -37,7 +37,7 @@ function parseHostname(value = '') {
 
 function normalizeRuntimeContext(runtimeContext = {}) {
   const frontendOrigin = String(runtimeContext.frontendOrigin || '');
-  const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || '');
+  const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || runtimeContext.baseUrl || '');
   const frontendHost = parseHostname(frontendOrigin);
   const backendHost = parseHostname(apiBaseUrl);
   const frontendLocal = isLoopbackHost(frontendHost) || !frontendHost;
@@ -58,6 +58,7 @@ function normalizeRuntimeContext(runtimeContext = {}) {
   return {
     frontendOrigin,
     apiBaseUrl,
+    baseUrl: apiBaseUrl,
     frontendHost,
     backendHost,
     frontendReachability,
@@ -69,9 +70,9 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
-    preferredTarget: runtimeContext.preferredTarget || homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
+    preferredTarget: runtimeContext.preferredTarget || homeNode?.uiUrl || (backendLocal ? apiBaseUrl : '') || frontendOrigin || apiBaseUrl,
     actualTargetUsed: runtimeContext.actualTargetUsed || apiBaseUrl || homeNode?.backendUrl || frontendOrigin,
-    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
+    nodeAddressSource: runtimeContext.nodeAddressSource || homeNode?.source || (backendLocal ? 'local-backend-session' : (frontendLocal ? 'local-browser-session' : 'route-diagnostics')),
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},
@@ -257,6 +258,7 @@ function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder 
 function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
   const diagnostics = runtimeContext.routeDiagnostics || {};
   const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser' || runtimeContext.sessionKind === 'local-desktop';
+  const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web' && backendAvailable && cloudAvailable;
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
@@ -355,15 +357,17 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       blockedReason: '',
     }, distProbe),
     cloud: createRouteEvaluation('cloud', {
-      configured: diagnostics.cloud?.configured === true,
-      available: diagnostics.cloud?.available === true,
+      configured: diagnostics.cloud?.configured === true || hostedCloudSession,
+      available: diagnostics.cloud?.available === true || hostedCloudSession,
       misconfigured: false,
       optional: false,
       target: typeof diagnostics.cloud?.target === 'string' ? diagnostics.cloud.target : '',
       actualTarget: typeof diagnostics.cloud?.actualTarget === 'string' ? diagnostics.cloud.actualTarget : '',
-      source: 'cloud-route-unavailable',
-      reason: 'No cloud-backed Stephanos route is currently ready',
-      blockedReason: 'no cloud-backed route is currently ready',
+      source: diagnostics.cloud?.source || (hostedCloudSession ? 'backend-cloud-session' : 'cloud-route-unavailable'),
+      reason: hostedCloudSession
+        ? 'A cloud-backed Stephanos route is ready'
+        : 'No cloud-backed Stephanos route is currently ready',
+      blockedReason: hostedCloudSession ? '' : 'no cloud-backed route is currently ready',
     }, diagnostics.cloud),
   };
 
@@ -626,14 +630,27 @@ export function createRuntimeStatusModel({
     runtimeContext: normalizedRuntimeContext,
   });
 
-  let activeProvider = normalizeProviderSelection(activeProviderHint || routePlan.selectedProvider);
-  if (activeProvider === DEFAULT_PROVIDER_KEY && !health[activeProvider] && routePlan.selectedProvider) {
-    activeProvider = routePlan.selectedProvider;
-  }
+  const nodeRoute = deriveNodeRoute({
+    runtimeContext: normalizedRuntimeContext,
+    backendAvailable,
+    cloudAvailable: routePlan.cloudAvailable,
+    validationState,
+  });
+  const liveRouteAvailable = nodeRoute.routeKind !== 'unavailable';
+  const preferredLiveProvider = routePlan.attemptOrder.find((providerKey) => providerKey !== 'mock' && health[providerKey]?.ok)
+    || (normalizedProvider !== 'mock' ? normalizedProvider : routePlan.selectedProvider);
+  const routeSelectedProvider = routePlan.selectedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
+    ? preferredLiveProvider
+    : routePlan.selectedProvider;
+  const hintedProvider = normalizeProviderSelection(activeProviderHint || routeSelectedProvider);
+  const activeProvider = hintedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
+    ? routeSelectedProvider
+    : hintedProvider;
 
   const fallbackActive = Boolean(
-    activeProvider
-    && activeProvider !== routePlan.selectedProvider
+    activeProviderHint
+    && activeProvider
+    && activeProvider !== routeSelectedProvider
     && providerMode !== 'explicit'
   );
 
@@ -642,13 +659,6 @@ export function createRuntimeStatusModel({
     : CLOUD_PROVIDER_KEYS.includes(activeProvider)
       ? 'cloud'
       : 'dev';
-
-  const nodeRoute = deriveNodeRoute({
-    runtimeContext: normalizedRuntimeContext,
-    backendAvailable,
-    cloudAvailable: routePlan.cloudAvailable,
-    validationState,
-  });
 
   const dependencySummary = buildDependencySummary({
     backendAvailable,
@@ -686,7 +696,7 @@ export function createRuntimeStatusModel({
     effectiveRouteMode: routePlan.effectiveRouteMode,
     providerMode: routePlan.effectiveRouteMode,
     selectedProvider: normalizedProvider,
-    routeSelectedProvider: routePlan.selectedProvider,
+    routeSelectedProvider,
     activeProvider,
     activeRouteKind,
     localAvailable: routePlan.localAvailable,
