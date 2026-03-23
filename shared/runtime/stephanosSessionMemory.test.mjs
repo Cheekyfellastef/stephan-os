@@ -6,6 +6,7 @@ import {
   createDefaultStephanosSessionMemory,
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
+  readPortableStephanosHomeNodePreference,
   restoreStephanosSessionMemoryForDevice,
   sanitizeStephanosSessionMemoryForDevice,
 } from './stephanosSessionMemory.mjs';
@@ -224,4 +225,73 @@ test('restoreStephanosSessionMemoryForDevice leaves localhost settings intact fo
   assert.equal(restored.memory.session.providerPreferences.providerConfigs.ollama.baseURL, 'http://localhost:11434');
   assert.deepEqual(restored.diagnostics.ignoredFields, []);
   assert.equal(restored.diagnostics.localDesktopSession, true);
+});
+
+
+test('persistStephanosSessionMemory keeps manual home-node preference portable across sessions', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: {
+      homeNodePreference: {
+        host: '192.168.0.198',
+        backendPort: 8787,
+        uiPort: 5173,
+        source: 'manual',
+      },
+    },
+  }, storage);
+
+  const portablePreference = readPortableStephanosHomeNodePreference(storage);
+  assert.equal(portablePreference.host, '192.168.0.198');
+  assert.equal(portablePreference.backendUrl, 'http://192.168.0.198:8787');
+  assert.equal(portablePreference.source, 'manual');
+});
+
+test('restoreStephanosSessionMemoryForDevice preserves non-loopback manual home-node preference for non-local sessions', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: {
+      homeNodePreference: {
+        host: '192.168.0.198',
+        backendPort: 8787,
+        uiPort: 5173,
+        source: 'manual',
+      },
+      providerPreferences: {
+        provider: 'groq',
+      },
+    },
+  }, storage);
+
+  const restored = restoreStephanosSessionMemoryForDevice({
+    storage,
+    currentOrigin: 'https://cheekyfellastef.github.io',
+  });
+
+  assert.equal(restored.memory.session.homeNodePreference.host, '192.168.0.198');
+  assert.equal(restored.memory.session.homeNodePreference.source, 'manual');
+  assert.doesNotMatch(restored.diagnostics.message, /homeNodePreference/);
+});
+
+test('restoreStephanosSessionMemoryForDevice drops loopback manual home-node preference for non-local sessions', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: {
+      homeNodePreference: {
+        host: 'localhost',
+        backendPort: 8787,
+        uiPort: 5173,
+        source: 'manual',
+      },
+    },
+  }, storage);
+
+  const restored = restoreStephanosSessionMemoryForDevice({
+    storage,
+    currentOrigin: 'https://cheekyfellastef.github.io',
+  });
+
+  assert.equal(restored.memory.session.homeNodePreference, null);
+  assert.ok(restored.diagnostics.ignoredFields.includes('session.homeNodePreference'));
+  assert.match(restored.diagnostics.reasons.join(' '), /manual home-node localhost address was ignored/i);
 });

@@ -9,6 +9,7 @@ import {
   probeStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
 } from '../shared/runtime/stephanosHomeNode.mjs';
+import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 import { validateStephanosRuntime } from '../system/apps/app_validator.js';
 
 test('createStephanosHomeNodeUrls builds LAN-friendly UI and backend URLs', () => {
@@ -724,9 +725,173 @@ test('validateStephanosRuntime keeps dist as fallback only when no live route is
     assert.equal(status.runtimeStatusModel.preferredRoute, 'dist');
     assert.equal(status.launchUrl, './apps/stephanos/dist/index.html');
     assert.equal(status.runtimeStatusModel.routeEvaluations['home-node'].available, false);
-    assert.match(status.runtimeStatusModel.routeEvaluations['home-node'].blockedReason, /configured but currently unreachable|health probe could not confirm/i);
+    assert.match(status.runtimeStatusModel.routeEvaluations['home-node'].blockedReason, /configured but currently unreachable|health probe could not confirm|unreachable host/i);
     assert.match(status.runtimeStatusModel.routeEvaluations.dist.reason, /fallback route/i);
     assert.match(status.message, /bundled dist entry exists and can be used as a fallback route/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
+
+test('buildStephanosHomeNodeCandidates ignores loopback manual nodes for non-local sessions', () => {
+  const candidates = buildStephanosHomeNodeCandidates({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    manualNode: { host: 'localhost', source: 'manual' },
+    lastKnownNode: { host: '192.168.0.198', source: 'lastKnown' },
+  });
+
+  assert.ok(candidates.every((candidate) => candidate.host !== 'localhost'));
+  assert.ok(candidates.some((candidate) => candidate.host === '192.168.0.198'));
+});
+
+test('discoverStephanosHomeNode reports an explicit timeout for unreachable manual home-node probes', async () => {
+  const discovery = await discoverStephanosHomeNode({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    manualNode: { host: '192.168.0.198', source: 'manual' },
+    fetchImpl: async () => {
+      const error = new Error('timed out');
+      error.name = 'AbortError';
+      throw error;
+    },
+  });
+
+  assert.equal(discovery.reachable, false);
+  assert.equal(discovery.source, 'manual');
+  assert.equal(discovery.failureCode, 'probe-timeout');
+  assert.equal(discovery.failureReason, 'probe timeout');
+  assert.match(discovery.message, /probe timeout/i);
+  assert.equal(discovery.attempts[0].source, 'manual');
+});
+
+test('validateStephanosRuntime restores manual home-node from portable session memory when local storage is empty', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    distPort: 4173,
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === STEPHANOS_SESSION_MEMORY_STORAGE_KEY) {
+        return JSON.stringify({
+          session: {
+            homeNodePreference: manualNode,
+          },
+        });
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+        }),
+        json: async () => ({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+        }),
+      };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: {} }),
+        json: async () => ({ success: true, data: {} }),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.runtimeStatusModel.routeKind, 'home-node');
+    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'manual');
+    assert.equal(status.runtimeStatusModel.runtimeContext.homeNode.host, '192.168.0.198');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
+test('validateStephanosRuntime surfaces explicit manual home-node failure reasons when the node is unreachable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    distPort: 4173,
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'stephanos_home_node_manual') {
+        return JSON.stringify(manualNode);
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      throw new TypeError('Failed to fetch');
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'manual');
+    assert.match(status.runtimeStatusModel.routeEvaluations['home-node'].blockedReason, /cORS\/network failure/i);
+    assert.match(status.runtimeStatusModel.dependencySummary, /home pc node unavailable/i);
+    assert.doesNotMatch(status.runtimeStatusModel.dependencySummary, /unknown source/i);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;

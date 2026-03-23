@@ -63,12 +63,15 @@ function normalizeRuntimeContext(runtimeContext = {}) {
     source: runtimeContext.homeNode?.source || 'manual',
   });
   const loopbackBackendMismatch = !launcherLocal && backendLocal;
-  const deviceContext = launcherLocal
+  const localDesktopBackendSession = !launcherLocal
+    && backendLocal
+    && runtimeContext.routeDiagnostics?.['local-desktop']?.configured === true;
+  const deviceContext = launcherLocal || localDesktopBackendSession
     ? 'pc-local-browser'
     : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
       ? 'lan-companion'
       : 'off-network';
-  const sessionKind = launcherLocal ? 'local-desktop' : 'hosted-web';
+  const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
   const compatiblePreferredTarget = resolveCompatibleUrl(
     runtimeContext.preferredTarget,
     homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
@@ -233,6 +236,10 @@ function buildRoutePreference(runtimeContext = {}) {
     return ['local-desktop', 'home-node', 'cloud', 'dist'];
   }
 
+  if (runtimeContext.routeDiagnostics?.['local-desktop']?.configured === true && runtimeContext.backendLocal) {
+    return ['local-desktop', 'home-node', 'cloud', 'dist'];
+  }
+
   if (runtimeContext.deviceContext === 'lan-companion') {
     return ['home-node', 'cloud', 'dist', 'local-desktop'];
   }
@@ -284,7 +291,9 @@ function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder 
 
 function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
   const diagnostics = runtimeContext.routeDiagnostics || {};
-  const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser' || runtimeContext.sessionKind === 'local-desktop';
+  const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser'
+    || runtimeContext.sessionKind === 'local-desktop'
+    || diagnostics['local-desktop']?.configured === true;
   const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web' && backendAvailable && cloudAvailable;
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
@@ -429,6 +438,14 @@ function summarizeSelectedRoute(routeKey, route, runtimeContext, backendAvailabl
       };
     }
 
+    const homeNodeBlockedReason = runtimeContext.routeDiagnostics?.['home-node']?.blockedReason || runtimeContext.routeDiagnostics?.['home-node']?.reason || '';
+    if (runtimeContext.homeNode?.configured && homeNodeBlockedReason) {
+      return {
+        headline: 'Home PC node unavailable',
+        summary: `Home PC node unavailable: ${homeNodeBlockedReason}`,
+      };
+    }
+
     return {
       headline: 'No reachable Stephanos route',
       summary: 'No reachable Stephanos route',
@@ -509,6 +526,12 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
     actualTargetUsed = selectedRoute?.actualTarget || selectedRoute?.target || runtimeContext.actualTargetUsed || preferredTarget;
   }
 
+  const nodeAddressSource = selectedRoute?.kind === 'local-desktop'
+    ? (selectedRoute.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'))
+    : (runtimeContext.homeNode?.configured || runtimeContext.nodeAddressSource)
+      ? (runtimeContext.nodeAddressSource || runtimeContext.homeNode?.source || selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'))
+      : (selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'));
+
   return {
     routeKind: selectedRouteKey || 'unavailable',
     preferredTarget,
@@ -518,7 +541,7 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
     cloudRouteReachable: Boolean(cloud.available),
     routeSummary: selectedSummary.summary,
     routeHeadline: selectedSummary.headline,
-    nodeAddressSource: selectedRoute?.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
+    nodeAddressSource,
     routeEvaluations: routeSelection.evaluations,
     routePreferenceOrder: routeSelection.preferenceOrder,
     preferredRoute: selectedRouteKey,
@@ -546,6 +569,11 @@ function buildDependencySummary({
 
     if (localPending && !localAvailable && effectiveRouteMode !== 'cloud-first') {
       return 'Checking local Ollama readiness';
+    }
+
+    const homeNodeEvaluation = nodeRoute.routeEvaluations['home-node'];
+    if (homeNodeEvaluation?.configured && homeNodeEvaluation?.blockedReason) {
+      return `Home PC node unavailable: ${homeNodeEvaluation.blockedReason}`;
     }
 
     return cloudAvailable ? 'Cloud route ready' : 'No reachable Stephanos route';
