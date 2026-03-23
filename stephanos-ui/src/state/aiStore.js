@@ -29,6 +29,7 @@ import {
   persistStephanosSessionMemory,
   restoreStephanosSessionMemoryForDevice,
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
+import { getApiRuntimeConfig } from '../ai/apiConfig';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -143,6 +144,34 @@ function normalizeStoredSettings(persistedSession) {
   };
 }
 
+function buildInitialRuntimeContext(initialApiRuntimeConfig, { sessionRestoreDiagnostics, homeNodePreference, homeNodeLastKnown }) {
+  const frontendOrigin = initialApiRuntimeConfig?.frontendOrigin || '';
+  const frontendHost = typeof window !== 'undefined' && window.location?.hostname
+    ? String(window.location.hostname || '')
+    : '';
+  const localDesktopSession = frontendHost === 'localhost' || frontendHost === '127.0.0.1';
+  const homeNode = initialApiRuntimeConfig?.homeNode || homeNodePreference || homeNodeLastKnown || null;
+  const preferredTarget = localDesktopSession
+    ? (initialApiRuntimeConfig?.baseUrl || '')
+    : (homeNode?.uiUrl || frontendOrigin || '');
+  const actualTargetUsed = localDesktopSession
+    ? (initialApiRuntimeConfig?.baseUrl || '')
+    : (homeNode?.backendUrl || initialApiRuntimeConfig?.baseUrl || '');
+
+  return {
+    ...initialApiRuntimeConfig,
+    apiBaseUrl: initialApiRuntimeConfig?.baseUrl || '',
+    backendBaseUrl: initialApiRuntimeConfig?.baseUrl || '',
+    preferredTarget,
+    actualTargetUsed,
+    nodeAddressSource: localDesktopSession
+      ? 'local-backend-session'
+      : (homeNode?.source || 'route-diagnostics'),
+    restoreDecision: sessionRestoreDiagnostics?.reasons?.[0] || '',
+    homeNode,
+  };
+}
+
 function createInitialMemorySnapshot() {
   const currentOrigin = typeof window !== 'undefined' && window.location?.origin
     ? window.location.origin
@@ -156,9 +185,15 @@ function createInitialMemorySnapshot() {
   });
   const persistedSession = restoredSession.memory;
   const defaults = createDefaultStephanosSessionMemory();
+  const initialApiRuntimeConfig = getApiRuntimeConfig();
   return {
     persistedSession,
     sessionRestoreDiagnostics: restoredSession.diagnostics,
+    initialApiRuntimeContext: buildInitialRuntimeContext(initialApiRuntimeConfig, {
+      sessionRestoreDiagnostics: restoredSession.diagnostics,
+      homeNodePreference,
+      homeNodeLastKnown,
+    }),
     settings: normalizeStoredSettings(persistedSession),
     uiLayout: normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT),
     lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
@@ -228,14 +263,15 @@ export function AIStoreProvider({ children }) {
     state: 'checking',
     label: 'Checking backend...',
     detail: 'Waiting for health check.',
-    target: 'local',
-    baseUrl: '',
-    frontendOrigin: '',
-    strategy: 'default:local-stephanos-backend',
-    backendTargetEndpoint: '',
-    healthEndpoint: '',
+    target: initialSnapshot.initialApiRuntimeContext?.target || 'local',
+    baseUrl: initialSnapshot.initialApiRuntimeContext?.baseUrl || '',
+    frontendOrigin: initialSnapshot.initialApiRuntimeContext?.frontendOrigin || '',
+    strategy: initialSnapshot.initialApiRuntimeContext?.strategy || 'default:local-stephanos-backend',
+    backendTargetEndpoint: initialSnapshot.initialApiRuntimeContext?.backendTargetEndpoint || '',
+    healthEndpoint: initialSnapshot.initialApiRuntimeContext?.healthEndpoint || '',
     backendReachable: false,
     backendDefaultProvider: DEFAULT_PROVIDER_KEY,
+    runtimeContext: initialSnapshot.initialApiRuntimeContext || null,
     lastCheckedAt: null,
     meta: null,
   });
@@ -390,6 +426,10 @@ export function AIStoreProvider({ children }) {
     }
 
     if (sessionRestoreDiagnostics.activeProvider === provider && sessionRestoreDiagnostics.activeProviderConfigAdjusted) {
+      return 'saved:portable-session';
+    }
+
+    if (sessionRestoreDiagnostics.ignoredFields?.includes(`providerConfigs.${provider}.baseURL`)) {
       return 'saved:portable-session';
     }
 
