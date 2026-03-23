@@ -17,6 +17,7 @@ import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
+import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
@@ -47,7 +48,7 @@ export default function App() {
   useDebugConsole();
 
   const providerSummary = buildProviderStatusSummary(provider, getActiveProviderConfig(), apiStatus.baseUrl, providerHealth[provider]);
-  const runtimeStatus = runtimeStatusModel;
+  const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
 
   useEffect(() => {
@@ -80,7 +81,7 @@ export default function App() {
                 Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{runtimeStatus.routeKind}</strong> · Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Preferred target: <strong>{runtimeStatus.preferredTarget || 'n/a'}</strong> · Actual target: <strong>{runtimeStatus.actualTargetUsed || 'n/a'}</strong> · Node source: <strong>{runtimeStatus.nodeAddressSource}</strong>
+                Preferred target: <strong>{runtimeStatus.preferredTarget || 'unavailable'}</strong> · Actual target: <strong>{runtimeStatus.actualTargetUsed || 'unavailable'}</strong> · Node source: <strong>{runtimeStatus.nodeAddressSource || 'unknown'}</strong>
               </p>
               <p className="local-ai-text secondary">
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
+import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import CommandResultCard from './CommandResultCard';
 import CollapsiblePanel from './CollapsiblePanel';
 
@@ -22,7 +23,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
   const ollamaState = provider === 'ollama'
     ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: apiStatus.frontendOrigin })
     : null;
-  const runtimeStatus = runtimeStatusModel;
+  const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -51,7 +52,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       <div className={`api-banner ${runtimeStatus.statusTone}`}>
         <strong>{runtimeStatus.headline}</strong>
         <span>{runtimeStatus.dependencySummary}</span>
-        <span>Route kind: {runtimeStatus.routeKind} · Preferred target: {runtimeStatus.preferredTarget || 'n/a'} · Source: {runtimeStatus.nodeAddressSource}</span>
+        <span>Route kind: {runtimeStatus.routeKind} · Preferred target: {runtimeStatus.preferredTarget || 'unavailable'} · Source: {runtimeStatus.nodeAddressSource || 'unknown'}</span>
       </div>
       {provider === 'ollama' && !runtimeStatus.localAvailable ? (
         <div className="api-banner degraded">

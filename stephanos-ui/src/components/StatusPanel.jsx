@@ -1,5 +1,6 @@
 import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
+import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -46,7 +47,11 @@ export default function StatusPanel() {
   const latest = commandHistory[commandHistory.length - 1];
   const activeConfig = getActiveProviderConfig();
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, apiStatus.baseUrl, providerHealth[provider]);
-  const runtimeStatus = runtimeStatusModel;
+  const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const finalRoute = runtimeStatus.finalRoute ?? {};
+  const providerEligibility = finalRoute.providerEligibility ?? {};
+  const reachability = finalRoute.reachability ?? {};
+  const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const executionTruth = isBusy
     ? 'busy'
     : !lastExecutionMetadata?.actual_provider_used
@@ -62,9 +67,13 @@ export default function StatusPanel() {
   const providerEndpointDisplay = resolveProviderEndpointForDisplay({
     providerKey: provider,
     config: activeConfig,
-    runtimeContext: runtimeStatus.runtimeContext,
+    runtimeContext,
     sessionRestoreDiagnostics,
   });
+  const readyCloudProviders = runtimeStatus.readyCloudProviders.length > 0 ? runtimeStatus.readyCloudProviders.join(', ') : 'pending';
+  const readyLocalProviders = runtimeStatus.readyLocalProviders.length > 0 ? runtimeStatus.readyLocalProviders.join(', ') : 'pending';
+  const attemptOrder = runtimeStatus.attemptOrder.length > 0 ? runtimeStatus.attemptOrder.join(' → ') : 'pending';
+  const sessionRestoreReason = sessionRestoreDiagnostics.reasons[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
 
   return (
     <CollapsiblePanel
@@ -88,24 +97,24 @@ export default function StatusPanel() {
         <li>Backend: {apiStatus.label}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
         <li>Route Kind: {runtimeStatus.routeKind}</li>
-        <li>Preferred Target: {runtimeStatus.preferredTarget || 'n/a'}</li>
-        <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'n/a'}</li>
-        <li>Final Route Source: {runtimeStatus.finalRoute?.source || 'n/a'}</li>
-        <li>Final Route Reachable: {runtimeStatus.finalRoute?.reachability?.selectedRouteReachable ? 'yes' : 'no'}</li>
-        <li>Backend-Mediated Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.backendMediatedProviders ? 'yes' : 'no'}</li>
-        <li>Local Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.localProviders ? 'yes' : 'no'}</li>
-        <li>Cloud Providers Eligible: {runtimeStatus.finalRoute?.providerEligibility?.cloudProviders ? 'yes' : 'no'}</li>
-        <li>Mock Fallback Only: {runtimeStatus.finalRoute?.providerEligibility?.mockFallbackOnly ? 'yes' : 'no'}</li>
+        <li>Preferred Target: {runtimeStatus.preferredTarget || 'unavailable'}</li>
+        <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'unavailable'}</li>
+        <li>Final Route Source: {finalRoute.source || 'unknown'}</li>
+        <li>Final Route Reachable: {reachability.selectedRouteReachable ? 'yes' : 'pending'}</li>
+        <li>Backend-Mediated Providers Eligible: {providerEligibility.backendMediatedProviders ? 'yes' : 'pending'}</li>
+        <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
+        <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
+        <li>Mock Fallback Only: {providerEligibility.mockFallbackOnly ? 'yes' : 'pending'}</li>
         <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
-        <li>Node Address Source: {runtimeStatus.nodeAddressSource}</li>
+        <li>Node Address Source: {runtimeStatus.nodeAddressSource || 'unknown'}</li>
         <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
-        <li>Ready Cloud Providers: {runtimeStatus.readyCloudProviders.join(', ') || 'none'}</li>
-        <li>Ready Local Providers: {runtimeStatus.readyLocalProviders.join(', ') || 'none'}</li>
-        <li>Dependency Summary: {runtimeStatus.dependencySummary}</li>
+        <li>Ready Cloud Providers: {readyCloudProviders}</li>
+        <li>Ready Local Providers: {readyLocalProviders}</li>
+        <li>Dependency Summary: {runtimeStatus.dependencySummary || 'pending'}</li>
         <li>Backend Default Provider: {apiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Selected Provider Health: {statusSummary.healthBadge}</li>
         <li>Selected Provider State: {statusSummary.healthState}</li>
@@ -115,7 +124,7 @@ export default function StatusPanel() {
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
         <li>Session Restore Decision: {sessionRestoreDiagnostics.message}</li>
-        <li>Session Restore Reason: {sessionRestoreDiagnostics.reasons[0] || runtimeStatus.runtimeContext.restoreDecision || 'Portable session state restored.'}</li>
+        <li>Session Restore Reason: {sessionRestoreReason}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
         <li>Provider Endpoint: {providerEndpointDisplay}</li>
@@ -132,7 +141,7 @@ export default function StatusPanel() {
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
-        <li>Attempt Order: {runtimeStatus.attemptOrder.join(' → ')}</li>
+        <li>Attempt Order: {attemptOrder}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Session Workspace: mission-console</li>
         <li>Session Subview: {lastRoute || 'assistant'}</li>
@@ -158,7 +167,7 @@ export default function StatusPanel() {
         <li>Provider Routing Marker: {STEPHANOS_PROVIDER_ROUTING_MARKER}</li>
         <li>Debug Console: F1</li>
       </ul>
-      <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary}</p>
+      <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary || 'Diagnostics pending'}</p>
     </CollapsiblePanel>
   );
 }
