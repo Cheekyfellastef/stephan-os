@@ -32,6 +32,7 @@ import {
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
+import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -304,7 +305,7 @@ export function AIStoreProvider({ children }) {
     lastCheckedAt: null,
     meta: null,
   });
-  const runtimeStatusModel = useMemo(() => createRuntimeStatusModel({
+  const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
     validationState: apiStatus.state === 'offline'
@@ -322,7 +323,7 @@ export function AIStoreProvider({ children }) {
       homeNode: apiStatus.runtimeContext?.homeNode || null,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
-  }), [
+  })), [
     apiStatus.backendReachable,
     apiStatus.baseUrl,
     apiStatus.frontendOrigin,
