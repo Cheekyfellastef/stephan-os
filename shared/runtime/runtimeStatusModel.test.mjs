@@ -209,7 +209,7 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
     runtimeContext: {
       frontendOrigin: 'https://cheekyfellastef.github.io',
       apiBaseUrl: 'http://192.168.0.198:8787',
-      preferredTarget: 'http://192.168.0.198:5173/',
+      preferredTarget: 'http://192.168.0.198:8787',
       actualTargetUsed: 'http://192.168.0.198:8787',
       nodeAddressSource: 'manual',
       homeNode: {
@@ -227,7 +227,7 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
           configured: true,
           available: true,
           source: 'manual',
-          target: 'http://192.168.0.198:5173/',
+          target: 'http://192.168.0.198:8787',
           actualTarget: 'http://192.168.0.198:8787',
           reason: 'Home PC node is reachable on the LAN',
           blockedReason: '',
@@ -239,8 +239,86 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
   assert.equal(status.routeKind, 'home-node');
   assert.equal(status.homeNodeReachable, true);
   assert.equal(status.nodeAddressSource, 'manual');
-  assert.equal(status.preferredTarget, 'http://192.168.0.198:5173/');
+  assert.equal(status.preferredTarget, 'http://192.168.0.198:8787');
   assert.equal(status.actualTargetUsed, 'http://192.168.0.198:8787');
   assert.equal(status.runtimeModeLabel, 'home node/lan');
   assert.match(status.dependencySummary, /home pc node ready/i);
+});
+
+test('createRuntimeStatusModel keeps local-first provider routing for reachable LAN home-node sessions', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true, reason: '' },
+      groq: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.effectiveRouteMode, 'local-first');
+  assert.equal(status.routeKind, 'home-node');
+  assert.equal(status.activeProvider, 'ollama');
+  assert.equal(status.preferredTarget, 'http://192.168.0.198:8787');
+  assert.equal(status.nodeAddressSource, 'manual');
+});
+
+test('createRuntimeStatusModel surfaces explicit Ollama failure reasons before truthful fallback', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: false, reason: 'Nothing answered at that Ollama address.' },
+      groq: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          source: 'local-backend-session',
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          reason: 'Backend online locally; local-desktop stays valid',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'local-desktop');
+  assert.equal(status.activeProvider, 'groq');
+  assert.match(status.dependencySummary, /Ollama unavailable: Nothing answered at that Ollama address\./i);
+  assert.match(status.dependencySummary, /cloud active because local Ollama is unavailable/i);
 });

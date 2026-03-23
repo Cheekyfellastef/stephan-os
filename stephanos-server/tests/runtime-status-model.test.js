@@ -89,7 +89,7 @@ test('runtime status surfaces a reachable home PC node separately from local des
       frontendOrigin: 'https://stephanos.example',
       apiBaseUrl: 'http://192.168.1.42:8787',
       homeNode: { host: '192.168.1.42', uiPort: 5173, backendPort: 8787, source: 'lastKnown', reachable: true },
-      preferredTarget: 'http://192.168.1.42:5173/',
+      preferredTarget: 'http://192.168.1.42:8787',
       actualTargetUsed: 'http://192.168.1.42:8787',
     },
   });
@@ -97,7 +97,7 @@ test('runtime status surfaces a reachable home PC node separately from local des
   assert.equal(model.routeKind, 'home-node');
   assert.equal(model.preferredRoute, 'home-node');
   assert.equal(model.homeNodeReachable, true);
-  assert.equal(model.preferredTarget, 'http://192.168.1.42:5173/');
+  assert.equal(model.preferredTarget, 'http://192.168.1.42:8787');
   assert.equal(model.actualTargetUsed, 'http://192.168.1.42:8787');
   assert.equal(model.nodeAddressSource, 'lastKnown');
   assert.equal(model.dependencySummary, 'Home PC node is reachable on the LAN');

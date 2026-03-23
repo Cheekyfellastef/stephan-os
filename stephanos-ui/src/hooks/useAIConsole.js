@@ -104,7 +104,7 @@ function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
   return {
     homeNode: adoptedHomeNode,
     nodeAddressSource: source,
-    preferredTarget: preferredUiUrl || resolvedRuntimeContext.preferredTarget || '',
+    preferredTarget: requestOrigin || adoptedHomeNode.backendUrl || resolvedRuntimeContext.preferredTarget || '',
     actualTargetUsed: requestOrigin || adoptedHomeNode.backendUrl || resolvedRuntimeContext.actualTargetUsed || '',
     adopted: true,
   };
@@ -230,12 +230,12 @@ export function useAIConsole() {
     const preferredTarget = localDesktopSession && compatibleBackendBaseUrl
       ? compatibleBackendBaseUrl
       : resolveCompatibleTarget(
-        adoptedHomeNode.preferredTarget || resolvedRuntimeContext.preferredTarget,
-        health.data?.published_client_route
-          || adoptedHomeNode.homeNode?.uiUrl
-          || resolvedRuntimeContext.homeNode?.uiUrl
-          || resolvedRuntimeContext.frontendOrigin
-          || publishedBackendBaseUrl,
+        adoptedHomeNode.actualTargetUsed || adoptedHomeNode.preferredTarget || resolvedRuntimeContext.actualTargetUsed,
+        publishedBackendBaseUrl
+          || adoptedHomeNode.homeNode?.backendUrl
+          || resolvedRuntimeContext.homeNode?.backendUrl
+          || resolvedRuntimeContext.baseUrl
+          || resolvedRuntimeContext.apiBaseUrl,
         { allowLoopback: localDesktopSession },
       );
     const actualTargetUsed = resolveCompatibleTarget(
@@ -264,7 +264,7 @@ export function useAIConsole() {
             configured: true,
             available: Boolean(health.ok),
             misconfigured: false,
-            target: adoptedHomeNode.preferredTarget || adoptedHomeNode.homeNode.uiUrl || '',
+            target: actualTargetUsed,
             actualTarget: actualTargetUsed,
             source: nodeAddressSource,
             reason: health.ok
@@ -340,8 +340,8 @@ export function useAIConsole() {
     const preferredTarget = localBackendSession
       ? compatibleBackendBaseUrl
       : resolveCompatibleTarget(
-        discovery.preferredNode?.uiUrl || nextRuntimeConfig.homeNode?.uiUrl || '',
-        nextRuntimeConfig.frontendOrigin,
+        discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
+        compatibleBackendBaseUrl,
         { allowLoopback: localDesktopSession },
       );
     return {
