@@ -34,12 +34,15 @@ jobs:
         working-directory: stephanos-ui
         run: npm ci
 
-      - name: Build Stephanos UI into apps/stephanos/dist
-        working-directory: stephanos-ui
-        run: npm run build
+      - name: Build Stephanos UI pipeline from repo root
+        run: npm run stephanos:build
+
+      - name: Verify generated Stephanos dist from repo root
+        run: npm run stephanos:verify
 
       - name: Upload built Stephanos dist artifact
         uses: actions/upload-artifact@v4
         with:
           name: stephanos-ui-dist
           path: apps/stephanos/dist
+          if-no-files-found: error
