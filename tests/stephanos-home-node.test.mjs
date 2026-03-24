@@ -834,6 +834,88 @@ test('validateStephanosRuntime keeps dist as fallback only when no live route is
   }
 });
 
+test('validateStephanosRuntime counts backend-published routes for hosted forensics when launcher runtime-status is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    distPort: 4173,
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'stephanos_home_node_manual') {
+        return JSON.stringify(manualNode);
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      const payload = {
+        service: 'stephanos-server',
+        published_backend_base_url: 'http://192.168.0.198:8787',
+        backend_base_url: 'http://192.168.0.198:8787',
+        client_route_state: 'ready',
+      };
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(payload),
+        json: async () => payload,
+      };
+    }
+
+    if (url === './apps/stephanos/runtime-status.json' || url === 'http://127.0.0.1:4173/__stephanos/health') {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ data: {} }),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.runtimeStatusModel.routeForensics.runtimeRoutePublished, true);
+    assert.equal(status.runtimeStatusModel.routeForensics.firstBadTransition, '');
+    assert.equal(status.runtimeStatusModel.routeForensics.evidence.backendRoutePublished, true);
+    assert.equal(status.runtimeStatusModel.routeForensics.evidence.statusProbeOk, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
 
 test('buildStephanosHomeNodeCandidates ignores loopback manual nodes for non-local sessions', () => {
   const candidates = buildStephanosHomeNodeCandidates({
