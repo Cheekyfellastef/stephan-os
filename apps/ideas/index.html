@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stephanos Ideas</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #04070f;
+      --panel: #0b1430;
+      --line: #1f4d86;
+      --text: #d7ecff;
+      --muted: #82a8d4;
+      --accent: #34a2ff;
+      --accent-soft: rgba(52, 162, 255, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: radial-gradient(circle at top, #0b1430 0%, #03050a 70%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .ideas-shell {
+      max-width: 980px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(10,18,36,.95), rgba(4,10,22,.95));
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, .3);
+    }
+
+    .headline { margin: 0 0 8px; font-size: 1.4rem; }
+    .subtle { color: var(--muted); margin: 0; }
+
+    .grid { display: grid; gap: 10px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #070d1c;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 10px;
+    }
+
+    button {
+      border: 1px solid var(--accent);
+      background: linear-gradient(180deg, #0c4f96, #063b74);
+      color: #e8f6ff;
+      padding: 9px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    .ghost {
+      border-color: var(--line);
+      background: #081325;
+      color: var(--muted);
+    }
+
+    .entry {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: rgba(5, 12, 26, .88);
+      display: grid;
+      gap: 10px;
+    }
+
+    .media-pill {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      background: var(--accent-soft);
+      border: 1px solid #2a6db3;
+      border-radius: 999px;
+      padding: 4px 10px;
+      margin: 3px 6px 0 0;
+      font-size: .84rem;
+      color: #d3ecff;
+    }
+
+    .media-link { color: #93d0ff; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <main class="ideas-shell">
+    <section class="card">
+      <h1 class="headline">Ideas Node</h1>
+      <p class="subtle">Persistent multimedia idea records. This tile stores only references and text metadata. Upload/sync is not implemented in this runtime.</p>
+    </section>
+
+    <section class="card grid">
+      <h2 class="headline">Create idea record</h2>
+      <label>Title <input id="idea-title" type="text" maxlength="120" required /></label>
+      <label>Summary <textarea id="idea-summary" rows="3" placeholder="Core concept, direction, or question..."></textarea></label>
+      <label>Tags (comma-separated) <input id="idea-tags" type="text" placeholder="ideas, research, vr" /></label>
+
+      <div class="grid two">
+        <label>Reference type
+          <select id="media-type">
+            <option value="text">Text note</option>
+            <option value="image">Image/photo reference</option>
+            <option value="video">Video reference</option>
+            <option value="audio">Music/audio reference</option>
+            <option value="link">External link</option>
+          </select>
+        </label>
+        <label>Reference title <input id="media-title" type="text" placeholder="What is this reference?" /></label>
+      </div>
+
+      <label>Reference source (URL, file path note, or plain text pointer)
+        <input id="media-source" type="text" placeholder="https://... or photo://camera-roll/..." />
+      </label>
+      <label>Reference notes <textarea id="media-notes" rows="2"></textarea></label>
+      <div>
+        <button id="save-idea" type="button">Save idea</button>
+        <button id="seed-ideas" type="button" class="ghost">Re-seed examples</button>
+      </div>
+      <p id="save-status" class="subtle" aria-live="polite"></p>
+    </section>
+
+    <section class="card">
+      <h2 class="headline">Stored ideas</h2>
+      <div id="ideas-list" class="grid"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./ideas-app.js"></script>
+</body>
+</html>

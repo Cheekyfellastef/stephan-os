@@ -1,0 +1,7 @@
+{
+  "name": "Ideas",
+  "icon": "💡",
+  "entry": "index.html",
+  "type": "simulation",
+  "packaging": "classic-static"
+}
