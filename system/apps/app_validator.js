@@ -491,6 +491,54 @@ function buildStephanosRuntimeStatusMessage({ liveTargets, preferredTarget, heal
     : `Stephanos dist runtime live at ${preferredTarget?.url || liveTargets[0].url}, but backend dependencies are degraded.`;
 }
 
+function deriveStephanosRouteForensics({
+  currentOrigin = '',
+  backendBaseUrl = '',
+  backendProbe = { ok: false },
+  localDesktopProbe = { ok: false },
+  homeNodeDiscovery = { reachable: false, message: '' },
+  preferredHomeNode = null,
+  runtimeProbe = { ok: false },
+  statusProbe = { ok: false },
+  finalRouteKind = 'unavailable',
+}) {
+  const currentHost = extractHostname(currentOrigin);
+  const backendHost = extractHostname(backendBaseUrl);
+  const localSession = isLoopbackHost(currentHost) || !currentHost;
+  const homeConfigured = Boolean(preferredHomeNode?.host);
+  const homeReachable = Boolean(homeNodeDiscovery?.reachable);
+  const backendReachable = Boolean(backendProbe?.ok || localDesktopProbe?.ok);
+  const runtimeRoutePublished = Boolean(statusProbe?.ok || runtimeProbe?.ok);
+
+  let firstBadTransition = '';
+  if (!runtimeRoutePublished) {
+    firstBadTransition = 'launcher-runtime-status-unpublished';
+  } else if (!backendReachable) {
+    firstBadTransition = 'backend-unreachable';
+  } else if (!localSession && homeConfigured && !homeReachable) {
+    firstBadTransition = 'home-node-configured-but-unreachable';
+  } else if (!localSession && !homeConfigured) {
+    firstBadTransition = 'hosted-session-without-home-node';
+  }
+
+  return {
+    currentHost,
+    backendHost,
+    localSession,
+    homeConfigured,
+    homeReachable,
+    backendReachable,
+    runtimeRoutePublished,
+    finalRouteKind,
+    firstBadTransition,
+    evidence: {
+      backendProbeOk: Boolean(backendProbe?.ok),
+      localDesktopProbeOk: Boolean(localDesktopProbe?.ok),
+      homeNodeMessage: homeNodeDiscovery?.message || '',
+    },
+  };
+}
+
 export async function validateStephanosRuntime(entryPath, context = {}, options = {}) {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const manualNode = readPersistedStephanosHomeNode() || readPortableStephanosHomeNodePreference();
@@ -685,6 +733,18 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     },
   });
   const finalRoute = runtimeStatusModel.finalRoute;
+  const routeForensics = deriveStephanosRouteForensics({
+    currentOrigin,
+    backendBaseUrl: effectiveBackendBaseUrl,
+    backendProbe,
+    localDesktopProbe: localDesktopBackendProbe,
+    homeNodeDiscovery,
+    preferredHomeNode,
+    runtimeProbe,
+    statusProbe,
+    finalRouteKind: finalRoute.routeKind,
+  });
+  runtimeStatusModel.routeForensics = routeForensics;
 
   let launchUrl = '';
   let launchStrategy = 'workspace';
@@ -745,6 +805,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       issues: [],
       runtimeStatusModel,
       dependencyState: runtimeStatusModel.appLaunchState,
+      routeForensics,
       providerHealth,
       launchUrl,
       launchStrategy,
@@ -766,6 +827,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       message: launcherMessage || 'Checking reachable Stephanos route.',
       runtimeStatusModel,
       dependencyState: 'degraded',
+      routeForensics,
       providerHealth,
       runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
     };
@@ -777,6 +839,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     issues: [runtimeStatusModel.dependencySummary],
     runtimeStatusModel,
     dependencyState: 'unavailable',
+    routeForensics,
     providerHealth,
     runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
     runtimeAvailability: {

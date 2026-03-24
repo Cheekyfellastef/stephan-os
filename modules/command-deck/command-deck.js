@@ -85,6 +85,9 @@ function renderLauncherStatusStrip(projects) {
         <strong>${runtime.headline}</strong>
         <div class="runtime-strip-subtext">${runtime.dependencySummary}</div>
         <div class="runtime-strip-subtext">Preferred target: ${runtime.preferredTarget || 'n/a'} · Actual target: ${runtime.actualTargetUsed || 'n/a'}</div>
+        ${runtime.routeForensics?.firstBadTransition
+    ? `<div class="runtime-strip-subtext">Forensic boundary: ${runtime.routeForensics.firstBadTransition}</div>`
+    : ''}
       </div>
       <div class="runtime-chip-row">
         <span class="runtime-chip ${runtime.backendAvailable ? 'ready' : 'degraded'}">Backend ${runtime.backendAvailable ? 'Online' : 'Offline'}</span>
@@ -158,9 +161,10 @@ function renderProjectRegistry(projects, context) {
     }
 
     const runtimeSummary = safeProject.runtimeStatusModel?.dependencySummary;
+    const forensicBoundary = safeProject.runtimeStatusModel?.routeForensics?.firstBadTransition;
     const runtimeDetail = safeProject.runtimeStatusModel?.preferredTarget
-      ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}`
-      : runtimeSummary;
+      ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
+      : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
     const issueLabel = safeProject.validationState === 'error' || safeProject.validationState === 'launching'
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
       : runtimeDetail
