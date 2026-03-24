@@ -117,6 +117,35 @@
 
     .status-success { color: #9ce8b8; }
     .status-error { color: #ffafbf; }
+
+    .data-port-status {
+      margin-top: 2px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: rgba(7, 15, 32, 0.9);
+      font-weight: 600;
+    }
+
+    .data-port-status.status-success {
+      border-color: #2e8f57;
+      background: rgba(16, 61, 39, 0.45);
+    }
+
+    .data-port-status.status-error {
+      border-color: #a04861;
+      background: rgba(84, 21, 38, 0.4);
+    }
+
+    .data-port-debug {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(6, 14, 29, 0.85);
+      display: grid;
+      gap: 4px;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
@@ -176,7 +205,12 @@
         aria-label="Ideas Data Port JSON"
         placeholder='{"app":"ideas","version":1,"exportedAt":"...","state":{"records":[...]}}'
       ></textarea>
-      <p id="ideas-data-port-status" class="subtle" aria-live="polite"></p>
+      <p id="ideas-data-port-status" class="subtle data-port-status" aria-live="polite"></p>
+      <div class="data-port-debug" aria-live="polite">
+        <div><strong>Last import result:</strong> <span id="ideas-import-last-result">Not run</span></div>
+        <div><strong>Imported record count:</strong> <span id="ideas-import-record-count">0</span></div>
+        <div><strong>Last reason:</strong> <span id="ideas-import-last-reason">N/A</span></div>
+      </div>
     </section>
 
     <section class="card">
