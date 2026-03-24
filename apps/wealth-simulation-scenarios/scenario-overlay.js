@@ -326,6 +326,28 @@
     showTransientStatus('Data Port JSON generated below.', 'success');
   };
 
+  const downloadExportJson = () => {
+    const textarea = mountNode.querySelector('[data-port-text]');
+    const jsonText = textarea?.value?.trim() || dataPortText.trim();
+    if (!jsonText) {
+      showTransientStatus('Download failed: generate or paste JSON first.', 'error');
+      return;
+    }
+
+    try {
+      const blob = new Blob([`${jsonText}\n`], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `wealth-simulation-scenarios-data-port-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showTransientStatus('JSON download started.', 'success');
+    } catch (error) {
+      showTransientStatus('Download failed: unable to create JSON file.', 'error');
+    }
+  };
+
   const copyExportJson = async () => {
     const textarea = mountNode.querySelector('[data-port-text]');
     const jsonText = textarea?.value?.trim() || dataPortText.trim();
@@ -470,27 +492,31 @@
           <p class="scenario-lab-panel__description">
             Select a preset to annotate the simulation with sandbox assumptions. Each scenario now remembers its own local input state in this browser only.
           </p>
-          <div class="scenario-lab-panel__actions" aria-label="Scenario settings actions">
-            <button type="button" class="scenario-lab-panel__action-button" data-export-settings>Export JSON</button>
-            <button type="button" class="scenario-lab-panel__action-button" data-copy-settings>Copy JSON</button>
-            <button type="button" class="scenario-lab-panel__action-button" data-import-settings>Import JSON</button>
-            <button type="button" class="scenario-lab-panel__action-button" data-import-file-open>Import File</button>
-            <input type="file" accept="application/json,.json" hidden data-import-file />
-          </div>
-          <div class="scenario-lab-panel__port">
-            <label for="scenario-data-port-input" class="scenario-lab-panel__port-label">Data Port</label>
-            <textarea
-              id="scenario-data-port-input"
-              class="scenario-lab-panel__port-textarea"
-              data-port-text
-              spellcheck="false"
-              autocapitalize="off"
-              autocomplete="off"
-              aria-label="Scenario Data Port JSON"
-              placeholder='{"app":"wealth-simulation-scenarios","version":1,"exportedAt":"...","state":{...},"ui":{...}}'
-            ></textarea>
-          </div>
-          <p class="scenario-lab-panel__status" data-scenario-status role="status" aria-live="polite" hidden></p>
+          <section class="scenario-lab-panel__data-port" aria-label="Data Port">
+            <h3 class="scenario-lab-panel__data-port-title">Data Port</h3>
+            <div class="scenario-lab-panel__actions" aria-label="Scenario settings actions">
+              <button type="button" class="scenario-lab-panel__action-button" data-export-settings>Export JSON</button>
+              <button type="button" class="scenario-lab-panel__action-button" data-copy-settings>Copy JSON</button>
+              <button type="button" class="scenario-lab-panel__action-button" data-import-settings>Import JSON</button>
+              <button type="button" class="scenario-lab-panel__action-button" data-download-settings>Download JSON</button>
+              <button type="button" class="scenario-lab-panel__action-button" data-import-file-open>Upload JSON</button>
+              <input type="file" accept="application/json,.json" hidden data-import-file />
+            </div>
+            <div class="scenario-lab-panel__port">
+              <label for="scenario-data-port-input" class="scenario-lab-panel__port-label">JSON</label>
+              <textarea
+                id="scenario-data-port-input"
+                class="scenario-lab-panel__port-textarea"
+                data-port-text
+                spellcheck="false"
+                autocapitalize="off"
+                autocomplete="off"
+                aria-label="Scenario Data Port JSON"
+                placeholder='{"app":"wealth-simulation-scenarios","version":1,"exportedAt":"...","state":{...},"ui":{...}}'
+              ></textarea>
+            </div>
+            <p class="scenario-lab-panel__status" data-scenario-status role="status" aria-live="polite" hidden></p>
+          </section>
           <div class="scenario-lab-panel__tabs" role="tablist" aria-label="Scenario panel sections">
             <button type="button" class="scenario-lab-panel__tab${activeTab === 'presets' ? ' is-active' : ''}" data-panel-tab="presets" role="tab" aria-selected="${activeTab === 'presets'}">Presets</button>
             <button type="button" class="scenario-lab-panel__tab${activeTab === 'config' ? ' is-active' : ''}" data-panel-tab="config" role="tab" aria-selected="${activeTab === 'config'}">Config</button>
@@ -574,6 +600,9 @@
 
     mountNode.querySelector('[data-import-settings]')?.addEventListener('click', () => {
       importFromTextarea();
+    });
+    mountNode.querySelector('[data-download-settings]')?.addEventListener('click', () => {
+      downloadExportJson();
     });
 
     const importFileInput = mountNode.querySelector('[data-import-file]');
