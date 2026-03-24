@@ -321,9 +321,11 @@ function deriveFallbackSuppressionReason(routeKey, evaluations, preferenceOrder 
 
 function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailable, validationState }) {
   const diagnostics = runtimeContext.routeDiagnostics || {};
+  const localDesktopDiagnosticEligible = diagnostics['local-desktop']?.configured === true
+    && runtimeContext.backendLocal;
   const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser'
     || runtimeContext.sessionKind === 'local-desktop'
-    || diagnostics['local-desktop']?.configured === true;
+    || localDesktopDiagnosticEligible;
   const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web' && backendAvailable && cloudAvailable;
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);

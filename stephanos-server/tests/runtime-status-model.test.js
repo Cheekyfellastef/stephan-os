@@ -247,6 +247,43 @@ test('ipad/lan context prefers home-node when it is reachable', () => {
   assert.equal(model.routeKind, 'home-node');
 });
 
+test('hosted session ignores stale local-desktop diagnostics from restored state', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: true },
+      groq: { ok: false },
+    },
+    backendAvailable: false,
+    validationState: 'error',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://cheekyfellastef.github.io',
+      preferredTarget: 'https://cheekyfellastef.github.io',
+      actualTargetUsed: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          source: 'local-backend-session',
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          reason: 'Backend online locally; provider/router is using the live local-desktop backend session',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(model.routeKind, 'unavailable');
+  assert.equal(model.headline, 'No reachable Stephanos route');
+  assert.equal(model.dependencySummary, 'No reachable Stephanos route');
+  assert.equal(model.preferredTarget, 'https://cheekyfellastef.github.io');
+  assert.equal(model.actualTargetUsed, 'https://cheekyfellastef.github.io');
+});
+
 test('route model does not emit source unknown when structured route status exists', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'groq',
