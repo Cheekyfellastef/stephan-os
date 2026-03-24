@@ -95,6 +95,28 @@
     }
 
     .media-link { color: #93d0ff; word-break: break-all; }
+
+    .data-port {
+      display: grid;
+      gap: 10px;
+    }
+
+    .data-port-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .data-port textarea {
+      min-height: 170px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .86rem;
+      line-height: 1.45;
+    }
+
+    .status-success { color: #9ce8b8; }
+    .status-error { color: #ffafbf; }
   </style>
 </head>
 <body>
@@ -132,6 +154,29 @@
         <button id="seed-ideas" type="button" class="ghost">Re-seed examples</button>
       </div>
       <p id="save-status" class="subtle" aria-live="polite"></p>
+    </section>
+
+    <section class="card data-port" aria-label="Data Port">
+      <h2 class="headline">Data Port</h2>
+      <p class="subtle">Export, copy, paste, and import Ideas tile JSON snapshots.</p>
+      <div class="data-port-actions">
+        <button id="ideas-export-json" type="button">Export JSON</button>
+        <button id="ideas-copy-json" type="button">Copy JSON</button>
+        <button id="ideas-import-json" type="button">Import JSON</button>
+        <button id="ideas-download-json" type="button" class="ghost">Download JSON</button>
+        <button id="ideas-upload-json" type="button" class="ghost">Upload JSON</button>
+        <input id="ideas-upload-json-input" type="file" accept="application/json,.json" hidden />
+      </div>
+      <label for="ideas-data-port-text" class="subtle">JSON</label>
+      <textarea
+        id="ideas-data-port-text"
+        spellcheck="false"
+        autocapitalize="off"
+        autocomplete="off"
+        aria-label="Ideas Data Port JSON"
+        placeholder='{"app":"ideas","version":1,"exportedAt":"...","state":{"records":[...]}}'
+      ></textarea>
+      <p id="ideas-data-port-status" class="subtle" aria-live="polite"></p>
     </section>
 
     <section class="card">
