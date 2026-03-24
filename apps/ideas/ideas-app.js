@@ -65,6 +65,9 @@ const elements = {
   dataPortDownload: document.getElementById('ideas-download-json'),
   dataPortUpload: document.getElementById('ideas-upload-json'),
   dataPortUploadInput: document.getElementById('ideas-upload-json-input'),
+  importLastResult: document.getElementById('ideas-import-last-result'),
+  importRecordCount: document.getElementById('ideas-import-record-count'),
+  importLastReason: document.getElementById('ideas-import-last-reason'),
 };
 
 function isRecord(value) {
@@ -126,6 +129,10 @@ function createIdeasExportPayload() {
 }
 
 function parseImportPayload(rawText) {
+  if (!rawText.trim()) {
+    return { ok: false, message: 'Import failed: JSON input is empty.' };
+  }
+
   let parsed;
   try {
     parsed = JSON.parse(rawText);
@@ -146,9 +153,18 @@ function parseImportPayload(rawText) {
     return { ok: false, message: 'Import failed: missing state payload.' };
   }
 
+  if (!Array.isArray(parsed.state.records)) {
+    return { ok: false, message: 'Import failed: state.records must be an array.' };
+  }
+
+  const sanitizedState = sanitizeIdeasState(parsed.state);
+  if (parsed.state.records.length > 0 && sanitizedState.records.length === 0) {
+    return { ok: false, message: 'Import failed: no usable idea records found in state.records.' };
+  }
+
   return {
     ok: true,
-    state: sanitizeIdeasState(parsed.state),
+    state: sanitizedState,
   };
 }
 
@@ -163,6 +179,20 @@ function setDataPortStatus(message, tone = 'info') {
     elements.dataPortStatus.classList.add('status-success');
   } else if (tone === 'error') {
     elements.dataPortStatus.classList.add('status-error');
+  }
+}
+
+function setImportDebugStatus({ success, recordCount = 0, reason = 'N/A' }) {
+  if (elements.importLastResult) {
+    elements.importLastResult.textContent = success ? 'Success' : 'Failure';
+  }
+
+  if (elements.importRecordCount) {
+    elements.importRecordCount.textContent = String(recordCount);
+  }
+
+  if (elements.importLastReason) {
+    elements.importLastReason.textContent = reason;
   }
 }
 
@@ -219,6 +249,17 @@ function renderIdeas() {
     `;
 
     elements.ideasList.appendChild(item);
+  });
+}
+
+function applyImportedIdeas(records, successMessage) {
+  const appliedRecords = store.writeAll(records);
+  renderIdeas();
+  setDataPortStatus(`${successMessage} (${appliedRecords.length} record${appliedRecords.length === 1 ? '' : 's'} imported.)`, 'success');
+  setImportDebugStatus({
+    success: true,
+    recordCount: appliedRecords.length,
+    reason: 'Import applied to Ideas state and persisted.',
   });
 }
 
@@ -320,12 +361,11 @@ elements.dataPortImport?.addEventListener('click', () => {
   const parsed = parseImportPayload(text);
   if (!parsed.ok) {
     setDataPortStatus(parsed.message, 'error');
+    setImportDebugStatus({ success: false, recordCount: 0, reason: parsed.message });
     return;
   }
 
-  store.writeAll(parsed.state.records);
-  renderIdeas();
-  setDataPortStatus('Import success: Ideas state applied.', 'success');
+  applyImportedIdeas(parsed.state.records, 'Import success: Ideas state applied');
 });
 
 elements.dataPortDownload?.addEventListener('click', () => {
@@ -376,14 +416,15 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
     const parsed = parseImportPayload(text);
     if (!parsed.ok) {
       setDataPortStatus(parsed.message, 'error');
+      setImportDebugStatus({ success: false, recordCount: 0, reason: parsed.message });
       return;
     }
 
-    store.writeAll(parsed.state.records);
-    renderIdeas();
-    setDataPortStatus('Import success: Ideas JSON file applied.', 'success');
+    applyImportedIdeas(parsed.state.records, 'Import success: Ideas JSON file applied');
   } catch (error) {
-    setDataPortStatus('Import failed: unable to read selected file.', 'error');
+    const message = 'Import failed: unable to read selected file.';
+    setDataPortStatus(message, 'error');
+    setImportDebugStatus({ success: false, recordCount: 0, reason: message });
   } finally {
     if (event?.target) {
       event.target.value = '';
@@ -393,3 +434,4 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
 
 seedIfEmpty();
 renderIdeas();
+setImportDebugStatus({ success: false, recordCount: 0, reason: 'No import attempt yet.' });
