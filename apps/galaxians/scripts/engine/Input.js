@@ -8,12 +8,15 @@ export default class Input {
         this.joystickKnob = null;
 
         this.joystickPointerId = null;
-        this.firePointerId = null;
+        this.activePointers = new Map();
         this.joystickCenter = { x: 0, y: 0 };
         this.joystickOffset = { x: 0, y: 0 };
+        this.pointerFirePulse = false;
 
         this.deadZone = 12;
         this.maxRadius = 64;
+        this.dragStartThreshold = 14;
+        this.tapMaxDurationMs = 250;
 
         this.sources = {
             keyboard: { moveLeft: false, moveRight: false, fire: false },
@@ -87,6 +90,8 @@ export default class Input {
     update(){
 
         this.updateGamepad();
+        this.sources.pointer.fire = this.pointerFirePulse;
+        this.pointerFirePulse = false;
         this.syncActions();
 
     }
@@ -156,31 +161,46 @@ export default class Input {
         if(!this.surface || !this.isPrimaryPointerButton(event)) return;
 
         const relativePoint = this.getRelativePoint(event);
-        const isLeftSide = relativePoint.x < relativePoint.width / 2;
-
-        if(isLeftSide && this.joystickPointerId === null){
-            this.joystickPointerId = event.pointerId;
-            this.capturePointer(event.pointerId);
-            this.setJoystickCenter(relativePoint.x, relativePoint.y);
-            this.updateJoystickFromPoint(relativePoint.x, relativePoint.y);
-            this.preventPointerDefault(event);
-            return;
-        }
-
-        if(!isLeftSide && this.firePointerId === null){
-            this.firePointerId = event.pointerId;
-            this.capturePointer(event.pointerId);
-            this.sources.pointer.fire = true;
-            this.syncActions();
-            this.preventPointerDefault(event);
-        }
+        this.activePointers.set(event.pointerId, {
+            startX: relativePoint.x,
+            startY: relativePoint.y,
+            x: relativePoint.x,
+            y: relativePoint.y,
+            startTime: performance.now(),
+            movedPastTapThreshold: false
+        });
+        this.capturePointer(event.pointerId);
+        this.preventPointerDefault(event);
 
     }
 
     onPointerMove(event){
 
+        const pointerState = this.activePointers.get(event.pointerId);
+        if(!pointerState) return;
+
+        const relativePoint = this.getRelativePoint(event);
+        pointerState.x = relativePoint.x;
+        pointerState.y = relativePoint.y;
+
+        const movedDistanceSquared =
+            ((pointerState.x - pointerState.startX) ** 2) +
+            ((pointerState.y - pointerState.startY) ** 2);
+
+        if(movedDistanceSquared > this.dragStartThreshold ** 2){
+            pointerState.movedPastTapThreshold = true;
+        }
+
+        // Rule: first pointer that crosses drag threshold claims joystick.
+        if(
+            this.joystickPointerId === null &&
+            pointerState.movedPastTapThreshold
+        ){
+            this.joystickPointerId = event.pointerId;
+            this.setJoystickCenter(pointerState.startX, pointerState.startY);
+        }
+
         if(event.pointerId === this.joystickPointerId){
-            const relativePoint = this.getRelativePoint(event);
             this.updateJoystickFromPoint(relativePoint.x, relativePoint.y);
             this.preventPointerDefault(event);
         }
@@ -189,32 +209,51 @@ export default class Input {
 
     onPointerUp(event){
 
-        this.releasePointerState(event.pointerId, event);
+        this.releasePointerState(event.pointerId, event, false);
 
     }
 
     onPointerCancel(event){
 
-        this.releasePointerState(event.pointerId, event);
+        this.releasePointerState(event.pointerId, event, true);
 
     }
 
-    releasePointerState(pointerId, event = null){
+    releasePointerState(pointerId, event = null, canceled = false){
+
+        const pointerState = this.activePointers.get(pointerId);
 
         if(pointerId === this.joystickPointerId){
             this.releaseCapturedPointer(pointerId);
             this.joystickPointerId = null;
             this.resetJoystickState();
-        }
-
-        if(pointerId === this.firePointerId){
+        } else {
             this.releaseCapturedPointer(pointerId);
-            this.firePointerId = null;
-            this.sources.pointer.fire = false;
-            this.syncActions();
         }
 
+        if(!canceled && this.isTapPointer(pointerState)){
+            this.queueTapFire();
+        }
+
+        this.activePointers.delete(pointerId);
         this.preventPointerDefault(event);
+
+    }
+
+    isTapPointer(pointerState){
+
+        if(!pointerState || pointerState.movedPastTapThreshold) return false;
+
+        const elapsed = performance.now() - pointerState.startTime;
+        return elapsed <= this.tapMaxDurationMs;
+
+    }
+
+    queueTapFire(){
+
+        this.pointerFirePulse = true;
+        this.sources.pointer.fire = true;
+        this.syncActions();
 
     }
 
@@ -320,16 +359,13 @@ export default class Input {
             this.releaseCapturedPointer(this.joystickPointerId);
         }
 
-        if(this.firePointerId !== null){
-            this.releaseCapturedPointer(this.firePointerId);
-        }
-
         this.joystickPointerId = null;
-        this.firePointerId = null;
+        this.activePointers.clear();
         this.joystickCenter.x = 0;
         this.joystickCenter.y = 0;
         this.joystickOffset.x = 0;
         this.joystickOffset.y = 0;
+        this.pointerFirePulse = false;
 
         this.sources.pointer.moveLeft = false;
         this.sources.pointer.moveRight = false;
