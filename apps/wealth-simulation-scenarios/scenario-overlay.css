@@ -216,6 +216,39 @@ body.stephanos-scenario-body::before {
   color: #ffd2d2;
 }
 
+.scenario-lab-panel__port {
+  margin-top: 12px;
+}
+
+.scenario-lab-panel__port-label {
+  display: inline-block;
+  margin: 0 0 6px;
+  color: var(--scenario-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scenario-lab-panel__port-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 203, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(4, 15, 30, 0.72);
+  color: var(--scenario-text);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.scenario-lab-panel__port-textarea:focus-visible {
+  outline: 2px solid rgba(136, 210, 255, 0.86);
+  outline-offset: 2px;
+}
+
 .scenario-lab-panel__tabs {
   display: flex;
   gap: 10px;
@@ -570,5 +603,9 @@ body.stephanos-scenario-body::before {
   .scenario-sim-app__slider-label {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .scenario-lab-panel__action-button {
+    min-height: 42px;
   }
 }
