@@ -508,7 +508,31 @@ function deriveStephanosRouteForensics({
   const homeConfigured = Boolean(preferredHomeNode?.host);
   const homeReachable = Boolean(homeNodeDiscovery?.reachable);
   const backendReachable = Boolean(backendProbe?.ok || localDesktopProbe?.ok);
-  const runtimeRoutePublished = Boolean(statusProbe?.ok || runtimeProbe?.ok);
+  const backendPublicationProbe = backendProbe?.ok
+    ? backendProbe
+    : (localDesktopProbe?.ok ? localDesktopProbe : { ok: false });
+  const backendPublishedRoute = String(
+    backendPublicationProbe?.json?.published_backend_base_url
+    || backendPublicationProbe?.json?.backend_base_url
+    || ''
+  ).trim();
+  const backendPublishedRouteHost = extractHostname(backendPublishedRoute);
+  const backendClientRouteState = String(
+    backendPublicationProbe?.json?.client_route_state || ''
+  ).trim().toLowerCase();
+  const backendRoutePublished = Boolean(
+    backendPublicationProbe?.ok
+    && backendPublishedRoute
+    && backendClientRouteState
+    && backendClientRouteState !== 'unavailable'
+    && backendClientRouteState !== 'unknown'
+    && (
+      localSession
+      || !isLoopbackHost(backendPublishedRouteHost)
+      || backendClientRouteState === 'misconfigured'
+    )
+  );
+  const runtimeRoutePublished = Boolean(statusProbe?.ok || runtimeProbe?.ok || backendRoutePublished);
 
   let firstBadTransition = '';
   if (!runtimeRoutePublished) {
@@ -535,6 +559,11 @@ function deriveStephanosRouteForensics({
       backendProbeOk: Boolean(backendProbe?.ok),
       localDesktopProbeOk: Boolean(localDesktopProbe?.ok),
       homeNodeMessage: homeNodeDiscovery?.message || '',
+      statusProbeOk: Boolean(statusProbe?.ok),
+      runtimeProbeOk: Boolean(runtimeProbe?.ok),
+      backendRoutePublished,
+      backendPublishedRoute,
+      backendClientRouteState,
     },
   };
 }
