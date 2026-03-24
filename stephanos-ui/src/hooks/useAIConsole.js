@@ -16,6 +16,23 @@ import { useAIStore } from '../state/aiStore';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
+function summarizeDiscoveryAttempts(attempts = []) {
+  if (!Array.isArray(attempts) || !attempts.length) {
+    return 'No non-loopback candidates were available to probe.';
+  }
+
+  return attempts
+    .map((attempt) => {
+      const candidate = `${attempt.source || 'unknown'}:${attempt.host || 'unknown'}`;
+      if (attempt.ok) {
+        return `${candidate} accepted`;
+      }
+
+      return `${candidate} rejected (${attempt.failureDetail || attempt.reason || 'unknown failure'})`;
+    })
+    .join(' | ');
+}
+
 function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback = false } = {}) {
   const candidateHost = extractHostname(candidate);
   if (candidate && (allowLoopback || !isLoopbackHost(candidateHost))) {
@@ -337,6 +354,10 @@ export function useAIConsole() {
     const localDesktopSession = isLoopbackHost(extractHostname(baseRuntimeConfig.frontendOrigin));
     const homeNodeConfigured = Boolean(homeNodePreference?.host || homeNodeLastKnown?.host);
 
+    const unreachableDetail = homeNodeConfigured
+      ? `${discovery.message || 'Home PC node unreachable right now.'} Candidates: ${summarizeDiscoveryAttempts(discovery.attempts)} Fallback: ${discovery.fallback?.rule || 'no candidates were reachable; runtime context fell back to current origin.'}`
+      : 'No home PC node configured yet.';
+
     setHomeNodeStatus({
       state: discovery.reachable
         ? 'ready'
@@ -349,12 +370,11 @@ export function useAIConsole() {
           ? (homeNodeConfigured
             ? 'Home PC node is optional on this local desktop session; local Stephanos routes remain valid when available.'
             : 'Home PC node is optional on this local desktop session.')
-          : (homeNodeConfigured
-            ? (discovery.message || 'Home PC node unreachable right now.')
-            : 'No home PC node configured yet.'),
+          : unreachableDetail,
       attempts: discovery.attempts,
       node: discovery.preferredNode,
       source: discovery.source || (localDesktopSession ? 'local-browser-session' : 'route-diagnostics'),
+      fallback: discovery.fallback || null,
     });
 
     if (discovery.preferredNode) {

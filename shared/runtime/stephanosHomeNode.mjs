@@ -426,6 +426,37 @@ function describeHomeNodeFailure({
   };
 }
 
+function formatAttemptRejection(attempt = {}) {
+  if (attempt.ok) {
+    return `${attempt.source}:${attempt.host || 'unknown'} accepted`;
+  }
+
+  const detail = String(attempt.failureDetail || attempt.reason || 'unknown failure').trim();
+  return `${attempt.source}:${attempt.host || 'unknown'} rejected (${detail})`;
+}
+
+function summarizeFallbackDecision({ attempts = [], prioritizedAttempt = null, source = '', status = '' } = {}) {
+  const attemptedCandidates = attempts.map((attempt) => ({
+    host: attempt.host,
+    backendUrl: attempt.backendUrl,
+    source: attempt.source,
+    ok: attempt.ok,
+    rejection: attempt.ok ? '' : (attempt.failureDetail || attempt.reason || 'unknown failure'),
+  }));
+
+  return {
+    selectedSource: source || prioritizedAttempt?.source || 'manual',
+    selectedHost: prioritizedAttempt?.host || '',
+    rule: status === 'available'
+      ? 'selected first reachable candidate'
+      : 'no candidates were reachable; preserving configured node context and falling back to current origin/runtime context',
+    attemptedCandidates,
+    summary: attempts.length
+      ? attempts.map((attempt) => formatAttemptRejection(attempt)).join(' | ')
+      : 'no non-loopback candidates were available to probe',
+  };
+}
+
 async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeoutMs = 1500 } = {}) {
   if (typeof fetchImpl !== 'function' || !url) {
     return { ok: false, reason: 'fetch-unavailable' };
@@ -563,6 +594,12 @@ export async function discoverStephanosHomeNode({
       });
 
       if (probe.ok && probe.node && isValidStephanosHomeNode(probe.node)) {
+        const fallback = summarizeFallbackDecision({
+          attempts,
+          prioritizedAttempt: attempts[attempts.length - 1] || null,
+          source: probe.node.source || candidate.source || 'discovered',
+          status: 'available',
+        });
         persistStephanosLastKnownNode({ ...probe.node, source: probe.node.source || candidate.source || 'discovered' }, storage);
         return {
           reachable: true,
@@ -574,6 +611,7 @@ export async function discoverStephanosHomeNode({
           message: 'Stephanos home node reachable.',
           failureCode: '',
           failureReason: '',
+          fallback,
         };
       }
     }
@@ -599,6 +637,12 @@ export async function discoverStephanosHomeNode({
       manualNodeLoopbackRejected,
     });
     const configured = Boolean(preferredNode || manualNodePresent || manualNodeLoopbackRejected || manualNodeInvalid);
+    const fallback = summarizeFallbackDecision({
+      attempts,
+      prioritizedAttempt,
+      source: prioritizedAttempt?.source || fallbackSource || 'manual',
+      status: configured ? 'unavailable' : 'not-configured',
+    });
 
     return {
       reachable: false,
@@ -610,6 +654,7 @@ export async function discoverStephanosHomeNode({
       message: configured ? failure.message : 'Manual home-node address is missing.',
       failureCode: configured ? failure.code : 'missing-manual-node',
       failureReason: configured ? failure.detail : 'missing manual node',
+      fallback,
     };
   } catch (error) {
     return {
@@ -623,6 +668,12 @@ export async function discoverStephanosHomeNode({
       error: error?.message || 'unknown-error',
       failureCode: 'discovery-error',
       failureReason: error?.message || 'unknown-error',
+      fallback: summarizeFallbackDecision({
+        attempts: [],
+        prioritizedAttempt: null,
+        source: 'unknown',
+        status: 'searching',
+      }),
     };
   }
 }
