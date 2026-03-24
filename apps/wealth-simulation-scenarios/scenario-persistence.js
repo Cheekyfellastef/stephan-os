@@ -81,17 +81,18 @@
   };
 
   const createExportPayload = (state) => {
-    const sourceState = isRecord(state) ? state : {};
+    const sanitizedState = sanitizePersistedState(state);
+    const statePayload = {
+      selectedScenario: sanitizedState.selectedScenario,
+      scenarios: sanitizeScenarioMap(sanitizedState.scenarios),
+    };
 
     return {
       app: APP_ID,
       version: STORAGE_VERSION,
       exportedAt: new Date().toISOString(),
-      selectedScenario: typeof sourceState.selectedScenario === 'string' && sourceState.selectedScenario.trim()
-        ? sourceState.selectedScenario
-        : 'base-case',
-      scenarios: sanitizeScenarioMap(sourceState.scenarios),
-      ui: sanitizeUiState(sourceState.ui),
+      state: statePayload,
+      ui: sanitizeUiState(sanitizedState.ui),
     };
   };
 
@@ -129,9 +130,22 @@
       };
     }
 
+    if (!isRecord(value.state)) {
+      return {
+        ok: false,
+        code: 'unsupported-schema',
+        message: 'Import failed: the settings file is missing state data.',
+      };
+    }
+
     return {
       ok: true,
-      state: sanitizePersistedState(value),
+      state: sanitizePersistedState({
+        version: STORAGE_VERSION,
+        selectedScenario: value.state.selectedScenario,
+        scenarios: value.state.scenarios,
+        ui: value.ui,
+      }),
     };
   };
 

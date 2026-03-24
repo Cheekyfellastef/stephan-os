@@ -69,6 +69,7 @@
   let decorateFrame = null;
   let saveTimer = null;
   let statusTimer = null;
+  let dataPortText = '';
 
   const setUiState = (uiPatch) => {
     persistedState.ui = {
@@ -316,17 +317,55 @@
 
   const handleExport = () => {
     const payload = persistence?.createExportPayload?.(buildCurrentState()) || buildCurrentState();
-    const didDownload = persistence?.downloadTextFile?.(
-      'wealth-simulation-scenarios-settings.json',
-      `${JSON.stringify(payload, null, 2)}\n`
-    );
+    dataPortText = `${JSON.stringify(payload, null, 2)}\n`;
+    const textarea = mountNode.querySelector('[data-port-text]');
+    if (textarea) {
+      textarea.value = dataPortText;
+    }
 
-    if (didDownload) {
-      showTransientStatus('Scenario settings exported to JSON.', 'success');
+    showTransientStatus('Data Port JSON generated below.', 'success');
+  };
+
+  const copyExportJson = async () => {
+    const textarea = mountNode.querySelector('[data-port-text]');
+    const jsonText = textarea?.value?.trim() || dataPortText.trim();
+    if (!jsonText) {
+      showTransientStatus('Copy failed: generate or paste JSON first.', 'error');
       return;
     }
 
-    showTransientStatus('Export failed: this browser could not start the download.', 'error');
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(jsonText);
+      } else if (textarea) {
+        textarea.focus();
+        textarea.select();
+        const didCopy = document.execCommand?.('copy');
+        if (!didCopy) {
+          throw new Error('Clipboard unavailable');
+        }
+      } else {
+        throw new Error('Clipboard unavailable');
+      }
+
+      showTransientStatus('JSON copied to clipboard.', 'success');
+    } catch (error) {
+      showTransientStatus('Copy failed: clipboard access is unavailable.', 'error');
+    }
+  };
+
+  const importFromTextarea = () => {
+    const textarea = mountNode.querySelector('[data-port-text]');
+    const text = textarea?.value || '';
+    dataPortText = text;
+    const importResult = persistence?.parseImportedText?.(text);
+    if (!importResult?.ok) {
+      showTransientStatus(importResult?.message || 'Import failed.', 'error');
+      return;
+    }
+
+    applyImportedState(importResult.state);
+    showTransientStatus('Scenario settings imported successfully.', 'success');
   };
 
   const applyImportedState = (state) => {
@@ -432,9 +471,24 @@
             Select a preset to annotate the simulation with sandbox assumptions. Each scenario now remembers its own local input state in this browser only.
           </p>
           <div class="scenario-lab-panel__actions" aria-label="Scenario settings actions">
-            <button type="button" class="scenario-lab-panel__action-button" data-export-settings>Export Settings</button>
-            <button type="button" class="scenario-lab-panel__action-button" data-import-settings>Import Settings</button>
+            <button type="button" class="scenario-lab-panel__action-button" data-export-settings>Export JSON</button>
+            <button type="button" class="scenario-lab-panel__action-button" data-copy-settings>Copy JSON</button>
+            <button type="button" class="scenario-lab-panel__action-button" data-import-settings>Import JSON</button>
+            <button type="button" class="scenario-lab-panel__action-button" data-import-file-open>Import File</button>
             <input type="file" accept="application/json,.json" hidden data-import-file />
+          </div>
+          <div class="scenario-lab-panel__port">
+            <label for="scenario-data-port-input" class="scenario-lab-panel__port-label">Data Port</label>
+            <textarea
+              id="scenario-data-port-input"
+              class="scenario-lab-panel__port-textarea"
+              data-port-text
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              aria-label="Scenario Data Port JSON"
+              placeholder='{"app":"wealth-simulation-scenarios","version":1,"exportedAt":"...","state":{...},"ui":{...}}'
+            ></textarea>
           </div>
           <p class="scenario-lab-panel__status" data-scenario-status role="status" aria-live="polite" hidden></p>
           <div class="scenario-lab-panel__tabs" role="tablist" aria-label="Scenario panel sections">
@@ -514,8 +568,21 @@
       handleExport();
     });
 
-    const importFileInput = mountNode.querySelector('[data-import-file]');
+    mountNode.querySelector('[data-copy-settings]')?.addEventListener('click', () => {
+      copyExportJson();
+    });
+
     mountNode.querySelector('[data-import-settings]')?.addEventListener('click', () => {
+      importFromTextarea();
+    });
+
+    const importFileInput = mountNode.querySelector('[data-import-file]');
+    const dataPortTextarea = mountNode.querySelector('[data-port-text]');
+    if (dataPortTextarea) {
+      dataPortTextarea.value = dataPortText;
+    }
+
+    mountNode.querySelector('[data-import-file-open]')?.addEventListener('click', () => {
       importFileInput?.click?.();
     });
     importFileInput?.addEventListener('change', handleImportSelection);
