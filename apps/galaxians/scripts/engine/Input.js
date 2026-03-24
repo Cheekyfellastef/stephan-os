@@ -3,7 +3,17 @@ export default class Input {
     constructor(surface = null){
 
         this.surface = null;
-        this.pointerId = null;
+        this.touchOverlay = null;
+        this.joystickBase = null;
+        this.joystickKnob = null;
+
+        this.joystickPointerId = null;
+        this.firePointerId = null;
+        this.joystickCenter = { x: 0, y: 0 };
+        this.joystickOffset = { x: 0, y: 0 };
+
+        this.deadZone = 12;
+        this.maxRadius = 64;
 
         this.sources = {
             keyboard: { moveLeft: false, moveRight: false, fire: false },
@@ -44,6 +54,9 @@ export default class Input {
         }
 
         this.surface = surface;
+        this.touchOverlay = surface.parentElement?.querySelector("[data-touch-overlay]") ?? null;
+        this.joystickBase = this.touchOverlay?.querySelector("[data-joystick-base]") ?? null;
+        this.joystickKnob = this.touchOverlay?.querySelector("[data-joystick-knob]") ?? null;
 
         this.surface.addEventListener("pointerdown", this.boundPointerDown);
         this.surface.addEventListener("pointermove", this.boundPointerMove);
@@ -63,9 +76,11 @@ export default class Input {
         this.surface.removeEventListener("pointercancel", this.boundPointerCancel);
         this.surface.removeEventListener("lostpointercapture", this.boundPointerCancel);
 
-        this.surface = null;
-        this.pointerId = null;
         this.resetPointerActions();
+        this.surface = null;
+        this.touchOverlay = null;
+        this.joystickBase = null;
+        this.joystickKnob = null;
 
     }
 
@@ -138,69 +153,145 @@ export default class Input {
 
     onPointerDown(event){
 
-        if(!this.surface) return;
+        if(!this.surface || !this.isPrimaryPointerButton(event)) return;
 
-        if(this.pointerId !== null && this.pointerId !== event.pointerId){
+        const relativePoint = this.getRelativePoint(event);
+        const isLeftSide = relativePoint.x < relativePoint.width / 2;
+
+        if(isLeftSide && this.joystickPointerId === null){
+            this.joystickPointerId = event.pointerId;
+            this.capturePointer(event.pointerId);
+            this.setJoystickCenter(relativePoint.x, relativePoint.y);
+            this.updateJoystickFromPoint(relativePoint.x, relativePoint.y);
+            this.preventPointerDefault(event);
             return;
         }
 
-        this.pointerId = event.pointerId;
-        this.surface.setPointerCapture?.(event.pointerId);
-        this.updatePointerFromEvent(event);
-        this.preventPointerDefault(event);
+        if(!isLeftSide && this.firePointerId === null){
+            this.firePointerId = event.pointerId;
+            this.capturePointer(event.pointerId);
+            this.sources.pointer.fire = true;
+            this.syncActions();
+            this.preventPointerDefault(event);
+        }
 
     }
 
     onPointerMove(event){
 
-        if(event.pointerId !== this.pointerId) return;
-
-        this.updatePointerFromEvent(event);
-        this.preventPointerDefault(event);
+        if(event.pointerId === this.joystickPointerId){
+            const relativePoint = this.getRelativePoint(event);
+            this.updateJoystickFromPoint(relativePoint.x, relativePoint.y);
+            this.preventPointerDefault(event);
+        }
 
     }
 
     onPointerUp(event){
 
-        if(event.pointerId !== this.pointerId) return;
-
-        this.releasePointer(event);
+        this.releasePointerState(event.pointerId, event);
 
     }
 
     onPointerCancel(event){
 
-        if(this.pointerId !== null && event.pointerId !== undefined && event.pointerId !== this.pointerId) return;
-
-        this.releasePointer(event);
+        this.releasePointerState(event.pointerId, event);
 
     }
 
-    releasePointer(event){
+    releasePointerState(pointerId, event = null){
 
-        if(this.surface && event?.pointerId !== undefined && this.surface.hasPointerCapture?.(event.pointerId)){
-            this.surface.releasePointerCapture(event.pointerId);
+        if(pointerId === this.joystickPointerId){
+            this.releaseCapturedPointer(pointerId);
+            this.joystickPointerId = null;
+            this.resetJoystickState();
         }
 
-        this.pointerId = null;
-        this.resetPointerActions();
+        if(pointerId === this.firePointerId){
+            this.releaseCapturedPointer(pointerId);
+            this.firePointerId = null;
+            this.sources.pointer.fire = false;
+            this.syncActions();
+        }
+
         this.preventPointerDefault(event);
 
     }
 
-    updatePointerFromEvent(event){
+    capturePointer(pointerId){
+
+        this.surface?.setPointerCapture?.(pointerId);
+
+    }
+
+    releaseCapturedPointer(pointerId){
+
+        if(this.surface && this.surface.hasPointerCapture?.(pointerId)){
+            this.surface.releasePointerCapture(pointerId);
+        }
+
+    }
+
+    getRelativePoint(event){
 
         const rect = this.surface.getBoundingClientRect();
-        const relativeX = event.clientX - rect.left;
-        const zone = relativeX / rect.width;
 
-        this.sources.pointer.moveLeft = zone < 0.35;
-        this.sources.pointer.moveRight = zone > 0.65;
-        this.sources.pointer.fire = zone >= 0.35 && zone <= 0.65;
+        return {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            width: rect.width,
+            height: rect.height
+        };
+
+    }
+
+    setJoystickCenter(x, y){
+
+        this.joystickCenter.x = x;
+        this.joystickCenter.y = y;
+        this.joystickOffset.x = 0;
+        this.joystickOffset.y = 0;
+        this.renderJoystick();
+
+    }
+
+    updateJoystickFromPoint(x, y){
+
+        const dx = x - this.joystickCenter.x;
+        const clampedX = Math.max(-this.maxRadius, Math.min(this.maxRadius, dx));
+
+        this.joystickOffset.x = clampedX;
+        this.joystickOffset.y = 0;
+
+        this.sources.pointer.moveLeft = clampedX < -this.deadZone;
+        this.sources.pointer.moveRight = clampedX > this.deadZone;
+
+        this.renderJoystick();
+        this.syncActions();
+
+    }
+
+    renderJoystick(){
+
+        if(!this.touchOverlay || !this.joystickBase || !this.joystickKnob) return;
+
+        const active = this.joystickPointerId !== null;
+
+        this.touchOverlay.dataset.joystickActive = active ? "true" : "false";
+        this.touchOverlay.style.setProperty("--joystick-center-x", `${this.joystickCenter.x}px`);
+        this.touchOverlay.style.setProperty("--joystick-center-y", `${this.joystickCenter.y}px`);
+        this.touchOverlay.style.setProperty("--joystick-offset-x", `${this.joystickOffset.x}px`);
+        this.touchOverlay.style.setProperty("--joystick-offset-y", `${this.joystickOffset.y}px`);
+
+    }
+
+    isPrimaryPointerButton(event){
 
         if(event.pointerType === "mouse"){
-            this.sources.pointer.fire = event.buttons === 1 && this.sources.pointer.fire;
+            return event.button === 0;
         }
+
+        return true;
 
     }
 
@@ -212,11 +303,46 @@ export default class Input {
 
     }
 
+    resetJoystickState(){
+
+        this.joystickOffset.x = 0;
+        this.joystickOffset.y = 0;
+        this.sources.pointer.moveLeft = false;
+        this.sources.pointer.moveRight = false;
+        this.renderJoystick();
+        this.syncActions();
+
+    }
+
     resetPointerActions(){
+
+        if(this.joystickPointerId !== null){
+            this.releaseCapturedPointer(this.joystickPointerId);
+        }
+
+        if(this.firePointerId !== null){
+            this.releaseCapturedPointer(this.firePointerId);
+        }
+
+        this.joystickPointerId = null;
+        this.firePointerId = null;
+        this.joystickCenter.x = 0;
+        this.joystickCenter.y = 0;
+        this.joystickOffset.x = 0;
+        this.joystickOffset.y = 0;
 
         this.sources.pointer.moveLeft = false;
         this.sources.pointer.moveRight = false;
         this.sources.pointer.fire = false;
+
+        if(this.touchOverlay){
+            this.touchOverlay.dataset.joystickActive = "false";
+            this.touchOverlay.style.removeProperty("--joystick-center-x");
+            this.touchOverlay.style.removeProperty("--joystick-center-y");
+            this.touchOverlay.style.removeProperty("--joystick-offset-x");
+            this.touchOverlay.style.removeProperty("--joystick-offset-y");
+        }
+
         this.syncActions();
 
     }
@@ -229,7 +355,7 @@ export default class Input {
             source.fire = false;
         });
 
-        this.pointerId = null;
+        this.resetPointerActions();
         this.syncActions();
 
     }

@@ -14,11 +14,15 @@ export default class Renderer {
 
         this.ctx.imageSmoothingEnabled = false;
 
-        Scaler.apply(canvas, Config.baseWidth, Config.baseHeight);
-
-        window.addEventListener("resize", () => {
+        this.boundResize = () => {
             Scaler.apply(canvas, Config.baseWidth, Config.baseHeight);
-        });
+        };
+
+        this.boundResize();
+
+        window.addEventListener("resize", this.boundResize);
+        window.visualViewport?.addEventListener("resize", this.boundResize);
+        window.visualViewport?.addEventListener("scroll", this.boundResize);
 
     }
 
