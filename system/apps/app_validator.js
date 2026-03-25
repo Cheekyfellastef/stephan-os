@@ -31,6 +31,7 @@ import {
 const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_LOCAL_URLS = createStephanosLocalUrls();
 const STEPHANOS_DIST_ENTRY = STEPHANOS_LOCAL_URLS.distEntryPath;
+const STEPHANOS_DIST_METADATA = "apps/stephanos/dist/stephanos-build.json";
 const STEPHANOS_RUNTIME_URL = STEPHANOS_LOCAL_URLS.runtimeUrl;
 const STEPHANOS_HEALTH_URL = STEPHANOS_LOCAL_URLS.healthUrl;
 const STEPHANOS_STATUS_URL = STEPHANOS_LOCAL_URLS.runtimeStatusPath;
@@ -65,6 +66,21 @@ function toFetchPath(path) {
   }
 
   return `./${normalized}`;
+}
+
+function formatBuildStamp(buildTimestamp) {
+  const value = String(buildTimestamp || '').trim();
+  if (!value) {
+    return 'unknown';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'unknown';
+  }
+
+  const pad = (segment) => String(segment).padStart(2, '0');
+  return `${parsed.getUTCFullYear()}-${pad(parsed.getUTCMonth() + 1)}-${pad(parsed.getUTCDate())} ${pad(parsed.getUTCHours())}:${pad(parsed.getUTCMinutes())}:${pad(parsed.getUTCSeconds())} UTC`;
 }
 
 async function fetchJson(path) {
@@ -589,6 +605,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const localDesktopBackendHealthUrl = `${localDesktopBackendBaseUrl}/api/health`;
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
+  const distMetadataProbe = await fetchJsonSafely(toFetchPath(STEPHANOS_DIST_METADATA));
   const backendProbe = await fetchJsonSafely(backendHealthUrl);
   const localDesktopBackendProbe = localDesktopSession && backendBaseUrl !== localDesktopBackendBaseUrl
     ? await fetchJsonSafely(localDesktopBackendHealthUrl)
@@ -807,6 +824,19 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     finalRouteKind: finalRoute.routeKind,
   });
   runtimeStatusModel.routeForensics = routeForensics;
+  const rawBuildTimestamp =
+    launcherStatus?.buildTimestamp
+    || runtimeProbe.json?.buildTimestamp
+    || distMetadataProbe.json?.buildTimestamp
+    || '';
+  const buildStamp = formatBuildStamp(rawBuildTimestamp);
+  const buildMarker = String(
+    launcherStatus?.runtimeMarker
+      || runtimeProbe.json?.runtimeMarker
+      || distMetadataProbe.json?.runtimeMarker
+      || ''
+  ).trim();
+  const buildStampLabel = `Stephanos Build: ${buildStamp}`;
 
   let launchUrl = '';
   let launchStrategy = 'workspace';
@@ -856,9 +886,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     staleStateCleared,
     discoveryDisabled: Boolean(options.discoveryDisabled),
     disabled: Boolean(options.disabled),
-    runtimeMarker: launcherStatus?.runtimeMarker || runtimeProbe.json?.runtimeMarker || null,
-    gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || null,
-    buildTimestamp: launcherStatus?.buildTimestamp || runtimeProbe.json?.buildTimestamp || null,
+    runtimeMarker: buildMarker || null,
+    gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || distMetadataProbe.json?.gitCommit || null,
+    buildTimestamp: rawBuildTimestamp || null,
     reason: `${validationReason}; dependency=${runtimeStatusModel.dependencySummary}`,
   });
 
@@ -882,6 +912,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
         dist: [distPreferredTarget?.url || hostedDistUrl].filter(Boolean),
         homeNode: homeNodeUiReachable && homeNodeTarget ? [homeNodeTarget.url] : [],
       },
+      buildStamp,
+      buildStampLabel,
+      buildMarker,
     };
   }
 
@@ -894,6 +927,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       routeForensics,
       providerHealth,
       runtimeTargets: [...probedTargets, ...(homeNodeLaunchProbe ? [homeNodeLaunchProbe] : (homeNodeTarget ? [homeNodeTarget] : []))],
+      buildStamp,
+      buildStampLabel,
+      buildMarker,
     };
   }
 
@@ -911,6 +947,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       dist: entryExists ? [hostedDistUrl] : [],
       homeNode: [],
     },
+    buildStamp,
+    buildStampLabel,
+    buildMarker,
   };
 }
 
@@ -971,6 +1010,9 @@ export async function validateApps(apps, context = {}) {
       app.dependencyState = stephanosStatus.dependencyState || stephanosStatus.runtimeStatusModel?.appLaunchState || 'ready';
       app.runtimeTargets = Array.isArray(stephanosStatus.runtimeTargets) ? stephanosStatus.runtimeTargets : [];
       app.runtimeAvailability = stephanosStatus.runtimeAvailability || { dev: [], dist: [] };
+      app.buildStamp = stephanosStatus.buildStamp || 'unknown';
+      app.buildStampLabel = stephanosStatus.buildStampLabel || 'Stephanos Build: unknown';
+      app.buildMarker = stephanosStatus.buildMarker || '';
       if (stephanosStatus.launchUrl) {
         app.entry = stephanosStatus.launchUrl;
       }
