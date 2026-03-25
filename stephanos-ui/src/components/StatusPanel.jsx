@@ -62,9 +62,15 @@ export default function StatusPanel() {
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
+  const adjudication = runtimeStatus.runtimeAdjudication ?? { issues: [] };
+  const runtimeSessionTruth = runtimeTruth.session ?? {};
+  const runtimeRouteTruth = runtimeTruth.route ?? {};
+  const runtimeReachabilityTruth = runtimeTruth.reachabilityTruth ?? {};
+  const runtimeProviderTruth = runtimeTruth.provider ?? {};
+  const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
-  const reachability = runtimeTruth.reachability ?? finalRoute.reachability ?? {};
+  const reachability = runtimeTruth.reachabilityRaw ?? runtimeTruth.reachability ?? finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const homeNodeDiagnostics = runtimeContext.routeDiagnostics?.['home-node'] ?? {};
   const interactionAuditSummary = [
@@ -132,16 +138,19 @@ export default function StatusPanel() {
         <li>Fallback Active: {runtimeTruth.fallbackActive || runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
-        <li>Session Kind: {runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
+        <li>Session Kind: {runtimeSessionTruth.sessionKind || runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
+        <li>Non-Local Session: {(runtimeSessionTruth.nonLocalSession === true) ? 'yes' : 'no'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>
         <li>Winning Route Reason: {routeTruthView.winnerReason}</li>
+        <li>Adjudicated Winning Reason: {runtimeRouteTruth.winningReason || routeTruthView.winnerReason}</li>
         <li>Preferred Target: {routeTruthView.preferredTarget}</li>
         <li>Actual Target Used: {routeTruthView.actualTarget}</li>
         <li>Final Route Source: {routeTruthView.source}</li>
         <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
         <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
         <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>
+        <li>Adjudicated UI Reachable: {runtimeReachabilityTruth.uiReachableState || 'unknown'}</li>
         <li>Home Node Usable: {routeTruthView.homeNodeUsableState}</li>
         <li>Backend-Mediated Providers Eligible: {providerEligibility.backendMediatedProviders ? 'yes' : 'pending'}</li>
         <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
@@ -151,6 +160,9 @@ export default function StatusPanel() {
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>
         <li>Guardrails Detail: {primaryGuardrailMessage}</li>
+        <li>Adjudicator Blocking Issues: {runtimeDiagnosticsTruth.blockingIssues?.length ?? 0}</li>
+        <li>Adjudicator Warnings: {runtimeDiagnosticsTruth.invariantWarnings?.length ?? 0}</li>
+        <li>Adjudicator Total Issues: {adjudication.issues?.length ?? 0}</li>
         <li>Local Node Reachable (diagnostic): {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable (diagnostic): {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable (diagnostic): {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
@@ -171,6 +183,7 @@ export default function StatusPanel() {
         <li>Requested Provider (UI): {uiDiagnostics.requestedProvider || provider}</li>
         <li>Selected Provider (Route): {routeTruthView.selectedProvider}</li>
         <li>Executed Provider (Route): {routeTruthView.executedProvider}</li>
+        <li>Executable Provider (Adjudicated): {runtimeProviderTruth.executableProvider || 'n/a'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
         <li>Ready Cloud Providers: {readyCloudProviders}</li>

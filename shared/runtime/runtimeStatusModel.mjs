@@ -21,7 +21,7 @@ import {
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
-import { buildRuntimeTruthSnapshot } from './truthContract.mjs';
+import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -990,19 +990,34 @@ export function createRuntimeStatusModel({
     validationState,
     appLaunchState,
   });
-  const runtimeTruth = buildRuntimeTruthSnapshot({
+  const preliminaryModel = { ...model, finalRouteTruth };
+  const guardrails = evaluateRuntimeGuardrails(preliminaryModel);
+  const runtimeAdjudication = adjudicateRuntimeTruth({
     runtimeContext: normalizedRuntimeContext,
     finalRoute,
     finalRouteTruth,
     routePlan,
     routeEvaluations: nodeRoute.routeEvaluations,
     routePreferenceOrder: nodeRoute.routePreferenceOrder,
+    selectedProvider: normalizedProvider,
+    routeSelectedProvider,
+    activeProvider,
+    providerHealth: health,
+    fallbackActive,
+    validationState,
+    appLaunchState,
+    guardrails,
   });
 
   return {
     ...model,
     finalRouteTruth,
-    runtimeTruth,
-    guardrails: evaluateRuntimeGuardrails({ ...model, finalRouteTruth, runtimeTruth }),
+    runtimeTruth: runtimeAdjudication.runtimeTruth,
+    runtimeTruthSnapshot: runtimeAdjudication.runtimeTruthSnapshot,
+    runtimeAdjudication: {
+      issues: runtimeAdjudication.issues,
+      computedFromPersistence: false,
+    },
+    guardrails,
   };
 }
