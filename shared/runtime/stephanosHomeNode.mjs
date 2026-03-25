@@ -46,6 +46,33 @@ export function isPrivateIpv4Host(hostname = '') {
     || (octets[0] === 192 && octets[1] === 168);
 }
 
+function isValidIpv4Host(hostname = '') {
+  const value = String(hostname).trim();
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) {
+    return false;
+  }
+
+  const octets = value.split('.').map((part) => Number.parseInt(part, 10));
+  return !octets.some((part) => Number.isNaN(part) || part < 0 || part > 255);
+}
+
+function isMalformedHomeNodeHost(hostname = '') {
+  const value = String(hostname).trim().toLowerCase();
+  if (!value) {
+    return true;
+  }
+
+  if (/^\d+$/.test(value)) {
+    return true;
+  }
+
+  if (/^\d+(?:\.\d+){1,3}$/.test(value) && !isValidIpv4Host(value)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isLikelyLanHost(hostname = '') {
   const value = String(hostname).trim().toLowerCase();
   if (!value) return false;
@@ -117,7 +144,7 @@ export function normalizeStephanosHomeNode(value = {}, defaults = {}) {
   const input = value && typeof value === 'object' ? value : {};
   const fallback = defaults && typeof defaults === 'object' ? defaults : {};
   const host = extractHostname(input.host || input.ip || fallback.host || fallback.ip || '');
-  if (!host) {
+  if (!host || isMalformedHomeNodeHost(host)) {
     return createEmptyStephanosHomeNode({ ...fallback, ...input }, fallback.source || 'manual');
   }
 
@@ -175,12 +202,20 @@ function writeJsonStorage(storage, key, value) {
 }
 
 export function readPersistedStephanosHomeNode(storage = globalThis?.localStorage) {
-  const normalized = normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY), { source: 'manual' });
+  const raw = readJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY);
+  const normalized = normalizeStephanosHomeNode(raw, { source: 'manual' });
+  if (raw && !isValidStephanosHomeNode(normalized)) {
+    writeJsonStorage(storage, STEPHANOS_HOME_NODE_STORAGE_KEY, null);
+  }
   return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
 export function readPersistedStephanosLastKnownNode(storage = globalThis?.localStorage) {
-  const normalized = normalizeStephanosHomeNode(readJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY), { source: 'lastKnown' });
+  const raw = readJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY);
+  const normalized = normalizeStephanosHomeNode(raw, { source: 'lastKnown' });
+  if (raw && !isValidStephanosHomeNode(normalized)) {
+    writeJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY, null);
+  }
   return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
