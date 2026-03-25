@@ -21,3 +21,9 @@
 - Change Mission Console, provider router UI, or Stephanos theme **only** in `stephanos-ui/src/**`.
 - Never hand-edit `apps/stephanos/dist/**`; it is generated output.
 - Root launcher files are real, but they are **not** the Mission Console implementation.
+
+
+## See also
+
+- `docs/stephanos-routing-truths-and-guardrails.md` for local-vs-remote routing, home-node launchability, and dist fallback guardrails.
+- `docs/stephanos-ui-build.md` for source→dist→runtime verification flow.
