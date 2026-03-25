@@ -536,9 +536,28 @@ export function useAIConsole() {
   useEffect(() => {
     if (startupOllamaSyncAttemptedRef.current) return;
 
-    if (!shouldAutoSyncOllama({ apiStatus, ollamaHealth, ollamaConfig: ollamaDraftConfig })) {
+    const shouldRunStartupDiscovery = shouldAutoSyncOllama({
+      apiStatus,
+      ollamaHealth,
+      ollamaConfig: ollamaDraftConfig,
+    });
+
+    if (!shouldRunStartupDiscovery) {
+      console.debug('[Stephanos UI] Startup Ollama discovery skipped', {
+        backendReachable: apiStatus?.backendReachable,
+        frontendOrigin: apiStatus?.frontendOrigin || runtimeConfig.frontendOrigin,
+        ollamaHealthState: ollamaHealth?.state || 'unknown',
+        ollamaLikelyWrongDevice: ollamaHealth?.likelyWrongDevice === true,
+        configuredBaseUrl: ollamaDraftConfig?.baseURL || '',
+      });
       return;
     }
+
+    console.debug('[Stephanos UI] Startup Ollama discovery running', {
+      backendReachable: apiStatus?.backendReachable,
+      frontendOrigin: apiStatus?.frontendOrigin || runtimeConfig.frontendOrigin,
+      configuredBaseUrl: ollamaDraftConfig?.baseURL || '',
+    });
 
     startupOllamaSyncAttemptedRef.current = true;
 
@@ -568,6 +587,11 @@ export function useAIConsole() {
       }));
 
       if (!result.success) {
+        console.debug('[Stephanos UI] Startup Ollama discovery did not find a usable endpoint', {
+          reason: result.reason || '',
+          failureBucket: result.failureBucket || '',
+          attempts: result.attempts || [],
+        });
         setProviderHealth((prev) => ({
           ...prev,
           ollama: {
@@ -585,6 +609,12 @@ export function useAIConsole() {
         }));
         return;
       }
+
+      console.debug('[Stephanos UI] Startup Ollama discovery detected an endpoint', {
+        baseURL: result.baseURL,
+        host: result.host,
+        models: result.models || [],
+      });
 
       applyDetectedOllamaConnection({
         result,
