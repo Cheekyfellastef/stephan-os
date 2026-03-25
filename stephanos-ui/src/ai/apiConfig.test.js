@@ -82,3 +82,31 @@ test('getApiRuntimeConfigSnapshotKey changes when the preferred home node change
     globals.restore();
   }
 });
+
+test('getApiRuntimeConfig avoids localhost backend defaults in hosted-web sessions without a home-node', () => {
+  const globals = installBrowserGlobals({
+    origin: 'https://cheekyfellastef.github.io',
+    storage: {},
+  });
+
+  try {
+    const config = getApiRuntimeConfig();
+    assert.equal(config.baseUrl, 'https://cheekyfellastef.github.io');
+  } finally {
+    globals.restore();
+  }
+});
+
+test('getApiRuntimeConfig keeps localhost backend defaults for local desktop sessions', () => {
+  const globals = installBrowserGlobals({
+    origin: 'http://localhost:5173',
+    storage: {},
+  });
+
+  try {
+    const config = getApiRuntimeConfig();
+    assert.equal(config.baseUrl, 'http://localhost:8787');
+  } finally {
+    globals.restore();
+  }
+});

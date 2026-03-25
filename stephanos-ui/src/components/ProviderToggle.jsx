@@ -4,7 +4,7 @@ import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
-import { extractHostname, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
+import { extractHostname, isLoopbackHost, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
@@ -344,6 +344,23 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     ? 'empty'
     : (!normalizedManualHomeNodeHost || isMalformedStephanosHost(normalizedManualHomeNodeHost) ? 'invalid' : 'valid');
   const homeNodeSourceLabel = homeNodePreference?.source || homeNodeLastKnown?.source || 'none';
+  const localDesktopSession = isLoopbackHost(extractHostname(runtimeConfig.frontendOrigin));
+  const needsManualHomeNodeInput = !localDesktopSession && homeNodeStatus.state !== 'ready';
+
+  useEffect(() => {
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      homeNodeInputRequired: needsManualHomeNodeInput,
+      homeNodeInputMounted: true,
+      homeNodeInputInteractive: true,
+    }));
+    return () => {
+      setUiDiagnostics((prev) => ({
+        ...prev,
+        homeNodeInputMounted: false,
+      }));
+    };
+  }, [needsManualHomeNodeInput, setUiDiagnostics]);
 
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
@@ -406,6 +423,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <input
             type="text"
             placeholder="192.168.1.42"
+            autoFocus={needsManualHomeNodeInput}
             value={homeNodeDraft.host}
             onMouseDown={() => setUiDiagnostics((prev) => ({ ...prev, homeNodeInputClickReceived: true }))}
             onClick={() => setUiDiagnostics((prev) => ({ ...prev, homeNodeInputClickReceived: true }))}

@@ -807,6 +807,10 @@ export function resolveStephanosBackendBaseUrl({
     }
   }
 
+  if (current?.origin && current?.hostname && !isLoopbackHost(current.hostname)) {
+    return current.origin;
+  }
+
   return `http://localhost:${DEFAULT_HOME_NODE_BACKEND_PORT}`;
 }
 

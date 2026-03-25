@@ -15,6 +15,8 @@ import {
 } from '../ai/providerConfig';
 import {
   clearPersistedStephanosHomeNode,
+  extractHostname,
+  isLoopbackHost,
   isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
   persistStephanosHomeNodePreference,
@@ -177,10 +179,8 @@ function normalizeStoredSettings(persistedSession) {
 
 function buildInitialRuntimeContext(initialApiRuntimeConfig, { sessionRestoreDiagnostics, homeNodePreference, homeNodeLastKnown }) {
   const frontendOrigin = initialApiRuntimeConfig?.frontendOrigin || '';
-  const frontendHost = typeof window !== 'undefined' && window.location?.hostname
-    ? String(window.location.hostname || '')
-    : '';
-  const localDesktopSession = frontendHost === 'localhost' || frontendHost === '127.0.0.1';
+  const frontendHost = extractHostname(frontendOrigin);
+  const localDesktopSession = !frontendHost || isLoopbackHost(frontendHost);
   const homeNode = initialApiRuntimeConfig?.homeNode || homeNodePreference || homeNodeLastKnown || null;
   const preferredTarget = localDesktopSession
     ? (initialApiRuntimeConfig?.baseUrl || '')

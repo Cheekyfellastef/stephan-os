@@ -160,6 +160,9 @@ export default function StatusPanel() {
         <li>Home Node Input Draft Value: {uiDiagnostics.homeNodeInputDraftValue || ''}</li>
         <li>Home Node Input Saved Value: {uiDiagnostics.homeNodeInputSavedValue || ''}</li>
         <li>Home Node Input Editing Active: {uiDiagnostics.homeNodeInputEditingActive ? 'yes' : 'no'}</li>
+        <li>Home Node Input Required: {uiDiagnostics.homeNodeInputRequired ? 'yes' : 'no'}</li>
+        <li>Home Node Input Mounted: {uiDiagnostics.homeNodeInputMounted ? 'yes' : 'no'}</li>
+        <li>Home Node Input Interactive: {uiDiagnostics.homeNodeInputInteractive ? 'yes' : 'no'}</li>
         <li>Home Node Input Overwrite Source: {uiDiagnostics.homeNodeInputOverwriteSource || 'none'}</li>
         <li>Home Node Input Interaction Audit: {interactionAuditSummary}</li>
         <li>Node Address Source: {routeTruthView.source}</li>
