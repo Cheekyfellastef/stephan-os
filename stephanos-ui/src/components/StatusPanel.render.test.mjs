@@ -230,6 +230,52 @@ test('StatusPanel renders truthful placeholders when providerEligibility is miss
   assert.match(rendered, /Cloud Providers Eligible: pending/);
 });
 
+test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime truth', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      appLaunchState: 'degraded',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      selectedProvider: 'groq',
+      routeSelectedProvider: 'groq',
+      activeProvider: 'groq',
+      finalRoute: {
+        routeKind: 'cloud',
+        source: 'backend-cloud-session',
+        preferredTarget: 'https://stephanos.example',
+        actualTarget: 'https://api.stephanos.example',
+      },
+      finalRouteTruth: {
+        routeKind: 'cloud',
+        requestedProvider: 'groq',
+        selectedProvider: 'groq',
+        executedProvider: 'groq',
+      },
+      runtimeTruth: {
+        session: { sessionKind: 'hosted-web', nonLocalSession: true },
+        route: { winningReason: 'cloud route won' },
+        reachability: { uiReachableState: 'reachable' },
+        provider: { executableProvider: 'groq' },
+        diagnostics: { blockingIssues: [{ code: 'x' }], invariantWarnings: [{ code: 'y' }] },
+      },
+      runtimeAdjudication: {
+        issues: [{ code: 'x' }, { code: 'y' }],
+      },
+      runtimeContext: {},
+      readyCloudProviders: [],
+      readyLocalProviders: [],
+      attemptOrder: [],
+    },
+  });
+
+  const rendered = renderStatusPanel();
+  assert.match(rendered, /Adjudicator Blocking Issues: 1/);
+  assert.match(rendered, /Adjudicator Warnings: 1/);
+  assert.match(rendered, /Adjudicator Total Issues: 2/);
+  assert.match(rendered, /Executable Provider \(Adjudicated\): groq/);
+});
+
 
 test('App render regression guard: real useAIConsole boot path still renders startup diagnostics', async () => {
   const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appWithRealConsoleAliases);

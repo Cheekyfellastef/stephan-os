@@ -66,6 +66,50 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     operatorAction: '',
   },
   runtimeTruth: {
+    session: {
+      sessionKind: 'unknown',
+      deviceContext: 'unknown',
+      localEligible: false,
+      hostedSession: false,
+      nonLocalSession: false,
+    },
+    route: {
+      requestedMode: 'pending',
+      effectiveMode: 'pending',
+      candidates: [],
+      selectedRouteKind: 'unavailable',
+      preferredTarget: 'unavailable',
+      actualTarget: 'unavailable',
+      source: 'unknown',
+      winningReason: '',
+      fallbackActive: false,
+    },
+    reachabilityTruth: {
+      backendReachable: false,
+      uiReachableState: 'unknown',
+      uiReachable: null,
+      selectedRouteReachable: false,
+      selectedRouteUsable: false,
+      localAvailable: false,
+      homeNodeAvailable: false,
+      cloudAvailable: false,
+      distAvailable: false,
+    },
+    provider: {
+      requestedProvider: 'unknown',
+      selectedProvider: 'unknown',
+      executableProvider: '',
+      providerHealthState: 'unknown',
+      providerReason: '',
+      fallbackProviderUsed: false,
+    },
+    diagnostics: {
+      invariantWarnings: [],
+      blockingIssues: [],
+      operatorGuidance: [],
+      validationState: 'launching',
+      appLaunchState: 'pending',
+    },
     sessionKind: 'unknown',
     deviceContext: 'unknown',
     requestedRouteMode: 'pending',
@@ -92,6 +136,11 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     providerEligibility: {},
     routeEvaluations: {},
     routePreferenceOrder: [],
+    computedFromPersistence: false,
+  },
+  runtimeAdjudication: {
+    issues: [],
+    computedFromPersistence: false,
   },
 });
 
@@ -195,6 +244,27 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       selectedProvider: candidate.runtimeTruth.selectedProvider || finalRouteTruth.selectedProvider || selectedProviderProjection,
       executedProvider: candidate.runtimeTruth.executedProvider || finalRouteTruth.executedProvider || executedProviderProjection,
       routePreferenceOrder: normalizeArray(candidate.runtimeTruth.routePreferenceOrder, []),
+      session: candidate.runtimeTruth.session && typeof candidate.runtimeTruth.session === 'object'
+        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.session, ...candidate.runtimeTruth.session }
+        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.session },
+      route: candidate.runtimeTruth.route && typeof candidate.runtimeTruth.route === 'object'
+        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route, ...candidate.runtimeTruth.route }
+        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route },
+      reachabilityTruth: candidate.runtimeTruth.reachabilityTruth && typeof candidate.runtimeTruth.reachabilityTruth === 'object'
+        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth, ...candidate.runtimeTruth.reachabilityTruth }
+        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth },
+      provider: candidate.runtimeTruth.provider && typeof candidate.runtimeTruth.provider === 'object'
+        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider, ...candidate.runtimeTruth.provider }
+        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider },
+      diagnostics: candidate.runtimeTruth.diagnostics && typeof candidate.runtimeTruth.diagnostics === 'object'
+        ? {
+          ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.diagnostics,
+          ...candidate.runtimeTruth.diagnostics,
+          invariantWarnings: normalizeArray(candidate.runtimeTruth.diagnostics.invariantWarnings),
+          blockingIssues: normalizeArray(candidate.runtimeTruth.diagnostics.blockingIssues),
+          operatorGuidance: normalizeArray(candidate.runtimeTruth.diagnostics.operatorGuidance),
+        }
+        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.diagnostics },
     }
     : {
       ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth,
@@ -224,7 +294,15 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       providerEligibility: finalRoute.providerEligibility || {},
       routeEvaluations: candidate.routeEvaluations && typeof candidate.routeEvaluations === 'object' ? candidate.routeEvaluations : {},
       routePreferenceOrder: normalizeArray(candidate.routePreferenceOrder, []),
+      computedFromPersistence: false,
     };
+
+  const runtimeAdjudication = candidate.runtimeAdjudication && typeof candidate.runtimeAdjudication === 'object'
+    ? {
+      issues: normalizeArray(candidate.runtimeAdjudication.issues),
+      computedFromPersistence: candidate.runtimeAdjudication.computedFromPersistence === true,
+    }
+    : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeAdjudication };
 
   const guardrails = candidate.guardrails && typeof candidate.guardrails === 'object'
     ? {
@@ -251,6 +329,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     finalRoute,
     finalRouteTruth,
     runtimeTruth,
+    runtimeAdjudication,
     guardrails,
     routeKind,
     preferredTarget,
