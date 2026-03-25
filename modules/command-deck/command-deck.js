@@ -23,6 +23,9 @@ function normaliseProject(project) {
     dependencyState: project?.dependencyState || 'ready',
     runtimeStatusModel: project?.runtimeStatusModel || null,
     launchStrategy: project?.launchStrategy || 'workspace',
+    buildStamp: project?.buildStamp || 'unknown',
+    buildStampLabel: project?.buildStampLabel || 'Stephanos Build: unknown',
+    buildMarker: project?.buildMarker || '',
   };
 }
 
@@ -72,9 +75,25 @@ function renderLauncherStatusStrip(projects) {
 
   const stephanos = projects.map(normaliseProject).find((project) => String(project.name || '').toLowerCase().includes('stephanos'));
   const runtime = stephanos?.runtimeStatusModel;
+  const buildStampLabel = stephanos?.buildStampLabel || 'Stephanos Build: unknown';
+  const runtimeMarker = stephanos?.buildMarker ? `<div class="runtime-strip-subtext">Runtime marker: ${stephanos.buildMarker}</div>` : '';
+
+  if (!stephanos) {
+    strip.innerHTML = '';
+    return;
+  }
 
   if (!runtime) {
-    strip.innerHTML = '';
+    strip.innerHTML = `
+      <div class="runtime-strip-card degraded">
+        <div>
+          <div class="runtime-strip-label">System Route</div>
+          <strong>Stephanos runtime status unavailable</strong>
+          <div class="runtime-strip-subtext">${buildStampLabel}</div>
+          <div class="runtime-strip-subtext">Route diagnostics are pending or unavailable.</div>
+        </div>
+      </div>
+    `;
     return;
   }
 
@@ -84,6 +103,8 @@ function renderLauncherStatusStrip(projects) {
         <div class="runtime-strip-label">System Route</div>
         <strong>${runtime.headline}</strong>
         <div class="runtime-strip-subtext">${runtime.dependencySummary}</div>
+        <div class="runtime-strip-subtext">${buildStampLabel}</div>
+        ${runtimeMarker}
         <div class="runtime-strip-subtext">Preferred target: ${runtime.preferredTarget || 'n/a'} · Actual target: ${runtime.actualTargetUsed || 'n/a'}</div>
         ${runtime.routeForensics?.firstBadTransition
     ? `<div class="runtime-strip-subtext">Forensic boundary: ${runtime.routeForensics.firstBadTransition}</div>`
@@ -201,9 +222,17 @@ let cleanupStatusChanged = null;
 let cleanupValidationPassed = null;
 let cleanupValidationFailed = null;
 let cleanupAppRepaired = null;
+let lastLoggedBuildStamp = null;
 
 export function init(context) {
-  renderProjectRegistry(getRuntimeProjects(context), context);
+  const initialProjects = getRuntimeProjects(context);
+  renderProjectRegistry(initialProjects, context);
+  const stephanos = initialProjects.map(normaliseProject).find((project) => String(project.name || '').toLowerCase().includes('stephanos'));
+  const currentBuildStamp = stephanos?.buildStamp || 'unknown';
+  if (lastLoggedBuildStamp !== currentBuildStamp) {
+    console.info(`[Stephanos] Build stamp: ${currentBuildStamp}`);
+    lastLoggedBuildStamp = currentBuildStamp;
+  }
 
   cleanupSimulationStart = context.eventBus.on('simulation:start', (simulationName) => {
     const normalized = String(simulationName || '').trim().toLowerCase();
@@ -242,7 +271,14 @@ export function init(context) {
   });
 
   cleanupStatusChanged = context.eventBus.on('app:status_changed', () => {
-    renderProjectRegistry(getRuntimeProjects(context), context);
+    const projects = getRuntimeProjects(context);
+    renderProjectRegistry(projects, context);
+    const stephanos = projects.map(normaliseProject).find((project) => String(project.name || '').toLowerCase().includes('stephanos'));
+    const currentBuildStamp = stephanos?.buildStamp || 'unknown';
+    if (lastLoggedBuildStamp !== currentBuildStamp) {
+      console.info(`[Stephanos] Build stamp: ${currentBuildStamp}`);
+      lastLoggedBuildStamp = currentBuildStamp;
+    }
   });
 
   cleanupValidationPassed = context.eventBus.on('app:validation_passed', () => {
