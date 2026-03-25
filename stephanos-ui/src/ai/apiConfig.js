@@ -1,4 +1,5 @@
 import {
+  isMalformedStephanosHost,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
@@ -53,6 +54,9 @@ function normalizeBaseUrl(value) {
 
   try {
     const parsed = new URL(trimmed);
+    if (isMalformedStephanosHost(parsed.hostname || '')) {
+      return getDefaultApiBaseUrl();
+    }
     return parsed.href.replace(/\/$/, '');
   } catch {
     return getDefaultApiBaseUrl();

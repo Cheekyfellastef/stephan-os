@@ -8,6 +8,7 @@ import {
   createStephanosHomeNodeUrls,
   discoverStephanosHomeNode,
   extractHostname,
+  isMalformedStephanosHost,
   isLoopbackHost,
   normalizeStephanosHomeNode,
   summarizeStephanosHomeNode,
@@ -36,12 +37,12 @@ function summarizeDiscoveryAttempts(attempts = []) {
 
 function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback = false } = {}) {
   const candidateHost = extractHostname(candidate);
-  if (candidate && (allowLoopback || !isLoopbackHost(candidateHost))) {
+  if (candidate && !isMalformedStephanosHost(candidateHost) && (allowLoopback || !isLoopbackHost(candidateHost))) {
     return candidate;
   }
 
   const fallbackHost = extractHostname(fallback);
-  if (fallback && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+  if (fallback && !isMalformedStephanosHost(fallbackHost) && (allowLoopback || !isLoopbackHost(fallbackHost))) {
     return fallback;
   }
 
