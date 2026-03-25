@@ -293,6 +293,9 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     source: String(merged.source || 'route-diagnostics'),
     reason: String(merged.reason || ''),
     blockedReason: String(merged.blockedReason || ''),
+    backendReachable: merged.backendReachable === true,
+    uiReachable: merged.uiReachable === true,
+    usable: merged.usable !== false && Boolean(merged.available),
   };
 }
 
@@ -604,6 +607,7 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
     routeEvaluations: routeSelection.evaluations,
     routePreferenceOrder: routeSelection.preferenceOrder,
     preferredRoute: selectedRouteKey,
+    winnerReason: selectedRoute?.reason || '',
     classificationFailed: Boolean(routeSelection.localDesktopClassificationFailed || (backendAvailable && !selectedRouteKey)),
   };
 }
@@ -660,9 +664,57 @@ export function finalizeRuntimeRouteResolution({
     }),
     summary: nodeRoute?.routeSummary || '',
     headline: nodeRoute?.routeHeadline || '',
+    winnerReason: nodeRoute?.winnerReason || '',
   };
 
   return finalRoute;
+}
+
+export function buildFinalRouteTruth({
+  runtimeContext = {},
+  nodeRoute = {},
+  finalRoute = {},
+  routePlan = {},
+  backendAvailable = false,
+  activeProvider = '',
+  routeSelectedProvider = '',
+  fallbackActive = false,
+  validationState = 'healthy',
+  appLaunchState = 'ready',
+} = {}) {
+  const selectedEvaluation = nodeRoute?.preferredRoute ? nodeRoute.routeEvaluations?.[nodeRoute.preferredRoute] : null;
+  const homeNodeEvaluation = nodeRoute?.routeEvaluations?.['home-node'] || {};
+  const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
+
+  return {
+    sessionKind: runtimeContext.sessionKind || 'unknown',
+    deviceContext: runtimeContext.deviceContext || 'unknown',
+    runtimeModeLabel: nodeRoute?.routeKind === 'home-node'
+      ? 'home node/lan'
+      : (runtimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
+    requestedRouteMode: routePlan.requestedRouteMode || DEFAULT_ROUTE_MODE,
+    effectiveRouteMode: routePlan.effectiveRouteMode || DEFAULT_ROUTE_MODE,
+    preferredRoute: nodeRoute?.preferredRoute || 'unavailable',
+    routeKind: nodeRoute?.routeKind || 'unavailable',
+    winnerReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
+    preferredTarget: finalRoute?.preferredTarget || '',
+    actualTarget: finalRoute?.actualTarget || '',
+    source: finalRoute?.source || runtimeContext.nodeAddressSource || 'route-diagnostics',
+    backendReachable: Boolean(backendAvailable),
+    uiReachable: selectedEvaluation?.uiReachable === true,
+    routeUsable: selectedEvaluation?.usable === true,
+    homeNodeUsable: homeNodeEvaluation?.usable === true,
+    localRouteUsable: localEvaluation?.usable === true,
+    cloudRouteReachable: finalRoute?.reachability?.cloudRouteReachable === true,
+    fallbackActive: Boolean(fallbackActive),
+    fallbackRouteActive: nodeRoute?.routeKind === 'dist',
+    requestedProvider: routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
+    selectedProvider: routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY,
+    executedProvider: activeProvider || '',
+    validationState,
+    appLaunchState,
+    operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
+  };
 }
 
 function buildDependencySummary({
@@ -916,9 +968,22 @@ export function createRuntimeStatusModel({
     preferredRoute: nodeRoute.preferredRoute,
     classificationFailed: nodeRoute.classificationFailed,
   };
+  const finalRouteTruth = buildFinalRouteTruth({
+    runtimeContext: normalizedRuntimeContext,
+    nodeRoute,
+    finalRoute,
+    routePlan,
+    backendAvailable,
+    activeProvider,
+    routeSelectedProvider,
+    fallbackActive,
+    validationState,
+    appLaunchState,
+  });
 
   return {
     ...model,
+    finalRouteTruth,
     guardrails: evaluateRuntimeGuardrails(model),
   };
 }

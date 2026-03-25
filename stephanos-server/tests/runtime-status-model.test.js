@@ -416,3 +416,77 @@ test('runtime status keeps provider eligibility aligned with finalRoute truth fo
   assert.equal(model.finalRoute.providerEligibility.cloudProviders, true);
   assert.equal(model.guardrails.summary.errors, 0);
 });
+
+test('final route truth snapshot stays aligned with selected route and provider execution truth', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: true },
+      groq: { ok: true },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    activeProviderHint: 'groq',
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://192.168.1.42:8787',
+      homeNode: { host: '192.168.1.42', uiPort: 5173, backendPort: 8787, source: 'manual', reachable: true },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          backendReachable: true,
+          uiReachable: true,
+          usable: true,
+          source: 'manual',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.finalRouteTruth.sessionKind, 'hosted-web');
+  assert.equal(model.finalRouteTruth.routeKind, 'home-node');
+  assert.equal(model.finalRouteTruth.homeNodeUsable, true);
+  assert.equal(model.finalRouteTruth.uiReachable, true);
+  assert.equal(model.finalRouteTruth.selectedProvider, model.routeSelectedProvider);
+  assert.equal(model.finalRouteTruth.executedProvider, model.activeProvider);
+});
+
+test('local operator override removes home-node usability from final truth on local desktop', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+      apiBaseUrl: 'http://localhost:8787',
+      homeNode: { host: '192.168.1.42', source: 'manual', reachable: true },
+      homeNodeOperatorOverrideActive: true,
+      homeNodeOperatorOverrideNodeConfigured: true,
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          backendReachable: true,
+          uiReachable: true,
+          usable: true,
+          source: 'manual',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.routeEvaluations['home-node'].available, false);
+  assert.equal(model.finalRouteTruth.homeNodeUsable, false);
+  assert.equal(model.finalRouteTruth.routeKind, 'local-desktop');
+});
