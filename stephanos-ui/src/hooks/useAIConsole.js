@@ -4,6 +4,7 @@ import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } fr
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import {
+  DEFAULT_HOME_NODE_BACKEND_PORT,
   createStephanosHomeNodeUrls,
   discoverStephanosHomeNode,
   extractHostname,
@@ -45,6 +46,15 @@ function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback 
   }
 
   return allowLoopback ? (candidate || fallback || '') : '';
+}
+
+function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
+  const frontendHost = extractHostname(frontendOrigin);
+  const preferredHost = isLoopbackHost(frontendHost) ? frontendHost : 'localhost';
+  return createStephanosHomeNodeUrls({
+    host: preferredHost || 'localhost',
+    backendPort: DEFAULT_HOME_NODE_BACKEND_PORT,
+  }).backendUrl;
 }
 
 
@@ -206,6 +216,7 @@ export function useAIConsole() {
     devMode,
     fallbackEnabled,
     fallbackOrder,
+    disableHomeNodeForLocalSession,
     providerSelectionSource,
     getActiveProviderConfigSource,
     getEffectiveProviderConfigs,
@@ -278,6 +289,18 @@ export function useAIConsole() {
         : (resolvedRuntimeContext.restoreDecision || ''),
       routeDiagnostics: {
         ...(resolvedRuntimeContext.routeDiagnostics || {}),
+        ...(localDesktopSession && resolvedRuntimeContext.homeNodeOperatorOverrideActive ? {
+          'home-node': {
+            configured: Boolean(resolvedRuntimeContext.homeNodeOperatorOverrideNodeConfigured),
+            available: false,
+            misconfigured: false,
+            target: resolvedRuntimeContext.homeNode?.backendUrl || '',
+            actualTarget: '',
+            source: 'local-operator-override',
+            reason: 'Home-node route source ignored due to local operator override.',
+            blockedReason: 'Force Local On This PC is enabled for this browser session.',
+          },
+        } : {}),
         ...(!localDesktopSession && adoptedHomeNode.homeNode ? {
           'home-node': {
             configured: true,
@@ -301,7 +324,9 @@ export function useAIConsole() {
             actualTarget: backendBaseUrl,
             source: 'local-backend-session',
             reason: health.ok
-              ? 'Backend online locally; provider/router is using the live local-desktop backend session'
+              ? (resolvedRuntimeContext.homeNodeOperatorOverrideActive
+                ? 'Backend online locally; home-node route source ignored by operator override.'
+                : 'Backend online locally; provider/router is using the live local-desktop backend session')
               : 'Local desktop session detected, but the backend is offline',
             blockedReason: health.ok ? '' : 'backend is offline',
           },
@@ -341,17 +366,20 @@ export function useAIConsole() {
 
   const resolveRuntimeConfig = useCallback(async () => {
     const baseRuntimeConfig = getApiRuntimeConfig();
+    const localDesktopSession = isLoopbackHost(extractHostname(baseRuntimeConfig.frontendOrigin));
+    const shouldIgnoreHomeNodeForThisSession = localDesktopSession && disableHomeNodeForLocalSession;
+    const effectiveManualNode = shouldIgnoreHomeNodeForThisSession ? null : homeNodePreference;
+    const effectiveLastKnownNode = shouldIgnoreHomeNodeForThisSession ? null : homeNodeLastKnown;
     const discovery = await discoverStephanosHomeNode({
       currentOrigin: baseRuntimeConfig.frontendOrigin,
-      manualNode: homeNodePreference,
-      lastKnownNode: homeNodeLastKnown,
+      manualNode: effectiveManualNode,
+      lastKnownNode: effectiveLastKnownNode,
       recentHosts: [
         ollamaConnection.lastSuccessfulHost,
         ...(ollamaConnection.recentHosts || []),
       ].filter(Boolean),
     });
 
-    const localDesktopSession = isLoopbackHost(extractHostname(baseRuntimeConfig.frontendOrigin));
     const homeNodeConfigured = Boolean(homeNodePreference?.host || homeNodeLastKnown?.host);
 
     const unreachableDetail = homeNodeConfigured
@@ -366,24 +394,34 @@ export function useAIConsole() {
           : (homeNodeConfigured ? 'unreachable' : 'idle'),
       detail: discovery.reachable
         ? `Using ${summarizeStephanosHomeNode(discovery.preferredNode)}.`
+        : shouldIgnoreHomeNodeForThisSession
+          ? (homeNodeConfigured
+            ? 'Home-node route source ignored by local operator override; local desktop routing is active.'
+            : 'Local operator override is active; local desktop routing is active.')
         : localDesktopSession
           ? (homeNodeConfigured
             ? 'Home PC node is optional on this local desktop session; local Stephanos routes remain valid when available.'
             : 'Home PC node is optional on this local desktop session.')
           : unreachableDetail,
       attempts: discovery.attempts,
-      node: discovery.preferredNode,
-      source: discovery.source || (localDesktopSession ? 'local-browser-session' : 'route-diagnostics'),
+      node: shouldIgnoreHomeNodeForThisSession ? null : discovery.preferredNode,
+      source: shouldIgnoreHomeNodeForThisSession
+        ? 'local-operator-override'
+        : (discovery.source || (localDesktopSession ? 'local-browser-session' : 'route-diagnostics')),
       fallback: discovery.fallback || null,
     });
 
-    if (discovery.preferredNode) {
+    if (!shouldIgnoreHomeNodeForThisSession && discovery.preferredNode) {
       setHomeNodeLastKnown(discovery.preferredNode);
     }
 
     const nextRuntimeConfig = getApiRuntimeConfig();
+    const localDesktopBackendUrl = resolveLocalDesktopBackendBaseUrl(nextRuntimeConfig.frontendOrigin);
+    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession
+      ? localDesktopBackendUrl
+      : nextRuntimeConfig.baseUrl;
     const compatibleBackendBaseUrl = resolveCompatibleTarget(
-      nextRuntimeConfig.baseUrl,
+      effectiveRuntimeBaseUrl,
       discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
       { allowLoopback: localDesktopSession },
     );
@@ -401,9 +439,11 @@ export function useAIConsole() {
         apiBaseUrl: compatibleBackendBaseUrl,
         backendBaseUrl: compatibleBackendBaseUrl,
         baseUrl: compatibleBackendBaseUrl,
-        homeNode: discovery.preferredNode || nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null,
+        homeNode: shouldIgnoreHomeNodeForThisSession
+          ? (nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null)
+          : (discovery.preferredNode || nextRuntimeConfig.homeNode || homeNodePreference || homeNodeLastKnown || null),
         nodeAddressSource: localBackendSession
-          ? 'local-backend-session'
+          ? (shouldIgnoreHomeNodeForThisSession ? 'local-backend-session:operator-override' : 'local-backend-session')
           : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
         preferredTarget,
         actualTargetUsed: resolveCompatibleTarget(
@@ -413,11 +453,15 @@ export function useAIConsole() {
         ),
         restoreDecision: !localDesktopSession && isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl))
           ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
-          : '',
+          : (shouldIgnoreHomeNodeForThisSession
+            ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+            : ''),
+        homeNodeOperatorOverrideActive: shouldIgnoreHomeNodeForThisSession,
+        homeNodeOperatorOverrideNodeConfigured: homeNodeConfigured,
       },
       discovery,
     };
-  }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus]);
+  }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus, disableHomeNodeForLocalSession]);
 
 
   const refreshHealth = useCallback(async () => {

@@ -97,6 +97,7 @@ export function createDefaultRouterSettings() {
     routeMode: DEFAULT_ROUTE_MODE,
     devMode: true,
     fallbackEnabled: true,
+    disableHomeNodeForLocalSession: false,
     fallbackOrder: [...FALLBACK_PROVIDER_KEYS],
     providerConfigs: createDefaultSavedProviderConfigs(),
   };

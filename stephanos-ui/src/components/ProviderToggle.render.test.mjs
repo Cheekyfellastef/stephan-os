@@ -71,6 +71,8 @@ function createStore(overrides = {}) {
     setDevMode: () => {},
     fallbackEnabled: true,
     setFallbackEnabled: () => {},
+    disableHomeNodeForLocalSession: false,
+    setDisableHomeNodeForLocalSession: () => {},
     providerHealth: {
       groq: {
         ok: false,

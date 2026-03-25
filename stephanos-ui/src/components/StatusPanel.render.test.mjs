@@ -82,6 +82,7 @@ function createBaseStore(overrides = {}) {
     routeMode: 'auto',
     devMode: true,
     fallbackEnabled: true,
+    disableHomeNodeForLocalSession: false,
     fallbackOrder: ['groq', 'gemini', 'mock'],
     providerHealth: {},
     getActiveProviderConfig: () => ({ baseURL: '', model: '' }),
