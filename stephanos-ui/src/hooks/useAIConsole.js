@@ -355,7 +355,7 @@ export function useAIConsole() {
     const homeNodeConfigured = Boolean(homeNodePreference?.host || homeNodeLastKnown?.host);
 
     const unreachableDetail = homeNodeConfigured
-      ? `${discovery.message || 'Home PC node unreachable right now.'} Candidates: ${summarizeDiscoveryAttempts(discovery.attempts)} Fallback: ${discovery.fallback?.rule || 'no candidates were reachable; runtime context fell back to current origin.'}`
+      ? `${discovery.message || 'Home PC node unreachable right now.'} Candidates: ${discovery.attemptSummary || summarizeDiscoveryAttempts(discovery.attempts)} Action: ${discovery.operatorAction || 'Set manual home node to a reachable LAN backend host/IP:port.'} Fallback: ${discovery.fallback?.rule || 'no candidates were reachable; runtime context fell back to current origin.'}`
       : 'No home PC node configured yet.';
 
     setHomeNodeStatus({

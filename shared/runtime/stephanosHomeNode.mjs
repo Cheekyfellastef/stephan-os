@@ -435,6 +435,50 @@ function formatAttemptRejection(attempt = {}) {
   return `${attempt.source}:${attempt.host || 'unknown'} rejected (${detail})`;
 }
 
+function summarizeAttemptFailures(attempts = []) {
+  if (!Array.isArray(attempts) || !attempts.length) {
+    return 'no non-loopback candidates were available to probe';
+  }
+
+  return attempts.map((attempt) => formatAttemptRejection(attempt)).join(' | ');
+}
+
+function deriveOperatorAction({
+  nonLocalSession = false,
+  prioritizedAttempt = null,
+  preferredNode = null,
+  configured = false,
+} = {}) {
+  if (!configured) {
+    return nonLocalSession
+      ? 'Set a manual home-node to a reachable LAN host/IP and backend port (for example 192.168.x.x:8787).'
+      : 'Start stephanos-server locally or configure a reachable home-node.';
+  }
+
+  const source = prioritizedAttempt?.source || preferredNode?.source || '';
+  const reason = String(prioritizedAttempt?.reason || '').toLowerCase();
+  const host = prioritizedAttempt?.host || preferredNode?.host || '';
+  if (reason === 'timeout') {
+    return `Probe to ${host || 'the configured home-node'} timed out. Confirm the target host/port is reachable from this device and that /api/health responds quickly.`;
+  }
+  if (reason === 'not-stephanos-server') {
+    return `Target ${host || 'configured host'} is reachable but is not stephanos-server. Point manual home-node to the machine running stephanos-server on port 8787.`;
+  }
+  if (reason.includes('cors') || reason.includes('failed to fetch') || reason.includes('networkerror')) {
+    return `Browser network/CORS blocked access to ${host || 'configured host'}. Ensure iPad/browser can reach the LAN backend and the backend allows this origin.`;
+  }
+  if (source === 'manual') {
+    return `Update manual home-node to a reachable LAN host/IP and port, then re-check discovery. Current target: ${host || 'unknown host'}.`;
+  }
+  if (source === 'lastKnown') {
+    return `Last known home-node ${host || ''} is no longer reachable. Update manual home-node to the current reachable LAN host/IP.`;
+  }
+
+  return nonLocalSession
+    ? 'No reachable Stephanos backend was found from this hosted session. Set manual home-node to the reachable LAN backend host/IP:port.'
+    : 'No reachable Stephanos backend was found. Start stephanos-server or configure a reachable home-node.';
+}
+
 function summarizeFallbackDecision({ attempts = [], prioritizedAttempt = null, source = '', status = '' } = {}) {
   const attemptedCandidates = attempts.map((attempt) => ({
     host: attempt.host,
@@ -451,9 +495,7 @@ function summarizeFallbackDecision({ attempts = [], prioritizedAttempt = null, s
       ? 'selected first reachable candidate'
       : 'no candidates were reachable; preserving configured node context and falling back to current origin/runtime context',
     attemptedCandidates,
-    summary: attempts.length
-      ? attempts.map((attempt) => formatAttemptRejection(attempt)).join(' | ')
-      : 'no non-loopback candidates were available to probe',
+    summary: summarizeAttemptFailures(attempts),
   };
 }
 
@@ -643,6 +685,13 @@ export async function discoverStephanosHomeNode({
       source: prioritizedAttempt?.source || fallbackSource || 'manual',
       status: configured ? 'unavailable' : 'not-configured',
     });
+    const attemptSummary = summarizeAttemptFailures(attempts);
+    const operatorAction = deriveOperatorAction({
+      nonLocalSession,
+      prioritizedAttempt,
+      preferredNode,
+      configured,
+    });
 
     return {
       reachable: false,
@@ -654,6 +703,8 @@ export async function discoverStephanosHomeNode({
       message: configured ? failure.message : 'Manual home-node address is missing.',
       failureCode: configured ? failure.code : 'missing-manual-node',
       failureReason: configured ? failure.detail : 'missing manual node',
+      attemptSummary,
+      operatorAction,
       fallback,
     };
   } catch (error) {
@@ -668,6 +719,8 @@ export async function discoverStephanosHomeNode({
       error: error?.message || 'unknown-error',
       failureCode: 'discovery-error',
       failureReason: error?.message || 'unknown-error',
+      attemptSummary: 'no non-loopback candidates were available to probe',
+      operatorAction: 'Retry discovery after confirming network connectivity and backend availability.',
       fallback: summarizeFallbackDecision({
         attempts: [],
         prioritizedAttempt: null,
