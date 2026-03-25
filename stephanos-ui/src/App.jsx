@@ -21,6 +21,8 @@ import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
 import {
   STEPHANOS_UI_BUILD_STAMP,
+  STEPHANOS_BUILD_TIME,
+  STEPHANOS_UI_BUILD_TIME_LOCAL,
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
   STEPHANOS_UI_RUNTIME_ID,
@@ -140,6 +142,7 @@ export default function App() {
       <footer className="runtime-diagnostic" aria-label="runtime diagnostic">
         <span>{STEPHANOS_UI_RUNTIME_LABEL}</span>
         <span>build: {STEPHANOS_UI_BUILD_STAMP}</span>
+        <span>Stephanos Build: {STEPHANOS_UI_BUILD_TIME_LOCAL} ({STEPHANOS_BUILD_TIME})</span>
         <span>marker: {STEPHANOS_UI_RUNTIME_MARKER}</span>
         <span>launcher: root index.html → apps/stephanos/dist/index.html</span>
         <span>runtime id: {STEPHANOS_UI_RUNTIME_ID}</span>
