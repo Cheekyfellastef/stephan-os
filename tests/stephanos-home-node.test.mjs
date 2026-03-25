@@ -84,6 +84,17 @@ test('buildStephanosHomeNodeCandidates drops partial objects without a host', ()
   assert.deepEqual(candidates.map((candidate) => candidate.host), ['192.168.1.42']);
 });
 
+test('buildStephanosHomeNodeCandidates rejects malformed numeric manual hosts', () => {
+  const candidates = buildStephanosHomeNodeCandidates({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    manualNode: { host: '1', source: 'manual' },
+    lastKnownNode: { host: '192.168.1.42', source: 'lastKnown' },
+  });
+
+  assert.ok(candidates.every((candidate) => candidate.host !== '1'));
+  assert.deepEqual([...new Set(candidates.map((candidate) => candidate.host))], ['192.168.1.42', 'cheekyfellastef.github.io']);
+});
+
 test('discoverStephanosHomeNode reports not-configured when no valid candidates exist', async () => {
   const discovery = await discoverStephanosHomeNode({
     manualNode: null,

@@ -708,6 +708,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           misconfigured: false,
           target: effectiveBackendBaseUrl,
           actualTarget: effectiveBackendBaseUrl,
+          backendReachable: healthyBackend,
+          uiReachable: Boolean(localPreferredTarget?.url),
+          usable: localDesktopCapableSession && healthyBackend,
           source: localDesktopCapableSession
             ? (localPreferredTarget?.url ? 'local-runtime-probe' : 'local-backend-session')
             : 'not-applicable',
@@ -728,6 +731,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           misconfigured: Boolean((homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured) || (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)),
           target: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
+          backendReachable: Boolean(homeNodeDiscovery.reachable),
+          uiReachable: homeNodeUiReachable,
+          usable: homeNodeRouteAvailable,
           source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
           reason: homeNodeRouteAvailable
             ? (backendPublishedRouteMisconfigured
@@ -762,6 +768,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           misconfigured: false,
           target: distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''),
           actualTarget: distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''),
+          backendReachable: healthyBackend,
+          uiReachable: Boolean(distLive || entryExists),
+          usable: Boolean(distLive || entryExists),
           source: distLive ? 'dist-runtime-probe' : (entryExists ? 'dist-entry' : 'dist-unavailable'),
           reason: distLive
             ? 'Bundled dist runtime is reachable'
@@ -775,6 +784,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
           misconfigured: false,
           target: '',
           actualTarget: '',
+          backendReachable: false,
+          uiReachable: false,
+          usable: false,
           source: 'cloud-route-unavailable',
           reason: 'No explicit cloud Stephanos runtime route was published',
           blockedReason: 'no cloud-backed route is currently ready',
