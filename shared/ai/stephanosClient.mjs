@@ -1,10 +1,7 @@
 import {
-  readPersistedStephanosHomeNode,
-  readPersistedStephanosLastKnownNode,
-  resolveStephanosBackendBaseUrl,
-} from '../runtime/stephanosHomeNode.mjs';
-
-const DEFAULT_BACKEND_BASE_URL = 'http://localhost:8787';
+  requestStephanosBackend,
+  resolveStephanosBackendClientBaseUrl,
+} from '../runtime/backendClient.mjs';
 
 function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
@@ -27,29 +24,8 @@ function resolvePromptFromMessages(messages = []) {
   return normalized[normalized.length - 1]?.content || '';
 }
 
-function resolveFrontendOrigin(runtimeContext = {}) {
-  if (safeString(runtimeContext.frontendOrigin)) {
-    return safeString(runtimeContext.frontendOrigin);
-  }
-
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-
-  return '';
-}
-
 function resolveBackendBaseUrl(runtimeContext = {}) {
-  const storage = runtimeContext.storage || globalThis?.localStorage;
-  const manualNode = runtimeContext.manualNode || readPersistedStephanosHomeNode(storage);
-  const lastKnownNode = runtimeContext.lastKnownNode || readPersistedStephanosLastKnownNode(storage);
-
-  return resolveStephanosBackendBaseUrl({
-    currentOrigin: resolveFrontendOrigin(runtimeContext),
-    manualNode,
-    lastKnownNode,
-    explicitBaseUrl: runtimeContext.baseUrl,
-  }) || DEFAULT_BACKEND_BASE_URL;
+  return resolveStephanosBackendClientBaseUrl(runtimeContext) || 'http://localhost:8787';
 }
 
 function buildChatPayload({ provider = 'ollama', messages = [], context = {}, model = '', runtimeContext = {} } = {}) {
@@ -69,7 +45,8 @@ function buildChatPayload({ provider = 'ollama', messages = [], context = {}, mo
     providerConfigs: normalizedModel ? { [normalizedProvider]: providerConfig } : {},
     runtimeContext: {
       ...runtimeContext,
-      frontendOrigin: resolveFrontendOrigin(runtimeContext),
+      frontendOrigin: safeString(runtimeContext.frontendOrigin)
+        || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : ''),
       tileContext: {
         ...(context && typeof context === 'object' ? context : {}),
       },
@@ -85,39 +62,15 @@ export async function queryStephanosAI({
   runtimeContext = {},
   fetchImpl = globalThis.fetch,
 } = {}) {
-  if (typeof fetchImpl !== 'function') {
-    throw new Error('Fetch is unavailable; cannot contact Stephanos backend AI route.');
-  }
-
-  const baseUrl = resolveBackendBaseUrl(runtimeContext);
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/api/ai/chat`;
   const payload = buildChatPayload({ provider, messages, context, model, runtimeContext });
-
-  const response = await fetchImpl(endpoint, {
+  const response = await requestStephanosBackend({
+    path: '/api/ai/chat',
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
+    runtimeContext,
+    fetchImpl,
   });
-
-  const text = await response.text();
-  let json = {};
-
-  if (text) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new Error('Stephanos backend returned malformed JSON from /api/ai/chat.');
-    }
-  }
-
-  if (!response.ok) {
-    const error = new Error(json?.error || `Stephanos AI request failed with HTTP ${response.status}.`);
-    error.status = response.status;
-    error.payload = json;
-    throw error;
-  }
-
-  return json;
+  return response.json || {};
 }
 
 export { resolveBackendBaseUrl as resolveStephanosAiBackendBaseUrl };

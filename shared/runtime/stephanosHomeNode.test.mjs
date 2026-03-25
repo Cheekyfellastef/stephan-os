@@ -16,6 +16,15 @@ test('probeStephanosHomeNode keeps reachable manual LAN backend even when health
   }, {
     fetchImpl: async () => ({
       ok: true,
+      async text() {
+        return JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          api_status: 'online',
+          backend_base_url: 'http://localhost:8787',
+          backend_target_endpoint: 'http://localhost:8787/api/ai/chat',
+        });
+      },
       json: async () => ({
         ok: true,
         service: 'stephanos-server',
@@ -44,6 +53,15 @@ test('discoverStephanosHomeNode reports manual reachable LAN node as available e
     },
     fetchImpl: async () => ({
       ok: true,
+      async text() {
+        return JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          api_status: 'online',
+          backend_base_url: 'http://localhost:8787',
+          backend_target_endpoint: 'http://localhost:8787/api/ai/chat',
+        });
+      },
       json: async () => ({
         ok: true,
         service: 'stephanos-server',

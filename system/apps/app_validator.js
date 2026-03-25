@@ -27,6 +27,7 @@ import {
   isValidStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
+import { requestStephanosBackend } from "../../shared/runtime/backendClient.mjs";
 
 const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_LOCAL_URLS = createStephanosLocalUrls();
@@ -112,31 +113,40 @@ async function fetchJsonSafely(path) {
   }
 }
 
-async function postJsonSafely(path, body) {
+async function requestStephanosBackendSafely({
+  path,
+  method = 'GET',
+  body,
+  runtimeContext = {},
+  timeoutMs = 2500,
+  diagnostics = null,
+} = {}) {
   try {
-    const response = await fetch(path, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body || {})
+    const response = await requestStephanosBackend({
+      path,
+      method,
+      body,
+      runtimeContext,
+      timeoutMs,
+      diagnostics,
     });
-
-    if (!response.ok) {
-      return { ok: false, status: response.status };
-    }
-
-    const raw = await response.text();
-
-    try {
-      return { ok: true, json: JSON.parse(raw) };
-    } catch {
-      return { ok: false, parseError: true };
-    }
-  } catch {
-    return { ok: false, networkError: true };
+    return {
+      ok: true,
+      status: response.status,
+      json: response.json,
+      requestPath: path,
+      backendBaseUrl: response.baseUrl,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: error?.status || 0,
+      parseError: /malformed JSON/i.test(String(error?.message || '')),
+      networkError: !error?.status,
+      requestPath: path,
+      backendBaseUrl: error?.baseUrl || '',
+      reason: error?.message || 'backend-request-failed',
+    };
   }
 }
 
@@ -234,6 +244,9 @@ function emitStephanosValidationLog(context, details = {}) {
     `discoveryDisabled=${details.discoveryDisabled === true ? "yes" : "no"}`,
     `disabled=${details.disabled === true ? "yes" : "no"}`,
     `reason=${details.reason || "(not-yet-determined)"}`,
+    `backend request path=${details.backendRequestPath || "(none)"}`,
+    `backend resolved base URL=${details.backendResolvedBaseUrl || "(none)"}`,
+    `backend request success=${details.backendRequestSuccess === true ? "yes" : details.backendRequestSuccess === false ? "no" : "(n/a)"}`,
     `runtime marker=${details.runtimeMarker || "(missing)"}`,
     `git commit=${details.gitCommit || "(missing)"}`,
     `build timestamp=${details.buildTimestamp || "(missing)"}`
@@ -601,21 +614,24 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   });
   const localDesktopSession = isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin);
   const localDesktopBackendBaseUrl = 'http://localhost:8787';
-  const backendHealthUrl = `${backendBaseUrl}/api/health`;
-  const localDesktopBackendHealthUrl = `${localDesktopBackendBaseUrl}/api/health`;
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
   const distMetadataProbe = await fetchJsonSafely(toFetchPath(STEPHANOS_DIST_METADATA));
-  const backendProbe = await fetchJsonSafely(backendHealthUrl);
+  const backendProbe = await requestStephanosBackendSafely({
+    path: '/api/health',
+    runtimeContext: { baseUrl: backendBaseUrl, frontendOrigin: currentOrigin },
+  });
   const localDesktopBackendProbe = localDesktopSession && backendBaseUrl !== localDesktopBackendBaseUrl
-    ? await fetchJsonSafely(localDesktopBackendHealthUrl)
+    ? await requestStephanosBackendSafely({
+      path: '/api/health',
+      runtimeContext: { baseUrl: localDesktopBackendBaseUrl, frontendOrigin: currentOrigin },
+    })
     : backendProbe;
   const effectiveBackendProbe = backendProbe.ok ? backendProbe : localDesktopBackendProbe;
   const effectiveBackendBaseUrl = backendProbe.ok
     ? backendBaseUrl
     : (localDesktopBackendProbe.ok ? localDesktopBackendBaseUrl : backendBaseUrl);
   const localDesktopCapableSession = localDesktopSession || isLoopbackHost(extractHostname(effectiveBackendBaseUrl));
-  const providerHealthUrl = `${effectiveBackendBaseUrl}/api/ai/providers/health`;
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
     .trim()
@@ -687,10 +703,15 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
 
   const providerPreferences = readPersistedProviderPreferences();
   const providerHealthProbe = healthyBackend
-    ? await postJsonSafely(providerHealthUrl, {
-      provider: providerPreferences.selectedProvider,
-      fallbackEnabled: providerPreferences.fallbackEnabled,
-      fallbackOrder: providerPreferences.fallbackOrder,
+    ? await requestStephanosBackendSafely({
+      path: '/api/ai/providers/health',
+      method: 'POST',
+      runtimeContext: { baseUrl: effectiveBackendBaseUrl, frontendOrigin: currentOrigin },
+      body: {
+        provider: providerPreferences.selectedProvider,
+        fallbackEnabled: providerPreferences.fallbackEnabled,
+        fallbackOrder: providerPreferences.fallbackOrder,
+      },
     })
     : { ok: false };
   const providerHealth = providerHealthProbe.ok ? providerHealthProbe.json?.data || {} : {};
@@ -886,6 +907,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     staleStateCleared,
     discoveryDisabled: Boolean(options.discoveryDisabled),
     disabled: Boolean(options.disabled),
+    backendRequestPath: effectiveBackendProbe.requestPath || backendProbe.requestPath || '',
+    backendResolvedBaseUrl: effectiveBackendProbe.backendBaseUrl || effectiveBackendBaseUrl || '',
+    backendRequestSuccess: Boolean(effectiveBackendProbe.ok),
     runtimeMarker: buildMarker || null,
     gitCommit: launcherStatus?.gitCommit || runtimeProbe.json?.gitCommit || distMetadataProbe.json?.gitCommit || null,
     buildTimestamp: rawBuildTimestamp || null,
