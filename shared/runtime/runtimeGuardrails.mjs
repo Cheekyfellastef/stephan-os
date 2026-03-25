@@ -51,6 +51,7 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
   const model = asObject(runtimeStatusModel);
   const runtimeContext = asObject(model.runtimeContext);
   const finalRoute = asObject(model.finalRoute);
+  const finalRouteTruth = asObject(model.finalRouteTruth);
   const runtimeContextFinalRoute = asObject(runtimeContext.finalRoute);
   const routeEvaluations = asObject(model.routeEvaluations);
   const selectedRoute = finalRoute.routeKind ? asObject(routeEvaluations)[finalRoute.routeKind] : null;
@@ -114,6 +115,61 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
       'Top-level route fields must remain a projection of finalRoute so route truth stays singular.',
       { mismatches: topLevelRouteMismatches.map(([field, outerValue, finalValue]) => ({ field, outerValue, finalValue })) },
     ));
+  }
+
+  if (Object.keys(finalRouteTruth).length > 0) {
+    const truthProjectionMismatches = [
+      ['routeKind', finalRouteTruth.routeKind, finalRoute.routeKind],
+      ['preferredTarget', finalRouteTruth.preferredTarget, finalRoute.preferredTarget],
+      ['actualTarget', finalRouteTruth.actualTarget, finalRoute.actualTarget],
+      ['source', finalRouteTruth.source, finalRoute.source],
+      ['requestedProvider', finalRouteTruth.requestedProvider, model.selectedProvider],
+      ['selectedProvider', finalRouteTruth.selectedProvider, model.routeSelectedProvider || model.selectedProvider],
+      ['executedProvider', finalRouteTruth.executedProvider, model.activeProvider],
+    ].filter(([, truthValue, projectedValue]) => {
+      if (truthValue === undefined || truthValue === null || truthValue === '') return false;
+      return asString(truthValue) !== asString(projectedValue);
+    });
+
+    if (truthProjectionMismatches.length > 0) {
+      invariants.push(createInvariant(
+        'final-route-truth-projection',
+        'error',
+        'finalRouteTruth must stay aligned with finalRoute and provider projection fields.',
+        { mismatches: truthProjectionMismatches.map(([field, truthValue, projectedValue]) => ({ field, truthValue, projectedValue })) },
+      ));
+    }
+
+    if (finalRoute.routeKind === 'dist' && finalRouteTruth.fallbackRouteActive !== true) {
+      invariants.push(createInvariant(
+        'dist-route-must-be-fallback-active',
+        'error',
+        'dist route truth must always stay flagged as fallbackRouteActive.',
+        { routeKind: finalRoute.routeKind, fallbackRouteActive: finalRouteTruth.fallbackRouteActive },
+      ));
+    }
+
+    if (finalRouteTruth.fallbackRouteActive === true && finalRoute.routeKind !== 'dist') {
+      invariants.push(createInvariant(
+        'fallback-route-active-mismatch',
+        'error',
+        'fallbackRouteActive may only be true when finalRoute.routeKind is dist.',
+        { routeKind: finalRoute.routeKind, fallbackRouteActive: finalRouteTruth.fallbackRouteActive },
+      ));
+    }
+
+    if (finalRoute.routeKind === 'home-node' && finalRouteTruth.uiReachable === false && finalRouteTruth.routeUsable === true) {
+      invariants.push(createInvariant(
+        'backend-only-home-node-not-usable',
+        'error',
+        'A backend-reachable but UI-unreachable home-node must never be marked routeUsable.',
+        {
+          routeKind: finalRoute.routeKind,
+          uiReachable: finalRouteTruth.uiReachable,
+          routeUsable: finalRouteTruth.routeUsable,
+        },
+      ));
+    }
   }
 
   if (finalRoutePresent && finalRoute.providerEligibility) {

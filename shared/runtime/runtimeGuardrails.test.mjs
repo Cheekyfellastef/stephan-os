@@ -248,3 +248,103 @@ test('guardrails emit a warning when local-desktop truth points at a non-loopbac
   assert.equal(report.hasWarnings, true);
   assert.ok(report.warnings.some((issue) => issue.id === 'local-desktop-non-loopback-suspicious'));
 });
+
+test('guardrails catch finalRouteTruth projection drift across route and provider fields', () => {
+  const report = evaluateRuntimeGuardrails({
+    appLaunchState: 'ready',
+    backendAvailable: true,
+    localAvailable: true,
+    cloudAvailable: true,
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      finalRoute: {
+        routeKind: 'cloud',
+        source: 'backend-cloud-session',
+        preferredTarget: 'https://stephanos.example',
+        actualTarget: 'https://api.stephanos.example',
+      },
+    },
+    finalRoute: {
+      routeKind: 'cloud',
+      source: 'backend-cloud-session',
+      preferredTarget: 'https://stephanos.example',
+      actualTarget: 'https://api.stephanos.example',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: deriveExpectedProviderEligibility({
+        routeKind: 'cloud',
+        backendAvailable: true,
+        localAvailable: true,
+        cloudAvailable: true,
+      }),
+    },
+    finalRouteTruth: {
+      routeKind: 'home-node',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTarget: 'http://192.168.0.198:8787',
+      source: 'manual',
+      requestedProvider: 'mock',
+      selectedProvider: 'mock',
+      executedProvider: 'mock',
+    },
+    routeEvaluations: {
+      cloud: { available: true },
+    },
+  });
+
+  assert.equal(report.hasErrors, true);
+  assert.ok(report.errors.some((issue) => issue.id === 'final-route-truth-projection'));
+});
+
+test('guardrails reject backend-only home-node claims when uiReachable is false but routeUsable is true', () => {
+  const report = evaluateRuntimeGuardrails({
+    appLaunchState: 'ready',
+    backendAvailable: true,
+    localAvailable: true,
+    cloudAvailable: false,
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'ollama',
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      finalRoute: {
+        routeKind: 'home-node',
+        source: 'manual',
+        preferredTarget: 'http://192.168.0.198:8787',
+        actualTarget: 'http://192.168.0.198:8787',
+      },
+    },
+    finalRoute: {
+      routeKind: 'home-node',
+      source: 'manual',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTarget: 'http://192.168.0.198:8787',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: deriveExpectedProviderEligibility({
+        routeKind: 'home-node',
+        backendAvailable: true,
+        localAvailable: true,
+        cloudAvailable: false,
+      }),
+    },
+    finalRouteTruth: {
+      routeKind: 'home-node',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTarget: 'http://192.168.0.198:8787',
+      source: 'manual',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      uiReachable: false,
+      routeUsable: true,
+    },
+    routeEvaluations: {
+      'home-node': { available: true },
+    },
+  });
+
+  assert.equal(report.hasErrors, true);
+  assert.ok(report.errors.some((issue) => issue.id === 'backend-only-home-node-not-usable'));
+});
