@@ -4,6 +4,7 @@ import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
+import { extractHostname, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
@@ -110,6 +111,19 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [isAutoFindingOllama, setIsAutoFindingOllama] = useState(false);
   const [ollamaDiscovery, setOllamaDiscovery] = useState(null);
   const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
+  const [homeNodeDraft, setHomeNodeDraft] = useState(() => ({
+    host: String(homeNodePreference?.host || ''),
+    uiPort: Number(homeNodePreference?.uiPort) || 5173,
+    backendPort: Number(homeNodePreference?.backendPort) || 8787,
+  }));
+
+  useEffect(() => {
+    setHomeNodeDraft({
+      host: String(homeNodePreference?.host || ''),
+      uiPort: Number(homeNodePreference?.uiPort) || 5173,
+      backendPort: Number(homeNodePreference?.backendPort) || 8787,
+    });
+  }, [homeNodePreference?.host, homeNodePreference?.uiPort, homeNodePreference?.backendPort]);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: true, providerToggleMarker: PROVIDER_COMPONENT_MARKER }));
@@ -203,25 +217,49 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
 
 
   const handleSaveHomeNode = () => {
-    if (!homeNodePreference?.host) {
+    const trimmedHost = String(homeNodeDraft.host || '').trim();
+    if (!trimmedHost) {
       setHomeNodePreference(null);
       onTestConnection();
       return;
     }
 
+    const normalizedHost = extractHostname(trimmedHost);
+    if (!normalizedHost || isMalformedStephanosHost(normalizedHost)) {
+      setUiDiagnostics((prev) => ({
+        ...prev,
+        homeNodeManualHostState: 'invalid',
+        homeNodeManualHostValue: trimmedHost,
+      }));
+      return;
+    }
+
     setHomeNodePreference({
-      host: homeNodePreference.host,
-      uiPort: homeNodePreference.uiPort,
-      backendPort: homeNodePreference.backendPort,
+      host: normalizedHost,
+      uiPort: homeNodeDraft.uiPort,
+      backendPort: homeNodeDraft.backendPort,
       source: 'manual',
     });
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      homeNodeManualHostState: 'saved',
+      homeNodeManualHostValue: normalizedHost,
+    }));
     onTestConnection();
   };
 
   const handleClearHomeNode = () => {
+    setHomeNodeDraft({ host: '', uiPort: 5173, backendPort: 8787 });
     setHomeNodePreference(null);
     onTestConnection();
   };
+
+  const manualHomeNodeHost = String(homeNodeDraft.host || '').trim();
+  const normalizedManualHomeNodeHost = extractHostname(manualHomeNodeHost);
+  const homeNodeHostState = !manualHomeNodeHost
+    ? 'empty'
+    : (!normalizedManualHomeNodeHost || isMalformedStephanosHost(normalizedManualHomeNodeHost) ? 'invalid' : 'valid');
+  const homeNodeSourceLabel = homeNodePreference?.source || homeNodeLastKnown?.source || 'none';
 
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
@@ -268,6 +306,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <p><strong>Preferred source:</strong> {homeNodeStatus.source || homeNodePreference?.source || homeNodeLastKnown?.source || 'none'}</p>
           <p><strong>Last known node:</strong> {homeNodeLastKnown?.uiUrl || 'none'}</p>
           <p><strong>Preferred backend:</strong> {runtimeConfig.baseUrl}</p>
+          <p>
+            <strong>Manual host state:</strong>{' '}
+            {homeNodeHostState === 'empty'
+              ? 'empty'
+              : (homeNodeHostState === 'invalid' ? 'invalid (not active until saved as a valid host/IP)' : 'valid draft')}
+            {' · '}<strong>Source:</strong> {homeNodeSourceLabel}
+          </p>
         </div>
       </div>
 
@@ -277,8 +322,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <input
             type="text"
             placeholder="192.168.1.42"
-            value={homeNodePreference?.host || ''}
-            onChange={(event) => setHomeNodePreference({ host: event.target.value, source: 'manual' })}
+            value={homeNodeDraft.host}
+            onChange={(event) => setHomeNodeDraft((prev) => ({ ...prev, host: event.target.value }))}
           />
         </label>
         <label>
@@ -286,8 +331,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <input
             type="number"
             placeholder="5173"
-            value={homeNodePreference?.uiPort || 5173}
-            onChange={(event) => setHomeNodePreference({ uiPort: Number(event.target.value) || 5173, source: 'manual' })}
+            value={homeNodeDraft.uiPort || 5173}
+            onChange={(event) => setHomeNodeDraft((prev) => ({ ...prev, uiPort: Number(event.target.value) || 5173 }))}
           />
         </label>
         <label>
@@ -295,8 +340,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <input
             type="number"
             placeholder="8787"
-            value={homeNodePreference?.backendPort || 8787}
-            onChange={(event) => setHomeNodePreference({ backendPort: Number(event.target.value) || 8787, source: 'manual' })}
+            value={homeNodeDraft.backendPort || 8787}
+            onChange={(event) => setHomeNodeDraft((prev) => ({ ...prev, backendPort: Number(event.target.value) || 8787 }))}
           />
         </label>
         <button type="button" className="ghost-button" onClick={handleSaveHomeNode}>Save Home Node</button>

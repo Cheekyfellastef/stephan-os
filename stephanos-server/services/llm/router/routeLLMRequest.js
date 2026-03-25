@@ -27,6 +27,37 @@ function buildFallbackReason(failedAttempts = []) {
   return reasons.length > 0 ? reasons.join(' | ') : null;
 }
 
+export function resolveFallbackTelemetry({
+  requestedProvider = DEFAULT_PROVIDER_KEY,
+  selectedProvider = DEFAULT_PROVIDER_KEY,
+  actualProvider = DEFAULT_PROVIDER_KEY,
+  failedAttempts = [],
+} = {}) {
+  const attemptFailureReason = buildFallbackReason(failedAttempts);
+  const providerRedirected = actualProvider !== requestedProvider;
+  const fallbackUsed = failedAttempts.length > 0 || providerRedirected;
+
+  if (!fallbackUsed) {
+    return { fallbackUsed: false, fallbackReason: null };
+  }
+
+  if (attemptFailureReason) {
+    return { fallbackUsed: true, fallbackReason: attemptFailureReason };
+  }
+
+  if (selectedProvider !== requestedProvider) {
+    return {
+      fallbackUsed: true,
+      fallbackReason: `Routing selected "${selectedProvider}" instead of requested "${requestedProvider}" because the requested provider was not healthy for this route.`,
+    };
+  }
+
+  return {
+    fallbackUsed: true,
+    fallbackReason: `Routing executed "${actualProvider}" instead of requested "${requestedProvider}".`,
+  };
+}
+
 async function executeProvider(provider, request, routerConfig) {
   const config = sanitizeProviderConfig(provider, routerConfig.providerConfigs?.[provider] || {});
   const health = await PROVIDER_HEALTH_CHECKS[provider](config);
@@ -173,8 +204,12 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
 
     if (attempt.result.ok && attempt.result.outputText) {
       const failedAttempts = attempts.slice(0, -1);
-      const fallbackUsed = provider !== selectedProvider;
-      const fallbackReason = fallbackUsed ? buildFallbackReason(failedAttempts) : null;
+      const { fallbackUsed, fallbackReason } = resolveFallbackTelemetry({
+        requestedProvider,
+        selectedProvider,
+        actualProvider: provider,
+        failedAttempts,
+      });
       const finalResult = {
         ...attempt.result,
         requestedProvider,

@@ -130,3 +130,21 @@ test('ProviderToggle renders a Groq API key field and truthful backend-only copy
   assert.match(rendered, /Groq requests still run only through the Stephanos backend/i);
   assert.match(rendered, /API key/);
 });
+
+test('ProviderToggle keeps Home PC Host or IP input editable', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore({
+    homeNodePreference: { host: '192.168.0.198', uiPort: 5173, backendPort: 8787, source: 'manual' },
+  });
+  const rendered = renderProviderToggle();
+  const hostInputMarkup = rendered.match(/<span>Home PC Host or IP<\/span><input[^>]+>/i)?.[0] || '';
+
+  assert.match(rendered, /Home PC Host or IP/);
+  assert.match(hostInputMarkup, /type=\"text\"/i);
+  assert.doesNotMatch(hostInputMarkup, /readonly/i);
+  assert.doesNotMatch(hostInputMarkup, /disabled/i);
+});
