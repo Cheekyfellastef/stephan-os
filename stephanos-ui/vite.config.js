@@ -119,6 +119,7 @@ export default defineConfig({
   // including when the repository is hosted from the GitHub Pages subpath /stephan-os/.
   base: './',
   define: {
+    __STEPHANOS_BUILD_TIME__: JSON.stringify(buildMetadata.buildTimestamp),
     __STEPHANOS_UI_VERSION__: JSON.stringify(buildMetadata.version),
     __STEPHANOS_UI_SOURCE__: JSON.stringify(buildMetadata.sourceIdentifier),
     __STEPHANOS_UI_SOURCE_FINGERPRINT__: JSON.stringify(buildMetadata.sourceFingerprint),
