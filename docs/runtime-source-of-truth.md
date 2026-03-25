@@ -22,6 +22,11 @@
 - Never hand-edit `apps/stephanos/dist/**`; it is generated output.
 - Root launcher files are real, but they are **not** the Mission Console implementation.
 
+## Runtime truth contract
+- The canonical route/provider/runtime decision snapshot is `runtimeStatusModel.finalRouteTruth` from `shared/runtime/runtimeStatusModel.mjs`.
+- Route selection is enforced once in the shared runtime status pipeline; UI diagnostics must render this snapshot instead of recomputing route truth.
+- `finalRouteTruth` includes session kind, selected route, reachability/usable flags (backend + UI), requested/selected/executed provider truth, fallback activity, and operator recovery guidance.
+
 
 ## See also
 
