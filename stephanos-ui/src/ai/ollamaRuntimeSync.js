@@ -45,7 +45,7 @@ export function shouldAutoSyncOllama({ apiStatus, ollamaHealth = {}, ollamaConfi
 
   const frontendHost = extractHostname(apiStatus?.frontendOrigin || apiStatus?.runtimeContext?.frontendOrigin || '');
   if (isLoopbackHost(frontendHost)) {
-    return false;
+    return true;
   }
 
   const normalizedBaseUrl = normalizeOllamaBaseUrl(ollamaConfig?.baseURL);

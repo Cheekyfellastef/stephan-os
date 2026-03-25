@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { shouldAutoSyncOllama } from './ollamaRuntimeSync.js';
 
-test('shouldAutoSyncOllama stays backend-authoritative for pc local browser sessions', () => {
+test('shouldAutoSyncOllama auto-discovers on localhost sessions once backend is reachable', () => {
   assert.equal(shouldAutoSyncOllama({
     apiStatus: {
       backendReachable: true,
@@ -13,9 +13,9 @@ test('shouldAutoSyncOllama stays backend-authoritative for pc local browser sess
       ok: false,
     },
     ollamaConfig: {
-      baseURL: 'http://localhost:11434',
+      baseURL: '',
     },
-  }), false);
+  }), true);
 });
 
 test('shouldAutoSyncOllama still allows remote sessions to discover loopback Ollama replacements', () => {
@@ -32,4 +32,20 @@ test('shouldAutoSyncOllama still allows remote sessions to discover loopback Oll
       baseURL: 'http://localhost:11434',
     },
   }), true);
+});
+
+test('shouldAutoSyncOllama avoids remote startup discovery when no compatible Ollama target is configured', () => {
+  assert.equal(shouldAutoSyncOllama({
+    apiStatus: {
+      backendReachable: true,
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+    },
+    ollamaHealth: {
+      ok: false,
+      likelyWrongDevice: false,
+    },
+    ollamaConfig: {
+      baseURL: '',
+    },
+  }), false);
 });
