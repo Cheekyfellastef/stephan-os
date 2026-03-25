@@ -118,8 +118,39 @@ function inferRequestProtocol(request = null) {
   return 'http:';
 }
 
+function resolveRequestHost(request = null) {
+  const forwardedHost = normalizeForwardedHost(request?.headers?.['x-forwarded-host'] || '');
+  const directHost = normalizeForwardedHost(request?.headers?.host || '');
+
+  const hostCandidates = [directHost, forwardedHost].filter(Boolean);
+  if (!hostCandidates.length) {
+    return null;
+  }
+
+  const getHostname = (host) => {
+    try {
+      return new URL(`http://${host}`).hostname;
+    } catch {
+      return '';
+    }
+  };
+
+  const directHostname = getHostname(directHost);
+  const forwardedHostname = getHostname(forwardedHost);
+
+  if (directHost && directHostname && !isLoopbackHost(directHostname)) {
+    return directHost;
+  }
+
+  if (forwardedHost && forwardedHostname && !isLoopbackHost(forwardedHostname)) {
+    return forwardedHost;
+  }
+
+  return directHost || forwardedHost;
+}
+
 function resolveRequestOrigin(request = null) {
-  const host = normalizeForwardedHost(request?.headers?.['x-forwarded-host'] || request?.headers?.host || '');
+  const host = resolveRequestHost(request);
   if (!host) {
     return null;
   }
