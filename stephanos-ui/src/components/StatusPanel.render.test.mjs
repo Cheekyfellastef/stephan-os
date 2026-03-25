@@ -197,7 +197,7 @@ test('StatusPanel renders truthful placeholders when finalRoute is missing', asy
   const rendered = renderStatusPanel();
 
   assert.match(rendered, /Final Route Source: unknown/);
-  assert.match(rendered, /Final Route Reachable: pending/);
+  assert.match(rendered, /Final Route Reachable: no/);
   assert.match(rendered, /Preferred Target: unavailable/);
   assert.match(rendered, /Guardrails Warnings: 0/);
 });
@@ -320,4 +320,108 @@ test('StatusPanel renders guardrails diagnostics without crashing on partial run
 
   assert.match(rendered, /Guardrails Errors: 1/);
   assert.match(rendered, /Guardrails Detail: Non-local sessions must never expose loopback or localhost as the client-facing route target\./);
+});
+
+test('App route/provider labels are sourced from finalRouteTruth', async () => {
+  const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      dependencySummary: 'home-node degraded',
+      statusTone: 'degraded',
+      finalRoute: {
+        routeKind: 'home-node',
+        source: 'manual',
+        preferredTarget: 'http://192.168.0.10:8787',
+        actualTarget: 'http://192.168.0.10:8787',
+        reachability: { selectedRouteReachable: false },
+        providerEligibility: {},
+      },
+      finalRouteTruth: {
+        routeKind: 'home-node',
+        requestedProvider: 'ollama',
+        selectedProvider: 'groq',
+        executedProvider: 'gemini',
+        preferredTarget: 'http://192.168.0.10:8787',
+        actualTarget: 'http://192.168.0.10:8787',
+        source: 'manual',
+        routeUsable: false,
+        backendReachable: true,
+      },
+    },
+  });
+
+  const rendered = renderApp();
+  assert.match(rendered, /Route kind: <strong>home-node<\/strong>/);
+  assert.match(rendered, /Requested provider: <strong>ollama<\/strong>/);
+  assert.match(rendered, /Selected provider: <strong>groq<\/strong>/);
+  assert.match(rendered, /Executed provider: <strong>gemini<\/strong>/);
+});
+
+test('AIConsole route/provider banner is sourced from finalRouteTruth', async () => {
+  const { renderAIConsole } = await importBundledModule(path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'), statusPanelAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      dependencySummary: 'degraded',
+      statusTone: 'degraded',
+      finalRoute: {
+        routeKind: 'home-node',
+        source: 'manual',
+        preferredTarget: 'http://192.168.0.10:8787',
+        actualTarget: 'http://192.168.0.10:8787',
+        reachability: { selectedRouteReachable: false },
+        providerEligibility: {},
+      },
+      finalRouteTruth: {
+        routeKind: 'home-node',
+        requestedProvider: 'ollama',
+        selectedProvider: 'groq',
+        executedProvider: 'gemini',
+        preferredTarget: 'http://192.168.0.10:8787',
+        source: 'manual',
+        routeUsable: false,
+      },
+    },
+  });
+  const rendered = renderAIConsole();
+  assert.match(rendered, /Requested: ollama · Selected: groq · Executed: gemini/);
+});
+
+test('StatusPanel truth rows degrade uiReachable honestly and keep provider stages distinct', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases);
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      routeKind: 'cloud',
+      selectedProvider: 'mock',
+      routeSelectedProvider: 'mock',
+      activeProvider: 'mock',
+      finalRoute: {
+        routeKind: 'home-node',
+        source: 'manual',
+        preferredTarget: 'http://192.168.0.99:8787',
+        actualTarget: 'http://192.168.0.99:8787',
+        reachability: { selectedRouteReachable: false },
+        providerEligibility: {},
+      },
+      finalRouteTruth: {
+        routeKind: 'home-node',
+        requestedProvider: 'ollama',
+        selectedProvider: 'groq',
+        executedProvider: 'gemini',
+        uiReachable: false,
+        routeUsable: false,
+      },
+    },
+  });
+
+  const rendered = renderStatusPanel();
+  assert.match(rendered, /Requested Provider: ollama/);
+  assert.match(rendered, /Route Selected Provider: groq/);
+  assert.match(rendered, /Active Provider: gemini/);
+  assert.match(rendered, /Route Kind: home-node/);
+  assert.match(rendered, /Selected Route UI Reachable: no/);
+  assert.doesNotMatch(rendered, /Route Kind: cloud/);
+  assert.doesNotMatch(rendered, /Requested Provider: mock/);
 });

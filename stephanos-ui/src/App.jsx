@@ -18,6 +18,7 @@ import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
 import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
+import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
 import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
@@ -51,6 +52,7 @@ export default function App() {
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const providerSummary = buildProviderStatusSummary(
     provider,
     getActiveProviderConfig(),
@@ -74,8 +76,8 @@ export default function App() {
         isOpen={safeUiLayout.providerControlsPanel !== false}
         onToggle={() => togglePanel('providerControlsPanel')}
         actions={showCloudFallbackAction ? (
-          <button type="button" className="ghost-button" onClick={() => setProvider(runtimeStatus.activeProvider)}>
-            Use {runtimeStatus.activeProvider}
+          <button type="button" className="ghost-button" onClick={() => setProvider(routeTruthView.executedProvider)}>
+            Use {routeTruthView.executedProvider}
           </button>
         ) : null}
       >
@@ -87,10 +89,10 @@ export default function App() {
                 {runtimeStatus.headline}. <strong>{runtimeStatus.dependencySummary}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{runtimeStatus.routeKind}</strong> · Selected provider: <strong>{providerSummary.providerLabel}</strong> · Active route: <strong>{runtimeStatus.activeProvider}</strong> · Backend: <strong>{runtimeStatus.backendAvailable ? 'online' : 'offline'}</strong>
+                Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{routeTruthView.routeKind}</strong> · Requested provider: <strong>{routeTruthView.requestedProvider}</strong> · Selected provider: <strong>{routeTruthView.selectedProvider}</strong> · Executed provider: <strong>{routeTruthView.executedProvider}</strong> · Backend: <strong>{routeTruthView.backendReachableState}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Preferred target: <strong>{runtimeStatus.preferredTarget || 'unavailable'}</strong> · Actual target: <strong>{runtimeStatus.actualTargetUsed || 'unavailable'}</strong> · Node source: <strong>{runtimeStatus.nodeAddressSource || 'unknown'}</strong>
+                Preferred target: <strong>{routeTruthView.preferredTarget}</strong> · Actual target: <strong>{routeTruthView.actualTarget}</strong> · Node source: <strong>{routeTruthView.source}</strong>
               </p>
               <p className="local-ai-text secondary">
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.
@@ -103,7 +105,7 @@ export default function App() {
           Current Provider: <strong>{providerSummary.providerLabel}</strong> · Requested Route Mode: <strong>{runtimeStatus.requestedRouteMode}</strong> · Effective Route Mode: <strong>{runtimeStatus.effectiveRouteMode}</strong> · Launch State: <strong>{runtimeStatus.appLaunchState}</strong>
         </p>
         <p className="provider-dock-status">
-          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{runtimeStatus.activeProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
+          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{routeTruthView.executedProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
         </p>
         <ProviderToggle
           onTestConnection={refreshHealth}
