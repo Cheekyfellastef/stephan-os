@@ -30,6 +30,35 @@
 - Top-level compatibility fields (`routeKind`, `preferredTarget`, `actualTargetUsed`, `selectedProvider`, `activeProvider`) are non-authoritative and diagnostic-only.
 - Home-node usability requires full truth (backend + UI/client reachability), not backend reachability alone.
 
+## Lessons learned from finalRouteTruth rollout
+- Stale top-level projections can silently override runtime truth unless projection precedence always favors `finalRouteTruth` first.
+- Backend reachability is necessary but insufficient; route usability and launchability must remain separate checks.
+- Home-node is usable only when the backend is reachable **and** the UI reachability chain is reachable.
+- Dist fallback is a valid truthful outcome, but it must always be explicitly labeled as fallback.
+- Requested, selected, and executed provider stages are distinct operator truths and must never be collapsed into one label.
+- Unknown UI reachability must degrade honestly (`unknown`) and must not default to “reachable.”
+- Truth drift often appears first in UI labels/operator copy before it appears as obvious routing breakage.
+
+## Guardrails for contributors and Codex passes
+- Do not derive route/provider semantics directly from raw `runtimeStatus` projection fields when `finalRouteTruth` or `buildFinalRouteTruthView` already provides the value.
+- Do not present backend-only success as route readiness or home-node launchability.
+- Do not label any fallback route as primary/live.
+- Compatibility fields must never outrank `finalRouteTruth`.
+- If legacy compatibility fields remain, label them diagnostic-only in UI and docs.
+- Normalize restored persisted state before route truth is projected to UI (see shared runtime status normalization and `ensureRuntimeStatusModel` in `stephanos-ui/src/state/runtimeStatusDefaults.js`).
+
+## Failure signatures (fast drift detection)
+- Route kind and operator reason disagree.
+- Active provider label collapses requested/selected/executed stages.
+- Home-node appears available while UI reachability is unreachable/unknown.
+- Hosted/remote session presents loopback-derived target as active truth.
+- Dist path renders as normal healthy primary route instead of explicit fallback.
+- Unknown reachability state silently renders as reachable.
+
+## Recommended future work
+- **Required now:** none, as long as runtime and UI truth tests stay green.
+- **Optional purity upgrade:** move `uiReachabilityState` tri-state deeper into `routeEvaluations` and intermediate runtime objects so unknown/partial states cannot be flattened early.
+- **Optional enforcement:** add stronger CI/static checks to block banned direct reads of compatibility projection fields in UI components.
 
 ## See also
 
