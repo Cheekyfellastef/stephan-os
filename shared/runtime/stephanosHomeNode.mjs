@@ -56,7 +56,7 @@ function isValidIpv4Host(hostname = '') {
   return !octets.some((part) => Number.isNaN(part) || part < 0 || part > 255);
 }
 
-function isMalformedHomeNodeHost(hostname = '') {
+export function isMalformedStephanosHost(hostname = '') {
   const value = String(hostname).trim().toLowerCase();
   if (!value) {
     return true;
@@ -144,7 +144,7 @@ export function normalizeStephanosHomeNode(value = {}, defaults = {}) {
   const input = value && typeof value === 'object' ? value : {};
   const fallback = defaults && typeof defaults === 'object' ? defaults : {};
   const host = extractHostname(input.host || input.ip || fallback.host || fallback.ip || '');
-  if (!host || isMalformedHomeNodeHost(host)) {
+  if (!host || isMalformedStephanosHost(host)) {
     return createEmptyStephanosHomeNode({ ...fallback, ...input }, fallback.source || 'manual');
   }
 

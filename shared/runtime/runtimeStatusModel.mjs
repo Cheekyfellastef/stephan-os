@@ -13,6 +13,7 @@ import {
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
 import {
+  isMalformedStephanosHost,
   isLikelyLanHost,
   isLoopbackHost,
   normalizeStephanosHomeNode,
@@ -39,12 +40,12 @@ function parseHostname(value = '') {
 
 function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
   const candidateHost = parseHostname(candidate);
-  if (candidate && (allowLoopback || !isLoopbackHost(candidateHost))) {
+  if (candidate && !isMalformedStephanosHost(candidateHost) && (allowLoopback || !isLoopbackHost(candidateHost))) {
     return candidate;
   }
 
   const fallbackHost = parseHostname(fallback);
-  if (fallback && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+  if (fallback && !isMalformedStephanosHost(fallbackHost) && (allowLoopback || !isLoopbackHost(fallbackHost))) {
     return fallback;
   }
 
@@ -107,6 +108,8 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},
+    homeNodeOperatorOverrideActive: runtimeContext.homeNodeOperatorOverrideActive === true,
+    homeNodeOperatorOverrideNodeConfigured: runtimeContext.homeNodeOperatorOverrideNodeConfigured === true,
     loopbackBackendMismatch,
   };
 }
@@ -329,6 +332,14 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web' && backendAvailable && cloudAvailable;
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
+  const homeNodeOverrideActive = runtimeContext.homeNodeOperatorOverrideActive === true && localDesktopSession;
+  const homeNodeConfiguredOverride = diagnostics['home-node'] && typeof diagnostics['home-node'].configured === 'boolean'
+    ? diagnostics['home-node'].configured
+    : undefined;
+  const effectiveHomeNodeConfigured = homeNodeOverrideActive
+    ? false
+    : (homeNodeConfiguredOverride ?? homeNodeConfigured);
+  const effectiveHomeNodeReachable = effectiveHomeNodeConfigured && homeNodeReachable;
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const localDesktopProbe = diagnostics['local-desktop'] || {};
   const homeNodeProbe = diagnostics['home-node'] || {};
@@ -382,35 +393,48 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : 'not a local desktop session'),
     }),
     'home-node': createRouteEvaluation('home-node', {
-      configured: homeNodeConfigured,
-      available: homeNodeReachable,
-      misconfigured: homeNodeMisconfigured,
+      configured: effectiveHomeNodeConfigured,
+      available: effectiveHomeNodeReachable,
+      misconfigured: effectiveHomeNodeReachable && homeNodeMisconfigured,
       optional: runtimeContext.deviceContext === 'pc-local-browser',
-      source: runtimeContext.homeNode?.source || (homeNodeConfigured ? 'configured-home-node' : 'not-configured'),
-      reason: homeNodeReachable
+      source: homeNodeOverrideActive
+        ? 'local-operator-override'
+        : (runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
+      reason: homeNodeOverrideActive
+        ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
           : 'Home PC node is reachable on the LAN')
-        : (homeNodeConfigured
+        : (effectiveHomeNodeConfigured
           ? 'Home PC node is configured but currently unreachable'
           : 'Home PC node is not configured'),
-      blockedReason: homeNodeConfigured
-        ? (homeNodeProbe.blockedReason || (homeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
+      blockedReason: homeNodeOverrideActive
+        ? 'home-node/manual route source ignored by local operator override'
+        : effectiveHomeNodeConfigured
+        ? (homeNodeProbe.blockedReason || (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
         : 'home node is not configured',
     }, {
       ...homeNodeProbe,
-      available: homeNodeReachable,
-      misconfigured: homeNodeMisconfigured || Boolean(homeNodeProbe.misconfigured),
-      source: homeNodeProbe.source || runtimeContext.homeNode?.source || (homeNodeConfigured ? 'configured-home-node' : 'not-configured'),
-      reason: homeNodeProbe.reason || (homeNodeReachable
+      configured: effectiveHomeNodeConfigured,
+      available: effectiveHomeNodeReachable,
+      misconfigured: effectiveHomeNodeReachable && (homeNodeMisconfigured || Boolean(homeNodeProbe.misconfigured)),
+      source: homeNodeOverrideActive
+        ? 'local-operator-override'
+        : (homeNodeProbe.source || runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
+      reason: homeNodeOverrideActive
+        ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : homeNodeProbe.reason || (effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
           : 'Home PC node is reachable on the LAN')
-        : (homeNodeConfigured
+        : (effectiveHomeNodeConfigured
           ? 'Home PC node is configured but currently unreachable'
           : 'Home PC node is not configured')),
-      blockedReason: homeNodeProbe.blockedReason || (homeNodeConfigured
-        ? (homeNodeReachable ? '' : 'health probe could not confirm the home-node route')
+      blockedReason: homeNodeOverrideActive
+        ? 'home-node/manual route source ignored by local operator override'
+        : homeNodeProbe.blockedReason || (effectiveHomeNodeConfigured
+        ? (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route')
         : 'home node is not configured'),
     }),
     dist: createRouteEvaluation('dist', {
