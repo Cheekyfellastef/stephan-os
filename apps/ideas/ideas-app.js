@@ -61,6 +61,7 @@ const elements = {
   dataPortStatus: document.getElementById('ideas-data-port-status'),
   dataPortExport: document.getElementById('ideas-export-json'),
   dataPortCopy: document.getElementById('ideas-copy-json'),
+  dataPortImportClipboard: document.getElementById('ideas-import-clipboard'),
   dataPortImport: document.getElementById('ideas-import-json'),
   dataPortDownload: document.getElementById('ideas-download-json'),
   dataPortUpload: document.getElementById('ideas-upload-json'),
@@ -366,6 +367,32 @@ elements.dataPortImport?.addEventListener('click', () => {
   }
 
   applyImportedIdeas(parsed.state.records, 'Import success: Ideas state applied');
+});
+
+elements.dataPortImportClipboard?.addEventListener('click', async () => {
+  try {
+    if (!window.isSecureContext || !navigator.clipboard?.readText) {
+      throw new Error('Clipboard read unavailable');
+    }
+
+    const clipboardText = await navigator.clipboard.readText();
+    const parsed = parseImportPayload(clipboardText);
+    if (!parsed.ok) {
+      setDataPortStatus(parsed.message, 'error');
+      setImportDebugStatus({ success: false, recordCount: 0, reason: parsed.message });
+      return;
+    }
+
+    if (elements.dataPortText) {
+      elements.dataPortText.value = `${clipboardText.trim()}\n`;
+    }
+
+    applyImportedIdeas(parsed.state.records, 'Clipboard import success: Ideas state applied');
+  } catch (error) {
+    const message = 'Clipboard import failed. Paste JSON into the text area and use Import From Text.';
+    setDataPortStatus(message, 'error');
+    setImportDebugStatus({ success: false, recordCount: 0, reason: message });
+  }
 });
 
 elements.dataPortDownload?.addEventListener('click', () => {

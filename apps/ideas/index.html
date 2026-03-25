@@ -107,6 +107,12 @@
       gap: 8px;
     }
 
+    .data-port-help {
+      margin: 0;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
     .data-port textarea {
       min-height: 170px;
       resize: vertical;
@@ -191,11 +197,13 @@
       <div class="data-port-actions">
         <button id="ideas-export-json" type="button">Export JSON</button>
         <button id="ideas-copy-json" type="button">Copy JSON</button>
-        <button id="ideas-import-json" type="button">Import JSON</button>
+        <button id="ideas-import-clipboard" type="button">Import From Clipboard</button>
+        <button id="ideas-import-json" type="button">Import From Text</button>
         <button id="ideas-download-json" type="button" class="ghost">Download JSON</button>
         <button id="ideas-upload-json" type="button" class="ghost">Upload JSON</button>
         <input id="ideas-upload-json-input" type="file" accept="application/json,.json" hidden />
       </div>
+      <p class="data-port-help">Use <strong>Import From Clipboard</strong> for one-tap paste-free import, or paste JSON below and use <strong>Import From Text</strong>.</p>
       <label for="ideas-data-port-text" class="subtle">JSON</label>
       <textarea
         id="ideas-data-port-text"
