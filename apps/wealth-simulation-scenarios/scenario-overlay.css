@@ -401,6 +401,10 @@ body.stephanos-scenario-body::before {
   box-shadow: var(--scenario-shadow);
 }
 
+.scenario-sim-app > * {
+  min-width: 0;
+}
+
 .scenario-sim-app__title,
 .scenario-sim-app h1 {
   margin: 0 !important;
@@ -523,6 +527,13 @@ body.stephanos-scenario-body::before {
   border-radius: 22px;
   background: linear-gradient(180deg, rgba(8, 19, 37, 0.95), rgba(3, 10, 22, 0.98));
   box-shadow: inset 0 1px 0 rgba(159, 211, 255, 0.05);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.scenario-sim-app__chart-shell .recharts-responsive-container {
+  width: 100% !important;
+  min-width: 0;
 }
 
 .scenario-sim-app__chart-shell .recharts-wrapper,
@@ -612,6 +623,7 @@ body.stephanos-scenario-body::before {
 @media (max-width: 720px) {
   .scenario-sim-app {
     padding: 20px !important;
+    gap: 12px;
   }
 
   .scenario-sim-app__asset-grid {
@@ -638,5 +650,51 @@ body.stephanos-scenario-body::before {
 
   .scenario-lab-panel__port-textarea {
     min-height: 210px;
+  }
+
+  .scenario-sim-app__chart-shell {
+    padding: 12px 10px 10px !important;
+    border-radius: 16px;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-cartesian-axis-tick-value,
+  .scenario-sim-app__chart-shell .recharts-text,
+  .scenario-sim-app__chart-shell .recharts-label {
+    font-size: 11px;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-default-legend {
+    gap: 6px 10px;
+    margin-top: 8px !important;
+    padding: 8px 10px;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-legend-item {
+    margin-right: 0 !important;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-legend-item-text {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 430px) {
+  #scenario-lab-root,
+  #root {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .scenario-sim-app {
+    padding: 14px !important;
+    border-radius: 18px;
+  }
+
+  .scenario-sim-app__slider {
+    padding: 12px;
+  }
+
+  .scenario-sim-app__status {
+    padding: 12px;
   }
 }
