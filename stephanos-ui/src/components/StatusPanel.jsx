@@ -66,6 +66,13 @@ export default function StatusPanel() {
   const reachability = finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const homeNodeDiagnostics = runtimeContext.routeDiagnostics?.['home-node'] ?? {};
+  const interactionAuditSummary = [
+    `click:${uiDiagnostics.homeNodeInputClickReceived ? 'yes' : 'no'}`,
+    `focus:${uiDiagnostics.homeNodeInputFocusReceived ? 'yes' : 'no'}`,
+    `input:${uiDiagnostics.homeNodeInputEventReceived ? 'yes' : 'no'}`,
+    `state-updated:${uiDiagnostics.homeNodeInputStateUpdated ? 'yes' : 'no'}`,
+    `overwritten:${uiDiagnostics.homeNodeInputStateOverwritten ? 'yes' : 'no'}`,
+  ].join(' · ');
   const homeNodeAttempts = Array.isArray(homeNodeStatus?.attempts) ? homeNodeStatus.attempts : [];
   const homeNodeAttemptSummary = homeNodeAttempts.length
     ? homeNodeAttempts.map((attempt) => {
@@ -149,8 +156,19 @@ export default function StatusPanel() {
         <li>Home Node Diagnostic Blocked Reason: {homeNodeDiagnostics.blockedReason || 'n/a'}</li>
         <li>Home Node Candidate Attempts: {homeNodeAttemptSummary}</li>
         <li>Home Node Operator Action: {homeNodeAction}</li>
+        <li>Home Node Input Mode: {homeNodeDiagnostics.source || 'manual'}</li>
+        <li>Home Node Input Draft Value: {uiDiagnostics.homeNodeInputDraftValue || ''}</li>
+        <li>Home Node Input Saved Value: {uiDiagnostics.homeNodeInputSavedValue || ''}</li>
+        <li>Home Node Input Editing Active: {uiDiagnostics.homeNodeInputEditingActive ? 'yes' : 'no'}</li>
+        <li>Home Node Input Overwrite Source: {uiDiagnostics.homeNodeInputOverwriteSource || 'none'}</li>
+        <li>Home Node Input Interaction Audit: {interactionAuditSummary}</li>
         <li>Node Address Source: {routeTruthView.source}</li>
         <li>Backend Reachable: {routeTruthView.backendReachableState}</li>
+        <li>Backend URL In Use: {uiDiagnostics.backendUrlInUse || runtimeContext.apiBaseUrl || safeApiStatus.baseUrl || 'n/a'}</li>
+        <li>Ollama Base URL In Use: {uiDiagnostics.ollamaBaseUrlInUse || 'n/a'}</li>
+        <li>Requested Provider (UI): {uiDiagnostics.requestedProvider || provider}</li>
+        <li>Selected Provider (Route): {routeTruthView.selectedProvider}</li>
+        <li>Executed Provider (Route): {routeTruthView.executedProvider}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
         <li>Ready Cloud Providers: {readyCloudProviders}</li>
