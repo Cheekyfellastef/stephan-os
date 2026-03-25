@@ -56,3 +56,9 @@ That same metadata is surfaced in:
 Required order before publish: **build → verify → publish**.
 
 If you edit `stephanos-ui/src/**`, rebuild and verify before commit or deployment. Commit the source change and regenerated dist together so the served runtime cannot drift.
+
+## Operator support snapshot (Status panel)
+
+- In the Mission Console **Status** panel, operators can click **Copy Support Snapshot** to copy a compact diagnostics block for ChatGPT/Codex.
+- The snapshot is built from canonical runtime truth (`runtimeStatus.finalRouteTruth` / runtime adjudicator projections) plus safe status metadata; unknown values are labeled explicitly.
+- Secrets (API keys, auth tokens, raw sensitive config) are intentionally excluded by design.

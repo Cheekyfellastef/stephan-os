@@ -169,6 +169,7 @@ test('StatusPanel renders when runtimeStatusModel is null or undefined', async (
   const rendered = renderStatusPanel();
 
   assert.match(rendered, /Status/);
+  assert.match(rendered, /Copy Support Snapshot/);
   assert.match(rendered, /Launch State:/);
   assert.match(rendered, /Dependency Summary: pending/);
   assert.match(rendered, /Final Route Source: unknown/);
