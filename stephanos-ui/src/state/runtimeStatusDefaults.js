@@ -131,10 +131,13 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     }
     : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
 
-  const routeKind = candidate.routeKind ?? finalRoute.routeKind ?? baseModel.routeKind;
-  const preferredTarget = candidate.preferredTarget ?? finalRoute.preferredTarget ?? baseModel.preferredTarget;
-  const actualTargetUsed = candidate.actualTargetUsed ?? finalRoute.actualTarget ?? baseModel.actualTargetUsed;
-  const nodeAddressSource = candidate.nodeAddressSource ?? finalRoute.source ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
+  const routeKind = finalRoute.routeKind ?? candidate.routeKind ?? baseModel.routeKind;
+  const preferredTarget = finalRoute.preferredTarget ?? candidate.preferredTarget ?? baseModel.preferredTarget;
+  const actualTargetUsed = finalRoute.actualTarget ?? candidate.actualTargetUsed ?? baseModel.actualTargetUsed;
+  const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
+  const requestedProviderProjection = candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
+  const selectedProviderProjection = candidate.routeSelectedProvider || candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
+  const executedProviderProjection = candidate.activeProvider || '';
   const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
     ? {
       ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
@@ -143,6 +146,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       preferredTarget: candidate.finalRouteTruth.preferredTarget || preferredTarget,
       actualTarget: candidate.finalRouteTruth.actualTarget || actualTargetUsed,
       source: candidate.finalRouteTruth.source || nodeAddressSource,
+      requestedProvider: candidate.finalRouteTruth.requestedProvider || requestedProviderProjection,
+      selectedProvider: candidate.finalRouteTruth.selectedProvider || selectedProviderProjection,
+      executedProvider: candidate.finalRouteTruth.executedProvider || executedProviderProjection,
+      fallbackActive: candidate.finalRouteTruth.fallbackActive ?? candidate.fallbackActive ?? false,
     }
     : {
       ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
@@ -151,6 +158,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       preferredTarget,
       actualTarget: actualTargetUsed,
       source: nodeAddressSource,
+      requestedProvider: requestedProviderProjection,
+      selectedProvider: selectedProviderProjection,
+      executedProvider: executedProviderProjection,
+      fallbackActive: candidate.fallbackActive === true,
     };
 
   return {
