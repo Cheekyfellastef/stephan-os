@@ -149,6 +149,27 @@ test('ProviderToggle keeps Home PC Host or IP input editable', async () => {
   assert.doesNotMatch(hostInputMarkup, /disabled/i);
 });
 
+test('ProviderToggle surfaces manual home-node guidance for hosted-web manual-needed state', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore({
+    homeNodeStatus: {
+      state: 'unreachable',
+      detail: 'No reachable Stephanos backend was found from this hosted session. Set manual home-node to the reachable LAN backend host/IP:port.',
+      source: 'manual',
+      attempts: [],
+    },
+  });
+  const rendered = renderProviderToggle();
+
+  assert.match(rendered, /Home PC node unreachable/);
+  assert.match(rendered, /Set manual home-node to the reachable LAN backend host\/IP:port/i);
+  assert.match(rendered, /Home PC Host or IP/);
+});
+
 test('resolveHomeNodeDraftSync keeps in-progress edits from being clobbered', async () => {
   const { resolveHomeNodeDraftSync } = await importBundledModule(
     path.join(srcRoot, 'components/ProviderToggle.jsx'),

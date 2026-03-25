@@ -785,6 +785,8 @@ export function resolveStephanosBackendBaseUrl({
   }
 
   const current = safeUrlParse(currentOrigin);
+  const currentHost = current?.hostname || '';
+  const currentIsNonLoopback = Boolean(currentHost) && !isLoopbackHost(currentHost);
   if (current?.hostname && isLikelyLanHost(current.hostname) && !isLoopbackHost(current.hostname)) {
     if (normalizePort(current.port, DEFAULT_HOME_NODE_UI_PORT) === DEFAULT_HOME_NODE_BACKEND_PORT) {
       return current.origin;
@@ -805,6 +807,10 @@ export function resolveStephanosBackendBaseUrl({
     if (backendParsed?.origin && !isMalformedStephanosHost(backendParsed.hostname || '')) {
       return backendParsed.origin;
     }
+  }
+
+  if (currentIsNonLoopback && current?.origin) {
+    return current.origin;
   }
 
   return `http://localhost:${DEFAULT_HOME_NODE_BACKEND_PORT}`;

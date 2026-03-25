@@ -137,6 +137,17 @@ test('resolveStephanosBackendBaseUrl uses the current LAN host before falling ba
   );
 });
 
+test('resolveStephanosBackendBaseUrl keeps hosted-web origins truthful when no home node is configured', () => {
+  assert.equal(
+    resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
+    'https://cheekyfellastef.github.io',
+  );
+  assert.notEqual(
+    resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
+    'http://localhost:8787',
+  );
+});
+
 test('resolveStephanosBackendBaseUrl ignores malformed manual backend URL and falls back safely', () => {
   const resolved = resolveStephanosBackendBaseUrl({
     currentOrigin: 'http://localhost:5173',
@@ -416,7 +427,7 @@ test('validateStephanosRuntime prefers local-desktop on PC when backend is onlin
   }
 });
 
-test('validateStephanosRuntime promotes localhost backend to local-desktop even from the hosted launcher', async () => {
+test('validateStephanosRuntime does not promote localhost backend to local-desktop from the hosted launcher', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
   const originalLocalStorage = globalThis.localStorage;
@@ -491,20 +502,18 @@ test('validateStephanosRuntime promotes localhost backend to local-desktop even 
     const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
 
     assert.equal(status.state, 'healthy');
-    assert.equal(status.runtimeStatusModel.routeKind, 'local-desktop');
-    assert.equal(status.runtimeStatusModel.preferredRoute, 'local-desktop');
-    assert.equal(status.runtimeStatusModel.runtimeContext.deviceContext, 'pc-local-browser');
-    assert.equal(status.runtimeStatusModel.preferredTarget, 'http://localhost:8787');
-    assert.equal(status.runtimeStatusModel.actualTargetUsed, 'http://localhost:8787');
-    assert.equal(status.runtimeStatusModel.nodeAddressSource, 'local-backend-session');
+    assert.equal(status.runtimeStatusModel.routeKind, 'dist');
+    assert.equal(status.runtimeStatusModel.preferredRoute, 'dist');
+    assert.equal(status.runtimeStatusModel.runtimeContext.deviceContext, 'off-network');
+    assert.notEqual(status.runtimeStatusModel.preferredTarget, 'http://localhost:8787');
+    assert.notEqual(status.runtimeStatusModel.actualTargetUsed, 'http://localhost:8787');
+    assert.notEqual(status.runtimeStatusModel.nodeAddressSource, 'local-backend-session');
     assert.equal(status.runtimeStatusModel.cloudRouteReachable, false);
-    assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].source, 'local-backend-session');
-    assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].target, 'http://localhost:8787');
-    assert.match(status.runtimeStatusModel.routeEvaluations['local-desktop'].reason, /backend online locally/i);
+    assert.equal(status.runtimeStatusModel.routeEvaluations['local-desktop'].available, false);
     assert.equal(status.runtimeStatusModel.routeEvaluations.dist.available, true);
     assert.equal(status.runtimeStatusModel.routeEvaluations.dist.target, './apps/stephanos/dist/index.html');
     assert.equal(status.runtimeStatusModel.routeEvaluations.dist.source, 'dist-entry');
-    assert.match(status.runtimeStatusModel.routeEvaluations.dist.blockedReason, /local-desktop is a valid live route and outranks dist/i);
+    assert.match(status.runtimeStatusModel.routeEvaluations['local-desktop'].blockedReason, /not a local desktop session/i);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;

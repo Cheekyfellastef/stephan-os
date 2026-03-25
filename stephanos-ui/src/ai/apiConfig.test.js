@@ -82,3 +82,32 @@ test('getApiRuntimeConfigSnapshotKey changes when the preferred home node change
     globals.restore();
   }
 });
+
+test('getApiRuntimeConfig keeps hosted-web sessions on current origin when no home node exists', () => {
+  const globals = installBrowserGlobals({
+    origin: 'https://cheekyfellastef.github.io',
+    storage: {},
+  });
+
+  try {
+    const config = getApiRuntimeConfig();
+    assert.equal(config.baseUrl, 'https://cheekyfellastef.github.io');
+    assert.notEqual(config.baseUrl, 'http://localhost:8787');
+  } finally {
+    globals.restore();
+  }
+});
+
+test('getApiRuntimeConfig keeps local-desktop localhost fallback for loopback origins', () => {
+  const globals = installBrowserGlobals({
+    origin: 'http://localhost:5173',
+    storage: {},
+  });
+
+  try {
+    const config = getApiRuntimeConfig();
+    assert.equal(config.baseUrl, 'http://localhost:8787');
+  } finally {
+    globals.restore();
+  }
+});
