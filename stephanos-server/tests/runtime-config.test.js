@@ -86,7 +86,7 @@ test('published backend base url uses inbound LAN host for remote-safe client ro
   assert.equal(diagnostics.ok, true);
 });
 
-test('request-aware resolver flags loopback publication as misconfigured for remote access', () => {
+test('request-aware resolver promotes request host when configured public base url is loopback', () => {
   const resolved = resolvePublishedBackendBaseUrl({
     env: {
       PORT: '8787',
@@ -101,9 +101,9 @@ test('request-aware resolver flags loopback publication as misconfigured for rem
     },
   });
 
-  assert.equal(resolved.publishedBaseUrl, 'http://localhost:8787');
+  assert.equal(resolved.publishedBaseUrl, 'http://192.168.0.198:8787');
   assert.equal(resolved.internalBaseUrl, 'http://localhost:8787');
-  assert.equal(resolved.clientRouteState, 'misconfigured');
-  assert.equal(resolved.clientRouteSafe, false);
-  assert.equal(resolved.source, 'configured-public-base-url');
+  assert.equal(resolved.clientRouteState, 'ready');
+  assert.equal(resolved.clientRouteSafe, true);
+  assert.equal(resolved.source, 'request-host-promoted');
 });

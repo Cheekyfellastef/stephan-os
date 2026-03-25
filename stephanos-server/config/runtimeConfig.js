@@ -135,8 +135,31 @@ export function resolvePublishedBackendBaseUrl({ env = process.env, request = nu
   const internalBaseUrl = buildServerBaseUrl(env);
   const configuredPublicBaseUrl = normalizeConfiguredPublicBaseUrl(env);
   const requestOrigin = resolveRequestOrigin(request);
+  const configuredHost = (() => {
+    try {
+      return configuredPublicBaseUrl ? new URL(configuredPublicBaseUrl).hostname : '';
+    } catch {
+      return '';
+    }
+  })();
+  const requestHost = (() => {
+    try {
+      return requestOrigin ? new URL(requestOrigin).hostname : '';
+    } catch {
+      return '';
+    }
+  })();
+  const requestLooksRemote = Boolean(requestHost && !isLoopbackHost(requestHost));
+  const shouldPromoteRequestOrigin = Boolean(
+    requestLooksRemote
+    && requestOrigin
+    && configuredPublicBaseUrl
+    && isLoopbackHost(configuredHost),
+  );
 
-  const publishedBaseUrl = configuredPublicBaseUrl
+  const publishedBaseUrl = shouldPromoteRequestOrigin
+    ? requestOrigin
+    : configuredPublicBaseUrl
     || requestOrigin
     || internalBaseUrl;
 
@@ -148,15 +171,6 @@ export function resolvePublishedBackendBaseUrl({ env = process.env, request = nu
     }
   })();
 
-  const requestHost = (() => {
-    try {
-      return requestOrigin ? new URL(requestOrigin).hostname : '';
-    } catch {
-      return '';
-    }
-  })();
-
-  const requestLooksRemote = Boolean(requestHost && !isLoopbackHost(requestHost));
   const publishedHostIsLoopback = isLoopbackHost(publishedHost);
   const clientRouteState = requestLooksRemote && publishedHostIsLoopback
     ? 'misconfigured'
@@ -166,7 +180,9 @@ export function resolvePublishedBackendBaseUrl({ env = process.env, request = nu
     internalBaseUrl,
     publishedBaseUrl,
     requestOrigin,
-    source: configuredPublicBaseUrl
+    source: shouldPromoteRequestOrigin
+      ? 'request-host-promoted'
+      : configuredPublicBaseUrl
       ? 'configured-public-base-url'
       : requestOrigin
         ? 'request-host'
