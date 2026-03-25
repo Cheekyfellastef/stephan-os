@@ -1,3 +1,5 @@
+import { requestStephanosBackend } from './backendClient.mjs';
+
 const DEFAULT_HOME_NODE_UI_PORT = 5173;
 const DEFAULT_HOME_NODE_BACKEND_PORT = 8787;
 const DEFAULT_HOME_NODE_DIST_PORT = 4173;
@@ -354,12 +356,6 @@ export function buildStephanosHomeNodeCandidates({
   return Array.from(candidateMap.values()).slice(0, 8);
 }
 
-function createAbortErrorTimeout(timeoutMs) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  return { controller, timeoutId };
-}
-
 function classifyProbeFailureReason(reason = '') {
   const normalized = String(reason || '').trim();
   const lower = normalized.toLowerCase();
@@ -550,30 +546,26 @@ async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeou
     return { ok: false, reason: 'invalid-url' };
   }
 
-  const { controller, timeoutId } = createAbortErrorTimeout(timeoutMs);
   try {
-    const response = await fetchImpl(url, {
+    const parsed = safeUrlParse(url);
+    const probe = await requestStephanosBackend({
+      path: '/api/health',
       method: 'GET',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        'Cache-Control': 'no-cache',
+      runtimeContext: {
+        baseUrl: parsed?.origin || '',
       },
-      signal: controller.signal,
+      fetchImpl,
+      timeoutMs,
     });
-
-    if (!response.ok) {
-      return { ok: false, status: response.status, reason: `http-${response.status}` };
-    }
-
-    return { ok: true, json: await response.json() };
+    return { ok: true, json: probe.json };
   } catch (error) {
     return {
       ok: false,
-      reason: error?.name === 'AbortError' ? 'timeout' : (error?.message || 'network-error'),
+      status: error?.status,
+      reason: error?.code === 'backend-timeout'
+        ? 'timeout'
+        : (error?.status ? `http-${error.status}` : (error?.message || 'network-error')),
     };
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
