@@ -153,6 +153,9 @@ test('validateStephanosRuntime boot path does not throw when no home node is con
   };
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'HEAD') {
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 
@@ -203,6 +206,9 @@ test('validateStephanosRuntime treats a reachable home node as reachable even wh
   };
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'HEAD') {
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 
@@ -393,6 +399,9 @@ test('validateStephanosRuntime promotes localhost backend to local-desktop even 
       if (url === './apps/stephanos/dist/index.html') {
         return { ok: true, status: 200, text: async () => '' };
       }
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 
@@ -497,6 +506,9 @@ test('validateStephanosRuntime prefers reachable home-node over dist fallback on
       if (url === './apps/stephanos/dist/index.html' || url === 'http://127.0.0.1:4173/apps/stephanos/dist/') {
         return { ok: true, status: 200, text: async () => '' };
       }
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 
@@ -594,6 +606,9 @@ test('validateStephanosRuntime prefers reachable home-node over dist from the ho
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'HEAD') {
       if (url === './apps/stephanos/dist/index.html') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      if (url === 'http://192.168.0.198:5173/') {
         return { ok: true, status: 200, text: async () => '' };
       }
       return { ok: false, status: 404, text: async () => '' };
@@ -834,6 +849,104 @@ test('validateStephanosRuntime keeps dist as fallback only when no live route is
   }
 });
 
+test('validateStephanosRuntime falls back to hosted dist when home-node backend is reachable but home-node UI target is unreachable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    distPort: 4173,
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'stephanos_home_node_manual') {
+        return JSON.stringify(manualNode);
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      if (url === './apps/stephanos/dist/index.html') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: false, status: 404, text: async () => '' };
+      }
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+        json: async () => ({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://localhost:8787',
+          client_route_state: 'ready',
+        }),
+      };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: { groq: { ok: true } } }),
+        json: async () => ({ success: true, data: { groq: { ok: true } } }),
+      };
+    }
+
+    if (url === './apps/stephanos/runtime-status.json' || url === 'http://127.0.0.1:4173/__stephanos/health') {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.state, 'healthy');
+    assert.equal(status.runtimeStatusModel.routeKind, 'dist');
+    assert.equal(status.runtimeStatusModel.routeEvaluations['home-node'].configured, true);
+    assert.equal(status.runtimeStatusModel.routeEvaluations['home-node'].available, false);
+    assert.match(status.runtimeStatusModel.routeEvaluations['home-node'].blockedReason, /home-node ui target is unreachable/i);
+    assert.equal(status.launchUrl, './apps/stephanos/dist/index.html');
+    assert.equal(status.launchStrategy, 'workspace');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
 test('validateStephanosRuntime counts backend-published routes for hosted forensics when launcher runtime-status is unavailable', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
@@ -859,6 +972,9 @@ test('validateStephanosRuntime counts backend-published routes for hosted forens
   };
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'HEAD') {
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 
@@ -976,6 +1092,9 @@ test('validateStephanosRuntime restores manual home-node from portable session m
   };
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'HEAD') {
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
       return { ok: false, status: 404, text: async () => '' };
     }
 

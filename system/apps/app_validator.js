@@ -660,6 +660,11 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       reachable: true,
     })
     : null;
+  const homeNodeLaunchProbe = homeNodeTarget
+    ? await probeStephanosRuntimeTarget(homeNodeTarget, { requireStephanosMarker: false })
+    : null;
+  const homeNodeUiReachable = Boolean(homeNodeLaunchProbe?.reachable);
+  const homeNodeRouteAvailable = Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host && homeNodeUiReachable);
   const localPreferredTarget = getStephanosPreferredRuntimeTarget(devLiveTargets, ['dev']);
   const distPreferredTarget = distLive && distTarget ? { ...distTarget, validStephanosTarget: true } : null;
 
@@ -691,7 +696,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     runtimeContext: {
       frontendOrigin: currentOrigin,
       apiBaseUrl: effectiveBackendBaseUrl,
-      homeNode: preferredHomeNode ? (homeNodeDiscovery.reachable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
+      homeNode: preferredHomeNode ? (homeNodeRouteAvailable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
       preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || currentOrigin,
       actualTargetUsed: effectiveBackendBaseUrl,
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
@@ -719,29 +724,37 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
         },
         'home-node': {
           configured: Boolean(preferredHomeNode?.host),
-          available: Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host),
-          misconfigured: Boolean(homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured),
+          available: homeNodeRouteAvailable,
+          misconfigured: Boolean((homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured) || (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)),
           target: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
           source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
-          reason: homeNodeDiscovery.reachable
+          reason: homeNodeRouteAvailable
             ? (backendPublishedRouteMisconfigured
               ? 'Home PC node is reachable, but the published client route is misconfigured'
               : 'Home PC node is reachable on the LAN')
-            : (preferredHomeNode?.host
-              ? [
-                homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable',
-                homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
-                homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
-              ].filter(Boolean).join(' ')
-              : 'Home PC node is not configured'),
-          blockedReason: !homeNodeDiscovery.reachable && preferredHomeNode?.host
+            : (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable
+              ? 'Home PC backend is reachable, but the published home-node UI target is unreachable from this launcher session'
+              : (homeNodeDiscovery.reachable
+                ? (backendPublishedRouteMisconfigured
+                  ? 'Home PC node is reachable, but the published client route is misconfigured'
+                  : 'Home PC node is reachable on the LAN')
+                : (preferredHomeNode?.host
+                  ? [
+                    homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable',
+                    homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
+                    homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
+                  ].filter(Boolean).join(' ')
+                  : 'Home PC node is not configured'))),
+          blockedReason: (!homeNodeRouteAvailable && homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)
+            ? `home-node UI target is unreachable (${homeNodeTarget?.url || preferredHomeNode?.uiUrl || 'unknown target'})`
+            : (!homeNodeDiscovery.reachable && preferredHomeNode?.host
             ? [
               homeNodeDiscovery.message || 'health probe could not confirm the home-node route',
               homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
               homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
             ].filter(Boolean).join(' ')
-            : (!preferredHomeNode?.host ? 'home node is not configured' : ''),
+            : (!preferredHomeNode?.host ? 'home node is not configured' : '')),
         },
         dist: {
           configured: Boolean(entryExists || distPreferredTarget?.url),
@@ -790,8 +803,10 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       launchUrl = localPreferredTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
       break;
     case 'home-node':
-      launchUrl = homeNodeTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
-      launchStrategy = homeNodeTarget?.url ? 'navigate' : 'workspace';
+      launchUrl = homeNodeUiReachable
+        ? (homeNodeTarget?.url || '')
+        : (distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''));
+      launchStrategy = homeNodeUiReachable ? 'navigate' : 'workspace';
       break;
     case 'dist':
       launchUrl = distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
@@ -848,12 +863,12 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       launchStrategy,
       runtimeTargets: [
         ...probedTargets,
-        ...(homeNodeTarget ? [homeNodeTarget] : []),
+        ...(homeNodeLaunchProbe ? [homeNodeLaunchProbe] : (homeNodeTarget ? [homeNodeTarget] : [])),
       ],
       runtimeAvailability: {
         dev: devLiveTargets.map((target) => target.url),
         dist: [distPreferredTarget?.url || hostedDistUrl].filter(Boolean),
-        homeNode: homeNodeTarget ? [homeNodeTarget.url] : [],
+        homeNode: homeNodeUiReachable && homeNodeTarget ? [homeNodeTarget.url] : [],
       },
     };
   }
@@ -866,7 +881,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       dependencyState: 'degraded',
       routeForensics,
       providerHealth,
-      runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
+      runtimeTargets: [...probedTargets, ...(homeNodeLaunchProbe ? [homeNodeLaunchProbe] : (homeNodeTarget ? [homeNodeTarget] : []))],
     };
   }
 
@@ -878,7 +893,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     dependencyState: 'unavailable',
     routeForensics,
     providerHealth,
-    runtimeTargets: [...probedTargets, ...(homeNodeTarget ? [homeNodeTarget] : [])],
+    runtimeTargets: [...probedTargets, ...(homeNodeLaunchProbe ? [homeNodeLaunchProbe] : (homeNodeTarget ? [homeNodeTarget] : []))],
     runtimeAvailability: {
       dev: [],
       dist: entryExists ? [hostedDistUrl] : [],
