@@ -67,12 +67,24 @@ function buildHomeNodeDraftFromPreference(homeNodePreference) {
 
 export function resolveHomeNodeDraftSync({ currentDraft, preference, isEditing }) {
   const nextFromPreference = buildHomeNodeDraftFromPreference(preference);
+  const currentHost = String(currentDraft?.host || '').trim();
+  const nextHost = String(nextFromPreference.host || '').trim();
   if (isEditing) {
     return {
       nextDraft: currentDraft,
       overwritten: false,
       overwriteSource: '',
       skippedBecauseEditing: true,
+    };
+  }
+
+  if (!nextHost && currentHost) {
+    return {
+      nextDraft: currentDraft,
+      overwritten: false,
+      overwriteSource: '',
+      skippedBecauseEditing: false,
+      skippedBecauseEmptyPreference: true,
     };
   }
 
@@ -144,6 +156,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
   const [homeNodeDraft, setHomeNodeDraft] = useState(() => buildHomeNodeDraftFromPreference(homeNodePreference));
   const [isEditingHomeNode, setIsEditingHomeNode] = useState(false);
+  const [homeNodeSaveResult, setHomeNodeSaveResult] = useState('');
 
   useEffect(() => {
     const syncResult = resolveHomeNodeDraftSync({
@@ -155,7 +168,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setUiDiagnostics((prev) => ({
       ...prev,
       homeNodeInputStateOverwritten: syncResult.overwritten,
-      homeNodeInputOverwriteSource: syncResult.overwriteSource || (syncResult.skippedBecauseEditing ? 'none:editing-active' : 'none'),
+      homeNodeInputOverwriteSource: syncResult.overwriteSource || (syncResult.skippedBecauseEditing
+        ? 'none:editing-active'
+        : (syncResult.skippedBecauseEmptyPreference ? 'none:ignored-empty-preference' : 'none')),
     }));
   }, [homeNodePreference?.host, homeNodePreference?.uiPort, homeNodePreference?.backendPort, isEditingHomeNode]);
 
@@ -166,6 +181,11 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
 
   useEffect(() => {
     const ollamaDraft = getDraftProviderConfig('ollama');
+    const manualHomeNodeHost = String(homeNodeDraft.host || '').trim();
+    const normalizedManualHomeNodeHost = extractHostname(manualHomeNodeHost);
+    const homeNodeManualHostValidity = !manualHomeNodeHost
+      ? 'empty'
+      : (!normalizedManualHomeNodeHost || isMalformedStephanosHost(normalizedManualHomeNodeHost) ? 'invalid' : 'valid');
     setUiDiagnostics((prev) => ({
       ...prev,
       homeNodeInputDraftValue: String(homeNodeDraft.host || ''),
@@ -174,8 +194,12 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       backendUrlInUse: String(runtimeConfig.baseUrl || ''),
       ollamaBaseUrlInUse: String(ollamaDraft?.baseURL || ''),
       requestedProvider: provider,
+      homeNodeEffectiveValue: String(homeNodePreference?.host || homeNodeLastKnown?.host || ''),
+      homeNodeEffectiveSource: String(homeNodePreference?.host ? (homeNodePreference?.source || 'manual') : (homeNodeLastKnown?.source || 'none')),
+      homeNodeSaveResult,
+      homeNodeManualHostValidity,
     }));
-  }, [getDraftProviderConfig, homeNodeDraft.host, homeNodePreference?.host, isEditingHomeNode, provider, runtimeConfig.baseUrl, setUiDiagnostics]);
+  }, [getDraftProviderConfig, homeNodeDraft.host, homeNodeLastKnown?.host, homeNodeLastKnown?.source, homeNodePreference?.host, homeNodePreference?.source, homeNodeSaveResult, isEditingHomeNode, provider, runtimeConfig.baseUrl, setUiDiagnostics]);
 
   const ollamaModelOptions = useMemo(() => {
     const draft = getDraftProviderConfig('ollama');
@@ -266,8 +290,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const handleSaveHomeNode = () => {
     const trimmedHost = String(homeNodeDraft.host || '').trim();
     if (!trimmedHost) {
-      setHomeNodePreference(null);
-      onTestConnection();
+      setHomeNodeSaveResult('rejected:empty-host');
+      setUiDiagnostics((prev) => ({
+        ...prev,
+        homeNodeManualHostState: 'empty',
+        homeNodeManualHostValue: '',
+        homeNodeSaveResult: 'rejected:empty-host',
+      }));
       return;
     }
 
@@ -277,7 +306,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         ...prev,
         homeNodeManualHostState: 'invalid',
         homeNodeManualHostValue: trimmedHost,
+        homeNodeSaveResult: 'rejected:invalid-host',
       }));
+      setHomeNodeSaveResult('rejected:invalid-host');
       return;
     }
 
@@ -288,10 +319,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       source: 'manual',
     });
     setIsEditingHomeNode(false);
+    setHomeNodeDraft((prev) => ({ ...prev, host: normalizedHost }));
+    setHomeNodeSaveResult('saved');
     setUiDiagnostics((prev) => ({
       ...prev,
       homeNodeManualHostState: 'saved',
       homeNodeManualHostValue: normalizedHost,
+      homeNodeSaveResult: 'saved',
     }));
     onTestConnection();
   };
@@ -300,6 +334,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setHomeNodeDraft({ host: '', uiPort: 5173, backendPort: 8787 });
     setIsEditingHomeNode(false);
     setHomeNodePreference(null);
+    setHomeNodeSaveResult('cleared');
     onTestConnection();
   };
 

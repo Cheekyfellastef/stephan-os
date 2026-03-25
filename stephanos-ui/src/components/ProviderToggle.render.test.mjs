@@ -182,3 +182,20 @@ test('resolveHomeNodeDraftSync applies persisted value when editing is inactive'
   assert.equal(syncResult.overwritten, true);
   assert.equal(syncResult.overwriteSource, 'homeNodePreference-sync');
 });
+
+test('resolveHomeNodeDraftSync does not replace non-empty draft with empty persisted host', async () => {
+  const { resolveHomeNodeDraftSync } = await importBundledModule(
+    path.join(srcRoot, 'components/ProviderToggle.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  const syncResult = resolveHomeNodeDraftSync({
+    currentDraft: { host: '192.168.1.77', uiPort: 5173, backendPort: 8787 },
+    preference: { host: '', uiPort: 5173, backendPort: 8787 },
+    isEditing: false,
+  });
+
+  assert.equal(syncResult.nextDraft.host, '192.168.1.77');
+  assert.equal(syncResult.overwritten, false);
+  assert.equal(syncResult.skippedBecauseEmptyPreference, true);
+});
