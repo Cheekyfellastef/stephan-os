@@ -85,6 +85,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setDevMode,
     fallbackEnabled,
     setFallbackEnabled,
+    disableHomeNodeForLocalSession,
+    setDisableHomeNodeForLocalSession,
     providerHealth,
     providerDraftStatus,
     getDraftProviderConfig,
@@ -304,6 +306,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       <div className="toggle-row">
         <label className="toggle-chip"><input type="checkbox" checked={devMode} onChange={(event) => setDevMode(event.target.checked)} /> Dev-safe mode</label>
         <label className="toggle-chip"><input type="checkbox" checked={fallbackEnabled} onChange={(event) => setFallbackEnabled(event.target.checked)} /> Fallback enabled</label>
+        <label className="toggle-chip"><input type="checkbox" checked={disableHomeNodeForLocalSession} onChange={(event) => setDisableHomeNodeForLocalSession(event.target.checked)} /> Force Local On This PC</label>
       </div>
 
       <div className="provider-card-grid">

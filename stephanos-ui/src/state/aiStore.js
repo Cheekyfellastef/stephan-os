@@ -159,6 +159,7 @@ function normalizeStoredSettings(persistedSession) {
     routeMode: normalizeRouteMode(persistedSettings.routeMode),
     devMode: persistedSettings.devMode !== false,
     fallbackEnabled: persistedSettings.fallbackEnabled !== false,
+    disableHomeNodeForLocalSession: persistedSettings.disableHomeNodeForLocalSession === true,
     fallbackOrder: Array.isArray(persistedSettings.fallbackOrder)
       ? persistedSettings.fallbackOrder
       : defaults.fallbackOrder,
@@ -258,6 +259,7 @@ export function AIStoreProvider({ children }) {
   const [routeMode, setRouteModeState] = useState(initialSettings.routeMode || DEFAULT_ROUTE_MODE);
   const [devMode, setDevModeState] = useState(initialSettings.devMode);
   const [fallbackEnabled, setFallbackEnabledState] = useState(initialSettings.fallbackEnabled);
+  const [disableHomeNodeForLocalSession, setDisableHomeNodeForLocalSessionState] = useState(initialSettings.disableHomeNodeForLocalSession === true);
   const [fallbackOrder, setFallbackOrderState] = useState(initialSettings.fallbackOrder);
   const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSettings.providerConfigs);
   const [draftProviderConfigs, setDraftProviderConfigs] = useState(initialSettings.providerConfigs);
@@ -370,6 +372,7 @@ export function AIStoreProvider({ children }) {
           routeMode,
           devMode,
           fallbackEnabled,
+          disableHomeNodeForLocalSession,
           fallbackOrder,
           providerConfigs: sanitizeConfigForStorage(savedProviderConfigs),
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
@@ -394,6 +397,7 @@ export function AIStoreProvider({ children }) {
     routeMode,
     devMode,
     fallbackEnabled,
+    disableHomeNodeForLocalSession,
     fallbackOrder,
     savedProviderConfigs,
     ollamaConnection,
@@ -451,6 +455,10 @@ export function AIStoreProvider({ children }) {
     setFallbackEnabledState(Boolean(next));
   }, []);
 
+  const setDisableHomeNodeForLocalSession = useCallback((next) => {
+    setDisableHomeNodeForLocalSessionState(Boolean(next));
+  }, []);
+
   const setOllamaConnection = useCallback((patch = {}) => {
     const nextConnection = normalizeOllamaConnection({ ...ollamaConnection, ...patch });
     setOllamaConnectionState(nextConnection);
@@ -479,6 +487,7 @@ export function AIStoreProvider({ children }) {
     setRouteModeState(defaults.routeMode);
     setDevModeState(defaults.devMode);
     setFallbackEnabledState(defaults.fallbackEnabled);
+    setDisableHomeNodeForLocalSessionState(defaults.disableHomeNodeForLocalSession === true);
     setFallbackOrderState(defaults.fallbackOrder);
     setSavedProviderConfigs(sessionSafe);
     setDraftProviderConfigs(sessionSafe);
@@ -623,6 +632,8 @@ export function AIStoreProvider({ children }) {
     setDevMode,
     fallbackEnabled,
     setFallbackEnabled,
+    disableHomeNodeForLocalSession,
+    setDisableHomeNodeForLocalSession,
     fallbackOrder,
     setFallbackOrderState,
     savedProviderConfigs,
@@ -675,6 +686,7 @@ export function AIStoreProvider({ children }) {
     routeMode,
     devMode,
     fallbackEnabled,
+    disableHomeNodeForLocalSession,
     fallbackOrder,
     savedProviderConfigs,
     draftProviderConfigs,
@@ -698,6 +710,7 @@ export function AIStoreProvider({ children }) {
     setRouteMode,
     setDevMode,
     setFallbackEnabled,
+    setDisableHomeNodeForLocalSession,
     setOllamaConnection,
     setHomeNodePreference,
     setHomeNodeLastKnown,

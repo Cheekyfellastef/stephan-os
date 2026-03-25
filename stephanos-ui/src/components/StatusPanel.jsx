@@ -30,6 +30,7 @@ export default function StatusPanel() {
     routeMode,
     devMode,
     fallbackEnabled,
+    disableHomeNodeForLocalSession,
     fallbackOrder,
     providerHealth,
     getActiveProviderConfig,
@@ -158,6 +159,7 @@ export default function StatusPanel() {
         <li>Session Restore Reason: {sessionRestoreReason}</li>
         <li>Dev Mode: {devMode ? 'on' : 'off'}</li>
         <li>Fallback Enabled: {fallbackEnabled ? 'yes' : 'no'}</li>
+        <li>Home Node Disabled For Local Session: {disableHomeNodeForLocalSession ? 'yes' : 'no'}</li>
         <li>Provider Endpoint: {providerEndpointDisplay}</li>
         <li>Provider Model: {statusSummary.model}</li>
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
