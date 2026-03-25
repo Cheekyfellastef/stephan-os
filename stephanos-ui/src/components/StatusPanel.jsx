@@ -59,6 +59,7 @@ export default function StatusPanel() {
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   // finalRoute is the sole resolved route truth for UI rendering; guardrails report when any projection drifts.
   const finalRoute = runtimeStatus.finalRoute ?? {};
+  const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
   const providerEligibility = finalRoute.providerEligibility ?? {};
   const reachability = finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
@@ -121,11 +122,17 @@ export default function StatusPanel() {
         <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
+        <li>Session Kind: {finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
         <li>Route Kind: {runtimeStatus.routeKind}</li>
+        <li>Preferred Route: {finalRouteTruth.preferredRoute || runtimeStatus.preferredRoute || 'unavailable'}</li>
+        <li>Winning Route Reason: {finalRouteTruth.winnerReason || finalRoute.winnerReason || runtimeStatus.routeSummary || 'n/a'}</li>
         <li>Preferred Target: {runtimeStatus.preferredTarget || 'unavailable'}</li>
         <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'unavailable'}</li>
         <li>Final Route Source: {finalRoute.source || 'unknown'}</li>
         <li>Final Route Reachable: {reachability.selectedRouteReachable ? 'yes' : 'pending'}</li>
+        <li>Selected Route UI Reachable: {finalRouteTruth.uiReachable ? 'yes' : 'no'}</li>
+        <li>Selected Route Usable: {finalRouteTruth.routeUsable ? 'yes' : 'no'}</li>
+        <li>Home Node Usable: {finalRouteTruth.homeNodeUsable ? 'yes' : 'no'}</li>
         <li>Backend-Mediated Providers Eligible: {providerEligibility.backendMediatedProviders ? 'yes' : 'pending'}</li>
         <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
         <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
@@ -174,6 +181,8 @@ export default function StatusPanel() {
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
+        <li>Execution Provider (Truth): {finalRouteTruth.executedProvider || runtimeStatus.activeProvider || 'n/a'}</li>
+        <li>Recovery Guidance: {finalRouteTruth.operatorAction || homeNodeAction || 'n/a'}</li>
         <li>Attempt Order: {attemptOrder}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Session Workspace: mission-console</li>

@@ -37,6 +37,33 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     preferredTarget: 'unavailable',
     actualTarget: 'unavailable',
   },
+  finalRouteTruth: {
+    sessionKind: 'unknown',
+    deviceContext: 'unknown',
+    runtimeModeLabel: 'pending',
+    requestedRouteMode: 'pending',
+    effectiveRouteMode: 'pending',
+    preferredRoute: 'unavailable',
+    routeKind: 'unavailable',
+    winnerReason: '',
+    preferredTarget: 'unavailable',
+    actualTarget: 'unavailable',
+    source: 'unknown',
+    backendReachable: false,
+    uiReachable: false,
+    routeUsable: false,
+    homeNodeUsable: false,
+    localRouteUsable: false,
+    cloudRouteReachable: false,
+    fallbackActive: false,
+    fallbackRouteActive: false,
+    requestedProvider: 'unknown',
+    selectedProvider: 'unknown',
+    executedProvider: '',
+    validationState: 'launching',
+    appLaunchState: 'pending',
+    operatorAction: '',
+  },
 });
 
 function normalizeArray(value, fallback = []) {
@@ -108,12 +135,30 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const preferredTarget = candidate.preferredTarget ?? finalRoute.preferredTarget ?? baseModel.preferredTarget;
   const actualTargetUsed = candidate.actualTargetUsed ?? finalRoute.actualTarget ?? baseModel.actualTargetUsed;
   const nodeAddressSource = candidate.nodeAddressSource ?? finalRoute.source ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
+  const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
+    ? {
+      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      ...candidate.finalRouteTruth,
+      routeKind: candidate.finalRouteTruth.routeKind || routeKind,
+      preferredTarget: candidate.finalRouteTruth.preferredTarget || preferredTarget,
+      actualTarget: candidate.finalRouteTruth.actualTarget || actualTargetUsed,
+      source: candidate.finalRouteTruth.source || nodeAddressSource,
+    }
+    : {
+      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      routeKind,
+      preferredRoute: candidate.preferredRoute || routeKind,
+      preferredTarget,
+      actualTarget: actualTargetUsed,
+      source: nodeAddressSource,
+    };
 
   return {
     ...baseModel,
     ...candidate,
     runtimeContext,
     finalRoute,
+    finalRouteTruth,
     guardrails,
     routeKind,
     preferredTarget,
