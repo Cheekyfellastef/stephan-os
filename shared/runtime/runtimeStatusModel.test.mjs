@@ -485,3 +485,32 @@ test('createRuntimeStatusModel reports uiReachabilityState as unknown until rout
   assert.equal(pending.finalRouteTruth.uiReachabilityState, 'unknown');
   assert.equal(ready.finalRouteTruth.uiReachabilityState, 'reachable');
 });
+
+test('createRuntimeStatusModel emits canonical runtimeTruth aligned with final route/provider adjudication', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: { groq: { ok: true } },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://api.example.com',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://cheekyfellastef.github.io',
+          actualTarget: 'https://api.example.com',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.runtimeTruth.selectedRoute, status.finalRouteTruth.routeKind);
+  assert.equal(status.runtimeTruth.actualTarget, status.finalRouteTruth.actualTarget);
+  assert.equal(status.runtimeTruth.selectedProvider, status.finalRouteTruth.selectedProvider);
+  assert.equal(status.runtimeTruth.executedProvider, status.finalRouteTruth.executedProvider);
+  assert.equal(status.runtimeTruth.backendReachable, true);
+});

@@ -158,14 +158,14 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
       ));
     }
 
-    if (finalRoute.routeKind === 'home-node' && finalRouteTruth.uiReachable === false && finalRouteTruth.routeUsable === true) {
+    if (finalRoute.routeKind === 'home-node' && finalRouteTruth.uiReachabilityState === 'unreachable' && finalRouteTruth.routeUsable === true) {
       invariants.push(createInvariant(
         'backend-only-home-node-not-usable',
         'error',
         'A backend-reachable but UI-unreachable home-node must never be marked routeUsable.',
         {
           routeKind: finalRoute.routeKind,
-          uiReachable: finalRouteTruth.uiReachable,
+          uiReachabilityState: finalRouteTruth.uiReachabilityState,
           routeUsable: finalRouteTruth.routeUsable,
         },
       ));

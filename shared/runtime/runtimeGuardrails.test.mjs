@@ -298,7 +298,7 @@ test('guardrails catch finalRouteTruth projection drift across route and provide
   assert.ok(report.errors.some((issue) => issue.id === 'final-route-truth-projection'));
 });
 
-test('guardrails reject backend-only home-node claims when uiReachable is false but routeUsable is true', () => {
+test('guardrails reject backend-only home-node claims when uiReachabilityState is unreachable but routeUsable is true', () => {
   const report = evaluateRuntimeGuardrails({
     appLaunchState: 'ready',
     backendAvailable: true,
@@ -337,7 +337,7 @@ test('guardrails reject backend-only home-node claims when uiReachable is false 
       requestedProvider: 'ollama',
       selectedProvider: 'ollama',
       executedProvider: 'ollama',
-      uiReachable: false,
+      uiReachabilityState: 'unreachable',
       routeUsable: true,
     },
     routeEvaluations: {

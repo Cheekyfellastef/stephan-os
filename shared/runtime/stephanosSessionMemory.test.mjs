@@ -98,6 +98,22 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
   assert.match(persisted.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test('persistStephanosSessionMemory strips runtime-only truth fields from persisted core memory', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: { providerPreferences: { provider: 'groq' } },
+    runtimeTruth: { selectedRoute: 'home-node', actualTarget: 'http://localhost:8787' },
+    finalRouteTruth: { routeKind: 'local-desktop', actualTarget: 'http://localhost:8787' },
+    preferredTarget: 'http://localhost:8787',
+  }, storage);
+
+  const restored = readPersistedStephanosSessionMemory(storage);
+  assert.equal(restored.session.providerPreferences.provider, 'groq');
+  assert.equal(Object.prototype.hasOwnProperty.call(restored, 'runtimeTruth'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(restored, 'finalRouteTruth'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(restored, 'preferredTarget'), false);
+});
+
 test('readPersistedStephanosSessionMemory truthfully migrates legacy provider and layout keys', () => {
   const storage = createMemoryStorage({
     [AI_SETTINGS_STORAGE_KEY]: JSON.stringify({

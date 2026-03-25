@@ -21,6 +21,7 @@ import {
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
+import { buildRuntimeTruthSnapshot } from './truthContract.mjs';
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -299,8 +300,8 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     source: String(merged.source || 'route-diagnostics'),
     reason: String(merged.reason || ''),
     blockedReason: String(merged.blockedReason || ''),
-    backendReachable: merged.backendReachable === true,
-    uiReachable: merged.uiReachable === true,
+    backendReachable: merged.backendReachable === true ? true : (merged.backendReachable === false ? false : null),
+    uiReachable: merged.uiReachable === true ? true : (merged.uiReachable === false ? false : null),
     usable: merged.usable !== false && Boolean(merged.available),
   };
 }
@@ -989,10 +990,19 @@ export function createRuntimeStatusModel({
     validationState,
     appLaunchState,
   });
+  const runtimeTruth = buildRuntimeTruthSnapshot({
+    runtimeContext: normalizedRuntimeContext,
+    finalRoute,
+    finalRouteTruth,
+    routePlan,
+    routeEvaluations: nodeRoute.routeEvaluations,
+    routePreferenceOrder: nodeRoute.routePreferenceOrder,
+  });
 
   return {
     ...model,
     finalRouteTruth,
-    guardrails: evaluateRuntimeGuardrails(model),
+    runtimeTruth,
+    guardrails: evaluateRuntimeGuardrails({ ...model, finalRouteTruth, runtimeTruth }),
   };
 }
