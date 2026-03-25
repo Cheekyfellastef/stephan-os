@@ -61,9 +61,10 @@ export default function StatusPanel() {
   // finalRoute is the sole resolved route truth for UI rendering; guardrails report when any projection drifts.
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
+  const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
-  const providerEligibility = finalRoute.providerEligibility ?? {};
-  const reachability = finalRoute.reachability ?? {};
+  const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
+  const reachability = runtimeTruth.reachability ?? finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const homeNodeDiagnostics = runtimeContext.routeDiagnostics?.['home-node'] ?? {};
   const interactionAuditSummary = [
@@ -128,10 +129,10 @@ export default function StatusPanel() {
         <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
         <li>Active Provider: {routeTruthView.executedProvider}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
-        <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
+        <li>Fallback Active: {runtimeTruth.fallbackActive || runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
-        <li>Session Kind: {finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
+        <li>Session Kind: {runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>
         <li>Winning Route Reason: {routeTruthView.winnerReason}</li>
@@ -146,6 +147,7 @@ export default function StatusPanel() {
         <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
         <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
         <li>Mock Fallback Only: {providerEligibility.mockFallbackOnly ? 'yes' : 'pending'}</li>
+        <li>Runtime Truth Contract: core truth persisted separately; runtime truth adjudicated per-session</li>
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>
         <li>Guardrails Detail: {primaryGuardrailMessage}</li>

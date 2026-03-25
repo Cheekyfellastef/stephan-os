@@ -7,6 +7,7 @@ import {
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
 import { isLoopbackHost, isValidStephanosHomeNode, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
+import { sanitizeCoreTruthInput } from './truthContract.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
@@ -477,8 +478,9 @@ function createLegacyProviderPreferencesPayload(memory) {
 }
 
 export function persistStephanosSessionMemory(memory, storage = globalThis?.localStorage) {
+  const { sanitized } = sanitizeCoreTruthInput(memory || {});
   const normalized = normalizeStephanosSessionMemory({
-    ...memory,
+    ...sanitized,
     updatedAt: new Date().toISOString(),
   });
 

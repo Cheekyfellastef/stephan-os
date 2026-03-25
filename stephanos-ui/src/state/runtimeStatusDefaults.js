@@ -65,6 +65,34 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     appLaunchState: 'pending',
     operatorAction: '',
   },
+  runtimeTruth: {
+    sessionKind: 'unknown',
+    deviceContext: 'unknown',
+    requestedRouteMode: 'pending',
+    effectiveRouteMode: 'pending',
+    preferredRoute: 'unavailable',
+    selectedRoute: 'unavailable',
+    winnerReason: '',
+    preferredTarget: 'unavailable',
+    actualTarget: 'unavailable',
+    source: 'unknown',
+    backendReachable: false,
+    uiReachabilityState: 'unknown',
+    routeUsable: false,
+    cloudRouteReachable: false,
+    fallbackActive: false,
+    fallbackRouteActive: false,
+    requestedProvider: 'unknown',
+    selectedProvider: 'unknown',
+    executedProvider: '',
+    validationState: 'launching',
+    appLaunchState: 'pending',
+    operatorAction: '',
+    reachability: {},
+    providerEligibility: {},
+    routeEvaluations: {},
+    routePreferenceOrder: [],
+  },
 });
 
 function normalizeArray(value, fallback = []) {
@@ -75,7 +103,6 @@ function normalizeUiReachabilityState(value, legacyBoolean) {
   if (value === 'reachable' || value === 'unreachable' || value === 'unknown') {
     return value;
   }
-
   if (legacyBoolean === true) return 'reachable';
   if (legacyBoolean === false) return 'unreachable';
   return 'unknown';
@@ -83,19 +110,15 @@ function normalizeUiReachabilityState(value, legacyBoolean) {
 
 export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const hasCandidate = runtimeStatusModel && typeof runtimeStatusModel === 'object';
-  const candidate = hasCandidate
-    ? runtimeStatusModel
-    : {};
+  const candidate = hasCandidate ? runtimeStatusModel : {};
   const baseModel = hasCandidate ? DEFAULT_RUNTIME_STATUS_MODEL : PENDING_RUNTIME_STATUS_MODEL;
-  const finalRouteCandidate = candidate.finalRoute && typeof candidate.finalRoute === 'object'
-    ? candidate.finalRoute
-    : {};
-  const runtimeContextCandidate = candidate.runtimeContext && typeof candidate.runtimeContext === 'object'
-    ? candidate.runtimeContext
-    : {};
+
+  const finalRouteCandidate = candidate.finalRoute && typeof candidate.finalRoute === 'object' ? candidate.finalRoute : {};
+  const runtimeContextCandidate = candidate.runtimeContext && typeof candidate.runtimeContext === 'object' ? candidate.runtimeContext : {};
   const runtimeContextFinalRouteCandidate = runtimeContextCandidate.finalRoute && typeof runtimeContextCandidate.finalRoute === 'object'
     ? runtimeContextCandidate.finalRoute
     : {};
+
   const hasFinalRouteCandidate = Object.keys(finalRouteCandidate).length > 0 || Object.keys(runtimeContextFinalRouteCandidate).length > 0;
   const finalRouteBase = hasFinalRouteCandidate ? baseModel.finalRoute : PENDING_RUNTIME_STATUS_MODEL.finalRoute;
 
@@ -124,6 +147,85 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     finalRoute,
   };
 
+  const routeKind = finalRoute.routeKind ?? candidate.routeKind ?? baseModel.routeKind;
+  const preferredTarget = finalRoute.preferredTarget ?? candidate.preferredTarget ?? baseModel.preferredTarget;
+  const actualTargetUsed = finalRoute.actualTarget ?? candidate.actualTargetUsed ?? baseModel.actualTargetUsed;
+  const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
+  const requestedProviderProjection = candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
+  const selectedProviderProjection = candidate.routeSelectedProvider || candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
+  const executedProviderProjection = candidate.activeProvider || '';
+
+  const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
+    ? {
+      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      ...candidate.finalRouteTruth,
+      routeKind: candidate.finalRouteTruth.routeKind || routeKind,
+      preferredTarget: candidate.finalRouteTruth.preferredTarget || preferredTarget,
+      actualTarget: candidate.finalRouteTruth.actualTarget || actualTargetUsed,
+      source: candidate.finalRouteTruth.source || nodeAddressSource,
+      requestedProvider: candidate.finalRouteTruth.requestedProvider || requestedProviderProjection,
+      selectedProvider: candidate.finalRouteTruth.selectedProvider || selectedProviderProjection,
+      executedProvider: candidate.finalRouteTruth.executedProvider || executedProviderProjection,
+      fallbackActive: candidate.finalRouteTruth.fallbackActive ?? candidate.fallbackActive ?? false,
+      uiReachabilityState: normalizeUiReachabilityState(candidate.finalRouteTruth.uiReachabilityState, candidate.finalRouteTruth.uiReachable),
+    }
+    : {
+      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      routeKind,
+      preferredRoute: candidate.preferredRoute || routeKind,
+      preferredTarget,
+      actualTarget: actualTargetUsed,
+      source: nodeAddressSource,
+      requestedProvider: requestedProviderProjection,
+      selectedProvider: selectedProviderProjection,
+      executedProvider: executedProviderProjection,
+      fallbackActive: candidate.fallbackActive === true,
+      uiReachabilityState: 'unknown',
+    };
+
+  const runtimeTruth = candidate.runtimeTruth && typeof candidate.runtimeTruth === 'object'
+    ? {
+      ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth,
+      ...candidate.runtimeTruth,
+      selectedRoute: candidate.runtimeTruth.selectedRoute || finalRouteTruth.routeKind || routeKind,
+      preferredTarget: candidate.runtimeTruth.preferredTarget || finalRouteTruth.preferredTarget || preferredTarget,
+      actualTarget: candidate.runtimeTruth.actualTarget || finalRouteTruth.actualTarget || actualTargetUsed,
+      source: candidate.runtimeTruth.source || finalRouteTruth.source || nodeAddressSource,
+      requestedProvider: candidate.runtimeTruth.requestedProvider || finalRouteTruth.requestedProvider || requestedProviderProjection,
+      selectedProvider: candidate.runtimeTruth.selectedProvider || finalRouteTruth.selectedProvider || selectedProviderProjection,
+      executedProvider: candidate.runtimeTruth.executedProvider || finalRouteTruth.executedProvider || executedProviderProjection,
+      routePreferenceOrder: normalizeArray(candidate.runtimeTruth.routePreferenceOrder, []),
+    }
+    : {
+      ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth,
+      sessionKind: finalRouteTruth.sessionKind,
+      deviceContext: finalRouteTruth.deviceContext,
+      requestedRouteMode: finalRouteTruth.requestedRouteMode,
+      effectiveRouteMode: finalRouteTruth.effectiveRouteMode,
+      preferredRoute: finalRouteTruth.preferredRoute,
+      selectedRoute: finalRouteTruth.routeKind || routeKind,
+      winnerReason: finalRouteTruth.winnerReason,
+      preferredTarget: finalRouteTruth.preferredTarget || preferredTarget,
+      actualTarget: finalRouteTruth.actualTarget || actualTargetUsed,
+      source: finalRouteTruth.source || nodeAddressSource,
+      backendReachable: finalRouteTruth.backendReachable === true,
+      uiReachabilityState: finalRouteTruth.uiReachabilityState || 'unknown',
+      routeUsable: finalRouteTruth.routeUsable === true,
+      cloudRouteReachable: finalRouteTruth.cloudRouteReachable === true,
+      fallbackActive: finalRouteTruth.fallbackActive === true,
+      fallbackRouteActive: finalRouteTruth.fallbackRouteActive === true,
+      requestedProvider: finalRouteTruth.requestedProvider || requestedProviderProjection,
+      selectedProvider: finalRouteTruth.selectedProvider || selectedProviderProjection,
+      executedProvider: finalRouteTruth.executedProvider || executedProviderProjection,
+      validationState: finalRouteTruth.validationState || 'launching',
+      appLaunchState: finalRouteTruth.appLaunchState || 'pending',
+      operatorAction: finalRouteTruth.operatorAction || '',
+      reachability: finalRoute.reachability || {},
+      providerEligibility: finalRoute.providerEligibility || {},
+      routeEvaluations: candidate.routeEvaluations && typeof candidate.routeEvaluations === 'object' ? candidate.routeEvaluations : {},
+      routePreferenceOrder: normalizeArray(candidate.routePreferenceOrder, []),
+    };
+
   const guardrails = candidate.guardrails && typeof candidate.guardrails === 'object'
     ? {
       ok: candidate.guardrails.ok !== false,
@@ -142,50 +244,13 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     }
     : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
 
-  const routeKind = finalRoute.routeKind ?? candidate.routeKind ?? baseModel.routeKind;
-  const preferredTarget = finalRoute.preferredTarget ?? candidate.preferredTarget ?? baseModel.preferredTarget;
-  const actualTargetUsed = finalRoute.actualTarget ?? candidate.actualTargetUsed ?? baseModel.actualTargetUsed;
-  const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
-  const requestedProviderProjection = candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
-  const selectedProviderProjection = candidate.routeSelectedProvider || candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
-  const executedProviderProjection = candidate.activeProvider || '';
-  const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
-    ? {
-      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
-      ...candidate.finalRouteTruth,
-      routeKind: candidate.finalRouteTruth.routeKind || routeKind,
-      preferredTarget: candidate.finalRouteTruth.preferredTarget || preferredTarget,
-      actualTarget: candidate.finalRouteTruth.actualTarget || actualTargetUsed,
-      source: candidate.finalRouteTruth.source || nodeAddressSource,
-      requestedProvider: candidate.finalRouteTruth.requestedProvider || requestedProviderProjection,
-      selectedProvider: candidate.finalRouteTruth.selectedProvider || selectedProviderProjection,
-      executedProvider: candidate.finalRouteTruth.executedProvider || executedProviderProjection,
-      fallbackActive: candidate.finalRouteTruth.fallbackActive ?? candidate.fallbackActive ?? false,
-      uiReachabilityState: normalizeUiReachabilityState(
-        candidate.finalRouteTruth.uiReachabilityState,
-        candidate.finalRouteTruth.uiReachable,
-      ),
-    }
-    : {
-      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
-      routeKind,
-      preferredRoute: candidate.preferredRoute || routeKind,
-      preferredTarget,
-      actualTarget: actualTargetUsed,
-      source: nodeAddressSource,
-      requestedProvider: requestedProviderProjection,
-      selectedProvider: selectedProviderProjection,
-      executedProvider: executedProviderProjection,
-      fallbackActive: candidate.fallbackActive === true,
-      uiReachabilityState: 'unknown',
-    };
-
   return {
     ...baseModel,
     ...candidate,
     runtimeContext,
     finalRoute,
     finalRouteTruth,
+    runtimeTruth,
     guardrails,
     routeKind,
     preferredTarget,
