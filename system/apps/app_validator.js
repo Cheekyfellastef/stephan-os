@@ -729,10 +729,18 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
               ? 'Home PC node is reachable, but the published client route is misconfigured'
               : 'Home PC node is reachable on the LAN')
             : (preferredHomeNode?.host
-              ? (homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable')
+              ? [
+                homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable',
+                homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
+                homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
+              ].filter(Boolean).join(' ')
               : 'Home PC node is not configured'),
           blockedReason: !homeNodeDiscovery.reachable && preferredHomeNode?.host
-            ? (homeNodeDiscovery.message || 'health probe could not confirm the home-node route')
+            ? [
+              homeNodeDiscovery.message || 'health probe could not confirm the home-node route',
+              homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
+              homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
+            ].filter(Boolean).join(' ')
             : (!preferredHomeNode?.host ? 'home node is not configured' : ''),
         },
         dist: {

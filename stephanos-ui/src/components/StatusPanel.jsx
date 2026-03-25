@@ -42,6 +42,7 @@ export default function StatusPanel() {
     workingMemory,
     projectMemory,
     sessionRestoreDiagnostics,
+    homeNodeStatus,
   } = useAIStore();
 
   const safeApiStatus = apiStatus || {};
@@ -60,6 +61,19 @@ export default function StatusPanel() {
   const providerEligibility = finalRoute.providerEligibility ?? {};
   const reachability = finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
+  const homeNodeDiagnostics = runtimeContext.routeDiagnostics?.['home-node'] ?? {};
+  const homeNodeAttempts = Array.isArray(homeNodeStatus?.attempts) ? homeNodeStatus.attempts : [];
+  const homeNodeAttemptSummary = homeNodeAttempts.length
+    ? homeNodeAttempts.map((attempt) => {
+      const base = `${attempt.source || 'unknown'}:${attempt.host || 'unknown'}`;
+      return attempt.ok
+        ? `${base} accepted`
+        : `${base} rejected (${attempt.failureDetail || attempt.reason || 'unknown failure'})`;
+    }).join(' | ')
+    : 'no probe attempts captured';
+  const homeNodeActionMatch = String(homeNodeDiagnostics.blockedReason || homeNodeDiagnostics.reason || '')
+    .match(/Action:\s*([^]+)$/i);
+  const homeNodeAction = homeNodeActionMatch?.[1]?.trim() || 'n/a';
   const guardrails = runtimeStatus.guardrails ?? { summary: { total: 0, errors: 0, warnings: 0 }, errors: [], warnings: [] };
   const primaryGuardrailMessage = guardrails.errors?.[0]?.message || guardrails.warnings?.[0]?.message || 'none';
   const executionTruth = isBusy
@@ -121,6 +135,10 @@ export default function StatusPanel() {
         <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
+        <li>Home Node Diagnostic Reason: {homeNodeDiagnostics.reason || 'n/a'}</li>
+        <li>Home Node Diagnostic Blocked Reason: {homeNodeDiagnostics.blockedReason || 'n/a'}</li>
+        <li>Home Node Candidate Attempts: {homeNodeAttemptSummary}</li>
+        <li>Home Node Operator Action: {homeNodeAction}</li>
         <li>Node Address Source: {runtimeStatus.nodeAddressSource || 'unknown'}</li>
         <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
