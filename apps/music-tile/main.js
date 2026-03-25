@@ -1,6 +1,7 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { buildJourney } from './engine/journeyBuilder.js';
 import { DEFAULT_SELECTION, loadMusicTileState, saveMusicTileState, resetMusicTileState } from './state/musicTileState.js';
+import { resolveYouTubeLink } from './utils/youtubeLinkResolver.js';
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -65,13 +66,16 @@ function renderJourney(result) {
     return;
   }
 
-  elements.journey.innerHTML = result.journey.map((track, index) => `
-    <li class="journey-item">
+  elements.journey.innerHTML = result.journey.map((track, index) => {
+    const link = resolveYouTubeLink(track);
+    return `
+    <li class="journey-item" data-link-mode="${link.mode}">
       <div><strong>${index + 1}. ${track.title}</strong> — ${track.artist}</div>
-      <div class="track-meta">~${track.approximateBpm} BPM • ${track.notes}</div>
-      <div class="track-actions"><a href="${track.youtubeUrl}" target="_blank" rel="noopener noreferrer">Open on YouTube</a></div>
+      <div class="track-meta">~${track.approximateBpm} BPM • ${track.notes} • Link mode: ${link.mode}</div>
+      <div class="track-actions"><a href="${link.url}" target="_blank" rel="noopener noreferrer">${link.actionLabel}</a></div>
     </li>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderDebug() {
@@ -124,18 +128,20 @@ function resetSelection() {
 
 function openFirstTrack() {
   const first = state.lastJourney?.journey?.[0];
-  if (!first?.youtubeUrl) {
+  if (!first) {
     return;
   }
 
-  window.open(first.youtubeUrl, '_blank', 'noopener,noreferrer');
+  const link = resolveYouTubeLink(first);
+  window.open(link.url, '_blank', 'noopener,noreferrer');
 }
 
 function openFullJourney() {
   const tracks = state.lastJourney?.journey || [];
   tracks.forEach((track, index) => {
     window.setTimeout(() => {
-      window.open(track.youtubeUrl, '_blank', 'noopener,noreferrer');
+      const link = resolveYouTubeLink(track);
+      window.open(link.url, '_blank', 'noopener,noreferrer');
     }, index * 250);
   });
 }
