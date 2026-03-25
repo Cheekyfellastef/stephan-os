@@ -130,7 +130,7 @@ export default function StatusPanel() {
         <li>Winning Route Reason: {routeTruthView.winnerReason}</li>
         <li>Preferred Target: {routeTruthView.preferredTarget}</li>
         <li>Actual Target Used: {routeTruthView.actualTarget}</li>
-        <li>Final Route Source: {finalRoute.source || 'unknown'}</li>
+        <li>Final Route Source: {routeTruthView.source}</li>
         <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
         <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
         <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>
@@ -142,9 +142,9 @@ export default function StatusPanel() {
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>
         <li>Guardrails Detail: {primaryGuardrailMessage}</li>
-        <li>Local Node Reachable: {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
-        <li>Cloud Route Reachable: {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
-        <li>Home Node Reachable: {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
+        <li>Local Node Reachable (diagnostic): {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
+        <li>Cloud Route Reachable (diagnostic): {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
+        <li>Home Node Reachable (diagnostic): {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>
         <li>Home Node Diagnostic Reason: {homeNodeDiagnostics.reason || 'n/a'}</li>
         <li>Home Node Diagnostic Blocked Reason: {homeNodeDiagnostics.blockedReason || 'n/a'}</li>
         <li>Home Node Candidate Attempts: {homeNodeAttemptSummary}</li>

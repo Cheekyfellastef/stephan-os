@@ -437,3 +437,51 @@ test('createRuntimeStatusModel guardrails preserve request-host promotion for re
   assert.equal(status.guardrails.summary.errors, 0);
   assert.equal(status.guardrails.summary.warnings, 0);
 });
+
+test('createRuntimeStatusModel reports uiReachabilityState as unknown until route truth is known', () => {
+  const pending = createRuntimeStatusModel({
+    validationState: 'launching',
+    backendAvailable: false,
+    providerHealth: {},
+    runtimeContext: {},
+  });
+
+  const ready = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      nodeAddressSource: 'manual',
+      homeNode: {
+        host: '192.168.0.198',
+        uiPort: 5173,
+        backendPort: 8787,
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+        configured: true,
+        reachable: true,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          uiReachable: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+    },
+  });
+
+  assert.equal(pending.finalRouteTruth.uiReachabilityState, 'unknown');
+  assert.equal(ready.finalRouteTruth.uiReachabilityState, 'reachable');
+});

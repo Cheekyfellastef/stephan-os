@@ -6,6 +6,17 @@ function asBooleanState(value) {
   return 'unknown';
 }
 
+function normalizeUiReachabilityState(value, legacyBoolean) {
+  if (value === 'reachable') return 'yes';
+  if (value === 'unreachable') return 'no';
+  if (value === 'unknown') return 'unknown';
+  return asBooleanState(legacyBoolean);
+}
+
+// UI truth projection contract:
+// - runtimeStatus.finalRouteTruth is canonical runtime truth.
+// - this helper is the only approved projection layer for route/provider/operator UI labels.
+// - top-level runtimeStatus route/provider fields are compatibility diagnostics, not authoritative display truth.
 export function buildFinalRouteTruthView(runtimeStatusModel) {
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
@@ -19,7 +30,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
 
   const uiReachableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
-    : asBooleanState(finalRouteTruth.uiReachable);
+    : normalizeUiReachabilityState(finalRouteTruth.uiReachabilityState, finalRouteTruth.uiReachable);
   const routeUsableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
     : asBooleanState(finalRouteTruth.routeUsable);

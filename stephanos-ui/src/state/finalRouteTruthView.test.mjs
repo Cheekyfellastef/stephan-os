@@ -49,6 +49,19 @@ test('buildFinalRouteTruthView marks uiReachable and route usability unknown whi
   assert.equal(view.routeUsableState, 'unknown');
 });
 
+test('buildFinalRouteTruthView prefers tri-state ui reachability from finalRouteTruth', () => {
+  const view = buildFinalRouteTruthView({
+    appLaunchState: 'ready',
+    finalRouteTruth: {
+      routeKind: 'home-node',
+      uiReachabilityState: 'unreachable',
+      uiReachable: true,
+    },
+  });
+
+  assert.equal(view.uiReachableState, 'no');
+});
+
 test('summarizeHomeNodeUsabilityTruth prevents backend-only availability inflation', () => {
   const truth = summarizeHomeNodeUsabilityTruth({
     backendReachable: true,

@@ -25,7 +25,10 @@
 ## Runtime truth contract
 - The canonical route/provider/runtime decision snapshot is `runtimeStatusModel.finalRouteTruth` from `shared/runtime/runtimeStatusModel.mjs`.
 - Route selection is enforced once in the shared runtime status pipeline; UI diagnostics must render this snapshot instead of recomputing route truth.
-- `finalRouteTruth` includes session kind, selected route, reachability/usable flags (backend + UI), requested/selected/executed provider truth, fallback activity, and operator recovery guidance.
+- `buildFinalRouteTruthView` (`stephanos-ui/src/state/finalRouteTruthView.js`) is the approved UI projection layer for route kind, provider stage labels, preferred/actual target, reachability wording, fallback state, and operator reason text.
+- `finalRouteTruth.uiReachabilityState` is tri-state runtime truth (`reachable | unreachable | unknown`); legacy boolean `uiReachable` is compatibility-only.
+- Top-level compatibility fields (`routeKind`, `preferredTarget`, `actualTargetUsed`, `selectedProvider`, `activeProvider`) are non-authoritative and diagnostic-only.
+- Home-node usability requires full truth (backend + UI/client reachability), not backend reachability alone.
 
 
 ## See also

@@ -50,6 +50,7 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     actualTarget: 'unavailable',
     source: 'unknown',
     backendReachable: false,
+    uiReachabilityState: 'unknown',
     uiReachable: false,
     routeUsable: false,
     homeNodeUsable: false,
@@ -68,6 +69,16 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
 
 function normalizeArray(value, fallback = []) {
   return Array.isArray(value) ? value : fallback;
+}
+
+function normalizeUiReachabilityState(value, legacyBoolean) {
+  if (value === 'reachable' || value === 'unreachable' || value === 'unknown') {
+    return value;
+  }
+
+  if (legacyBoolean === true) return 'reachable';
+  if (legacyBoolean === false) return 'unreachable';
+  return 'unknown';
 }
 
 export function ensureRuntimeStatusModel(runtimeStatusModel) {
@@ -150,6 +161,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       selectedProvider: candidate.finalRouteTruth.selectedProvider || selectedProviderProjection,
       executedProvider: candidate.finalRouteTruth.executedProvider || executedProviderProjection,
       fallbackActive: candidate.finalRouteTruth.fallbackActive ?? candidate.fallbackActive ?? false,
+      uiReachabilityState: normalizeUiReachabilityState(
+        candidate.finalRouteTruth.uiReachabilityState,
+        candidate.finalRouteTruth.uiReachable,
+      ),
     }
     : {
       ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
@@ -162,6 +177,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       selectedProvider: selectedProviderProjection,
       executedProvider: executedProviderProjection,
       fallbackActive: candidate.fallbackActive === true,
+      uiReachabilityState: 'unknown',
     };
 
   return {
