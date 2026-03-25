@@ -15,6 +15,7 @@ import {
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { useAIStore } from '../state/aiStore';
+import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -57,6 +58,7 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
     backendPort: DEFAULT_HOME_NODE_BACKEND_PORT,
   }).backendUrl;
 }
+
 
 
 function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
@@ -302,20 +304,29 @@ export function useAIConsole() {
             blockedReason: 'Force Local On This PC is enabled for this browser session.',
           },
         } : {}),
-        ...(!localDesktopSession && adoptedHomeNode.homeNode ? {
-          'home-node': {
-            configured: true,
-            available: Boolean(health.ok),
-            misconfigured: false,
-            target: actualTargetUsed,
-            actualTarget: actualTargetUsed,
-            source: nodeAddressSource,
-            reason: health.ok
-              ? 'Home PC node is reachable on the LAN'
-              : 'Home PC node is configured but currently unreachable',
-            blockedReason: health.ok ? '' : 'health probe could not confirm the home-node route',
-          },
-        } : {}),
+        ...(!localDesktopSession && adoptedHomeNode.homeNode ? (() => {
+          const backendReachable = Boolean(health.ok);
+          const uiReachable = resolveUiReachabilityFromHealth(health);
+          const usabilityTruth = summarizeHomeNodeUsabilityTruth({ backendReachable, uiReachable, source: nodeAddressSource });
+          return {
+            'home-node': {
+              configured: true,
+              available: usabilityTruth.usable,
+              backendReachable: usabilityTruth.backendReachable,
+              uiReachable: usabilityTruth.uiReachable,
+              usable: usabilityTruth.usable,
+              fallbackActive: usabilityTruth.fallbackActive,
+              misconfigured: false,
+              target: actualTargetUsed,
+              actualTarget: actualTargetUsed,
+              source: nodeAddressSource,
+              reason: usabilityTruth.routeReason,
+              blockedReason: usabilityTruth.operatorReason,
+              routeReason: usabilityTruth.routeReason,
+              operatorReason: usabilityTruth.operatorReason,
+            },
+          };
+        })() : {}),
         ...(localDesktopSession ? {
           'local-desktop': {
             configured: true,

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
+import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import CommandResultCard from './CommandResultCard';
 import CollapsiblePanel from './CollapsiblePanel';
 
@@ -28,6 +29,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: safeApiStatus.frontendOrigin })
     : null;
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const showStartupPlaceholder = safeCommandHistory.length === 0
     && (runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking');
 
@@ -58,14 +60,14 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       <div className={`api-banner ${runtimeStatus.statusTone}`}>
         <strong>{runtimeStatus.headline}</strong>
         <span>{runtimeStatus.dependencySummary}</span>
-        <span>Route kind: {runtimeStatus.routeKind} · Preferred target: {runtimeStatus.preferredTarget || 'unavailable'} · Source: {runtimeStatus.nodeAddressSource || 'unknown'}</span>
+        <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
       </div>
       {provider === 'ollama' && !runtimeStatus.localAvailable ? (
         <div className="api-banner degraded">
           <strong>{runtimeStatus.cloudAvailable ? 'Cloud route available' : ollamaState.title}</strong>
           <span>
             {runtimeStatus.cloudAvailable
-              ? `Stephanos can keep routing requests through ${runtimeStatus.activeProvider} while your local Ollama node is offline.`
+              ? `Stephanos can keep routing requests through ${routeTruthView.executedProvider} while your local Ollama node is offline.`
               : (ollamaState.helpText[0] || 'Bring Ollama online or configure a cloud provider.')}
           </span>
         </div>

@@ -1,6 +1,7 @@
 import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
+import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -60,6 +61,7 @@ export default function StatusPanel() {
   // finalRoute is the sole resolved route truth for UI rendering; guardrails report when any projection drifts.
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
+  const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const providerEligibility = finalRoute.providerEligibility ?? {};
   const reachability = finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
@@ -115,24 +117,24 @@ export default function StatusPanel() {
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
         <li>Effective Route Mode: {runtimeStatus.effectiveRouteMode}</li>
-        <li>Requested Provider: {runtimeStatus.selectedProvider}</li>
-        <li>Route Selected Provider: {runtimeStatus.routeSelectedProvider}</li>
-        <li>Active Provider: {runtimeStatus.activeProvider}</li>
+        <li>Requested Provider: {routeTruthView.requestedProvider}</li>
+        <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
+        <li>Active Provider: {routeTruthView.executedProvider}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
         <li>Session Kind: {finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
-        <li>Route Kind: {runtimeStatus.routeKind}</li>
-        <li>Preferred Route: {finalRouteTruth.preferredRoute || runtimeStatus.preferredRoute || 'unavailable'}</li>
-        <li>Winning Route Reason: {finalRouteTruth.winnerReason || finalRoute.winnerReason || runtimeStatus.routeSummary || 'n/a'}</li>
-        <li>Preferred Target: {runtimeStatus.preferredTarget || 'unavailable'}</li>
-        <li>Actual Target Used: {runtimeStatus.actualTargetUsed || 'unavailable'}</li>
+        <li>Route Kind: {routeTruthView.routeKind}</li>
+        <li>Preferred Route: {routeTruthView.preferredRoute}</li>
+        <li>Winning Route Reason: {routeTruthView.winnerReason}</li>
+        <li>Preferred Target: {routeTruthView.preferredTarget}</li>
+        <li>Actual Target Used: {routeTruthView.actualTarget}</li>
         <li>Final Route Source: {finalRoute.source || 'unknown'}</li>
-        <li>Final Route Reachable: {reachability.selectedRouteReachable ? 'yes' : 'pending'}</li>
-        <li>Selected Route UI Reachable: {finalRouteTruth.uiReachable ? 'yes' : 'no'}</li>
-        <li>Selected Route Usable: {finalRouteTruth.routeUsable ? 'yes' : 'no'}</li>
-        <li>Home Node Usable: {finalRouteTruth.homeNodeUsable ? 'yes' : 'no'}</li>
+        <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
+        <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
+        <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>
+        <li>Home Node Usable: {routeTruthView.homeNodeUsableState}</li>
         <li>Backend-Mediated Providers Eligible: {providerEligibility.backendMediatedProviders ? 'yes' : 'pending'}</li>
         <li>Local Providers Eligible: {providerEligibility.localProviders ? 'yes' : 'pending'}</li>
         <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
@@ -147,8 +149,8 @@ export default function StatusPanel() {
         <li>Home Node Diagnostic Blocked Reason: {homeNodeDiagnostics.blockedReason || 'n/a'}</li>
         <li>Home Node Candidate Attempts: {homeNodeAttemptSummary}</li>
         <li>Home Node Operator Action: {homeNodeAction}</li>
-        <li>Node Address Source: {runtimeStatus.nodeAddressSource || 'unknown'}</li>
-        <li>Backend Reachable: {runtimeStatus.backendAvailable ? 'yes' : 'no'}</li>
+        <li>Node Address Source: {routeTruthView.source}</li>
+        <li>Backend Reachable: {routeTruthView.backendReachableState}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
         <li>Ready Cloud Providers: {readyCloudProviders}</li>
@@ -181,8 +183,8 @@ export default function StatusPanel() {
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
-        <li>Execution Provider (Truth): {finalRouteTruth.executedProvider || runtimeStatus.activeProvider || 'n/a'}</li>
-        <li>Recovery Guidance: {finalRouteTruth.operatorAction || homeNodeAction || 'n/a'}</li>
+        <li>Execution Provider (Truth): {routeTruthView.executedProvider}</li>
+        <li>Recovery Guidance: {routeTruthView.operatorReason || homeNodeAction || 'n/a'}</li>
         <li>Attempt Order: {attemptOrder}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>
         <li>Session Workspace: mission-console</li>
