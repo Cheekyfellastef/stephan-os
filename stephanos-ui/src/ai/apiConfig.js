@@ -31,11 +31,27 @@ function getStoredHomeNodeContext() {
 function getDefaultApiBaseUrl() {
   const currentOrigin = getFrontendOrigin();
   const { manualNode, lastKnownNode } = getStoredHomeNodeContext();
-  return resolveStephanosBackendBaseUrl({
+  const resolvedBaseUrl = resolveStephanosBackendBaseUrl({
     currentOrigin,
     manualNode,
     lastKnownNode,
-  }) || DEFAULT_API_BASE_URL;
+  });
+  const currentHost = (() => {
+    try {
+      return new URL(currentOrigin).hostname || '';
+    } catch {
+      return '';
+    }
+  })();
+  const localDesktopSession = !currentHost || isLoopbackHost(currentHost);
+
+  if (resolvedBaseUrl) {
+    return resolvedBaseUrl;
+  }
+
+  return localDesktopSession
+    ? DEFAULT_API_BASE_URL
+    : currentOrigin;
 }
 
 function normalizeBaseUrl(value) {

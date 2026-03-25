@@ -199,3 +199,36 @@ test('resolveHomeNodeDraftSync does not replace non-empty draft with empty persi
   assert.equal(syncResult.overwritten, false);
   assert.equal(syncResult.skippedBecauseEmptyPreference, true);
 });
+
+test('ProviderToggle autofocuses home-node input when hosted-web session needs manual routing', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  globalThis.window = {
+    location: {
+      origin: 'https://cheekyfellastef.github.io',
+    },
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  };
+  globalThis.localStorage = globalThis.window.localStorage;
+
+  try {
+    globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore({
+      homeNodeStatus: { state: 'unreachable', detail: 'Manual home node required.', attempts: [] },
+    });
+    const rendered = renderProviderToggle();
+    const hostInputMarkup = rendered.match(/<span>Home PC Host or IP<\/span><input[^>]+>/i)?.[0] || '';
+    assert.match(hostInputMarkup, /autofocus/i);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
