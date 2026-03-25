@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Music Tile</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern">
+    <header class="panel header-panel">
+      <h1>Music Tile</h1>
+      <p>Intent-driven audiovisual journey builder. Phase 1 uses curated external playback links (YouTube).</p>
+    </header>
+
+    <section class="panel controls-panel">
+      <h2>Control Panel</h2>
+      <div class="control-grid">
+        <label>Origin Era
+          <select id="era-select">
+            <option value="cream-courtyard">Cream Courtyard</option>
+            <option value="uplifting-trance">Uplifting Trance</option>
+            <option value="progressive-bridge">Progressive Bridge</option>
+            <option value="afterlife-modern">Afterlife / Modern</option>
+          </select>
+        </label>
+
+        <label>Energy Curve
+          <select id="energy-select">
+            <option value="flat">Flat</option>
+            <option value="rising">Rising</option>
+            <option value="peaks">Peaks</option>
+          </select>
+        </label>
+
+        <label>Emotion Vector
+          <select id="emotion-select">
+            <option value="euphoric">Euphoric</option>
+            <option value="dark">Dark</option>
+            <option value="reflective">Reflective</option>
+            <option value="transcendent">Transcendent</option>
+          </select>
+        </label>
+
+        <label>Density
+          <select id="density-select">
+            <option value="minimal">Minimal</option>
+            <option value="layered">Layered</option>
+            <option value="full-festival">Full Festival</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="action-row">
+        <button id="build-journey-btn">Build Journey</button>
+        <button id="open-first-btn" class="ghost">Open First Track</button>
+        <button id="open-all-btn" class="ghost">Open Full Journey</button>
+        <button id="reset-btn" class="ghost">Reset</button>
+      </div>
+      <p class="muted">No streaming backend is implemented in Phase 1. Playback launches in external tabs.</p>
+    </section>
+
+    <section class="panel summary-panel">
+      <h2>Session Summary</h2>
+      <div class="summary-grid" id="summary-grid"></div>
+    </section>
+
+    <section class="panel journey-panel">
+      <h2>Recommended Journey</h2>
+      <ol id="journey-list" class="journey-list"></ol>
+    </section>
+
+    <section class="panel debug-panel" id="debug-panel" hidden>
+      <h2>Debug</h2>
+      <pre id="debug-output"></pre>
+    </section>
+
+    <button id="debug-toggle" class="debug-toggle" title="Toggle debug panel">Debug</button>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
