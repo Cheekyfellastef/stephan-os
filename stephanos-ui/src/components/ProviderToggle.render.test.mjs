@@ -148,3 +148,37 @@ test('ProviderToggle keeps Home PC Host or IP input editable', async () => {
   assert.doesNotMatch(hostInputMarkup, /readonly/i);
   assert.doesNotMatch(hostInputMarkup, /disabled/i);
 });
+
+test('resolveHomeNodeDraftSync keeps in-progress edits from being clobbered', async () => {
+  const { resolveHomeNodeDraftSync } = await importBundledModule(
+    path.join(srcRoot, 'components/ProviderToggle.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  const syncResult = resolveHomeNodeDraftSync({
+    currentDraft: { host: '192.168.1.77', uiPort: 5173, backendPort: 8787 },
+    preference: { host: '192.168.1.42', uiPort: 5173, backendPort: 8787 },
+    isEditing: true,
+  });
+
+  assert.equal(syncResult.nextDraft.host, '192.168.1.77');
+  assert.equal(syncResult.overwritten, false);
+  assert.equal(syncResult.skippedBecauseEditing, true);
+});
+
+test('resolveHomeNodeDraftSync applies persisted value when editing is inactive', async () => {
+  const { resolveHomeNodeDraftSync } = await importBundledModule(
+    path.join(srcRoot, 'components/ProviderToggle.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  const syncResult = resolveHomeNodeDraftSync({
+    currentDraft: { host: '192.168.1.77', uiPort: 5173, backendPort: 8787 },
+    preference: { host: '192.168.1.42', uiPort: 5173, backendPort: 8787 },
+    isEditing: false,
+  });
+
+  assert.equal(syncResult.nextDraft.host, '192.168.1.42');
+  assert.equal(syncResult.overwritten, true);
+  assert.equal(syncResult.overwriteSource, 'homeNodePreference-sync');
+});

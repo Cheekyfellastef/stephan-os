@@ -57,6 +57,37 @@ const ROUTE_MODE_COPY = {
   },
 };
 
+function buildHomeNodeDraftFromPreference(homeNodePreference) {
+  return {
+    host: String(homeNodePreference?.host || ''),
+    uiPort: Number(homeNodePreference?.uiPort) || 5173,
+    backendPort: Number(homeNodePreference?.backendPort) || 8787,
+  };
+}
+
+export function resolveHomeNodeDraftSync({ currentDraft, preference, isEditing }) {
+  const nextFromPreference = buildHomeNodeDraftFromPreference(preference);
+  if (isEditing) {
+    return {
+      nextDraft: currentDraft,
+      overwritten: false,
+      overwriteSource: '',
+      skippedBecauseEditing: true,
+    };
+  }
+
+  const overwritten = String(currentDraft?.host || '') !== String(nextFromPreference.host || '')
+    || Number(currentDraft?.uiPort) !== Number(nextFromPreference.uiPort)
+    || Number(currentDraft?.backendPort) !== Number(nextFromPreference.backendPort);
+
+  return {
+    nextDraft: nextFromPreference,
+    overwritten,
+    overwriteSource: overwritten ? 'homeNodePreference-sync' : '',
+    skippedBecauseEditing: false,
+  };
+}
+
 function renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }) {
 
   return (
@@ -111,24 +142,40 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [isAutoFindingOllama, setIsAutoFindingOllama] = useState(false);
   const [ollamaDiscovery, setOllamaDiscovery] = useState(null);
   const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
-  const [homeNodeDraft, setHomeNodeDraft] = useState(() => ({
-    host: String(homeNodePreference?.host || ''),
-    uiPort: Number(homeNodePreference?.uiPort) || 5173,
-    backendPort: Number(homeNodePreference?.backendPort) || 8787,
-  }));
+  const [homeNodeDraft, setHomeNodeDraft] = useState(() => buildHomeNodeDraftFromPreference(homeNodePreference));
+  const [isEditingHomeNode, setIsEditingHomeNode] = useState(false);
 
   useEffect(() => {
-    setHomeNodeDraft({
-      host: String(homeNodePreference?.host || ''),
-      uiPort: Number(homeNodePreference?.uiPort) || 5173,
-      backendPort: Number(homeNodePreference?.backendPort) || 8787,
+    const syncResult = resolveHomeNodeDraftSync({
+      currentDraft: homeNodeDraft,
+      preference: homeNodePreference,
+      isEditing: isEditingHomeNode,
     });
-  }, [homeNodePreference?.host, homeNodePreference?.uiPort, homeNodePreference?.backendPort]);
+    setHomeNodeDraft(syncResult.nextDraft);
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      homeNodeInputStateOverwritten: syncResult.overwritten,
+      homeNodeInputOverwriteSource: syncResult.overwriteSource || (syncResult.skippedBecauseEditing ? 'none:editing-active' : 'none'),
+    }));
+  }, [homeNodePreference?.host, homeNodePreference?.uiPort, homeNodePreference?.backendPort, isEditingHomeNode]);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: true, providerToggleMarker: PROVIDER_COMPONENT_MARKER }));
     return () => setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: false }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    const ollamaDraft = getDraftProviderConfig('ollama');
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      homeNodeInputDraftValue: String(homeNodeDraft.host || ''),
+      homeNodeInputSavedValue: String(homeNodePreference?.host || ''),
+      homeNodeInputEditingActive: isEditingHomeNode,
+      backendUrlInUse: String(runtimeConfig.baseUrl || ''),
+      ollamaBaseUrlInUse: String(ollamaDraft?.baseURL || ''),
+      requestedProvider: provider,
+    }));
+  }, [getDraftProviderConfig, homeNodeDraft.host, homeNodePreference?.host, isEditingHomeNode, provider, runtimeConfig.baseUrl, setUiDiagnostics]);
 
   const ollamaModelOptions = useMemo(() => {
     const draft = getDraftProviderConfig('ollama');
@@ -240,6 +287,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       backendPort: homeNodeDraft.backendPort,
       source: 'manual',
     });
+    setIsEditingHomeNode(false);
     setUiDiagnostics((prev) => ({
       ...prev,
       homeNodeManualHostState: 'saved',
@@ -250,6 +298,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
 
   const handleClearHomeNode = () => {
     setHomeNodeDraft({ host: '', uiPort: 5173, backendPort: 8787 });
+    setIsEditingHomeNode(false);
     setHomeNodePreference(null);
     onTestConnection();
   };
@@ -323,7 +372,27 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
             type="text"
             placeholder="192.168.1.42"
             value={homeNodeDraft.host}
-            onChange={(event) => setHomeNodeDraft((prev) => ({ ...prev, host: event.target.value }))}
+            onMouseDown={() => setUiDiagnostics((prev) => ({ ...prev, homeNodeInputClickReceived: true }))}
+            onClick={() => setUiDiagnostics((prev) => ({ ...prev, homeNodeInputClickReceived: true }))}
+            onFocus={() => {
+              setIsEditingHomeNode(true);
+              setUiDiagnostics((prev) => ({ ...prev, homeNodeInputFocusReceived: true, homeNodeInputEditingActive: true }));
+            }}
+            onBlur={() => {
+              setIsEditingHomeNode(false);
+              setUiDiagnostics((prev) => ({ ...prev, homeNodeInputEditingActive: false }));
+            }}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setHomeNodeDraft((prev) => ({ ...prev, host: nextValue }));
+              setUiDiagnostics((prev) => ({
+                ...prev,
+                homeNodeInputEventReceived: true,
+                homeNodeInputStateUpdated: true,
+                homeNodeInputDraftValue: nextValue,
+              }));
+            }}
+            onPaste={() => setUiDiagnostics((prev) => ({ ...prev, homeNodeInputPasteReceived: true }))}
           />
         </label>
         <label>
