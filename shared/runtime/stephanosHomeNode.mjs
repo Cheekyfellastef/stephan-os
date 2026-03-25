@@ -61,6 +61,12 @@ export function isMalformedStephanosHost(hostname = '') {
   if (!value) {
     return true;
   }
+  if (!/[a-z0-9]/.test(value)) {
+    return true;
+  }
+  if (value.startsWith('.') || value.endsWith('.') || value.includes('..')) {
+    return true;
+  }
 
   if (/^\d+$/.test(value)) {
     return true;
@@ -95,16 +101,17 @@ export function extractHostname(value = '') {
 
 export function createStephanosHomeNodeUrls({ host = '', uiPort = DEFAULT_HOME_NODE_UI_PORT, backendPort = DEFAULT_HOME_NODE_BACKEND_PORT, distPort = DEFAULT_HOME_NODE_DIST_PORT } = {}) {
   const normalizedHost = extractHostname(host);
+  const validHost = normalizedHost && !isMalformedStephanosHost(normalizedHost) ? normalizedHost : '';
   const resolvedUiPort = normalizePort(uiPort, DEFAULT_HOME_NODE_UI_PORT);
   const resolvedBackendPort = normalizePort(backendPort, DEFAULT_HOME_NODE_BACKEND_PORT);
   const resolvedDistPort = normalizePort(distPort, DEFAULT_HOME_NODE_DIST_PORT);
-  const uiOrigin = normalizedHost ? `http://${normalizedHost}:${resolvedUiPort}` : '';
-  const backendOrigin = normalizedHost ? `http://${normalizedHost}:${resolvedBackendPort}` : '';
-  const distOrigin = normalizedHost ? `http://${normalizedHost}:${resolvedDistPort}` : '';
+  const uiOrigin = validHost ? `http://${validHost}:${resolvedUiPort}` : '';
+  const backendOrigin = validHost ? `http://${validHost}:${resolvedBackendPort}` : '';
+  const distOrigin = validHost ? `http://${validHost}:${resolvedDistPort}` : '';
 
   return {
-    host: normalizedHost,
-    ip: isPrivateIpv4Host(normalizedHost) ? normalizedHost : '',
+    host: validHost,
+    ip: isPrivateIpv4Host(validHost) ? validHost : '',
     uiPort: resolvedUiPort,
     backendPort: resolvedBackendPort,
     distPort: resolvedDistPort,
@@ -794,7 +801,10 @@ export function resolveStephanosBackendBaseUrl({
       : null;
 
   if (preferredNode?.backendUrl) {
-    return preferredNode.backendUrl;
+    const backendParsed = safeUrlParse(preferredNode.backendUrl);
+    if (backendParsed?.origin && !isMalformedStephanosHost(backendParsed.hostname || '')) {
+      return backendParsed.origin;
+    }
   }
 
   return `http://localhost:${DEFAULT_HOME_NODE_BACKEND_PORT}`;

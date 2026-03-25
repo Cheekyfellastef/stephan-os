@@ -15,6 +15,7 @@ import {
 } from '../ai/providerConfig';
 import {
   clearPersistedStephanosHomeNode,
+  isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
   persistStephanosHomeNodePreference,
   persistStephanosLastKnownNode,
@@ -580,9 +581,12 @@ export function AIStoreProvider({ children }) {
   const isDraftDirty = (providerKey) => JSON.stringify(draftProviderConfigs[providerKey]) !== JSON.stringify(savedProviderConfigs[providerKey]);
 
   const setHomeNodePreference = useCallback((patch = {}) => {
-    const nextPreference = patch === null
+    const normalizedPreference = patch === null
       ? null
       : normalizeStephanosHomeNode({ ...(homeNodePreference || {}), ...patch }, { source: 'manual' });
+    const nextPreference = normalizedPreference && isValidStephanosHomeNode(normalizedPreference)
+      ? normalizedPreference
+      : null;
     setHomeNodePreferenceState(nextPreference);
     if (nextPreference) {
       persistStephanosHomeNodePreference(nextPreference);

@@ -20,6 +20,16 @@ test('createStephanosHomeNodeUrls builds LAN-friendly UI and backend URLs', () =
   assert.equal(urls.backendHealthUrl, 'http://192.168.1.42:8787/api/health');
 });
 
+test('createStephanosHomeNodeUrls rejects malformed hosts and never emits empty-host backend URLs', () => {
+  const malformed = createStephanosHomeNodeUrls({ host: '.' });
+  const empty = createStephanosHomeNodeUrls({ host: '' });
+
+  assert.equal(malformed.backendUrl, '');
+  assert.equal(malformed.backendHealthUrl, '');
+  assert.equal(empty.backendUrl, '');
+  assert.equal(empty.backendHealthUrl, '');
+});
+
 test('normalizeStephanosHomeNode(null) returns a safe empty structure', () => {
   const normalized = normalizeStephanosHomeNode(null, { source: 'manual' });
 
@@ -125,6 +135,20 @@ test('resolveStephanosBackendBaseUrl uses the current LAN host before falling ba
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io', manualNode: normalizeStephanosHomeNode({ host: '192.168.1.42' }) }),
     'http://192.168.1.42:8787',
   );
+});
+
+test('resolveStephanosBackendBaseUrl ignores malformed manual backend URL and falls back safely', () => {
+  const resolved = resolveStephanosBackendBaseUrl({
+    currentOrigin: 'http://localhost:5173',
+    manualNode: {
+      host: '.',
+      backendUrl: 'http://.:8787',
+      source: 'manual',
+    },
+  });
+
+  assert.equal(resolved, 'http://localhost:8787');
+  assert.notEqual(resolved, 'http://.:8787');
 });
 
 test('probeStephanosHomeNode keeps the candidate LAN backend when health still publishes localhost', async () => {
