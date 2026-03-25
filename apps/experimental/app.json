@@ -1,0 +1,7 @@
+{
+  "name": "Experimental",
+  "icon": "🧪",
+  "entry": "dist/index.html",
+  "type": "simulation",
+  "packaging": "vite"
+}
