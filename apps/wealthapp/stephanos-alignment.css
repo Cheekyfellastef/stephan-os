@@ -182,6 +182,7 @@ body.stephanos-wealthapp-body::before {
 
 .stephanos-wealthapp__chart-wrap {
   margin-top: 4px;
+  max-width: 100%;
 }
 
 .stephanos-wealthapp__chart-shell {
@@ -194,7 +195,7 @@ body.stephanos-wealthapp-body::before {
 
 .stephanos-wealthapp__chart-shell .recharts-wrapper,
 .stephanos-wealthapp__chart-shell .recharts-surface {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .stephanos-wealthapp__chart-shell .recharts-cartesian-grid line {
@@ -337,4 +338,43 @@ body.stephanos-wealthapp-body::before {
 
 .stephanos-wealthapp__import-status[data-tone='info'] {
   color: rgba(226, 232, 240, 0.92);
+}
+
+@media (max-width: 430px) {
+  #root {
+    padding: 12px 10px 20px;
+  }
+
+  .stephanos-wealthapp {
+    gap: 10px;
+    padding: 14px !important;
+    border-radius: 16px;
+  }
+
+  .stephanos-wealthapp__slider {
+    padding: 10px 12px;
+  }
+
+  .stephanos-wealthapp__chart-wrap {
+    width: 100% !important;
+  }
+
+  .stephanos-wealthapp__chart-shell {
+    padding: 12px 10px 10px !important;
+    border-radius: 16px;
+  }
+
+  .stephanos-wealthapp__chart-shell .recharts-default-legend {
+    gap: 8px 10px;
+    margin-top: 8px !important;
+    padding: 8px 10px;
+  }
+
+  .stephanos-wealthapp__chart-shell .recharts-legend-item {
+    margin-right: 0 !important;
+  }
+
+  .stephanos-wealthapp__chart-shell .recharts-legend-item-text {
+    font-size: 0.78rem;
+  }
 }
