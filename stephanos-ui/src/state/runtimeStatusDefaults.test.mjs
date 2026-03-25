@@ -46,3 +46,20 @@ test('ensureRuntimeStatusModel projects requested/selected/executed provider tru
   assert.equal(normalized.finalRouteTruth.executedProvider, 'groq');
   assert.equal(normalized.finalRouteTruth.fallbackActive, true);
 });
+
+test('ensureRuntimeStatusModel keeps ui reachability tri-state compatible with legacy boolean', () => {
+  const fromTriState = ensureRuntimeStatusModel({
+    finalRouteTruth: {
+      uiReachabilityState: 'reachable',
+      uiReachable: false,
+    },
+  });
+  const fromLegacy = ensureRuntimeStatusModel({
+    finalRouteTruth: {
+      uiReachable: true,
+    },
+  });
+
+  assert.equal(fromTriState.finalRouteTruth.uiReachabilityState, 'reachable');
+  assert.equal(fromLegacy.finalRouteTruth.uiReachabilityState, 'reachable');
+});

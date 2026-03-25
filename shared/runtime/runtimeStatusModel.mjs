@@ -263,6 +263,12 @@ function deriveRoutePlan({
   };
 }
 
+function asTriState(value) {
+  if (value === true) return 'reachable';
+  if (value === false) return 'unreachable';
+  return 'unknown';
+}
+
 
 function buildRoutePreference(runtimeContext = {}) {
   if (runtimeContext.deviceContext === 'pc-local-browser') {
@@ -685,6 +691,8 @@ export function buildFinalRouteTruth({
   const selectedEvaluation = nodeRoute?.preferredRoute ? nodeRoute.routeEvaluations?.[nodeRoute.preferredRoute] : null;
   const homeNodeEvaluation = nodeRoute?.routeEvaluations?.['home-node'] || {};
   const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
+  const routeKnown = appLaunchState !== 'pending' && (nodeRoute?.routeKind || 'unavailable') !== 'unavailable';
+  const uiReachabilityState = routeKnown ? asTriState(selectedEvaluation?.uiReachable) : 'unknown';
 
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
@@ -701,7 +709,8 @@ export function buildFinalRouteTruth({
     actualTarget: finalRoute?.actualTarget || '',
     source: finalRoute?.source || runtimeContext.nodeAddressSource || 'route-diagnostics',
     backendReachable: Boolean(backendAvailable),
-    uiReachable: selectedEvaluation?.uiReachable === true,
+    uiReachabilityState,
+    uiReachable: uiReachabilityState === 'reachable',
     routeUsable: selectedEvaluation?.usable === true,
     homeNodeUsable: homeNodeEvaluation?.usable === true,
     localRouteUsable: localEvaluation?.usable === true,
