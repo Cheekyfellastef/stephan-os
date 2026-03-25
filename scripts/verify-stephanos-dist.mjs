@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   createStephanosBuildMetadata,
   DIST_WARNING_BANNER,
@@ -20,6 +21,24 @@ function fail(message) {
 
 const expectedMetadata = createStephanosBuildMetadata();
 
+
+const stephanosAppManifestPath = resolve('apps/stephanos/app.json');
+
+let stephanosAppManifest;
+try {
+  stephanosAppManifest = JSON.parse(readFileSync(stephanosAppManifestPath, 'utf8'));
+} catch {
+  fail('Stephanos app manifest is missing or invalid: apps/stephanos/app.json.');
+}
+
+if (stephanosAppManifest.entry !== 'dist/index.html') {
+  fail(`Stephanos launcher entry must target dist/index.html, found "${stephanosAppManifest.entry}".`);
+}
+
+if (stephanosAppManifest.packaging !== 'vite') {
+  fail(`Stephanos app packaging must be "vite", found "${stephanosAppManifest.packaging}".`);
+}
+
 if (!existsSync(stephanosDistIndexPath)) {
   fail('Stephanos dist is missing: apps/stephanos/dist/index.html. Rebuild with: npm run stephanos:build');
 }
@@ -34,6 +53,27 @@ for (const requiredLine of DIST_WARNING_BANNER.split('\n')) {
 const assetReferences = getDistAssetReferences(indexHtml);
 if (assetReferences.length === 0) {
   fail('Stephanos dist is incomplete: dist/index.html does not reference any relative runtime assets. Rebuild with: npm run stephanos:build');
+}
+
+
+const absoluteAssetReferences = assetReferences.filter((assetPath) => assetPath.startsWith('/'));
+if (absoluteAssetReferences.length > 0) {
+  fail(`Stephanos dist contains absolute asset references (${absoluteAssetReferences.join(', ')}). Rebuild with a relative Vite base (./).`);
+}
+
+const nonDotRelativeAssetReferences = assetReferences.filter((assetPath) => !assetPath.startsWith('./'));
+if (nonDotRelativeAssetReferences.length > 0) {
+  fail(`Stephanos dist asset references must be dot-relative (./...), found: ${nonDotRelativeAssetReferences.join(', ')}.`);
+}
+
+const entryScriptMatches = [...indexHtml.matchAll(/<script\b[^>]+src=["']([^"']+)["'][^>]*><\/script>/g)];
+if (entryScriptMatches.length === 0) {
+  fail('Stephanos dist is missing its script entry tag in dist/index.html. Rebuild with: npm run stephanos:build');
+}
+
+const missingTypeModule = entryScriptMatches.some((match) => !/\btype=["']module["']/.test(match[0]));
+if (missingTypeModule) {
+  fail('Stephanos dist entry scripts must be type="module" for Vite runtime execution. Rebuild with: npm run stephanos:build');
 }
 
 const missingAssets = assetReferences.filter((assetPath) => !existsSync(resolveDistAssetPath(assetPath)));

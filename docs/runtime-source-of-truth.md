@@ -22,6 +22,30 @@
 - Never hand-edit `apps/stephanos/dist/**`; it is generated output.
 - Root launcher files are real, but they are **not** the Mission Console implementation.
 
+
+## Build pipeline (source → dist)
+1. `npm run stephanos:build` executes `scripts/build-stephanos-ui.mjs`.
+2. Build metadata is computed from `stephanos-ui/src/**` + shared runtime/AI source fingerprints.
+3. Vite builds from `stephanos-ui/index.html` + `stephanos-ui/src/main.jsx` into `apps/stephanos/dist` with `base: './'`.
+4. Build output includes:
+   - `apps/stephanos/dist/index.html`
+   - hashed JS/CSS assets under `apps/stephanos/dist/assets/`
+   - runtime metadata in `apps/stephanos/dist/stephanos-build.json` and embedded metadata in `dist/index.html`.
+
+## Verification workflow
+- Run `npm run stephanos:verify` after each build.
+- Verification enforces:
+  - launcher manifest points at `apps/stephanos/dist/index.html` via `entry: "dist/index.html"`
+  - `dist/index.html` exists and contains generated-file banner
+  - script/link assets exist and are dot-relative (`./...`) for GitHub Pages subpath safety
+  - dist metadata matches current source fingerprint and runtime marker
+  - route marker strings prove dist JS came from current source pipeline
+
+## Runtime build marker
+- Stephanos UI displays a visible runtime footer marker rendered from build-time constants (not hardcoded static text).
+- Marker includes build timestamp (`buildTimestamp`), version, git commit, runtime marker token, source path, and fingerprint prefix.
+- To confirm rebuild freshness, run build twice and compare footer `build:` value or `stephanos-build.json` `buildTimestamp`.
+
 ## Runtime truth contract
 - The canonical route/provider/runtime decision snapshot is `runtimeStatusModel.finalRouteTruth` from `shared/runtime/runtimeStatusModel.mjs`.
 - Deterministic per-session runtime adjudication now runs through `shared/runtime/runtimeAdjudicator.mjs` and emits grouped `runtimeStatusModel.runtimeTruth` plus structured `runtimeStatusModel.runtimeAdjudication.issues`.
