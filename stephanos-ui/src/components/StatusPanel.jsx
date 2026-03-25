@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
+import { buildSupportSnapshot } from '../state/supportSnapshot';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -20,6 +22,7 @@ import {
 import CollapsiblePanel from './CollapsiblePanel';
 
 export default function StatusPanel() {
+  const [copyNotice, setCopyNotice] = useState(null);
   const {
     status,
     isBusy,
@@ -116,6 +119,69 @@ export default function StatusPanel() {
   const readyLocalProviders = runtimeStatus.readyLocalProviders.length > 0 ? runtimeStatus.readyLocalProviders.join(', ') : 'pending';
   const attemptOrder = runtimeStatus.attemptOrder.length > 0 ? runtimeStatus.attemptOrder.join(' → ') : 'pending';
   const sessionRestoreReason = safeSessionRestoreDiagnostics.reasons?.[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
+  const browserWindow = typeof window !== 'undefined' ? window : null;
+  const browserNavigator = typeof navigator !== 'undefined' ? navigator : null;
+  const browserDocument = typeof document !== 'undefined' ? document : null;
+  const notifyCopyResult = (message, tone) => {
+    setCopyNotice({ message, tone });
+    globalThis.setTimeout(() => {
+      setCopyNotice((current) => (current?.message === message ? null : current));
+    }, 2800);
+  };
+  const supportSnapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      ...runtimeStatus,
+      uiVersion: STEPHANOS_UI_VERSION,
+      uiBuildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+    },
+    routeTruthView,
+    runtimeSessionTruth,
+    runtimeRouteTruth,
+    runtimeReachabilityTruth,
+    runtimeProviderTruth,
+    runtimeDiagnosticsTruth,
+    runtimeContext,
+    safeApiStatus,
+    statusSummary,
+    origin: browserWindow?.location?.origin,
+    href: browserWindow?.location?.href,
+  });
+
+  const handleCopySupportSnapshot = async () => {
+    if (browserNavigator?.clipboard?.writeText) {
+      try {
+        await browserNavigator.clipboard.writeText(supportSnapshot);
+        notifyCopyResult('Support snapshot copied', 'ready');
+        return;
+      } catch (_error) {
+        // fall through to execCommand fallback
+      }
+    }
+
+    if (!browserDocument?.body || typeof browserDocument.execCommand !== 'function') {
+      notifyCopyResult('Failed to copy support snapshot', 'degraded');
+      return;
+    }
+
+    try {
+      const fallbackArea = browserDocument.createElement('textarea');
+      fallbackArea.value = supportSnapshot;
+      fallbackArea.setAttribute('readonly', 'readonly');
+      fallbackArea.style.position = 'fixed';
+      fallbackArea.style.top = '-1000px';
+      browserDocument.body.appendChild(fallbackArea);
+      fallbackArea.select();
+      const copied = browserDocument.execCommand('copy');
+      browserDocument.body.removeChild(fallbackArea);
+      if (copied) {
+        notifyCopyResult('Support snapshot copied', 'ready');
+      } else {
+        notifyCopyResult('Failed to copy support snapshot', 'degraded');
+      }
+    } catch (_error) {
+      notifyCopyResult('Failed to copy support snapshot', 'degraded');
+    }
+  };
 
   return (
     <CollapsiblePanel
@@ -127,6 +193,16 @@ export default function StatusPanel() {
       isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
     >
+      <div className="status-panel-copy-actions">
+        <button type="button" className="ghost-button" onClick={handleCopySupportSnapshot}>
+          Copy Support Snapshot
+        </button>
+        {copyNotice ? (
+          <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
+            {copyNotice.message}
+          </span>
+        ) : null}
+      </div>
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
