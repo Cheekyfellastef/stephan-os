@@ -223,7 +223,12 @@ export default function StatusPanel() {
       onToggle={() => togglePanel('statusPanel')}
     >
       <div className="status-panel-copy-actions">
-        <button type="button" className="ghost-button" onClick={handleCopySupportSnapshot}>
+        <button
+          type="button"
+          className="status-panel-copy-button"
+          onClick={handleCopySupportSnapshot}
+          aria-label="Copy Support Snapshot"
+        >
           Copy Support Snapshot
         </button>
         {copyNotice ? (
