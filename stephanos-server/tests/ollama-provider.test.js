@@ -28,6 +28,39 @@ test('checkOllamaHealth returns misconfigured result for malformed URL', async (
   assert.deepEqual(health.models, []);
 });
 
+test('checkOllamaHealth falls back to localhost default for empty/undefined/null URL values', async () => {
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }),
+    };
+  };
+
+  try {
+    const empty = await checkOllamaHealth({ baseURL: '' });
+    const undefinedValue = await checkOllamaHealth({ baseURL: undefined });
+    const nil = await checkOllamaHealth({ baseURL: null });
+
+    for (const health of [empty, undefinedValue, nil]) {
+      assert.equal(health.ok, true);
+      assert.equal(health.state, 'CONNECTED');
+      assert.equal(health.baseURL, 'http://localhost:11434');
+      assert.equal(health.endpoint, 'http://localhost:11434/api/tags');
+      assert.deepEqual(health.models, ['gpt-oss:20b']);
+    }
+    assert.deepEqual(calls, [
+      'http://localhost:11434/api/tags',
+      'http://localhost:11434/api/tags',
+      'http://localhost:11434/api/tags',
+    ]);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('checkOllamaHealth preserves normal healthy behavior for valid localhost URL', async () => {
   const calls = [];
   globalThis.fetch = async (url) => {
@@ -66,4 +99,3 @@ test('getProviderHealthSnapshot does not crash when ollama URL is malformed', as
   assert.equal(snapshot.ollama.reason, 'Ollama base URL is missing or invalid');
   assert.equal(snapshot.ollama.config.baseURL, '://bad-url');
 });
-
