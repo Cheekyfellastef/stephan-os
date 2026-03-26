@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
   [switch]$AutoOpen,
-  [switch]$OpenBoth,
   [ValidateSet('launcher-root','vite-dev')]
-  [string]$Mode = 'launcher-root'
+  [string]$Mode = 'launcher-root',
+  [ValidateSet('launcher','runtime','cockpit')]
+  [string]$BootMode = 'cockpit'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,16 +14,6 @@ $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
 $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $viteDevUrl = 'http://localhost:5173/'
-$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherShellUrl }
-$browserTargets = if ($Mode -eq 'vite-dev') {
-  @($viteDevUrl)
-}
-elseif ($OpenBoth.IsPresent) {
-  @($launcherShellUrl, $launcherRuntimeUrl)
-}
-else {
-  @($launcherShellUrl)
-}
 $launcherRootCommand = 'npm run stephanos:serve'
 
 function Write-LiveLog([string]$Message) {
@@ -129,26 +120,53 @@ function Get-PortListenerSnapshot([int]$Port) {
   return @{ Running = $true; ProcessIds = $processIds; ProcessNames = @($processNames | Select-Object -Unique) }
 }
 
-function Open-LocalStephanosBrowser([string]$Url) {
+function Get-CockpitSurfaces([string]$ResolvedBootMode) {
+  $surfaceMap = [ordered]@{
+    launcher = [ordered]@{ Label = 'launcher'; Url = $launcherShellUrl }
+    runtime  = [ordered]@{ Label = 'runtime'; Url = $launcherRuntimeUrl }
+  }
+
+  switch ($ResolvedBootMode) {
+    'launcher' { return @($surfaceMap.launcher) }
+    'runtime' { return @($surfaceMap.runtime) }
+    'cockpit' { return @($surfaceMap.launcher, $surfaceMap.runtime) }
+    default {
+      throw "Unsupported boot mode '$ResolvedBootMode'. Supported modes: launcher, runtime, cockpit."
+    }
+  }
+}
+
+function Open-CockpitSurface([string]$Url, [string]$Label) {
+  Write-LiveLog "Opening $Label: $Url"
   Start-Process -FilePath $Url | Out-Null
 }
 
 try {
+  $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
+  $browserSurfaces = if ($Mode -eq 'vite-dev') {
+    @([ordered]@{ Label = 'vite-dev'; Url = $viteDevUrl })
+  }
+  else {
+    Get-CockpitSurfaces -ResolvedBootMode $resolvedBootMode
+  }
+  $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
+
   $port4173Before = Get-PortListenerSnapshot -Port 4173
   $port5173Before = Get-PortListenerSnapshot -Port 5173
 
   Write-LiveLog "selected ignition mode: $Mode"
+  Write-LiveLog "Boot mode: $resolvedBootMode"
   if ($Mode -eq 'vite-dev') {
     Write-LiveLog "vite-dev target: $viteDevUrl"
+    if ($BootMode -ne 'launcher') {
+      Write-LiveLog "Boot mode '$BootMode' is not used in vite-dev; using launcher surface only"
+    }
   }
   else {
     Write-LiveLog "4173 launcher shell: $launcherShellUrl"
     Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
-    Write-LiveLog "final browser target: $uiUrl"
-    if ($OpenBoth.IsPresent) {
-      Write-LiveLog "open both enabled: $launcherShellUrl + $launcherRuntimeUrl"
-    }
   }
+
   Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
   Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
 
@@ -176,17 +194,20 @@ try {
   Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl
 
   if ($Mode -eq 'vite-dev') {
-    Write-LiveLog "waiting for vite-dev runtime at $uiUrl"
-    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $uiUrl
+    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
+    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
   }
   else {
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
-    Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
+
+    if ($resolvedBootMode -in @('runtime', 'cockpit')) {
+      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl"
+      Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
+    }
   }
 
-  $isLocalhostLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
+  $isLocalhostLaunch = ($browserTargets | Where-Object { $_ -notlike 'http://127.0.0.1:*' -and $_ -notlike 'http://localhost:*' }).Count -eq 0
   $autoOpenEnabled = if ($isLocalhostLaunch) { $AutoOpen.IsPresent } else { $true }
 
   Write-LiveLog 'server started'
@@ -202,8 +223,8 @@ try {
   Write-Host ''
 
   if ($autoOpenEnabled) {
-    foreach ($target in $browserTargets) {
-      Open-LocalStephanosBrowser -Url $target
+    foreach ($surface in $browserSurfaces) {
+      Open-CockpitSurface -Url $surface.Url -Label $surface.Label
     }
   }
 }
