@@ -63,9 +63,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   });
 
   assert.match(snapshot, /Stephanos Support Snapshot/);
-  assert.match(snapshot, /requestedRouteMode: auto/);
-  assert.match(snapshot, /winningReason: cloud route won by adjudicator/);
-  assert.match(snapshot, /providerHealthState: healthy/);
+  assert.match(snapshot, /Requested Route Mode: auto/);
+  assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
+  assert.match(snapshot, /Selected Provider State: healthy/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud: usable \(public route reachable\)/);
   assert.match(snapshot, /invariantWarnings:\n- minor drift detected/);
 });
@@ -85,8 +85,8 @@ test('buildSupportSnapshot prints explicit unavailable markers for empty diagnos
     now: { toISOString: () => '2026-03-25T00:00:02.000Z' },
   });
 
-  assert.match(snapshot, /origin: n\/a/);
-  assert.match(snapshot, /selectedRouteKind: n\/a/);
+  assert.match(snapshot, /Origin: n\/a/);
+  assert.match(snapshot, /Selected Route Kind: n\/a/);
   assert.match(snapshot, /blockingIssues:\n- n\/a/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- n\/a/);
 });
@@ -117,9 +117,9 @@ test('buildSupportSnapshot does not promote selected provider to executable when
     now: { toISOString: () => '2026-03-26T00:00:02.000Z' },
   });
 
-  assert.match(snapshot, /requestedProvider: ollama/);
-  assert.match(snapshot, /selectedProvider: ollama/);
-  assert.match(snapshot, /executableProvider: none/);
-  assert.match(snapshot, /providerHealthState: unknown/);
-  assert.doesNotMatch(snapshot, /executableProvider: ollama/);
+  assert.match(snapshot, /Last Requested Provider: ollama/);
+  assert.match(snapshot, /Selected Provider: ollama/);
+  assert.match(snapshot, /Executable Provider: none/);
+  assert.match(snapshot, /Selected Provider State: unknown/);
+  assert.doesNotMatch(snapshot, /Executable Provider: ollama/);
 });
