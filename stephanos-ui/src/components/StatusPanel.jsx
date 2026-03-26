@@ -121,7 +121,6 @@ export default function StatusPanel() {
   const sessionRestoreReason = safeSessionRestoreDiagnostics.reasons?.[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
   const browserWindow = typeof window !== 'undefined' ? window : null;
   const browserNavigator = typeof navigator !== 'undefined' ? navigator : null;
-  const browserDocument = typeof document !== 'undefined' ? document : null;
   const notifyCopyResult = (message, tone) => {
     setCopyNotice({ message, tone });
     globalThis.setTimeout(() => {
@@ -177,36 +176,14 @@ export default function StatusPanel() {
   });
 
   const handleCopySupportSnapshot = async () => {
-    if (browserNavigator?.clipboard?.writeText) {
-      try {
-        await browserNavigator.clipboard.writeText(supportSnapshot);
-        notifyCopyResult('Support snapshot copied', 'ready');
-        return;
-      } catch (_error) {
-        // fall through to execCommand fallback
-      }
-    }
-
-    if (!browserDocument?.body || typeof browserDocument.execCommand !== 'function') {
+    if (!browserNavigator?.clipboard?.writeText) {
       notifyCopyResult('Copy failed', 'degraded');
       return;
     }
 
     try {
-      const fallbackArea = browserDocument.createElement('textarea');
-      fallbackArea.value = supportSnapshot;
-      fallbackArea.setAttribute('readonly', 'readonly');
-      fallbackArea.style.position = 'fixed';
-      fallbackArea.style.top = '-1000px';
-      browserDocument.body.appendChild(fallbackArea);
-      fallbackArea.select();
-      const copied = browserDocument.execCommand('copy');
-      browserDocument.body.removeChild(fallbackArea);
-      if (copied) {
-        notifyCopyResult('Support snapshot copied', 'ready');
-      } else {
-        notifyCopyResult('Copy failed', 'degraded');
-      }
+      await browserNavigator.clipboard.writeText(supportSnapshot);
+      notifyCopyResult('Support snapshot copied', 'ready');
     } catch (_error) {
       notifyCopyResult('Copy failed', 'degraded');
     }
@@ -221,17 +198,17 @@ export default function StatusPanel() {
       className="status-panel"
       isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
-    >
-      <div className="status-panel-copy-actions">
+      actions={(
         <button type="button" className="ghost-button" onClick={handleCopySupportSnapshot}>
           Copy Support Snapshot
         </button>
-        {copyNotice ? (
-          <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
-            {copyNotice.message}
-          </span>
-        ) : null}
-      </div>
+      )}
+    >
+      {copyNotice ? (
+        <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
+          {copyNotice.message}
+        </span>
+      ) : null}
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
