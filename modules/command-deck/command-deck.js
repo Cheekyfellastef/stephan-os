@@ -46,15 +46,15 @@ function ensureStatusSurface(containerId, className = '') {
     return node;
   }
 
-  const projectsSection = document.getElementById('projects');
-  if (!projectsSection) {
+  const secondaryPanels = document.getElementById('launcher-secondary-panels');
+  if (!secondaryPanels) {
     return null;
   }
 
   node = document.createElement('section');
   node.id = containerId;
   node.className = className;
-  projectsSection.insertBefore(node, projectsSection.querySelector('#project-registry'));
+  secondaryPanels.appendChild(node);
   return node;
 }
 
