@@ -197,6 +197,80 @@ function Test-UrlReady([string]$Url) {
   }
 }
 
+function Test-JavaScriptMime([string]$Url) {
+  try {
+    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 -Headers @{
+      'Cache-Control' = 'no-cache'
+    }
+    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+      return @{
+        Ok = $false
+        StatusCode = $response.StatusCode
+        ContentType = [string]$response.Headers['Content-Type']
+      }
+    }
+
+    $contentType = ([string]$response.Headers['Content-Type']).ToLowerInvariant()
+    return @{
+      Ok = $contentType -eq 'text/javascript; charset=utf-8'
+      StatusCode = $response.StatusCode
+      ContentType = [string]$response.Headers['Content-Type']
+    }
+  }
+  catch {
+    return @{
+      Ok = $false
+      StatusCode = $null
+      ContentType = ''
+    }
+  }
+}
+
+function Test-LauncherShellReusable {
+  $healthReady = Test-UrlReady -Url 'http://127.0.0.1:4173/__stephanos/health'
+  if (-not $healthReady) {
+    return @{
+      Reusable = $false
+      HealthReady = $false
+      RuntimeStatusMime = $null
+      LocalUrlsMime = $null
+    }
+  }
+
+  $runtimeStatusMime = Test-JavaScriptMime -Url 'http://127.0.0.1:4173/shared/runtime/runtimeStatusModel.mjs'
+  $localUrlsMime = Test-JavaScriptMime -Url 'http://127.0.0.1:4173/shared/runtime/stephanosLocalUrls.mjs?v=live-launcher-probe'
+  return @{
+    Reusable = $runtimeStatusMime.Ok -and $localUrlsMime.Ok
+    HealthReady = $true
+    RuntimeStatusMime = $runtimeStatusMime
+    LocalUrlsMime = $localUrlsMime
+  }
+}
+
+function Stop-ProcessOnTcpPort([int]$Port) {
+  $connections = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  if (-not $connections) {
+    $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  }
+
+  if (-not $connections) {
+    Write-LiveLog "no listening process found on port $Port"
+    return
+  }
+
+  $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($processId in $processIds) {
+    try {
+      $process = Get-Process -Id $processId -ErrorAction Stop
+      Write-LiveLog "stopping stale process on port $Port (pid=$processId, name=$($process.ProcessName))"
+      Stop-Process -Id $processId -Force -ErrorAction Stop
+    }
+    catch {
+      Write-LiveLog "failed to stop process on port $Port (pid=$processId): $($_.Exception.Message)"
+    }
+  }
+}
+
 function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
@@ -221,6 +295,28 @@ function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$
   Start-DevWindow -Title $WindowTitle -Command $Command
 }
 
+function Ensure-LauncherShellRunning {
+  Write-LiveLog 'starting launcher shell'
+  $reuseCheck = Test-LauncherShellReusable
+  if ($reuseCheck.Reusable) {
+    Write-LiveLog 'launcher shell already responding with valid JavaScript MIME types; reusing existing process'
+    return
+  }
+
+  if ($reuseCheck.HealthReady) {
+    Write-LiveLog 'launcher shell health endpoint responded but runtime module MIME checks failed; replacing stale 4173 server process'
+    if ($null -ne $reuseCheck.RuntimeStatusMime) {
+      Write-LiveLog "runtimeStatusModel.mjs -> status=$($reuseCheck.RuntimeStatusMime.StatusCode), content-type=$($reuseCheck.RuntimeStatusMime.ContentType)"
+    }
+    if ($null -ne $reuseCheck.LocalUrlsMime) {
+      Write-LiveLog "stephanosLocalUrls.mjs?v=live-launcher-probe -> status=$($reuseCheck.LocalUrlsMime.StatusCode), content-type=$($reuseCheck.LocalUrlsMime.ContentType)"
+    }
+    Stop-ProcessOnTcpPort -Port 4173
+  }
+
+  Start-DevWindow -Title 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
+}
+
 try {
   $launcherState = Get-LauncherState
 
@@ -232,7 +328,7 @@ try {
   Save-LauncherState -State $launcherState
 
   Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
-  Ensure-ProcessRunning -StepLabel 'launcher shell' -HealthUrl 'http://127.0.0.1:4173/__stephanos/health' -WindowTitle 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
+  Ensure-LauncherShellRunning
 
   Write-LiveLog 'waiting for backend'
   Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl

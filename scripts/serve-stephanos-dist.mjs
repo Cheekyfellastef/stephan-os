@@ -319,6 +319,9 @@ if (isMainModule) {
       console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} failed module MIME checks; refusing reuse.`);
       console.error(`[DIST SERVER LIVE] runtimeStatusModel.mjs -> status=${existingServer.moduleMimeChecks?.runtimeStatusModel?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.runtimeStatusModel?.contentType ?? 'n/a'}`);
       console.error(`[DIST SERVER LIVE] stephanosLocalUrls.mjs?v=live-mime-probe -> status=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.contentType ?? 'n/a'}`);
+      console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
+      process.exit(1);
+      return;
     }
 
     console.error(`[DIST SERVER LIVE] Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
