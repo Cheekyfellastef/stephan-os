@@ -6,8 +6,8 @@ set "POWERSHELL_TARGET=%SCRIPT_DIR%Launch-Stephanos-Local.ps1"
 
 echo [LAUNCHER LIVE] PowerShell target: %POWERSHELL_TARGET%
 if "%~1"=="" (
-  echo [LAUNCHER LIVE] No mode argument supplied; defaulting to launcher-root (4173).
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_TARGET%" -Mode launcher-root
+  echo [LAUNCHER LIVE] No arguments supplied; defaulting to -Mode launcher-root -BootMode cockpit -AutoOpen.
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_TARGET%" -Mode launcher-root -BootMode cockpit -AutoOpen
 ) else (
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_TARGET%" %*
 )
