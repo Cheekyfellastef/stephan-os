@@ -1,4 +1,4 @@
-function asText(value, fallback = 'unknown') {
+function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
   return text.length > 0 ? text : fallback;
@@ -6,19 +6,19 @@ function asText(value, fallback = 'unknown') {
 
 function asList(value) {
   if (!Array.isArray(value) || value.length === 0) {
-    return ['- none'];
+    return ['- n/a'];
   }
-  return value.map((item) => `- ${asText(item, 'unknown')}`);
+  return value.map((item) => `- ${asText(item, 'n/a')}`);
 }
 
 function summarizeRouteDiagnostics(routeDiagnostics) {
   if (!routeDiagnostics || typeof routeDiagnostics !== 'object') {
-    return ['- unavailable'];
+    return ['- n/a'];
   }
 
   const entries = Object.entries(routeDiagnostics).slice(0, 4).map(([key, details]) => {
     if (!details || typeof details !== 'object') {
-      return `- ${key}: unavailable`;
+      return `- ${key}: n/a`;
     }
     const state = details.usable === true
       ? 'usable'
@@ -33,7 +33,7 @@ function summarizeRouteDiagnostics(routeDiagnostics) {
     return `- ${key}: ${state} (${reason})`;
   });
 
-  return entries.length > 0 ? entries : ['- unavailable'];
+  return entries.length > 0 ? entries : ['- n/a'];
 }
 
 export function buildSupportSnapshot({
@@ -51,8 +51,8 @@ export function buildSupportSnapshot({
   origin,
   href,
 }) {
-  const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'unknown');
-  const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'unknown');
+  const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
+  const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'n/a');
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || []).map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown');
 
@@ -69,7 +69,7 @@ export function buildSupportSnapshot({
 
   const lines = [
     'Stephanos Support Snapshot',
-    `timestamp: ${asText(now?.toISOString?.(), 'unknown')}`,
+    `timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
     `origin: ${resolvedOrigin}`,
     `url: ${resolvedUrl}`,
     `uiVersion: ${asText(runtimeStatus?.uiVersion, 'unknown')}`,
@@ -78,9 +78,9 @@ export function buildSupportSnapshot({
     `deviceContext: ${asText(runtimeSessionTruth?.deviceContext || runtimeStatus?.deviceContext)}`,
     `requestedRouteMode: ${asText(runtimeStatus?.requestedRouteMode)}`,
     `effectiveRouteMode: ${asText(runtimeStatus?.effectiveRouteMode)}`,
-    `selectedRouteKind: ${asText(routeTruthView?.routeKind, 'unavailable')}`,
-    `preferredTarget: ${asText(routeTruthView?.preferredTarget, 'unavailable')}`,
-    `actualTarget: ${asText(routeTruthView?.actualTarget, 'unavailable')}`,
+    `selectedRouteKind: ${asText(routeTruthView?.routeKind, 'n/a')}`,
+    `preferredTarget: ${asText(routeTruthView?.preferredTarget, 'n/a')}`,
+    `actualTarget: ${asText(routeTruthView?.actualTarget, 'n/a')}`,
     `winningReason: ${asText(runtimeRouteTruth?.winningReason || routeTruthView?.winnerReason, 'n/a')}`,
     `fallbackActive: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,
     `backendReachable: ${asText(routeTruthView?.backendReachableState)}`,
@@ -95,6 +95,10 @@ export function buildSupportSnapshot({
     `executableProvider: ${asText(runtimeProviderTruth?.executableProvider, 'none')}`,
     `providerHealthState: ${asText(statusSummary?.healthState)}`,
     `providerReason: ${asText(statusSummary?.healthReason || statusSummary?.healthDetail, 'n/a')}`,
+    `launchState: ${asText(runtimeStatus?.appLaunchState)}`,
+    `activeProvider: ${asText(routeTruthView?.executedProvider)}`,
+    `dependencySummary: ${asText(runtimeStatus?.dependencySummary)}`,
+    `backendDefaultProvider: ${asText(safeApiStatus?.backendDefaultProvider)}`,
     '',
     'routeDiagnosticsSummary:',
     ...summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics),
