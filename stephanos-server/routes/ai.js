@@ -12,6 +12,38 @@ import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 const logger = createLogger('ai-route');
 const router = express.Router();
 
+
+function formatTileContextForPrompt(tileContext = {}) {
+  if (!tileContext || typeof tileContext !== 'object') {
+    return '';
+  }
+
+  const activeTile = tileContext.activeTileContext || null;
+  const relevantTiles = Array.isArray(tileContext.relevantTileContexts) ? tileContext.relevantTileContexts : [];
+  const diagnostic = tileContext.diagnostics || {};
+
+  if (!activeTile && relevantTiles.length === 0) {
+    return '';
+  }
+
+  const contextLines = [
+    'Operator tile context (live workspace state):',
+    activeTile
+      ? `- Active tile: ${activeTile.tileTitle || activeTile.tileId} (${activeTile.tileId}). Summary: ${activeTile.summary || 'n/a'}. Structured data: ${JSON.stringify(activeTile.structuredData || {})}`
+      : '- Active tile: none provided.',
+  ];
+
+  if (relevantTiles.length > 0) {
+    contextLines.push(`- Additional tile snapshots (${relevantTiles.length}):`);
+    relevantTiles.forEach((snapshot) => {
+      contextLines.push(`  - ${snapshot.tileTitle || snapshot.tileId} (${snapshot.tileId}): ${snapshot.summary || 'n/a'} | data=${JSON.stringify(snapshot.structuredData || {})}`);
+    });
+  }
+
+  contextLines.push(`- Tile context diagnostics: ${JSON.stringify(diagnostic)}`);
+  return contextLines.join('\n');
+}
+
 const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /memory list /memory save <text> /memory find <query> /memory propose <id|recent> /proposals /proposals list /proposals stats /proposals show <id> /proposals accept <id> /proposals reject <id> /activity /activity list /activity recent /activity show <id> /roadmap /roadmap list /roadmap add <text> /roadmap done <id> /roadmap show <id> /kg help /simulate help /simulate history list /simulate history show <runId> /simulate history clear /simulate compare <runIdA> <runIdB> /clear';
 
 
@@ -28,6 +60,9 @@ router.post('/chat', async (req, res) => {
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
   const mergedProviderConfigs = { ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) };
   const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
+  const assembledTileContext = normalizedRuntimeContext.tileContext && typeof normalizedRuntimeContext.tileContext === 'object'
+    ? normalizedRuntimeContext.tileContext
+    : null;
   const providerResolution = resolveProviderRequest(provider, effectiveProviderConfig, { routeMode, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
 
   if (!prompt || typeof prompt !== 'string') {
@@ -97,6 +132,7 @@ router.post('/chat', async (req, res) => {
       memorySummary ? `Relevant local memory:
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
+      formatTileContextForPrompt(assembledTileContext),
     ].filter(Boolean).join('\n\n');
 
     const llmResult = await routeLLMRequest({
@@ -178,6 +214,7 @@ Use these memories when they help, but do not repeat them unless they are releva
           fallback_reason: executionMetadata.fallback_reason,
           assistant_context: contextBundle,
           relevant_memory: memoryHits,
+          tile_context_diagnostics: assembledTileContext?.diagnostics || null,
         },
         memory_hits: memoryHits,
         timing_ms: Date.now() - startedAt,
@@ -216,6 +253,7 @@ Use these memories when they help, but do not repeat them unless they are releva
         assistant_context: contextBundle,
         relevant_memory: memoryHits,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
+        tile_context_diagnostics: assembledTileContext?.diagnostics || null,
       },
       memory_hits: memoryHits,
       timing_ms: Date.now() - startedAt,

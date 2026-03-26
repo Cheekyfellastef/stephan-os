@@ -203,6 +203,34 @@
     }
   };
 
+
+  const buildAiContextSnapshot = (state) => {
+    const sanitized = sanitizePersistedState(state);
+    const selectedScenario = sanitized.selectedScenario || 'base-case';
+    const scenarioInputs = sanitized.scenarios?.[selectedScenario]?.inputs || {};
+    return {
+      tileTitle: 'Wealth Simulation Scenarios',
+      tileType: 'simulation',
+      contextVersion: 1,
+      summary: `Scenario lab focused on ${selectedScenario} with ${Object.keys(scenarioInputs).length} overridden assumption(s).`,
+      structuredData: {
+        selectedScenario,
+        scenarioCount: Object.keys(sanitized.scenarios || {}).length,
+        selectedScenarioInputs: scenarioInputs,
+      },
+      visibility: 'workspace',
+    };
+  };
+
+  const publishAiContextSnapshot = (state) => {
+    const bridge = global.StephanosTileContextBridge;
+    if (!bridge?.publishTileContextSnapshot) {
+      return null;
+    }
+
+    return bridge.publishTileContextSnapshot(APP_ID, buildAiContextSnapshot(state));
+  };
+
   const storage = {
     get() {
       try {
@@ -275,5 +303,7 @@
     loadState: () => storage.load(),
     saveState: (state) => storage.save(state),
     clearState: () => storage.clear(),
+    buildAiContextSnapshot,
+    publishAiContextSnapshot,
   };
 })(window);

@@ -48,8 +48,11 @@ async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeCo
   return result.data;
 }
 
-export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true, runtimeConfig = getApiRuntimeConfig() }) {
-  const runtimeContext = runtimeConfig;
+export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true, runtimeConfig = getApiRuntimeConfig(), tileContext = null }) {
+  const runtimeContext = {
+    ...runtimeConfig,
+    ...(tileContext && typeof tileContext === 'object' ? { tileContext } : {}),
+  };
   const payload = {
     prompt,
     provider,

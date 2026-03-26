@@ -370,6 +370,46 @@
     }
   };
 
+
+  const publishAiContext = (controls = []) => {
+    const bridge = global.StephanosTileContextBridge;
+    if (!bridge?.publishTileContextSnapshot) {
+      return;
+    }
+
+    const inputs = readInputsFromDom(controls);
+    const statePensionAnnual = Number(inputs.combinedStatePensionAnnual || 0);
+    const statePensionAge = Number(inputs.retirementAge || 0) + 7;
+    const isaTargetAnnual = Number(inputs.desiredIncome || 0) - statePensionAnnual;
+
+    bridge.publishTileContextSnapshot(APP_ID, {
+      tileTitle: 'Wealth App',
+      tileType: 'simulation',
+      contextVersion: 1,
+      summary: `Retirement plan targeting £${Number(inputs.desiredIncome || 0).toLocaleString()} annual income with retirement age ${Number(inputs.retirementAge || 0)}.`,
+      structuredData: {
+        retirementAge: Number(inputs.retirementAge || 0),
+        desiredIncomeAnnual: Number(inputs.desiredIncome || 0),
+        statePensionAge,
+        statePensionAnnual,
+        isaBridgeTargetAnnual: isaTargetAnnual,
+        isaBridgeAssumption: 'ISA withdrawals cover income gap before state pension and pension drawdown sequencing.',
+        pensionSequencing: {
+          activePension: Number(inputs.activePension || 0),
+          dormantPension: Number(inputs.dormantPension || 0),
+        },
+        sustainabilityGoal: 'Maintain target annual income through forecast horizon without balance exhaustion.',
+        scenarioInputs: {
+          returnRate: Number(inputs.returnRate || 0),
+          isaAnnualContribution: Number(inputs.isaAnnualContribution || 0),
+          activePensionContribution: Number(inputs.activePensionContribution || 0),
+          houseSaleAge: Number(inputs.houseSaleAge || 0),
+        },
+      },
+      visibility: 'workspace',
+    });
+  };
+
   const ensureToolbar = (root) => {
     if (!root || typeof root.querySelector !== 'function') {
       return null;
@@ -497,6 +537,7 @@
       }
 
       storage.save(createStateFromDom(controls));
+      publishAiContext(controls);
     };
 
     const scheduleSave = () => {
@@ -537,6 +578,7 @@
       storage.clear();
       suppressSave = false;
       setStatus('', 'info');
+      publishAiContext(controls);
     };
 
     const handleExport = () => {
@@ -614,6 +656,7 @@
     toolbarRefs.fileInput.addEventListener('change', handleImportSelection);
 
     applyState(storage.load());
+    publishAiContext(controls);
     return true;
   };
 
