@@ -1,13 +1,15 @@
 [CmdletBinding()]
 param(
-  [switch]$AutoOpen
+  [switch]$AutoOpen,
+  [ValidateSet('launcher-root', 'vite-dev')]
+  [string]$Mode = 'launcher-root'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
-$uiUrl = 'http://127.0.0.1:4173/'
+$uiUrl = if ($Mode -eq 'vite-dev') { 'http://127.0.0.1:5173/' } else { 'http://127.0.0.1:4173/' }
 $launcherStateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Stephanos'
 $launcherStatePath = Join-Path $launcherStateDir 'launcher-state.json'
 
@@ -309,6 +311,34 @@ function Stop-ProcessOnTcpPort([int]$Port) {
   return $killedProcessIds
 }
 
+function Get-PortListenerSnapshot([int]$Port) {
+  $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  if (-not $connections) {
+    return @{
+      Running = $false
+      ProcessIds = @()
+      ProcessNames = @()
+    }
+  }
+
+  $processIds = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
+  $processNames = @()
+  foreach ($processId in $processIds) {
+    try {
+      $processNames += (Get-Process -Id $processId -ErrorAction Stop).ProcessName
+    }
+    catch {
+      $processNames += "pid-$processId"
+    }
+  }
+
+  return @{
+    Running = $true
+    ProcessIds = $processIds
+    ProcessNames = @($processNames | Select-Object -Unique)
+  }
+}
+
 function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
@@ -365,15 +395,22 @@ function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$
 }
 
 function Ensure-LauncherShellRunning {
-  Write-LiveLog 'starting launcher shell'
-  $isLocalhostDevLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
-  if ($isLocalhostDevLaunch) {
-    Write-LiveLog 'localhost/dev mode: forcing hard reset of port 4173 launcher shell server (no reuse)'
-    Stop-ProcessOnTcpPort -Port 4173 | Out-Null
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog 'starting vite-dev mode'
+    Start-DevWindow -Title 'Stephanos Vite Dev Runtime' -Command '$env:STEPHANOS_IGNITION_MODE=''vite-dev''; npm run stephanos:ignite:vite-dev'
+    Write-LiveLog 'vite-dev process started (command=npm run stephanos:ignite:vite-dev)'
+    return
   }
 
-  Start-DevWindow -Title 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
-  Write-LiveLog 'launcher shell server process started (command=npm run stephanos:serve)'
+  Write-LiveLog 'starting launcher-root mode'
+  Write-LiveLog 'launcher-root mode: forcing hard reset of port 4173 launcher shell server (no reuse)'
+  Stop-ProcessOnTcpPort -Port 4173 | Out-Null
+
+  Write-LiveLog 'launcher-root mode: preventing accidental Vite dev capture by stopping 5173 listeners'
+  Stop-ProcessOnTcpPort -Port 5173 | Out-Null
+
+  Start-DevWindow -Title 'Stephanos Launcher Shell' -Command '$env:STEPHANOS_IGNITION_MODE=''launcher-root''; npm run stephanos:ignite:launcher-root'
+  Write-LiveLog 'launcher shell server process started (command=npm run stephanos:ignite:launcher-root)'
 }
 
 function Get-ChromeExecutable {
@@ -404,6 +441,10 @@ function Open-LocalStephanosBrowser([string]$Url) {
       $isolatedProfileEnabled = $true
       $isolatedUserDataDir = Join-Path $launcherStateDir 'chrome-localhost-user-data'
       $isolatedProfileDirectory = 'StephanosLocalhost'
+      if (Test-Path $isolatedUserDataDir) {
+        Write-LiveLog "clearing isolated Chrome profile to prevent restored stale localhost tabs"
+        Remove-Item -Path $isolatedUserDataDir -Recurse -Force -ErrorAction SilentlyContinue
+      }
       if (-not (Test-Path $isolatedUserDataDir)) {
         New-Item -ItemType Directory -Path $isolatedUserDataDir -Force | Out-Null
       }
@@ -449,6 +490,12 @@ function Open-LocalStephanosBrowser([string]$Url) {
 
 try {
   $launcherState = Get-LauncherState
+  $port4173Before = Get-PortListenerSnapshot -Port 4173
+  $port5173Before = Get-PortListenerSnapshot -Port 5173
+  Write-LiveLog "intended mode: $Mode"
+  Write-LiveLog "intended final URL: $uiUrl"
+  Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
+  Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
 
   Update-RepoIfSafe
 
@@ -463,8 +510,14 @@ try {
   Write-LiveLog 'waiting for backend'
   Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl
 
-  Write-LiveLog "waiting for launcher shell landing page at $uiUrl"
-  Wait-ForLandingPageReady -Url $uiUrl -TimeoutSeconds 120
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog "waiting for vite-dev runtime at $uiUrl"
+    Wait-ForUrl -StepLabel 'vite-dev runtime' -Url $uiUrl
+  }
+  else {
+    Write-LiveLog "waiting for launcher shell landing page at $uiUrl"
+    Wait-ForLandingPageReady -Url $uiUrl -TimeoutSeconds 120
+  }
 
   $isLocalhostLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
   $autoOpenEnabled = if ($isLocalhostLaunch) { $AutoOpen.IsPresent } else { $true }

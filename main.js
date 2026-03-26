@@ -33,6 +33,12 @@ const launcherRuntimeFingerprint = {
   expectedMissionControlDistUrl: canonicalUrls.runtimeIndexUrl,
 };
 console.info("[Stephanos Runtime Fingerprint]", launcherRuntimeFingerprint);
+console.info("[IGNITION MODE]", {
+  intendedMode: "launcher-root",
+  intendedFinalUrl: canonicalUrls.launcherShellUrl,
+  distRuntimeUrl: canonicalUrls.runtimeIndexUrl,
+  devRuntimeUrl: "http://127.0.0.1:5173/",
+});
 markRootLandingLoaded({ href: globalThis.location?.href || "", readyState: document.readyState });
 const disposeStartupInteractionListeners = attachStartupInteractionListeners();
 
@@ -58,6 +64,17 @@ function renderLauncherRuntimeFingerprint() {
   `;
 }
 
+function renderIgnitionModeBanner() {
+  const bannerNode = document.getElementById("ignition-mode-banner");
+  if (!bannerNode) {
+    return;
+  }
+
+  const onDistPath = String(globalThis.location?.pathname || "").startsWith("/apps/stephanos/dist/");
+  const modeLabel = onDistPath ? "4173 dist runtime" : "4173 launcher-root";
+  bannerNode.innerHTML = `IGNITION MODE: <code>${modeLabel}</code> · expected root <code>${canonicalUrls.launcherShellUrl}</code> · expected dist <code>${canonicalUrls.runtimeIndexUrl}</code>`;
+}
+
 async function hydrateLauncherBuildIdentity() {
   try {
     const response = await fetch("./apps/stephanos/dist/stephanos-build.json", { cache: "no-store" });
@@ -69,11 +86,13 @@ async function hydrateLauncherBuildIdentity() {
     launcherRuntimeFingerprint.buildTimestamp = buildMetadata?.buildTimestamp || launcherRuntimeFingerprint.buildTimestamp;
     launcherRuntimeFingerprint.fingerprint = buildMetadata?.runtimeMarker || launcherRuntimeFingerprint.fingerprint;
     renderLauncherRuntimeFingerprint();
+    renderIgnitionModeBanner();
     console.info("[Stephanos Runtime Fingerprint] launcher metadata hydrated", launcherRuntimeFingerprint);
   } catch {
     // no-op: keep fallback fingerprint for diagnostics
   }
 }
+renderIgnitionModeBanner();
 
 window.openSystemPanel = function() {};
 

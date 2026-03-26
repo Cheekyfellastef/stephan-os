@@ -5,7 +5,7 @@ set "SCRIPT_DIR=%~dp0"
 set "POWERSHELL_TARGET=%SCRIPT_DIR%Launch-Stephanos-Local.ps1"
 
 echo [LAUNCHER LIVE] PowerShell target: %POWERSHELL_TARGET%
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_TARGET%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_TARGET%" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (

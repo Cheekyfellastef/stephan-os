@@ -25,9 +25,23 @@ async function logDevStartupHealthCheck() {
     routeSourceLabel: 'vite-main-entry',
   };
   console.info(STEPHANOS_UI_BOOT_LOG);
+  const intendedMode = startupFingerprint.runtimeRole === 'mission-control-dist-runtime'
+    ? '4173 dist runtime'
+    : '5173 Vite dev runtime';
+  const intendedFinalUrl = startupFingerprint.runtimeRole === 'mission-control-dist-runtime'
+    ? canonicalUrls.runtimeIndexUrl
+    : 'http://127.0.0.1:5173/';
+  const [port4173Running, port5173Running] = await Promise.all([
+    fetch('http://127.0.0.1:4173/__stephanos/health', { method: 'GET' }).then((response) => response.ok).catch(() => false),
+    fetch('http://127.0.0.1:5173/', { method: 'GET' }).then((response) => response.ok).catch(() => false),
+  ]);
+
   console.info('[Stephanos Runtime] Build metadata', STEPHANOS_UI_BUILD_METADATA);
   console.info('[Stephanos Runtime Fingerprint] startup', startupFingerprint);
-  console.info('Stephanos UI running on http://localhost:5173');
+  console.info('[Stephanos Runtime] Intended mode', intendedMode);
+  console.info('[Stephanos Runtime] Intended final URL', intendedFinalUrl);
+  console.info('[Stephanos Runtime] 4173 currently running', port4173Running);
+  console.info('[Stephanos Runtime] 5173 currently running', port5173Running);
   console.info('Waiting for backend health check...');
 
   const healthUrl = buildApiUrl('/api/health');
