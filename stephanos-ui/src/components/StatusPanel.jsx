@@ -72,6 +72,7 @@ export default function StatusPanel() {
   const runtimeProviderTruth = runtimeTruth.provider ?? {};
   const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  const executableProviderLabel = routeTruthView.executedProvider || 'none';
   const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
   const reachability = runtimeTruth.reachabilityRaw ?? runtimeTruth.reachability ?? finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
@@ -209,7 +210,7 @@ export default function StatusPanel() {
         <li>Effective Route Mode: {runtimeStatus.effectiveRouteMode}</li>
         <li>Requested Provider: {routeTruthView.requestedProvider}</li>
         <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
-        <li>Active Provider: {routeTruthView.executedProvider}</li>
+        <li>Active Provider: {executableProviderLabel}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {runtimeTruth.fallbackActive || runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
@@ -258,7 +259,7 @@ export default function StatusPanel() {
         <li>Ollama Base URL In Use: {uiDiagnostics.ollamaBaseUrlInUse || 'n/a'}</li>
         <li>Requested Provider (UI): {uiDiagnostics.requestedProvider || provider}</li>
         <li>Selected Provider (Route): {routeTruthView.selectedProvider}</li>
-        <li>Executed Provider (Route): {routeTruthView.executedProvider}</li>
+        <li>Executed Provider (Route): {executableProviderLabel}</li>
         <li>Executable Provider (Adjudicated): {runtimeProviderTruth.executableProvider || 'n/a'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
@@ -292,7 +293,7 @@ export default function StatusPanel() {
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
-        <li>Execution Provider (Truth): {routeTruthView.executedProvider}</li>
+        <li>Execution Provider (Truth): {executableProviderLabel}</li>
         <li>Recovery Guidance: {routeTruthView.operatorReason || homeNodeAction || 'n/a'}</li>
         <li>Attempt Order: {attemptOrder}</li>
         <li>Execution Status: {isBusy ? 'busy' : status}</li>

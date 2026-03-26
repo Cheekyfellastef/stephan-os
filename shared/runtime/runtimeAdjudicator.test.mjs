@@ -121,5 +121,50 @@ test('adjudicator does not promote selected provider to executable when provider
   }));
 
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'groq');
   assert.ok(adjudicated.issues.some((issue) => issue.code === 'provider-execution-unvalidated'));
+});
+
+test('adjudicator does not promote selected provider when provider health is unknown', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'ollama',
+    providerHealth: {},
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
+  assert.equal(adjudicated.runtimeTruth.provider.providerHealthState, 'unknown');
+});
+
+test('adjudicator promotes selected provider only when provider health is ok', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: { groq: { ok: true } },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'groq');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'groq');
+  assert.equal(adjudicated.runtimeTruth.provider.providerHealthState, 'healthy');
 });

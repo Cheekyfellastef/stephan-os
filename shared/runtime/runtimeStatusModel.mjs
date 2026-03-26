@@ -684,6 +684,7 @@ export function buildFinalRouteTruth({
   routePlan = {},
   backendAvailable = false,
   activeProvider = '',
+  providerHealth = {},
   routeSelectedProvider = '',
   fallbackActive = false,
   validationState = 'healthy',
@@ -694,6 +695,11 @@ export function buildFinalRouteTruth({
   const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
   const routeKnown = appLaunchState !== 'pending' && (nodeRoute?.routeKind || 'unavailable') !== 'unavailable';
   const uiReachabilityState = routeKnown ? asTriState(selectedEvaluation?.uiReachable) : 'unknown';
+
+  const selectedProviderTruth = routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY;
+  const executableProvider = providerHealth?.[selectedProviderTruth]?.ok === true
+    ? selectedProviderTruth
+    : '';
 
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
@@ -719,8 +725,8 @@ export function buildFinalRouteTruth({
     fallbackActive: Boolean(fallbackActive),
     fallbackRouteActive: nodeRoute?.routeKind === 'dist',
     requestedProvider: routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
-    selectedProvider: routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY,
-    executedProvider: activeProvider || '',
+    selectedProvider: selectedProviderTruth,
+    executedProvider: executableProvider,
     validationState,
     appLaunchState,
     operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
@@ -985,6 +991,7 @@ export function createRuntimeStatusModel({
     routePlan,
     backendAvailable,
     activeProvider,
+    providerHealth: health,
     routeSelectedProvider,
     fallbackActive,
     validationState,

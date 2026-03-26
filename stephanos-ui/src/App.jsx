@@ -61,6 +61,7 @@ export default function App() {
   );
   const startupDiagnosticsVisible = runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking';
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
+  const executableProviderLabel = routeTruthView.executedProvider || 'none';
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
@@ -75,7 +76,7 @@ export default function App() {
         className="provider-dock"
         isOpen={safeUiLayout.providerControlsPanel !== false}
         onToggle={() => togglePanel('providerControlsPanel')}
-        actions={showCloudFallbackAction ? (
+        actions={showCloudFallbackAction && routeTruthView.executedProvider ? (
           <button type="button" className="ghost-button" onClick={() => setProvider(routeTruthView.executedProvider)}>
             Use {routeTruthView.executedProvider}
           </button>
@@ -89,7 +90,7 @@ export default function App() {
                 {runtimeStatus.headline}. <strong>{runtimeStatus.dependencySummary}</strong>
               </p>
               <p className="local-ai-text secondary">
-                Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{routeTruthView.routeKind}</strong> · Requested provider: <strong>{routeTruthView.requestedProvider}</strong> · Selected provider: <strong>{routeTruthView.selectedProvider}</strong> · Executed provider: <strong>{routeTruthView.executedProvider}</strong> · Backend: <strong>{routeTruthView.backendReachableState}</strong>
+                Requested mode: <strong>{routeMode}</strong> · Route kind: <strong>{routeTruthView.routeKind}</strong> · Requested provider: <strong>{routeTruthView.requestedProvider}</strong> · Selected provider: <strong>{routeTruthView.selectedProvider}</strong> · Executed provider: <strong>{executableProviderLabel}</strong> · Backend: <strong>{routeTruthView.backendReachableState}</strong>
               </p>
               <p className="local-ai-text secondary">
                 Preferred target: <strong>{routeTruthView.preferredTarget}</strong> · Actual target: <strong>{routeTruthView.actualTarget}</strong> · Node source: <strong>{routeTruthView.source}</strong>
@@ -105,7 +106,7 @@ export default function App() {
           Current Provider: <strong>{providerSummary.providerLabel}</strong> · Requested Route Mode: <strong>{runtimeStatus.requestedRouteMode}</strong> · Effective Route Mode: <strong>{runtimeStatus.effectiveRouteMode}</strong> · Launch State: <strong>{runtimeStatus.appLaunchState}</strong>
         </p>
         <p className="provider-dock-status">
-          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{routeTruthView.executedProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
+          Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{executableProviderLabel}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
         </p>
         <ProviderToggle
           onTestConnection={refreshHealth}

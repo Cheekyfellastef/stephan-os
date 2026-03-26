@@ -25,7 +25,7 @@ test('ensureRuntimeStatusModel keeps finalRoute as authoritative for top-level r
   assert.equal(normalized.nodeAddressSource, 'manual');
 });
 
-test('ensureRuntimeStatusModel projects requested/selected/executed provider truth into finalRouteTruth', () => {
+test('ensureRuntimeStatusModel projects requested/selected provider truth without inferring executable provider', () => {
   const normalized = ensureRuntimeStatusModel({
     selectedProvider: 'ollama',
     routeSelectedProvider: 'groq',
@@ -43,7 +43,7 @@ test('ensureRuntimeStatusModel projects requested/selected/executed provider tru
 
   assert.equal(normalized.finalRouteTruth.requestedProvider, 'ollama');
   assert.equal(normalized.finalRouteTruth.selectedProvider, 'groq');
-  assert.equal(normalized.finalRouteTruth.executedProvider, 'groq');
+  assert.equal(normalized.finalRouteTruth.executedProvider, '');
   assert.equal(normalized.finalRouteTruth.fallbackActive, true);
 });
 

@@ -514,3 +514,31 @@ test('createRuntimeStatusModel emits canonical runtimeTruth aligned with final r
   assert.equal(status.runtimeTruth.executedProvider, status.finalRouteTruth.executedProvider);
   assert.equal(status.runtimeTruth.backendReachable, true);
 });
+
+test('createRuntimeStatusModel keeps selected provider while leaving executed provider empty until health is ok', () => {
+  const unknownHealth = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {},
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+    },
+  });
+  const healthy = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: { ollama: { ok: true } },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+    },
+  });
+
+  assert.equal(unknownHealth.finalRouteTruth.selectedProvider, 'ollama');
+  assert.equal(unknownHealth.finalRouteTruth.executedProvider, '');
+  assert.equal(healthy.finalRouteTruth.selectedProvider, 'ollama');
+  assert.equal(healthy.finalRouteTruth.executedProvider, 'ollama');
+});
