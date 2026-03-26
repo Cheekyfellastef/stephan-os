@@ -115,6 +115,7 @@
 
       if (index === topLevelChildren.length - 1 && child.querySelector?.('.recharts-wrapper')) {
         child.classList.add('scenario-sim-app__chart-shell');
+        child.firstElementChild?.classList.add('scenario-sim-app__chart-wrapper');
       }
     });
 
