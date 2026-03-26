@@ -697,4 +697,20 @@ body.stephanos-scenario-body::before {
   .scenario-sim-app__status {
     padding: 12px;
   }
+
+  .scenario-sim-app__chart-shell .recharts-responsive-container {
+    height: min(56vw, 230px) !important;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-wrapper,
+  .scenario-sim-app__chart-shell .recharts-surface {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .scenario-sim-app__chart-shell .recharts-cartesian-axis-tick-value,
+  .scenario-sim-app__chart-shell .recharts-text,
+  .scenario-sim-app__chart-shell .recharts-label {
+    font-size: 10px;
+  }
 }

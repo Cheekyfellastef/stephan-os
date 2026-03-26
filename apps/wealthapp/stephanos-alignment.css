@@ -364,6 +364,22 @@ body.stephanos-wealthapp-body::before {
     border-radius: 16px;
   }
 
+  .stephanos-wealthapp__chart-shell .recharts-responsive-container {
+    height: min(56vw, 230px) !important;
+  }
+
+  .stephanos-wealthapp__chart-shell .recharts-wrapper,
+  .stephanos-wealthapp__chart-shell .recharts-surface {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .stephanos-wealthapp__chart-shell .recharts-cartesian-axis-tick-value,
+  .stephanos-wealthapp__chart-shell .recharts-text,
+  .stephanos-wealthapp__chart-shell .recharts-label {
+    font-size: 0.68rem;
+  }
+
   .stephanos-wealthapp__chart-shell .recharts-default-legend {
     gap: 8px 10px;
     margin-top: 8px !important;
