@@ -9,7 +9,9 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
-$uiUrl = if ($Mode -eq 'vite-dev') { 'http://127.0.0.1:5173/' } else { 'http://127.0.0.1:4173/' }
+$launcherRootUrl = 'http://127.0.0.1:4173/'
+$viteDevUrl = 'http://127.0.0.1:5173/'
+$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherRootUrl }
 $launcherStateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Stephanos'
 $launcherStatePath = Join-Path $launcherStateDir 'launcher-state.json'
 
@@ -396,12 +398,19 @@ function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$
 
 function Ensure-LauncherShellRunning {
   if ($Mode -eq 'vite-dev') {
-    Write-LiveLog 'starting vite-dev mode'
+    Write-LiveLog 'selected ignition mode: vite-dev (explicit opt-in)'
+    Write-LiveLog "final browser target: $viteDevUrl"
+    Write-LiveLog 'vite-dev running: yes'
+    Write-LiveLog 'vite-dev selected explicitly; launching 5173 runtime'
     Start-DevWindow -Title 'Stephanos Vite Dev Runtime' -Command '$env:STEPHANOS_IGNITION_MODE=''vite-dev''; npm run stephanos:ignite:vite-dev'
     Write-LiveLog 'vite-dev process started (command=npm run stephanos:ignite:vite-dev)'
     return
   }
 
+  Write-LiveLog 'selected ignition mode: launcher-root'
+  Write-LiveLog "final browser target: $launcherRootUrl"
+  Write-LiveLog 'vite-dev running: no'
+  Write-LiveLog 'vite-dev not selected; ignoring 5173'
   Write-LiveLog 'starting launcher-root mode'
   Write-LiveLog 'launcher-root mode: forcing hard reset of port 4173 launcher shell server (no reuse)'
   Stop-ProcessOnTcpPort -Port 4173 | Out-Null
@@ -492,8 +501,12 @@ try {
   $launcherState = Get-LauncherState
   $port4173Before = Get-PortListenerSnapshot -Port 4173
   $port5173Before = Get-PortListenerSnapshot -Port 5173
-  Write-LiveLog "intended mode: $Mode"
-  Write-LiveLog "intended final URL: $uiUrl"
+  Write-LiveLog "selected ignition mode: $Mode"
+  Write-LiveLog "final browser target: $uiUrl"
+  Write-LiveLog "vite-dev running: $(if ($Mode -eq 'vite-dev') { 'yes (explicit opt-in)' } else { 'no' })"
+  if ($Mode -ne 'vite-dev') {
+    Write-LiveLog 'vite-dev not selected; ignoring 5173'
+  }
   Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
   Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
 

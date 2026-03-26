@@ -7,6 +7,8 @@
     "build": "npm run stephanos:build",
     "verify": "npm run stephanos:verify",
     "stephanos": "npm run stephanos:ignite:launcher-root",
+    "stephanos:launcher-root": "npm run stephanos:ignite:launcher-root",
+    "stephanos:vite-dev": "npm run stephanos:ignite:vite-dev",
     "stephanos:ignite:launcher-root": "npm run stephanos:serve",
     "stephanos:ignite:vite-dev": "npm run stephanos:dev",
     "stephanos:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
