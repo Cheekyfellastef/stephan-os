@@ -393,17 +393,39 @@ function Get-ChromeExecutable {
 function Open-LocalStephanosBrowser([string]$Url) {
   $isLocalhostTarget = $Url -like 'http://127.0.0.1:*' -or $Url -like 'http://localhost:*'
   $chromeExecutable = if ($isLocalhostTarget) { Get-ChromeExecutable } else { $null }
+  $isolatedProfileEnabled = $false
+  $isolatedUserDataDir = ''
+  $isolatedProfileDirectory = ''
 
   if ($chromeExecutable) {
+    if ($isLocalhostTarget) {
+      $isolatedProfileEnabled = $true
+      $isolatedUserDataDir = Join-Path $launcherStateDir 'chrome-localhost-user-data'
+      $isolatedProfileDirectory = 'StephanosLocalhost'
+      if (-not (Test-Path $isolatedUserDataDir)) {
+        New-Item -ItemType Directory -Path $isolatedUserDataDir -Force | Out-Null
+      }
+    }
+
     $chromeArgs = @(
       '--new-window',
       '--no-first-run',
       '--disable-session-crashed-bubble',
-      '--disable-features=ErrorPageAutoReload',
-      $Url
+      '--disable-features=ErrorPageAutoReload'
     )
+    if ($isolatedProfileEnabled) {
+      $chromeArgs += @(
+        "--user-data-dir=$isolatedUserDataDir",
+        "--profile-directory=$isolatedProfileDirectory"
+      )
+    }
+    $chromeArgs += $Url
+
     Write-LiveLog "opening browser with explicit Chrome top-level navigation"
+    Write-LiveLog "isolated-profile mode active: $isolatedProfileEnabled"
     Write-LiveLog "browser executable: $chromeExecutable"
+    Write-LiveLog "browser user-data-dir: $(if ($isolatedProfileEnabled) { $isolatedUserDataDir } else { '<default Chrome profile>' })"
+    Write-LiveLog "browser profile-directory: $(if ($isolatedProfileEnabled) { $isolatedProfileDirectory } else { '<default profile>' })"
     Write-LiveLog "browser args: $($chromeArgs -join ' ')"
     Write-LiveLog "browser target URL: $Url"
     Write-LiveLog 'browser launch intent: fresh top-level navigation (no shell iframe, no recovery-tab reuse)'
@@ -411,8 +433,13 @@ function Open-LocalStephanosBrowser([string]$Url) {
     return
   }
 
+  Write-LiveLog "isolated-profile mode active: $isolatedProfileEnabled"
+  Write-LiveLog "browser executable: <not found>"
+  Write-LiveLog "browser user-data-dir: <not used>"
+  Write-LiveLog "browser profile-directory: <not used>"
   Write-LiveLog 'opening browser via system default handler (Chrome executable not found)'
   Write-LiveLog "browser command: Start-Process $Url"
+  Write-LiveLog "browser args: <none>"
   Write-LiveLog "browser target URL: $Url"
   Write-LiveLog 'browser launch intent: top-level navigation request via shell URL handler'
   Start-Process -FilePath $Url | Out-Null
