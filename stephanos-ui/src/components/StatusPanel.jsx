@@ -3,6 +3,7 @@ import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '.
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
+import { buildSupportSnapshot } from '../state/supportSnapshot';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -126,16 +127,53 @@ export default function StatusPanel() {
       setCopyNotice((current) => (current?.message === message ? null : current));
     }, 2800);
   };
-  const supportSnapshot = [
-    'Stephanos Support Snapshot',
-    `Launch State: ${runtimeStatus.appLaunchState}`,
-    `Route Mode: ${runtimeStatus.effectiveRouteMode}`,
-    `Selected Provider: ${routeTruthView.selectedProvider}`,
-    `Active Provider: ${routeTruthView.executedProvider}`,
-    `Backend Reachable: ${routeTruthView.backendReachableState}`,
-    `UI Build Timestamp: ${STEPHANOS_UI_BUILD_TIMESTAMP}`,
-    `UI Runtime Marker: ${STEPHANOS_UI_RUNTIME_MARKER}`,
-  ].join('\n');
+  const supportSnapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      ...runtimeStatus,
+      providerSelectionSource,
+      activeProviderConfigSource: getActiveProviderConfigSource(),
+      devMode,
+      fallbackEnabled,
+      providerEndpoint: providerEndpointDisplay,
+      providerModel: statusSummary.model,
+      lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
+      lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
+      lastRequestedProvider: lastExecutionMetadata?.requested_provider,
+      lastSelectedProvider: lastExecutionMetadata?.selected_provider,
+      lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
+      lastModelUsed: lastExecutionMetadata?.model_used,
+      lastResponseTruth: responseTruth,
+      lastFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a',
+      lastFallbackReason: lastExecutionMetadata?.fallback_reason,
+      executionTruth,
+      executionStatus: isBusy ? 'busy' : status,
+      route: lastRoute,
+      commands: safeCommandHistory.length,
+      latestTool: latest?.tool_used ?? 'none',
+      uiMarker: uiDiagnostics.componentMarker,
+      uiVersion: STEPHANOS_UI_VERSION,
+      uiGitCommit: STEPHANOS_UI_GIT_COMMIT,
+      uiBuildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+      uiRuntimeId: STEPHANOS_UI_RUNTIME_ID,
+      uiRuntimeMarker: STEPHANOS_UI_RUNTIME_MARKER,
+      uiBuildTarget: STEPHANOS_UI_BUILD_TARGET,
+      uiBuildTargetIdentifier: STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
+      uiSource: STEPHANOS_UI_SOURCE,
+      uiSourceFingerprint: STEPHANOS_UI_SOURCE_FINGERPRINT,
+      debugConsole: 'F1',
+    },
+    routeTruthView,
+    runtimeSessionTruth,
+    runtimeRouteTruth,
+    runtimeReachabilityTruth,
+    runtimeProviderTruth,
+    runtimeDiagnosticsTruth,
+    runtimeContext,
+    safeApiStatus,
+    statusSummary,
+    origin: browserWindow?.location?.origin,
+    href: browserWindow?.location?.href,
+  });
 
   const handleCopySupportSnapshot = async () => {
     if (!browserNavigator?.clipboard?.writeText) {
@@ -160,8 +198,7 @@ export default function StatusPanel() {
       className="status-panel"
       isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
-    >
-      <div className="status-panel-copy-actions">
+      actions={(
         <button
           type="button"
           className="status-panel-copy-button"
@@ -170,12 +207,15 @@ export default function StatusPanel() {
         >
           Copy Support Snapshot [LOCAL SNAPSHOT]
         </button>
-        {copyNotice ? (
+      )}
+    >
+      {copyNotice ? (
+        <div className="status-panel-copy-actions">
           <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
             {copyNotice.message}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
