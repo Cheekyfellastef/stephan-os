@@ -21,6 +21,14 @@ function providerHealthStateFor(providerKey, providerHealth = {}) {
   return 'unknown';
 }
 
+function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
+  if (!selectedProvider) return false;
+  const selectedHealth = asObject(providerHealth)[selectedProvider];
+  if (!selectedHealth || selectedHealth.ok !== true) return false;
+  if (selectedHealth.provider && selectedHealth.provider !== selectedProvider) return false;
+  return true;
+}
+
 function createIssue(code, severity, category, message, details = {}) {
   return {
     code,
@@ -86,10 +94,8 @@ export function adjudicateRuntimeTruth({
   const selectedProviderTruth = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
   const activeProviderTruth = truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
-  const selectedProviderValidated = selectedProviderHealth?.ok === true;
-  const executableProvider = selectedProviderValidated
-    ? selectedProviderTruth
-    : (asObject(providerHealth)[activeProviderTruth]?.ok === true ? activeProviderTruth : '');
+  const selectedProviderValidated = isSelectedProviderHealthy(selectedProviderTruth, providerHealth);
+  const executableProvider = selectedProviderValidated ? selectedProviderTruth : '';
 
   const runtimeTruth = {
     session: {
