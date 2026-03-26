@@ -223,6 +223,22 @@ export function resolveContentType(filePath) {
   return mimeTypes[extname(filePathWithoutQuery).toLowerCase()] || 'application/octet-stream';
 }
 
+function resolveRequestExtension(requestPathname, filePath) {
+  const requestExtension = extname(requestPathname).toLowerCase();
+  if (requestExtension) {
+    return requestExtension;
+  }
+  const filePathWithoutQuery = filePath.split('#', 1)[0].split('?', 1)[0];
+  return extname(filePathWithoutQuery).toLowerCase();
+}
+
+function shouldLogLiveMimeDebug(pathname) {
+  return (
+    pathname === '/shared/runtime/runtimeStatusModel.mjs' ||
+    pathname === '/shared/runtime/stephanosLocalUrls.mjs'
+  );
+}
+
 export function createStephanosDistServer() {
   return createServer((request, response) => {
     if (request.method === 'OPTIONS') {
@@ -253,16 +269,27 @@ export function createStephanosDistServer() {
       return;
     }
 
-    const contentType = resolveContentType(filePath);
+    const extension = resolveRequestExtension(requestUrl.pathname, filePath);
+    const contentType = mimeTypes[extension] || resolveContentType(filePath);
     if (mimeDebugEnabled) {
       console.log(
         `[DIST SERVER MIME DEBUG] requestedUrl="${request.url || '/'}" pathname="${requestUrl.pathname}" filePath="${filePath}" contentType="${contentType}"`,
+      );
+    }
+    if (shouldLogLiveMimeDebug(requestUrl.pathname)) {
+      console.log(
+        `[DIST SERVER LIVE MIME] requestedUrl="${request.url || '/'}" pathname="${requestUrl.pathname}" filePath="${filePath}" extension="${extension || '(none)'}" contentType="${contentType}"`,
       );
     }
     response.writeHead(200, {
       ...baseHeaders,
       'Content-Type': contentType,
     });
+    if (shouldLogLiveMimeDebug(requestUrl.pathname)) {
+      console.log(
+        `[DIST SERVER LIVE MIME] writeHead path="${requestUrl.pathname}" contentType="${contentType}"`,
+      );
+    }
     createReadStream(filePath).pipe(response);
   });
 }
