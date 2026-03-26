@@ -255,20 +255,25 @@ function Stop-ProcessOnTcpPort([int]$Port) {
 
   if (-not $connections) {
     Write-LiveLog "no listening process found on port $Port"
-    return
+    return @()
   }
 
   $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+  $killedProcessIds = @()
   foreach ($processId in $processIds) {
     try {
       $process = Get-Process -Id $processId -ErrorAction Stop
-      Write-LiveLog "stopping stale process on port $Port (pid=$processId, name=$($process.ProcessName))"
+      Write-LiveLog "detected old $Port PID $processId (name=$($process.ProcessName))"
       Stop-Process -Id $processId -Force -ErrorAction Stop
+      Write-LiveLog "killed old $Port PID $processId"
+      $killedProcessIds += $processId
     }
     catch {
       Write-LiveLog "failed to stop process on port $Port (pid=$processId): $($_.Exception.Message)"
     }
   }
+
+  return $killedProcessIds
 }
 
 function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
@@ -297,24 +302,14 @@ function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$
 
 function Ensure-LauncherShellRunning {
   Write-LiveLog 'starting launcher shell'
-  $reuseCheck = Test-LauncherShellReusable
-  if ($reuseCheck.Reusable) {
-    Write-LiveLog 'launcher shell already responding with valid JavaScript MIME types; reusing existing process'
-    return
-  }
-
-  if ($reuseCheck.HealthReady) {
-    Write-LiveLog 'launcher shell health endpoint responded but runtime module MIME checks failed; replacing stale 4173 server process'
-    if ($null -ne $reuseCheck.RuntimeStatusMime) {
-      Write-LiveLog "runtimeStatusModel.mjs -> status=$($reuseCheck.RuntimeStatusMime.StatusCode), content-type=$($reuseCheck.RuntimeStatusMime.ContentType)"
-    }
-    if ($null -ne $reuseCheck.LocalUrlsMime) {
-      Write-LiveLog "stephanosLocalUrls.mjs?v=live-launcher-probe -> status=$($reuseCheck.LocalUrlsMime.StatusCode), content-type=$($reuseCheck.LocalUrlsMime.ContentType)"
-    }
-    Stop-ProcessOnTcpPort -Port 4173
+  $isLocalhostDevLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
+  if ($isLocalhostDevLaunch) {
+    Write-LiveLog 'localhost/dev mode: forcing hard reset of port 4173 launcher shell server (no reuse)'
+    Stop-ProcessOnTcpPort -Port 4173 | Out-Null
   }
 
   Start-DevWindow -Title 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
+  Write-LiveLog 'started fresh launcher shell via npm run stephanos:serve (Stephanos dist server path)'
 }
 
 try {
