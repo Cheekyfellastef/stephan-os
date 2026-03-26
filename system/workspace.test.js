@@ -234,9 +234,9 @@ test("workspace launch does not recreate iframe for duplicate open requests", as
     },
   };
   const project = {
-    name: "Stephanos OS",
-    folder: "stephanos",
-    entry: "apps/stephanos/dist/index.html",
+    name: "Wealth App",
+    folder: "wealthapp",
+    entry: "apps/wealthapp/index.html",
     dependencies: [],
   };
 
@@ -287,9 +287,9 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
     },
   };
   const project = {
-    name: "Stephanos OS",
-    folder: "stephanos",
-    entry: "apps/stephanos/dist/index.html",
+    name: "Wealth App",
+    folder: "wealthapp",
+    entry: "apps/wealthapp/index.html",
     dependencies: [],
   };
 
@@ -312,6 +312,40 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
     assert.equal(documentRef.nodes.workspace.style.display, "block");
     assert.equal(iframeCount, 1);
     assert.deepEqual(emitted, ["workspace:opened", "workspace:closed", "workspace:opened"]);
+  } finally {
+    globals.restore();
+  }
+});
+
+test("workspace stephanos launch always forces top-level navigation", async () => {
+  const documentRef = createDocumentFixture();
+  const globals = installWorkspaceGlobals(documentRef, async () => ({ ok: true, status: 200 }));
+  const assigned = [];
+  globalThis.window.location.assign = (value) => {
+    assigned.push(value);
+  };
+
+  const context = {
+    eventBus: {
+      emit() {},
+    },
+  };
+  const project = {
+    name: "Stephanos OS",
+    folder: "stephanos",
+    entry: "apps/stephanos/dist/index.html",
+    dependencies: [],
+  };
+
+  try {
+    await workspace.open(project, context);
+    const iframeCount = documentRef.nodes["workspace-content"].children
+      .flatMap((node) => node.children || [])
+      .filter((node) => node.tagName === "iframe").length;
+
+    assert.deepEqual(assigned, ["http://localhost/apps/stephanos/dist/index.html"]);
+    assert.equal(iframeCount, 0);
+    assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
   } finally {
     globals.restore();
   }
