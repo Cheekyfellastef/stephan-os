@@ -57,6 +57,7 @@ export function sanitizeProviderConfig(provider, config = {}) {
 
   if ('apiKey' in merged) merged.apiKey = String(merged.apiKey || '');
   if ('baseURL' in merged) merged.baseURL = String(merged.baseURL || '').trim();
+  if ('baseURL' in merged && merged.baseURL === '' && defaults.baseURL) merged.baseURL = String(defaults.baseURL).trim();
   if ('model' in merged) merged.model = String(merged.model || '').trim();
   if ('latencyMs' in merged) merged.latencyMs = Math.max(0, Number(merged.latencyMs) || defaults.latencyMs || 0);
   if ('failRate' in merged) merged.failRate = Math.max(0, Math.min(1, Number(merged.failRate) || 0));
