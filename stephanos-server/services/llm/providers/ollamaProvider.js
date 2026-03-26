@@ -8,6 +8,7 @@ const OLLAMA_STATE = {
   OFFLINE: 'OFFLINE',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
 };
+const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 
 function parseAbsoluteUrl(value) {
   const text = String(value ?? '').trim();
@@ -64,8 +65,33 @@ function classifyOllamaFailure(error) {
 }
 
 function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure = null }) {
-  const parsedBaseUrl = parseAbsoluteUrl(resolved.baseURL);
-  if (!parsedBaseUrl) {
+  const baseURL = String(resolved?.baseURL ?? '').trim();
+  if (!baseURL) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      badge: 'Offline',
+      state: OLLAMA_STATE.MISCONFIGURED,
+      message: 'Ollama configuration is invalid',
+      detail: 'Ollama base URL is missing or blank.',
+      helpText: [
+        'Set Ollama base URL to a valid http(s) URL (example: http://localhost:11434).',
+        'Or switch to Mock Mode (free dev mode).',
+      ],
+      reason: 'Ollama base URL is missing or invalid',
+      failureType: 'misconfigured',
+      isLocalhost: false,
+      likelyWrongDevice: false,
+      suggestedUrl: 'http://192.168.1.42:11434',
+      baseURL,
+      endpoint: resolved.healthEndpoint || '',
+    };
+  }
+
+  let parsedBaseUrl;
+  try {
+    parsedBaseUrl = new URL(baseURL);
+  } catch {
     return {
       ok: false,
       provider: 'ollama',
@@ -82,7 +108,7 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
       isLocalhost: false,
       likelyWrongDevice: false,
       suggestedUrl: 'http://192.168.1.42:11434',
-      baseURL: String(resolved.baseURL || ''),
+      baseURL,
       endpoint: resolved.healthEndpoint || '',
     };
   }
@@ -176,7 +202,8 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
 
 export function resolveOllamaConfig(config = {}) {
   const resolved = sanitizeProviderConfig('ollama', config);
-  const baseURL = String(resolved.baseURL || '').trim();
+  const rawBaseURL = resolved.baseURL;
+  const baseURL = String(rawBaseURL ?? '').trim() || DEFAULT_OLLAMA_BASE_URL;
   const trimmedBaseURL = baseURL.replace(/\/$/, '');
 
   return {

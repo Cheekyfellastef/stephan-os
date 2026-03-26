@@ -28,6 +28,10 @@ test('checkOllamaHealth returns misconfigured result for malformed URL', async (
   assert.deepEqual(health.models, []);
 });
 
+test('checkOllamaHealth does not crash on bad config', async () => {
+  await assert.doesNotReject(async () => checkOllamaHealth({ baseURL: '://bad-url' }));
+});
+
 test('checkOllamaHealth falls back to localhost default for empty/undefined/null URL values', async () => {
   const calls = [];
   globalThis.fetch = async (url) => {
