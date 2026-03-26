@@ -87,6 +87,7 @@ test('buildSupportSnapshot prints explicit unavailable markers for empty diagnos
 
   assert.match(snapshot, /origin: unknown/);
   assert.match(snapshot, /selectedRouteKind: unavailable/);
+  assert.match(snapshot, /executableProvider: none/);
   assert.match(snapshot, /blockingIssues:\n- none/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- unavailable/);
 });

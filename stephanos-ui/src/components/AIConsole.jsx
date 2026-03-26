@@ -30,6 +30,7 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
     : null;
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  const executedProviderLabel = routeTruthView.executedProvider || 'none';
   const showStartupPlaceholder = safeCommandHistory.length === 0
     && (runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking');
 
@@ -60,14 +61,14 @@ export default function AIConsole({ input, setInput, submitPrompt, commandHistor
       <div className={`api-banner ${runtimeStatus.statusTone}`}>
         <strong>{runtimeStatus.headline}</strong>
         <span>{runtimeStatus.dependencySummary}</span>
-        <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
+        <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {executedProviderLabel} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
       </div>
       {provider === 'ollama' && !runtimeStatus.localAvailable ? (
         <div className="api-banner degraded">
           <strong>{runtimeStatus.cloudAvailable ? 'Cloud route available' : ollamaState.title}</strong>
           <span>
             {runtimeStatus.cloudAvailable
-              ? `Stephanos can keep routing requests through ${routeTruthView.executedProvider} while your local Ollama node is offline.`
+              ? `Stephanos can keep routing requests through ${executedProviderLabel} while your local Ollama node is offline.`
               : (ollamaState.helpText[0] || 'Bring Ollama online or configure a cloud provider.')}
           </span>
         </div>

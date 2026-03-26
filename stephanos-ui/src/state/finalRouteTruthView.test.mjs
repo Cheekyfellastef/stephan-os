@@ -62,6 +62,23 @@ test('buildFinalRouteTruthView prefers tri-state ui reachability from finalRoute
   assert.equal(view.uiReachableState, 'no');
 });
 
+test('buildFinalRouteTruthView does not infer executed provider from activeProvider without truth', () => {
+  const view = buildFinalRouteTruthView({
+    activeProvider: 'ollama',
+    finalRouteTruth: {
+      selectedProvider: 'ollama',
+      executedProvider: '',
+    },
+    runtimeTruth: {
+      selectedProvider: 'ollama',
+      executedProvider: '',
+    },
+  });
+
+  assert.equal(view.selectedProvider, 'ollama');
+  assert.equal(view.executedProvider, '');
+});
+
 test('summarizeHomeNodeUsabilityTruth prevents backend-only availability inflation', () => {
   const truth = summarizeHomeNodeUsabilityTruth({
     backendReachable: true,

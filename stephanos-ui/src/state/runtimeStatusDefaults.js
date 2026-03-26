@@ -202,7 +202,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
   const requestedProviderProjection = candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
   const selectedProviderProjection = candidate.routeSelectedProvider || candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
-  const executedProviderProjection = candidate.activeProvider || '';
+  const executableProviderProjection = candidate.runtimeTruth?.provider?.executableProvider
+    || candidate.runtimeTruth?.executedProvider
+    || candidate.finalRouteTruth?.executedProvider
+    || '';
 
   const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
     ? {
@@ -214,7 +217,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       source: candidate.finalRouteTruth.source || nodeAddressSource,
       requestedProvider: candidate.finalRouteTruth.requestedProvider || requestedProviderProjection,
       selectedProvider: candidate.finalRouteTruth.selectedProvider || selectedProviderProjection,
-      executedProvider: candidate.finalRouteTruth.executedProvider || executedProviderProjection,
+      executedProvider: candidate.finalRouteTruth.executedProvider || executableProviderProjection,
       fallbackActive: candidate.finalRouteTruth.fallbackActive ?? candidate.fallbackActive ?? false,
       uiReachabilityState: normalizeUiReachabilityState(candidate.finalRouteTruth.uiReachabilityState, candidate.finalRouteTruth.uiReachable),
     }
@@ -227,7 +230,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       source: nodeAddressSource,
       requestedProvider: requestedProviderProjection,
       selectedProvider: selectedProviderProjection,
-      executedProvider: executedProviderProjection,
+      executedProvider: executableProviderProjection,
       fallbackActive: candidate.fallbackActive === true,
       uiReachabilityState: 'unknown',
     };
@@ -242,7 +245,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       source: candidate.runtimeTruth.source || finalRouteTruth.source || nodeAddressSource,
       requestedProvider: candidate.runtimeTruth.requestedProvider || finalRouteTruth.requestedProvider || requestedProviderProjection,
       selectedProvider: candidate.runtimeTruth.selectedProvider || finalRouteTruth.selectedProvider || selectedProviderProjection,
-      executedProvider: candidate.runtimeTruth.executedProvider || finalRouteTruth.executedProvider || executedProviderProjection,
+      executedProvider: candidate.runtimeTruth.executedProvider || finalRouteTruth.executedProvider || executableProviderProjection,
       routePreferenceOrder: normalizeArray(candidate.runtimeTruth.routePreferenceOrder, []),
       session: candidate.runtimeTruth.session && typeof candidate.runtimeTruth.session === 'object'
         ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.session, ...candidate.runtimeTruth.session }
@@ -286,7 +289,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       fallbackRouteActive: finalRouteTruth.fallbackRouteActive === true,
       requestedProvider: finalRouteTruth.requestedProvider || requestedProviderProjection,
       selectedProvider: finalRouteTruth.selectedProvider || selectedProviderProjection,
-      executedProvider: finalRouteTruth.executedProvider || executedProviderProjection,
+      executedProvider: finalRouteTruth.executedProvider || executableProviderProjection,
       validationState: finalRouteTruth.validationState || 'launching',
       appLaunchState: finalRouteTruth.appLaunchState || 'pending',
       operatorAction: finalRouteTruth.operatorAction || '',

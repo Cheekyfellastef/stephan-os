@@ -92,7 +92,7 @@ export function buildSupportSnapshot({
     `cloudAvailable: ${runtimeStatus?.cloudAvailable === true ? 'yes' : runtimeStatus?.cloudAvailable === false ? 'no' : 'unknown'}`,
     `requestedProvider: ${asText(routeTruthView?.requestedProvider)}`,
     `selectedProvider: ${asText(routeTruthView?.selectedProvider)}`,
-    `executableProvider: ${asText(runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider)}`,
+    `executableProvider: ${asText(runtimeProviderTruth?.executableProvider, 'none')}`,
     `providerHealthState: ${asText(statusSummary?.healthState)}`,
     `providerReason: ${asText(statusSummary?.healthReason || statusSummary?.healthDetail, 'n/a')}`,
     '',
