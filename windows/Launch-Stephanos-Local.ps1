@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
-$uiUrl = 'http://localhost:5173/'
+$uiUrl = 'http://127.0.0.1:4173/'
 $launcherStateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Stephanos'
 $launcherStatePath = Join-Path $launcherStateDir 'launcher-state.json'
 
@@ -232,13 +232,13 @@ try {
   Save-LauncherState -State $launcherState
 
   Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
-  Ensure-ProcessRunning -StepLabel 'UI' -HealthUrl $uiUrl -WindowTitle 'Stephanos UI' -Command 'npm --prefix stephanos-ui run dev'
+  Ensure-ProcessRunning -StepLabel 'launcher shell' -HealthUrl 'http://127.0.0.1:4173/__stephanos/health' -WindowTitle 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
 
   Write-LiveLog 'waiting for backend'
   Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl
 
-  Write-LiveLog 'waiting for UI'
-  Wait-ForUrl -StepLabel 'UI' -Url $uiUrl
+  Write-LiveLog 'waiting for launcher shell'
+  Wait-ForUrl -StepLabel 'launcher shell' -Url $uiUrl
 
   Write-LiveLog 'opening browser'
   Start-Process $uiUrl | Out-Null
