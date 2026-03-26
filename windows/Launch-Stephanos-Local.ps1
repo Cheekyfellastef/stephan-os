@@ -9,9 +9,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
-$launcherRootUrl = 'http://127.0.0.1:4173/'
+$launcherShellUrl = 'http://127.0.0.1:4173/'
+$launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $viteDevUrl = 'http://localhost:5173/'
-$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherRootUrl }
+$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherRuntimeUrl }
 $launcherRootCommand = 'npm run stephanos:serve'
 
 function Write-LiveLog([string]$Message) {
@@ -127,7 +128,14 @@ try {
   $port5173Before = Get-PortListenerSnapshot -Port 5173
 
   Write-LiveLog "selected ignition mode: $Mode"
-  Write-LiveLog "final browser target: $uiUrl"
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog "vite-dev target: $viteDevUrl"
+  }
+  else {
+    Write-LiveLog "4173 launcher shell: $launcherShellUrl"
+    Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
+    Write-LiveLog "final browser target: $uiUrl"
+  }
   Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
   Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
 
@@ -148,7 +156,7 @@ try {
     }
 
     Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
-    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRootUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand
+    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherShellUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand
   }
 
   Write-LiveLog 'waiting for backend'
@@ -159,8 +167,10 @@ try {
     Wait-ForUrl -StepLabel 'vite-dev ui' -Url $uiUrl
   }
   else {
-    Write-LiveLog "waiting for launcher-root runtime at $uiUrl"
-    Wait-ForUrl -StepLabel 'launcher-root ui' -Url $uiUrl
+    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
+    Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
+    Write-LiveLog "waiting for launcher-root runtime target at $uiUrl"
+    Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $uiUrl
   }
 
   $isLocalhostLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
