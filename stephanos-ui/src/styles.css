@@ -798,6 +798,42 @@ pre {
   letter-spacing: 0.02em;
 }
 
+.runtime-fingerprint-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  max-width: min(460px, calc(100vw - 28px));
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(87, 168, 255, 0.5);
+  background: rgba(2, 10, 22, 0.95);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  color: #d0ebff;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.runtime-fingerprint-badge strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9fd4ff;
+}
+
+.runtime-fingerprint-badge ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.runtime-fingerprint-badge code {
+  color: #fff;
+  word-break: break-all;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -822,6 +858,12 @@ pre {
   .local-ai-banner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .runtime-fingerprint-badge {
+    position: static;
+    margin-top: 1rem;
+    max-width: 100%;
   }
 }
 

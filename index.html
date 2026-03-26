@@ -243,6 +243,41 @@ border-color:#3c78b8;
 border-color:#497ec2;
 }
 
+.runtime-fingerprint-badge {
+position: fixed;
+right: 16px;
+bottom: 16px;
+z-index: 1200;
+max-width: min(460px, calc(100vw - 28px));
+font-size: 12px;
+line-height: 1.35;
+padding: 10px 12px;
+border-radius: 10px;
+border: 1px solid #356ea8;
+background: rgba(5, 14, 28, 0.94);
+box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+color: #d0ebff;
+}
+
+.runtime-fingerprint-badge strong {
+display: block;
+margin-bottom: 6px;
+font-size: 11px;
+letter-spacing: 0.05em;
+text-transform: uppercase;
+color: #9fd4ff;
+}
+
+.runtime-fingerprint-badge ul {
+margin: 0;
+padding-left: 16px;
+}
+
+.runtime-fingerprint-badge code {
+word-break: break-all;
+color: #fff;
+}
+
 .companion-launch-button {
 margin-top: 12px;
 width: 100%;
@@ -408,6 +443,10 @@ margin-bottom:20px;
 <pre id="runtime-diagnostics-json" style="white-space:pre-wrap;background:#0b1320;color:#bfe4ff;padding:10px;border-radius:8px;overflow:auto;"></pre>
 
 </section>
+<aside id="launcher-runtime-fingerprint" class="runtime-fingerprint-badge" aria-live="polite">
+<strong>Launcher Runtime Fingerprint</strong>
+<div>Collecting launcher fingerprint…</div>
+</aside>
 
 <section id="workspace" style="display:none; margin-top:20px;">
 
