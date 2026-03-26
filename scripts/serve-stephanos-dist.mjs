@@ -190,8 +190,8 @@ export function resolveContentType(filePath) {
   return mimeTypes[extname(filePathWithoutQuery).toLowerCase()] || 'application/octet-stream';
 }
 
-if (isMainModule) {
-  const server = createServer((request, response) => {
+export function createStephanosDistServer() {
+  return createServer((request, response) => {
     if (request.method === 'OPTIONS') {
       response.writeHead(204, baseHeaders);
       response.end();
@@ -207,8 +207,8 @@ if (isMainModule) {
       return;
     }
 
-    const requestPath = new URL(request.url || '/', `http://${host}:${port}`).pathname;
-    const { redirectTo, filePath } = resolveRequestFile(requestPath);
+    const requestUrl = new URL(request.url || '/', `http://${host}:${port}`);
+    const { redirectTo, filePath } = resolveRequestFile(requestUrl.pathname);
 
     if (redirectTo) {
       sendRedirect(response, redirectTo);
@@ -227,6 +227,10 @@ if (isMainModule) {
     });
     createReadStream(filePath).pipe(response);
   });
+}
+
+if (isMainModule) {
+  const server = createStephanosDistServer();
 
   server.on('error', async (error) => {
     if (error?.code !== 'EADDRINUSE') {
