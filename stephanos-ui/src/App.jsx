@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import AIConsole from './components/AIConsole';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
@@ -29,6 +29,7 @@ import {
   STEPHANOS_UI_SOURCE,
   STEPHANOS_UI_SOURCE_FINGERPRINT,
 } from './runtimeInfo';
+import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -61,10 +62,32 @@ export default function App() {
   );
   const startupDiagnosticsVisible = runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking';
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
+  const runtimeFingerprint = useMemo(() => {
+    const canonicalUrls = createStephanosLocalUrls();
+    const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const browserPathname = typeof window !== 'undefined' ? window.location.pathname : '';
+    const runtimeRole = browserPathname.startsWith('/apps/stephanos/dist/') ? 'mission-control-dist-runtime' : 'mission-control-dev-runtime';
+
+    return {
+      commitHash: STEPHANOS_UI_SOURCE_FINGERPRINT,
+      buildFingerprint: STEPHANOS_UI_RUNTIME_MARKER,
+      buildTimestamp: STEPHANOS_UI_BUILD_STAMP,
+      currentOrigin: browserOrigin,
+      currentPathname: browserPathname,
+      runtimeRole,
+      expectedRootLauncherUrl: canonicalUrls.launcherShellUrl,
+      expectedMissionControlDistUrl: canonicalUrls.runtimeIndexUrl,
+      routeSourceLabel: routeTruthView.source,
+    };
+  }, [routeTruthView.source]);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
+  }, [runtimeFingerprint]);
 
   return (
     <main className="app-shell-root">
@@ -148,6 +171,20 @@ export default function App() {
         <span>source: {STEPHANOS_UI_SOURCE}</span>
         <span>fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</span>
       </footer>
+      <aside className="runtime-fingerprint-badge" aria-label="mission control runtime fingerprint">
+        <strong>Mission Control Fingerprint</strong>
+        <ul>
+          <li><b>role:</b> {runtimeFingerprint.runtimeRole}</li>
+          <li><b>route/source:</b> {runtimeFingerprint.routeSourceLabel}</li>
+          <li><b>build:</b> <code>{runtimeFingerprint.buildFingerprint}</code></li>
+          <li><b>commit:</b> <code>{runtimeFingerprint.commitHash}</code></li>
+          <li><b>built:</b> {runtimeFingerprint.buildTimestamp}</li>
+          <li><b>origin:</b> <code>{runtimeFingerprint.currentOrigin}</code></li>
+          <li><b>pathname:</b> <code>{runtimeFingerprint.currentPathname}</code></li>
+          <li><b>expected root:</b> <code>{runtimeFingerprint.expectedRootLauncherUrl}</code></li>
+          <li><b>expected dist:</b> <code>{runtimeFingerprint.expectedMissionControlDistUrl}</code></li>
+        </ul>
+      </aside>
 
       <DebugConsole />
     </main>

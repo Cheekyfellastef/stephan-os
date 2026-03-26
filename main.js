@@ -8,6 +8,7 @@ import { validateApps } from "./system/apps/app_validator.js";
 import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
+import { createStephanosLocalUrls } from "./shared/runtime/stephanosLocalUrls.mjs";
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 import {
   attachStartupInteractionListeners,
@@ -19,8 +20,60 @@ import {
 console.log("Stephanos OS booting");
 console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
+const canonicalUrls = createStephanosLocalUrls();
+const launcherRuntimeFingerprint = {
+  runtimeLabel: "root-launcher",
+  routeSourceLabel: "root index.html + main.js launcher shell",
+  fingerprint: `launcher-${document.querySelector('meta[name=\"stephanos-version\"]')?.getAttribute("content") || "unknown"}-${new Date(document.lastModified || Date.now()).toISOString()}`,
+  commitHash: "unknown",
+  buildTimestamp: document.lastModified || new Date().toISOString(),
+  currentOrigin: globalThis.location?.origin || "",
+  currentPathname: globalThis.location?.pathname || "",
+  expectedRootLauncherUrl: canonicalUrls.launcherShellUrl,
+  expectedMissionControlDistUrl: canonicalUrls.runtimeIndexUrl,
+};
+console.info("[Stephanos Runtime Fingerprint]", launcherRuntimeFingerprint);
 markRootLandingLoaded({ href: globalThis.location?.href || "", readyState: document.readyState });
 const disposeStartupInteractionListeners = attachStartupInteractionListeners();
+
+function renderLauncherRuntimeFingerprint() {
+  const badgeNode = document.getElementById("launcher-runtime-fingerprint");
+  if (!badgeNode) {
+    return;
+  }
+
+  badgeNode.innerHTML = `
+    <strong>Launcher Runtime Fingerprint</strong>
+    <ul>
+      <li><b>role:</b> ${launcherRuntimeFingerprint.runtimeLabel}</li>
+      <li><b>route/source:</b> ${launcherRuntimeFingerprint.routeSourceLabel}</li>
+      <li><b>fingerprint:</b> <code>${launcherRuntimeFingerprint.fingerprint}</code></li>
+      <li><b>commit:</b> ${launcherRuntimeFingerprint.commitHash}</li>
+      <li><b>built:</b> ${launcherRuntimeFingerprint.buildTimestamp}</li>
+      <li><b>origin:</b> <code>${launcherRuntimeFingerprint.currentOrigin}</code></li>
+      <li><b>pathname:</b> <code>${launcherRuntimeFingerprint.currentPathname}</code></li>
+      <li><b>expected root:</b> <code>${launcherRuntimeFingerprint.expectedRootLauncherUrl}</code></li>
+      <li><b>expected dist:</b> <code>${launcherRuntimeFingerprint.expectedMissionControlDistUrl}</code></li>
+    </ul>
+  `;
+}
+
+async function hydrateLauncherBuildIdentity() {
+  try {
+    const response = await fetch("./apps/stephanos/dist/stephanos-build.json", { cache: "no-store" });
+    if (!response.ok) {
+      return;
+    }
+    const buildMetadata = await response.json();
+    launcherRuntimeFingerprint.commitHash = buildMetadata?.gitCommit || launcherRuntimeFingerprint.commitHash;
+    launcherRuntimeFingerprint.buildTimestamp = buildMetadata?.buildTimestamp || launcherRuntimeFingerprint.buildTimestamp;
+    launcherRuntimeFingerprint.fingerprint = buildMetadata?.runtimeMarker || launcherRuntimeFingerprint.fingerprint;
+    renderLauncherRuntimeFingerprint();
+    console.info("[Stephanos Runtime Fingerprint] launcher metadata hydrated", launcherRuntimeFingerprint);
+  } catch {
+    // no-op: keep fallback fingerprint for diagnostics
+  }
+}
 
 window.openSystemPanel = function() {};
 
@@ -133,6 +186,7 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
 
   const diagnostics = {
     checkedAt: new Date().toISOString(),
+    runtimeFingerprint: launcherRuntimeFingerprint,
     runtimeMode: runtimeMode.mode,
     shellSource: runtimeMode.shellSource,
     launcherOrigin: runtimeMode.origin || globalThis.location?.origin || '',
@@ -356,5 +410,7 @@ window.toggleDeveloperMode = toggleDeveloperMode;
 window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.addEventListener("load", () => {
+  renderLauncherRuntimeFingerprint();
+  void hydrateLauncherBuildIdentity();
   startStephanos();
 });
