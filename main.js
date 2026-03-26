@@ -144,10 +144,6 @@ function renderRootProjectTiles(projects = [], context = {}) {
     return;
   }
 
-  if (container.childElementCount > 0) {
-    return;
-  }
-
   container.innerHTML = "";
 
   projects.forEach((project) => {
@@ -244,6 +240,7 @@ function isDeveloperModeEnabled() {
 
 function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
   const summaryNode = document.getElementById("runtime-diagnostics-summary");
+  const compactNode = document.getElementById("runtime-diagnostics-compact");
   const jsonNode = document.getElementById("runtime-diagnostics-json");
 
   if (!summaryNode || !jsonNode) {
@@ -271,7 +268,11 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
     startupLaunchAudit: getStartupDiagnosticsSnapshot(),
   };
 
-  summaryNode.textContent = `Mode: ${diagnostics.runtimeMode} · Active tile: ${diagnostics.activeTileId || 'none'} · Loaded tiles: ${diagnostics.loadedTileIds.length}`;
+  const summaryText = `Mode: ${diagnostics.runtimeMode} · Active tile: ${diagnostics.activeTileId || 'none'} · Loaded tiles: ${diagnostics.loadedTileIds.length}`;
+  summaryNode.textContent = summaryText;
+  if (compactNode) {
+    compactNode.textContent = `Runtime status: ${summaryText}`;
+  }
   jsonNode.textContent = JSON.stringify(diagnostics, null, 2);
 }
 
