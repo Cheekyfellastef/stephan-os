@@ -1,6 +1,7 @@
 import { loadDependencies } from "./apps/dependency_loader.js";
 import { createStephanosRuntimeTargets, getStephanosPreferredRuntimeTarget } from "../shared/runtime/stephanosLocalUrls.mjs";
 import { clearActiveTileContextHint, setActiveTileContextHint } from "../shared/runtime/tileContextRegistry.mjs";
+import { recordStartupLaunchTrigger } from "../shared/runtime/startupLaunchDiagnostics.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -352,6 +353,17 @@ export const workspace = {
     const resolvedEntryUrl = resolveProjectEntryUrl(project);
 
     if (isStephanosProject(project) && resolvedEntryUrl) {
+      recordStartupLaunchTrigger({
+        sourceModule: "system/workspace.js",
+        sourceFunction: "workspace.open",
+        triggerType: "workspace-open-stephanos",
+        triggerPayload: {
+          launchStrategy: project?.launchStrategy || "workspace",
+          projectName: project?.name || "",
+        },
+        rawTarget: project?.entry || "",
+        resolvedTarget: resolvedEntryUrl,
+      });
       logWorkspaceEvent("Stephanos boot forcing top-level navigation", {
         sessionId: launch.sessionId,
         projectKey: launch.projectKey,
@@ -365,6 +377,17 @@ export const workspace = {
     }
 
     if (isStephanosProject(project) && isCrossOriginHttpUrl(project?.entry)) {
+      recordStartupLaunchTrigger({
+        sourceModule: "system/workspace.js",
+        sourceFunction: "workspace.open",
+        triggerType: "workspace-open-stephanos-cross-origin",
+        triggerPayload: {
+          launchStrategy: project?.launchStrategy || "workspace",
+          projectName: project?.name || "",
+        },
+        rawTarget: project?.entry || "",
+        resolvedTarget: project?.entry || "",
+      });
       logWorkspaceEvent("Stephanos launch escalated to top-level navigation", {
         sessionId: launch.sessionId,
         target: project.entry,

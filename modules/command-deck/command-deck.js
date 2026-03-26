@@ -1,3 +1,5 @@
+import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
+
 function normaliseProject(project) {
   if (typeof project === 'string') {
     return {
@@ -56,7 +58,7 @@ function ensureStatusSurface(containerId, className = '') {
   return node;
 }
 
-function launchProject(project, context) {
+function launchProject(project, context, trigger = {}) {
   if (!project?.entry) {
     return;
   }
@@ -77,7 +79,28 @@ function launchProject(project, context) {
     isStephanos,
     rawEntry: project.entry,
     resolvedEntry,
+    trigger,
   });
+
+  recordStartupLaunchTrigger({
+    sourceModule: 'modules/command-deck/command-deck.js',
+    sourceFunction: 'launchProject',
+    triggerType: trigger.type || 'unknown',
+    triggerPayload: trigger,
+    rawTarget: project.entry,
+    resolvedTarget: resolvedEntry,
+  });
+
+  const startupDiagnostics = getStartupDiagnosticsSnapshot();
+  if (isStephanos && trigger?.type === 'event-bus' && startupDiagnostics.userInteraction?.interacted !== true) {
+    console.warn('[CommandDeck] Suppressed non-interactive Stephanos auto-launch event during landing-page runtime', {
+      trigger,
+      startupDiagnostics,
+      rawEntry: project.entry,
+      resolvedEntry,
+    });
+    return;
+  }
 
   if (isStephanos) {
     console.info('[CommandDeck] Stephanos launch forcing top-level navigation', {
@@ -179,7 +202,7 @@ function renderMobileCompanionDeck(projects, context) {
 
   const button = deck.querySelector('.companion-launch-button');
   if (button && stephanos?.entry) {
-    button.onclick = () => launchProject(stephanos, context);
+    button.onclick = () => launchProject(stephanos, context, { type: 'user-click', origin: 'companion-launch-button' });
   }
 }
 
@@ -230,7 +253,7 @@ function renderProjectRegistry(projects, context) {
       tile.setAttribute('aria-disabled', 'true');
     } else {
       tile.title = runtimeDetail || safeProject.statusMessage || safeProject.name;
-      tile.onclick = () => launchProject(safeProject, context);
+      tile.onclick = () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' });
     }
 
     container.appendChild(tile);
@@ -279,14 +302,14 @@ export function init(context) {
       );
 
       if (wealthProject && !wealthProject?.disabled) {
-        launchProject(normaliseProject(wealthProject), context);
+        launchProject(normaliseProject(wealthProject), context, { type: 'event-bus', origin: 'simulation:start', simulationName });
       }
 
       return;
     }
 
     if (project && !project?.disabled) {
-      launchProject(normaliseProject(project), context);
+      launchProject(normaliseProject(project), context, { type: 'event-bus', origin: 'simulation:start', simulationName });
     }
   });
 
@@ -352,3 +375,4 @@ export function dispose() {
     cleanupAppRepaired = null;
   }
 }
+import { recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';

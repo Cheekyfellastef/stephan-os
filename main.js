@@ -9,10 +9,18 @@ import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
+import {
+  attachStartupInteractionListeners,
+  getStartupDiagnosticsSnapshot,
+  markRootLandingLoaded,
+  markStartupSettled
+} from "./shared/runtime/startupLaunchDiagnostics.mjs";
 
 console.log("Stephanos OS booting");
 console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
+markRootLandingLoaded({ href: globalThis.location?.href || "", readyState: document.readyState });
+const disposeStartupInteractionListeners = attachStartupInteractionListeners();
 
 window.openSystemPanel = function() {};
 
@@ -132,6 +140,7 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
     activeTileId,
     tileContextRegistryPopulated: registrySnapshots.length > 0,
     tileContextRegistryTileIds: registrySnapshots.map((snapshot) => snapshot.tileId),
+    startupLaunchAudit: getStartupDiagnosticsSnapshot(),
   };
 
   summaryNode.textContent = `Mode: ${diagnostics.runtimeMode} · Shell: ${diagnostics.shellSource} · Active tile: ${diagnostics.activeTileId || 'none'} · Tile registry entries: ${registrySnapshots.length}`;
@@ -328,6 +337,10 @@ async function startStephanos() {
 
   log("System ready");
   console.log("system ready");
+  markStartupSettled();
+  if (typeof disposeStartupInteractionListeners === "function") {
+    disposeStartupInteractionListeners();
+  }
 
   const boot = document.getElementById("boot-screen");
   if (boot) {
