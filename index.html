@@ -10,6 +10,76 @@
 
 <title>Stephanos OS</title>
 
+<script>
+(function stephanosEarlyBootstrapDiagnostics() {
+  const DIAG_PREFIX = '[Stephanos Early Bootstrap]';
+  const startedAt = Date.now();
+  const safeLog = (...args) => {
+    try { console.info(DIAG_PREFIX, ...args); } catch {}
+  };
+
+  safeLog('root HTML parser reached diagnostics block', {
+    href: globalThis.location?.href || '',
+    topEqualsSelf: globalThis.top === globalThis.self,
+    readyState: document.readyState,
+    startedAt,
+  });
+
+  const describeUrlArg = (value) => {
+    if (typeof value === 'string') return value;
+    if (value && typeof value.href === 'string') return value.href;
+    return String(value ?? '');
+  };
+
+  const wrapLocationFn = (name) => {
+    const original = globalThis.location?.[name];
+    if (typeof original !== 'function') return;
+    globalThis.location[name] = function patchedLocationNavigation(...args) {
+      safeLog(`location.${name} called`, { target: describeUrlArg(args[0] ?? '') });
+      return original.apply(this, args);
+    };
+  };
+
+  wrapLocationFn('assign');
+  wrapLocationFn('replace');
+
+  const originalWindowOpen = globalThis.open;
+  if (typeof originalWindowOpen === 'function') {
+    globalThis.open = function patchedWindowOpen(...args) {
+      safeLog('window.open called', { target: describeUrlArg(args[0] ?? ''), rawArgs: args });
+      return originalWindowOpen.apply(this, args);
+    };
+  }
+
+  const originalCreateElement = Document.prototype.createElement;
+  Document.prototype.createElement = function patchedCreateElement(...args) {
+    const element = originalCreateElement.apply(this, args);
+    const tag = String(args[0] || '').toLowerCase();
+    if (tag === 'iframe' || tag === 'frame') {
+      safeLog('frame element created', { tag, stack: new Error().stack });
+    }
+    return element;
+  };
+
+  const originalSetAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function patchedSetAttribute(name, value) {
+    const tagName = String(this?.tagName || '').toLowerCase();
+    const attrName = String(name || '').toLowerCase();
+    if ((tagName === 'iframe' || tagName === 'frame') && attrName === 'src') {
+      safeLog('frame src attribute assigned', { tagName, value: String(value || '') });
+    }
+    return originalSetAttribute.call(this, name, value);
+  };
+
+  window.addEventListener('beforeunload', () => {
+    safeLog('beforeunload fired', {
+      href: globalThis.location?.href || '',
+      elapsedMs: Date.now() - startedAt,
+    });
+  });
+})();
+</script>
+
 <meta name="stephanos-version" content="0.1">
 
 <meta name="mobile-web-app-capable" content="yes"> 
