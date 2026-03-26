@@ -160,22 +160,22 @@ export default function StatusPanel() {
       className="status-panel"
       isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
-      actions={(
+    >
+      <div className="status-panel-copy-actions">
         <button
           type="button"
           className="status-panel-copy-button"
           onClick={handleCopySupportSnapshot}
-          aria-label="Copy Support Snapshot"
+          aria-label="Copy Support Snapshot [LOCAL SNAPSHOT]"
         >
-          Copy Support Snapshot
+          Copy Support Snapshot [LOCAL SNAPSHOT]
         </button>
-      )}
-    >
-      {copyNotice ? (
-        <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
-          {copyNotice.message}
-        </span>
-      ) : null}
+        {copyNotice ? (
+          <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">
+            {copyNotice.message}
+          </span>
+        ) : null}
+      </div>
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
