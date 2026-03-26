@@ -4,9 +4,12 @@ import assert from 'node:assert/strict';
 import { resolveContentType } from './serve-stephanos-dist.mjs';
 
 test('resolveContentType serves JavaScript MIME for .mjs and .js files', () => {
+  assert.equal(resolveContentType('/launcher/index.mjs'), 'text/javascript; charset=utf-8');
+  assert.equal(resolveContentType('/shared/runtime/runtimeStatusModel.mjs'), 'text/javascript; charset=utf-8');
   assert.equal(resolveContentType('/apps/stephanos/dist/runtimeStatusModel.mjs'), 'text/javascript; charset=utf-8');
   assert.equal(resolveContentType('/apps/stephanos/dist/assets/index.js'), 'text/javascript; charset=utf-8');
   assert.notEqual(resolveContentType('/apps/stephanos/dist/runtimeStatusModel.mjs'), 'application/octet-stream');
+  assert.equal(resolveContentType('/apps/stephanos/dist/runtimeStatusModel.mjs?v=dev-cache-bust'), 'text/javascript; charset=utf-8');
 });
 
 test('resolveContentType serves expected MIME types for core web assets', () => {
