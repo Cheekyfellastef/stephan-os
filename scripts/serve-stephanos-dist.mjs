@@ -186,7 +186,8 @@ function resolveRequestFile(requestPath) {
 }
 
 export function resolveContentType(filePath) {
-  return mimeTypes[extname(filePath).toLowerCase()] || 'application/octet-stream';
+  const filePathWithoutQuery = filePath.split('#', 1)[0].split('?', 1)[0];
+  return mimeTypes[extname(filePathWithoutQuery).toLowerCase()] || 'application/octet-stream';
 }
 
 if (isMainModule) {
