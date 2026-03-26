@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+  [switch]$AutoOpen
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -464,8 +466,27 @@ try {
   Write-LiveLog "waiting for launcher shell landing page at $uiUrl"
   Wait-ForLandingPageReady -Url $uiUrl -TimeoutSeconds 120
 
-  Write-LiveLog "opening browser at $uiUrl"
-  Open-LocalStephanosBrowser -Url $uiUrl
+  $isLocalhostLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
+  $autoOpenEnabled = if ($isLocalhostLaunch) { $AutoOpen.IsPresent } else { $true }
+
+  Write-LiveLog 'server started'
+  Write-LiveLog 'readiness succeeded'
+  Write-LiveLog "manual URL: $uiUrl"
+  Write-LiveLog "browser auto-open disabled: $(-not $autoOpenEnabled)"
+
+  Write-Host ''
+  Write-Host 'Stephanos local server ready' -ForegroundColor Green
+  Write-Host 'Open manually in browser:' -ForegroundColor Green
+  Write-Host $uiUrl -ForegroundColor Green
+  Write-Host ''
+
+  if ($autoOpenEnabled) {
+    Write-LiveLog "opening browser at $uiUrl"
+    Open-LocalStephanosBrowser -Url $uiUrl
+  }
+  else {
+    Write-LiveLog 'browser auto-open is disabled for localhost launch; waiting for manual open'
+  }
 }
 catch {
   $failedStep = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { 'unknown step' }
