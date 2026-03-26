@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   repoRoot,
   stephanosDistIndexPath,
@@ -25,8 +26,18 @@ const staticRootPath = repoRoot;
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.txt': 'text/plain; charset=utf-8',
@@ -38,6 +49,9 @@ const baseHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Cache-Control': 'no-store',
 };
+
+const isMainModule =
+  process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
 function sendNotFound(response) {
   response.writeHead(404, {
@@ -171,84 +185,90 @@ function resolveRequestFile(requestPath) {
   return { filePath };
 }
 
-const server = createServer((request, response) => {
-  if (request.method === 'OPTIONS') {
-    response.writeHead(204, baseHeaders);
-    response.end();
-    return;
-  }
+export function resolveContentType(filePath) {
+  return mimeTypes[extname(filePath).toLowerCase()] || 'application/octet-stream';
+}
 
-  if ((request.url || '').startsWith('/__stephanos/health')) {
+if (isMainModule) {
+  const server = createServer((request, response) => {
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, baseHeaders);
+      response.end();
+      return;
+    }
+
+    if ((request.url || '').startsWith('/__stephanos/health')) {
+      response.writeHead(200, {
+        ...baseHeaders,
+        'Content-Type': 'application/json; charset=utf-8',
+      });
+      response.end(`${JSON.stringify(buildHealthPayload(), null, 2)}\n`);
+      return;
+    }
+
+    const requestPath = new URL(request.url || '/', `http://${host}:${port}`).pathname;
+    const { redirectTo, filePath } = resolveRequestFile(requestPath);
+
+    if (redirectTo) {
+      sendRedirect(response, redirectTo);
+      return;
+    }
+
+    if (!filePath || !existsSync(filePath)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const contentType = resolveContentType(filePath);
     response.writeHead(200, {
       ...baseHeaders,
-      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Type': contentType,
     });
-    response.end(`${JSON.stringify(buildHealthPayload(), null, 2)}\n`);
-    return;
-  }
-
-  const requestPath = new URL(request.url || '/', `http://${host}:${port}`).pathname;
-  const { redirectTo, filePath } = resolveRequestFile(requestPath);
-
-  if (redirectTo) {
-    sendRedirect(response, redirectTo);
-    return;
-  }
-
-  if (!filePath || !existsSync(filePath)) {
-    sendNotFound(response);
-    return;
-  }
-
-  const contentType = mimeTypes[extname(filePath)] || 'application/octet-stream';
-  response.writeHead(200, {
-    ...baseHeaders,
-    'Content-Type': contentType,
+    createReadStream(filePath).pipe(response);
   });
-  createReadStream(filePath).pipe(response);
-});
 
-server.on('error', async (error) => {
-  if (error?.code !== 'EADDRINUSE') {
-    console.error('[DIST SERVER LIVE] Failed to start static server.');
-    console.error(error);
+  server.on('error', async (error) => {
+    if (error?.code !== 'EADDRINUSE') {
+      console.error('[DIST SERVER LIVE] Failed to start static server.');
+      console.error(error);
+      process.exit(1);
+      return;
+    }
+
+    const existingServer = await probeExistingStephanosServer();
+    if (existingServer.reusable) {
+      console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing`);
+      console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
+      console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
+      console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
+      process.exit(0);
+      return;
+    }
+
+    console.error(`[DIST SERVER LIVE] Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
     process.exit(1);
-    return;
-  }
+  });
 
-  const existingServer = await probeExistingStephanosServer();
-  if (existingServer.reusable) {
-    console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing`);
+  server.listen(port, host, async () => {
+    const readiness = await verifyServedRuntime(runtimeUrl);
+    if (!readiness.ready) {
+      console.error('[DIST SERVER LIVE] Static server started but the declared runtime URL did not return HTTP 200.');
+      console.error(`[DIST SERVER LIVE] Health URL ready: ${readiness.healthOk}`);
+      console.error(`[DIST SERVER LIVE] Runtime URL ready: ${readiness.runtimeOk}`);
+      process.exit(1);
+      return;
+    }
+
+    const buildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
+    console.log(`[DIST SERVER LIVE] Stephanos static server running at http://${host}:${port}/`);
     console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
-    console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
-    console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
-    process.exit(0);
-    return;
-  }
-
-  console.error(`[DIST SERVER LIVE] Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
-  process.exit(1);
-});
-
-server.listen(port, host, async () => {
-  const readiness = await verifyServedRuntime(runtimeUrl);
-  if (!readiness.ready) {
-    console.error('[DIST SERVER LIVE] Static server started but the declared runtime URL did not return HTTP 200.');
-    console.error(`[DIST SERVER LIVE] Health URL ready: ${readiness.healthOk}`);
-    console.error(`[DIST SERVER LIVE] Runtime URL ready: ${readiness.runtimeOk}`);
-    process.exit(1);
-    return;
-  }
-
-  const buildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
-  console.log(`[DIST SERVER LIVE] Stephanos static server running at http://${host}:${port}/`);
-  console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
-  console.log(`[DIST SERVER LIVE] Stephanos health endpoint: ${healthUrl}`);
-  console.log(`[DIST SERVER LIVE] Built runtime URL: ${runtimeUrl}`);
-  console.log(`[DIST SERVER LIVE] Launcher shell URL: ${launcherShellUrl}`);
-  if (buildMetadata) {
-    console.log(`[DIST SERVER LIVE] Runtime marker: ${buildMetadata.runtimeMarker}`);
-    console.log(`[DIST SERVER LIVE] Git commit: ${buildMetadata.gitCommit}`);
-    console.log(`[DIST SERVER LIVE] Build timestamp: ${buildMetadata.buildTimestamp}`);
-  }
-});
+    console.log(`[DIST SERVER LIVE] Stephanos health endpoint: ${healthUrl}`);
+    console.log(`[DIST SERVER LIVE] Built runtime URL: ${runtimeUrl}`);
+    console.log(`[DIST SERVER LIVE] Launcher shell URL: ${launcherShellUrl}`);
+    if (buildMetadata) {
+      console.log(`[DIST SERVER LIVE] Runtime marker: ${buildMetadata.runtimeMarker}`);
+      console.log(`[DIST SERVER LIVE] Git commit: ${buildMetadata.gitCommit}`);
+      console.log(`[DIST SERVER LIVE] Build timestamp: ${buildMetadata.buildTimestamp}`);
+    }
+  });
+}
