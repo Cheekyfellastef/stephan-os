@@ -375,4 +375,3 @@ export function dispose() {
     cleanupAppRepaired = null;
   }
 }
-import { recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
