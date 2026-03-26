@@ -12,6 +12,7 @@ $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
 $launcherRootUrl = 'http://127.0.0.1:4173/'
 $viteDevUrl = 'http://localhost:5173/'
 $uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherRootUrl }
+$launcherRootCommand = 'npm run stephanos:serve'
 
 function Write-LiveLog([string]$Message) {
   Write-Host "[LAUNCHER LIVE] $Message"
@@ -145,6 +146,9 @@ try {
     else {
       Write-LiveLog 'no 5173 listener to stop'
     }
+
+    Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
+    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRootUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand
   }
 
   Write-LiveLog 'waiting for backend'
