@@ -49,6 +49,7 @@ const baseHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Cache-Control': 'no-store',
 };
+const mimeDebugEnabled = process.env.STEPHANOS_SERVE_DEBUG_MIME === '1';
 
 const isMainModule =
   process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
@@ -122,6 +123,26 @@ async function probeHttp200(url) {
   }
 }
 
+async function probeJavaScriptMime(url) {
+  try {
+    const response = await fetch(url, {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    return {
+      ok: response.ok && contentType === 'text/javascript; charset=utf-8',
+      status: response.status,
+      contentType,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: null,
+      contentType: null,
+    };
+  }
+}
+
 async function verifyServedRuntime(url) {
   const [healthOk, runtimeOk] = await Promise.all([
     probeHttp200(healthUrl),
@@ -137,6 +158,7 @@ async function verifyServedRuntime(url) {
 
 async function probeExistingStephanosServer() {
   try {
+    const probeOrigin = new URL(healthUrl).origin;
     const response = await fetch(healthUrl, {
       headers: { Accept: 'application/json' },
     });
@@ -148,14 +170,25 @@ async function probeExistingStephanosServer() {
     const payload = await response.json();
     const resolvedRuntimeUrl = payload?.runtimeUrl || runtimeUrl;
     const runtimeReady = await probeHttp200(resolvedRuntimeUrl);
+    const [runtimeStatusModuleMime, localUrlsModuleMime] = await Promise.all([
+      probeJavaScriptMime(`${probeOrigin}/shared/runtime/runtimeStatusModel.mjs`),
+      probeJavaScriptMime(`${probeOrigin}/shared/runtime/stephanosLocalUrls.mjs?v=live-mime-probe`),
+    ]);
+    const moduleMimeReady = runtimeStatusModuleMime.ok && localUrlsModuleMime.ok;
 
     return {
       reusable:
         payload?.service === 'stephanos-dist-server' &&
         payload?.distMountPath === distMountPath &&
         payload?.staticRootPath === staticRootPath &&
-        runtimeReady,
+        runtimeReady &&
+        moduleMimeReady,
       runtimeReady,
+      moduleMimeReady,
+      moduleMimeChecks: {
+        runtimeStatusModel: runtimeStatusModuleMime,
+        stephanosLocalUrls: localUrlsModuleMime,
+      },
       runtimeUrl: resolvedRuntimeUrl,
       payload,
     };
@@ -221,6 +254,11 @@ export function createStephanosDistServer() {
     }
 
     const contentType = resolveContentType(filePath);
+    if (mimeDebugEnabled) {
+      console.log(
+        `[DIST SERVER MIME DEBUG] requestedUrl="${request.url || '/'}" pathname="${requestUrl.pathname}" filePath="${filePath}" contentType="${contentType}"`,
+      );
+    }
     response.writeHead(200, {
       ...baseHeaders,
       'Content-Type': contentType,
@@ -248,6 +286,12 @@ if (isMainModule) {
       console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
       process.exit(0);
       return;
+    }
+
+    if (existingServer.payload?.service === 'stephanos-dist-server' && existingServer.runtimeReady && !existingServer.moduleMimeReady) {
+      console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} failed module MIME checks; refusing reuse.`);
+      console.error(`[DIST SERVER LIVE] runtimeStatusModel.mjs -> status=${existingServer.moduleMimeChecks?.runtimeStatusModel?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.runtimeStatusModel?.contentType ?? 'n/a'}`);
+      console.error(`[DIST SERVER LIVE] stephanosLocalUrls.mjs?v=live-mime-probe -> status=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.contentType ?? 'n/a'}`);
     }
 
     console.error(`[DIST SERVER LIVE] Port ${port} is occupied by a non-Stephanos process, cannot continue.`);
