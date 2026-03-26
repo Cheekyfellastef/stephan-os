@@ -3,10 +3,22 @@ import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
+  MISCONFIGURED: 'MISCONFIGURED',
   LOCALHOST_MISMATCH: 'LOCALHOST_MISMATCH',
   OFFLINE: 'OFFLINE',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
 };
+
+function parseAbsoluteUrl(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 function isLoopbackHostname(hostname = '') {
   const normalized = String(hostname || '').toLowerCase();
@@ -52,7 +64,29 @@ function classifyOllamaFailure(error) {
 }
 
 function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure = null }) {
-  const parsedBaseUrl = new URL(resolved.baseURL);
+  const parsedBaseUrl = parseAbsoluteUrl(resolved.baseURL);
+  if (!parsedBaseUrl) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      badge: 'Offline',
+      state: OLLAMA_STATE.MISCONFIGURED,
+      message: 'Ollama configuration is invalid',
+      detail: 'Ollama base URL is missing or invalid.',
+      helpText: [
+        'Set Ollama base URL to a valid http(s) URL (example: http://localhost:11434).',
+        'Or switch to Mock Mode (free dev mode).',
+      ],
+      reason: 'Ollama base URL is missing or invalid',
+      failureType: 'misconfigured',
+      isLocalhost: false,
+      likelyWrongDevice: false,
+      suggestedUrl: 'http://192.168.1.42:11434',
+      baseURL: String(resolved.baseURL || ''),
+      endpoint: resolved.healthEndpoint || '',
+    };
+  }
+
   const isLocalhost = isLoopbackHostname(parsedBaseUrl.hostname);
   const suggestedUrl = `${parsedBaseUrl.protocol}//192.168.1.42:${parsedBaseUrl.port || '11434'}`;
 
@@ -142,10 +176,14 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
 
 export function resolveOllamaConfig(config = {}) {
   const resolved = sanitizeProviderConfig('ollama', config);
+  const baseURL = String(resolved.baseURL || '').trim();
+  const trimmedBaseURL = baseURL.replace(/\/$/, '');
+
   return {
     ...resolved,
-    endpoint: `${resolved.baseURL.replace(/\/$/, '')}/api/chat`,
-    healthEndpoint: `${resolved.baseURL.replace(/\/$/, '')}/api/tags`,
+    baseURL,
+    endpoint: `${trimmedBaseURL}/api/chat`,
+    healthEndpoint: `${trimmedBaseURL}/api/tags`,
   };
 }
 
@@ -172,6 +210,15 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 
 export async function checkOllamaHealth(config = {}) {
   const resolved = resolveOllamaConfig(config);
+  const parsedBaseUrl = parseAbsoluteUrl(resolved.baseURL);
+  if (!parsedBaseUrl) {
+    return {
+      ...buildOllamaHealthState({ resolved, ok: false }),
+      models: [],
+      requestedModel: resolved.model,
+    };
+  }
+
   try {
     const tags = await fetchOllamaTags(resolved);
     return {
@@ -186,6 +233,19 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const resolved = resolveOllamaConfig(config);
+  if (!parseAbsoluteUrl(resolved.baseURL)) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: resolved.model || '',
+      outputText: '',
+      error: {
+        code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+        message: 'Ollama base URL is missing or invalid.',
+        retryable: false,
+      },
+    };
+  }
 
   if (!resolved.model) {
     return { ok: false, provider: 'ollama', model: '', outputText: '', error: { code: ERROR_CODES.LLM_OLLAMA_MODEL_MISSING, message: 'Ollama model is required.', retryable: false } };
