@@ -250,6 +250,7 @@
   const flushState = () => {
     persistedState.selectedScenario = activeScenarioId;
     persistence?.saveState?.(persistedState);
+    persistence?.publishAiContextSnapshot?.(persistedState);
   };
 
   const setStatus = (message = '', tone = 'info') => {

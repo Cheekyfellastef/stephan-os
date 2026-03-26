@@ -1,5 +1,6 @@
 import { loadDependencies } from "./apps/dependency_loader.js";
 import { createStephanosRuntimeTargets, getStephanosPreferredRuntimeTarget } from "../shared/runtime/stephanosLocalUrls.mjs";
+import { clearActiveTileContextHint, setActiveTileContextHint } from "../shared/runtime/tileContextRegistry.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -321,6 +322,13 @@ export const workspace = {
 
     clearWorkspaceLoadTimeout();
 
+    setActiveTileContextHint({
+      tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+      tileTitle: project?.name || "Workspace",
+      tileType: project?.type || "workspace",
+      source: "workspace",
+    });
+
     workspacePanel.style.display = "block";
     projectsPanel.style.display = "none";
     setWorkspaceChromeVisibility(true);
@@ -483,6 +491,7 @@ export const workspace = {
     }
 
     clearWorkspaceLoadTimeout();
+    clearActiveTileContextHint();
 
     if (workspaceRuntimeState.activeIframe?.remove) {
       workspaceRuntimeState.activeIframe.remove();

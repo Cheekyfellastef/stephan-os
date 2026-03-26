@@ -16,6 +16,7 @@ import {
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { useAIStore } from '../state/aiStore';
 import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
+import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -712,6 +713,10 @@ export function useAIConsole() {
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
+      const assembledTileContext = assembleStephanosContext({
+        userPrompt: prompt,
+        runtimeContext: finalizedRequestContext,
+      });
       const { data, requestPayload } = await sendPrompt({
         prompt,
         provider,
@@ -721,6 +726,7 @@ export function useAIConsole() {
         fallbackOrder,
         devMode,
         runtimeConfig: finalizedRequestContext,
+        tileContext: assembledTileContext,
       });
 
       const providerHealth = data.data?.provider_health || {};
@@ -801,6 +807,7 @@ export function useAIConsole() {
         backend_health_endpoint: finalizedRequestContext.healthEndpoint,
         final_route: finalizedRequestContext.finalRoute || null,
         request_trace: data.data?.request_trace || null,
+        tile_context_diagnostics: data.data?.tile_context_diagnostics || assembledTileContext?.diagnostics || null,
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
