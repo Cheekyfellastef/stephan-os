@@ -187,13 +187,44 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   ) | Out-Null
 }
 
-function Test-UrlReady([string]$Url) {
+function Test-UrlReachable([string]$Url) {
   try {
     $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
-    return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+    return $response.StatusCode -ge 200 -and $response.StatusCode -lt 300
   }
   catch {
     return $false
+  }
+}
+
+function Test-LandingPageReady([string]$Url) {
+  try {
+    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3 -Headers @{
+      'Cache-Control' = 'no-cache'
+      'Pragma' = 'no-cache'
+    }
+
+    $statusCode = [int]$response.StatusCode
+    $contentType = [string]$response.Headers['Content-Type']
+    $body = [string]$response.Content
+    $hasStephanosMarker = $body -match '<meta\s+name="stephanos-version"'
+
+    return @{
+      Ok = ($statusCode -ge 200 -and $statusCode -lt 300 -and $hasStephanosMarker)
+      StatusCode = $statusCode
+      ContentType = $contentType
+      HasStephanosMarker = $hasStephanosMarker
+      Error = ''
+    }
+  }
+  catch {
+    return @{
+      Ok = $false
+      StatusCode = $null
+      ContentType = ''
+      HasStephanosMarker = $false
+      Error = $_.Exception.Message
+    }
   }
 }
 
@@ -227,7 +258,7 @@ function Test-JavaScriptMime([string]$Url) {
 }
 
 function Test-LauncherShellReusable {
-  $healthReady = Test-UrlReady -Url 'http://127.0.0.1:4173/__stephanos/health'
+  $healthReady = Test-UrlReachable -Url 'http://127.0.0.1:4173/__stephanos/health'
   if (-not $healthReady) {
     return @{
       Reusable = $false
@@ -280,7 +311,7 @@ function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 12
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
   while ((Get-Date) -lt $deadline) {
-    if (Test-UrlReady -Url $Url) {
+    if (Test-UrlReachable -Url $Url) {
       return
     }
 
@@ -290,14 +321,45 @@ function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 12
   throw "Timed out waiting for $StepLabel at $Url"
 }
 
+function Wait-ForLandingPageReady([string]$Url, [int]$TimeoutSeconds = 120) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $attempt = 0
+
+  while ((Get-Date) -lt $deadline) {
+    $attempt += 1
+    $probe = Test-LandingPageReady -Url $Url
+
+    if ($probe.Ok) {
+      Write-LiveLog "launcher shell readiness probe success (attempt $attempt): status=$($probe.StatusCode) marker=$($probe.HasStephanosMarker) contentType=$($probe.ContentType)"
+      return
+    }
+
+    $reason = if (-not [string]::IsNullOrWhiteSpace([string]$probe.Error)) {
+      $probe.Error
+    }
+    elseif ($null -eq $probe.StatusCode) {
+      'no-http-response'
+    }
+    else {
+      "status=$($probe.StatusCode) marker=$($probe.HasStephanosMarker) contentType=$($probe.ContentType)"
+    }
+
+    Write-LiveLog "launcher shell readiness probe attempt $attempt failed: $reason"
+    Start-Sleep -Seconds 1
+  }
+
+  throw "Timed out waiting for launcher landing page readiness at $Url (timeout=${TimeoutSeconds}s)"
+}
+
 function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$WindowTitle, [string]$Command) {
   Write-LiveLog "starting $StepLabel"
-  if (Test-UrlReady -Url $HealthUrl) {
+  if (Test-UrlReachable -Url $HealthUrl) {
     Write-LiveLog "$StepLabel already responding; reusing existing process"
     return
   }
 
   Start-DevWindow -Title $WindowTitle -Command $Command
+  Write-LiveLog "$StepLabel process started (command=$Command)"
 }
 
 function Ensure-LauncherShellRunning {
@@ -309,7 +371,7 @@ function Ensure-LauncherShellRunning {
   }
 
   Start-DevWindow -Title 'Stephanos Launcher Shell' -Command 'npm run stephanos:serve'
-  Write-LiveLog 'started fresh launcher shell via npm run stephanos:serve (Stephanos dist server path)'
+  Write-LiveLog 'launcher shell server process started (command=npm run stephanos:serve)'
 }
 
 try {
@@ -328,10 +390,10 @@ try {
   Write-LiveLog 'waiting for backend'
   Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl
 
-  Write-LiveLog 'waiting for launcher shell'
-  Wait-ForUrl -StepLabel 'launcher shell' -Url $uiUrl
+  Write-LiveLog "waiting for launcher shell landing page at $uiUrl"
+  Wait-ForLandingPageReady -Url $uiUrl -TimeoutSeconds 120
 
-  Write-LiveLog 'opening browser'
+  Write-LiveLog "opening browser at $uiUrl"
   Start-Process $uiUrl | Out-Null
 }
 catch {
