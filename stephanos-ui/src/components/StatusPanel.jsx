@@ -203,9 +203,9 @@ export default function StatusPanel() {
           type="button"
           className="status-panel-copy-button"
           onClick={handleCopySupportSnapshot}
-          aria-label="Copy Support Snapshot [LOCAL SNAPSHOT]"
+          aria-label="Copy Support Snapshot [IGNITION LOCAL]"
         >
-          Copy Support Snapshot [LOCAL SNAPSHOT]
+          Copy Support Snapshot [IGNITION LOCAL]
         </button>
       )}
     >
