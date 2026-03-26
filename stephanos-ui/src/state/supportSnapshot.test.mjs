@@ -85,10 +85,10 @@ test('buildSupportSnapshot prints explicit unavailable markers for empty diagnos
     now: { toISOString: () => '2026-03-25T00:00:02.000Z' },
   });
 
-  assert.match(snapshot, /origin: unknown/);
-  assert.match(snapshot, /selectedRouteKind: unavailable/);
-  assert.match(snapshot, /blockingIssues:\n- none/);
-  assert.match(snapshot, /routeDiagnosticsSummary:\n- unavailable/);
+  assert.match(snapshot, /origin: n\/a/);
+  assert.match(snapshot, /selectedRouteKind: n\/a/);
+  assert.match(snapshot, /blockingIssues:\n- n\/a/);
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- n\/a/);
 });
 
 test('buildSupportSnapshot does not promote selected provider to executable when health is unknown', () => {

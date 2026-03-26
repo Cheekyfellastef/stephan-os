@@ -159,7 +159,7 @@ export default function StatusPanel() {
     }
 
     if (!browserDocument?.body || typeof browserDocument.execCommand !== 'function') {
-      notifyCopyResult('Failed to copy support snapshot', 'degraded');
+      notifyCopyResult('Copy failed', 'degraded');
       return;
     }
 
@@ -176,10 +176,10 @@ export default function StatusPanel() {
       if (copied) {
         notifyCopyResult('Support snapshot copied', 'ready');
       } else {
-        notifyCopyResult('Failed to copy support snapshot', 'degraded');
+        notifyCopyResult('Copy failed', 'degraded');
       }
     } catch (_error) {
-      notifyCopyResult('Failed to copy support snapshot', 'degraded');
+      notifyCopyResult('Copy failed', 'degraded');
     }
   };
 
