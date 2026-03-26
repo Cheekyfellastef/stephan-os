@@ -61,8 +61,35 @@ function launchProject(project, context) {
     return;
   }
 
+  const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
+  const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
+  const resolvedEntry = (() => {
+    try {
+      return new URL(project.entry, window.location.href).href;
+    } catch {
+      return project.entry;
+    }
+  })();
+
+  console.info('[CommandDeck] Launch requested', {
+    project: project?.name || projectId || 'unknown',
+    launchStrategy: project.launchStrategy || 'workspace',
+    isStephanos,
+    rawEntry: project.entry,
+    resolvedEntry,
+  });
+
+  if (isStephanos) {
+    console.info('[CommandDeck] Stephanos launch forcing top-level navigation', {
+      reason: 'avoid iframe-based local ignition/recovery from invalid frame contexts',
+      target: resolvedEntry,
+    });
+    window.location.assign(resolvedEntry);
+    return;
+  }
+
   if (project.launchStrategy === 'navigate') {
-    window.location.href = project.entry;
+    window.location.assign(resolvedEntry);
     return;
   }
 

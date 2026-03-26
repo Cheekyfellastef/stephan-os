@@ -36,6 +36,19 @@ function isStephanosProject(project) {
   return identifier === "stephanos" || identifier === "stephanos os";
 }
 
+function resolveProjectEntryUrl(project) {
+  const rawEntry = String(project?.entry || "").trim();
+  if (!rawEntry) {
+    return "";
+  }
+
+  try {
+    return new URL(rawEntry, window.location.href).href;
+  } catch {
+    return rawEntry;
+  }
+}
+
 function getProjectKey(project) {
   return String(project?.folder || project?.id || project?.entry || project?.name || "workspace")
     .trim()
@@ -335,6 +348,21 @@ export const workspace = {
     title.textContent = project?.name || "Workspace";
     content.innerHTML = "";
     workspaceRuntimeState.activeIframe = null;
+
+    const resolvedEntryUrl = resolveProjectEntryUrl(project);
+
+    if (isStephanosProject(project) && resolvedEntryUrl) {
+      logWorkspaceEvent("Stephanos boot forcing top-level navigation", {
+        sessionId: launch.sessionId,
+        projectKey: launch.projectKey,
+        launchStrategy: project?.launchStrategy || "workspace",
+        rawEntry: project?.entry || "",
+        resolvedEntryUrl,
+        reason: "prevent iframe/chrome-error recovery path during local ignition",
+      });
+      window.location.assign(resolvedEntryUrl);
+      return;
+    }
 
     if (isStephanosProject(project) && isCrossOriginHttpUrl(project?.entry)) {
       logWorkspaceEvent("Stephanos launch escalated to top-level navigation", {
