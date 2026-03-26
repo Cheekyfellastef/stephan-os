@@ -11,6 +11,7 @@ import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 
 console.log("Stephanos OS booting");
+console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
 
 window.openSystemPanel = function() {};
