@@ -87,6 +87,34 @@ test('buildSupportSnapshot prints explicit unavailable markers for empty diagnos
 
   assert.match(snapshot, /origin: unknown/);
   assert.match(snapshot, /selectedRouteKind: unavailable/);
+  assert.match(snapshot, /executableProvider: n\/a/);
   assert.match(snapshot, /blockingIssues:\n- none/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- unavailable/);
+});
+
+test('buildSupportSnapshot preserves selected provider intent when executable provider is absent', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {
+      executableProvider: '',
+      providerHealthState: 'unknown',
+    },
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-03-25T00:00:03.000Z' },
+  });
+
+  assert.match(snapshot, /requestedProvider: ollama/);
+  assert.match(snapshot, /selectedProvider: ollama/);
+  assert.match(snapshot, /executableProvider: n\/a/);
+  assert.match(snapshot, /providerHealthState: unknown/);
 });
