@@ -175,6 +175,10 @@ line-height:1.3;
 margin: 0 0 18px;
 }
 
+#launcher-secondary-panels {
+margin-top: 16px;
+}
+
 .runtime-strip-card,
 .companion-deck-card {
 padding: 14px 16px;
@@ -508,19 +512,20 @@ margin-bottom:20px;
 <section id="projects">
 
 <h2>Projects</h2>
-<p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
-
-<section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
-<section id="mobile-companion-deck" class="mobile-companion-deck"></section>
 <div id="project-registry"></div>
-<section id="runtime-diagnostics" aria-live="polite" class="runtime-diagnostics-card secondary">
-<details id="runtime-diagnostics-details">
-  <summary>
-    Launcher diagnostics (optional)
-    <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
-  </summary>
-  <pre id="runtime-diagnostics-json"></pre>
-</details>
+<section id="launcher-secondary-panels">
+  <p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
+  <section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
+  <section id="mobile-companion-deck" class="mobile-companion-deck"></section>
+  <section id="runtime-diagnostics" aria-live="polite" class="runtime-diagnostics-card secondary">
+  <details id="runtime-diagnostics-details">
+    <summary>
+      Launcher diagnostics (optional)
+      <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
+    </summary>
+    <pre id="runtime-diagnostics-json"></pre>
+  </details>
+  </section>
 </section>
 
 </section>
