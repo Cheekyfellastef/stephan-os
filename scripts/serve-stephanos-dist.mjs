@@ -1,5 +1,6 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import net from 'node:net';
 import { extname, join, normalize, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -12,6 +13,7 @@ import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.m
 
 const host = process.env.STEPHANOS_SERVE_HOST || '0.0.0.0';
 const port = Number(process.env.STEPHANOS_SERVE_PORT || 4173);
+const ignitionMode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
 const {
   distMountPath,
   runtimeUrl,
@@ -93,6 +95,7 @@ function buildHealthPayload() {
   return {
     ok: distEntryExists,
     service: 'stephanos-dist-server',
+    intendedMode: ignitionMode,
     port,
     staticRootPath,
     runtimeUrl,
@@ -110,6 +113,24 @@ function buildHealthPayload() {
     launcherStatus: readRuntimeStatus(),
     checkedAt: new Date().toISOString(),
   };
+}
+
+function probePortListening(portToProbe, hostToProbe = '127.0.0.1', timeoutMs = 350) {
+  return new Promise((resolveProbe) => {
+    const socket = net.connect({ host: hostToProbe, port: portToProbe });
+    let settled = false;
+    const finish = (isListening) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolveProbe(isListening);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.on('connect', () => finish(true));
+    socket.on('timeout', () => finish(false));
+    socket.on('error', () => finish(false));
+  });
 }
 
 async function probeHttp200(url) {
@@ -295,6 +316,15 @@ export function createStephanosDistServer() {
 }
 
 if (isMainModule) {
+  const [port4173Listening, port5173Listening] = await Promise.all([
+    probePortListening(4173),
+    probePortListening(5173),
+  ]);
+  console.log(`[DIST SERVER LIVE] Intended mode: ${ignitionMode}`);
+  console.log(`[DIST SERVER LIVE] Intended final URL: ${launcherShellUrl}`);
+  console.log(`[DIST SERVER LIVE] 4173 already listening: ${port4173Listening ? 'yes' : 'no'}`);
+  console.log(`[DIST SERVER LIVE] 5173 already listening: ${port5173Listening ? 'yes' : 'no'}`);
+
   const server = createStephanosDistServer();
 
   server.on('error', async (error) => {

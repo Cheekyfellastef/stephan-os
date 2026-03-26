@@ -80,6 +80,22 @@ export default function App() {
       routeSourceLabel: routeTruthView.source,
     };
   }, [routeTruthView.source]);
+  const ignitionModeBanner = useMemo(() => {
+    const pathname = runtimeFingerprint.currentPathname || '';
+    const origin = runtimeFingerprint.currentOrigin || '';
+    const isDistRuntime = pathname.startsWith('/apps/stephanos/dist/');
+    const isViteDevRuntime = origin.includes(':5173');
+    const mode = isViteDevRuntime
+      ? '5173 Vite dev runtime'
+      : isDistRuntime
+        ? '4173 dist runtime'
+        : '4173 launcher-root';
+
+    return {
+      mode,
+      tone: isViteDevRuntime ? 'warning' : isDistRuntime ? 'ready' : 'neutral',
+    };
+  }, [runtimeFingerprint]);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
@@ -91,6 +107,9 @@ export default function App() {
 
   return (
     <main className="app-shell-root">
+      <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+        IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+      </div>
       <CollapsiblePanel
         panelId="providerControlsPanel"
         title="AI Provider Controls"
