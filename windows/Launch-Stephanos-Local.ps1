@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [switch]$AutoOpen,
+  [switch]$OpenBoth,
   [ValidateSet('launcher-root','vite-dev')]
   [string]$Mode = 'launcher-root'
 )
@@ -12,7 +13,16 @@ $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
 $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $viteDevUrl = 'http://localhost:5173/'
-$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherRuntimeUrl }
+$uiUrl = if ($Mode -eq 'vite-dev') { $viteDevUrl } else { $launcherShellUrl }
+$browserTargets = if ($Mode -eq 'vite-dev') {
+  @($viteDevUrl)
+}
+elseif ($OpenBoth.IsPresent) {
+  @($launcherShellUrl, $launcherRuntimeUrl)
+}
+else {
+  @($launcherShellUrl)
+}
 $launcherRootCommand = 'npm run stephanos:serve'
 
 function Write-LiveLog([string]$Message) {
@@ -135,6 +145,9 @@ try {
     Write-LiveLog "4173 launcher shell: $launcherShellUrl"
     Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
     Write-LiveLog "final browser target: $uiUrl"
+    if ($OpenBoth.IsPresent) {
+      Write-LiveLog "open both enabled: $launcherShellUrl + $launcherRuntimeUrl"
+    }
   }
   Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
   Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
@@ -169,25 +182,29 @@ try {
   else {
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
-    Write-LiveLog "waiting for launcher-root runtime target at $uiUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $uiUrl
+    Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl"
+    Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
   }
 
   $isLocalhostLaunch = $uiUrl -like 'http://127.0.0.1:*' -or $uiUrl -like 'http://localhost:*'
   $autoOpenEnabled = if ($isLocalhostLaunch) { $AutoOpen.IsPresent } else { $true }
 
   Write-LiveLog 'server started'
-  Write-LiveLog "manual URL: $uiUrl"
+  Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
   Write-LiveLog "browser auto-open disabled: $(-not $autoOpenEnabled)"
 
   Write-Host ''
   Write-Host 'Stephanos local server ready' -ForegroundColor Green
   Write-Host 'Open manually in browser:' -ForegroundColor Green
-  Write-Host $uiUrl -ForegroundColor Green
+  foreach ($target in $browserTargets) {
+    Write-Host $target -ForegroundColor Green
+  }
   Write-Host ''
 
   if ($autoOpenEnabled) {
-    Open-LocalStephanosBrowser -Url $uiUrl
+    foreach ($target in $browserTargets) {
+      Open-LocalStephanosBrowser -Url $target
+    }
   }
 }
 catch {
