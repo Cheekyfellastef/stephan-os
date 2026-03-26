@@ -48,19 +48,25 @@ function renderLauncherRuntimeFingerprint() {
     return;
   }
 
+  const runtimePath = launcherRuntimeFingerprint.currentPathname || "/";
+  const runtimeBuilt = launcherRuntimeFingerprint.buildTimestamp || "unknown";
   badgeNode.innerHTML = `
     <strong>Launcher Runtime Fingerprint</strong>
-    <ul>
-      <li><b>role:</b> ${launcherRuntimeFingerprint.runtimeLabel}</li>
-      <li><b>route/source:</b> ${launcherRuntimeFingerprint.routeSourceLabel}</li>
-      <li><b>fingerprint:</b> <code>${launcherRuntimeFingerprint.fingerprint}</code></li>
-      <li><b>commit:</b> ${launcherRuntimeFingerprint.commitHash}</li>
-      <li><b>built:</b> ${launcherRuntimeFingerprint.buildTimestamp}</li>
-      <li><b>origin:</b> <code>${launcherRuntimeFingerprint.currentOrigin}</code></li>
-      <li><b>pathname:</b> <code>${launcherRuntimeFingerprint.currentPathname}</code></li>
-      <li><b>expected root:</b> <code>${launcherRuntimeFingerprint.expectedRootLauncherUrl}</code></li>
-      <li><b>expected dist:</b> <code>${launcherRuntimeFingerprint.expectedMissionControlDistUrl}</code></li>
-    </ul>
+    <p class="runtime-fingerprint-summary">
+      <b>Role:</b> ${launcherRuntimeFingerprint.runtimeLabel} · <b>Path:</b> <code>${runtimePath}</code>
+    </p>
+    <details>
+      <summary>Show fingerprint details</summary>
+      <ul>
+        <li><b>route/source:</b> ${launcherRuntimeFingerprint.routeSourceLabel}</li>
+        <li><b>fingerprint:</b> <code>${launcherRuntimeFingerprint.fingerprint}</code></li>
+        <li><b>commit:</b> ${launcherRuntimeFingerprint.commitHash}</li>
+        <li><b>built:</b> ${runtimeBuilt}</li>
+        <li><b>origin:</b> <code>${launcherRuntimeFingerprint.currentOrigin}</code></li>
+        <li><b>expected root:</b> <code>${launcherRuntimeFingerprint.expectedRootLauncherUrl}</code></li>
+        <li><b>expected dist:</b> <code>${launcherRuntimeFingerprint.expectedMissionControlDistUrl}</code></li>
+      </ul>
+    </details>
   `;
 }
 
@@ -216,7 +222,7 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
     startupLaunchAudit: getStartupDiagnosticsSnapshot(),
   };
 
-  summaryNode.textContent = `Mode: ${diagnostics.runtimeMode} · Shell: ${diagnostics.shellSource} · Active tile: ${diagnostics.activeTileId || 'none'} · Tile registry entries: ${registrySnapshots.length}`;
+  summaryNode.textContent = `Mode: ${diagnostics.runtimeMode} · Active tile: ${diagnostics.activeTileId || 'none'} · Loaded tiles: ${diagnostics.loadedTileIds.length}`;
   jsonNode.textContent = JSON.stringify(diagnostics, null, 2);
 }
 
