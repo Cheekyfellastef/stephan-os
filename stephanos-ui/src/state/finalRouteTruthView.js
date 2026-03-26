@@ -45,7 +45,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     homeNodeUsableState: asBooleanState(finalRouteTruth.homeNodeUsable),
     requestedProvider: runtimeTruth.requestedProvider || finalRouteTruth.requestedProvider || runtimeStatus.selectedProvider || 'unknown',
     selectedProvider: runtimeTruth.selectedProvider || finalRouteTruth.selectedProvider || runtimeStatus.routeSelectedProvider || runtimeStatus.selectedProvider || 'unknown',
-    executedProvider: runtimeTruth.executedProvider || finalRouteTruth.executedProvider || runtimeStatus.activeProvider || 'unknown',
+    executedProvider: runtimeTruth.executedProvider || finalRouteTruth.executedProvider || 'n/a',
     preferredTarget,
     actualTarget,
     source,

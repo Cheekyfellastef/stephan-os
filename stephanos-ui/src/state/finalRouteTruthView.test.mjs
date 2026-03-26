@@ -49,6 +49,23 @@ test('buildFinalRouteTruthView marks uiReachable and route usability unknown whi
   assert.equal(view.routeUsableState, 'unknown');
 });
 
+test('buildFinalRouteTruthView does not infer executed provider from active provider projection', () => {
+  const view = buildFinalRouteTruthView({
+    activeProvider: 'ollama',
+    runtimeTruth: {
+      selectedProvider: 'ollama',
+      executedProvider: '',
+    },
+    finalRouteTruth: {
+      selectedProvider: 'ollama',
+      executedProvider: '',
+    },
+  });
+
+  assert.equal(view.selectedProvider, 'ollama');
+  assert.equal(view.executedProvider, 'n/a');
+});
+
 test('buildFinalRouteTruthView prefers tri-state ui reachability from finalRouteTruth', () => {
   const view = buildFinalRouteTruthView({
     appLaunchState: 'ready',

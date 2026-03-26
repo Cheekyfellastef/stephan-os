@@ -270,6 +270,21 @@ function asTriState(value) {
   return 'unknown';
 }
 
+function resolveExecutableProvider({
+  selectedProvider = '',
+  activeProvider = '',
+  providerHealth = {},
+} = {}) {
+  const health = normalizeProviderHealth(providerHealth);
+  if (selectedProvider && health[selectedProvider]?.ok === true) {
+    return selectedProvider;
+  }
+  if (activeProvider && health[activeProvider]?.ok === true) {
+    return activeProvider;
+  }
+  return '';
+}
+
 
 function buildRoutePreference(runtimeContext = {}) {
   if (runtimeContext.deviceContext === 'pc-local-browser') {
@@ -682,6 +697,7 @@ export function buildFinalRouteTruth({
   nodeRoute = {},
   finalRoute = {},
   routePlan = {},
+  providerHealth = {},
   backendAvailable = false,
   activeProvider = '',
   routeSelectedProvider = '',
@@ -694,6 +710,12 @@ export function buildFinalRouteTruth({
   const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
   const routeKnown = appLaunchState !== 'pending' && (nodeRoute?.routeKind || 'unavailable') !== 'unavailable';
   const uiReachabilityState = routeKnown ? asTriState(selectedEvaluation?.uiReachable) : 'unknown';
+  const selectedProvider = routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY;
+  const executableProvider = resolveExecutableProvider({
+    selectedProvider,
+    activeProvider,
+    providerHealth,
+  });
 
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
@@ -719,8 +741,8 @@ export function buildFinalRouteTruth({
     fallbackActive: Boolean(fallbackActive),
     fallbackRouteActive: nodeRoute?.routeKind === 'dist',
     requestedProvider: routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
-    selectedProvider: routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY,
-    executedProvider: activeProvider || '',
+    selectedProvider,
+    executedProvider: executableProvider,
     validationState,
     appLaunchState,
     operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
@@ -983,6 +1005,7 @@ export function createRuntimeStatusModel({
     nodeRoute,
     finalRoute,
     routePlan,
+    providerHealth: health,
     backendAvailable,
     activeProvider,
     routeSelectedProvider,

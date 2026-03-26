@@ -123,3 +123,69 @@ test('adjudicator does not promote selected provider to executable when provider
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
   assert.ok(adjudicated.issues.some((issue) => issue.code === 'provider-execution-unvalidated'));
 });
+
+test('adjudicator keeps executable provider empty when provider health is unknown', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'ollama',
+    providerHealth: {},
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
+  assert.equal(adjudicated.runtimeTruth.provider.providerHealthState, 'unknown');
+});
+
+test('adjudicator keeps executable provider empty when provider health failed', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'ollama',
+    providerHealth: { ollama: { ok: false, state: 'FAILED', reason: 'refused' } },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
+  assert.equal(adjudicated.runtimeTruth.provider.providerHealthState, 'unhealthy');
+});
+
+test('adjudicator promotes selected provider to executable when provider health ok', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'ollama',
+    providerHealth: { ollama: { ok: true, state: 'READY' } },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.providerHealthState, 'healthy');
+});
