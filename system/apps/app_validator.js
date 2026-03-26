@@ -859,6 +859,10 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   ).trim();
   const buildStampLabel = `Stephanos Build: ${buildStamp}`;
 
+  const currentHostname = extractHostname(currentOrigin);
+  const launcherPathname = String(globalThis.location?.pathname || "/");
+  const localLauncherShell = isLoopbackHost(currentHostname) && ["/", "/index.html"].includes(launcherPathname);
+
   let launchUrl = '';
   let launchStrategy = 'workspace';
   switch (finalRoute.routeKind) {
@@ -883,6 +887,11 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
         launchStrategy = 'navigate';
       }
       break;
+  }
+
+  if (localLauncherShell && entryExists) {
+    launchUrl = hostedDistUrl;
+    launchStrategy = 'workspace';
   }
 
   const launchableRuntime = Boolean(launchUrl);

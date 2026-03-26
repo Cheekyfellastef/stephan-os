@@ -18,9 +18,9 @@ What it does, in plain English:
 - Safely checks your local repo and pulls the latest GitHub changes only when the repo is clean.
 - Skips the pull with a clear message when local changes are present, so nothing gets overwritten.
 - Installs dependencies automatically for the root repo, `stephanos-ui`, and `stephanos-server` when package metadata changed or `node_modules` is missing.
-- Starts or reuses the local Stephanos backend on `8787` and the Vite Mission Console UI on `5173`.
-- Waits for the working dev URLs to answer, then opens `http://localhost:5173/`.
-- Stays on the known-good dev path instead of the old fragile dist-launch flow.
+- Starts or reuses the local Stephanos backend on `8787` and the shared launcher shell server on `4173`.
+- Waits for the launcher shell health/runtime URLs to answer, then opens `http://127.0.0.1:4173/`.
+- Runs one localhost launcher/workspace shell so Mission Console and local tiles share runtime context.
 - Targets local Ollama at `http://localhost:11434` by default, with Mock Mode available inside Stephanos if Ollama is offline.
 
 Mental model:
@@ -45,7 +45,7 @@ windows\Launch-Stephanos-Local.cmd
 
 ## Stephanos developer scripts
 
-- `npm run stephanos:dev` — run the Stephanos server plus the live Vite UI from `stephanos-ui`.
+- `npm run stephanos:dev` — run the Stephanos server plus the live Vite UI from `stephanos-ui` (component iteration mode).
 - `npm run stephanos:clean` — remove generated `apps/stephanos/dist/**` assets before a rebuild.
 - `npm run stephanos:build` — rebuild `stephanos-ui` into `apps/stephanos/dist/**` and stamp it with runtime metadata.
 - `npm run stephanos:verify` — validate that dist exists, asset references resolve, and build metadata/fingerprint still match the current source.

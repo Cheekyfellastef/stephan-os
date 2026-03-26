@@ -7,6 +7,8 @@ import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_a
 import { validateApps } from "./system/apps/app_validator.js";
 import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
+import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
+import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 
 console.log("Stephanos OS booting");
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
@@ -38,6 +40,17 @@ function log(message) {
 }
 
 let developerMode = false;
+
+
+function getRuntimeProjects(context = {}) {
+  const stateProjects = context?.systemState?.get?.("projects");
+  if (Array.isArray(stateProjects) && stateProjects.length > 0) {
+    return stateProjects;
+  }
+
+  return Array.isArray(context?.projects) ? context.projects : [];
+}
+
 
 function applyDeveloperModeVisibility() {
   const display = developerMode ? "block" : "none";
@@ -92,6 +105,38 @@ function isDeveloperModeEnabled() {
   return developerMode;
 }
 
+
+function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
+  const summaryNode = document.getElementById("runtime-diagnostics-summary");
+  const jsonNode = document.getElementById("runtime-diagnostics-json");
+
+  if (!summaryNode || !jsonNode) {
+    return;
+  }
+
+  const runtimeMode = resolveLauncherRuntimeMode();
+  const activeHint = getActiveTileContextHint() || null;
+  const registrySnapshots = getAllTileContextSnapshots();
+  const loadedTileIds = projects
+    .map((project) => String(project?.folder || project?.id || project?.name || '').trim().toLowerCase())
+    .filter(Boolean);
+  const activeTileId = activeHint?.tileId || String(workspace?.activeProjectKey || '').trim() || null;
+
+  const diagnostics = {
+    checkedAt: new Date().toISOString(),
+    runtimeMode: runtimeMode.mode,
+    shellSource: runtimeMode.shellSource,
+    launcherOrigin: runtimeMode.origin || globalThis.location?.origin || '',
+    loadedTileIds,
+    activeTileId,
+    tileContextRegistryPopulated: registrySnapshots.length > 0,
+    tileContextRegistryTileIds: registrySnapshots.map((snapshot) => snapshot.tileId),
+  };
+
+  summaryNode.textContent = `Mode: ${diagnostics.runtimeMode} · Shell: ${diagnostics.shellSource} · Active tile: ${diagnostics.activeTileId || 'none'} · Tile registry entries: ${registrySnapshots.length}`;
+  jsonNode.textContent = JSON.stringify(diagnostics, null, 2);
+}
+
 function startStephanosHealthMonitor(projects, context) {
   const monitor = async () => {
     try {
@@ -133,6 +178,7 @@ async function startStephanos() {
   });
 
   const { apps: projects, validationReport } = await discoverApps({ eventBus });
+  updateRuntimeDiagnostics({ projects });
 
   const { workspace } = await import("./system/workspace.js");
   const {
@@ -198,6 +244,7 @@ async function startStephanos() {
 
     try {
       await validateApps(projects, validationContext);
+      updateRuntimeDiagnostics({ projects, workspace });
     } catch (error) {
       console.warn("Stephanos revalidation failed.", error);
     }
@@ -258,6 +305,20 @@ async function startStephanos() {
   window.returnToCommandDeck = function() {
     context.workspace.close(context);
   };
+
+  eventBus.on("workspace:opened", () => {
+    updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+  });
+
+  eventBus.on("workspace:closed", () => {
+    updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+  });
+
+  window.addEventListener("storage", () => {
+    updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+  });
+
+  updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
 
   const status = document.getElementById("system-status-text");
   if (status) {
