@@ -171,12 +171,25 @@ function renderRootProjectTiles(projects = [], context = {}) {
       ${stateIssue ? `<div class="app-tile-issue">${stateIssue}</div>` : ""}
     `;
 
+    const projectId = String(project?.folder || project?.id || project?.name || "").trim().toLowerCase();
+    const isStephanos = projectId === "stephanos" || projectId === "stephanos os";
+    const launchStrategy = String(project?.launchStrategy || "").trim().toLowerCase();
+
     if (validationState === "error" || validationState === "launching") {
       tile.setAttribute("aria-disabled", "true");
       tile.title = stateIssue || "App status unavailable";
     } else {
       tile.title = name;
-      tile.onclick = () => context?.workspace?.open?.(project, context);
+      tile.onclick = () => {
+        if (isStephanos || launchStrategy === "navigate") {
+          if (project?.entry) {
+            window.location.assign(project.entry);
+          }
+          return;
+        }
+
+        context?.workspace?.open?.(project, context);
+      };
     }
 
     container.appendChild(tile);
