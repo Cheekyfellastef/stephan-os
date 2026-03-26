@@ -138,6 +138,55 @@ function getRuntimeProjects(context = {}) {
   return Array.isArray(context?.projects) ? context.projects : [];
 }
 
+function renderRootProjectTiles(projects = [], context = {}) {
+  const container = document.getElementById("project-registry");
+  if (!container) {
+    return;
+  }
+
+  if (container.childElementCount > 0) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  projects.forEach((project) => {
+    const tile = document.createElement("div");
+    const validationState = String(project?.validationState || "").trim().toLowerCase();
+    const icon = project?.icon || "🧩";
+    const name = project?.name || "Unnamed Project";
+    const statusMessage = project?.statusMessage || "";
+    const issues = Array.isArray(project?.validationIssues) ? project.validationIssues : [];
+    const stateIssue = statusMessage || issues[0] || "";
+
+    tile.className = "app-tile";
+
+    if (validationState === "error") {
+      tile.classList.add("app-tile-error");
+    } else if (validationState === "launching") {
+      tile.classList.add("app-tile-pending");
+    } else if (String(project?.dependencyState || "").trim().toLowerCase() === "degraded") {
+      tile.classList.add("app-tile-degraded");
+    }
+
+    tile.innerHTML = `
+      <div style="font-size:36px;">${icon}</div>
+      <div style="margin-top:8px;">${name}</div>
+      ${stateIssue ? `<div class="app-tile-issue">${stateIssue}</div>` : ""}
+    `;
+
+    if (validationState === "error" || validationState === "launching") {
+      tile.setAttribute("aria-disabled", "true");
+      tile.title = stateIssue || "App status unavailable";
+    } else {
+      tile.title = name;
+      tile.onclick = () => context?.workspace?.open?.(project, context);
+    }
+
+    container.appendChild(tile);
+  });
+}
+
 
 function applyDeveloperModeVisibility() {
   const display = developerMode ? "block" : "none";
@@ -310,6 +359,7 @@ async function startStephanos() {
     workspace,
     projects
   };
+  renderRootProjectTiles(projects, context);
 
   systemState.set("appValidationReport", validationReport);
 
@@ -334,6 +384,7 @@ async function startStephanos() {
     try {
       await validateApps(projects, validationContext);
       updateRuntimeDiagnostics({ projects, workspace });
+      renderRootProjectTiles(getRuntimeProjects(context), context);
     } catch (error) {
       console.warn("Stephanos revalidation failed.", error);
     }
@@ -401,13 +452,16 @@ async function startStephanos() {
 
   eventBus.on("workspace:closed", () => {
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+    renderRootProjectTiles(getRuntimeProjects(context), context);
   });
 
   window.addEventListener("storage", () => {
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+    renderRootProjectTiles(getRuntimeProjects(context), context);
   });
 
   updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+  renderRootProjectTiles(getRuntimeProjects(context), context);
 
   const status = document.getElementById("system-status-text");
   if (status) {
