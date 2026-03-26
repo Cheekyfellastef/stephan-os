@@ -293,6 +293,39 @@ word-break: break-all;
 color: #fff;
 }
 
+.runtime-diagnostics-card {
+margin-top: 14px;
+padding: 12px 14px;
+border: 1px solid #355d8b;
+border-radius: 10px;
+background: rgba(6, 16, 30, 0.86);
+}
+
+.runtime-diagnostics-card summary {
+cursor: pointer;
+font-weight: 700;
+color: #a8dbff;
+}
+
+.runtime-diagnostics-card summary span {
+display: block;
+margin-top: 6px;
+font-weight: 400;
+font-size: 12px;
+color: #d2ecff;
+}
+
+.runtime-diagnostics-card pre {
+white-space: pre-wrap;
+background: #0b1320;
+color: #bfe4ff;
+padding: 10px;
+border-radius: 8px;
+overflow: auto;
+margin: 10px 0 0;
+max-height: 320px;
+}
+
 .companion-launch-button {
 margin-top: 12px;
 width: 100%;
@@ -454,12 +487,14 @@ margin-bottom:20px;
 
 </section>
 
-<section id="runtime-diagnostics" aria-live="polite">
-
-<h2>Runtime Diagnostics</h2>
-<p id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</p>
-<pre id="runtime-diagnostics-json" style="white-space:pre-wrap;background:#0b1320;color:#bfe4ff;padding:10px;border-radius:8px;overflow:auto;"></pre>
-
+<section id="runtime-diagnostics" aria-live="polite" class="runtime-diagnostics-card">
+<details id="runtime-diagnostics-details">
+  <summary>
+    Runtime Diagnostics (expand for fingerprint + startup JSON)
+    <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
+  </summary>
+  <pre id="runtime-diagnostics-json"></pre>
+</details>
 </section>
 <aside id="launcher-runtime-fingerprint" class="runtime-fingerprint-badge" aria-live="polite">
 <strong>Launcher Runtime Fingerprint</strong>
