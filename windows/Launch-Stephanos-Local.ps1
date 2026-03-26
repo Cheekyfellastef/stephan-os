@@ -374,6 +374,50 @@ function Ensure-LauncherShellRunning {
   Write-LiveLog 'launcher shell server process started (command=npm run stephanos:serve)'
 }
 
+function Get-ChromeExecutable {
+  $candidates = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
+    (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
+    (Join-Path $env:LocalAppData 'Google\Chrome\Application\chrome.exe')
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+  foreach ($candidate in $candidates) {
+    if (Test-Path $candidate) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
+
+function Open-LocalStephanosBrowser([string]$Url) {
+  $isLocalhostTarget = $Url -like 'http://127.0.0.1:*' -or $Url -like 'http://localhost:*'
+  $chromeExecutable = if ($isLocalhostTarget) { Get-ChromeExecutable } else { $null }
+
+  if ($chromeExecutable) {
+    $chromeArgs = @(
+      '--new-window',
+      '--no-first-run',
+      '--disable-session-crashed-bubble',
+      '--disable-features=ErrorPageAutoReload',
+      $Url
+    )
+    Write-LiveLog "opening browser with explicit Chrome top-level navigation"
+    Write-LiveLog "browser executable: $chromeExecutable"
+    Write-LiveLog "browser args: $($chromeArgs -join ' ')"
+    Write-LiveLog "browser target URL: $Url"
+    Write-LiveLog 'browser launch intent: fresh top-level navigation (no shell iframe, no recovery-tab reuse)'
+    Start-Process -FilePath $chromeExecutable -ArgumentList $chromeArgs | Out-Null
+    return
+  }
+
+  Write-LiveLog 'opening browser via system default handler (Chrome executable not found)'
+  Write-LiveLog "browser command: Start-Process $Url"
+  Write-LiveLog "browser target URL: $Url"
+  Write-LiveLog 'browser launch intent: top-level navigation request via shell URL handler'
+  Start-Process -FilePath $Url | Out-Null
+}
+
 try {
   $launcherState = Get-LauncherState
 
@@ -394,7 +438,7 @@ try {
   Wait-ForLandingPageReady -Url $uiUrl -TimeoutSeconds 120
 
   Write-LiveLog "opening browser at $uiUrl"
-  Start-Process $uiUrl | Out-Null
+  Open-LocalStephanosBrowser -Url $uiUrl
 }
 catch {
   $failedStep = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { 'unknown step' }
