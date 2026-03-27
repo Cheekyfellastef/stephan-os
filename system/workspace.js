@@ -51,12 +51,25 @@ function resolveProjectEntryUrl(project) {
 }
 
 function resolveStephanosLaunchTarget(project) {
-  return String(
-    project?.launchEntry
-    || project?.runtimeEntry
-    || project?.entry
+  const launchEntry = String(project?.launchEntry || '').trim();
+  const runtimeEntry = String(project?.runtimeEntry || '').trim();
+  const compatibilityEntry = String(project?.entry || '').trim();
+  const resolved = String(
+    launchEntry
+    || runtimeEntry
+    || compatibilityEntry
     || ''
   ).trim();
+
+  if (!launchEntry && (runtimeEntry || compatibilityEntry)) {
+    console.warn('[Workspace Guardrail] Stephanos launchEntry missing; using fallback order launchEntry -> runtimeEntry -> entry.', {
+      runtimeEntry,
+      entry: compatibilityEntry,
+      resolved,
+    });
+  }
+
+  return resolved;
 }
 
 function getProjectKey(project) {

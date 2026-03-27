@@ -9,6 +9,7 @@ test('root launcher renders visible build proof surface', () => {
   assert.match(launcherHtml, /id="launcher-build-proof"/);
   assert.match(launcherMain, /function renderLauncherBuildProof/);
   assert.match(launcherMain, /hydrateLauncherBuildProof/);
+  assert.doesNotMatch(launcherMain, /launcherDiagnostics\.enabled[\s\S]{0,80}launcher-build-proof/);
 });
 
 test('tile-first launcher path remains isolated from diagnostics surfaces', () => {

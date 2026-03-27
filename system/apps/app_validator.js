@@ -241,6 +241,10 @@ function emitDiagnostic(context, message) {
   context?.eventBus?.emit("app:diagnostic", { message });
 }
 
+function warnStephanosEntryInvariant(message, details = {}) {
+  console.warn(`[Stephanos Guardrail] ${message}`, details);
+}
+
 function emitStephanosValidationLog(context, details = {}) {
   const message = [
     `[VALIDATOR LIVE] manifest entry=${details.manifestEntry || "(missing)"}`,
@@ -1077,8 +1081,39 @@ export async function validateApps(apps, context = {}) {
       app.runtimeEntry = stephanosStatus.runtimeEntry || stephanosStatus.runtimeLaunchUrl || app.runtimeEntry || app.entry;
       app.launchEntry = stephanosStatus.launchEntry || stephanosStatus.launchUrl || app.launchEntry || app.entry;
       if (app.launchEntry) {
+        if (app.entry && app.entry !== app.launchEntry) {
+          warnStephanosEntryInvariant('Updating compatibility app.entry from authoritative launchEntry while preserving separated fields.', {
+            previousEntry: app.entry,
+            launchEntry: app.launchEntry,
+            launcherEntry: app.launcherEntry,
+            runtimeEntry: app.runtimeEntry,
+          });
+        }
         app.entry = app.launchEntry;
       }
+
+      if (!app.launcherEntry || !app.runtimeEntry || !app.launchEntry) {
+        warnStephanosEntryInvariant('Stephanos validation produced incomplete separated launch fields.', {
+          launcherEntry: app.launcherEntry || '',
+          runtimeEntry: app.runtimeEntry || '',
+          launchEntry: app.launchEntry || '',
+          entry: app.entry || '',
+        });
+      }
+
+      if (
+        app.launcherEntry &&
+        app.runtimeEntry &&
+        app.launcherEntry === app.runtimeEntry &&
+        String(globalThis.location?.pathname || '/') === '/'
+      ) {
+        warnStephanosEntryInvariant('Launcher and runtime entries unexpectedly match on root launcher context.', {
+          launcherEntry: app.launcherEntry,
+          runtimeEntry: app.runtimeEntry,
+          launchEntry: app.launchEntry,
+        });
+      }
+
       app.launchStrategy = stephanosStatus.launchStrategy || 'workspace';
 
       if (previousValidationState === "error" && stephanosStatus.state !== "error") {
