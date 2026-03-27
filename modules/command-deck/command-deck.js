@@ -231,7 +231,7 @@ function syncTileRegistrySnapshots(projects) {
     });
 }
 
-export function renderProjectRegistry(projects, context) {
+export function renderProjectRegistry(projects, context, options = {}) {
   const container = document.getElementById('project-registry');
   if (!container) {
     console.error('Command Deck: #project-registry not found');
@@ -240,8 +240,12 @@ export function renderProjectRegistry(projects, context) {
 
   container.innerHTML = '';
   syncTileRegistrySnapshots(projects);
-  renderLauncherStatusStrip(projects, context);
-  renderMobileCompanionDeck(projects, context);
+
+  const enableSecondaryStatusSurfaces = options?.enableSecondaryStatusSurfaces === true;
+  if (enableSecondaryStatusSurfaces) {
+    renderLauncherStatusStrip(projects, context);
+    renderMobileCompanionDeck(projects, context);
+  }
 
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
