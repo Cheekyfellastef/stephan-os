@@ -1,6 +1,13 @@
+import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
+
 const loadedModules = [];
 const moduleStates = {};
 let moduleRegistry = [];
+const LAUNCHER_CRITICAL_MODULE_PATH_PREFIXES = Object.freeze([
+  "./modules/command-deck/",
+  "./system/workspace.js",
+  "./main.js",
+]);
 
 function ensureActiveModules(context) {
   if (!context) {
@@ -56,6 +63,26 @@ function createImportUrl(modulePath, options = {}) {
   }
 
   return moduleUrl.href;
+}
+
+function isLauncherCriticalModulePath(modulePath) {
+  const normalizedPath = String(modulePath || "").trim();
+  return LAUNCHER_CRITICAL_MODULE_PATH_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix));
+}
+
+function emitModuleFailure(context, moduleId, modulePath, reason, error = null) {
+  const launcherCritical = isLauncherCriticalModulePath(modulePath);
+  const payload = {
+    id: moduleId || modulePath,
+    path: modulePath,
+    reason: reason || "Module load failed",
+    launcherCritical,
+    lawId: launcherCritical ? STEPHANOS_LAW_IDS.IMPORT_STRUCTURE_GUARD : STEPHANOS_LAW_IDS.UNIVERSAL_ENTRY,
+    errorName: error?.name || null,
+    errorStack: typeof error?.stack === "string" ? error.stack : null,
+  };
+
+  context?.eventBus?.emit("module:failed", payload);
 }
 
 async function loadModuleFromPath(modulePath, context, options = {}) {
@@ -160,11 +187,7 @@ export async function loadModules(context) {
       await loadModuleFromPath(modulePath, context);
     } catch (err) {
       console.error("Module load error:", modulePath, err);
-      context?.eventBus?.emit("module:failed", {
-        id: modulePath,
-        path: modulePath,
-        reason: err?.message || "Module load failed"
-      });
+      emitModuleFailure(context, modulePath, modulePath, err?.message || "Module load failed", err);
     }
   }
 }
@@ -223,11 +246,7 @@ export async function reloadModule(moduleId, context) {
     return true;
   } catch (err) {
     console.error("Module reload error:", loadedEntry.modulePath, err);
-    context?.eventBus?.emit("module:failed", {
-      id: moduleId,
-      path: loadedEntry.modulePath,
-      reason: err?.message || "Module reload failed"
-    });
+    emitModuleFailure(context, moduleId, loadedEntry.modulePath, err?.message || "Module reload failed", err);
     return false;
   }
 }
@@ -249,11 +268,7 @@ export async function enableModule(moduleId, context) {
     return true;
   } catch (err) {
     console.error("Module enable error:", state.modulePath, err);
-    context?.eventBus?.emit("module:failed", {
-      id: moduleId,
-      path: state.modulePath,
-      reason: err?.message || "Module enable failed"
-    });
+    emitModuleFailure(context, moduleId, state.modulePath, err?.message || "Module enable failed", err);
     return false;
   }
 }

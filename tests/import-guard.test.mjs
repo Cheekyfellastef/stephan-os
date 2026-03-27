@@ -27,6 +27,19 @@ test('import guard fails when an identifier is imported twice', () => {
   assert.ok(violations.some((violation) => violation.reason === 'duplicate import'));
 });
 
+test('import guard catches duplicate binding pattern that previously broke command deck', () => {
+  const source = [
+    "import { recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';",
+    'const ready = true;',
+    "import { recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';",
+    'export { ready };',
+  ].join('\n');
+
+  const violations = analyzeImportStructureInSource(source, 'command-deck-duplicate.mjs');
+  assert.ok(violations.some((violation) => violation.reason === 'duplicate import'));
+  assert.ok(violations.some((violation) => violation.reason === 'import not at top'));
+});
+
 test('import guard fails when an import appears after executable code', () => {
   const source = [
     'const x = 1;',

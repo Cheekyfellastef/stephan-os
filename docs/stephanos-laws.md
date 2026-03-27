@@ -77,4 +77,10 @@ Any coding agent editing launcher/runtime/routing/build-truth paths must:
 3. Update laws/docs/tests together if behavior or policy changes.
 4. Reference applicable law IDs in targeted guard logs where helpful.
 
+## Failure class spotlight: launcher import-structure regressions
+
+- A prior launcher outage (Friday, March 27, 2026) was caused by duplicate import declarations in `modules/command-deck/command-deck.js`.
+- Symptom pattern: diagnostics/laws still render, while launcher tiles vanish and module loader reports a syntax/module-load failure.
+- Constitutional response: treat import-structure violations as law breaks and block with `npm run stephanos:guard:imports` during verify.
+
 If an edit changes invariant-sensitive behavior and no law/tests/docs changes accompany it, the pass is incomplete.
