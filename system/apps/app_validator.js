@@ -903,9 +903,17 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   }
 
   let launchUrl = runtimeLaunchUrl;
+  let launcherEntry = launcherShellUrl;
+  let runtimeEntry = runtimeLaunchUrl;
+  let launchEntry = runtimeLaunchUrl;
   if (localLauncherShell) {
-    launchUrl = launcherShellUrl;
-    launchStrategy = 'navigate';
+    launcherEntry = launcherShellUrl;
+    runtimeEntry = runtimeLaunchUrl;
+    launchEntry = runtimeLaunchUrl;
+    launchUrl = runtimeLaunchUrl;
+    if (runtimeLaunchUrl) {
+      launchStrategy = 'navigate';
+    }
   }
 
   const launchableRuntime = Boolean(launchUrl);
@@ -951,6 +959,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       launchUrl,
       runtimeLaunchUrl,
       launcherShellUrl,
+      launcherEntry,
+      runtimeEntry,
+      launchEntry,
       launchStrategy,
       runtimeTargets: [
         ...probedTargets,
@@ -1062,9 +1073,9 @@ export async function validateApps(apps, context = {}) {
       app.buildStamp = stephanosStatus.buildStamp || 'unknown';
       app.buildStampLabel = stephanosStatus.buildStampLabel || 'Stephanos Build: unknown';
       app.buildMarker = stephanosStatus.buildMarker || '';
-      app.launcherEntry = stephanosStatus.launcherShellUrl || app.launcherEntry || app.entry;
-      app.runtimeEntry = stephanosStatus.runtimeLaunchUrl || app.runtimeEntry || app.entry;
-      app.launchEntry = stephanosStatus.launchUrl || app.launchEntry || app.entry;
+      app.launcherEntry = stephanosStatus.launcherEntry || stephanosStatus.launcherShellUrl || app.launcherEntry || app.entry;
+      app.runtimeEntry = stephanosStatus.runtimeEntry || stephanosStatus.runtimeLaunchUrl || app.runtimeEntry || app.entry;
+      app.launchEntry = stephanosStatus.launchEntry || stephanosStatus.launchUrl || app.launchEntry || app.entry;
       if (app.launchEntry) {
         app.entry = app.launchEntry;
       }

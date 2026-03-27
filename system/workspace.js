@@ -53,7 +53,7 @@ function resolveProjectEntryUrl(project) {
 function resolveStephanosLaunchTarget(project) {
   return String(
     project?.launchEntry
-    || project?.launchUrl
+    || project?.runtimeEntry
     || project?.entry
     || ''
   ).trim();

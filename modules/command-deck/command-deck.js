@@ -26,10 +26,22 @@ function normaliseProject(project) {
     dependencyState: project?.dependencyState || 'ready',
     runtimeStatusModel: project?.runtimeStatusModel || null,
     launchStrategy: project?.launchStrategy || 'workspace',
+    launcherEntry: project?.launcherEntry || '',
+    runtimeEntry: project?.runtimeEntry || '',
+    launchEntry: project?.launchEntry || '',
     buildStamp: project?.buildStamp || 'unknown',
     buildStampLabel: project?.buildStampLabel || 'Stephanos Build: unknown',
     buildMarker: project?.buildMarker || '',
   };
+}
+
+function resolveStephanosLaunchTarget(project) {
+  return String(
+    project?.launchEntry
+    || project?.runtimeEntry
+    || project?.entry
+    || ''
+  ).trim();
 }
 
 function getRuntimeProjects(context) {
@@ -60,17 +72,19 @@ function ensureStatusSurface(containerId, className = '') {
 }
 
 function launchProject(project, context, trigger = {}) {
-  if (!project?.entry) {
+  const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
+  const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
+  const chosenTarget = isStephanos ? resolveStephanosLaunchTarget(project) : String(project?.entry || '').trim();
+
+  if (!chosenTarget) {
     return;
   }
 
-  const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
-  const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
   const resolvedEntry = (() => {
     try {
-      return new URL(project.entry, window.location.href).href;
+      return new URL(chosenTarget, window.location.href).href;
     } catch {
-      return project.entry;
+      return chosenTarget;
     }
   })();
 
@@ -78,7 +92,7 @@ function launchProject(project, context, trigger = {}) {
     project: project?.name || projectId || 'unknown',
     launchStrategy: project.launchStrategy || 'workspace',
     isStephanos,
-    rawEntry: project.entry,
+    rawEntry: chosenTarget,
     resolvedEntry,
     trigger,
   });
@@ -88,7 +102,7 @@ function launchProject(project, context, trigger = {}) {
     sourceFunction: 'launchProject',
     triggerType: trigger.type || 'unknown',
     triggerPayload: trigger,
-    rawTarget: project.entry,
+    rawTarget: chosenTarget,
     resolvedTarget: resolvedEntry,
   });
 
@@ -97,7 +111,7 @@ function launchProject(project, context, trigger = {}) {
     console.warn('[CommandDeck] Suppressed non-interactive Stephanos auto-launch event during landing-page runtime', {
       trigger,
       startupDiagnostics,
-      rawEntry: project.entry,
+      rawEntry: chosenTarget,
       resolvedEntry,
     });
     return;
