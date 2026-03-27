@@ -238,13 +238,12 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
       expectedRuntimeMarker === servedRuntimeMarker;
 
     return {
-      reusable:
-        payload?.service === 'stephanos-dist-server' &&
-        payload?.distMountPath === distMountPath &&
-        payload?.staticRootPath === staticRootPath &&
-        runtimeReady &&
-        moduleMimeReady &&
+      reusable: canReuseStephanosServer({
+        payload,
+        runtimeReady,
+        moduleMimeReady,
         markerMatchesExpected,
+      }),
       runtimeReady,
       moduleMimeReady,
       markerMatchesExpected,
@@ -264,6 +263,22 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
   } catch {
     return { reusable: false };
   }
+}
+
+export function canReuseStephanosServer({
+  payload,
+  runtimeReady,
+  moduleMimeReady,
+  markerMatchesExpected,
+}) {
+  return (
+    payload?.service === 'stephanos-dist-server' &&
+    payload?.distMountPath === distMountPath &&
+    payload?.staticRootPath === staticRootPath &&
+    runtimeReady &&
+    moduleMimeReady &&
+    markerMatchesExpected
+  );
 }
 
 function resolveRequestFile(requestPath) {
