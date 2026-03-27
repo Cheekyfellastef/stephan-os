@@ -1,4 +1,5 @@
 import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
+import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
 
 function normaliseProject(project) {
   if (typeof project === 'string') {
@@ -206,7 +207,31 @@ function renderMobileCompanionDeck(projects, context) {
   }
 }
 
-function renderProjectRegistry(projects, context) {
+
+function syncTileRegistrySnapshots(projects) {
+  projects
+    .map(normaliseProject)
+    .forEach((project) => {
+      const tileId = String(project?.id || project?.folder || project?.name || '')
+        .trim()
+        .toLowerCase();
+
+      if (!tileId) {
+        return;
+      }
+
+      publishTileContextSnapshot(tileId, {
+        tileTitle: project.name || 'Unnamed Project',
+        projectName: project.name || 'Unnamed Project',
+        route: project.entry || '',
+        launchStrategy: project.launchStrategy || 'workspace',
+        dependencyState: project.dependencyState || 'ready',
+        validationState: project.validationState || (project.disabled ? 'error' : 'healthy'),
+      });
+    });
+}
+
+export function renderProjectRegistry(projects, context) {
   const container = document.getElementById('project-registry');
   if (!container) {
     console.error('Command Deck: #project-registry not found');
@@ -214,6 +239,7 @@ function renderProjectRegistry(projects, context) {
   }
 
   container.innerHTML = '';
+  syncTileRegistrySnapshots(projects);
   renderLauncherStatusStrip(projects, context);
   renderMobileCompanionDeck(projects, context);
 
