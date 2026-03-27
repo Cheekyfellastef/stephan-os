@@ -104,6 +104,82 @@ test('validateStephanosRuntime preserves launcherEntry/runtimeEntry/launchEntry 
   }
 });
 
+test('validateStephanosRuntime probes launcher runtime-status on /apps/stephanos/runtime-status.json', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+
+  const fetchCalls = [];
+
+  globalThis.window = { location: { origin: 'http://127.0.0.1:4173' } };
+  globalThis.fetch = async (url) => {
+    const requestUrl = String(url);
+    fetchCalls.push(requestUrl);
+    if (
+      requestUrl === './apps/stephanos/runtime-status.json'
+      || requestUrl === 'http://127.0.0.1:4173/__stephanos/health'
+    ) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          state: 'ready',
+          runtimeMarker: 'marker',
+          launcherStatus: {
+            state: 'ready',
+            launchInProgress: false,
+            subsystems: { build: { state: 'ready' }, ui: { state: 'ready' }, backend: { state: 'ready' } },
+          },
+        }),
+        json: async () => ({
+          state: 'ready',
+          runtimeMarker: 'marker',
+          launcherStatus: {
+            state: 'ready',
+            launchInProgress: false,
+            subsystems: { build: { state: 'ready' }, ui: { state: 'ready' }, backend: { state: 'ready' } },
+          },
+        }),
+      };
+    }
+
+    if (requestUrl === './apps/stephanos/dist/stephanos-build.json') {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ runtimeMarker: 'marker' }),
+      };
+    }
+
+    if (
+      requestUrl === 'http://localhost:5173/'
+      || requestUrl === 'http://127.0.0.1:5173/'
+      || requestUrl === 'http://127.0.0.1:4173/apps/stephanos/dist/'
+    ) {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '',
+      };
+    }
+
+    return {
+      ok: true,
+      text: async () => '<!doctype html><html></html>',
+      json: async () => ({ service: 'stephanos-server', client_route_state: 'ready', published_backend_base_url: 'http://127.0.0.1:8787' }),
+    };
+  };
+
+  try {
+    await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+    assert.equal(
+      fetchCalls.includes('/apps/stephanos/runtime-status.json')
+      || fetchCalls.includes('./apps/stephanos/runtime-status.json'),
+      true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
 test('validateApps keeps separated Stephanos entries authoritative while app.entry remains compatibility mirror', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
