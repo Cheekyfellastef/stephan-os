@@ -16,6 +16,8 @@ test('tile-first launcher path remains isolated from diagnostics surfaces', () =
   assert.match(launcherMain, /renderLauncherProjectRegistry\(projects, context, \{ enableSecondaryStatusSurfaces: false \}\)/);
   assert.match(launcherMain, /renderTileFirstLauncher\(projects, fallbackTileContext\)/);
   assert.match(launcherMain, /renderTileFirstLauncher\(projects, context\)/);
+  assert.match(launcherMain, /renderStephanosLawsPanel\(\)/);
+  assert.match(launcherHtml, /id="stephanos-laws-mount"/);
   assert.match(launcherHtml, /id="launcher-diagnostics-mount"/);
   assert.match(launcherHtml, /Guardrail: product launcher tiles render first; diagnostics can only appear inside this isolated mount/);
 });

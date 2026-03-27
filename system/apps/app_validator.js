@@ -28,6 +28,7 @@ import {
   resolveStephanosBackendBaseUrl,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
 import { requestStephanosBackend } from "../../shared/runtime/backendClient.mjs";
+import { STEPHANOS_LAW_IDS } from "../../shared/runtime/stephanosLaws.mjs";
 
 const STEPHANOS_APP_ID = "stephanos";
 const STEPHANOS_LOCAL_URLS = createStephanosLocalUrls();
@@ -241,8 +242,9 @@ function emitDiagnostic(context, message) {
   context?.eventBus?.emit("app:diagnostic", { message });
 }
 
-function warnStephanosEntryInvariant(message, details = {}) {
-  console.warn(`[Stephanos Guardrail] ${message}`, details);
+function warnStephanosEntryInvariant(message, details = {}, lawId = "") {
+  const lawPrefix = lawId ? `[LAW:${lawId}] ` : "";
+  console.warn(`[Stephanos Guardrail] ${lawPrefix}${message}`, details);
 }
 
 function emitStephanosValidationLog(context, details = {}) {
@@ -1087,7 +1089,7 @@ export async function validateApps(apps, context = {}) {
             launchEntry: app.launchEntry,
             launcherEntry: app.launcherEntry,
             runtimeEntry: app.runtimeEntry,
-          });
+          }, STEPHANOS_LAW_IDS.ENTRY_COMPATIBILITY_ONLY);
         }
         app.entry = app.launchEntry;
       }
@@ -1098,7 +1100,7 @@ export async function validateApps(apps, context = {}) {
           runtimeEntry: app.runtimeEntry || '',
           launchEntry: app.launchEntry || '',
           entry: app.entry || '',
-        });
+        }, STEPHANOS_LAW_IDS.ENTRY_SEPARATION);
       }
 
       if (
@@ -1111,7 +1113,7 @@ export async function validateApps(apps, context = {}) {
           launcherEntry: app.launcherEntry,
           runtimeEntry: app.runtimeEntry,
           launchEntry: app.launchEntry,
-        });
+        }, STEPHANOS_LAW_IDS.RUNTIME_TARGET_DISTINCT);
       }
 
       app.launchStrategy = stephanosStatus.launchStrategy || 'workspace';

@@ -12,6 +12,7 @@ import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode
 import { createStephanosLocalUrls } from "./shared/runtime/stephanosLocalUrls.mjs";
 import { getLauncherDiagnosticsControl } from "./shared/runtime/launcherDiagnosticsControl.mjs";
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
+import { renderStephanosLawsPanel } from "./shared/runtime/renderStephanosLawsPanel.mjs";
 import {
   attachStartupInteractionListeners,
   getStartupDiagnosticsSnapshot,
@@ -465,6 +466,7 @@ async function startStephanos() {
     },
   };
   renderTileFirstLauncher(projects, fallbackTileContext);
+  renderStephanosLawsPanel();
 
   try {
     const { workspace } = await import("./system/workspace.js");
@@ -509,6 +511,7 @@ async function startStephanos() {
       projects
     };
     renderTileFirstLauncher(projects, context);
+    renderStephanosLawsPanel();
 
     systemState.set("appValidationReport", validationReport);
 

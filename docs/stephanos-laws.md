@@ -1,0 +1,80 @@
+# Stephanos Laws (Constitutional Layer)
+
+Stephanos Laws are a durable architectural-law system that now exists in three synchronized forms:
+
+1. **Repository law**: this doc, `docs/stephanos-guardrails-v2.md`, and AGENTS policy.
+2. **Runtime law**: `shared/runtime/stephanosLaws.mjs` (machine-readable structured law objects).
+3. **Human-visible law**: launcher-shell “Laws of Stephanos” section rendered from the runtime law source.
+
+If these layers drift, the implementation is incomplete.
+
+## Machine-readable law source
+
+- Source of truth: `shared/runtime/stephanosLaws.mjs`
+- Runtime renderer: `shared/runtime/renderStephanosLawsPanel.mjs`
+- Launcher mount: `index.html#stephanos-laws-mount`
+- Launcher wiring: `main.js` via `renderStephanosLawsPanel()`
+
+Every law object includes:
+
+- `id`
+- `title`
+- `shortStatement`
+- `fullDescription`
+- `category`
+- `invariantType`
+- `operatorImplication`
+- `engineeringImplication`
+- `relatedFiles`
+- `testCoverageHint`
+- `severity`
+- `status`
+
+## Layered architecture North Star
+
+Stephanos is expected to evolve with explicit layers:
+
+### Layer 1 — Universal entry truth
+- Hosted/root landing page (`/`) is the universal doorway and launcher shell.
+- It stays tile-first and stable.
+- It is not the full brain of Stephanos.
+
+### Layer 2 — Shared system truth
+- Shared runtime/state contracts carry identity, continuity, memory, route context, and durable preferences.
+- This layer is deeper truth than one launcher route.
+
+### Layer 3 — Runtime embodiment truth
+- Device/runtime embodiments can differ (desktop, tablet, phone, local node, hosted shell, etc.).
+- Embodiment differences must still preserve one Stephanos identity and law model.
+
+## Law categories
+
+Current law categories:
+- `entry`
+- `routing`
+- `runtime`
+- `state`
+- `build-truth`
+- `diagnostics-boundary`
+- `compatibility`
+- `cross-device-architecture`
+
+## Operator usage
+
+Use the laws as your North Star when diagnosing regressions:
+
+1. Open the **Laws of Stephanos** section in launcher shell and identify violated law IDs.
+2. Check the law’s `relatedFiles` and `testCoverageHint` to focus investigation.
+3. Re-run build/verify gates for build-truth laws.
+4. Treat violations as architecture policy breaks, not cosmetic drift.
+
+## Coding-agent usage
+
+Any coding agent editing launcher/runtime/routing/build-truth paths must:
+
+1. Read `shared/runtime/stephanosLaws.mjs` first.
+2. Preserve law invariants and categories.
+3. Update laws/docs/tests together if behavior or policy changes.
+4. Reference applicable law IDs in targeted guard logs where helpful.
+
+If an edit changes invariant-sensitive behavior and no law/tests/docs changes accompany it, the pass is incomplete.

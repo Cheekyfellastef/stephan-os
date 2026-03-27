@@ -2,6 +2,8 @@
 
 ## Scope
 This file is a hard policy for launcher/runtime/routing edits. It is not optional guidance.
+Machine-readable companion policy lives in `shared/runtime/stephanosLaws.mjs`.
+Human/operator guide lives in `docs/stephanos-laws.md`.
 
 ## Truth model (must stay separated)
 
@@ -73,3 +75,13 @@ Any mismatch => reject reuse and force operator restart.
 - Root launcher showing diagnostics/status content in primary tile body.
 - Reusing existing local server with marker mismatch or bad module MIME.
 - Build metadata mismatch between `dist/index.html` and `stephanos-build.json`.
+
+## Constitutional law linkage (Stephanos Laws layer)
+
+Guardrails v2 is now mirrored by a structured law layer:
+
+- Runtime law source: `shared/runtime/stephanosLaws.mjs`
+- UI renderer: `shared/runtime/renderStephanosLawsPanel.mjs`
+- Launcher-visible surface: `index.html#stephanos-laws-mount`
+
+When changing launcher/runtime/routing behavior, update tests/docs/law mappings together. Do not let prose policy and structured law source diverge.
