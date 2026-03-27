@@ -93,6 +93,13 @@ test('existing server probe rejects reuse when runtime marker mismatches expecte
       };
     }
 
+    if (String(url).includes('/apps/stephanos/runtime-status.json')) {
+      return {
+        ok: true,
+        json: async () => ({ state: 'ready' }),
+      };
+    }
+
     return {
       ok: true,
       text: async () => '<html><head><meta name="stephanos-build-runtime-marker" content="stale-marker"></head></html>',
@@ -104,4 +111,48 @@ test('existing server probe rejects reuse when runtime marker mismatches expecte
   });
 
   assert.equal(result.reusable, false);
+});
+
+test('existing server probe rejects reuse when runtime-status route is missing', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/apps/stephanos/runtime-status.json')) {
+      return { ok: false, status: 404 };
+    }
+
+    if (String(url).includes('/__stephanos/health')) {
+      return {
+        ok: true,
+        json: async () => ({
+          service: 'stephanos-dist-server',
+          runtimeMarker: 'marker-123',
+        }),
+      };
+    }
+
+    if (String(url).includes('/__stephanos/source-truth')) {
+      return {
+        ok: true,
+        json: async () => ({
+          launcherCriticalSourceTruth: [],
+        }),
+      };
+    }
+
+    return {
+      ok: true,
+      text: async () => '<html><head><meta name="stephanos-build-runtime-marker" content="marker-123"></head></html>',
+    };
+  };
+
+  const result = await probeExistingLocalServer({
+    expectedRuntimeMarker: 'marker-123',
+  });
+
+  assert.equal(result.reusable, false);
+  assert.equal(result.reason, 'required health/source/runtime probes failed');
 });
