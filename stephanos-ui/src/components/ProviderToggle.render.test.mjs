@@ -1,65 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { build } from 'esbuild';
-
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../..');
-const uiRoot = path.join(repoRoot, 'stephanos-ui');
-const srcRoot = path.join(uiRoot, 'src');
-const buildDefine = {
-  __STEPHANOS_UI_VERSION__: JSON.stringify('test-version'),
-  __STEPHANOS_UI_SOURCE__: JSON.stringify('test-source'),
-  __STEPHANOS_UI_SOURCE_FINGERPRINT__: JSON.stringify('test-fingerprint'),
-  __STEPHANOS_UI_BUILD_TARGET__: JSON.stringify('test-target'),
-  __STEPHANOS_UI_BUILD_TARGET_IDENTIFIER__: JSON.stringify('test-target-id'),
-  __STEPHANOS_UI_RUNTIME_ID__: JSON.stringify('test-runtime-id'),
-  __STEPHANOS_UI_SOURCE_TRUTH__: JSON.stringify('test-source-truth'),
-  __STEPHANOS_UI_BUILD_METADATA__: JSON.stringify({
-    runtimeMarker: 'test-runtime-marker',
-    gitCommit: 'test-commit',
-    buildTimestamp: 'test-build-timestamp',
-  }),
-};
-
-function aliasPlugin(aliases) {
-  return {
-    name: 'alias-plugin',
-    setup(buildContext) {
-      buildContext.onResolve({ filter: /.*/ }, (args) => {
-        if (aliases[args.path]) {
-          return { path: aliases[args.path] };
-        }
-        return null;
-      });
-    },
-  };
-}
-
-async function importBundledModule(entryPoint, aliases = {}) {
-  const outfile = path.join(
-    os.tmpdir(),
-    `stephanos-provider-toggle-test-${Date.now()}-${Math.random().toString(36).slice(2)}.cjs`,
-  );
-
-  const result = await build({
-    absWorkingDir: uiRoot,
-    entryPoints: [entryPoint],
-    bundle: true,
-    format: 'cjs',
-    platform: 'node',
-    outfile,
-    define: buildDefine,
-    jsx: 'automatic',
-    plugins: [aliasPlugin(aliases)],
-  });
-  assert.ok(result.errors.length === 0, `Expected bundle without errors for ${entryPoint}`);
-  const imported = await import(pathToFileURL(outfile).href);
-  await fs.unlink(outfile).catch(() => {});
-  return imported;
-}
+import { importBundledModule, srcRoot } from '../test/renderHarness.mjs';
 
 function createStore(overrides = {}) {
   return {

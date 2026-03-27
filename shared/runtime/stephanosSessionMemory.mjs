@@ -223,7 +223,11 @@ function normalizeProjectMemory(value = {}) {
 
 function normalizeUiState(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
-  const uiLayout = source.uiLayout && typeof source.uiLayout === 'object' ? { ...source.uiLayout } : {};
+  const baseUiLayout = source.uiLayout && typeof source.uiLayout === 'object' ? { ...source.uiLayout } : {};
+  const uiLayout = {
+    ...baseUiLayout,
+    buildParityPanelVisible: baseUiLayout.buildParityPanelVisible === true,
+  };
   const activeSubview = normalizeString(source.activeSubview || source.recentRoute, STEPHANOS_ACTIVE_SUBVIEW);
   return {
     activeWorkspace: normalizeString(source.activeWorkspace, STEPHANOS_ACTIVE_WORKSPACE),

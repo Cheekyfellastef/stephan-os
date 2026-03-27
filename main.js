@@ -17,6 +17,7 @@ import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
 import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
+import { createBuildParitySnapshot } from "./shared/runtime/buildParity.mjs";
 import { createStephanosMemory, createStephanosMemoryGateway } from "./shared/runtime/stephanosMemory.mjs";
 import { createStephanosContinuityService } from "./shared/runtime/stephanosContinuity.mjs";
 import {
@@ -400,20 +401,18 @@ async function hydrateLauncherBuildProof() {
     servedBuildTimestamp,
     realitySync: realitySyncState,
   });
-  buildTruthSignals.requestedSourceMarker = requestedSourceMarker;
-  buildTruthSignals.builtMarker = builtMarker;
-  buildTruthSignals.servedMarker = servedMarker;
-  buildTruthSignals.buildTimestamp = buildTimestamp;
-  buildTruthSignals.servedBuildTimestamp = servedBuildTimestamp;
-  buildTruthSignals.servedDistTruthAvailable = Boolean(servedMarker || servedBuildTimestamp);
-  buildTruthSignals.sourceDistParityOk = builtMarker && servedMarker ? builtMarker === servedMarker : null;
-  buildTruthSignals.localhostMirrorDrift = buildTruthSignals.sourceDistParityOk === false;
-  buildTruthSignals.ignitionRestartRequired = buildTruthSignals.localhostMirrorDrift
-    && buildTruthSignals.ignitionRestartSupported
-    && realitySyncState.enabled === false;
-  if (!buildTruthSignals.servedSourceTruthAvailable) {
-    buildTruthSignals.servedSourceTruthAvailable = Boolean(requestedSourceMarker);
-  }
+  const paritySnapshot = createBuildParitySnapshot({
+    requestedSourceMarker,
+    builtMarker,
+    servedMarker,
+    buildTimestamp,
+    servedBuildTimestamp,
+    servedSourceTruthAvailable: buildTruthSignals.servedSourceTruthAvailable,
+    sourceDistParityOk: buildTruthSignals.sourceDistParityOk,
+    ignitionRestartSupported: buildTruthSignals.ignitionRestartSupported,
+    realitySyncEnabled: realitySyncState.enabled,
+  });
+  Object.assign(buildTruthSignals, paritySnapshot);
   const displayedMarker = servedMarker || builtMarker || requestedSourceMarker || "";
   const displayedTimestamp = servedBuildTimestamp || buildTimestamp || "";
   realitySyncController.updateDisplayedTruth({ marker: displayedMarker, timestamp: displayedTimestamp });

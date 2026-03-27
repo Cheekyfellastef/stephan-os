@@ -20,6 +20,7 @@ const TOGGLE_DEFINITIONS = Object.freeze([
   { id: 'runtime-diagnostics', label: 'Runtime Diagnostics', type: 'surface' },
   { id: 'launcher-fingerprint', label: 'Launcher Runtime Fingerprint', type: 'surface' },
   { id: 'truth-panel', label: 'Truth Panel', type: 'surface' },
+  { id: 'build-parity-panel', label: 'Build Parity Signals', type: 'surface' },
   { id: 'reality-sync', label: 'Reality Sync / Auto Truth Refresh', type: 'surface' },
 ]);
 
@@ -79,6 +80,12 @@ export function createSystemPanelStateController({
       return;
     }
 
+    if (toggleId === 'build-parity-panel') {
+      applySurfaceVisibility?.({ truthPanelVisible: normalizedEnabled });
+      writeLayoutState({ buildParityPanelVisible: normalizedEnabled, truthPanelVisible: normalizedEnabled }, storage);
+      return;
+    }
+
     if (toggleId === 'reality-sync') {
       setRealitySyncEnabled?.(normalizedEnabled);
       writeLayoutState({ realitySyncEnabled: normalizedEnabled }, storage);
@@ -100,6 +107,10 @@ export function createSystemPanelStateController({
 
     if (toggleId === 'truth-panel') {
       return layout.truthPanelVisible === true;
+    }
+
+    if (toggleId === 'build-parity-panel') {
+      return layout.buildParityPanelVisible === true || layout.truthPanelVisible === true;
     }
 
     if (toggleId === 'reality-sync') {
