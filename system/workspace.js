@@ -50,6 +50,15 @@ function resolveProjectEntryUrl(project) {
   }
 }
 
+function resolveStephanosLaunchTarget(project) {
+  return String(
+    project?.launchEntry
+    || project?.launchUrl
+    || project?.entry
+    || ''
+  ).trim();
+}
+
 function getProjectKey(project) {
   return String(project?.folder || project?.id || project?.entry || project?.name || "workspace")
     .trim()
@@ -350,7 +359,13 @@ export const workspace = {
     content.innerHTML = "";
     workspaceRuntimeState.activeIframe = null;
 
-    const resolvedEntryUrl = resolveProjectEntryUrl(project);
+    const stephanosLaunchTarget = isStephanosProject(project)
+      ? resolveStephanosLaunchTarget(project)
+      : "";
+    const resolvedEntryUrl = resolveProjectEntryUrl({
+      ...project,
+      entry: stephanosLaunchTarget || project?.entry,
+    });
 
     if (isStephanosProject(project) && resolvedEntryUrl) {
       recordStartupLaunchTrigger({
@@ -361,16 +376,16 @@ export const workspace = {
           launchStrategy: project?.launchStrategy || "workspace",
           projectName: project?.name || "",
         },
-        rawTarget: project?.entry || "",
+        rawTarget: stephanosLaunchTarget || project?.entry || "",
         resolvedTarget: resolvedEntryUrl,
       });
-      logWorkspaceEvent("Stephanos boot forcing top-level navigation", {
+      logWorkspaceEvent("Stephanos launch using validated top-level target", {
         sessionId: launch.sessionId,
         projectKey: launch.projectKey,
         launchStrategy: project?.launchStrategy || "workspace",
-        rawEntry: project?.entry || "",
+        rawEntry: stephanosLaunchTarget || project?.entry || "",
         resolvedEntryUrl,
-        reason: "prevent iframe/chrome-error recovery path during local ignition",
+        reason: "validated-route navigation",
       });
       window.location.assign(resolvedEntryUrl);
       return;
