@@ -47,8 +47,12 @@ export function assembleStephanosContext({
   maxSnapshots = 3,
   storage = globalThis.localStorage,
 } = {}) {
+  const continuityState = runtimeContext.stephanosContinuity
+    && typeof runtimeContext.stephanosContinuity.getState === 'function'
+    ? runtimeContext.stephanosContinuity.getState()
+    : null;
   const activeHint = getActiveTileContextHint({ storage });
-  const activeTileIdFromRuntime = safeString(runtimeContext.activeTileId);
+  const activeTileIdFromRuntime = safeString(runtimeContext.activeTileId || continuityState?.workspace?.activeTileId);
   const activeTileSnapshot = getSelectedTileContextSnapshot({
     tileId: activeTileIdFromRuntime || activeHint?.tileId || '',
     storage,
@@ -84,6 +88,13 @@ export function assembleStephanosContext({
       deviceContext: safeString(runtimeContext.deviceContext),
       sessionKind: safeString(runtimeContext.sessionKind),
     },
+    continuity: continuityState ? {
+      continuityId: safeString(continuityState.session?.continuityId),
+      activeWorkspace: safeString(continuityState.workspace?.activeWorkspace),
+      activeTileId: safeString(continuityState.workspace?.activeTileId),
+      recentEvents: Array.isArray(continuityState.recentEvents) ? continuityState.recentEvents.slice(-5) : [],
+      updatedAt: safeString(continuityState.updatedAt),
+    } : null,
     diagnostics: {
       activeTileId: activeTileSnapshot?.tileId || activeHint?.tileId || null,
       includedTileIds: tileContexts.map((snapshot) => snapshot.tileId),

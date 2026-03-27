@@ -337,6 +337,13 @@ function buildWorkspaceFrameContainer(documentRef) {
 
 function showWorkspaceFallback(container, project, context) {
   context?.eventBus?.emit("workspace:launch_failed", project);
+  context?.eventBus?.emit("tile.result", {
+    tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+    tileTitle: project?.name || "Unknown Tile",
+    result: "launch-failed",
+    source: "workspace",
+    summary: `Failed to open ${project?.name || "workspace tile"}.`,
+  });
   renderAppLoadError(container, buildWorkspaceLoadErrorMessage(project));
 }
 
@@ -364,6 +371,12 @@ export const workspace = {
       tileTitle: project?.name || "Workspace",
       tileType: project?.type || "workspace",
       source: "workspace",
+    });
+    context?.eventBus?.emit("tile.focused", {
+      tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+      tileTitle: project?.name || "Workspace",
+      source: "workspace",
+      summary: `Focused ${project?.name || "workspace tile"}.`,
     });
 
     workspacePanel.style.display = "block";
@@ -456,6 +469,12 @@ export const workspace = {
       content.appendChild(backButton);
       content.appendChild(container);
       context?.eventBus?.emit("workspace:opened", project);
+      context?.eventBus?.emit("tile.opened", {
+        tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+        tileTitle: project?.name || "Workspace",
+        source: "workspace",
+        summary: `Opened ${project?.name || "workspace tile"}.`,
+      });
       return;
     }
 
@@ -553,11 +572,23 @@ export const workspace = {
 
       container.appendChild(iframe);
       context?.eventBus?.emit("workspace:opened", project);
+      context?.eventBus?.emit("tile.opened", {
+        tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+        tileTitle: project?.name || "Workspace",
+        source: "workspace",
+        summary: `Opened ${project?.name || "workspace tile"}.`,
+      });
       return;
     }
 
     content.textContent = `Workspace for ${project?.name || "project"}`;
     context?.eventBus?.emit("workspace:opened", project);
+    context?.eventBus?.emit("tile.opened", {
+      tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
+      tileTitle: project?.name || "Workspace",
+      source: "workspace",
+      summary: `Opened ${project?.name || "workspace tile"}.`,
+    });
   },
 
   close(context = {}) {
@@ -596,5 +627,9 @@ export const workspace = {
     setWorkspaceChromeVisibility(false);
 
     context?.eventBus?.emit("workspace:closed");
+    context?.eventBus?.emit("tile.closed", {
+      source: "workspace",
+      summary: "Workspace returned to command deck.",
+    });
   }
 };

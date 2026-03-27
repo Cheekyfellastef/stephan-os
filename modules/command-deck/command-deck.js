@@ -33,6 +33,12 @@ function normaliseProject(project) {
     buildStamp: project?.buildStamp || 'unknown',
     buildStampLabel: project?.buildStampLabel || 'Stephanos Build: unknown',
     buildMarker: project?.buildMarker || '',
+    capabilities: Array.isArray(project?.capabilities) ? project.capabilities : [],
+    eventsPublished: Array.isArray(project?.eventsPublished) ? project.eventsPublished : [],
+    eventsConsumed: Array.isArray(project?.eventsConsumed) ? project.eventsConsumed : [],
+    memoryUsage: project?.memoryUsage || 'none-declared',
+    continuityParticipation: project?.continuityParticipation || 'none-declared',
+    aiAddressable: project?.aiAddressable === true,
   };
 }
 
@@ -119,6 +125,14 @@ function launchProject(project, context, trigger = {}) {
     rawEntry: chosenTarget,
     resolvedEntry,
     trigger,
+  });
+  context?.eventBus?.emit('tile.action', {
+    tileId: projectId,
+    tileTitle: project?.name || projectId || 'unknown',
+    action: 'launch-requested',
+    triggerType: trigger?.type || 'unknown',
+    source: 'command-deck',
+    summary: `Launch requested for ${project?.name || projectId || 'tile'}`,
   });
 
   recordStartupLaunchTrigger({
