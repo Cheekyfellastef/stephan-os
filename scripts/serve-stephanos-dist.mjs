@@ -539,6 +539,7 @@ export function createStephanosDistServer() {
       response.end(`${JSON.stringify({
         runtimeMarker: healthPayload.runtimeMarker || null,
         buildTimestamp: healthPayload.buildTimestamp || null,
+        gitCommit: healthPayload.gitCommit || null,
         sourceTruthAvailable: launcherCriticalSourceTruth.every((entry) => entry.exists === true),
         sourceDistParityOk: null,
         launcherCriticalSourceTruth,

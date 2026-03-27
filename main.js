@@ -17,6 +17,10 @@ import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
 import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
+import {
+  createBuildParitySnapshot,
+  evaluateToggleRegistryParity,
+} from "./shared/runtime/buildParity.mjs";
 import { createStephanosMemory, createStephanosMemoryGateway } from "./shared/runtime/stephanosMemory.mjs";
 import { createStephanosContinuityService } from "./shared/runtime/stephanosContinuity.mjs";
 import {
@@ -49,9 +53,9 @@ const launcherDiagnostics = (() => {
 const launcherRuntimeFingerprint = {
   runtimeLabel: "root-launcher",
   routeSourceLabel: "root index.html + main.js launcher shell",
-  fingerprint: `launcher-${document.querySelector('meta[name=\"stephanos-version\"]')?.getAttribute("content") || "unknown"}-${new Date(document.lastModified || Date.now()).toISOString()}`,
+  fingerprint: `launcher-${document.querySelector('meta[name=\"stephanos-version\"]')?.getAttribute("content") || "unknown"}`,
   commitHash: "unknown",
-  buildTimestamp: document.lastModified || new Date().toISOString(),
+  buildTimestamp: "unknown",
   currentOrigin: globalThis.location?.origin || "",
   currentPathname: globalThis.location?.pathname || "",
   expectedRootLauncherUrl: canonicalUrls.launcherShellUrl,
@@ -312,6 +316,7 @@ function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = 
   if (!proofNode) {
     return;
   }
+  refreshPanelRegistryParity();
 
   const activeMarker = servedMarker || builtMarker || requestedSourceMarker || "unknown";
   const activeTimestamp = servedBuildTimestamp || buildTimestamp || "unknown";
@@ -320,10 +325,15 @@ function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = 
   const refreshReason = realitySync?.lastRefreshReason || "none";
   const mirrorStatus = buildTruthSignals.localhostMirrorDrift ? "drift" : "aligned";
   const restartLabel = buildTruthSignals.ignitionRestartRequired ? "restart required" : "restart not required";
+  const paritySummary = buildTruthSignals.paritySnapshot?.parityOk ? "launcher/tile/served aligned" : "parity mismatch";
+  const toggleSummary = buildTruthSignals.panelRegistryParity?.parityOk ? "registry aligned" : "registry drift";
   proofNode.innerHTML = `
     <strong>Build</strong>
     <div>${activeTimestamp}</div>
     <div><code>${activeMarker}</code></div>
+    <div class="launcher-build-reality-sync">Commit: <code>${buildTruthSignals.paritySnapshot?.gitCommit || "unknown"}</code></div>
+    <div class="launcher-build-reality-sync">Runtime mode: ${buildTruthSignals.paritySnapshot?.runtimeMode || "unknown"} · origin: ${buildTruthSignals.paritySnapshot?.artifactOrigin || "unknown"}</div>
+    <div class="launcher-build-reality-sync">Parity: ${paritySummary} · Toggle registry: ${toggleSummary}</div>
     <div class="launcher-build-reality-sync">Reality Sync: ${syncStateLabel} · screen ${staleLabel}</div>
     <div class="launcher-build-reality-sync">Latest: <code>${realitySync?.latestMarker || "unknown"}</code></div>
     <div class="launcher-build-reality-sync">Last refresh reason: ${refreshReason}</div>
@@ -337,6 +347,8 @@ async function hydrateLauncherBuildProof() {
   let buildTimestamp = null;
   let servedMarker = null;
   let servedBuildTimestamp = null;
+  let servedSource = "health";
+  let servedCommit = null;
 
   try {
     const buildResponse = await fetch("./apps/stephanos/dist/stephanos-build.json", { cache: "no-store" });
@@ -360,6 +372,7 @@ async function hydrateLauncherBuildProof() {
       const healthPayload = await healthResponse.json();
       servedMarker = healthPayload?.runtimeMarker || null;
       servedBuildTimestamp = healthPayload?.buildTimestamp || null;
+      servedCommit = healthPayload?.gitCommit || null;
       buildTruthSignals.ignitionRestartSupported = healthPayload?.ignitionRestart?.supported === true;
       buildTruthSignals.lastRestartRequestAt = healthPayload?.ignitionRestart?.lastRequestedAt || buildTruthSignals.lastRestartRequestAt;
       buildTruthSignals.lastRestartResult = healthPayload?.ignitionRestart?.lastResult || buildTruthSignals.lastRestartResult;
@@ -378,6 +391,11 @@ async function hydrateLauncherBuildProof() {
       }
       if (typeof sourceTruthPayload?.sourceDistParityOk === "boolean") {
         buildTruthSignals.sourceDistParityOk = sourceTruthPayload.sourceDistParityOk;
+      }
+      if (sourceTruthPayload?.runtimeMarker || sourceTruthPayload?.buildTimestamp) {
+        servedMarker = sourceTruthPayload.runtimeMarker || servedMarker;
+        servedBuildTimestamp = sourceTruthPayload.buildTimestamp || servedBuildTimestamp;
+        servedSource = "source-truth";
       }
     }
   } catch {
@@ -408,6 +426,30 @@ async function hydrateLauncherBuildProof() {
   buildTruthSignals.servedDistTruthAvailable = Boolean(servedMarker || servedBuildTimestamp);
   buildTruthSignals.sourceDistParityOk = builtMarker && servedMarker ? builtMarker === servedMarker : null;
   buildTruthSignals.localhostMirrorDrift = buildTruthSignals.sourceDistParityOk === false;
+  buildTruthSignals.paritySnapshot = createBuildParitySnapshot({
+    launcher: {
+      version: document.querySelector('meta[name="stephanos-version"]')?.getAttribute("content") || "unknown",
+      runtimeMarker: requestedSourceMarker,
+      buildTimestamp,
+      gitCommit: launcherRuntimeFingerprint.commitHash,
+      runtimeMode: "launcher-root",
+      source: "launcher-shell",
+    },
+    tile: {
+      version: document.querySelector('meta[name="stephanos-version"]')?.getAttribute("content") || "unknown",
+      runtimeMarker: builtMarker,
+      buildTimestamp,
+      gitCommit: launcherRuntimeFingerprint.commitHash,
+      runtimeMode: "mission-console-dist",
+      source: "dist-metadata",
+    },
+    served: {
+      runtimeMarker: servedMarker,
+      buildTimestamp: servedBuildTimestamp,
+      gitCommit: servedCommit,
+      source: servedSource,
+    },
+  });
   buildTruthSignals.ignitionRestartRequired = buildTruthSignals.localhostMirrorDrift
     && buildTruthSignals.ignitionRestartSupported
     && realitySyncState.enabled === false;
@@ -570,6 +612,8 @@ const buildTruthSignals = {
   ignitionRestartSupported: false,
   lastRestartRequestAt: "",
   lastRestartResult: "none",
+  paritySnapshot: null,
+  panelRegistryParity: null,
 };
 const initialUiLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
 const launcherSurfaceVisibility = {
@@ -592,7 +636,7 @@ const realitySyncState = {
   attemptsForCurrentMarker: 0,
 };
 
-const realitySyncController = createRealitySyncController({
+  const realitySyncController = createRealitySyncController({
   enabled: realitySyncState.enabled,
   onStateChange(nextState) {
     Object.assign(realitySyncState, nextState);
@@ -618,6 +662,13 @@ const realitySyncController = createRealitySyncController({
     }, 900);
   },
 });
+
+function refreshPanelRegistryParity() {
+  const toggleIds = Array.from(document.querySelectorAll('#stephanos-system-panel input[data-toggle-id]'))
+    .map((node) => node.getAttribute('data-toggle-id'))
+    .filter(Boolean);
+  buildTruthSignals.panelRegistryParity = evaluateToggleRegistryParity(toggleIds);
+}
 
 window.setRealitySyncEnabled = function setRealitySyncEnabled(enabled) {
   const currentMemory = readPersistedStephanosSessionMemory();

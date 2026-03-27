@@ -8,9 +8,10 @@ import {
 } from '../ai/providerDefaults.mjs';
 import { isLoopbackHost, isValidStephanosHomeNode, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
 import { sanitizeCoreTruthInput } from './truthContract.mjs';
+import { SYSTEM_PANEL_TOGGLE_REGISTRY_VERSION } from './buildParity.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
-export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
+export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 2;
 export const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
 export const STEPHANOS_ACTIVE_WORKSPACE = 'mission-console';
 export const STEPHANOS_ACTIVE_SUBVIEW = 'assistant';
@@ -223,7 +224,11 @@ function normalizeProjectMemory(value = {}) {
 
 function normalizeUiState(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
-  const uiLayout = source.uiLayout && typeof source.uiLayout === 'object' ? { ...source.uiLayout } : {};
+  const uiLayoutInput = source.uiLayout && typeof source.uiLayout === 'object' ? source.uiLayout : {};
+  const uiLayout = {
+    ...uiLayoutInput,
+    systemPanelToggleRegistryVersion: Number(uiLayoutInput.systemPanelToggleRegistryVersion) || SYSTEM_PANEL_TOGGLE_REGISTRY_VERSION,
+  };
   const activeSubview = normalizeString(source.activeSubview || source.recentRoute, STEPHANOS_ACTIVE_SUBVIEW);
   return {
     activeWorkspace: normalizeString(source.activeWorkspace, STEPHANOS_ACTIVE_WORKSPACE),

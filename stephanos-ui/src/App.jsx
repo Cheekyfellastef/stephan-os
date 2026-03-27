@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AIConsole from './components/AIConsole';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
@@ -21,15 +21,19 @@ import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
 import {
   STEPHANOS_UI_BUILD_STAMP,
+  STEPHANOS_UI_BUILD_TIMESTAMP,
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
+  STEPHANOS_UI_GIT_COMMIT,
   STEPHANOS_UI_RUNTIME_ID,
   STEPHANOS_UI_RUNTIME_LABEL,
   STEPHANOS_UI_RUNTIME_MARKER,
   STEPHANOS_UI_SOURCE,
   STEPHANOS_UI_SOURCE_FINGERPRINT,
+  STEPHANOS_UI_VERSION,
 } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
+import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -69,9 +73,9 @@ export default function App() {
     const runtimeRole = browserPathname.startsWith('/apps/stephanos/dist/') ? 'mission-control-dist-runtime' : 'mission-control-dev-runtime';
 
     return {
-      commitHash: STEPHANOS_UI_SOURCE_FINGERPRINT,
+      commitHash: STEPHANOS_UI_GIT_COMMIT,
       buildFingerprint: STEPHANOS_UI_RUNTIME_MARKER,
-      buildTimestamp: STEPHANOS_UI_BUILD_STAMP,
+      buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
       currentOrigin: browserOrigin,
       currentPathname: browserPathname,
       runtimeRole,
@@ -104,6 +108,51 @@ export default function App() {
   useEffect(() => {
     console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
   }, [runtimeFingerprint]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadServedTruth = async () => {
+      const payloads = await Promise.all([
+        fetch('/__stephanos/source-truth', { cache: 'no-store' }).then((response) => response.ok ? response.json() : null).catch(() => null),
+        fetch('/__stephanos/health', { cache: 'no-store' }).then((response) => response.ok ? response.json() : null).catch(() => null),
+      ]);
+      const sourceTruth = payloads[0] || {};
+      const health = payloads[1] || {};
+      if (!mounted) {
+        return;
+      }
+      setServedTruth({
+        runtimeMarker: sourceTruth.runtimeMarker || health.runtimeMarker || '',
+        buildTimestamp: sourceTruth.buildTimestamp || health.buildTimestamp || '',
+        gitCommit: sourceTruth.gitCommit || health.gitCommit || '',
+        source: sourceTruth.runtimeMarker || sourceTruth.buildTimestamp ? 'source-truth' : (health.runtimeMarker || health.buildTimestamp ? 'health' : 'unavailable'),
+      });
+    };
+    void loadServedTruth();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const paritySnapshot = useMemo(() => createBuildParitySnapshot({
+    launcher: {
+      version: STEPHANOS_UI_VERSION,
+      runtimeMarker: STEPHANOS_UI_RUNTIME_MARKER,
+      buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+      gitCommit: STEPHANOS_UI_GIT_COMMIT,
+      runtimeMode: runtimeFingerprint.runtimeRole,
+      source: 'mission-console-runtime',
+    },
+    tile: {
+      version: STEPHANOS_UI_VERSION,
+      runtimeMarker: STEPHANOS_UI_RUNTIME_MARKER,
+      buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+      gitCommit: STEPHANOS_UI_GIT_COMMIT,
+      runtimeMode: runtimeFingerprint.runtimeRole,
+      source: STEPHANOS_UI_SOURCE,
+    },
+    served: servedTruth,
+  }), [runtimeFingerprint.runtimeRole, servedTruth]);
 
   return (
     <main className="app-shell-root">
@@ -189,6 +238,10 @@ export default function App() {
         <span>target id: {STEPHANOS_UI_BUILD_TARGET_IDENTIFIER}</span>
         <span>source: {STEPHANOS_UI_SOURCE}</span>
         <span>fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</span>
+        <span>served marker: {paritySnapshot.servedRuntimeMarker}</span>
+        <span>served timestamp: {paritySnapshot.servedBuildTimestamp}</span>
+        <span>served source: {paritySnapshot.artifactOrigin}</span>
+        <span>parity: {paritySnapshot.parityOk ? 'aligned' : 'drift-detected'}</span>
       </footer>
       <aside className="runtime-fingerprint-badge" aria-label="mission control runtime fingerprint">
         <strong>Mission Control Fingerprint</strong>
@@ -209,3 +262,4 @@ export default function App() {
     </main>
   );
 }
+  const [servedTruth, setServedTruth] = useState({ runtimeMarker: '', buildTimestamp: '', gitCommit: '', source: 'unavailable' });
