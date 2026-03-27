@@ -15,6 +15,7 @@ $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $viteDevUrl = 'http://localhost:5173/'
 $launcherRootCommand = 'npm run stephanos:serve'
+$launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 
 function Write-LiveLog([string]$Message) {
   Write-Host "[LAUNCHER LIVE] $Message"
@@ -52,6 +53,20 @@ function Test-UrlReachable([string]$Url) {
   }
 }
 
+
+function Test-CommandSucceeds([string]$Command) {
+  try {
+    $output = & cmd /c $Command 2>&1
+    if ($output) {
+      $output | ForEach-Object { Write-LiveLog $_ }
+    }
+    return $LASTEXITCODE -eq 0
+  }
+  catch {
+    return $false
+  }
+}
+
 function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
@@ -64,11 +79,35 @@ function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 12
   throw "Timed out waiting for $StepLabel at $Url"
 }
 
-function Ensure-ProcessRunning([string]$StepLabel, [string]$HealthUrl, [string]$WindowTitle, [string]$Command) {
+function Ensure-ProcessRunning(
+  [string]$StepLabel,
+  [string]$HealthUrl,
+  [string]$WindowTitle,
+  [string]$Command,
+  [string]$ReuseProbeCommand = ''
+) {
   Write-LiveLog "starting $StepLabel"
   if (Test-UrlReachable -Url $HealthUrl) {
-    Write-LiveLog "$StepLabel already responding; reusing existing process"
-    return
+    if ($ReuseProbeCommand) {
+      Write-LiveLog "$StepLabel health is up; validating served build truth before reuse"
+      if (Test-CommandSucceeds -Command $ReuseProbeCommand) {
+        Write-LiveLog "$StepLabel already responding with current build truth; reusing existing process"
+        return
+      }
+
+      Write-LiveLog "$StepLabel responded but failed truth probe; replacing stale process"
+      $stopped = Stop-ProcessOnTcpPort -Port 4173
+      if ($stopped.Count -gt 0) {
+        Write-LiveLog "stopped stale process ids on 4173: $([string]::Join(',', $stopped))"
+      }
+      else {
+        Write-LiveLog 'truth probe failed but no stoppable process found on 4173; launching a fresh process anyway'
+      }
+    }
+    else {
+      Write-LiveLog "$StepLabel already responding; reusing existing process"
+      return
+    }
   }
 
   Start-DevWindow -Title $WindowTitle -Command $Command
@@ -187,7 +226,7 @@ try {
     }
 
     Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
-    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherShellUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand
+    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherShellUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
   }
 
   Write-LiveLog 'waiting for backend'
