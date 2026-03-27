@@ -2,26 +2,15 @@ import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
 } from '../../shared/runtime/stephanosSessionMemory.mjs';
+import {
+  SYSTEM_PANEL_TOGGLE_DEFINITIONS,
+} from '../../shared/runtime/buildParity.mjs';
 
 export const moduleDefinition = {
   id: 'system-panel',
   version: '1.1',
   description: 'Stephanos system control panel',
 };
-
-const TOGGLE_DEFINITIONS = Object.freeze([
-  { id: 'module-manager-panel', label: 'Modules', type: 'panel' },
-  { id: 'agent-console-panel', label: 'Agents Console', type: 'panel' },
-  { id: 'command-console-panel', label: 'Debug Console', type: 'panel' },
-  { id: 'task-monitor-panel', label: 'Task Monitor', type: 'panel' },
-  { id: 'dev-console', label: 'Developer Console', type: 'panel' },
-  { id: 'stephanos-laws-panel', label: 'Laws Panel', type: 'panel' },
-  { id: 'stephanos-build-panel', label: 'Build Panel', type: 'panel' },
-  { id: 'runtime-diagnostics', label: 'Runtime Diagnostics', type: 'surface' },
-  { id: 'launcher-fingerprint', label: 'Launcher Runtime Fingerprint', type: 'surface' },
-  { id: 'truth-panel', label: 'Truth Panel', type: 'surface' },
-  { id: 'reality-sync', label: 'Reality Sync / Auto Truth Refresh', type: 'surface' },
-]);
 
 function readLayoutState(storage = globalThis.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);
@@ -56,8 +45,6 @@ export function createSystemPanelStateController({
   setRealitySyncEnabled = globalThis.setRealitySyncEnabled,
   storage = globalThis.localStorage,
 } = {}) {
-  const layout = readLayoutState(storage);
-
   function setToggleState(toggleId, enabled) {
     const normalizedEnabled = enabled === true;
 
@@ -90,6 +77,7 @@ export function createSystemPanelStateController({
   }
 
   function getToggleState(toggleId) {
+    const layout = readLayoutState(storage);
     if (toggleId === 'runtime-diagnostics') {
       return layout.runtimeDiagnosticsVisible === true;
     }
@@ -110,7 +98,7 @@ export function createSystemPanelStateController({
   }
 
   return {
-    toggleDefinitions: TOGGLE_DEFINITIONS,
+    toggleDefinitions: SYSTEM_PANEL_TOGGLE_DEFINITIONS,
     getToggleState,
     setToggleState,
   };

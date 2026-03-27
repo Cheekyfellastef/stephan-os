@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION,
   STEPHANOS_SESSION_MEMORY_STORAGE_KEY,
   STEPHANOS_UI_LAYOUT_STORAGE_KEY,
   createDefaultStephanosSessionMemory,
@@ -34,6 +35,8 @@ function createMemoryStorage(seed = {}) {
 test('readPersistedStephanosSessionMemory falls back to safe defaults when storage is missing', () => {
   const memory = readPersistedStephanosSessionMemory(null);
   assert.deepEqual(memory, createDefaultStephanosSessionMemory());
+  assert.equal(memory.schemaVersion, STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION);
+  assert.equal(memory.session.ui.uiLayout.systemPanelToggleRegistryVersion, 2);
 });
 
 test('persistStephanosSessionMemory writes central schema and legacy mirrors for reload compatibility', () => {
