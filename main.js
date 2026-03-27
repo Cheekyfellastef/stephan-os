@@ -154,6 +154,72 @@ async function hydrateLauncherBuildIdentity() {
 }
 renderIgnitionModeBanner();
 
+function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = null, servedMarker = null, buildTimestamp = null, servedBuildTimestamp = null }) {
+  const proofNode = document.getElementById("launcher-build-proof");
+  if (!proofNode) {
+    return;
+  }
+
+  const activeMarker = servedMarker || builtMarker || requestedSourceMarker || "unknown";
+  const activeTimestamp = servedBuildTimestamp || buildTimestamp || "unknown";
+  proofNode.innerHTML = `
+    <strong>Build</strong>
+    <div>${activeTimestamp}</div>
+    <div><code>${activeMarker}</code></div>
+  `;
+}
+
+async function hydrateLauncherBuildProof() {
+  const requestedSourceMarker = launcherRuntimeFingerprint.fingerprint || null;
+  let builtMarker = null;
+  let buildTimestamp = null;
+  let servedMarker = null;
+  let servedBuildTimestamp = null;
+
+  try {
+    const buildResponse = await fetch("./apps/stephanos/dist/stephanos-build.json", { cache: "no-store" });
+    if (buildResponse.ok) {
+      const buildMetadata = await buildResponse.json();
+      builtMarker = buildMetadata?.runtimeMarker || null;
+      buildTimestamp = buildMetadata?.buildTimestamp || null;
+      launcherRuntimeFingerprint.commitHash = buildMetadata?.gitCommit || launcherRuntimeFingerprint.commitHash;
+      launcherRuntimeFingerprint.buildTimestamp = buildTimestamp || launcherRuntimeFingerprint.buildTimestamp;
+      launcherRuntimeFingerprint.fingerprint = builtMarker || launcherRuntimeFingerprint.fingerprint;
+      renderLauncherRuntimeFingerprint();
+      renderIgnitionModeBanner();
+    }
+  } catch {
+    // no-op
+  }
+
+  try {
+    const healthResponse = await fetch("./__stephanos/health", { cache: "no-store" });
+    if (healthResponse.ok) {
+      const healthPayload = await healthResponse.json();
+      servedMarker = healthPayload?.runtimeMarker || null;
+      servedBuildTimestamp = healthPayload?.buildTimestamp || null;
+    }
+  } catch {
+    // no-op
+  }
+
+  console.info("[Launcher Build Truth]", {
+    requestedSourceMarker,
+    builtMarker,
+    servedMarker,
+    buildTimestamp,
+    servedBuildTimestamp,
+    processReuseGuard: servedMarker && builtMarker ? servedMarker === builtMarker : null,
+  });
+  renderLauncherBuildProof({
+    requestedSourceMarker,
+    builtMarker,
+    servedMarker,
+    buildTimestamp,
+    servedBuildTimestamp,
+  });
+}
+
 window.openSystemPanel = function() {};
 
 window.setPanelState = function(panelId, enabled) {
@@ -581,5 +647,6 @@ window.addEventListener("load", () => {
   if (launcherDiagnostics.enabled) {
     void hydrateLauncherBuildIdentity();
   }
+  void hydrateLauncherBuildProof();
   startStephanos();
 });
