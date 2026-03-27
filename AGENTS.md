@@ -48,3 +48,10 @@ At minimum for launcher/runtime/guardrail edits:
 - targeted tests covering new guardrails,
 - `npm run stephanos:verify` (and `npm run stephanos:build` if dist truth changed),
 - stale-process reuse guard tests.
+
+## Truth Engine and toggle policy
+
+- Truth Engine (`shared/runtime/truthEngine.mjs`) is the operational self-audit layer and must stay data-driven from runtime/build/module truth signals.
+- Laws panel (`shared/runtime/renderStephanosLawsPanel.mjs`) remains the constitutional layer and must stay distinct from the Truth Panel.
+- Runtime Diagnostics, Launcher Runtime Fingerprint, and Truth Panel visibility controls live in the system panel/cog popup and must remain toggleable with persisted state.
+- Future truth-surface changes must preserve toggle integration + persisted visibility behavior.

@@ -14,6 +14,12 @@ import { getLauncherDiagnosticsControl } from "./shared/runtime/launcherDiagnost
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 import { renderStephanosLawsPanel } from "./shared/runtime/renderStephanosLawsPanel.mjs";
 import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
+import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
+import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
+import {
+  persistStephanosSessionMemory,
+  readPersistedStephanosSessionMemory,
+} from "./shared/runtime/stephanosSessionMemory.mjs";
 import {
   attachStartupInteractionListeners,
   getStartupDiagnosticsSnapshot,
@@ -62,7 +68,10 @@ const disposeStartupInteractionListeners = attachStartupInteractionListeners();
 function ensureLauncherDiagnosticsMount() {
   // Guardrail: launcher product UI (tile landing) stays clean; diagnostics render only in this isolated mount.
   const mount = document.getElementById("launcher-diagnostics-mount");
-  if (!mount || !launcherDiagnostics.enabled) {
+  const anyDiagnosticsSurfaceVisible = launcherSurfaceVisibility.runtimeDiagnosticsVisible
+    || launcherSurfaceVisibility.launcherRuntimeFingerprintVisible
+    || launcherSurfaceVisibility.truthPanelVisible;
+  if (!mount || (!launcherDiagnostics.enabled && !anyDiagnosticsSurfaceVisible)) {
     if (mount) {
       mount.innerHTML = "";
     }
@@ -91,12 +100,121 @@ function ensureLauncherDiagnosticsMount() {
         <strong>Launcher Runtime Fingerprint</strong>
         <div>Collecting launcher fingerprint…</div>
       </aside>
+      <section id="launcher-truth-panel-mount" aria-live="polite"></section>
       <pre id="runtime-diagnostics-json"></pre>
     </details>
   `;
 
   return mount.querySelector("#launcher-diagnostics-panel");
 }
+
+function persistLauncherSurfacePreferences() {
+  const currentMemory = readPersistedStephanosSessionMemory();
+  persistStephanosSessionMemory({
+    ...currentMemory,
+    session: {
+      ...currentMemory.session,
+      ui: {
+        ...currentMemory.session.ui,
+        uiLayout: {
+          ...(currentMemory.session.ui?.uiLayout || {}),
+          runtimeDiagnosticsVisible: launcherSurfaceVisibility.runtimeDiagnosticsVisible,
+          launcherRuntimeFingerprintVisible: launcherSurfaceVisibility.launcherRuntimeFingerprintVisible,
+          truthPanelVisible: launcherSurfaceVisibility.truthPanelVisible,
+        },
+      },
+    },
+  });
+}
+
+function buildTruthSnapshot({ projects = [], workspace = null } = {}) {
+  const container = document.getElementById("project-registry");
+  const tileDomCount = container?.querySelectorAll(".app-tile").length || 0;
+  const startupSnapshot = getStartupDiagnosticsSnapshot();
+  const runtimeMode = resolveLauncherRuntimeMode();
+  return createTruthSnapshot({
+    launcher: {
+      mode: runtimeMode.mode,
+      shellStatus: moduleFailureEvents.some((entry) => entry?.launcherCritical) ? "degraded" : "healthy",
+      tileRegistryCount: Array.isArray(projects) ? projects.length : 0,
+      tileDomCount,
+      launcherCriticalModuleFailureCount: moduleFailureEvents.filter((entry) => entry?.launcherCritical).length,
+      buildProofPresent: Boolean(document.getElementById("launcher-build-proof")),
+      projectsDiscoveredCount: Array.isArray(projects) ? projects.length : 0,
+    },
+    sourceBuildServed: {
+      buildMarker: buildTruthSignals.builtMarker || buildTruthSignals.requestedSourceMarker || "missing",
+      buildTimestamp: buildTruthSignals.buildTimestamp || "unknown",
+      servedSourceTruthAvailable: buildTruthSignals.servedSourceTruthAvailable,
+      servedDistTruthAvailable: buildTruthSignals.servedDistTruthAvailable,
+      sourceDistParityOk: buildTruthSignals.sourceDistParityOk,
+      servedMarker: buildTruthSignals.servedMarker || "missing",
+      servedBuildTimestamp: buildTruthSignals.servedBuildTimestamp || "unknown",
+    },
+    runtime: {
+      runtimeDiagnosticsEnabled: launcherSurfaceVisibility.runtimeDiagnosticsVisible,
+      launcherRuntimeFingerprintVisible: launcherSurfaceVisibility.launcherRuntimeFingerprintVisible,
+      truthPanelVisible: launcherSurfaceVisibility.truthPanelVisible,
+      backendReachable: buildTruthSignals.servedDistTruthAvailable,
+      finalRoute: workspace?.activeProjectKey || "launcher-root",
+      routeKind: runtimeMode.shellSource || "launcher",
+      runtimeErrorActive: startupSnapshot?.launchTriggers?.length > 0
+        && moduleFailureEvents.length > 0,
+    },
+  });
+}
+
+function updateTruthPanel({ projects = [], workspace = null } = {}) {
+  latestTruthSnapshot = buildTruthSnapshot({ projects, workspace });
+  renderTruthPanel(latestTruthSnapshot, document, {
+    visible: launcherSurfaceVisibility.truthPanelVisible,
+  });
+}
+
+function applyLauncherSurfaceVisibility() {
+  ensureLauncherDiagnosticsMount();
+  const diagnosticsPanel = document.getElementById("launcher-diagnostics-panel");
+  if (diagnosticsPanel) {
+    const showAnyDiagnosticsSurface = launcherSurfaceVisibility.runtimeDiagnosticsVisible
+      || launcherSurfaceVisibility.launcherRuntimeFingerprintVisible
+      || launcherSurfaceVisibility.truthPanelVisible;
+    diagnosticsPanel.style.display = showAnyDiagnosticsSurface ? "block" : "none";
+  }
+
+  const fingerprintPanel = document.getElementById("launcher-runtime-fingerprint");
+  if (fingerprintPanel) {
+    fingerprintPanel.style.display = launcherSurfaceVisibility.launcherRuntimeFingerprintVisible ? "block" : "none";
+  }
+  const diagnosticsSummary = document.getElementById("runtime-diagnostics-summary");
+  const diagnosticsCompact = document.getElementById("runtime-diagnostics-compact");
+  const diagnosticsJson = document.getElementById("runtime-diagnostics-json");
+  const runtimeStrip = document.getElementById("launcher-runtime-strip");
+  const mobileDeck = document.getElementById("mobile-companion-deck");
+  const ignitionBanner = document.getElementById("ignition-mode-banner");
+  const systemStatus = document.getElementById("system-status-text");
+  [diagnosticsSummary, diagnosticsCompact, diagnosticsJson, runtimeStrip, mobileDeck, ignitionBanner, systemStatus].forEach((node) => {
+    if (node) {
+      node.style.display = launcherSurfaceVisibility.runtimeDiagnosticsVisible ? "block" : "none";
+    }
+  });
+
+  updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+}
+
+window.applyLauncherSurfaceVisibility = function applyLauncherSurfaceVisibilityFromSystemPanel(nextState = {}) {
+  if (typeof nextState?.runtimeDiagnosticsVisible === "boolean") {
+    launcherSurfaceVisibility.runtimeDiagnosticsVisible = nextState.runtimeDiagnosticsVisible;
+  }
+  if (typeof nextState?.launcherRuntimeFingerprintVisible === "boolean") {
+    launcherSurfaceVisibility.launcherRuntimeFingerprintVisible = nextState.launcherRuntimeFingerprintVisible;
+  }
+  if (typeof nextState?.truthPanelVisible === "boolean") {
+    launcherSurfaceVisibility.truthPanelVisible = nextState.truthPanelVisible;
+  }
+  persistLauncherSurfacePreferences();
+  applyLauncherSurfaceVisibility();
+  updateRuntimeDiagnostics({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+};
 
 function renderLauncherRuntimeFingerprint() {
   const badgeNode = document.getElementById("launcher-runtime-fingerprint");
@@ -204,6 +322,22 @@ async function hydrateLauncherBuildProof() {
   } catch {
     // no-op
   }
+  try {
+    const sourceTruthResponse = await fetch("./__stephanos/source-truth", { cache: "no-store" });
+    if (sourceTruthResponse.ok) {
+      const sourceTruthPayload = await sourceTruthResponse.json();
+      if (typeof sourceTruthPayload?.sourceTruthAvailable === "boolean") {
+        buildTruthSignals.servedSourceTruthAvailable = sourceTruthPayload.sourceTruthAvailable;
+      } else {
+        buildTruthSignals.servedSourceTruthAvailable = true;
+      }
+      if (typeof sourceTruthPayload?.sourceDistParityOk === "boolean") {
+        buildTruthSignals.sourceDistParityOk = sourceTruthPayload.sourceDistParityOk;
+      }
+    }
+  } catch {
+    // no-op
+  }
 
   console.info("[Launcher Build Truth]", {
     requestedSourceMarker,
@@ -220,6 +354,17 @@ async function hydrateLauncherBuildProof() {
     buildTimestamp,
     servedBuildTimestamp,
   });
+  buildTruthSignals.requestedSourceMarker = requestedSourceMarker;
+  buildTruthSignals.builtMarker = builtMarker;
+  buildTruthSignals.servedMarker = servedMarker;
+  buildTruthSignals.buildTimestamp = buildTimestamp;
+  buildTruthSignals.servedBuildTimestamp = servedBuildTimestamp;
+  buildTruthSignals.servedDistTruthAvailable = Boolean(servedMarker || servedBuildTimestamp);
+  buildTruthSignals.sourceDistParityOk = builtMarker && servedMarker ? builtMarker === servedMarker : null;
+  if (!buildTruthSignals.servedSourceTruthAvailable) {
+    buildTruthSignals.servedSourceTruthAvailable = Boolean(requestedSourceMarker);
+  }
+  updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
 }
 
 window.openSystemPanel = function() {};
@@ -227,6 +372,20 @@ window.openSystemPanel = function() {};
 window.setPanelState = function(panelId, enabled) {
   const panel = document.getElementById(panelId);
   const container = document.getElementById("stephanos-panel-stack");
+  const currentMemory = readPersistedStephanosSessionMemory();
+  persistStephanosSessionMemory({
+    ...currentMemory,
+    session: {
+      ...currentMemory.session,
+      ui: {
+        ...currentMemory.session.ui,
+        uiLayout: {
+          ...(currentMemory.session.ui?.uiLayout || {}),
+          [panelId]: enabled === true,
+        },
+      },
+    },
+  });
 
   if (!panel) return;
 
@@ -250,6 +409,23 @@ function log(message) {
 
 let developerMode = false;
 const moduleFailureEvents = [];
+let latestTruthSnapshot = null;
+const buildTruthSignals = {
+  requestedSourceMarker: null,
+  builtMarker: null,
+  servedMarker: null,
+  buildTimestamp: null,
+  servedBuildTimestamp: null,
+  servedSourceTruthAvailable: false,
+  servedDistTruthAvailable: false,
+  sourceDistParityOk: null,
+};
+const initialUiLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
+const launcherSurfaceVisibility = {
+  runtimeDiagnosticsVisible: initialUiLayout.runtimeDiagnosticsVisible === true || launcherDiagnostics.enabled,
+  launcherRuntimeFingerprintVisible: initialUiLayout.launcherRuntimeFingerprintVisible === true || launcherDiagnostics.enabled,
+  truthPanelVisible: initialUiLayout.truthPanelVisible === true,
+};
 
 
 function getRuntimeProjects(context = {}) {
@@ -319,7 +495,7 @@ function isDeveloperModeEnabled() {
 
 
 function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
-  if (!launcherDiagnostics.enabled) {
+  if (!launcherSurfaceVisibility.runtimeDiagnosticsVisible) {
     return;
   }
 
@@ -361,6 +537,7 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
     compactNode.textContent = `Runtime status: ${summaryText}`;
   }
   jsonNode.textContent = JSON.stringify(diagnostics, null, 2);
+  updateTruthPanel({ projects, workspace });
 }
 
 
@@ -438,6 +615,7 @@ function startStephanosHealthMonitor(projects, context) {
 
 async function startStephanos() {
   ensureLauncherDiagnosticsMount();
+  applyLauncherSurfaceVisibility();
   const versionMeta = document.querySelector('meta[name="stephanos-version"]');
   if (versionMeta) {
     const version = versionMeta.getAttribute("content");
@@ -496,6 +674,7 @@ async function startStephanos() {
   };
   renderTileFirstLauncher(projects, fallbackTileContext);
   renderStephanosLawsPanel();
+  updateTruthPanel({ projects, workspace: null });
 
   try {
     const { workspace } = await import("./system/workspace.js");
@@ -616,6 +795,20 @@ async function startStephanos() {
     }
 
     applyDeveloperModeVisibility();
+    const persistedLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
+    const restorablePanels = new Set([
+      "module-manager-panel",
+      "agent-console-panel",
+      "command-console-panel",
+      "task-monitor-panel",
+      "dev-console",
+    ]);
+    Object.entries(persistedLayout).forEach(([panelId, enabled]) => {
+      if (typeof enabled === "boolean" && restorablePanels.has(panelId)) {
+        window.setPanelState(panelId, enabled);
+      }
+    });
+    applyLauncherSurfaceVisibility();
 
     window.__stephanosRuntime = {
       context,
@@ -643,6 +836,7 @@ async function startStephanos() {
 
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
     renderTileFirstLauncher(getRuntimeProjects(context), context);
+    applyLauncherSurfaceVisibility();
   } catch (error) {
     console.error("Stephanos launcher advanced bootstrap failed; keeping tile landing fallback.", error);
     log("⚠ Advanced launcher services failed to initialize; tile launcher remains available.");
@@ -676,6 +870,7 @@ window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 window.addEventListener("load", () => {
   ensureLauncherDiagnosticsMount();
   renderLauncherRuntimeFingerprint();
+  applyLauncherSurfaceVisibility();
   if (launcherDiagnostics.enabled) {
     void hydrateLauncherBuildIdentity();
   }
