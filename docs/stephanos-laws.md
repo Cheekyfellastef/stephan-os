@@ -84,6 +84,13 @@ Any coding agent editing launcher/runtime/routing/build-truth paths must:
 - Constitutional requirement: runtime-visible Truth Panel must show `displayed truth` vs `latest detected truth`, stale/current state, and refresh trigger reason.
 - Reality Sync must be explicit, operator-visible, and loop-guarded; never silent infinite refresh.
 - The System Panel toggle (`Reality Sync / Auto Truth Refresh`) controls automatic reconciliation while preserving stale-state visibility.
+- When localhost process truth drifts (marker/MIME/source-parity mismatch), supervised ignition restart handoff is allowed; if handoff is unavailable, Truth Panel must continue to report restart-required state.
+
+## Operator panel ergonomics law application
+
+- Runtime/operator popup panels are movable but remain within viewport bounds after restore.
+- Panel coordinates and collapse states are persisted in shared session-memory layout state.
+- Collapse affordance uses the same Stephanos knob pattern across panels for consistency with existing system controls.
 
 ## Failure class spotlight: launcher import-structure regressions
 

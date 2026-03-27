@@ -162,6 +162,9 @@ function buildTruthSnapshot({ projects = [], workspace = null } = {}) {
       routeKind: runtimeMode.shellSource || "launcher",
       runtimeErrorActive: startupSnapshot?.launchTriggers?.length > 0
         && moduleFailureEvents.length > 0,
+      localhostMirrorDrift: buildTruthSignals.localhostMirrorDrift === true,
+      ignitionRestartRequired: buildTruthSignals.ignitionRestartRequired === true,
+      ignitionRestartSupported: buildTruthSignals.ignitionRestartSupported === true,
     },
     realitySync: {
       enabled: realitySyncState.enabled !== false,
@@ -175,6 +178,8 @@ function buildTruthSnapshot({ projects = [], workspace = null } = {}) {
       lastRefreshReason: realitySyncState.lastRefreshReason || "",
       lastRefreshAt: realitySyncState.lastRefreshAt || "",
       attemptsForCurrentMarker: realitySyncState.attemptsForCurrentMarker || 0,
+      lastRestartRequestAt: buildTruthSignals.lastRestartRequestAt || "",
+      lastRestartResult: buildTruthSignals.lastRestartResult || "none",
     },
   });
 }
@@ -300,6 +305,8 @@ function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = 
   const staleLabel = realitySync?.isStale ? "stale" : "current";
   const syncStateLabel = realitySync?.enabled === false ? "disabled" : realitySync?.refreshPending ? "syncing" : "monitoring";
   const refreshReason = realitySync?.lastRefreshReason || "none";
+  const mirrorStatus = buildTruthSignals.localhostMirrorDrift ? "drift" : "aligned";
+  const restartLabel = buildTruthSignals.ignitionRestartRequired ? "restart required" : "restart not required";
   proofNode.innerHTML = `
     <strong>Build</strong>
     <div>${activeTimestamp}</div>
@@ -307,6 +314,7 @@ function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = 
     <div class="launcher-build-reality-sync">Reality Sync: ${syncStateLabel} · screen ${staleLabel}</div>
     <div class="launcher-build-reality-sync">Latest: <code>${realitySync?.latestMarker || "unknown"}</code></div>
     <div class="launcher-build-reality-sync">Last refresh reason: ${refreshReason}</div>
+    <div class="launcher-build-reality-sync">Localhost mirror: ${mirrorStatus} · ${restartLabel}</div>
   `;
 }
 
@@ -339,6 +347,9 @@ async function hydrateLauncherBuildProof() {
       const healthPayload = await healthResponse.json();
       servedMarker = healthPayload?.runtimeMarker || null;
       servedBuildTimestamp = healthPayload?.buildTimestamp || null;
+      buildTruthSignals.ignitionRestartSupported = healthPayload?.ignitionRestart?.supported === true;
+      buildTruthSignals.lastRestartRequestAt = healthPayload?.ignitionRestart?.lastRequestedAt || buildTruthSignals.lastRestartRequestAt;
+      buildTruthSignals.lastRestartResult = healthPayload?.ignitionRestart?.lastResult || buildTruthSignals.lastRestartResult;
     }
   } catch {
     // no-op
@@ -383,6 +394,10 @@ async function hydrateLauncherBuildProof() {
   buildTruthSignals.servedBuildTimestamp = servedBuildTimestamp;
   buildTruthSignals.servedDistTruthAvailable = Boolean(servedMarker || servedBuildTimestamp);
   buildTruthSignals.sourceDistParityOk = builtMarker && servedMarker ? builtMarker === servedMarker : null;
+  buildTruthSignals.localhostMirrorDrift = buildTruthSignals.sourceDistParityOk === false;
+  buildTruthSignals.ignitionRestartRequired = buildTruthSignals.localhostMirrorDrift
+    && buildTruthSignals.ignitionRestartSupported
+    && realitySyncState.enabled === false;
   if (!buildTruthSignals.servedSourceTruthAvailable) {
     buildTruthSignals.servedSourceTruthAvailable = Boolean(requestedSourceMarker);
   }
@@ -420,7 +435,63 @@ window.setPanelState = function(panelId, enabled) {
 
   const anyVisible = Array.from(container.children).some(p => p.style.display !== "none");
 
-  container.style.display = anyVisible ? "flex" : "none";
+  container.style.display = anyVisible ? "block" : "none";
+};
+
+window.getStephanosMirrorStatus = function getStephanosMirrorStatus() {
+  return {
+    localhostMirrorDrift: buildTruthSignals.localhostMirrorDrift === true,
+    ignitionRestartRequired: buildTruthSignals.ignitionRestartRequired === true,
+    ignitionRestartSupported: buildTruthSignals.ignitionRestartSupported === true,
+    lastRestartRequestAt: buildTruthSignals.lastRestartRequestAt || "",
+    lastRestartResult: buildTruthSignals.lastRestartResult || "none",
+  };
+};
+
+window.runRealitySyncCheck = async function runRealitySyncCheck() {
+  await realitySyncController.checkNow({ reason: "system-panel-manual-check" });
+  await hydrateLauncherBuildProof();
+  updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+  return realitySyncController.getState();
+};
+
+window.requestStephanosIgnitionRestart = async function requestStephanosIgnitionRestart({ source = "operator" } = {}) {
+  if (!buildTruthSignals.ignitionRestartSupported) {
+    return { ok: false, message: "restart endpoint unavailable" };
+  }
+  try {
+    const response = await fetch("./__stephanos/restart", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        source,
+        reason: "localhost-mirror-drift",
+      }),
+    });
+    if (!response.ok) {
+      buildTruthSignals.lastRestartResult = `failed:${response.status}`;
+      return { ok: false, message: `restart endpoint returned ${response.status}` };
+    }
+    const payload = await response.json();
+    buildTruthSignals.lastRestartRequestAt = payload?.requestedAt || new Date().toISOString();
+    buildTruthSignals.lastRestartResult = payload?.accepted ? "accepted" : "rejected";
+    if (payload?.accepted) {
+      const statusNode = document.getElementById("system-status-text");
+      if (statusNode) {
+        statusNode.textContent = "Ignition restart requested; waiting for fresh runtime marker…";
+      }
+      globalThis.setTimeout(() => {
+        globalThis.location?.reload?.();
+      }, 1500);
+    }
+    updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+    return { ok: payload?.accepted === true, message: payload?.message || "restart request sent" };
+  } catch (error) {
+    buildTruthSignals.lastRestartResult = "failed:network";
+    return { ok: false, message: error?.message || "restart request failed" };
+  }
 };
 
 function log(message) {
@@ -444,6 +515,11 @@ const buildTruthSignals = {
   servedSourceTruthAvailable: false,
   servedDistTruthAvailable: false,
   sourceDistParityOk: null,
+  localhostMirrorDrift: false,
+  ignitionRestartRequired: false,
+  ignitionRestartSupported: false,
+  lastRestartRequestAt: "",
+  lastRestartResult: "none",
 };
 const initialUiLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
 const launcherSurfaceVisibility = {
@@ -791,6 +867,7 @@ async function startStephanos() {
     systemState.set("projects", projects);
     const services = createServiceRegistry();
     const uiRenderer = createUIRenderer();
+    window.resetStephanosPanelLayout = () => uiRenderer.resetPanelLayout();
     const taskQueue = createTaskQueue();
 
     services.registerService("ui", uiRenderer);

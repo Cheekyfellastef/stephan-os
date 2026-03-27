@@ -109,3 +109,37 @@ test('existing server reuse rejects module MIME mismatches even when marker pari
     false,
   );
 });
+
+test('dist server exposes restart endpoint and reflects restart request in health payload', async (t) => {
+  process.env.STEPHANOS_TEST_DISABLE_EXIT = '1';
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => {
+    delete process.env.STEPHANOS_TEST_DISABLE_EXIT;
+    server.close();
+  });
+
+  const { port } = server.address();
+  const restartResponse = await fetch(`http://127.0.0.1:${port}/__stephanos/restart`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      source: 'test',
+      reason: 'integration-test',
+    }),
+  });
+
+  assert.equal(restartResponse.status, 202);
+  const restartPayload = await restartResponse.json();
+  assert.equal(restartPayload.accepted, true);
+
+  const healthResponse = await fetch(`http://127.0.0.1:${port}/__stephanos/health`);
+  assert.equal(healthResponse.status, 200);
+  const healthPayload = await healthResponse.json();
+  assert.equal(healthPayload.ignitionRestart.supported, true);
+  assert.equal(healthPayload.ignitionRestart.requested, true);
+  assert.equal(healthPayload.ignitionRestart.source, 'test');
+});

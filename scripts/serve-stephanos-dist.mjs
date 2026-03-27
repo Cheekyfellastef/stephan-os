@@ -59,6 +59,15 @@ const baseHeaders = {
   'Cache-Control': 'no-store',
 };
 const mimeDebugEnabled = process.env.STEPHANOS_SERVE_DEBUG_MIME === '1';
+const restartWindowMs = Number(process.env.STEPHANOS_RESTART_WINDOW_MS || 20_000);
+const ignitionRestartState = {
+  supported: true,
+  requested: false,
+  requestedAt: '',
+  lastResult: 'none',
+  source: 'none',
+  reason: '',
+};
 
 const isMainModule =
   process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
@@ -118,6 +127,14 @@ function buildHealthPayload() {
     gitCommit: buildMetadata?.gitCommit || null,
     buildTimestamp: buildMetadata?.buildTimestamp || null,
     launcherStatus: readRuntimeStatus(),
+    ignitionRestart: {
+      supported: ignitionRestartState.supported,
+      requested: ignitionRestartState.requested,
+      lastRequestedAt: ignitionRestartState.requestedAt || null,
+      lastResult: ignitionRestartState.lastResult || 'none',
+      source: ignitionRestartState.source || 'none',
+      reason: ignitionRestartState.reason || '',
+    },
     launcherSourceTruth: getLauncherCriticalSourceTruth(),
     checkedAt: new Date().toISOString(),
   };
@@ -239,6 +256,49 @@ async function verifyServedRuntime(url) {
     runtimeOk,
     ready: healthOk && runtimeOk,
   };
+}
+
+async function waitForPortToClose(targetPort, timeoutMs = restartWindowMs) {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const listening = await probePortListening(targetPort);
+    if (!listening) {
+      return true;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  return false;
+}
+
+async function requestExistingServerRestart({
+  expectedRuntimeMarker = null,
+  reason = 'stale-runtime-marker',
+  source = 'auto-restart-handoff',
+} = {}) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/__stephanos/restart`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expectedRuntimeMarker,
+        reason,
+        source,
+      }),
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    const payload = await response.json();
+    return {
+      ok: payload?.accepted === true,
+      status: response.status,
+      payload,
+    };
+  } catch {
+    return { ok: false, status: null };
+  }
 }
 
 async function probeExistingStephanosServer(expectedRuntimeMarker) {
@@ -423,6 +483,52 @@ export function createStephanosDistServer() {
       response.end(`${JSON.stringify(buildHealthPayload(), null, 2)}\n`);
       return;
     }
+    if ((request.url || '').startsWith('/__stephanos/restart')) {
+      if (request.method !== 'POST') {
+        response.writeHead(405, {
+          ...baseHeaders,
+          'Content-Type': 'application/json; charset=utf-8',
+        });
+        response.end(`${JSON.stringify({ accepted: false, message: 'POST required' })}\n`);
+        return;
+      }
+
+      const bodyParts = [];
+      request.on('data', (chunk) => {
+        bodyParts.push(chunk);
+      });
+      request.on('end', () => {
+        let payload = {};
+        try {
+          payload = JSON.parse(Buffer.concat(bodyParts).toString('utf8') || '{}');
+        } catch {
+          payload = {};
+        }
+        ignitionRestartState.requested = true;
+        ignitionRestartState.requestedAt = new Date().toISOString();
+        ignitionRestartState.lastResult = 'accepted';
+        ignitionRestartState.source = String(payload?.source || 'operator');
+        ignitionRestartState.reason = String(payload?.reason || 'manual-restart-request');
+        response.writeHead(202, {
+          ...baseHeaders,
+          'Content-Type': 'application/json; charset=utf-8',
+        });
+        response.end(`${JSON.stringify({
+          accepted: true,
+          message: 'Ignition restart accepted; process shutting down for restart handoff.',
+          requestedAt: ignitionRestartState.requestedAt,
+        })}\n`);
+
+        if (process.env.STEPHANOS_TEST_DISABLE_EXIT === '1') {
+          return;
+        }
+        setTimeout(() => {
+          response.socket?.destroy();
+          process.exit(0);
+        }, 120);
+      });
+      return;
+    }
     if ((request.url || '').startsWith('/__stephanos/source-truth')) {
       response.writeHead(200, {
         ...baseHeaders,
@@ -519,8 +625,22 @@ if (isMainModule) {
       console.error(`[DIST SERVER LIVE] expected marker=${existingServer.expectedRuntimeMarker || 'unavailable'}`);
       console.error(`[DIST SERVER LIVE] observed marker from health=${existingServer.observedRuntimeMarkers?.health || 'unavailable'}`);
       console.error(`[DIST SERVER LIVE] observed marker from served index=${existingServer.observedRuntimeMarkers?.servedIndex || 'unavailable'}`);
-      console.error(`[DIST SERVER LIVE] Refusing process reuse. Stop the stale process on port ${port} and restart.`);
-      process.exit(1);
+      const restartResponse = await requestExistingServerRestart({
+        expectedRuntimeMarker,
+        reason: 'runtime-marker-mismatch',
+      });
+      if (!restartResponse.ok) {
+        console.error(`[DIST SERVER LIVE] Refusing process reuse. Stop the stale process on port ${port} and restart.`);
+        process.exit(1);
+        return;
+      }
+      const closed = await waitForPortToClose(port);
+      if (!closed) {
+        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
+        process.exit(1);
+        return;
+      }
+      server.listen(port, host);
       return;
     }
 
@@ -528,16 +648,44 @@ if (isMainModule) {
       console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} failed module MIME checks; refusing reuse.`);
       console.error(`[DIST SERVER LIVE] runtimeStatusModel.mjs -> status=${existingServer.moduleMimeChecks?.runtimeStatusModel?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.runtimeStatusModel?.contentType ?? 'n/a'}`);
       console.error(`[DIST SERVER LIVE] stephanosLocalUrls.mjs?v=live-mime-probe -> status=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.contentType ?? 'n/a'}`);
-      console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
-      process.exit(1);
+      const restartResponse = await requestExistingServerRestart({
+        expectedRuntimeMarker,
+        reason: 'module-mime-mismatch',
+      });
+      if (!restartResponse.ok) {
+        console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
+        process.exit(1);
+        return;
+      }
+      const closed = await waitForPortToClose(port);
+      if (!closed) {
+        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
+        process.exit(1);
+        return;
+      }
+      server.listen(port, host);
       return;
     }
 
     if (existingServer.payload?.service === 'stephanos-dist-server' && existingServer.runtimeReady && !existingServer.sourceTruthReady) {
       console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} failed launcher source parity checks; refusing reuse.`);
       console.error(`[DIST SERVER LIVE] mismatched launcher-critical files: ${(existingServer.sourceTruthProbe?.mismatches || []).join(', ') || 'unknown'}`);
-      console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current launcher source.`);
-      process.exit(1);
+      const restartResponse = await requestExistingServerRestart({
+        expectedRuntimeMarker,
+        reason: 'launcher-source-parity-mismatch',
+      });
+      if (!restartResponse.ok) {
+        console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current launcher source.`);
+        process.exit(1);
+        return;
+      }
+      const closed = await waitForPortToClose(port);
+      if (!closed) {
+        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
+        process.exit(1);
+        return;
+      }
+      server.listen(port, host);
       return;
     }
 

@@ -56,6 +56,11 @@ A healthy process is reusable only when all gates pass:
 
 Any mismatch => reject reuse and force operator restart.
 
+### Restart handoff policy (localhost convergence)
+- `scripts/serve-stephanos-dist.mjs` now exposes `POST /__stephanos/restart` for supervised local ignition handoff.
+- If marker/MIME/source-truth gates fail on an already-running Stephanos dist server, a new serve invocation requests restart, waits for old process exit, then binds the port with current truth.
+- If restart handoff cannot be completed safely (no restart endpoint / process does not exit in window), startup must fail loudly and keep restart requirement explicit.
+
 ## Diagnostics rendering boundary
 - Launcher tile grid (`#project-registry`) is primary.
 - Diagnostics/status belong in isolated secondary mounts only.
@@ -112,3 +117,10 @@ When changing launcher/runtime/routing behavior, update tests/docs/law mappings 
 - Laws panel is constitutional guidance and stays separate from operational Truth Panel output.
 - System-panel/cog popup owns operator toggles for Runtime Diagnostics, Launcher Runtime Fingerprint, and Truth Panel.
 - Visibility toggle state should persist via shared Stephanos session-memory UI layout fields so surfaces restore consistently after reload.
+
+## Operator panel control model
+
+- Module/system popup panels are repositionable and must persist per-panel coordinates via session memory UI layout state.
+- Panel collapse uses the shared Stephanos knob affordance (`◉` expanded / `◎` collapsed); collapse state persists per panel.
+- Persisted positions must be clamped to viewport bounds on restore so panels cannot be lost off-screen.
+- System Panel includes a layout reset action that clears persisted panel positions/collapse state and re-seeds safe defaults.
