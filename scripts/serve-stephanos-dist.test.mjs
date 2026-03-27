@@ -47,6 +47,23 @@ test('dist server serves shared runtime modules with JavaScript MIME type', asyn
   }
 });
 
+
+test('dist server serves launcher runtime-status endpoint with shared toggle registry payload', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/apps/stephanos/runtime-status.json`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.systemPanel.toggleRegistrySource, 'shared/runtime/systemPanelToggleRegistry.mjs');
+  assert.equal(Array.isArray(payload.systemPanel.toggleDefinitions), true);
+  assert.equal(payload.systemPanel.toggleDefinitions.some((entry) => entry.id === 'self-healing-panel'), true);
+  assert.equal(payload.systemPanel.toggleDefinitions.some((entry) => entry.id === 'app-installer-panel'), true);
+});
+
 test('existing server reuse requires runtime marker parity and not just health', () => {
   const healthyStephanosServer = {
     payload: {
