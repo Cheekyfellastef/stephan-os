@@ -10,6 +10,14 @@
 4. Secondary diagnostics/status UI must not render in the primary launcher body by default.
 5. Localhost health alone is not truth. Source/build/served markers and MIME checks gate trust and reuse.
 
+## Stephanos laws policy (mandatory)
+
+1. Treat `shared/runtime/stephanosLaws.mjs` as repository policy, not optional commentary.
+2. Before editing launcher/runtime/routing/build-truth behavior, consult the laws source and relevant law IDs.
+3. If you change invariant-sensitive behavior, update law references and tests in the same pass.
+4. Do not ship changes that violate an active law status unless the law itself is explicitly updated (with docs/tests).
+5. Keep runtime-visible laws UI sourced from the structured law file; do not fork law text in disconnected UI copies.
+
 ## File ownership boundaries
 
 - Launcher-shell critical: `main.js`, `index.html`, `modules/command-deck/**`, `system/workspace.js`.

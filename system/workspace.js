@@ -2,6 +2,7 @@ import { loadDependencies } from "./apps/dependency_loader.js";
 import { createStephanosRuntimeTargets, getStephanosPreferredRuntimeTarget } from "../shared/runtime/stephanosLocalUrls.mjs";
 import { clearActiveTileContextHint, setActiveTileContextHint } from "../shared/runtime/tileContextRegistry.mjs";
 import { recordStartupLaunchTrigger } from "../shared/runtime/startupLaunchDiagnostics.mjs";
+import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -62,7 +63,7 @@ function resolveStephanosLaunchTarget(project) {
   ).trim();
 
   if (!launchEntry && (runtimeEntry || compatibilityEntry)) {
-    console.warn('[Workspace Guardrail] Stephanos launchEntry missing; using fallback order launchEntry -> runtimeEntry -> entry.', {
+    console.warn(`[Workspace Guardrail] [LAW:${STEPHANOS_LAW_IDS.ENTRY_SEPARATION}] Stephanos launchEntry missing; using fallback order launchEntry -> runtimeEntry -> entry.`, {
       runtimeEntry,
       entry: compatibilityEntry,
       resolved,

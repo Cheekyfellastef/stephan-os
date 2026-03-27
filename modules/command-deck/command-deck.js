@@ -1,5 +1,6 @@
 import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
+import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 
 function normaliseProject(project) {
   if (typeof project === 'string') {
@@ -49,7 +50,7 @@ function resolveStephanosLaunchTarget(project) {
   ).trim();
 
   if (!launchEntry && (runtimeEntry || compatibilityEntry)) {
-    console.warn('[CommandDeck] Stephanos launchEntry missing; using compatibility fallback order launchEntry -> runtimeEntry -> entry', {
+    console.warn(`[CommandDeck] [LAW:${STEPHANOS_LAW_IDS.ENTRY_SEPARATION}] Stephanos launchEntry missing; using compatibility fallback order launchEntry -> runtimeEntry -> entry`, {
       runtimeEntry,
       entry: compatibilityEntry,
       launcherEntry,
@@ -142,7 +143,7 @@ function launchProject(project, context, trigger = {}) {
 
   if (isStephanos) {
     if (trigger?.type === 'user-click' && launcherEntry && runtimeEntry && launcherEntry !== runtimeEntry && chosenTarget === launcherEntry) {
-      console.warn('[CommandDeck] Stephanos tile click resolved to launcher shell target; expected runtime launch target.', {
+      console.warn(`[CommandDeck] [LAW:${STEPHANOS_LAW_IDS.RUNTIME_TARGET_DISTINCT}] Stephanos tile click resolved to launcher shell target; expected runtime launch target.`, {
         launcherEntry,
         runtimeEntry,
         launchEntry,
@@ -151,7 +152,7 @@ function launchProject(project, context, trigger = {}) {
     }
 
     if (launchEntry && runtimeEntry && launchEntry !== runtimeEntry && chosenTarget === String(project?.entry || '').trim()) {
-      console.warn('[CommandDeck] Stephanos launch used compatibility entry even though separated launch fields exist.', {
+      console.warn(`[CommandDeck] [LAW:${STEPHANOS_LAW_IDS.ENTRY_COMPATIBILITY_ONLY}] Stephanos launch used compatibility entry even though separated launch fields exist.`, {
         launchEntry,
         runtimeEntry,
         entry: String(project?.entry || '').trim(),
