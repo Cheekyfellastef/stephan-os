@@ -13,6 +13,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
 $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
+$launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
 $viteDevUrl = 'http://localhost:5173/'
 $launcherRootCommand = 'npm run stephanos:serve'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
@@ -101,7 +102,7 @@ function Ensure-ProcessRunning(
         Write-LiveLog "stopped stale process ids on 4173: $([string]::Join(',', $stopped))"
       }
       else {
-        Write-LiveLog 'truth probe failed but no stoppable process found on 4173; launching a fresh process anyway'
+        throw "$StepLabel truth probe failed and no process could be stopped on 4173; refusing silent reuse of an unknown/stale server"
       }
     }
     else {
@@ -204,6 +205,7 @@ try {
   else {
     Write-LiveLog "4173 launcher shell: $launcherShellUrl"
     Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
+    Write-LiveLog "4173 runtime status probe: $launcherRuntimeStatusUrl"
   }
 
   Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
@@ -226,7 +228,7 @@ try {
     }
 
     Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
-    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherShellUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
+    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRuntimeStatusUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
   }
 
   Write-LiveLog 'waiting for backend'
@@ -237,6 +239,9 @@ try {
     Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
   }
   else {
+    Write-LiveLog "waiting for launcher-root runtime-status endpoint at $launcherRuntimeStatusUrl"
+    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl
+
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
 

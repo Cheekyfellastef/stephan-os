@@ -64,6 +64,19 @@ test('dist server serves launcher runtime-status endpoint with shared toggle reg
   assert.equal(payload.systemPanel.toggleDefinitions.some((entry) => entry.id === 'app-installer-panel'), true);
 });
 
+test('dist server routes runtime-status before static 404 handling (query-string safe)', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/apps/stephanos/runtime-status.json?source=launcher`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(typeof payload.runtimeMarker, 'string');
+});
+
 test('existing server reuse requires runtime marker parity and not just health', () => {
   const healthyStephanosServer = {
     payload: {
