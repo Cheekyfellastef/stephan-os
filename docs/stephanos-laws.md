@@ -77,6 +77,14 @@ Any coding agent editing launcher/runtime/routing/build-truth paths must:
 3. Update laws/docs/tests together if behavior or policy changes.
 4. Reference applicable law IDs in targeted guard logs where helpful.
 
+
+## Reality Sync rationale (stale-screen lies)
+
+- A green launcher UI can still be stale if a newer build/source truth exists but the screen has not reconciled.
+- Constitutional requirement: runtime-visible Truth Panel must show `displayed truth` vs `latest detected truth`, stale/current state, and refresh trigger reason.
+- Reality Sync must be explicit, operator-visible, and loop-guarded; never silent infinite refresh.
+- The System Panel toggle (`Reality Sync / Auto Truth Refresh`) controls automatic reconciliation while preserving stale-state visibility.
+
 ## Failure class spotlight: launcher import-structure regressions
 
 - A prior launcher outage (Friday, March 27, 2026) was caused by duplicate import declarations in `modules/command-deck/command-deck.js`.

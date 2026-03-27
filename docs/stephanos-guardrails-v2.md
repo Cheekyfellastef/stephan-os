@@ -93,6 +93,19 @@ Guardrails v2 is now mirrored by a structured law layer:
 
 When changing launcher/runtime/routing behavior, update tests/docs/law mappings together. Do not let prose policy and structured law source diverge.
 
+
+## Reality Sync policy (stale-screen correlation)
+
+- Reality Sync is mandatory launcher/runtime behavior: displayed build truth must be correlated with latest authoritative truth.
+- Authoritative truth priority for runtime sync checks: `__stephanos/source-truth` (when it exposes marker/timestamp) -> `__stephanos/health` -> `apps/stephanos/dist/stephanos-build.json` -> currently displayed build proof fallback.
+- When displayed marker/timestamp is older than latest detected truth, launcher must surface stale state and contradiction in Truth Panel.
+- Auto-reconcile may use full reload for reliability, but must include loop protections:
+  1. marker/timestamp must actually change,
+  2. per-marker refresh attempt cap,
+  3. refresh cooldown.
+- Operator must retain a persisted System Panel toggle (`Reality Sync / Auto Truth Refresh`). Disabled mode still reports stale state but does not auto-refresh.
+- Hosted and localhost flows may expose different truth depth; when endpoints are unavailable, Reality Sync must report reduced confidence rather than claiming current truth.
+
 ## Truth Engine and operator toggles
 
 - Truth Engine (`shared/runtime/truthEngine.mjs`) is the operational self-audit layer (reality snapshot + contradictions), not decorative status text.

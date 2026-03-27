@@ -45,6 +45,18 @@ test('truth panel renderer outputs compact operational summary and contradiction
       finalRoute: '/',
       routeKind: 'launcher',
     },
+    realitySync: {
+      enabled: true,
+      displayedMarker: 'build-a',
+      latestMarker: 'build-b',
+      displayedTimestamp: '2026-03-27T00:00:00.000Z',
+      latestTimestamp: '2026-03-27T01:00:00.000Z',
+      latestSource: 'health',
+      isStale: true,
+      refreshPending: false,
+      lastRefreshReason: 'new-truth-detected:health:poll',
+      lastRefreshAt: '2026-03-27T01:00:30.000Z',
+    },
     contradictions: [
       {
         id: 'tiles-discovered-but-not-rendered',
@@ -59,6 +71,9 @@ test('truth panel renderer outputs compact operational summary and contradiction
   assert.equal(documentRef.mount.style.display, 'block');
   assert.match(documentRef.mount.innerHTML, /Truth Panel/);
   assert.match(documentRef.mount.innerHTML, /Operational self-audit/);
+  assert.match(documentRef.mount.innerHTML, /Reality Sync/);
+  assert.match(documentRef.mount.innerHTML, /displayed marker/);
+  assert.match(documentRef.mount.innerHTML, /new-truth-detected:health:poll/);
   assert.match(documentRef.mount.innerHTML, /Contradictions \(1\)/);
   assert.match(documentRef.mount.innerHTML, /law-universal-entry-not-system-brain/);
 });

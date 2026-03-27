@@ -16,6 +16,7 @@ import { renderStephanosLawsPanel } from "./shared/runtime/renderStephanosLawsPa
 import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
+import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
 import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
@@ -121,6 +122,7 @@ function persistLauncherSurfacePreferences() {
           runtimeDiagnosticsVisible: launcherSurfaceVisibility.runtimeDiagnosticsVisible,
           launcherRuntimeFingerprintVisible: launcherSurfaceVisibility.launcherRuntimeFingerprintVisible,
           truthPanelVisible: launcherSurfaceVisibility.truthPanelVisible,
+          realitySyncEnabled: realitySyncState.enabled !== false,
         },
       },
     },
@@ -160,6 +162,19 @@ function buildTruthSnapshot({ projects = [], workspace = null } = {}) {
       routeKind: runtimeMode.shellSource || "launcher",
       runtimeErrorActive: startupSnapshot?.launchTriggers?.length > 0
         && moduleFailureEvents.length > 0,
+    },
+    realitySync: {
+      enabled: realitySyncState.enabled !== false,
+      displayedMarker: realitySyncState.displayedMarker || buildTruthSignals.servedMarker || buildTruthSignals.builtMarker || "missing",
+      displayedTimestamp: realitySyncState.displayedTimestamp || buildTruthSignals.servedBuildTimestamp || buildTruthSignals.buildTimestamp || "unknown",
+      latestMarker: realitySyncState.latestMarker || "missing",
+      latestTimestamp: realitySyncState.latestTimestamp || "unknown",
+      latestSource: realitySyncState.latestSource || "unavailable",
+      isStale: realitySyncState.isStale === true,
+      refreshPending: realitySyncState.refreshPending === true,
+      lastRefreshReason: realitySyncState.lastRefreshReason || "",
+      lastRefreshAt: realitySyncState.lastRefreshAt || "",
+      attemptsForCurrentMarker: realitySyncState.attemptsForCurrentMarker || 0,
     },
   });
 }
@@ -274,7 +289,7 @@ async function hydrateLauncherBuildIdentity() {
 }
 renderIgnitionModeBanner();
 
-function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = null, servedMarker = null, buildTimestamp = null, servedBuildTimestamp = null }) {
+function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = null, servedMarker = null, buildTimestamp = null, servedBuildTimestamp = null, realitySync = null }) {
   const proofNode = document.getElementById("launcher-build-proof");
   if (!proofNode) {
     return;
@@ -282,10 +297,16 @@ function renderLauncherBuildProof({ requestedSourceMarker = null, builtMarker = 
 
   const activeMarker = servedMarker || builtMarker || requestedSourceMarker || "unknown";
   const activeTimestamp = servedBuildTimestamp || buildTimestamp || "unknown";
+  const staleLabel = realitySync?.isStale ? "stale" : "current";
+  const syncStateLabel = realitySync?.enabled === false ? "disabled" : realitySync?.refreshPending ? "syncing" : "monitoring";
+  const refreshReason = realitySync?.lastRefreshReason || "none";
   proofNode.innerHTML = `
     <strong>Build</strong>
     <div>${activeTimestamp}</div>
     <div><code>${activeMarker}</code></div>
+    <div class="launcher-build-reality-sync">Reality Sync: ${syncStateLabel} · screen ${staleLabel}</div>
+    <div class="launcher-build-reality-sync">Latest: <code>${realitySync?.latestMarker || "unknown"}</code></div>
+    <div class="launcher-build-reality-sync">Last refresh reason: ${refreshReason}</div>
   `;
 }
 
@@ -353,6 +374,7 @@ async function hydrateLauncherBuildProof() {
     servedMarker,
     buildTimestamp,
     servedBuildTimestamp,
+    realitySync: realitySyncState,
   });
   buildTruthSignals.requestedSourceMarker = requestedSourceMarker;
   buildTruthSignals.builtMarker = builtMarker;
@@ -364,6 +386,9 @@ async function hydrateLauncherBuildProof() {
   if (!buildTruthSignals.servedSourceTruthAvailable) {
     buildTruthSignals.servedSourceTruthAvailable = Boolean(requestedSourceMarker);
   }
+  const displayedMarker = servedMarker || builtMarker || requestedSourceMarker || "";
+  const displayedTimestamp = servedBuildTimestamp || buildTimestamp || "";
+  realitySyncController.updateDisplayedTruth({ marker: displayedMarker, timestamp: displayedTimestamp });
   updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
 }
 
@@ -427,6 +452,68 @@ const launcherSurfaceVisibility = {
   truthPanelVisible: initialUiLayout.truthPanelVisible === true,
 };
 
+const realitySyncState = {
+  enabled: initialUiLayout.realitySyncEnabled !== false,
+  displayedMarker: "",
+  displayedTimestamp: "",
+  latestMarker: "",
+  latestTimestamp: "",
+  latestSource: "unavailable",
+  isStale: false,
+  refreshPending: false,
+  lastRefreshReason: "",
+  lastRefreshAt: "",
+  attemptsForCurrentMarker: 0,
+};
+
+const realitySyncController = createRealitySyncController({
+  enabled: realitySyncState.enabled,
+  onStateChange(nextState) {
+    Object.assign(realitySyncState, nextState);
+    renderLauncherBuildProof({
+      requestedSourceMarker: buildTruthSignals.requestedSourceMarker,
+      builtMarker: buildTruthSignals.builtMarker,
+      servedMarker: buildTruthSignals.servedMarker,
+      buildTimestamp: buildTruthSignals.buildTimestamp,
+      servedBuildTimestamp: buildTruthSignals.servedBuildTimestamp,
+      realitySync: realitySyncState,
+    });
+    updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+  },
+  onRefreshRequest(nextState) {
+    Object.assign(realitySyncState, nextState);
+    console.info("[Reality Sync] New truth detected. Syncing launcher reality.", nextState);
+    const status = document.getElementById("system-status-text");
+    if (status) {
+      status.textContent = "New build detected. Syncing reality…";
+    }
+    globalThis.setTimeout(() => {
+      globalThis.location?.reload?.();
+    }, 900);
+  },
+});
+
+window.setRealitySyncEnabled = function setRealitySyncEnabled(enabled) {
+  const currentMemory = readPersistedStephanosSessionMemory();
+  const normalizedEnabled = enabled === true;
+  persistStephanosSessionMemory({
+    ...currentMemory,
+    session: {
+      ...currentMemory.session,
+      ui: {
+        ...currentMemory.session.ui,
+        uiLayout: {
+          ...(currentMemory.session.ui?.uiLayout || {}),
+          realitySyncEnabled: normalizedEnabled,
+        },
+      },
+    },
+  });
+  realitySyncController.setEnabled(normalizedEnabled);
+  if (normalizedEnabled) {
+    void realitySyncController.checkNow({ reason: "toggle-enabled" });
+  }
+};
 
 function getRuntimeProjects(context = {}) {
   const stateProjects = context?.systemState?.get?.("projects");
@@ -473,6 +560,7 @@ async function reloadStephanos() {
     await window.__stephanosRuntime.disposeModules(window.__stephanosRuntime.context);
   }
 
+  realitySyncController.dispose();
   window.location.reload();
 }
 
@@ -481,6 +569,7 @@ function exitStephanos() {
     window.__stephanosRuntime.disposeHealthMonitor();
   }
 
+  realitySyncController.dispose();
   window.location.href = "/";
 }
 
@@ -813,7 +902,8 @@ async function startStephanos() {
     window.__stephanosRuntime = {
       context,
       disposeModules,
-      disposeHealthMonitor: startStephanosHealthMonitor(projects, validationContext)
+      disposeHealthMonitor: startStephanosHealthMonitor(projects, validationContext),
+      disposeRealitySync: () => realitySyncController.dispose(),
     };
 
     window.returnToCommandDeck = function() {
@@ -874,6 +964,11 @@ window.addEventListener("load", () => {
   if (launcherDiagnostics.enabled) {
     void hydrateLauncherBuildIdentity();
   }
+  realitySyncController.init({
+    displayedMarker: buildTruthSignals.servedMarker || buildTruthSignals.builtMarker || buildTruthSignals.requestedSourceMarker || "",
+    displayedTimestamp: buildTruthSignals.servedBuildTimestamp || buildTruthSignals.buildTimestamp || "",
+    enabled: realitySyncState.enabled,
+  });
   void hydrateLauncherBuildProof();
   startStephanos();
 });

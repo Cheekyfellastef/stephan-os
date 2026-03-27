@@ -13,7 +13,7 @@ const REQUIRED_LAW_FIELDS = Object.freeze([
   'status',
 ]);
 
-export const STEPHANOS_LAWS_VERSION = '2026-03-27.guardrails-v3';
+export const STEPHANOS_LAWS_VERSION = '2026-03-27.guardrails-v4';
 
 export const STEPHANOS_LAW_IDS = Object.freeze({
   UNIVERSAL_ENTRY: 'law-universal-entry-not-system-brain',
@@ -27,6 +27,7 @@ export const STEPHANOS_LAW_IDS = Object.freeze({
   ROOT_VS_TILE_ACTION: 'law-root-visit-and-tile-click-are-distinct-actions',
   SHARED_STATE_LAYER: 'law-shared-runtime-state-holds-cross-device-truth',
   DEVICE_EMBODIMENT: 'law-runtime-embodiment-can-vary-by-device',
+  REALITY_SYNC: 'law-reality-sync-keeps-displayed-truth-current',
 });
 
 export const stephanosLaws = Object.freeze([
@@ -167,6 +168,20 @@ export const stephanosLaws = Object.freeze([
     engineeringImplication: 'Extend shared/runtime contracts for durable truth instead of embedding persistence logic in launcher-only UI.',
     relatedFiles: ['shared/runtime/truthContract.mjs', 'docs/core-truth-vs-runtime-truth.md', 'shared/runtime/stephanosSessionMemory.mjs'],
     testCoverageHint: 'shared/runtime/* truth contract tests + session memory tests',
+    severity: 'high',
+    status: 'active',
+  },
+  {
+    id: STEPHANOS_LAW_IDS.REALITY_SYNC,
+    title: 'Reality Sync keeps displayed truth converged with latest detected truth',
+    shortStatement: 'Launcher surfaces must detect stale displayed build truth and reconcile toward newer authoritative truth.',
+    fullDescription: 'Stephanos launcher/runtime surfaces should continuously correlate displayed build markers/timestamps with authoritative source/build/served truth. When newer truth is detected, stale state must be surfaced and reconciled safely without aggressive or infinite refresh loops.',
+    category: 'build-truth',
+    invariantType: 'hard',
+    operatorImplication: 'If displayed marker is stale, Truth Panel must show the mismatch and whether auto-refresh is enabled or paused.',
+    engineeringImplication: 'Keep reality-sync polling, stale detection, refresh loop guards, and operator toggles wired through shared runtime/session memory paths.',
+    relatedFiles: ['shared/runtime/realitySync.mjs', 'shared/runtime/truthEngine.mjs', 'shared/runtime/renderTruthPanel.mjs', 'main.js', 'modules/system-panel/system-panel.js'],
+    testCoverageHint: 'tests/reality-sync.test.mjs, tests/truth-engine.test.mjs, tests/system-panel-toggle-state.test.mjs',
     severity: 'high',
     status: 'active',
   },
