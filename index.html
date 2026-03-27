@@ -477,6 +477,137 @@ color: #c5e6ff;
 margin: 8px 0;
 }
 
+.stephanos-system-panel {
+position: fixed;
+top: 50%;
+left: 50%;
+transform: translate(-50%, -50%);
+background: #101824;
+border: 1px solid #2d4762;
+border-radius: 12px;
+padding: 16px;
+width: min(380px, calc(100vw - 40px));
+z-index: 5000;
+color: #dff4ff;
+box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+}
+
+.stephanos-system-panel h3 {
+margin: 0;
+font-size: 19px;
+}
+
+.stephanos-system-panel .system-panel-subtitle {
+margin: 6px 0 10px;
+font-size: 12px;
+color: #96c6eb;
+}
+
+.stephanos-system-panel h4 {
+margin: 10px 0 8px;
+font-size: 12px;
+text-transform: uppercase;
+letter-spacing: 0.05em;
+color: #8fcfff;
+}
+
+.stephanos-system-toggle {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 12px;
+margin-bottom: 8px;
+font-size: 14px;
+}
+
+.stephanos-system-panel hr {
+border: 0;
+height: 1px;
+background: #243f59;
+margin: 12px 0;
+}
+
+.system-panel-close {
+width: 100%;
+margin-top: 0;
+padding: 10px 12px;
+border-radius: 8px;
+border: 1px solid #355d8b;
+background: rgba(9, 22, 37, 0.96);
+color: #dff4ff;
+cursor: pointer;
+}
+
+.truth-panel {
+margin-top: 12px;
+}
+
+.truth-panel-header {
+display: flex;
+justify-content: space-between;
+gap: 10px;
+align-items: center;
+}
+
+.truth-panel-header h3 {
+margin: 0;
+font-size: 14px;
+color: #a8dbff;
+}
+
+.truth-panel-pill {
+font-size: 11px;
+padding: 3px 8px;
+border-radius: 999px;
+border: 1px solid #356ea8;
+text-transform: uppercase;
+}
+
+.truth-status-healthy .truth-panel-pill {
+border-color: #2d8b6f;
+color: #a6efd4;
+}
+
+.truth-status-degraded .truth-panel-pill,
+.truth-status-critical .truth-panel-pill {
+border-color: #b4793c;
+color: #ffd9a8;
+}
+
+.truth-panel-intro {
+font-size: 12px;
+color: #9fd4ff;
+margin: 8px 0 10px;
+}
+
+.truth-panel-grid details {
+margin-top: 6px;
+}
+
+.truth-panel-signal-list {
+list-style: none;
+padding: 0;
+margin: 8px 0;
+}
+
+.truth-panel-signal-list li {
+display: flex;
+justify-content: space-between;
+gap: 12px;
+font-size: 12px;
+margin-bottom: 4px;
+}
+
+.truth-panel-signal-list b {
+font-weight: 600;
+color: #dff4ff;
+}
+
+.truth-contradictions ul {
+padding-left: 16px;
+font-size: 12px;
+}
+
 @media (max-width: 820px) {
   .stephanos-law-card summary {
     flex-direction: column;

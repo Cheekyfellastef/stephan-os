@@ -92,3 +92,10 @@ Guardrails v2 is now mirrored by a structured law layer:
 - Launcher-visible surface: `index.html#stephanos-laws-mount`
 
 When changing launcher/runtime/routing behavior, update tests/docs/law mappings together. Do not let prose policy and structured law source diverge.
+
+## Truth Engine and operator toggles
+
+- Truth Engine (`shared/runtime/truthEngine.mjs`) is the operational self-audit layer (reality snapshot + contradictions), not decorative status text.
+- Laws panel is constitutional guidance and stays separate from operational Truth Panel output.
+- System-panel/cog popup owns operator toggles for Runtime Diagnostics, Launcher Runtime Fingerprint, and Truth Panel.
+- Visibility toggle state should persist via shared Stephanos session-memory UI layout fields so surfaces restore consistently after reload.
