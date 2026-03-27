@@ -17,7 +17,8 @@ import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
 import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
-import { createStephanosMemory } from "./shared/runtime/stephanosMemory.mjs";
+import { createStephanosMemory, createStephanosMemoryGateway } from "./shared/runtime/stephanosMemory.mjs";
+import { createStephanosContinuityService } from "./shared/runtime/stephanosContinuity.mjs";
 import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
@@ -218,6 +219,17 @@ function applyLauncherSurfaceVisibility() {
       node.style.display = launcherSurfaceVisibility.runtimeDiagnosticsVisible ? "block" : "none";
     }
   });
+
+  const stephanosContinuity = window.__stephanosRuntime?.context?.services?.getService?.("stephanosContinuity");
+  if (stephanosContinuity?.update) {
+    stephanosContinuity.update({
+      truth: {
+        truthPanelVisible: launcherSurfaceVisibility.truthPanelVisible,
+        lawsPanelVisible: true,
+        realitySyncEnabled: realitySyncState.enabled !== false,
+      },
+    });
+  }
 
   updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
 }
@@ -910,13 +922,50 @@ async function startStephanos() {
       surface: "launcher-root",
       source: "launcher-runtime",
     });
+    const stephanosMemoryGateway = createStephanosMemoryGateway(stephanosMemory, {
+      namespace: "continuity",
+      source: "launcher-continuity-gateway",
+    });
+    const stephanosContinuity = createStephanosContinuityService({
+      eventBus,
+      memoryGateway: stephanosMemoryGateway,
+      initialState: {
+        session: {
+          continuityId: `launcher-${Date.now()}`,
+          surfaceMode: "launcher-root",
+          routeKind: "launcher",
+        },
+        environment: {
+          activeSurface: "launcher-root",
+        },
+        workspace: {
+          activeWorkspace: "launcher",
+        },
+      },
+      persistEventNames: [
+        "tile.opened",
+        "tile.closed",
+        "tile.result",
+        "workspace:opened",
+        "workspace:closed",
+        "truth.warning",
+        "truth.contradiction",
+        "law.warning",
+        "ai.intent.received",
+        "ai.decision.made",
+      ],
+    });
     const taskQueue = createTaskQueue();
 
     initializeStephanosOperatorPanels(uiRenderer);
     services.registerService("ui", uiRenderer);
     services.registerService("taskQueue", taskQueue);
     services.registerService("stephanosMemory", stephanosMemory);
+    services.registerService("stephanosMemoryGateway", stephanosMemoryGateway);
+    services.registerService("stephanosContinuity", stephanosContinuity);
     window.stephanosMemory = stephanosMemory;
+    window.stephanosContinuity = stephanosContinuity;
+    window.stephanosEvents = eventBus;
 
     const agentRegistry = createAgentRegistry();
     services.registerService("agentRegistry", agentRegistry);

@@ -9,10 +9,20 @@ export const assistantAgent = {
 
   async handleEvent(payload, context) {
     const userInput = payload.text;
+    context?.eventBus?.emit("ai.intent.received", {
+      source: "assistant-agent",
+      summary: String(userInput || "").trim() || "intent-received",
+      payload: { userInput: String(userInput || "") },
+    });
 
     console.log("Assistant received:", userInput);
 
     const interpreted = interpretLocally(userInput);
+    context?.eventBus?.emit("ai.decision.made", {
+      source: "assistant-agent",
+      summary: `Interpreted command: ${interpreted}`,
+      payload: { interpretedCommand: interpreted },
+    });
 
     executeStephanosCommand(interpreted, context);
   }

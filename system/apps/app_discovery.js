@@ -60,6 +60,7 @@ function resolveManifestEntryPath(folder, manifest) {
 
 function normaliseManifestApp(folder, manifest) {
   const packaging = resolvePackagingMode(manifest);
+  const participation = manifest?.participation && typeof manifest.participation === "object" ? manifest.participation : {};
 
   return {
     id: folder,
@@ -75,7 +76,14 @@ function normaliseManifestApp(folder, manifest) {
     validationState: "unknown",
     statusMessage: "",
     requiredPaths: Array.isArray(manifest.requiredPaths) ? manifest.requiredPaths : [],
-    dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : []
+    dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies : [],
+    capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities : [],
+    eventsPublished: Array.isArray(manifest.eventsPublished) ? manifest.eventsPublished : [],
+    eventsConsumed: Array.isArray(manifest.eventsConsumed) ? manifest.eventsConsumed : [],
+    memoryUsage: typeof manifest.memoryUsage === "string" ? manifest.memoryUsage : "none-declared",
+    continuityParticipation: typeof manifest.continuityParticipation === "string" ? manifest.continuityParticipation : "none-declared",
+    aiAddressable: manifest.aiAddressable === true,
+    participation,
   };
 }
 
@@ -246,7 +254,14 @@ async function validateAppRegistration(folder, context = {}) {
     discoveryDisabled: true,
     validationState: "error",
     statusMessage: issues[0] || "App failed discovery",
-    validationIssues: issues
+    validationIssues: issues,
+    capabilities: Array.isArray(manifest?.capabilities) ? manifest.capabilities : [],
+    eventsPublished: Array.isArray(manifest?.eventsPublished) ? manifest.eventsPublished : [],
+    eventsConsumed: Array.isArray(manifest?.eventsConsumed) ? manifest.eventsConsumed : [],
+    memoryUsage: typeof manifest?.memoryUsage === "string" ? manifest.memoryUsage : "none-declared",
+    continuityParticipation: typeof manifest?.continuityParticipation === "string" ? manifest.continuityParticipation : "none-declared",
+    aiAddressable: manifest?.aiAddressable === true,
+    participation: manifest?.participation && typeof manifest.participation === "object" ? manifest.participation : {},
   };
 
   const entryPath = resolveManifestEntryPath(folder, manifest);
