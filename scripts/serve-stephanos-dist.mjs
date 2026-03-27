@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import net from 'node:net';
@@ -24,6 +25,12 @@ const {
 } = createStephanosLocalUrls({ port });
 const runtimeStatusPath = resolve(repoRoot, 'apps', 'stephanos', 'runtime-status.json');
 const staticRootPath = repoRoot;
+const LAUNCHER_CRITICAL_SOURCE_PATHS = Object.freeze([
+  'main.js',
+  'modules/command-deck/command-deck.js',
+  'system/module_loader.js',
+  'system/workspace.js',
+]);
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -111,8 +118,34 @@ function buildHealthPayload() {
     gitCommit: buildMetadata?.gitCommit || null,
     buildTimestamp: buildMetadata?.buildTimestamp || null,
     launcherStatus: readRuntimeStatus(),
+    launcherSourceTruth: getLauncherCriticalSourceTruth(),
     checkedAt: new Date().toISOString(),
   };
+}
+
+function hashText(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function getLauncherCriticalSourceTruth() {
+  return LAUNCHER_CRITICAL_SOURCE_PATHS.map((relativePath) => {
+    const absolutePath = resolve(staticRootPath, relativePath);
+    if (!existsSync(absolutePath)) {
+      return {
+        path: relativePath,
+        exists: false,
+        sha256: null,
+      };
+    }
+
+    const source = readFileSync(absolutePath, 'utf8');
+    return {
+      path: relativePath,
+      exists: true,
+      sha256: hashText(source),
+      size: Buffer.byteLength(source),
+    };
+  });
 }
 
 function probePortListening(portToProbe, hostToProbe = '127.0.0.1', timeoutMs = 350) {
@@ -225,11 +258,13 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
       probeHttp200(resolvedRuntimeUrl),
       probeServedRuntimeMarker(resolvedRuntimeUrl),
     ]);
-    const [runtimeStatusModuleMime, localUrlsModuleMime] = await Promise.all([
+    const [runtimeStatusModuleMime, localUrlsModuleMime, sourceTruthProbe] = await Promise.all([
       probeJavaScriptMime(`${probeOrigin}/shared/runtime/runtimeStatusModel.mjs`),
       probeJavaScriptMime(`${probeOrigin}/shared/runtime/stephanosLocalUrls.mjs?v=live-mime-probe`),
+      probeLauncherCriticalSourceTruth(probeOrigin),
     ]);
     const moduleMimeReady = runtimeStatusModuleMime.ok && localUrlsModuleMime.ok;
+    const sourceTruthReady = sourceTruthProbe.ok;
     const healthRuntimeMarker = payload?.runtimeMarker || null;
     const servedRuntimeMarker = servedRuntimeMarkerProbe.runtimeMarker || null;
     const markerMatchesExpected =
@@ -242,10 +277,12 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
         payload,
         runtimeReady,
         moduleMimeReady,
+        sourceTruthReady,
         markerMatchesExpected,
       }),
       runtimeReady,
       moduleMimeReady,
+      sourceTruthReady,
       markerMatchesExpected,
       expectedRuntimeMarker: expectedRuntimeMarker || null,
       observedRuntimeMarkers: {
@@ -257,6 +294,7 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
         runtimeStatusModel: runtimeStatusModuleMime,
         stephanosLocalUrls: localUrlsModuleMime,
       },
+      sourceTruthProbe,
       runtimeUrl: resolvedRuntimeUrl,
       payload,
     };
@@ -269,6 +307,7 @@ export function canReuseStephanosServer({
   payload,
   runtimeReady,
   moduleMimeReady,
+  sourceTruthReady,
   markerMatchesExpected,
 }) {
   return (
@@ -277,8 +316,53 @@ export function canReuseStephanosServer({
     payload?.staticRootPath === staticRootPath &&
     runtimeReady &&
     moduleMimeReady &&
+    sourceTruthReady &&
     markerMatchesExpected
   );
+}
+
+async function probeLauncherCriticalSourceTruth(origin) {
+  const expected = getLauncherCriticalSourceTruth();
+  const expectedMap = new Map(expected.map((entry) => [entry.path, entry.sha256]));
+
+  try {
+    const response = await fetch(`${origin}/__stephanos/source-truth`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        mismatches: ['endpoint unavailable'],
+      };
+    }
+
+    const payload = await response.json();
+    const servedEntries = Array.isArray(payload?.launcherCriticalSourceTruth)
+      ? payload.launcherCriticalSourceTruth
+      : [];
+    const servedMap = new Map(servedEntries.map((entry) => [entry.path, entry.sha256]));
+    const mismatches = [];
+
+    for (const filePath of LAUNCHER_CRITICAL_SOURCE_PATHS) {
+      if (expectedMap.get(filePath) !== servedMap.get(filePath)) {
+        mismatches.push(filePath);
+      }
+    }
+
+    return {
+      ok: mismatches.length === 0,
+      status: response.status,
+      mismatches,
+      servedEntries,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: null,
+      mismatches: ['request failed'],
+    };
+  }
 }
 
 function resolveRequestFile(requestPath) {
@@ -337,6 +421,17 @@ export function createStephanosDistServer() {
         'Content-Type': 'application/json; charset=utf-8',
       });
       response.end(`${JSON.stringify(buildHealthPayload(), null, 2)}\n`);
+      return;
+    }
+    if ((request.url || '').startsWith('/__stephanos/source-truth')) {
+      response.writeHead(200, {
+        ...baseHeaders,
+        'Content-Type': 'application/json; charset=utf-8',
+      });
+      response.end(`${JSON.stringify({
+        launcherCriticalSourceTruth: getLauncherCriticalSourceTruth(),
+        checkedAt: new Date().toISOString(),
+      }, null, 2)}\n`);
       return;
     }
 
@@ -428,6 +523,14 @@ if (isMainModule) {
       console.error(`[DIST SERVER LIVE] runtimeStatusModel.mjs -> status=${existingServer.moduleMimeChecks?.runtimeStatusModel?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.runtimeStatusModel?.contentType ?? 'n/a'}`);
       console.error(`[DIST SERVER LIVE] stephanosLocalUrls.mjs?v=live-mime-probe -> status=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.status ?? 'n/a'}, content-type=${existingServer.moduleMimeChecks?.stephanosLocalUrls?.contentType ?? 'n/a'}`);
       console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
+      process.exit(1);
+      return;
+    }
+
+    if (existingServer.payload?.service === 'stephanos-dist-server' && existingServer.runtimeReady && !existingServer.sourceTruthReady) {
+      console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} failed launcher source parity checks; refusing reuse.`);
+      console.error(`[DIST SERVER LIVE] mismatched launcher-critical files: ${(existingServer.sourceTruthProbe?.mismatches || []).join(', ') || 'unknown'}`);
+      console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current launcher source.`);
       process.exit(1);
       return;
     }

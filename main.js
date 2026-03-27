@@ -13,6 +13,7 @@ import { createStephanosLocalUrls } from "./shared/runtime/stephanosLocalUrls.mj
 import { getLauncherDiagnosticsControl } from "./shared/runtime/launcherDiagnosticsControl.mjs";
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 import { renderStephanosLawsPanel } from "./shared/runtime/renderStephanosLawsPanel.mjs";
+import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import {
   attachStartupInteractionListeners,
   getStartupDiagnosticsSnapshot,
@@ -248,6 +249,7 @@ function log(message) {
 }
 
 let developerMode = false;
+const moduleFailureEvents = [];
 
 
 function getRuntimeProjects(context = {}) {
@@ -349,9 +351,11 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
     tileContextRegistryPopulated: registrySnapshots.length > 0,
     tileContextRegistryTileIds: registrySnapshots.map((snapshot) => snapshot.tileId),
     startupLaunchAudit: getStartupDiagnosticsSnapshot(),
+    moduleFailures: moduleFailureEvents.slice(-5),
   };
 
-  const summaryText = `Mode: ${diagnostics.runtimeMode} · Active tile: ${diagnostics.activeTileId || 'none'} · Loaded tiles: ${diagnostics.loadedTileIds.length}`;
+  const moduleFailureSuffix = diagnostics.moduleFailures.length > 0 ? ` · Module failures: ${diagnostics.moduleFailures.length}` : '';
+  const summaryText = `Mode: ${diagnostics.runtimeMode} · Active tile: ${diagnostics.activeTileId || 'none'} · Loaded tiles: ${diagnostics.loadedTileIds.length}${moduleFailureSuffix}`;
   summaryNode.textContent = summaryText;
   if (compactNode) {
     compactNode.textContent = `Runtime status: ${summaryText}`;
@@ -447,6 +451,31 @@ async function startStephanos() {
   log("Stephanos OS starting...");
 
   const eventBus = createEventBus();
+  eventBus.on("module:failed", (payload = {}) => {
+    const failureRecord = {
+      occurredAt: new Date().toISOString(),
+      moduleId: payload?.id || payload?.path || "unknown",
+      modulePath: payload?.path || "unknown",
+      reason: payload?.reason || "Unknown module failure",
+      launcherCritical: payload?.launcherCritical === true,
+      lawId: payload?.lawId || STEPHANOS_LAW_IDS.UNIVERSAL_ENTRY,
+    };
+    moduleFailureEvents.push(failureRecord);
+
+    const launcherCriticalLabel = failureRecord.launcherCritical ? "launcher-critical" : "non-critical";
+    console.error(`[Launcher Module Failure] ${failureRecord.modulePath} (${launcherCriticalLabel})`, failureRecord);
+    if (failureRecord.launcherCritical) {
+      console.error(`[Launcher Module Failure] [LAW:${failureRecord.lawId}] Module-load failure detected. This is not an "empty app registry" condition.`);
+      log(`❌ Launcher module failed (${failureRecord.modulePath}); tiles may be degraded.`);
+      const status = document.getElementById("system-status-text");
+      if (status) {
+        status.textContent = `Launcher degraded: module load failed (${failureRecord.modulePath})`;
+      }
+    } else {
+      log(`⚠ Module failed to load: ${failureRecord.modulePath}`);
+    }
+    updateRuntimeDiagnostics({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+  });
   eventBus.on("app:diagnostic", (payload) => {
     if (payload?.message) {
       log(`ℹ ${payload.message}`);

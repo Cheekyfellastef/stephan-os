@@ -51,7 +51,8 @@ A healthy process is reusable only when all gates pass:
 1. service identity + mount/static-root checks pass,
 2. health runtime marker matches expected local dist marker,
 3. served index runtime marker matches expected local dist marker,
-4. launcher-critical module MIME checks pass.
+4. launcher-critical module MIME checks pass,
+5. launcher-critical source parity check (`/__stephanos/source-truth`) matches on-disk SHA-256 hashes.
 
 Any mismatch => reject reuse and force operator restart.
 
@@ -75,6 +76,12 @@ Any mismatch => reject reuse and force operator restart.
 - Root launcher showing diagnostics/status content in primary tile body.
 - Reusing existing local server with marker mismatch or bad module MIME.
 - Build metadata mismatch between `dist/index.html` and `stephanos-build.json`.
+
+## Import structure enforcement (launcher-critical)
+- Imports must remain in the file's top import section (comments/blank lines may precede them).
+- Duplicate imported bindings in the same file are forbidden.
+- Enforced gate: `npm run stephanos:guard:imports` (also runs inside `npm run stephanos:verify`).
+- Incident note: this exact failure class previously caused root launcher tile loss (`Tile registry entries: 0`) after `command-deck.js` hit a duplicate import declaration.
 
 ## Constitutional law linkage (Stephanos Laws layer)
 
