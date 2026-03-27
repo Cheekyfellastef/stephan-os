@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -20,6 +21,15 @@ function fail(message) {
 }
 
 const expectedMetadata = createStephanosBuildMetadata();
+
+const importGuardResult = spawnSync(process.execPath, ['scripts/guard-import-structure.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+
+if (importGuardResult.error || importGuardResult.status !== 0) {
+  fail('Import structure guard failed. Resolve import guard violations before dist verification.');
+}
 
 
 const stephanosAppManifestPath = resolve('apps/stephanos/app.json');
