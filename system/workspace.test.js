@@ -317,7 +317,7 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
   }
 });
 
-test("workspace stephanos launch always forces top-level navigation", async () => {
+test("workspace stephanos launch uses validated launch target for top-level navigation", async () => {
   const documentRef = createDocumentFixture();
   const globals = installWorkspaceGlobals(documentRef, async () => ({ ok: true, status: 200 }));
   const assigned = [];
@@ -334,6 +334,9 @@ test("workspace stephanos launch always forces top-level navigation", async () =
     name: "Stephanos OS",
     folder: "stephanos",
     entry: "apps/stephanos/dist/index.html",
+    launchEntry: "/",
+    runtimeEntry: "apps/stephanos/dist/index.html",
+    launchStrategy: "navigate",
     dependencies: [],
   };
 
@@ -343,7 +346,7 @@ test("workspace stephanos launch always forces top-level navigation", async () =
       .flatMap((node) => node.children || [])
       .filter((node) => node.tagName === "iframe").length;
 
-    assert.deepEqual(assigned, ["http://localhost/apps/stephanos/dist/index.html"]);
+    assert.deepEqual(assigned, ["http://localhost/"]);
     assert.equal(iframeCount, 0);
     assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
   } finally {

@@ -69,6 +69,18 @@ function toFetchPath(path) {
   return `./${normalized}`;
 }
 
+function resolveCanonicalLauncherShellUrl(currentOrigin = '') {
+  try {
+    if (currentOrigin) {
+      return new URL('/', currentOrigin).href;
+    }
+  } catch {
+    // fall through to static launcher url fallback
+  }
+
+  return STEPHANOS_LOCAL_URLS.launcherShellUrl;
+}
+
 function formatBuildStamp(buildTimestamp) {
   const value = String(buildTimestamp || '').trim();
   if (!value) {
@@ -863,35 +875,37 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const launcherPathname = String(globalThis.location?.pathname || "/");
   const localLauncherShell = isLoopbackHost(currentHostname) && ["/", "/index.html"].includes(launcherPathname);
 
-  let launchUrl = '';
+  const launcherShellUrl = resolveCanonicalLauncherShellUrl(currentOrigin);
+  let runtimeLaunchUrl = '';
   let launchStrategy = 'workspace';
   switch (finalRoute.routeKind) {
     case 'local-desktop':
-      launchUrl = localPreferredTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      runtimeLaunchUrl = localPreferredTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
       break;
     case 'home-node':
-      launchUrl = homeNodeUiReachable
+      runtimeLaunchUrl = homeNodeUiReachable
         ? (homeNodeTarget?.url || '')
         : (distPreferredTarget?.url || (entryExists ? hostedDistUrl : ''));
       launchStrategy = homeNodeUiReachable ? 'navigate' : 'workspace';
       break;
     case 'dist':
-      launchUrl = distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      runtimeLaunchUrl = distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
       break;
     case 'cloud':
-      launchUrl = entryExists ? hostedDistUrl : (distPreferredTarget?.url || '');
+      runtimeLaunchUrl = entryExists ? hostedDistUrl : (distPreferredTarget?.url || '');
       break;
     default:
-      launchUrl = localPreferredTarget?.url || homeNodeTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
-      if (!launchUrl && homeNodeTarget?.url) {
+      runtimeLaunchUrl = localPreferredTarget?.url || homeNodeTarget?.url || distPreferredTarget?.url || (entryExists ? hostedDistUrl : '');
+      if (!runtimeLaunchUrl && homeNodeTarget?.url) {
         launchStrategy = 'navigate';
       }
       break;
   }
 
-  if (localLauncherShell && entryExists) {
-    launchUrl = hostedDistUrl;
-    launchStrategy = 'workspace';
+  let launchUrl = runtimeLaunchUrl;
+  if (localLauncherShell) {
+    launchUrl = launcherShellUrl;
+    launchStrategy = 'navigate';
   }
 
   const launchableRuntime = Boolean(launchUrl);
@@ -907,7 +921,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     resolvedEntryPath,
     entryExists,
     runtimeStatusPath: STEPHANOS_STATUS_URL,
-    runtimeUrl: launchUrl || hostedDistUrl || homeNodeTarget?.url || localPreferredTarget?.url || STEPHANOS_RUNTIME_URL,
+    runtimeUrl: runtimeLaunchUrl || hostedDistUrl || homeNodeTarget?.url || localPreferredTarget?.url || STEPHANOS_RUNTIME_URL,
     runtimeReachable: launchableRuntime,
     backendStatus: healthyBackend ? 'up' : backendState || 'down',
     staticServerStatus: launchableRuntime ? finalRoute.routeKind : uiState || 'down',
@@ -935,6 +949,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       routeForensics,
       providerHealth,
       launchUrl,
+      runtimeLaunchUrl,
+      launcherShellUrl,
       launchStrategy,
       runtimeTargets: [
         ...probedTargets,
@@ -1046,8 +1062,11 @@ export async function validateApps(apps, context = {}) {
       app.buildStamp = stephanosStatus.buildStamp || 'unknown';
       app.buildStampLabel = stephanosStatus.buildStampLabel || 'Stephanos Build: unknown';
       app.buildMarker = stephanosStatus.buildMarker || '';
-      if (stephanosStatus.launchUrl) {
-        app.entry = stephanosStatus.launchUrl;
+      app.launcherEntry = stephanosStatus.launcherShellUrl || app.launcherEntry || app.entry;
+      app.runtimeEntry = stephanosStatus.runtimeLaunchUrl || app.runtimeEntry || app.entry;
+      app.launchEntry = stephanosStatus.launchUrl || app.launchEntry || app.entry;
+      if (app.launchEntry) {
+        app.entry = app.launchEntry;
       }
       app.launchStrategy = stephanosStatus.launchStrategy || 'workspace';
 
