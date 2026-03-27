@@ -49,6 +49,19 @@ At minimum for launcher/runtime/guardrail edits:
 - `npm run stephanos:verify` (and `npm run stephanos:build` if dist truth changed),
 - stale-process reuse guard tests.
 
+
+## Reality Sync policy (mandatory)
+
+- Treat Reality Sync (`shared/runtime/realitySync.mjs`) as build-truth guardrail behavior, not a cosmetic notifier.
+- Launcher/runtime changes that affect build markers or truth-source availability must preserve:
+  - displayed marker/timestamp capture,
+  - latest authoritative marker/timestamp resolution,
+  - stale/current contradiction reporting,
+  - loop-protected auto-refresh behavior.
+- Reality Sync authoritative source order should remain explicit and documented in code/tests.
+- Keep the System Panel Reality Sync toggle persisted via shared session memory UI layout state.
+- If truth sources are unavailable (especially hosted contexts), surface degraded confidence/state instead of claiming current truth.
+
 ## Truth Engine and toggle policy
 
 - Truth Engine (`shared/runtime/truthEngine.mjs`) is the operational self-audit layer and must stay data-driven from runtime/build/module truth signals.

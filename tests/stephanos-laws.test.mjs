@@ -21,6 +21,7 @@ const REQUIRED_LAWS = [
   STEPHANOS_LAW_IDS.ROOT_VS_TILE_ACTION,
   STEPHANOS_LAW_IDS.SHARED_STATE_LAYER,
   STEPHANOS_LAW_IDS.DEVICE_EMBODIMENT,
+  STEPHANOS_LAW_IDS.REALITY_SYNC,
 ];
 
 test('Stephanos laws source loads and has active version marker', () => {

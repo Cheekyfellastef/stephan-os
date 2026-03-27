@@ -51,13 +51,28 @@ export function createTruthSnapshot(input = {}) {
     runtimeErrorActive: input?.runtime?.runtimeErrorActive === true,
   };
 
-  const contradictions = collectTruthContradictions({ launcher, sourceBuildServed, runtime });
+  const realitySync = {
+    enabled: input?.realitySync?.enabled !== false,
+    displayedMarker: normalizeStatus(input?.realitySync?.displayedMarker, 'missing'),
+    displayedTimestamp: normalizeStatus(input?.realitySync?.displayedTimestamp, 'unknown'),
+    latestMarker: normalizeStatus(input?.realitySync?.latestMarker, 'missing'),
+    latestTimestamp: normalizeStatus(input?.realitySync?.latestTimestamp, 'unknown'),
+    latestSource: normalizeStatus(input?.realitySync?.latestSource, 'unknown'),
+    isStale: input?.realitySync?.isStale === true,
+    refreshPending: input?.realitySync?.refreshPending === true,
+    lastRefreshReason: normalizeStatus(input?.realitySync?.lastRefreshReason, ''),
+    lastRefreshAt: normalizeStatus(input?.realitySync?.lastRefreshAt, ''),
+    attemptsForCurrentMarker: toFiniteNumber(input?.realitySync?.attemptsForCurrentMarker, 0),
+  };
+
+  const contradictions = collectTruthContradictions({ launcher, sourceBuildServed, runtime, realitySync });
 
   return {
     capturedAt: new Date().toISOString(),
     launcher,
     sourceBuildServed,
     runtime,
+    realitySync,
     contradictions,
     status: contradictions.some((entry) => entry.severity === 'critical')
       ? 'critical'
@@ -67,7 +82,7 @@ export function createTruthSnapshot(input = {}) {
   };
 }
 
-export function collectTruthContradictions({ launcher = {}, sourceBuildServed = {}, runtime = {} } = {}) {
+export function collectTruthContradictions({ launcher = {}, sourceBuildServed = {}, runtime = {}, realitySync = {} } = {}) {
   const contradictions = [];
 
   if (toFiniteNumber(launcher.projectsDiscoveredCount, 0) > 0 && toFiniteNumber(launcher.tileDomCount, 0) === 0) {
@@ -130,6 +145,20 @@ export function collectTruthContradictions({ launcher = {}, sourceBuildServed = 
       {
         runtimeDiagnosticsEnabled: runtime.runtimeDiagnosticsEnabled,
         runtimeErrorActive: runtime.runtimeErrorActive,
+      },
+    ));
+  }
+
+  if (realitySync.isStale === true) {
+    contradictions.push(contradiction(
+      'displayed-truth-stale-vs-latest',
+      'high',
+      'Displayed launcher build truth is older than latest detected truth.',
+      STEPHANOS_LAW_IDS.REALITY_SYNC,
+      {
+        displayedMarker: normalizeStatus(realitySync.displayedMarker, 'missing'),
+        latestMarker: normalizeStatus(realitySync.latestMarker, 'missing'),
+        enabled: realitySync.enabled === true,
       },
     ));
   }

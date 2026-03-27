@@ -61,6 +61,19 @@ export function renderTruthPanel(snapshot, documentRef = globalThis.document, op
     { label: 'final route / kind', value: `${snapshot?.runtime?.finalRoute || 'unknown'} / ${snapshot?.runtime?.routeKind || 'unknown'}` },
   ]);
 
+  const realitySyncSignals = renderSignalList([
+    { label: 'reality sync enabled', value: formatBoolean(snapshot?.realitySync?.enabled) },
+    { label: 'displayed marker', value: snapshot?.realitySync?.displayedMarker || 'missing' },
+    { label: 'latest marker', value: snapshot?.realitySync?.latestMarker || 'missing' },
+    { label: 'displayed timestamp', value: snapshot?.realitySync?.displayedTimestamp || 'unknown' },
+    { label: 'latest timestamp', value: snapshot?.realitySync?.latestTimestamp || 'unknown' },
+    { label: 'latest source', value: snapshot?.realitySync?.latestSource || 'unknown' },
+    { label: 'stale display detected', value: formatBoolean(snapshot?.realitySync?.isStale) },
+    { label: 'auto-refresh pending', value: formatBoolean(snapshot?.realitySync?.refreshPending) },
+    { label: 'last refresh reason', value: snapshot?.realitySync?.lastRefreshReason || 'none' },
+    { label: 'last refresh at', value: snapshot?.realitySync?.lastRefreshAt || 'never' },
+  ]);
+
   mount.innerHTML = `
     <section class="runtime-diagnostics-card secondary truth-panel truth-status-${escapeHtml(status)}" aria-label="Stephanos truth panel">
       <header class="truth-panel-header">
@@ -80,6 +93,10 @@ export function renderTruthPanel(snapshot, documentRef = globalThis.document, op
         <details>
           <summary>Runtime truth</summary>
           ${runtimeSignals}
+        </details>
+        <details>
+          <summary>Reality Sync</summary>
+          ${realitySyncSignals}
         </details>
       </div>
       <details class="truth-contradictions" ${contradictions.length > 0 ? 'open' : ''}>

@@ -61,6 +61,9 @@ test('system panel controller toggles runtime surfaces immediately', () => {
     applySurfaceVisibility(payload) {
       calls.push({ ...payload, type: 'surface' });
     },
+    setRealitySyncEnabled(enabled) {
+      calls.push({ enabled, type: 'reality-sync' });
+    },
     storage: createStorage({
       [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
     }),
@@ -69,9 +72,11 @@ test('system panel controller toggles runtime surfaces immediately', () => {
   controller.setToggleState('runtime-diagnostics', true);
   controller.setToggleState('launcher-fingerprint', true);
   controller.setToggleState('truth-panel', true);
+  controller.setToggleState('reality-sync', true);
   controller.setToggleState('agent-console-panel', true);
 
   assert.equal(calls.filter((entry) => entry.type === 'surface').length, 3);
+  assert.deepEqual(calls.find((entry) => entry.type === 'reality-sync'), { enabled: true, type: 'reality-sync' });
   assert.deepEqual(calls.at(-1), { panelId: 'agent-console-panel', enabled: true, type: 'panel' });
 });
 
@@ -81,6 +86,7 @@ test('system panel controller restores persisted toggle preferences', () => {
       runtimeDiagnosticsVisible: true,
       launcherRuntimeFingerprintVisible: true,
       truthPanelVisible: false,
+      realitySyncEnabled: false,
       'agent-console-panel': true,
     }),
   });
@@ -88,15 +94,19 @@ test('system panel controller restores persisted toggle preferences', () => {
   const controller = createSystemPanelStateController({
     setPanelState() {},
     applySurfaceVisibility() {},
+    setRealitySyncEnabled() {},
     storage,
   });
 
   assert.equal(controller.getToggleState('runtime-diagnostics'), true);
   assert.equal(controller.getToggleState('launcher-fingerprint'), true);
   assert.equal(controller.getToggleState('truth-panel'), false);
+  assert.equal(controller.getToggleState('reality-sync'), false);
   assert.equal(controller.getToggleState('agent-console-panel'), true);
 
   controller.setToggleState('truth-panel', true);
+  controller.setToggleState('reality-sync', true);
   const restored = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
   assert.equal(restored.session.ui.uiLayout.truthPanelVisible, true);
+  assert.equal(restored.session.ui.uiLayout.realitySyncEnabled, true);
 });

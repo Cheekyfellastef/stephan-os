@@ -56,6 +56,7 @@ test('existing server reuse requires runtime marker parity and not just health',
     },
     runtimeReady: true,
     moduleMimeReady: true,
+    sourceTruthReady: true,
   };
 
   assert.equal(
@@ -85,6 +86,7 @@ test('existing server reuse rejects stale responses when served index marker div
       },
       runtimeReady: true,
       moduleMimeReady: true,
+      sourceTruthReady: true,
       markerMatchesExpected: false,
     }),
     false,
@@ -101,6 +103,7 @@ test('existing server reuse rejects module MIME mismatches even when marker pari
       },
       runtimeReady: true,
       moduleMimeReady: false,
+      sourceTruthReady: true,
       markerMatchesExpected: true,
     }),
     false,

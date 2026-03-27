@@ -29,6 +29,14 @@ test('truth engine snapshot includes required sections and fields', () => {
       finalRoute: 'launcher-root',
       routeKind: 'launcher',
     },
+    realitySync: {
+      enabled: true,
+      displayedMarker: 'marker-a',
+      latestMarker: 'marker-a',
+      displayedTimestamp: '2026-03-27T00:00:00.000Z',
+      latestTimestamp: '2026-03-27T00:00:00.000Z',
+      isStale: false,
+    },
   });
 
   assert.equal(typeof snapshot.capturedAt, 'string');
@@ -36,6 +44,7 @@ test('truth engine snapshot includes required sections and fields', () => {
   assert.equal(snapshot.launcher.tileRegistryCount, 4);
   assert.equal(snapshot.sourceBuildServed.buildMarker, 'marker-a');
   assert.equal(snapshot.runtime.runtimeDiagnosticsEnabled, true);
+  assert.equal(snapshot.realitySync.displayedMarker, 'marker-a');
   assert.ok(Array.isArray(snapshot.contradictions));
 });
 
@@ -57,6 +66,12 @@ test('truth engine contradiction collection reports critical mismatch cases', ()
       runtimeDiagnosticsEnabled: false,
       runtimeErrorActive: true,
     },
+    realitySync: {
+      enabled: false,
+      displayedMarker: 'build-a',
+      latestMarker: 'build-b',
+      isStale: true,
+    },
   });
 
   const contradictionIds = snapshot.contradictions.map((entry) => entry.id);
@@ -66,4 +81,5 @@ test('truth engine contradiction collection reports critical mismatch cases', ()
   assert.ok(contradictionIds.includes('build-proof-missing'));
   assert.ok(contradictionIds.includes('source-dist-parity-mismatch'));
   assert.ok(contradictionIds.includes('runtime-errors-hidden'));
+  assert.ok(contradictionIds.includes('displayed-truth-stale-vs-latest'));
 });

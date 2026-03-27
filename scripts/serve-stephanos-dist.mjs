@@ -428,8 +428,14 @@ export function createStephanosDistServer() {
         ...baseHeaders,
         'Content-Type': 'application/json; charset=utf-8',
       });
+      const healthPayload = buildHealthPayload();
+      const launcherCriticalSourceTruth = getLauncherCriticalSourceTruth();
       response.end(`${JSON.stringify({
-        launcherCriticalSourceTruth: getLauncherCriticalSourceTruth(),
+        runtimeMarker: healthPayload.runtimeMarker || null,
+        buildTimestamp: healthPayload.buildTimestamp || null,
+        sourceTruthAvailable: launcherCriticalSourceTruth.every((entry) => entry.exists === true),
+        sourceDistParityOk: null,
+        launcherCriticalSourceTruth,
         checkedAt: new Date().toISOString(),
       }, null, 2)}\n`);
       return;
