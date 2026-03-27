@@ -331,151 +331,167 @@ async function startStephanos() {
 
   const { apps: projects, validationReport } = await discoverApps({ eventBus });
   updateRuntimeDiagnostics({ projects });
-
-  const { workspace } = await import("./system/workspace.js");
-  const {
-    loadModules,
-    disposeModules,
-    getLoadedModules,
-    getRegisteredModules,
-    registerModulePath,
-    reloadModules,
-    reloadModule,
-    disableModule,
-    enableModule
-  } = await import("./system/module_loader.js");
-  const { createSystemState } = await import("./system/core/system_state.js");
-  const { createServiceRegistry } = await import("./system/core/service_registry.js");
-  const { createUIRenderer } = await import("./system/ui_renderer.js");
-  const { createTaskQueue } = await import("./system/tasks/task_queue.js");
-  const { createTaskScheduler } = await import("./system/tasks/task_scheduler.js");
-  const { createAgentRegistry } = await import("./system/agents/agent_registry.js");
-  const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
-  const { sampleAgent } = await import("./system/agents/sample_agent.js");
-
-  const systemState = createSystemState();
-  systemState.set("projects", projects);
-  const services = createServiceRegistry();
-  const uiRenderer = createUIRenderer();
-  const taskQueue = createTaskQueue();
-
-  services.registerService("ui", uiRenderer);
-  services.registerService("taskQueue", taskQueue);
-
-  const agentRegistry = createAgentRegistry();
-  services.registerService("agentRegistry", agentRegistry);
-
-  const context = {
-    eventBus,
-    systemState,
-    services,
-    activeModules: {},
-    workspace,
-    projects
+  const fallbackTileContext = {
+    projects,
+    workspace: {
+      open(project) {
+        if (project?.entry) {
+          window.location.assign(project.entry);
+        }
+      },
+    },
   };
-  renderRootProjectTiles(projects, context);
+  renderRootProjectTiles(projects, fallbackTileContext);
 
-  systemState.set("appValidationReport", validationReport);
+  try {
+    const { workspace } = await import("./system/workspace.js");
+    const {
+      loadModules,
+      disposeModules,
+      getLoadedModules,
+      getRegisteredModules,
+      registerModulePath,
+      reloadModules,
+      reloadModule,
+      disableModule,
+      enableModule
+    } = await import("./system/module_loader.js");
+    const { createSystemState } = await import("./system/core/system_state.js");
+    const { createServiceRegistry } = await import("./system/core/service_registry.js");
+    const { createUIRenderer } = await import("./system/ui_renderer.js");
+    const { createTaskQueue } = await import("./system/tasks/task_queue.js");
+    const { createTaskScheduler } = await import("./system/tasks/task_scheduler.js");
+    const { createAgentRegistry } = await import("./system/agents/agent_registry.js");
+    const { createAgentRuntime } = await import("./system/agents/agent_runtime.js");
+    const { sampleAgent } = await import("./system/agents/sample_agent.js");
 
-  log(
-    `App discovery: ${validationReport.loaded} apps loaded, ${validationReport.invalid} app${validationReport.invalid === 1 ? "" : "s"} with errors`
-  );
+    const systemState = createSystemState();
+    systemState.set("projects", projects);
+    const services = createServiceRegistry();
+    const uiRenderer = createUIRenderer();
+    const taskQueue = createTaskQueue();
 
-  validationReport.issues.forEach((issue) => {
-    log(`⚠ ${issue}`);
-  });
+    services.registerService("ui", uiRenderer);
+    services.registerService("taskQueue", taskQueue);
 
-  createSelfHealingService(context);
+    const agentRegistry = createAgentRegistry();
+    services.registerService("agentRegistry", agentRegistry);
 
-  const validationContext = { eventBus, systemState };
-  const validationResults = await validateApps(projects, validationContext);
+    const context = {
+      eventBus,
+      systemState,
+      services,
+      activeModules: {},
+      workspace,
+      projects
+    };
+    renderRootProjectTiles(projects, context);
 
-  eventBus.on("app:revalidate_requested", async (payload) => {
-    if (payload?.appId) {
-      log(`ℹ revalidating ${payload.appId}: ${payload.reason || "manual request"}`);
-    }
+    systemState.set("appValidationReport", validationReport);
 
-    try {
-      await validateApps(projects, validationContext);
-      updateRuntimeDiagnostics({ projects, workspace });
-      renderRootProjectTiles(getRuntimeProjects(context), context);
-    } catch (error) {
-      console.warn("Stephanos revalidation failed.", error);
-    }
-  });
+    log(
+      `App discovery: ${validationReport.loaded} apps loaded, ${validationReport.invalid} app${validationReport.invalid === 1 ? "" : "s"} with errors`
+    );
 
-  for (const result of validationResults) {
-    console.warn("App Validator:", result.app);
-
-    result.issues.forEach(issue => {
-      console.warn(" - " + issue);
+    validationReport.issues.forEach((issue) => {
+      log(`⚠ ${issue}`);
     });
-  }
 
-  const agentRuntime = createAgentRuntime(context);
-  services.registerService("agentRuntime", agentRuntime);
+    createSelfHealingService(context);
 
-  const taskScheduler = createTaskScheduler(context);
-  services.registerService("taskScheduler", taskScheduler);
+    const validationContext = { eventBus, systemState };
+    const validationResults = await validateApps(projects, validationContext);
 
-  agentRuntime.startAgent(sampleAgent);
-  agentRuntime.startAgent(assistantAgent);
-  agentRuntime.startAgent(selfRepairAgent);
-  agentRuntime.startAgent(appInstallerAgent);
+    eventBus.on("app:revalidate_requested", async (payload) => {
+      if (payload?.appId) {
+        log(`ℹ revalidating ${payload.appId}: ${payload.reason || "manual request"}`);
+      }
 
-  context.moduleLoader = {
-    getLoadedModules: () => getLoadedModules(),
-    reloadModule: (moduleId) => reloadModule(moduleId, context),
-    disableModule: (moduleId) => disableModule(moduleId, context),
-    enableModule: (moduleId) => enableModule(moduleId, context),
-    getRegisteredModules: () => getRegisteredModules(),
-    registerModulePath: (modulePath) => registerModulePath(modulePath),
-    reloadModules: () => reloadModules(context)
-  };
+      try {
+        await validateApps(projects, validationContext);
+        updateRuntimeDiagnostics({ projects, workspace });
+        renderRootProjectTiles(getRuntimeProjects(context), context);
+      } catch (error) {
+        console.warn("Stephanos revalidation failed.", error);
+      }
+    });
 
-  console.log("modules loading");
-  await loadModules(context);
+    for (const result of validationResults) {
+      console.warn("App Validator:", result.app);
 
-  const panels = document.querySelectorAll(".stephanos-panel");
+      result.issues.forEach(issue => {
+        console.warn(" - " + issue);
+      });
+    }
 
-  panels.forEach(panel => {
-    panel.style.display = "none";
-  });
+    const agentRuntime = createAgentRuntime(context);
+    services.registerService("agentRuntime", agentRuntime);
 
-  const container = document.getElementById("stephanos-panel-stack");
+    const taskScheduler = createTaskScheduler(context);
+    services.registerService("taskScheduler", taskScheduler);
 
-  if (container) {
-    container.style.display = "none";
-  }
+    agentRuntime.startAgent(sampleAgent);
+    agentRuntime.startAgent(assistantAgent);
+    agentRuntime.startAgent(selfRepairAgent);
+    agentRuntime.startAgent(appInstallerAgent);
 
-  applyDeveloperModeVisibility();
+    context.moduleLoader = {
+      getLoadedModules: () => getLoadedModules(),
+      reloadModule: (moduleId) => reloadModule(moduleId, context),
+      disableModule: (moduleId) => disableModule(moduleId, context),
+      enableModule: (moduleId) => enableModule(moduleId, context),
+      getRegisteredModules: () => getRegisteredModules(),
+      registerModulePath: (modulePath) => registerModulePath(modulePath),
+      reloadModules: () => reloadModules(context)
+    };
 
-  window.__stephanosRuntime = {
-    context,
-    disposeModules,
-    disposeHealthMonitor: startStephanosHealthMonitor(projects, validationContext)
-  };
+    console.log("modules loading");
+    await loadModules(context);
 
-  window.returnToCommandDeck = function() {
-    context.workspace.close(context);
-  };
+    const panels = document.querySelectorAll(".stephanos-panel");
 
-  eventBus.on("workspace:opened", () => {
-    updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-  });
+    panels.forEach(panel => {
+      panel.style.display = "none";
+    });
 
-  eventBus.on("workspace:closed", () => {
+    const container = document.getElementById("stephanos-panel-stack");
+
+    if (container) {
+      container.style.display = "none";
+    }
+
+    applyDeveloperModeVisibility();
+
+    window.__stephanosRuntime = {
+      context,
+      disposeModules,
+      disposeHealthMonitor: startStephanosHealthMonitor(projects, validationContext)
+    };
+
+    window.returnToCommandDeck = function() {
+      context.workspace.close(context);
+    };
+
+    eventBus.on("workspace:opened", () => {
+      updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+    });
+
+    eventBus.on("workspace:closed", () => {
+      updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+      renderRootProjectTiles(getRuntimeProjects(context), context);
+    });
+
+    window.addEventListener("storage", () => {
+      updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
+      renderRootProjectTiles(getRuntimeProjects(context), context);
+    });
+
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
     renderRootProjectTiles(getRuntimeProjects(context), context);
-  });
-
-  window.addEventListener("storage", () => {
-    updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-    renderRootProjectTiles(getRuntimeProjects(context), context);
-  });
-
-  updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-  renderRootProjectTiles(getRuntimeProjects(context), context);
+  } catch (error) {
+    console.error("Stephanos launcher advanced bootstrap failed; keeping tile landing fallback.", error);
+    log("⚠ Advanced launcher services failed to initialize; tile launcher remains available.");
+  }
 
   const status = document.getElementById("system-status-text");
   if (status) {
