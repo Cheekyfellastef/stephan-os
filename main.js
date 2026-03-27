@@ -5,6 +5,7 @@ import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.
 import { appInstallerAgent } from "./system/agents/app_installer_agent/app_installer_agent.js";
 import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
 import { validateApps } from "./system/apps/app_validator.js";
+import { renderProjectRegistry as renderLauncherProjectRegistry } from "./modules/command-deck/command-deck.js";
 import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
@@ -22,7 +23,18 @@ console.log("Stephanos OS booting");
 console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
 const canonicalUrls = createStephanosLocalUrls();
-const launcherDiagnostics = getLauncherDiagnosticsControl();
+const launcherDiagnostics = (() => {
+  const control = getLauncherDiagnosticsControl();
+  if (control.source === "query" || control.source === "meta") {
+    return control;
+  }
+
+  return {
+    ...control,
+    enabled: false,
+    source: "default",
+  };
+})();
 const launcherRuntimeFingerprint = {
   runtimeLabel: "root-launcher",
   routeSourceLabel: "root index.html + main.js launcher shell",
@@ -180,63 +192,7 @@ function getRuntimeProjects(context = {}) {
   return Array.isArray(context?.projects) ? context.projects : [];
 }
 
-function renderRootProjectTiles(projects = [], context = {}) {
-  const container = document.getElementById("project-registry");
-  if (!container) {
-    return;
-  }
 
-  container.innerHTML = "";
-
-  projects.forEach((project) => {
-    const tile = document.createElement("div");
-    const validationState = String(project?.validationState || "").trim().toLowerCase();
-    const icon = project?.icon || "🧩";
-    const name = project?.name || "Unnamed Project";
-    const statusMessage = project?.statusMessage || "";
-    const issues = Array.isArray(project?.validationIssues) ? project.validationIssues : [];
-    const stateIssue = statusMessage || issues[0] || "";
-
-    tile.className = "app-tile";
-
-    if (validationState === "error") {
-      tile.classList.add("app-tile-error");
-    } else if (validationState === "launching") {
-      tile.classList.add("app-tile-pending");
-    } else if (String(project?.dependencyState || "").trim().toLowerCase() === "degraded") {
-      tile.classList.add("app-tile-degraded");
-    }
-
-    tile.innerHTML = `
-      <div style="font-size:36px;">${icon}</div>
-      <div style="margin-top:8px;">${name}</div>
-      ${stateIssue ? `<div class="app-tile-issue">${stateIssue}</div>` : ""}
-    `;
-
-    const projectId = String(project?.folder || project?.id || project?.name || "").trim().toLowerCase();
-    const isStephanos = projectId === "stephanos" || projectId === "stephanos os";
-    const launchStrategy = String(project?.launchStrategy || "").trim().toLowerCase();
-
-    if (validationState === "error" || validationState === "launching") {
-      tile.setAttribute("aria-disabled", "true");
-      tile.title = stateIssue || "App status unavailable";
-    } else {
-      tile.title = name;
-      tile.onclick = () => {
-        if (isStephanos || launchStrategy === "navigate") {
-          if (project?.entry) {
-            window.location.assign(project.entry);
-          }
-          return;
-        }
-
-        context?.workspace?.open?.(project, context);
-      };
-    }
-
-    container.appendChild(tile);
-  });
-}
 
 
 function applyDeveloperModeVisibility() {
@@ -389,7 +345,7 @@ async function startStephanos() {
       },
     },
   };
-  renderRootProjectTiles(projects, fallbackTileContext);
+  renderLauncherProjectRegistry(projects, fallbackTileContext);
 
   try {
     const { workspace } = await import("./system/workspace.js");
@@ -433,7 +389,7 @@ async function startStephanos() {
       workspace,
       projects
     };
-    renderRootProjectTiles(projects, context);
+    renderLauncherProjectRegistry(projects, context);
 
     systemState.set("appValidationReport", validationReport);
 
@@ -458,7 +414,7 @@ async function startStephanos() {
       try {
         await validateApps(projects, validationContext);
         updateRuntimeDiagnostics({ projects, workspace });
-        renderRootProjectTiles(getRuntimeProjects(context), context);
+        renderLauncherProjectRegistry(getRuntimeProjects(context), context);
       } catch (error) {
         console.warn("Stephanos revalidation failed.", error);
       }
@@ -526,16 +482,16 @@ async function startStephanos() {
 
     eventBus.on("workspace:closed", () => {
       updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-      renderRootProjectTiles(getRuntimeProjects(context), context);
+      renderLauncherProjectRegistry(getRuntimeProjects(context), context);
     });
 
     window.addEventListener("storage", () => {
       updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-      renderRootProjectTiles(getRuntimeProjects(context), context);
+      renderLauncherProjectRegistry(getRuntimeProjects(context), context);
     });
 
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-    renderRootProjectTiles(getRuntimeProjects(context), context);
+    renderLauncherProjectRegistry(getRuntimeProjects(context), context);
   } catch (error) {
     console.error("Stephanos launcher advanced bootstrap failed; keeping tile landing fallback.", error);
     log("⚠ Advanced launcher services failed to initialize; tile launcher remains available.");
