@@ -73,6 +73,7 @@ test('system panel controller toggles runtime surfaces immediately', () => {
   controller.setToggleState('launcher-fingerprint', true);
   controller.setToggleState('truth-panel', true);
   controller.setToggleState('reality-sync', true);
+  controller.setToggleState('stephanos-laws-panel', false);
   controller.setToggleState('agent-console-panel', true);
 
   assert.equal(calls.filter((entry) => entry.type === 'surface').length, 3);
@@ -87,6 +88,8 @@ test('system panel controller restores persisted toggle preferences', () => {
       launcherRuntimeFingerprintVisible: true,
       truthPanelVisible: false,
       realitySyncEnabled: false,
+      'stephanos-laws-panel': false,
+      'stephanos-build-panel': true,
       'agent-console-panel': true,
     }),
   });
@@ -102,11 +105,15 @@ test('system panel controller restores persisted toggle preferences', () => {
   assert.equal(controller.getToggleState('launcher-fingerprint'), true);
   assert.equal(controller.getToggleState('truth-panel'), false);
   assert.equal(controller.getToggleState('reality-sync'), false);
+  assert.equal(controller.getToggleState('stephanos-laws-panel'), false);
+  assert.equal(controller.getToggleState('stephanos-build-panel'), true);
   assert.equal(controller.getToggleState('agent-console-panel'), true);
 
   controller.setToggleState('truth-panel', true);
   controller.setToggleState('reality-sync', true);
+  controller.setToggleState('stephanos-build-panel', false);
   const restored = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
   assert.equal(restored.session.ui.uiLayout.truthPanelVisible, true);
   assert.equal(restored.session.ui.uiLayout.realitySyncEnabled, true);
+  assert.equal(restored.session.ui.uiLayout['stephanos-build-panel'], false);
 });

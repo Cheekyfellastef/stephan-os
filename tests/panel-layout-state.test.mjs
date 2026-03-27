@@ -262,3 +262,32 @@ test('resetPanelLayout clears collapsed state and rewrites default positions', (
   assert.equal(Number.isFinite(position.x), true);
   assert.equal(Number.isFinite(position.y), true);
 });
+
+test('build-proof panel participates in draggable persistent layout lifecycle', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panel = ui.createPanel('stephanos-build-panel', 'Build Proof');
+  const header = panel.querySelector('.stephanos-panel-header');
+  const knob = panel.querySelector('.stephanos-panel-knob');
+
+  header.dispatch('pointerdown', { button: 0, clientX: 180, clientY: 180, preventDefault() {}, target: { closest() { return null; } } });
+  header.dispatch('pointermove', { clientX: 420, clientY: 360 });
+  header.dispatch('pointerup', {});
+  knob.dispatch('click', {});
+  ui.resetPanelLayout();
+
+  const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  const savedPosition = memory.session.ui.uiLayout.panelPositions['stephanos-build-panel'];
+  const collapsed = memory.session.ui.uiLayout.panelCollapsed['stephanos-build-panel'];
+  assert.equal(Number.isFinite(savedPosition.x), true);
+  assert.equal(Number.isFinite(savedPosition.y), true);
+  assert.notEqual(collapsed, true);
+});

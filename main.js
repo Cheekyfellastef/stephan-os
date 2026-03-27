@@ -17,6 +17,7 @@ import { STEPHANOS_LAW_IDS } from "./shared/runtime/stephanosLaws.mjs";
 import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
 import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
+import { createStephanosMemory } from "./shared/runtime/stephanosMemory.mjs";
 import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
@@ -437,6 +438,43 @@ window.setPanelState = function(panelId, enabled) {
 
   container.style.display = anyVisible ? "block" : "none";
 };
+
+function initializeStephanosOperatorPanels(uiRenderer) {
+  if (!uiRenderer || typeof uiRenderer.createPanel !== "function") {
+    return;
+  }
+
+  const lawsPanel = uiRenderer.createPanel("stephanos-laws-panel", "Laws of Stephanos");
+  const lawsMount = document.getElementById("stephanos-laws-mount");
+  if (lawsPanel && lawsMount && lawsMount.parentNode !== lawsPanel) {
+    lawsPanel.appendChild(lawsMount);
+  }
+
+  const buildPanel = uiRenderer.createPanel("stephanos-build-panel", "Build Proof");
+  const buildProofNode = document.getElementById("launcher-build-proof");
+  if (buildPanel && buildProofNode && buildProofNode.parentNode !== buildPanel) {
+    buildPanel.appendChild(buildProofNode);
+  }
+}
+
+function restoreOperatorPanelVisibility(persistedLayout = {}) {
+  const restorablePanels = new Set([
+    "module-manager-panel",
+    "agent-console-panel",
+    "command-console-panel",
+    "task-monitor-panel",
+    "dev-console",
+    "stephanos-laws-panel",
+    "stephanos-build-panel",
+  ]);
+
+  restorablePanels.forEach((panelId) => {
+    const persisted = persistedLayout[panelId];
+    const defaultEnabled = panelId === "stephanos-laws-panel" || panelId === "stephanos-build-panel";
+    const enabled = typeof persisted === "boolean" ? persisted : defaultEnabled;
+    window.setPanelState(panelId, enabled);
+  });
+}
 
 window.getStephanosMirrorStatus = function getStephanosMirrorStatus() {
   return {
@@ -868,10 +906,17 @@ async function startStephanos() {
     const services = createServiceRegistry();
     const uiRenderer = createUIRenderer();
     window.resetStephanosPanelLayout = () => uiRenderer.resetPanelLayout();
+    const stephanosMemory = createStephanosMemory({
+      surface: "launcher-root",
+      source: "launcher-runtime",
+    });
     const taskQueue = createTaskQueue();
 
+    initializeStephanosOperatorPanels(uiRenderer);
     services.registerService("ui", uiRenderer);
     services.registerService("taskQueue", taskQueue);
+    services.registerService("stephanosMemory", stephanosMemory);
+    window.stephanosMemory = stephanosMemory;
 
     const agentRegistry = createAgentRegistry();
     services.registerService("agentRegistry", agentRegistry);
@@ -962,18 +1007,7 @@ async function startStephanos() {
 
     applyDeveloperModeVisibility();
     const persistedLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
-    const restorablePanels = new Set([
-      "module-manager-panel",
-      "agent-console-panel",
-      "command-console-panel",
-      "task-monitor-panel",
-      "dev-console",
-    ]);
-    Object.entries(persistedLayout).forEach(([panelId, enabled]) => {
-      if (typeof enabled === "boolean" && restorablePanels.has(panelId)) {
-        window.setPanelState(panelId, enabled);
-      }
-    });
+    restoreOperatorPanelVisibility(persistedLayout);
     applyLauncherSurfaceVisibility();
 
     window.__stephanosRuntime = {

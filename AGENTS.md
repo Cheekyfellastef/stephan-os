@@ -68,3 +68,9 @@ At minimum for launcher/runtime/guardrail edits:
 - Laws panel (`shared/runtime/renderStephanosLawsPanel.mjs`) remains the constitutional layer and must stay distinct from the Truth Panel.
 - Runtime Diagnostics, Launcher Runtime Fingerprint, and Truth Panel visibility controls live in the system panel/cog popup and must remain toggleable with persisted state.
 - Future truth-surface changes must preserve toggle integration + persisted visibility behavior.
+
+## Stephanos memory architecture policy
+
+- Keep UI/session memory (`shared/runtime/stephanosSessionMemory.mjs`) distinct from durable Stephanos memory (`shared/runtime/stephanosMemory.mjs`).
+- AI systems and tiles must use the shared Stephanos memory contract rather than creating ad hoc storage keys/contracts.
+- Localhost vs hosted memory semantics must stay explicit; do not imply cross-device sync without a real server-backed adapter path.

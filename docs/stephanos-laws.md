@@ -91,6 +91,19 @@ Any coding agent editing launcher/runtime/routing/build-truth paths must:
 - Runtime/operator popup panels are movable but remain within viewport bounds after restore.
 - Panel coordinates and collapse states are persisted in shared session-memory layout state.
 - Collapse affordance uses the same Stephanos knob pattern across panels for consistency with existing system controls.
+- Laws panel and Build Proof panel are now in this same operator-panel family (draggable, knob-collapsible, resettable, and toggleable from System Panel popup).
+
+## Memory architecture layer (durable continuity substrate)
+
+- UI/session layout memory remains in `shared/runtime/stephanosSessionMemory.mjs`.
+- Durable Stephanos memory lives in `shared/runtime/stephanosMemory.mjs` and exposes a shared AI/tile API:
+  - `createRecord` / `saveRecord`
+  - `getRecord`
+  - `listRecords`
+  - `updateRecord`
+  - `deleteRecord`
+- Current truth boundary is explicit: localhost + hosted each persist durable memory via the same contract, but cross-device sync requires a future server adapter.
+- See `docs/stephanos-memory-architecture.md` for v1 adapter model and usage contract.
 
 ## Failure class spotlight: launcher import-structure regressions
 
