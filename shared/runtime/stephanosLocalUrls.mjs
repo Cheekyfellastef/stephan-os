@@ -5,7 +5,7 @@ const DIST_MOUNT_PATH = '/apps/stephanos/dist/';
 const HEALTH_PATH = '/__stephanos/health';
 const LAUNCHER_SHELL_PATH = '/';
 const DIST_ENTRY_PATH = 'apps/stephanos/dist/index.html';
-const RUNTIME_STATUS_PATH = './apps/stephanos/runtime-status.json';
+const RUNTIME_STATUS_PATH = '/apps/stephanos/runtime-status.json';
 const DEV_RUNTIME_HOSTS = ['localhost', '127.0.0.1'];
 
 function normalizePort(port, fallbackPort = DEFAULT_LOCAL_PORT) {

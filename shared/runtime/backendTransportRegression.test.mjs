@@ -19,6 +19,13 @@ test('validator backend probes route through shared backend client transport hel
   assert.match(source, /path:\s*['"]\/api\/ai\/providers\/health['"]/);
 });
 
+test('validator runtime-status probe targets launcher-root runtime-status route', () => {
+  const validatorSource = read('system/apps/app_validator.js');
+  const localUrlsSource = read('shared/runtime/stephanosLocalUrls.mjs');
+  assert.match(validatorSource, /STEPHANOS_STATUS_URL\s*=\s*STEPHANOS_LOCAL_URLS\.runtimeStatusPath/);
+  assert.match(localUrlsSource, /const RUNTIME_STATUS_PATH = '\/apps\/stephanos\/runtime-status\.json';/);
+});
+
 test('runtime probe no longer fetches backend health directly', () => {
   const source = read('shared/runtime/stephanosHomeNode.mjs');
   assert.match(source, /requestStephanosBackend\s*\(/);

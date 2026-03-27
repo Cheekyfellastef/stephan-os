@@ -97,16 +97,17 @@ export function evaluateBuildPreflight({
 }
 
 export async function probeExistingLocalServer({ port = 4173, expectedRuntimeMarker }) {
-  const { healthUrl, runtimeUrl } = createStephanosLocalUrls({ port });
+  const { healthUrl, runtimeUrl, runtimeStatusPath } = createStephanosLocalUrls({ port });
 
   try {
-    const [healthResponse, sourceTruthResponse, runtimeResponse] = await Promise.all([
+    const [healthResponse, sourceTruthResponse, runtimeResponse, runtimeStatusResponse] = await Promise.all([
       fetch(healthUrl, { headers: { Accept: 'application/json' } }),
       fetch(`http://127.0.0.1:${port}/__stephanos/source-truth`, { headers: { Accept: 'application/json' } }),
       fetch(runtimeUrl, { headers: { 'Cache-Control': 'no-cache' } }),
+      fetch(`http://127.0.0.1:${port}${runtimeStatusPath}`, { headers: { Accept: 'application/json' } }),
     ]);
 
-    if (!healthResponse.ok || !sourceTruthResponse.ok || !runtimeResponse.ok) {
+    if (!healthResponse.ok || !sourceTruthResponse.ok || !runtimeResponse.ok || !runtimeStatusResponse.ok) {
       return { reusable: false, reason: 'required health/source/runtime probes failed' };
     }
 

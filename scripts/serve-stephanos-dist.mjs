@@ -325,15 +325,21 @@ async function requestExistingServerRestart({
 async function probeExistingStephanosServer(expectedRuntimeMarker) {
   try {
     const probeOrigin = new URL(healthUrl).origin;
-    const response = await fetch(healthUrl, {
-      headers: { Accept: 'application/json' },
-    });
+    const [healthResponse, runtimeStatusResponse] = await Promise.all([
+      fetch(healthUrl, {
+        headers: { Accept: 'application/json' },
+      }),
+      fetch(`${probeOrigin}/apps/stephanos/runtime-status.json`, {
+        headers: { Accept: 'application/json' },
+      }),
+    ]);
 
-    if (!response.ok) {
+    if (!healthResponse.ok) {
       return { reusable: false };
     }
 
-    const payload = await response.json();
+    const payload = await healthResponse.json();
+    const runtimeStatusReady = runtimeStatusResponse.ok;
     const resolvedRuntimeUrl = payload?.runtimeUrl || runtimeUrl;
     const [runtimeReady, servedRuntimeMarkerProbe] = await Promise.all([
       probeHttp200(resolvedRuntimeUrl),
@@ -357,11 +363,13 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
       reusable: canReuseStephanosServer({
         payload,
         runtimeReady,
+        runtimeStatusReady,
         moduleMimeReady,
         sourceTruthReady,
         markerMatchesExpected,
       }),
       runtimeReady,
+      runtimeStatusReady,
       moduleMimeReady,
       sourceTruthReady,
       markerMatchesExpected,
@@ -387,6 +395,7 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
 export function canReuseStephanosServer({
   payload,
   runtimeReady,
+  runtimeStatusReady,
   moduleMimeReady,
   sourceTruthReady,
   markerMatchesExpected,
@@ -396,6 +405,7 @@ export function canReuseStephanosServer({
     payload?.distMountPath === distMountPath &&
     payload?.staticRootPath === staticRootPath &&
     runtimeReady &&
+    runtimeStatusReady &&
     moduleMimeReady &&
     sourceTruthReady &&
     markerMatchesExpected
@@ -686,6 +696,27 @@ if (isMainModule) {
       });
       if (!restartResponse.ok) {
         console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
+        process.exit(1);
+        return;
+      }
+      const closed = await waitForPortToClose(port);
+      if (!closed) {
+        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
+        process.exit(1);
+        return;
+      }
+      server.listen(port, host);
+      return;
+    }
+
+    if (existingServer.payload?.service === 'stephanos-dist-server' && existingServer.runtimeReady && !existingServer.runtimeStatusReady) {
+      console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} is missing /apps/stephanos/runtime-status.json; refusing reuse.`);
+      const restartResponse = await requestExistingServerRestart({
+        expectedRuntimeMarker,
+        reason: 'runtime-status-route-missing',
+      });
+      if (!restartResponse.ok) {
+        console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve runtime-status route.`);
         process.exit(1);
         return;
       }
