@@ -7,11 +7,18 @@
 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="stephanos-launcher-diagnostics" content="off">
 
 <title>Stephanos OS</title>
 
 <script>
 (function stephanosEarlyBootstrapDiagnostics() {
+  const diagnosticsMeta = document.querySelector('meta[name="stephanos-launcher-diagnostics"]');
+  const diagnosticsEnabled = /^(1|true|on|yes|enabled)$/i.test(String(diagnosticsMeta?.getAttribute("content") || "").trim());
+  if (!diagnosticsEnabled) {
+    return;
+  }
+
   const DIAG_PREFIX = '[Stephanos Early Bootstrap]';
   const startedAt = Date.now();
   const safeLog = (...args) => {
@@ -516,28 +523,9 @@ margin-bottom:20px;
 
 <h2>Projects</h2>
 <div id="project-registry"></div>
-<section id="launcher-secondary-panels">
-  <details id="launcher-diagnostics-panel" class="runtime-diagnostics-card secondary">
-    <summary>
-      Launcher diagnostics (optional)
-      <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
-    </summary>
-    <section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
-    <section id="mobile-companion-deck" class="mobile-companion-deck"></section>
-    <p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
-    <div id="ignition-mode-banner" class="ignition-mode-banner" role="status" aria-live="polite">
-      IGNITION MODE: launcher-root (loading…)
-    </div>
-    <p id="system-status-text">System Initialising...</p>
-    <aside id="launcher-runtime-fingerprint" class="runtime-fingerprint-badge" aria-live="polite">
-      <strong>Launcher Runtime Fingerprint</strong>
-      <div>Collecting launcher fingerprint…</div>
-    </aside>
-    <pre id="runtime-diagnostics-json"></pre>
-  </details>
 </section>
-
-</section>
+<!-- Guardrail: product launcher tiles render first; diagnostics can only appear inside this isolated mount. -->
+<section id="launcher-diagnostics-mount" aria-label="Launcher diagnostics mount"></section>
 
 <section id="workspace" style="display:none; margin-top:20px;">
 
