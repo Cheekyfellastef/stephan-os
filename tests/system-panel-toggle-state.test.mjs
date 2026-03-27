@@ -52,6 +52,23 @@ function createSessionMemorySeed(uiLayout = {}) {
   });
 }
 
+
+test('system panel controller uses shared toggle registry with current module toggles', () => {
+  const controller = createSystemPanelStateController({
+    setPanelState() {},
+    applySurfaceVisibility() {},
+    setRealitySyncEnabled() {},
+    storage: createStorage({
+      [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+    }),
+  });
+
+  const toggleIds = controller.toggleDefinitions.map((entry) => entry.id);
+  assert.equal(toggleIds.includes('self-healing-panel'), true);
+  assert.equal(toggleIds.includes('app-installer-panel'), true);
+  assert.equal(toggleIds.includes('runtime-diagnostics'), true);
+});
+
 test('system panel controller toggles runtime surfaces immediately', () => {
   const calls = [];
   const controller = createSystemPanelStateController({

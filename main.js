@@ -18,6 +18,10 @@ import { createTruthSnapshot } from "./shared/runtime/truthEngine.mjs";
 import { renderTruthPanel } from "./shared/runtime/renderTruthPanel.mjs";
 import { createRealitySyncController } from "./shared/runtime/realitySync.mjs";
 import { createBuildParitySnapshot } from "./shared/runtime/buildParity.mjs";
+import {
+  getSystemPanelRestorablePanelIds,
+  isSystemPanelDefaultEnabled,
+} from "./shared/runtime/systemPanelToggleRegistry.mjs";
 import { createStephanosMemory, createStephanosMemoryGateway } from "./shared/runtime/stephanosMemory.mjs";
 import { createStephanosContinuityService } from "./shared/runtime/stephanosContinuity.mjs";
 import {
@@ -469,19 +473,11 @@ function initializeStephanosOperatorPanels(uiRenderer) {
 }
 
 function restoreOperatorPanelVisibility(persistedLayout = {}) {
-  const restorablePanels = new Set([
-    "module-manager-panel",
-    "agent-console-panel",
-    "command-console-panel",
-    "task-monitor-panel",
-    "dev-console",
-    "stephanos-laws-panel",
-    "stephanos-build-panel",
-  ]);
+  const restorablePanels = getSystemPanelRestorablePanelIds();
 
   restorablePanels.forEach((panelId) => {
     const persisted = persistedLayout[panelId];
-    const defaultEnabled = panelId === "stephanos-laws-panel" || panelId === "stephanos-build-panel";
+    const defaultEnabled = isSystemPanelDefaultEnabled(panelId);
     const enabled = typeof persisted === "boolean" ? persisted : defaultEnabled;
     window.setPanelState(panelId, enabled);
   });

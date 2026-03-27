@@ -2,6 +2,7 @@ import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
 } from '../../shared/runtime/stephanosSessionMemory.mjs';
+import { getSystemPanelToggleDefinitions } from '../../shared/runtime/systemPanelToggleRegistry.mjs';
 
 export const moduleDefinition = {
   id: 'system-panel',
@@ -9,20 +10,8 @@ export const moduleDefinition = {
   description: 'Stephanos system control panel',
 };
 
-const TOGGLE_DEFINITIONS = Object.freeze([
-  { id: 'module-manager-panel', label: 'Modules', type: 'panel' },
-  { id: 'agent-console-panel', label: 'Agents Console', type: 'panel' },
-  { id: 'command-console-panel', label: 'Debug Console', type: 'panel' },
-  { id: 'task-monitor-panel', label: 'Task Monitor', type: 'panel' },
-  { id: 'dev-console', label: 'Developer Console', type: 'panel' },
-  { id: 'stephanos-laws-panel', label: 'Laws Panel', type: 'panel' },
-  { id: 'stephanos-build-panel', label: 'Build Panel', type: 'panel' },
-  { id: 'runtime-diagnostics', label: 'Runtime Diagnostics', type: 'surface' },
-  { id: 'launcher-fingerprint', label: 'Launcher Runtime Fingerprint', type: 'surface' },
-  { id: 'truth-panel', label: 'Truth Panel', type: 'surface' },
-  { id: 'build-parity-panel', label: 'Build Parity Signals', type: 'surface' },
-  { id: 'reality-sync', label: 'Reality Sync / Auto Truth Refresh', type: 'surface' },
-]);
+const TOGGLE_DEFINITIONS = getSystemPanelToggleDefinitions();
+
 
 function readLayoutState(storage = globalThis.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);

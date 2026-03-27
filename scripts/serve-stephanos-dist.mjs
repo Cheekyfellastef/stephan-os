@@ -11,6 +11,7 @@ import {
   stephanosDistMetadataPath,
 } from './stephanos-build-utils.mjs';
 import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
+import { getSystemPanelToggleDefinitions } from '../shared/runtime/systemPanelToggleRegistry.mjs';
 
 const host = process.env.STEPHANOS_SERVE_HOST || '0.0.0.0';
 const port = Number(process.env.STEPHANOS_SERVE_PORT || 4173);
@@ -101,6 +102,26 @@ function readRuntimeStatus() {
       message: `Invalid runtime status file: ${error.message}`,
     };
   }
+}
+
+function buildRuntimeStatusPayload() {
+  const launcherStatus = readRuntimeStatus();
+  const buildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
+  const toggleRegistry = getSystemPanelToggleDefinitions();
+
+  return {
+    state: launcherStatus?.state || 'ready',
+    runtimeMarker: launcherStatus?.runtimeMarker || buildMetadata?.runtimeMarker || null,
+    gitCommit: launcherStatus?.gitCommit || buildMetadata?.gitCommit || null,
+    buildTimestamp: launcherStatus?.buildTimestamp || buildMetadata?.buildTimestamp || null,
+    launcherStatus,
+    systemPanel: {
+      toggleRegistrySource: 'shared/runtime/systemPanelToggleRegistry.mjs',
+      toggleDefinitions: toggleRegistry,
+      generatedAt: new Date().toISOString(),
+      fallbackApplied: launcherStatus == null,
+    },
+  };
 }
 
 function buildHealthPayload() {
@@ -548,6 +569,17 @@ export function createStephanosDistServer() {
     }
 
     const requestUrl = new URL(request.url || '/', `http://${host}:${port}`);
+
+    if (requestUrl.pathname === '/apps/stephanos/runtime-status.json') {
+      response.writeHead(200, {
+        ...baseHeaders,
+        'Content-Type': 'application/json; charset=utf-8',
+      });
+      response.end(`${JSON.stringify(buildRuntimeStatusPayload(), null, 2)}
+`);
+      return;
+    }
+
     const { redirectTo, filePath } = resolveRequestFile(requestUrl.pathname);
 
     if (redirectTo) {
