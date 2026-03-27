@@ -252,7 +252,15 @@ try {
   }
 
   $isLocalhostLaunch = ($browserTargets | Where-Object { $_ -notlike 'http://127.0.0.1:*' -and $_ -notlike 'http://localhost:*' }).Count -eq 0
-  $autoOpenEnabled = if ($isLocalhostLaunch) { $AutoOpen.IsPresent } else { $true }
+  $autoOpenEnabled = if ($Mode -eq 'launcher-root') {
+    $true
+  }
+  elseif ($isLocalhostLaunch) {
+    $AutoOpen.IsPresent
+  }
+  else {
+    $true
+  }
 
   Write-LiveLog 'server started'
   Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
