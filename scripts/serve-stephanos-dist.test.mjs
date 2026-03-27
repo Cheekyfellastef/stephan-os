@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 
 import {
+  canReuseStephanosServer,
   createStephanosDistServer,
   resolveContentType,
 } from './serve-stephanos-dist.mjs';
@@ -44,4 +45,32 @@ test('dist server serves shared runtime modules with JavaScript MIME type', asyn
     assert.equal(contentType, 'text/javascript; charset=utf-8');
     assert.notEqual(contentType, 'application/octet-stream');
   }
+});
+
+test('existing server reuse requires runtime marker parity and not just health', () => {
+  const healthyStephanosServer = {
+    payload: {
+      service: 'stephanos-dist-server',
+      distMountPath: '/apps/stephanos/dist/',
+      staticRootPath: '/workspace/stephan-os',
+    },
+    runtimeReady: true,
+    moduleMimeReady: true,
+  };
+
+  assert.equal(
+    canReuseStephanosServer({
+      ...healthyStephanosServer,
+      markerMatchesExpected: true,
+    }),
+    true,
+  );
+
+  assert.equal(
+    canReuseStephanosServer({
+      ...healthyStephanosServer,
+      markerMatchesExpected: false,
+    }),
+    false,
+  );
 });
