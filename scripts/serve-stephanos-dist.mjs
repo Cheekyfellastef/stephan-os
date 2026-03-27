@@ -144,6 +144,37 @@ async function probeHttp200(url) {
   }
 }
 
+async function probeServedRuntimeMarker(url) {
+  try {
+    const response = await fetch(url, {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        runtimeMarker: null,
+      };
+    }
+
+    const html = await response.text();
+    const runtimeMarkerMatch =
+      html.match(/<meta\b[^>]*\bname=["']stephanos-build-runtime-marker["'][^>]*\bcontent=["']([^"']+)["'][^>]*>/i) ||
+      html.match(/<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*\bname=["']stephanos-build-runtime-marker["'][^>]*>/i);
+    return {
+      ok: Boolean(runtimeMarkerMatch?.[1]),
+      status: response.status,
+      runtimeMarker: runtimeMarkerMatch?.[1] || null,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: null,
+      runtimeMarker: null,
+    };
+  }
+}
+
 async function probeJavaScriptMime(url) {
   try {
     const response = await fetch(url, {
@@ -177,7 +208,7 @@ async function verifyServedRuntime(url) {
   };
 }
 
-async function probeExistingStephanosServer() {
+async function probeExistingStephanosServer(expectedRuntimeMarker) {
   try {
     const probeOrigin = new URL(healthUrl).origin;
     const response = await fetch(healthUrl, {
@@ -190,12 +221,21 @@ async function probeExistingStephanosServer() {
 
     const payload = await response.json();
     const resolvedRuntimeUrl = payload?.runtimeUrl || runtimeUrl;
-    const runtimeReady = await probeHttp200(resolvedRuntimeUrl);
+    const [runtimeReady, servedRuntimeMarkerProbe] = await Promise.all([
+      probeHttp200(resolvedRuntimeUrl),
+      probeServedRuntimeMarker(resolvedRuntimeUrl),
+    ]);
     const [runtimeStatusModuleMime, localUrlsModuleMime] = await Promise.all([
       probeJavaScriptMime(`${probeOrigin}/shared/runtime/runtimeStatusModel.mjs`),
       probeJavaScriptMime(`${probeOrigin}/shared/runtime/stephanosLocalUrls.mjs?v=live-mime-probe`),
     ]);
     const moduleMimeReady = runtimeStatusModuleMime.ok && localUrlsModuleMime.ok;
+    const healthRuntimeMarker = payload?.runtimeMarker || null;
+    const servedRuntimeMarker = servedRuntimeMarkerProbe.runtimeMarker || null;
+    const markerMatchesExpected =
+      Boolean(expectedRuntimeMarker) &&
+      expectedRuntimeMarker === healthRuntimeMarker &&
+      expectedRuntimeMarker === servedRuntimeMarker;
 
     return {
       reusable:
@@ -203,9 +243,17 @@ async function probeExistingStephanosServer() {
         payload?.distMountPath === distMountPath &&
         payload?.staticRootPath === staticRootPath &&
         runtimeReady &&
-        moduleMimeReady,
+        moduleMimeReady &&
+        markerMatchesExpected,
       runtimeReady,
       moduleMimeReady,
+      markerMatchesExpected,
+      expectedRuntimeMarker: expectedRuntimeMarker || null,
+      observedRuntimeMarkers: {
+        health: healthRuntimeMarker,
+        servedIndex: servedRuntimeMarker,
+      },
+      servedRuntimeMarkerProbe,
       moduleMimeChecks: {
         runtimeStatusModel: runtimeStatusModuleMime,
         stephanosLocalUrls: localUrlsModuleMime,
@@ -335,13 +383,28 @@ if (isMainModule) {
       return;
     }
 
-    const existingServer = await probeExistingStephanosServer();
+    const expectedBuildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
+    const expectedRuntimeMarker = expectedBuildMetadata?.runtimeMarker || null;
+    const existingServer = await probeExistingStephanosServer(expectedRuntimeMarker);
+    console.log(`[DIST SERVER LIVE] Expected runtime marker from local dist metadata: ${expectedRuntimeMarker || 'unavailable'}`);
+    console.log(`[DIST SERVER LIVE] Existing server marker (health): ${existingServer.observedRuntimeMarkers?.health || 'unavailable'}`);
+    console.log(`[DIST SERVER LIVE] Existing server marker (served index): ${existingServer.observedRuntimeMarkers?.servedIndex || 'unavailable'}`);
     if (existingServer.reusable) {
-      console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing`);
+      console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing current process`);
       console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
       console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
       console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
       process.exit(0);
+      return;
+    }
+
+    if (existingServer.payload?.service === 'stephanos-dist-server' && !existingServer.markerMatchesExpected) {
+      console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} is stale; runtime marker mismatch.`);
+      console.error(`[DIST SERVER LIVE] expected marker=${existingServer.expectedRuntimeMarker || 'unavailable'}`);
+      console.error(`[DIST SERVER LIVE] observed marker from health=${existingServer.observedRuntimeMarkers?.health || 'unavailable'}`);
+      console.error(`[DIST SERVER LIVE] observed marker from served index=${existingServer.observedRuntimeMarkers?.servedIndex || 'unavailable'}`);
+      console.error(`[DIST SERVER LIVE] Refusing process reuse. Stop the stale process on port ${port} and restart.`);
+      process.exit(1);
       return;
     }
 
