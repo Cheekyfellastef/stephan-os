@@ -13,6 +13,7 @@
     "stephanos:ignite:vite-dev": "npm run stephanos:dev",
     "stephanos:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "stephanos:build": "node scripts/build-stephanos-ui.mjs",
+    "stephanos:guard:imports": "node scripts/guard-import-structure.mjs",
     "stephanos:verify": "node scripts/verify-stephanos-dist.mjs",
     "dev:server": "npm --prefix stephanos-server run dev",
     "dev:ui": "npm --prefix stephanos-ui run dev",

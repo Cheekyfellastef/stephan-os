@@ -31,6 +31,7 @@ Do not add Mission Console feature work into launcher-shell files during guardra
 - Any change that touches Stephanos launch semantics must update/add tests covering field separation and target resolution order.
 - Any change touching source/dist/served truth or process reuse must run build + verify + relevant tests.
 - Never loosen validation to “get green”. Fail loudly when truth checks do not pass.
+- Imports must only appear at the top of files. Duplicate imports are forbidden. Any change violating this must fail guard-import-structure before merge.
 
 ## Required launch resolution order
 
