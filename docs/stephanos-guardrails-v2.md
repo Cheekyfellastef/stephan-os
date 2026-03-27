@@ -124,3 +124,11 @@ When changing launcher/runtime/routing behavior, update tests/docs/law mappings 
 - Panel collapse uses the shared Stephanos knob affordance (`◉` expanded / `◎` collapsed); collapse state persists per panel.
 - Persisted positions must be clamped to viewport bounds on restore so panels cannot be lost off-screen.
 - System Panel includes a layout reset action that clears persisted panel positions/collapse state and re-seeds safe defaults.
+- Laws and Build Proof surfaces are first-class operator panels under the same movable/persisted/reset behavior.
+- Laws and Build panel visibility must be controllable from the existing System Panel popup toggles (no parallel control center).
+
+## Memory architecture guardrail
+
+- UI/session memory (`shared/runtime/stephanosSessionMemory.mjs`) and durable Stephanos memory (`shared/runtime/stephanosMemory.mjs`) are separate layers and must remain separate.
+- Durable memory must flow through the shared Stephanos memory contract (service registry + `window.stephanosMemory` bridge), not ad hoc per-tile storage keys.
+- Localhost and hosted semantics must be explicit: same API contract, separate trust/sync domains unless a server adapter is introduced.

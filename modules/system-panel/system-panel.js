@@ -15,6 +15,8 @@ const TOGGLE_DEFINITIONS = Object.freeze([
   { id: 'command-console-panel', label: 'Debug Console', type: 'panel' },
   { id: 'task-monitor-panel', label: 'Task Monitor', type: 'panel' },
   { id: 'dev-console', label: 'Developer Console', type: 'panel' },
+  { id: 'stephanos-laws-panel', label: 'Laws Panel', type: 'panel' },
+  { id: 'stephanos-build-panel', label: 'Build Panel', type: 'panel' },
   { id: 'runtime-diagnostics', label: 'Runtime Diagnostics', type: 'surface' },
   { id: 'launcher-fingerprint', label: 'Launcher Runtime Fingerprint', type: 'surface' },
   { id: 'truth-panel', label: 'Truth Panel', type: 'surface' },
