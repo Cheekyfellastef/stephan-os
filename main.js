@@ -292,6 +292,59 @@ function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
   jsonNode.textContent = JSON.stringify(diagnostics, null, 2);
 }
 
+
+function renderProjectRegistryLocalFallback(projects, context) {
+  const container = document.getElementById("project-registry");
+  if (!container) {
+    return false;
+  }
+
+  container.innerHTML = "";
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  safeProjects.forEach((project) => {
+    const tile = document.createElement("div");
+    tile.className = "app-tile";
+    const icon = project?.icon || "🧩";
+    const name = project?.name || "Unnamed Project";
+    tile.innerHTML = `<div style="font-size:36px;">${icon}</div><div style="margin-top:8px;">${name}</div>`;
+
+    if (project?.entry) {
+      tile.onclick = () => {
+        if (context?.workspace?.open) {
+          context.workspace.open(project, context);
+          return;
+        }
+
+        window.location.assign(project.entry);
+      };
+    } else {
+      tile.setAttribute("aria-disabled", "true");
+    }
+
+    container.appendChild(tile);
+  });
+
+  return container.querySelectorAll(".app-tile").length > 0;
+}
+
+function renderTileFirstLauncher(projects, context) {
+  renderLauncherProjectRegistry(projects, context, { enableSecondaryStatusSurfaces: false });
+
+  const container = document.getElementById("project-registry");
+  const tileCount = container?.querySelectorAll(".app-tile").length || 0;
+  const expectedMinimum = Array.isArray(projects) && projects.length > 0 ? 1 : 0;
+
+  if (tileCount >= expectedMinimum) {
+    return;
+  }
+
+  console.warn("[Launcher Recovery] Shared command-deck renderer did not produce visible tiles; using local fallback renderer.", {
+    tileCount,
+    projects: Array.isArray(projects) ? projects.length : 0,
+  });
+  renderProjectRegistryLocalFallback(projects, context);
+}
+
 function startStephanosHealthMonitor(projects, context) {
   const monitor = async () => {
     try {
@@ -345,7 +398,7 @@ async function startStephanos() {
       },
     },
   };
-  renderLauncherProjectRegistry(projects, fallbackTileContext);
+  renderTileFirstLauncher(projects, fallbackTileContext);
 
   try {
     const { workspace } = await import("./system/workspace.js");
@@ -389,7 +442,7 @@ async function startStephanos() {
       workspace,
       projects
     };
-    renderLauncherProjectRegistry(projects, context);
+    renderTileFirstLauncher(projects, context);
 
     systemState.set("appValidationReport", validationReport);
 
@@ -414,7 +467,7 @@ async function startStephanos() {
       try {
         await validateApps(projects, validationContext);
         updateRuntimeDiagnostics({ projects, workspace });
-        renderLauncherProjectRegistry(getRuntimeProjects(context), context);
+        renderTileFirstLauncher(getRuntimeProjects(context), context);
       } catch (error) {
         console.warn("Stephanos revalidation failed.", error);
       }
@@ -482,16 +535,16 @@ async function startStephanos() {
 
     eventBus.on("workspace:closed", () => {
       updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-      renderLauncherProjectRegistry(getRuntimeProjects(context), context);
+      renderTileFirstLauncher(getRuntimeProjects(context), context);
     });
 
     window.addEventListener("storage", () => {
       updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-      renderLauncherProjectRegistry(getRuntimeProjects(context), context);
+      renderTileFirstLauncher(getRuntimeProjects(context), context);
     });
 
     updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
-    renderLauncherProjectRegistry(getRuntimeProjects(context), context);
+    renderTileFirstLauncher(getRuntimeProjects(context), context);
   } catch (error) {
     console.error("Stephanos launcher advanced bootstrap failed; keeping tile landing fallback.", error);
     log("⚠ Advanced launcher services failed to initialize; tile launcher remains available.");
