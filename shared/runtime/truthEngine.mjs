@@ -49,6 +49,9 @@ export function createTruthSnapshot(input = {}) {
     finalRoute: normalizeStatus(input?.runtime?.finalRoute, 'unknown'),
     routeKind: normalizeStatus(input?.runtime?.routeKind, 'unknown'),
     runtimeErrorActive: input?.runtime?.runtimeErrorActive === true,
+    localhostMirrorDrift: input?.runtime?.localhostMirrorDrift === true,
+    ignitionRestartRequired: input?.runtime?.ignitionRestartRequired === true,
+    ignitionRestartSupported: input?.runtime?.ignitionRestartSupported === true,
   };
 
   const realitySync = {
@@ -63,6 +66,8 @@ export function createTruthSnapshot(input = {}) {
     lastRefreshReason: normalizeStatus(input?.realitySync?.lastRefreshReason, ''),
     lastRefreshAt: normalizeStatus(input?.realitySync?.lastRefreshAt, ''),
     attemptsForCurrentMarker: toFiniteNumber(input?.realitySync?.attemptsForCurrentMarker, 0),
+    lastRestartRequestAt: normalizeStatus(input?.realitySync?.lastRestartRequestAt, ''),
+    lastRestartResult: normalizeStatus(input?.realitySync?.lastRestartResult, 'none'),
   };
 
   const contradictions = collectTruthContradictions({ launcher, sourceBuildServed, runtime, realitySync });
@@ -159,6 +164,20 @@ export function collectTruthContradictions({ launcher = {}, sourceBuildServed = 
         displayedMarker: normalizeStatus(realitySync.displayedMarker, 'missing'),
         latestMarker: normalizeStatus(realitySync.latestMarker, 'missing'),
         enabled: realitySync.enabled === true,
+      },
+    ));
+  }
+
+  if (runtime.localhostMirrorDrift === true && runtime.ignitionRestartRequired === true) {
+    contradictions.push(contradiction(
+      'localhost-mirror-drift-restart-required',
+      'high',
+      'Localhost served truth diverged from authoritative marker and ignition restart is required for convergence.',
+      STEPHANOS_LAW_IDS.LOCALHOST_PROCESS_TRUTH,
+      {
+        localhostMirrorDrift: runtime.localhostMirrorDrift,
+        ignitionRestartRequired: runtime.ignitionRestartRequired,
+        ignitionRestartSupported: runtime.ignitionRestartSupported,
       },
     ));
   }

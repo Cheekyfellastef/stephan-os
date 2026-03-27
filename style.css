@@ -95,24 +95,55 @@ h1 {
 }
 
 .stephanos-panel {
-
-  width: 320px;
-  max-width: 100%;
-
-  background: #111;
-  color: #0f0;
-
-  border: 1px solid #333;
-  border-radius: 6px;
-
+  position: absolute;
+  width: min(360px, calc(100vw - 20px));
+  background: rgba(10, 18, 29, 0.96);
+  color: #d6ecff;
+  border: 1px solid #35526f;
+  border-radius: 10px;
   padding: 10px;
-
   font-family: monospace;
-
-  max-height: 350px;
-
+  max-height: min(70vh, 480px);
   overflow-y: auto;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
 
+.stephanos-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: grab;
+  user-select: none;
+}
+
+.stephanos-panel-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.stephanos-panel-knob {
+  border: 1px solid #4b6f94;
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  background: rgba(8, 21, 35, 0.95);
+  color: #daf3ff;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stephanos-panel-content {
+  display: block;
+}
+
+.stephanos-panel-dragging .stephanos-panel-header {
+  cursor: grabbing;
 }
 
 

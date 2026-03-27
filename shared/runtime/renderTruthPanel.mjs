@@ -59,6 +59,9 @@ export function renderTruthPanel(snapshot, documentRef = globalThis.document, op
     { label: 'truth panel visible', value: formatBoolean(snapshot?.runtime?.truthPanelVisible) },
     { label: 'backend reachable', value: snapshot?.runtime?.backendReachable == null ? 'unknown' : formatBoolean(snapshot?.runtime?.backendReachable) },
     { label: 'final route / kind', value: `${snapshot?.runtime?.finalRoute || 'unknown'} / ${snapshot?.runtime?.routeKind || 'unknown'}` },
+    { label: 'localhost mirror drift', value: formatBoolean(snapshot?.runtime?.localhostMirrorDrift) },
+    { label: 'ignition restart required', value: formatBoolean(snapshot?.runtime?.ignitionRestartRequired) },
+    { label: 'ignition restart supported', value: formatBoolean(snapshot?.runtime?.ignitionRestartSupported) },
   ]);
 
   const realitySyncSignals = renderSignalList([
@@ -72,6 +75,8 @@ export function renderTruthPanel(snapshot, documentRef = globalThis.document, op
     { label: 'auto-refresh pending', value: formatBoolean(snapshot?.realitySync?.refreshPending) },
     { label: 'last refresh reason', value: snapshot?.realitySync?.lastRefreshReason || 'none' },
     { label: 'last refresh at', value: snapshot?.realitySync?.lastRefreshAt || 'never' },
+    { label: 'last restart request', value: snapshot?.realitySync?.lastRestartRequestAt || 'never' },
+    { label: 'last restart result', value: snapshot?.realitySync?.lastRestartResult || 'none' },
   ]);
 
   mount.innerHTML = `
