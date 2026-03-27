@@ -30,6 +30,7 @@ import {
   STEPHANOS_UI_SOURCE_FINGERPRINT,
 } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
+import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -80,6 +81,20 @@ export default function App() {
       routeSourceLabel: routeTruthView.source,
     };
   }, [routeTruthView.source]);
+  const runtimeBuildParity = useMemo(
+    () => createBuildParitySnapshot({
+      requestedSourceMarker: STEPHANOS_UI_SOURCE_FINGERPRINT,
+      builtMarker: STEPHANOS_UI_RUNTIME_MARKER,
+      servedMarker: runtimeStatus.runtimeTruth?.servedMarker,
+      buildTimestamp: STEPHANOS_UI_BUILD_STAMP,
+      servedBuildTimestamp: runtimeStatus.runtimeTruth?.servedBuildTimestamp,
+      servedSourceTruthAvailable: runtimeStatus.runtimeTruth?.servedSourceTruthAvailable,
+      sourceDistParityOk: runtimeStatus.runtimeTruth?.sourceDistParityOk,
+      ignitionRestartSupported: runtimeStatus.runtimeTruth?.ignitionRestartSupported,
+      realitySyncEnabled: safeUiLayout.realitySyncEnabled !== false,
+    }),
+    [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
+  );
   const ignitionModeBanner = useMemo(() => {
     const pathname = runtimeFingerprint.currentPathname || '';
     const origin = runtimeFingerprint.currentOrigin || '';
@@ -138,6 +153,9 @@ export default function App() {
               </p>
               <p className="local-ai-text secondary">
                 Live source: <strong>stephanos-ui/src</strong> → built runtime: <strong>apps/stephanos/dist</strong>.
+              </p>
+              <p className="local-ai-text secondary">
+                Build parity confidence: <strong>{runtimeBuildParity.confidence}</strong> · source/dist parity: <strong>{runtimeBuildParity.sourceDistParityOk == null ? 'pending' : runtimeBuildParity.sourceDistParityOk ? 'true' : 'false'}</strong>
               </p>
             </div>
           </div>
