@@ -9,6 +9,7 @@ import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
 import { createStephanosLocalUrls } from "./shared/runtime/stephanosLocalUrls.mjs";
+import { getLauncherDiagnosticsControl } from "./shared/runtime/launcherDiagnosticsControl.mjs";
 import { getActiveTileContextHint, getAllTileContextSnapshots } from "./shared/runtime/tileContextRegistry.mjs";
 import {
   attachStartupInteractionListeners,
@@ -21,6 +22,7 @@ console.log("Stephanos OS booting");
 console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
 console.log("[VALIDATOR LIVE] Command deck booted from root launcher shell");
 const canonicalUrls = createStephanosLocalUrls();
+const launcherDiagnostics = getLauncherDiagnosticsControl();
 const launcherRuntimeFingerprint = {
   runtimeLabel: "root-launcher",
   routeSourceLabel: "root index.html + main.js launcher shell",
@@ -33,6 +35,7 @@ const launcherRuntimeFingerprint = {
   expectedMissionControlDistUrl: canonicalUrls.runtimeIndexUrl,
 };
 console.info("[Stephanos Runtime Fingerprint]", launcherRuntimeFingerprint);
+console.info("[Launcher Diagnostics]", launcherDiagnostics);
 console.info("[IGNITION MODE]", {
   intendedMode: "launcher-root",
   intendedFinalUrl: canonicalUrls.launcherShellUrl,
@@ -41,6 +44,45 @@ console.info("[IGNITION MODE]", {
 });
 markRootLandingLoaded({ href: globalThis.location?.href || "", readyState: document.readyState });
 const disposeStartupInteractionListeners = attachStartupInteractionListeners();
+
+function ensureLauncherDiagnosticsMount() {
+  // Guardrail: launcher product UI (tile landing) stays clean; diagnostics render only in this isolated mount.
+  const mount = document.getElementById("launcher-diagnostics-mount");
+  if (!mount || !launcherDiagnostics.enabled) {
+    if (mount) {
+      mount.innerHTML = "";
+    }
+    return null;
+  }
+
+  const existingPanel = mount.querySelector("#launcher-diagnostics-panel");
+  if (existingPanel) {
+    return existingPanel;
+  }
+
+  mount.innerHTML = `
+    <details id="launcher-diagnostics-panel" class="runtime-diagnostics-card secondary">
+      <summary>
+        Launcher diagnostics (optional)
+        <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
+      </summary>
+      <section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
+      <section id="mobile-companion-deck" class="mobile-companion-deck"></section>
+      <p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
+      <div id="ignition-mode-banner" class="ignition-mode-banner" role="status" aria-live="polite">
+        IGNITION MODE: launcher-root (loading…)
+      </div>
+      <p id="system-status-text">System Initialising...</p>
+      <aside id="launcher-runtime-fingerprint" class="runtime-fingerprint-badge" aria-live="polite">
+        <strong>Launcher Runtime Fingerprint</strong>
+        <div>Collecting launcher fingerprint…</div>
+      </aside>
+      <pre id="runtime-diagnostics-json"></pre>
+    </details>
+  `;
+
+  return mount.querySelector("#launcher-diagnostics-panel");
+}
 
 function renderLauncherRuntimeFingerprint() {
   const badgeNode = document.getElementById("launcher-runtime-fingerprint");
@@ -252,6 +294,11 @@ function isDeveloperModeEnabled() {
 
 
 function updateRuntimeDiagnostics({ projects = [], workspace = null } = {}) {
+  if (!launcherDiagnostics.enabled) {
+    return;
+  }
+
+  ensureLauncherDiagnosticsMount();
   const summaryNode = document.getElementById("runtime-diagnostics-summary");
   const compactNode = document.getElementById("runtime-diagnostics-compact");
   const jsonNode = document.getElementById("runtime-diagnostics-json");
@@ -310,6 +357,7 @@ function startStephanosHealthMonitor(projects, context) {
 }
 
 async function startStephanos() {
+  ensureLauncherDiagnosticsMount();
   const versionMeta = document.querySelector('meta[name="stephanos-version"]');
   if (versionMeta) {
     const version = versionMeta.getAttribute("content");
@@ -519,7 +567,10 @@ window.toggleDeveloperMode = toggleDeveloperMode;
 window.isDeveloperModeEnabled = isDeveloperModeEnabled;
 
 window.addEventListener("load", () => {
+  ensureLauncherDiagnosticsMount();
   renderLauncherRuntimeFingerprint();
-  void hydrateLauncherBuildIdentity();
+  if (launcherDiagnostics.enabled) {
+    void hydrateLauncherBuildIdentity();
+  }
   startStephanos();
 });
