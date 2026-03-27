@@ -74,3 +74,35 @@ test('existing server reuse requires runtime marker parity and not just health',
     false,
   );
 });
+
+test('existing server reuse rejects stale responses when served index marker diverges from local dist marker', () => {
+  assert.equal(
+    canReuseStephanosServer({
+      payload: {
+        service: 'stephanos-dist-server',
+        distMountPath: '/apps/stephanos/dist/',
+        staticRootPath: '/workspace/stephan-os',
+      },
+      runtimeReady: true,
+      moduleMimeReady: true,
+      markerMatchesExpected: false,
+    }),
+    false,
+  );
+});
+
+test('existing server reuse rejects module MIME mismatches even when marker parity would otherwise pass', () => {
+  assert.equal(
+    canReuseStephanosServer({
+      payload: {
+        service: 'stephanos-dist-server',
+        distMountPath: '/apps/stephanos/dist/',
+        staticRootPath: '/workspace/stephan-os',
+      },
+      runtimeReady: true,
+      moduleMimeReady: false,
+      markerMatchesExpected: true,
+    }),
+    false,
+  );
+});

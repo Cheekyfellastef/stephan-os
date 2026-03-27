@@ -317,7 +317,7 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
   }
 });
 
-test("workspace stephanos launch uses validated launch target for top-level navigation", async () => {
+test("workspace stephanos launch uses validated launch target for tile-click runtime semantics", async () => {
   const documentRef = createDocumentFixture();
   const globals = installWorkspaceGlobals(documentRef, async () => ({ ok: true, status: 200 }));
   const assigned = [];
@@ -334,8 +334,9 @@ test("workspace stephanos launch uses validated launch target for top-level navi
     name: "Stephanos OS",
     folder: "stephanos",
     entry: "apps/stephanos/dist/index.html",
-    launchEntry: "/",
-    runtimeEntry: "apps/stephanos/dist/index.html",
+    launcherEntry: "http://127.0.0.1:4173/",
+    runtimeEntry: "http://localhost:5173/",
+    launchEntry: "http://localhost:5173/",
     launchStrategy: "navigate",
     dependencies: [],
   };
@@ -346,7 +347,7 @@ test("workspace stephanos launch uses validated launch target for top-level navi
       .flatMap((node) => node.children || [])
       .filter((node) => node.tagName === "iframe").length;
 
-    assert.deepEqual(assigned, ["http://localhost/"]);
+    assert.deepEqual(assigned, ["http://localhost:5173/"]);
     assert.equal(iframeCount, 0);
     assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
   } finally {

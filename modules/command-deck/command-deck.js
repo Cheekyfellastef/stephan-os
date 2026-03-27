@@ -36,12 +36,32 @@ function normaliseProject(project) {
 }
 
 function resolveStephanosLaunchTarget(project) {
-  return String(
-    project?.launchEntry
-    || project?.runtimeEntry
-    || project?.entry
+  const launchEntry = String(project?.launchEntry || '').trim();
+  const runtimeEntry = String(project?.runtimeEntry || '').trim();
+  const compatibilityEntry = String(project?.entry || '').trim();
+  const launcherEntry = String(project?.launcherEntry || '').trim();
+
+  const resolved = String(
+    launchEntry
+    || runtimeEntry
+    || compatibilityEntry
     || ''
   ).trim();
+
+  if (!launchEntry && (runtimeEntry || compatibilityEntry)) {
+    console.warn('[CommandDeck] Stephanos launchEntry missing; using compatibility fallback order launchEntry -> runtimeEntry -> entry', {
+      runtimeEntry,
+      entry: compatibilityEntry,
+      launcherEntry,
+      resolved,
+    });
+  }
+
+  return resolved;
+}
+
+export function resolveStephanosLaunchTargetForTest(project) {
+  return resolveStephanosLaunchTarget(project);
 }
 
 function getRuntimeProjects(context) {
@@ -75,6 +95,9 @@ function launchProject(project, context, trigger = {}) {
   const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
   const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
   const chosenTarget = isStephanos ? resolveStephanosLaunchTarget(project) : String(project?.entry || '').trim();
+  const launcherEntry = String(project?.launcherEntry || '').trim();
+  const runtimeEntry = String(project?.runtimeEntry || '').trim();
+  const launchEntry = String(project?.launchEntry || '').trim();
 
   if (!chosenTarget) {
     return;
@@ -118,6 +141,24 @@ function launchProject(project, context, trigger = {}) {
   }
 
   if (isStephanos) {
+    if (trigger?.type === 'user-click' && launcherEntry && runtimeEntry && launcherEntry !== runtimeEntry && chosenTarget === launcherEntry) {
+      console.warn('[CommandDeck] Stephanos tile click resolved to launcher shell target; expected runtime launch target.', {
+        launcherEntry,
+        runtimeEntry,
+        launchEntry,
+        chosenTarget,
+      });
+    }
+
+    if (launchEntry && runtimeEntry && launchEntry !== runtimeEntry && chosenTarget === String(project?.entry || '').trim()) {
+      console.warn('[CommandDeck] Stephanos launch used compatibility entry even though separated launch fields exist.', {
+        launchEntry,
+        runtimeEntry,
+        entry: String(project?.entry || '').trim(),
+        chosenTarget,
+      });
+    }
+
     console.info('[CommandDeck] Stephanos launch forcing top-level navigation', {
       reason: 'avoid iframe-based local ignition/recovery from invalid frame contexts',
       target: resolvedEntry,
