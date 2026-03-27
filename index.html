@@ -177,6 +177,21 @@ margin: 0 0 18px;
 
 #launcher-secondary-panels {
 margin-top: 16px;
+display: flex;
+flex-direction: column;
+gap: 12px;
+}
+
+#launcher-runtime-strip {
+order: 1;
+}
+
+#mobile-companion-deck {
+order: 2;
+}
+
+#launcher-diagnostics-panel {
+order: 3;
 }
 
 .runtime-strip-card,
@@ -502,12 +517,14 @@ margin-bottom:20px;
 <h2>Projects</h2>
 <div id="project-registry"></div>
 <section id="launcher-secondary-panels">
+  <section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
+  <section id="mobile-companion-deck" class="mobile-companion-deck"></section>
+  <p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
   <details id="launcher-diagnostics-panel" class="runtime-diagnostics-card secondary">
     <summary>
       Launcher diagnostics (optional)
       <span id="runtime-diagnostics-summary">Collecting launcher runtime diagnostics…</span>
     </summary>
-    <p id="runtime-diagnostics-compact" class="runtime-diagnostics-compact" aria-live="polite">Runtime status: loading launcher diagnostics…</p>
     <div id="ignition-mode-banner" class="ignition-mode-banner" role="status" aria-live="polite">
       IGNITION MODE: launcher-root (loading…)
     </div>
@@ -518,8 +535,6 @@ margin-bottom:20px;
     </aside>
     <pre id="runtime-diagnostics-json"></pre>
   </details>
-  <section id="launcher-runtime-strip" class="launcher-runtime-strip"></section>
-  <section id="mobile-companion-deck" class="mobile-companion-deck"></section>
 </section>
 
 </section>
