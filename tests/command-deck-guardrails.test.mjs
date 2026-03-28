@@ -19,6 +19,17 @@ function createElement({ tagName = 'div', ownerDocument = null } = {}) {
     innerText: '',
     title: '',
     onclick: null,
+    classList: {
+      add(...tokens) {
+        const current = new Set(String(node.className || '').split(/\s+/).filter(Boolean));
+        tokens.forEach((token) => {
+          if (token) {
+            current.add(token);
+          }
+        });
+        node.className = Array.from(current).join(' ');
+      },
+    },
     appendChild(child) {
       child.parentNode = this;
       this.children.push(child);
@@ -109,4 +120,55 @@ test('launcher-critical command-deck module loads without duplicate declaration 
   await assert.doesNotReject(async () => {
     await import('../modules/command-deck/command-deck.js');
   });
+});
+
+test('renderProjectRegistry keeps Stephanos launch path clickable while runtime validation is launching', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: 'apps/stephanos/dist/index.html',
+    launchEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    runtimeEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launcherEntry: 'http://127.0.0.1:4173/',
+    validationState: 'launching',
+    statusMessage: 'Checking reachable Stephanos route.',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const tile = globalThis.document.getElementById('project-registry').children[0];
+    assert.equal(typeof tile.onclick, 'function');
+    assert.equal(tile.className.includes('app-tile-pending-launchable'), true);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test('renderProjectRegistry keeps non-launchable pending tiles blocked', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: '',
+    launchEntry: '',
+    runtimeEntry: '',
+    launcherEntry: 'http://127.0.0.1:4173/',
+    validationState: 'launching',
+    statusMessage: 'Checking reachable Stephanos route.',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const tile = globalThis.document.getElementById('project-registry').children[0];
+    assert.equal(tile.onclick, null);
+  } finally {
+    globalThis.document = originalDocument;
+  }
 });

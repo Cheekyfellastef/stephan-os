@@ -190,6 +190,11 @@ function launchProject(project, context, trigger = {}) {
   context.workspace.open(project, context);
 }
 
+function isStephanosProject(project) {
+  const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
+  return projectId === 'stephanos' || projectId === 'stephanos os';
+}
+
 function renderLauncherStatusStrip(projects) {
   const strip = ensureStatusSurface('launcher-runtime-strip', 'launcher-runtime-strip');
   if (!strip) return;
@@ -320,6 +325,14 @@ export function renderProjectRegistry(projects, context, options = {}) {
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
     const tile = document.createElement('div');
+    const isStephanos = isStephanosProject(safeProject);
+    const hasLaunchTarget = isStephanos
+      ? Boolean(resolveStephanosLaunchTarget(safeProject))
+      : Boolean(String(safeProject.entry || '').trim());
+    const launchInProgress = safeProject.validationState === 'launching';
+    const launchableWhilePending = launchInProgress && hasLaunchTarget;
+    const blockLaunch = safeProject.validationState === 'error'
+      || (launchInProgress && !launchableWhilePending);
 
     tile.className = 'app-tile';
 
@@ -348,10 +361,13 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ${issueLabel}
     `;
 
-    if (safeProject.validationState === 'error' || safeProject.validationState === 'launching') {
+    if (blockLaunch) {
       tile.title = safeProject.statusMessage || safeProject.validationIssues.join('\n') || 'App status unavailable';
       tile.setAttribute('aria-disabled', 'true');
     } else {
+      if (launchInProgress) {
+        tile.classList.add('app-tile-pending-launchable');
+      }
       tile.title = runtimeDetail || safeProject.statusMessage || safeProject.name;
       tile.onclick = () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' });
     }
