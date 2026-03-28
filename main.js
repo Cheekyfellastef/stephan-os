@@ -991,10 +991,38 @@ function renderProjectRegistryLocalFallback(projects, context) {
   return container.querySelectorAll(".app-tile").length > 0;
 }
 
+function hardenProjectRegistryHitTargets(container = document.getElementById("project-registry")) {
+  if (!container?.children) {
+    return;
+  }
+
+  Array.from(container.children).forEach((child) => {
+    const className = String(child?.className || "").trim();
+    const classTokens = className.length > 0 ? className.split(/\s+/) : [];
+    const isTile = classTokens.includes("app-tile");
+    const isClickableDiv = String(child?.tagName || "").toLowerCase() === "div" && typeof child?.onclick === "function";
+
+    if (!isTile && isClickableDiv && child?.classList?.add) {
+      child.classList.add("app-tile");
+      child.style.pointerEvents = "auto";
+      return;
+    }
+
+    if (isTile) {
+      child.style.pointerEvents = "auto";
+      return;
+    }
+
+    child.style.pointerEvents = "none";
+    child.dataset.launcherHitShield = "true";
+  });
+}
+
 function renderTileFirstLauncher(projects, context) {
   renderLauncherProjectRegistry(projects, context, { enableSecondaryStatusSurfaces: false });
 
   const container = document.getElementById("project-registry");
+  hardenProjectRegistryHitTargets(container);
   const tileCount = container?.querySelectorAll(".app-tile").length || 0;
   const expectedMinimum = Array.isArray(projects) && projects.length > 0 ? 1 : 0;
 
@@ -1007,6 +1035,7 @@ function renderTileFirstLauncher(projects, context) {
     projects: Array.isArray(projects) ? projects.length : 0,
   });
   renderProjectRegistryLocalFallback(projects, context);
+  hardenProjectRegistryHitTargets(container);
 }
 
 function startStephanosHealthMonitor(projects, context) {

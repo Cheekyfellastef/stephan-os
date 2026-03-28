@@ -198,3 +198,45 @@ test('renderProjectRegistry keeps launch-target tiles interactive while validati
     globalThis.document = originalDocument;
   }
 });
+
+test('renderProjectRegistry shields non-tile direct children from intercepting launcher hit-testing', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const registry = globalThis.document.getElementById('project-registry');
+  const ghostOverlay = createElement({ ownerDocument: globalThis.document });
+  const originalAppendChild = registry.appendChild.bind(registry);
+  let tileAppendCount = 0;
+  registry.appendChild = (child) => {
+    const appended = originalAppendChild(child);
+    if (String(child?.className || '').includes('app-tile')) {
+      tileAppendCount += 1;
+      if (tileAppendCount === 1) {
+        originalAppendChild(ghostOverlay);
+      }
+    }
+    return appended;
+  };
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launchEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    runtimeEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launcherEntry: 'http://127.0.0.1:4173/',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    assert.equal(registry.children.length, 2);
+    assert.equal(registry.children[0].className.includes('app-tile'), true);
+    assert.equal(registry.children[0].style.pointerEvents, 'auto');
+    assert.equal(registry.children[1], ghostOverlay);
+    assert.equal(registry.children[1].style.pointerEvents, 'none');
+    assert.equal(registry.children[1].dataset.launcherHitShield, 'true');
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});

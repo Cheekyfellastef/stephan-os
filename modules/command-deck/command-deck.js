@@ -98,6 +98,35 @@ function ensureStatusSurface(containerId, className = '') {
   return node;
 }
 
+function hardenProjectRegistryHitTargets(container) {
+  if (!container?.children) {
+    return;
+  }
+
+  Array.from(container.children).forEach((child) => {
+    const className = String(child?.className || '').trim();
+    const classTokens = className.length > 0 ? className.split(/\s+/) : [];
+    const isTile = classTokens.includes('app-tile');
+    const isClickableDiv = String(child?.tagName || '').toLowerCase() === 'div' && typeof child?.onclick === 'function';
+
+    if (!isTile && isClickableDiv && child?.classList?.add) {
+      child.classList.add('app-tile');
+      child.style.pointerEvents = 'auto';
+      return;
+    }
+
+    if (isTile) {
+      child.style.pointerEvents = 'auto';
+      return;
+    }
+
+    if (child?.style) {
+      child.style.pointerEvents = 'none';
+      child.dataset.launcherHitShield = 'true';
+    }
+  });
+}
+
 function launchProject(project, context, trigger = {}) {
   const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
   const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
@@ -379,6 +408,8 @@ export function renderProjectRegistry(projects, context, options = {}) {
 
     container.appendChild(tile);
   });
+
+  hardenProjectRegistryHitTargets(container);
 }
 
 export const moduleDefinition = {
