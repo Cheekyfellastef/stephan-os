@@ -27,7 +27,7 @@ test('ensureRuntimeStatusModel keeps finalRoute as authoritative for top-level r
 
 test('ensureRuntimeStatusModel projects requested/selected/executed provider truth into finalRouteTruth', () => {
   const normalized = ensureRuntimeStatusModel({
-    selectedProvider: 'ollama',
+    requestedProvider: 'ollama',
     routeSelectedProvider: 'groq',
     activeProvider: 'groq',
     fallbackActive: true,

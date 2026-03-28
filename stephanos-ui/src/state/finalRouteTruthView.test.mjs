@@ -37,6 +37,42 @@ test('buildFinalRouteTruthView uses finalRouteTruth over stale top-level project
   assert.equal(view.executedProvider, 'gemini');
 });
 
+test('buildFinalRouteTruthView keeps requested/selected unknown without canonical provider truth', () => {
+  const view = buildFinalRouteTruthView({
+    selectedProvider: 'mock',
+    activeProvider: 'mock',
+    routeKind: 'cloud',
+  });
+
+  assert.equal(view.requestedProvider, 'unknown');
+  assert.equal(view.selectedProvider, 'unknown');
+  assert.equal(view.executedProvider, 'mock');
+  assert.equal(view.routeKind, 'unavailable');
+});
+
+test('buildFinalRouteTruthView prefers adjudicated executable provider over selected provider', () => {
+  const view = buildFinalRouteTruthView({
+    runtimeTruth: {
+      selectedRoute: 'cloud',
+      provider: {
+        requestedProvider: 'ollama',
+        selectedProvider: 'groq',
+        executableProvider: 'groq',
+      },
+    },
+    finalRouteTruth: {
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      executedProvider: '',
+    },
+  });
+
+  assert.equal(view.requestedProvider, 'ollama');
+  assert.equal(view.selectedProvider, 'groq');
+  assert.equal(view.executedProvider, 'groq');
+});
+
 test('buildFinalRouteTruthView marks uiReachable and route usability unknown while pending', () => {
   const view = buildFinalRouteTruthView({
     appLaunchState: 'pending',
