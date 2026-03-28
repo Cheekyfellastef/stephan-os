@@ -2,10 +2,10 @@ import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
 } from "../shared/runtime/stephanosSessionMemory.mjs";
+import { attachPointerDrag } from "./pointer_drag.js";
 
 const PANEL_POSITION_KEY = "panelPositions";
 const PANEL_COLLAPSE_KEY = "panelCollapsed";
-const DRAG_HANDLE_SELECTOR = ".stephanos-panel-header";
 const DEFAULT_PANEL_SIZE = Object.freeze({
   width: 320,
   height: 280,
@@ -135,58 +135,27 @@ export function createUIRenderer() {
   }
 
   function installPanelDragBehavior(panel, handle) {
-    let dragState = null;
     const container = ensurePanelContainer();
-
-    function stopDrag() {
-      dragState = null;
-      panel.classList.remove("stephanos-panel-dragging");
-      container.classList.remove("stephanos-panel-drag-active");
-    }
-
-    function onPointerMove(event) {
-      if (!dragState) {
-        return;
-      }
-      const next = computeBoundedPosition({
-        x: event.clientX - dragState.offsetX,
-        y: event.clientY - dragState.offsetY,
-      }, panel);
-      panel.style.left = `${next.x}px`;
-      panel.style.top = `${next.y}px`;
-      dragState.lastPosition = next;
-    }
-
-    function onPointerUp() {
-      if (dragState?.lastPosition) {
-        writePanelPosition(panel.id, dragState.lastPosition, storage);
-      }
-      stopDrag();
-    }
-
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const target = event.target;
-      if (target?.closest?.(".stephanos-panel-knob")) {
-        return;
-      }
-      const bounds = panel.getBoundingClientRect();
-      dragState = {
-        offsetX: event.clientX - bounds.left,
-        offsetY: event.clientY - bounds.top,
-        lastPosition: { x: bounds.left, y: bounds.top },
-      };
-      panel.classList.add("stephanos-panel-dragging");
-      container.classList.add("stephanos-panel-drag-active");
-      handle.setPointerCapture?.(event.pointerId);
-      event.preventDefault();
+    attachPointerDrag({
+      panel,
+      handle,
+      panelId: panel.id,
+      preferViewportSpace: true,
+      debug: globalThis.window?.isDeveloperModeEnabled?.() === true,
+      interactiveSelector: ".stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]",
+      onDragStart() {
+        container.classList.add("stephanos-panel-drag-active");
+        panel.parentNode?.appendChild?.(panel);
+      },
+      onDragEnd() {
+        container.classList.remove("stephanos-panel-drag-active");
+      },
+      onPositionCommit(position) {
+        const bounded = computeBoundedPosition(position, panel);
+        applyPanelPosition(panel, bounded);
+        writePanelPosition(panel.id, bounded, storage);
+      },
     });
-
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerUp);
   }
 
   function installPanelKnobBehavior(panel, knobButton, content) {
