@@ -1,5 +1,5 @@
 export function createIgnitionPlan(decision) {
-  const needsRebuild = decision.action === 'rebuild';
+  const needsRebuild = true;
   return {
     needsRebuild,
     runVerify: true,

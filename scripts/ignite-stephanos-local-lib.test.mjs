@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createIgnitionPlan, runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 
-test('ignition plan requires rebuild for missing/stale/unverifiable states', () => {
-  for (const state of ['build-missing', 'build-stale', 'build-unverifiable']) {
+test('ignition plan requires rebuild for all known build states', () => {
+  for (const state of ['build-missing', 'build-stale', 'build-unverifiable', 'build-current']) {
     const plan = createIgnitionPlan({ state, action: 'rebuild' });
     assert.equal(plan.needsRebuild, true);
     assert.equal(plan.runVerify, true);
   }
 });
 
-test('ignition plan skips rebuild for current build state', () => {
+test('ignition plan enforces rebuild even when preflight says build-current', () => {
   const plan = createIgnitionPlan({ state: 'build-current', action: 'skip-build' });
-  assert.equal(plan.needsRebuild, false);
+  assert.equal(plan.needsRebuild, true);
   assert.equal(plan.runVerify, true);
 });
 
@@ -35,7 +35,7 @@ test('failed build blocks verify and serve', async () => {
   assert.deepEqual(calls, ['build']);
 });
 
-test('failed verify blocks serve', async () => {
+test('failed verify blocks serve after successful build', async () => {
   const calls = [];
   await assert.rejects(() => runIgnitionPlan({
     preflightState: { decision: { state: 'build-current', action: 'skip-build' } },
@@ -51,10 +51,10 @@ test('failed verify blocks serve', async () => {
     },
   }));
 
-  assert.deepEqual(calls, ['verify']);
+  assert.deepEqual(calls, ['build', 'verify']);
 });
 
-test('current build runs verify then serve without rebuild', async () => {
+test('current build still runs build then verify then serve', async () => {
   const calls = [];
   await runIgnitionPlan({
     preflightState: { decision: { state: 'build-current', action: 'skip-build' } },
@@ -69,7 +69,7 @@ test('current build runs verify then serve without rebuild', async () => {
     },
   });
 
-  assert.deepEqual(calls, ['verify', 'serve']);
+  assert.deepEqual(calls, ['build', 'verify', 'serve']);
 });
 
 test('stale build runs build then verify then serve', async () => {
