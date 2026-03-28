@@ -291,3 +291,33 @@ test('build-proof panel participates in draggable persistent layout lifecycle', 
   assert.equal(Number.isFinite(savedPosition.y), true);
   assert.notEqual(collapsed, true);
 });
+
+test('createPanel normalizes pre-existing panel stack container to click-through overlay defaults', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  const existingContainer = createElement('div', documentRef);
+  existingContainer.id = 'stephanos-panel-stack';
+  existingContainer.style.display = 'block';
+  existingContainer.style.position = 'relative';
+  existingContainer.style.pointerEvents = 'auto';
+  existingContainer.style.zIndex = '1';
+  existingContainer.parentNode = documentRef.body;
+  documentRef.body.children.push(existingContainer);
+  documentRef.nodes.set('stephanos-panel-stack', existingContainer);
+
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  ui.createPanel('stephanos-laws-panel', 'Laws');
+
+  const panelStack = documentRef.getElementById('stephanos-panel-stack');
+  assert.equal(panelStack.style.position, 'fixed');
+  assert.equal(panelStack.style.inset, '0');
+  assert.equal(panelStack.style.pointerEvents, 'none');
+  assert.equal(panelStack.style.zIndex, '4500');
+});

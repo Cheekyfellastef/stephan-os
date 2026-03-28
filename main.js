@@ -614,6 +614,90 @@ const realitySyncController = createRealitySyncController({
   },
 });
 
+function installLauncherInputHitTestDiagnostics(windowRef = globalThis.window, documentRef = globalThis.document) {
+  if (!launcherDiagnostics.enabled || !windowRef?.addEventListener || !documentRef) {
+    return () => {};
+  }
+
+  const onPointerDownCapture = (event) => {
+    const registry = documentRef.getElementById("project-registry");
+    if (!registry || !event?.target) {
+      return;
+    }
+
+    const inRegistry = typeof event.target.closest === "function"
+      ? event.target.closest("#project-registry")
+      : null;
+    if (!inRegistry) {
+      return;
+    }
+
+    const tile = typeof event.target.closest === "function"
+      ? event.target.closest(".app-tile")
+      : null;
+    const hitNode = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+      ? documentRef.elementFromPoint?.(event.clientX, event.clientY)
+      : null;
+    const hitTag = String(hitNode?.tagName || "").toLowerCase();
+    const hitId = hitNode?.id ? `#${hitNode.id}` : "";
+    const hitClass = typeof hitNode?.className === "string" && hitNode.className.trim()
+      ? `.${hitNode.className.trim().replace(/\s+/g, ".")}`
+      : "";
+
+    console.info("[Stephanos][HitTest]", {
+      phase: "pointerdown-capture",
+      clientX: event.clientX,
+      clientY: event.clientY,
+      targetTag: String(event.target?.tagName || "").toLowerCase(),
+      targetId: event.target?.id || "",
+      targetClassName: event.target?.className || "",
+      tileMatched: Boolean(tile),
+      tileTitle: tile?.querySelector?.("div:nth-child(2)")?.textContent?.trim?.() || "",
+      tileHasOnClick: typeof tile?.onclick === "function",
+      topHitElement: `${hitTag}${hitId}${hitClass}`,
+      defaultPrevented: event.defaultPrevented === true,
+    });
+  };
+
+  const onClickCapture = (event) => {
+    const registry = documentRef.getElementById("project-registry");
+    if (!registry || !event?.target) {
+      return;
+    }
+
+    const inRegistry = typeof event.target.closest === "function"
+      ? event.target.closest("#project-registry")
+      : null;
+    if (!inRegistry) {
+      return;
+    }
+
+    const tile = typeof event.target.closest === "function"
+      ? event.target.closest(".app-tile")
+      : null;
+
+    console.info("[Stephanos][TileInput]", {
+      phase: "click-capture",
+      targetTag: String(event.target?.tagName || "").toLowerCase(),
+      targetId: event.target?.id || "",
+      targetClassName: event.target?.className || "",
+      tileMatched: Boolean(tile),
+      tileHasOnClick: typeof tile?.onclick === "function",
+      bubbles: event.bubbles === true,
+      cancelable: event.cancelable === true,
+      defaultPrevented: event.defaultPrevented === true,
+    });
+  };
+
+  windowRef.addEventListener("pointerdown", onPointerDownCapture, true);
+  windowRef.addEventListener("click", onClickCapture, true);
+
+  return () => {
+    windowRef.removeEventListener("pointerdown", onPointerDownCapture, true);
+    windowRef.removeEventListener("click", onClickCapture, true);
+  };
+}
+
 window.setRealitySyncEnabled = function setRealitySyncEnabled(enabled) {
   const currentMemory = readPersistedStephanosSessionMemory();
   const normalizedEnabled = enabled === true;
@@ -1124,6 +1208,7 @@ window.addEventListener("load", () => {
     displayedTimestamp: buildTruthSignals.servedBuildTimestamp || buildTruthSignals.buildTimestamp || "",
     enabled: realitySyncState.enabled,
   });
+  installLauncherInputHitTestDiagnostics();
   void hydrateLauncherBuildProof();
   startStephanos();
 });

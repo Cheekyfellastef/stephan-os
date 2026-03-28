@@ -101,6 +101,19 @@ export function createUIRenderer() {
   const storage = globalThis.localStorage;
   let defaultPanelOffset = 0;
 
+  function normalizePanelContainerStyles(container) {
+    if (!container?.style) {
+      return container;
+    }
+
+    container.style.display = container.style.display || "none";
+    container.style.position = "fixed";
+    container.style.inset = "0";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "4500";
+    return container;
+  }
+
   function applyPanelPosition(panel, position = { x: 0, y: 0 }) {
     const bounded = computeBoundedPosition(position, panel);
     panel.style.left = `${bounded.x}px`;
@@ -213,16 +226,12 @@ export function createUIRenderer() {
     let container = documentRef.getElementById("stephanos-panel-stack");
 
     if (container) {
-      return container;
+      return normalizePanelContainerStyles(container);
     }
 
     container = documentRef.createElement("div");
     container.id = "stephanos-panel-stack";
-    container.style.display = "none";
-    container.style.position = "fixed";
-    container.style.inset = "0";
-    container.style.pointerEvents = "none";
-    container.style.zIndex = "4500";
+    normalizePanelContainerStyles(container);
 
     const workspacePanel = documentRef.getElementById("workspace");
     const layout = documentRef.getElementById("stephanos-layout");
@@ -235,7 +244,7 @@ export function createUIRenderer() {
       documentRef.body.appendChild(container);
     }
 
-    return container;
+    return normalizePanelContainerStyles(container);
   }
 
   return {
