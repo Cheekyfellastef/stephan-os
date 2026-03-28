@@ -207,7 +207,10 @@ function probePortListening(portToProbe, hostToProbe = '127.0.0.1', timeoutMs = 
 async function probeHttp200(url) {
   try {
     const response = await fetch(url, {
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Connection: 'close',
+      },
     });
     return response.ok;
   } catch {
@@ -218,7 +221,10 @@ async function probeHttp200(url) {
 async function probeServedRuntimeMarker(url) {
   try {
     const response = await fetch(url, {
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Connection: 'close',
+      },
     });
     if (!response.ok) {
       return {
@@ -249,7 +255,10 @@ async function probeServedRuntimeMarker(url) {
 async function probeJavaScriptMime(url) {
   try {
     const response = await fetch(url, {
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Connection: 'close',
+      },
     });
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     return {
@@ -301,6 +310,7 @@ async function requestExistingServerRestart({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Connection: 'close',
       },
       body: JSON.stringify({
         expectedRuntimeMarker,
@@ -327,10 +337,16 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
     const probeOrigin = new URL(healthUrl).origin;
     const [healthResponse, runtimeStatusResponse] = await Promise.all([
       fetch(healthUrl, {
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          Connection: 'close',
+        },
       }),
       fetch(`${probeOrigin}/apps/stephanos/runtime-status.json`, {
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          Connection: 'close',
+        },
       }),
     ]);
 
@@ -418,7 +434,10 @@ async function probeLauncherCriticalSourceTruth(origin) {
 
   try {
     const response = await fetch(`${origin}/__stephanos/source-truth`, {
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        Connection: 'close',
+      },
     });
     if (!response.ok) {
       return {
@@ -496,6 +515,16 @@ function shouldLogLiveMimeDebug(pathname) {
     pathname === '/shared/runtime/runtimeStatusModel.mjs' ||
     pathname === '/shared/runtime/stephanosLocalUrls.mjs'
   );
+}
+
+async function finishWithSuccessWithoutForcedExit(server) {
+  process.exitCode = 0;
+  if (server?.listening) {
+    await new Promise((resolveClose) => {
+      server.close(() => resolveClose());
+    });
+  }
+  await new Promise((resolveTick) => setImmediate(resolveTick));
 }
 
 export function createStephanosDistServer() {
@@ -658,7 +687,7 @@ if (isMainModule) {
       console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
       console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
       console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
-      process.exit(0);
+      await finishWithSuccessWithoutForcedExit(server);
       return;
     }
 
