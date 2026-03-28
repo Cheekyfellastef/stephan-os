@@ -642,6 +642,7 @@
     let statusTimer = null;
     let writeTimer = null;
     let suppressSave = false;
+    let hydrationCompleted = false;
 
     const setStatus = (message, tone = 'info') => {
       const { status } = toolbarRefs;
@@ -656,6 +657,13 @@
 
     const flushSave = () => {
       if (suppressSave) {
+        return;
+      }
+      if (!hydrationCompleted) {
+        storage.log('save-skipped', {
+          appId: APP_ID,
+          reason: 'hydration-incomplete',
+        });
         return;
       }
 
@@ -694,6 +702,10 @@
     };
 
     const handleReset = () => {
+      if (!hydrationCompleted) {
+        showTransientStatus('Please wait for shared state hydration before resetting.', 'warning');
+        return;
+      }
       suppressSave = true;
       global.clearTimeout?.(writeTimer);
       writeTimer = null;
@@ -780,6 +792,7 @@
 
     void storage.loadWithMeta().then((loaded) => {
       applyState(loaded.state);
+      hydrationCompleted = true;
       publishAiContext(controls);
       console.info('[TILE DATA][wealthapp] hydrate', {
         appId: APP_ID,

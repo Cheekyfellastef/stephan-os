@@ -336,3 +336,109 @@ test('tile data contract allows cross-surface durable save/load convergence via 
   });
   assert.equal(localhostLoad.state.selection.era, 'hosted-write');
 });
+
+test('tile data contract does not use origin-local mirror fallback on hosted sessions by default', async () => {
+  const mirrorKey = 'stephanos.tile.shared.mirror.v1.music-tile';
+  const storage = createStorage({
+    [mirrorKey]: JSON.stringify({
+      schemaVersion: 1,
+      state: { version: 1, selection: { era: 'stale-local-mirror' } },
+    }),
+  });
+
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 503,
+    async text() {
+      return JSON.stringify({ success: false, error: 'backend unavailable' });
+    },
+  });
+
+  const client = createStephanosTileDataClient({
+    fetchImpl,
+    storage,
+    locationObj: { origin: 'https://hosted.example.com', hostname: 'hosted.example.com', port: '' },
+    logger: { info() {} },
+  });
+
+  const loaded = await client.loadDurableState({
+    appId: 'music-tile',
+    schemaVersion: 1,
+    defaultState: { version: 1, selection: { era: 'default' } },
+    sanitizeState: (value) => value,
+  });
+
+  assert.equal(loaded.source, 'default-state');
+  assert.equal(loaded.state.selection.era, 'default');
+});
+
+test('tile data contract keeps mirror fallback for localhost sessions', async () => {
+  const mirrorKey = 'stephanos.tile.shared.mirror.v1.music-tile';
+  const storage = createStorage({
+    [mirrorKey]: JSON.stringify({
+      schemaVersion: 1,
+      state: { version: 1, selection: { era: 'local-mirror' } },
+    }),
+  });
+
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 503,
+    async text() {
+      return JSON.stringify({ success: false, error: 'backend unavailable' });
+    },
+  });
+
+  const client = createStephanosTileDataClient({
+    fetchImpl,
+    storage,
+    locationObj: { origin: 'http://127.0.0.1:4173', hostname: '127.0.0.1', port: '4173' },
+    logger: { info() {} },
+  });
+
+  const loaded = await client.loadDurableState({
+    appId: 'music-tile',
+    schemaVersion: 1,
+    defaultState: { version: 1, selection: { era: 'default' } },
+    sanitizeState: (value) => value,
+  });
+
+  assert.equal(loaded.source, 'local-mirror-fallback');
+  assert.equal(loaded.state.selection.era, 'local-mirror');
+});
+
+test('tile data contract only writes local mirror after successful backend save', async () => {
+  const mirrorKey = 'stephanos.tile.shared.mirror.v1.music-tile';
+  const storage = createStorage();
+  let shouldSucceed = false;
+
+  const fetchImpl = async () => ({
+    ok: shouldSucceed,
+    status: shouldSucceed ? 200 : 503,
+    async text() {
+      return JSON.stringify({ success: shouldSucceed });
+    },
+  });
+
+  const client = createStephanosTileDataClient({
+    fetchImpl,
+    storage,
+    locationObj: { origin: 'http://127.0.0.1:4173', hostname: '127.0.0.1', port: '4173' },
+    logger: { info() {} },
+  });
+
+  await client.saveDurableState({
+    appId: 'music-tile',
+    state: { version: 1, selection: { era: 'failed-save' } },
+    sanitizeState: (value) => value,
+  });
+  assert.equal(storage.getItem(mirrorKey), null);
+
+  shouldSucceed = true;
+  await client.saveDurableState({
+    appId: 'music-tile',
+    state: { version: 1, selection: { era: 'saved' } },
+    sanitizeState: (value) => value,
+  });
+  assert.notEqual(storage.getItem(mirrorKey), null);
+});
