@@ -188,3 +188,54 @@ test('adjudicator promotes selected provider to executable when health is ok and
   assert.equal(adjudicated.runtimeTruth.requestedProvider, 'ollama');
   assert.equal(adjudicated.runtimeTruth.selectedProvider, 'ollama');
 });
+
+test('adjudicator marks fallback provider usage when executable provider differs from requested provider', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeSelectedProvider: 'groq',
+    selectedProvider: 'ollama',
+    activeProvider: 'groq',
+    providerHealth: {
+      groq: { ok: true, provider: 'groq' },
+      ollama: { ok: false, reason: 'offline' },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'groq');
+  assert.equal(adjudicated.runtimeTruth.provider.fallbackProviderUsed, true);
+  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Requested ollama, executed groq/);
+});
+
+test('adjudicator emits blocking issue when shared write target appears before hydration completes', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      nodeAddressSource: 'manual',
+      memoryTruth: {
+        hydrationCompleted: false,
+        sourceUsedOnLoad: 'local-mirror-fallback',
+        writeTarget: 'shared-backend',
+      },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.memory.hydrationCompleted, false);
+  assert.ok(adjudicated.issues.some((issue) => issue.code === 'memory-write-before-hydration'));
+});

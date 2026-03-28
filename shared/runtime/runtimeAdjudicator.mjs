@@ -41,6 +41,35 @@ function createIssue(code, severity, category, message, details = {}) {
   };
 }
 
+function normalizeMemoryTruth(memoryTruth = {}) {
+  const source = asObject(memoryTruth);
+  const hydrationCompleted = source.hydrationCompleted === true;
+  const sourceUsedOnLoad = String(source.sourceUsedOnLoad || source.hydrationSource || 'unknown');
+  const writeTarget = String(source.writeTarget || source.lastSaveSource || 'unknown');
+  const fallbackReason = String(source.fallbackReason || (hydrationCompleted ? '' : 'not-hydrated'));
+  const degraded = source.degraded === true || (!hydrationCompleted && sourceUsedOnLoad !== 'shared-backend');
+
+  return {
+    hydrationCompleted,
+    sourceUsedOnLoad,
+    writeTarget,
+    durabilityClass: String(source.stateClass || 'runtime-session'),
+    fallbackReason,
+    degraded,
+  };
+}
+
+function normalizeTileTruth(tileTruth = {}) {
+  const source = asObject(tileTruth);
+  const ready = source.ready === true || source.executionReady === true;
+  return {
+    ready,
+    reason: String(source.reason || source.blockedReason || ''),
+    degraded: source.degraded === true || !ready,
+    launchSurface: String(source.launchSurface || source.surface || 'unknown'),
+  };
+}
+
 function projectLegacyRuntimeTruth(runtimeTruth) {
   return {
     ...runtimeTruth,
@@ -65,6 +94,8 @@ function projectLegacyRuntimeTruth(runtimeTruth) {
     validationState: runtimeTruth.diagnostics.validationState,
     appLaunchState: runtimeTruth.diagnostics.appLaunchState,
     operatorAction: runtimeTruth.diagnostics.operatorGuidance[0] || '',
+    memory: runtimeTruth.memory,
+    tile: runtimeTruth.tile,
   };
 }
 
@@ -96,6 +127,14 @@ export function adjudicateRuntimeTruth({
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
   const selectedProviderValidated = isSelectedProviderHealthy(selectedProviderTruth, providerHealth);
   const executableProvider = selectedProviderValidated ? selectedProviderTruth : '';
+  const fallbackProviderUsed = Boolean(executableProvider && requestedProvider && executableProvider !== requestedProvider);
+  const memoryTruth = normalizeMemoryTruth(context.memoryTruth);
+  const tileTruth = normalizeTileTruth(context.tileTruth);
+  const fallbackReason = fallbackProviderUsed
+    ? `Requested ${requestedProvider}, executed ${executableProvider}.`
+    : (truth.fallbackActive === true || fallbackActive === true)
+      ? 'Fallback route active.'
+      : '';
 
   const runtimeTruth = {
     session: {
@@ -138,8 +177,11 @@ export function adjudicateRuntimeTruth({
         || selectedProviderHealth?.message
         || '',
       ),
-      fallbackProviderUsed: Boolean((truth.fallbackActive === true || fallbackActive === true) && executableProvider && executableProvider !== selectedProviderTruth),
+      fallbackProviderUsed,
+      fallbackReason,
     },
+    memory: memoryTruth,
+    tile: tileTruth,
     diagnostics: {
       invariantWarnings: [],
       blockingIssues: [],
@@ -227,6 +269,36 @@ export function adjudicateRuntimeTruth({
       {
         likelyCause: 'Dist availability may have been treated as primary route readiness.',
         suggestedAction: 'Flag dist runtime as fallback and keep backend/cloud readiness distinct.',
+      },
+    ));
+  }
+
+  if (!memoryTruth.hydrationCompleted && memoryTruth.writeTarget === 'shared-backend') {
+    issues.push(createIssue(
+      'memory-write-before-hydration',
+      'error',
+      'memory',
+      'Shared memory write target was selected before hydration completed.',
+      {
+        likelyCause: 'Memory writes were enabled during pre-hydration runtime startup.',
+        suggestedAction: 'Block durable writes until hydrationCompleted is true.',
+        hydrationCompleted: memoryTruth.hydrationCompleted,
+        writeTarget: memoryTruth.writeTarget,
+      },
+    ));
+  }
+
+  if (!tileTruth.ready && runtimeTruth.diagnostics.appLaunchState === 'ready') {
+    issues.push(createIssue(
+      'tile-not-ready-while-runtime-ready',
+      'warning',
+      'tile-runtime',
+      'Runtime reports ready while tile execution readiness is false.',
+      {
+        likelyCause: 'Tile substrate did not hydrate or interactive surface wiring is incomplete.',
+        suggestedAction: 'Expose tile readiness blockers and gate launch state until resolved.',
+        tileReason: tileTruth.reason,
+        tileLaunchSurface: tileTruth.launchSurface,
       },
     ));
   }

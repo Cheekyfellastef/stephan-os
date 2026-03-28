@@ -200,8 +200,8 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const preferredTarget = finalRoute.preferredTarget ?? candidate.preferredTarget ?? baseModel.preferredTarget;
   const actualTargetUsed = finalRoute.actualTarget ?? candidate.actualTargetUsed ?? baseModel.actualTargetUsed;
   const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
-  const requestedProviderProjection = candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
-  const selectedProviderProjection = candidate.routeSelectedProvider || candidate.selectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
+  const requestedProviderProjection = candidate.requestedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
+  const selectedProviderProjection = candidate.routeSelectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
   const executedProviderProjection = candidate.activeProvider || '';
 
   const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'

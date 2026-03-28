@@ -72,6 +72,13 @@ export function buildRuntimeTruthSnapshot({
   routeEvaluations = {},
   routePreferenceOrder = [],
 } = {}) {
+  const memoryTruth = runtimeContext.memoryTruth && typeof runtimeContext.memoryTruth === 'object'
+    ? runtimeContext.memoryTruth
+    : {};
+  const tileTruth = runtimeContext.tileTruth && typeof runtimeContext.tileTruth === 'object'
+    ? runtimeContext.tileTruth
+    : {};
+
   return {
     sessionKind: finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown',
     deviceContext: finalRouteTruth.deviceContext || runtimeContext.deviceContext || 'unknown',
@@ -95,6 +102,13 @@ export function buildRuntimeTruthSnapshot({
     validationState: finalRouteTruth.validationState || 'healthy',
     appLaunchState: finalRouteTruth.appLaunchState || 'ready',
     operatorAction: finalRouteTruth.operatorAction || '',
+    memoryHydrationCompleted: memoryTruth.hydrationCompleted === true,
+    memoryHydrationSource: memoryTruth.sourceUsedOnLoad || memoryTruth.hydrationSource || 'unknown',
+    memoryWriteTarget: memoryTruth.writeTarget || memoryTruth.lastSaveSource || 'unknown',
+    memoryFallbackReason: memoryTruth.fallbackReason || '',
+    tileExecutionReady: tileTruth.ready === true || tileTruth.executionReady === true,
+    tileReadinessReason: tileTruth.reason || tileTruth.blockedReason || '',
+    tileLaunchSurface: tileTruth.launchSurface || tileTruth.surface || 'unknown',
     reachability: finalRoute.reachability || {},
     providerEligibility: finalRoute.providerEligibility || {},
     routeEvaluations,

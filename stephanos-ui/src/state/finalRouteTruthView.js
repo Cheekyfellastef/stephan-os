@@ -13,6 +13,18 @@ function normalizeUiReachabilityState(value, legacyBoolean) {
   return asBooleanState(legacyBoolean);
 }
 
+function pickTruth(...candidates) {
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim();
+    if (!value) continue;
+    if (['unknown', 'pending', 'unavailable', 'n/a'].includes(value.toLowerCase())) {
+      continue;
+    }
+    return value;
+  }
+  return '';
+}
+
 // UI truth projection contract:
 // - runtimeStatus.finalRouteTruth is canonical runtime truth.
 // - this helper is the only approved projection layer for route/provider/operator UI labels.
@@ -22,12 +34,13 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
   const finalRoute = runtimeStatus.finalRoute ?? {};
+  const runtimeProviderTruth = runtimeTruth.provider ?? {};
   const reachability = runtimeTruth.reachability ?? finalRoute.reachability ?? {};
 
-  const routeKind = runtimeTruth.selectedRoute || finalRouteTruth.routeKind || finalRoute.routeKind || runtimeStatus.routeKind || 'unavailable';
-  const preferredTarget = runtimeTruth.preferredTarget || finalRouteTruth.preferredTarget || finalRoute.preferredTarget || runtimeStatus.preferredTarget || 'unavailable';
-  const actualTarget = runtimeTruth.actualTarget || finalRouteTruth.actualTarget || finalRoute.actualTarget || runtimeStatus.actualTargetUsed || 'unavailable';
-  const source = runtimeTruth.source || finalRouteTruth.source || finalRoute.source || runtimeStatus.nodeAddressSource || 'unknown';
+  const routeKind = pickTruth(runtimeTruth.selectedRoute, finalRouteTruth.routeKind, finalRoute.routeKind) || 'unavailable';
+  const preferredTarget = pickTruth(runtimeTruth.preferredTarget, finalRouteTruth.preferredTarget, finalRoute.preferredTarget) || 'unavailable';
+  const actualTarget = pickTruth(runtimeTruth.actualTarget, finalRouteTruth.actualTarget, finalRoute.actualTarget) || 'unavailable';
+  const source = pickTruth(runtimeTruth.source, finalRouteTruth.source, finalRoute.source) || 'unknown';
 
   const uiReachableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
@@ -43,15 +56,15 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     uiReachableState,
     routeUsableState,
     homeNodeUsableState: asBooleanState(finalRouteTruth.homeNodeUsable),
-    requestedProvider: runtimeTruth.requestedProvider || finalRouteTruth.requestedProvider || runtimeStatus.selectedProvider || 'unknown',
-    selectedProvider: runtimeTruth.selectedProvider || finalRouteTruth.selectedProvider || runtimeStatus.routeSelectedProvider || runtimeStatus.selectedProvider || 'unknown',
-    executedProvider: runtimeTruth.executedProvider || finalRouteTruth.executedProvider || runtimeStatus.activeProvider || 'unknown',
+    requestedProvider: pickTruth(runtimeProviderTruth.requestedProvider, runtimeTruth.requestedProvider, finalRouteTruth.requestedProvider) || 'unknown',
+    selectedProvider: pickTruth(runtimeProviderTruth.selectedProvider, runtimeTruth.selectedProvider, finalRouteTruth.selectedProvider) || 'unknown',
+    executedProvider: pickTruth(runtimeProviderTruth.executableProvider, runtimeTruth.executedProvider, finalRouteTruth.executedProvider) || 'unknown',
     preferredTarget,
     actualTarget,
     source,
-    preferredRoute: runtimeTruth.preferredRoute || finalRouteTruth.preferredRoute || runtimeStatus.preferredRoute || routeKind,
-    winnerReason: runtimeTruth.winnerReason || finalRouteTruth.winnerReason || finalRoute.winnerReason || runtimeStatus.routeSummary || 'n/a',
-    operatorReason: runtimeTruth.operatorAction || finalRouteTruth.operatorAction || runtimeStatus.dependencySummary || 'n/a',
+    preferredRoute: pickTruth(runtimeTruth.preferredRoute, finalRouteTruth.preferredRoute) || routeKind,
+    winnerReason: pickTruth(runtimeTruth.winnerReason, finalRouteTruth.winnerReason, finalRoute.winnerReason) || 'n/a',
+    operatorReason: pickTruth(runtimeTruth.operatorAction, finalRouteTruth.operatorAction) || 'n/a',
     selectedRouteReachableState: reachability.selectedRouteReachable === true
       ? 'yes'
       : reachability.selectedRouteReachable === false
