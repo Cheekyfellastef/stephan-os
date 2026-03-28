@@ -55,6 +55,11 @@ function hasObjectState(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function isLoopbackHostname(hostname = '') {
+  const normalized = String(hostname || '').trim().toLowerCase();
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(normalized);
+}
+
 export function createStephanosTileDataClient({
   fetchImpl = globalThis.fetch,
   storage = globalThis.localStorage,
@@ -63,6 +68,7 @@ export function createStephanosTileDataClient({
   explicitBaseUrl = globalThis.__STEPHANOS_BACKEND_BASE_URL,
 } = {}) {
   const apiBaseUrl = detectApiBaseUrl({ locationObj, storage, explicitBaseUrl });
+  const defaultAllowMirrorFallback = isLoopbackHostname(locationObj?.hostname || '');
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
@@ -161,10 +167,11 @@ export function createStephanosTileDataClient({
       body: payload,
     });
 
-    const mirrorKey = createMirrorStorageKey(normalizedAppId);
-    writeLocalState(mirrorKey, payload);
-
     const source = response.ok ? 'shared-backend' : 'local-mirror-fallback';
+    if (response.ok) {
+      const mirrorKey = createMirrorStorageKey(normalizedAppId);
+      writeLocalState(mirrorKey, payload);
+    }
     log('save', {
       appId: normalizedAppId,
       sourceUsedOnSave: source,
@@ -191,6 +198,7 @@ export function createStephanosTileDataClient({
     legacyKeys = [],
     schemaVersion = 1,
     migrateLegacy = true,
+    allowMirrorFallback = defaultAllowMirrorFallback,
   } = {}) {
     const normalizedAppId = normalizeString(appId);
     if (!normalizedAppId) {
@@ -260,7 +268,7 @@ export function createStephanosTileDataClient({
     }
 
     const mirrorState = readLocalState(createMirrorStorageKey(normalizedAppId));
-    if (hasObjectState(mirrorState?.state)) {
+    if (allowMirrorFallback && hasObjectState(mirrorState?.state)) {
       const sanitizedMirror = sanitizeState(mirrorState.state);
       log('load', {
         appId: normalizedAppId,
@@ -286,7 +294,7 @@ export function createStephanosTileDataClient({
       sourceUsedOnLoad: 'defaults',
       backendUrlResolved: apiBaseUrl,
       backendLoadSucceeded: false,
-      localFallbackUsed: false,
+      localFallbackUsed: !allowMirrorFallback,
       localFallbackReason: response.diagnostics?.error || `http-${response.status || 0}`,
       sharedDataOverwrittenByDefaults: false,
       diagnostics: response.diagnostics,

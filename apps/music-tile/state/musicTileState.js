@@ -2,6 +2,11 @@ const STORAGE_KEY = 'stephanos.musicTile.state.v1';
 const SCHEMA_VERSION = 1;
 const APP_ID = 'music-tile';
 const LOG_PREFIX = '[TILE DATA][music-tile]';
+let hydrationCompleted = false;
+
+export function __resetMusicTileStateTestHooks() {
+  hydrationCompleted = false;
+}
 
 export const DEFAULT_SELECTION = {
   era: 'afterlife-modern',
@@ -49,6 +54,7 @@ export function loadMusicTileState() {
       }),
       legacyKeys: [STORAGE_KEY],
     }).then((response) => {
+      hydrationCompleted = true;
       console.info(LOG_PREFIX, 'load', {
         appId: APP_ID,
         sourceUsedOnLoad: response?.source || 'unknown',
@@ -72,6 +78,7 @@ export function loadMusicTileState() {
 
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
+    hydrationCompleted = true;
     return Promise.resolve({
       version: SCHEMA_VERSION,
       selection: { ...DEFAULT_SELECTION }
@@ -80,12 +87,14 @@ export function loadMusicTileState() {
 
   const parsed = safeParse(raw);
   if (!parsed || parsed.version !== SCHEMA_VERSION) {
+    hydrationCompleted = true;
     return Promise.resolve({
       version: SCHEMA_VERSION,
       selection: { ...DEFAULT_SELECTION }
     });
   }
 
+  hydrationCompleted = true;
   return Promise.resolve({
     version: SCHEMA_VERSION,
     selection: sanitizeSelection(parsed.selection),
@@ -101,6 +110,14 @@ export function saveMusicTileState(selection) {
     version: SCHEMA_VERSION,
     selection: sanitizeSelection(selection)
   };
+
+  if (!hydrationCompleted) {
+    console.info(LOG_PREFIX, 'save-skipped', {
+      appId: APP_ID,
+      reason: 'hydration-incomplete'
+    });
+    return payload;
+  }
 
   const tileDataClient = window.StephanosTileDataContract?.client;
   if (tileDataClient?.saveDurableState) {
@@ -129,6 +146,16 @@ export function saveMusicTileState(selection) {
 }
 
 export function resetMusicTileState() {
+  if (!hydrationCompleted) {
+    console.info(LOG_PREFIX, 'reset-skipped', {
+      appId: APP_ID,
+      reason: 'hydration-incomplete'
+    });
+    return {
+      version: SCHEMA_VERSION,
+      selection: { ...DEFAULT_SELECTION }
+    };
+  }
   const tileDataClient = window.StephanosTileDataContract?.client;
   if (tileDataClient?.saveDurableState) {
     tileDataClient.saveDurableState({
