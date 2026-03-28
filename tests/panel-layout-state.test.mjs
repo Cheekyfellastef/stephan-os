@@ -292,6 +292,31 @@ test('build-proof panel participates in draggable persistent layout lifecycle', 
   assert.notEqual(collapsed, true);
 });
 
+test('panel header tap without threshold movement does not commit drag position', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panel = ui.createPanel('service-inspector-panel', 'Service Inspector');
+  const header = panel.querySelector('.stephanos-panel-header');
+
+  header.dispatch('pointerdown', { button: 0, clientX: 120, clientY: 120, preventDefault() {}, target: { closest() { return null; } } });
+  header.dispatch('pointermove', { clientX: 122, clientY: 122 });
+  header.dispatch('pointerup', {});
+
+  const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(memory.session.ui.uiLayout.panelPositions || {}, 'service-inspector-panel'),
+    false,
+  );
+});
+
 test('createPanel normalizes pre-existing panel stack container to click-through overlay defaults', () => {
   const storage = createStorage({
     [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),

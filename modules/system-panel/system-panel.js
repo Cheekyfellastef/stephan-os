@@ -3,6 +3,7 @@ import {
   readPersistedStephanosSessionMemory,
 } from '../../shared/runtime/stephanosSessionMemory.mjs';
 import { getSystemPanelToggleDefinitions } from '../../shared/runtime/systemPanelToggleRegistry.mjs';
+import { attachPointerDrag } from '../../system/pointer_drag.js';
 
 export const moduleDefinition = {
   id: 'system-panel',
@@ -203,58 +204,18 @@ export function installDraggablePanel(
   if (!handle) {
     return;
   }
-
-  let dragState = null;
-  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-  const applyPosition = (x, y) => {
-    const panelBounds = panel.getBoundingClientRect();
-    const maxX = Math.max(8, window.innerWidth - panelBounds.width - 8);
-    const maxY = Math.max(8, window.innerHeight - panelBounds.height - 8);
-    panel.style.left = `${clamp(x, 8, maxX)}px`;
-    panel.style.top = `${clamp(y, 8, maxY)}px`;
-    panel.style.transform = 'none';
-  };
-
-  handle.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-    if (event.target?.closest?.('.stephanos-panel-knob')) {
-      return;
-    }
-    const bounds = panel.getBoundingClientRect();
-    applyPosition(bounds.left, bounds.top);
-    const normalizedBounds = panel.getBoundingClientRect();
-    dragState = {
-      offsetX: event.clientX - normalizedBounds.left,
-      offsetY: event.clientY - normalizedBounds.top,
-    };
-    panel.classList.add('stephanos-panel-dragging');
-    handle.setPointerCapture?.(event.pointerId);
-    event.preventDefault();
+  attachPointerDrag({
+    panel,
+    handle,
+    panelId: panel.id || 'stephanos-system-panel',
+    preferViewportSpace: true,
+    debug: globalThis.window?.isDeveloperModeEnabled?.() === true,
+    interactiveSelector: '.stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]',
+    onDragStart() {
+      panel.parentNode?.appendChild?.(panel);
+    },
+    onPositionCommit,
   });
-
-  handle.addEventListener('pointermove', (event) => {
-    if (!dragState) {
-      return;
-    }
-    applyPosition(event.clientX - dragState.offsetX, event.clientY - dragState.offsetY);
-  });
-
-  const clearDragState = () => {
-    if (dragState) {
-      const left = Number.parseFloat(panel.style.left);
-      const top = Number.parseFloat(panel.style.top);
-      if (Number.isFinite(left) && Number.isFinite(top)) {
-        onPositionCommit?.({ x: left, y: top });
-      }
-    }
-    dragState = null;
-    panel.classList.remove('stephanos-panel-dragging');
-  };
-
-  handle.addEventListener('pointerup', clearDragState);
-  handle.addEventListener('pointercancel', clearDragState);
 }
 
 export function init() {
