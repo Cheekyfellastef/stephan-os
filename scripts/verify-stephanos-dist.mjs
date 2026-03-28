@@ -32,6 +32,16 @@ if (importGuardResult.error || importGuardResult.status !== 0) {
 }
 
 
+const launcherScriptGuardResult = spawnSync(process.execPath, ['scripts/guard-launcher-scripts.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+
+if (launcherScriptGuardResult.error || launcherScriptGuardResult.status !== 0) {
+  fail('Launcher script guard failed. Resolve parser-hazard script violations before dist verification.');
+}
+
+
 const stephanosAppManifestPath = resolve('apps/stephanos/app.json');
 
 let stephanosAppManifest;
