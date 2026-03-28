@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'stephanos.musicTile.state.v1';
 const SCHEMA_VERSION = 1;
+const APP_ID = 'music-tile';
 
 export const DEFAULT_SELECTION = {
   era: 'afterlife-modern',
@@ -32,26 +33,43 @@ function sanitizeSelection(value) {
 }
 
 export function loadMusicTileState() {
+  const tileDataClient = window.StephanosTileDataContract?.client;
+  if (tileDataClient?.loadDurableState) {
+    return tileDataClient.loadDurableState({
+      appId: APP_ID,
+      schemaVersion: SCHEMA_VERSION,
+      defaultState: {
+        version: SCHEMA_VERSION,
+        selection: { ...DEFAULT_SELECTION }
+      },
+      sanitizeState: (value) => ({
+        version: SCHEMA_VERSION,
+        selection: sanitizeSelection(value?.selection)
+      }),
+      legacyKeys: [STORAGE_KEY],
+    }).then((response) => response.state);
+  }
+
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    return {
+    return Promise.resolve({
       version: SCHEMA_VERSION,
       selection: { ...DEFAULT_SELECTION }
-    };
+    });
   }
 
   const parsed = safeParse(raw);
   if (!parsed || parsed.version !== SCHEMA_VERSION) {
-    return {
+    return Promise.resolve({
       version: SCHEMA_VERSION,
       selection: { ...DEFAULT_SELECTION }
-    };
+    });
   }
 
-  return {
+  return Promise.resolve({
     version: SCHEMA_VERSION,
     selection: sanitizeSelection(parsed.selection)
-  };
+  });
 }
 
 export function saveMusicTileState(selection) {
@@ -60,11 +78,41 @@ export function saveMusicTileState(selection) {
     selection: sanitizeSelection(selection)
   };
 
+  const tileDataClient = window.StephanosTileDataContract?.client;
+  if (tileDataClient?.saveDurableState) {
+    tileDataClient.saveDurableState({
+      appId: APP_ID,
+      schemaVersion: SCHEMA_VERSION,
+      state: payload,
+      sanitizeState: (value) => ({
+        version: SCHEMA_VERSION,
+        selection: sanitizeSelection(value?.selection)
+      }),
+    });
+    return payload;
+  }
+
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   return payload;
 }
 
 export function resetMusicTileState() {
+  const tileDataClient = window.StephanosTileDataContract?.client;
+  if (tileDataClient?.saveDurableState) {
+    tileDataClient.saveDurableState({
+      appId: APP_ID,
+      schemaVersion: SCHEMA_VERSION,
+      state: {
+        version: SCHEMA_VERSION,
+        selection: { ...DEFAULT_SELECTION }
+      },
+      sanitizeState: (value) => ({
+        version: SCHEMA_VERSION,
+        selection: sanitizeSelection(value?.selection)
+      }),
+    });
+  }
+
   window.localStorage.removeItem(STORAGE_KEY);
   return {
     version: SCHEMA_VERSION,
