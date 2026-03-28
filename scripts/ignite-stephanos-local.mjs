@@ -117,6 +117,10 @@ const APPROVED_LOCAL_DIR_PREFIXES = [
   'apps/stephanos/dist/',
 ];
 
+const APPROVED_TRACKED_GENERATED_DIR_PREFIXES = [
+  'apps/stephanos/dist/',
+];
+
 const APPROVED_LOCAL_FILE_PATHS = new Set([
   'package-lock.json',
   'stephanos-server/package-lock.json',
@@ -137,6 +141,10 @@ function isApprovedLocalDirtPath(path) {
   }
 
   return APPROVED_LOCAL_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+function isApprovedTrackedGeneratedPath(path) {
+  return APPROVED_TRACKED_GENERATED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 function parsePorcelainStatusLine(line) {
@@ -174,10 +182,38 @@ export function evaluateGitStatusForIgnition(statusOutput) {
   };
 }
 
-function runGitPullPreflight() {
+function isTrackedStatus(status) {
+  return !status.includes('?');
+}
+
+export function collectApprovedTrackedGeneratedRestorePaths(statusAssessment) {
+  const restorePaths = new Set();
+  for (const entry of statusAssessment.approvedEntries) {
+    if (!isTrackedStatus(entry.status)) {
+      continue;
+    }
+
+    const approvedGeneratedOnly = entry.paths.every((path) => isApprovedTrackedGeneratedPath(path));
+    if (!approvedGeneratedOnly) {
+      continue;
+    }
+
+    for (const path of entry.paths) {
+      restorePaths.add(path);
+    }
+  }
+
+  return Array.from(restorePaths).sort();
+}
+
+export function runGitPullPreflightWithDeps({
+  captureStep = runStepCapture,
+  runStepFn = runStep,
+} = {}) {
   console.log('[IGNITION] git status check starting');
-  const statusResult = runStepCapture('git-status', 'git', ['status', '--porcelain']);
+  const statusResult = captureStep('git-status', 'git', ['status', '--porcelain']);
   const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
+  const approvedTrackedGeneratedRestorePaths = collectApprovedTrackedGeneratedRestorePaths(statusAssessment);
 
   if (statusAssessment.approvedEntries.length > 0) {
     console.log(`[IGNITION] approved local dirt ignored (${statusAssessment.approvedEntries.length} entries)`);
@@ -195,14 +231,21 @@ function runGitPullPreflight() {
     throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
   }
 
+  if (approvedTrackedGeneratedRestorePaths.length > 0) {
+    console.log(`[IGNITION] approved tracked generated dirt detected (${approvedTrackedGeneratedRestorePaths.length} paths)`);
+    console.log(`[IGNITION] restoring approved tracked generated dirt: ${approvedTrackedGeneratedRestorePaths.join(', ')}`);
+    runStepFn('git-restore-approved-tracked-generated-dirt', 'git', ['restore', '--worktree', '--staged', '--', ...approvedTrackedGeneratedRestorePaths]);
+    console.log('[IGNITION] approved tracked generated dirt restored');
+  }
+
   console.log('[IGNITION] git status clean');
   console.log('[IGNITION] git fetch starting');
-  runStep('git-fetch', 'git', ['fetch', '--prune', '--tags']);
+  runStepFn('git-fetch', 'git', ['fetch', '--prune', '--tags']);
   console.log('[IGNITION] git fetch passed');
 
   console.log('[IGNITION] git pull --ff-only starting');
   try {
-    runStep('git-pull-ff-only', 'git', ['pull', '--ff-only']);
+    runStepFn('git-pull-ff-only', 'git', ['pull', '--ff-only']);
   }
   catch (error) {
     console.error('[IGNITION] git pull blocked');
@@ -210,6 +253,10 @@ function runGitPullPreflight() {
   }
 
   console.log('[IGNITION] git pull passed');
+}
+
+function runGitPullPreflight() {
+  runGitPullPreflightWithDeps();
 }
 
 function printPreflightSummary({ decision, expectedMetadata, distMetadata, buildAction, verifyResult, processResult, finalResult }) {
