@@ -113,20 +113,25 @@ export async function run() {
     return;
   }
 
-  let buildAction = `skipped (${preflightState.decision.reason})`;
+  let buildAction = 'required pre-flight build (always-run policy)';
   let verifyResult = 'not-run';
 
   await runIgnitionPlan({
     preflightState,
     runBuild: async () => {
-      buildAction = `rebuilt (${preflightState.decision.state})`;
+      console.log('[IGNITION] build starting');
       runStep('build', npmCommand, ['run', 'stephanos:build']);
+      buildAction = `passed (${preflightState.decision.state})`;
+      console.log('[IGNITION] build passed');
     },
     runVerify: async () => {
+      console.log('[IGNITION] verify starting');
       runStep('verify', npmCommand, ['run', 'stephanos:verify']);
       verifyResult = 'passed';
+      console.log('[IGNITION] verify passed');
     },
     runServe: async () => {
+      console.log('[IGNITION] launch continuing');
       const refreshedState = readLocalBuildState();
       printPreflightSummary({
         ...refreshedState,
@@ -150,6 +155,7 @@ export function isMainModule(argv = process.argv, metaUrl = import.meta.url) {
 
 if (isMainModule()) {
   run().catch((error) => {
+    console.error('[IGNITION] launch blocked');
     console.error(`[IGNITION PREFLIGHT] failed: ${error.message}`);
     process.exit(1);
   });
