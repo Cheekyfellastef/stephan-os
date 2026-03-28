@@ -240,3 +240,34 @@ test('renderProjectRegistry shields non-tile direct children from intercepting l
     globalThis.document = originalDocument;
   }
 });
+
+test('renderProjectRegistry keeps tile DOM stable when render state is unchanged', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launchEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    runtimeEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launcherEntry: 'http://127.0.0.1:4173/',
+    validationState: 'healthy',
+    statusMessage: 'Stephanos ready: dist runtime live at http://127.0.0.1:4173/apps/stephanos/dist/index.html.',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const registry = globalThis.document.getElementById('project-registry');
+    const firstTile = registry.children[0];
+    assert.equal(typeof firstTile.onclick, 'function');
+
+    renderProjectRegistry(projects.map((project) => ({ ...project })), { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const secondTile = registry.children[0];
+    assert.equal(secondTile, firstTile);
+    assert.equal(typeof secondTile.onclick, 'function');
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});

@@ -335,6 +335,49 @@ function syncTileRegistrySnapshots(projects) {
     });
 }
 
+function createProjectRegistryRenderSignature(projects, options = {}) {
+  const safeProjects = (Array.isArray(projects) ? projects : []).map(normaliseProject);
+  const renderState = safeProjects.map((project) => {
+    const isStephanos = isStephanosProject(project);
+    const hasLaunchTarget = isStephanos
+      ? Boolean(resolveStephanosLaunchTarget(project))
+      : Boolean(String(project.entry || '').trim());
+    const launchInProgress = project.validationState === 'launching';
+    const launchError = project.validationState === 'error';
+    const launchableWhilePending = launchInProgress && hasLaunchTarget;
+    const launchableWhileErrored = launchError && hasLaunchTarget;
+    const blockLaunch = !hasLaunchTarget || (launchInProgress && !launchableWhilePending);
+
+    return {
+      id: String(project?.id || project?.folder || project?.name || '').trim().toLowerCase(),
+      name: project.name,
+      icon: project.icon,
+      validationState: project.validationState,
+      statusMessage: project.statusMessage,
+      validationIssue: project.validationIssues?.[0] || '',
+      dependencyState: project.dependencyState,
+      runtimeDetail: {
+        dependencySummary: project.runtimeStatusModel?.dependencySummary || '',
+        preferredTarget: project.runtimeStatusModel?.preferredTarget || '',
+        forensicBoundary: project.runtimeStatusModel?.routeForensics?.firstBadTransition || '',
+      },
+      buildStampLabel: project.buildStampLabel,
+      buildMarker: project.buildMarker,
+      launchFlags: {
+        blockLaunch,
+        launchError,
+        launchableWhileErrored,
+        launchInProgress,
+      },
+    };
+  });
+
+  return JSON.stringify({
+    enableSecondaryStatusSurfaces: options?.enableSecondaryStatusSurfaces === true,
+    projects: renderState,
+  });
+}
+
 export function renderProjectRegistry(projects, context, options = {}) {
   const container = document.getElementById('project-registry');
   if (!container) {
@@ -342,6 +385,11 @@ export function renderProjectRegistry(projects, context, options = {}) {
     return;
   }
 
+  const nextSignature = createProjectRegistryRenderSignature(projects, options);
+  if (container.__commandDeckRenderSignature === nextSignature) {
+    return;
+  }
+  container.__commandDeckRenderSignature = nextSignature;
   container.innerHTML = '';
   syncTileRegistrySnapshots(projects);
 
