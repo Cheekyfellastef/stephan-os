@@ -178,7 +178,47 @@ function Get-CockpitSurfaces([string]$ResolvedBootMode) {
 
 function Open-CockpitSurface([string]$Url, [string]$Label) {
   Write-LiveLog "Opening $Label: $Url"
-  Start-Process -FilePath $Url | Out-Null
+
+  $openAttempts = @(
+    [ordered]@{
+      Name = 'cmd-start'
+      Invoke = {
+        & cmd.exe /d /c start "" "$Url" | Out-Null
+        return $LASTEXITCODE -eq 0
+      }
+    },
+    [ordered]@{
+      Name = 'explorer'
+      Invoke = {
+        Start-Process -FilePath 'explorer.exe' -ArgumentList @($Url) | Out-Null
+        return $true
+      }
+    },
+    [ordered]@{
+      Name = 'start-process-url'
+      Invoke = {
+        Start-Process -FilePath $Url | Out-Null
+        return $true
+      }
+    }
+  )
+
+  foreach ($attempt in $openAttempts) {
+    Write-LiveLog "Opening $Label via $($attempt.Name)"
+    try {
+      if (& $attempt.Invoke) {
+        Write-LiveLog "Opened $Label via $($attempt.Name)"
+        return
+      }
+
+      Write-LiveLog "Open attempt $($attempt.Name) returned non-success for $Label"
+    }
+    catch {
+      Write-LiveLog "Open attempt $($attempt.Name) failed for $Label: $($_.Exception.Message)"
+    }
+  }
+
+  throw "Unable to open $Label in browser for URL $Url"
 }
 
 try {
@@ -275,8 +315,13 @@ try {
   Write-Host ''
 
   if ($autoOpenEnabled) {
-    foreach ($surface in $browserSurfaces) {
+    for ($index = 0; $index -lt $browserSurfaces.Count; $index++) {
+      $surface = $browserSurfaces[$index]
       Open-CockpitSurface -Url $surface.Url -Label $surface.Label
+
+      if ($index -lt ($browserSurfaces.Count - 1)) {
+        Start-Sleep -Milliseconds 450
+      }
     }
   }
 }
