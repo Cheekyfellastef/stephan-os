@@ -172,3 +172,29 @@ test('renderProjectRegistry keeps non-launchable pending tiles blocked', () => {
     globalThis.document = originalDocument;
   }
 });
+
+test('renderProjectRegistry keeps launch-target tiles interactive while validation reports error', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launchEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    runtimeEntry: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    launcherEntry: 'http://127.0.0.1:4173/',
+    validationState: 'error',
+    statusMessage: 'Runtime route probe failed; fallback launch target remains available.',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const tile = globalThis.document.getElementById('project-registry').children[0];
+    assert.equal(typeof tile.onclick, 'function');
+    assert.equal(tile.className.includes('app-tile-error-launchable'), true);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
