@@ -1,19 +1,64 @@
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
+function formatStep(label, command, commandArgs) {
+  return `[IGNITION PREFLIGHT] ${label}: ${command} ${commandArgs.join(' ')}`;
+}
+
+function isWindowsNpmCommand(command, platform = process.platform) {
+  if (platform !== 'win32') {
+    return false;
+  }
+
+  return /(^|[\\/])npm(?:\.cmd)?$/i.test(command);
+}
+
+function quoteWindowsCmdArg(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+export function resolveStepExecution(command, commandArgs, platform = process.platform) {
+  if (isWindowsNpmCommand(command, platform)) {
+    const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
+    const commandLine = [command, ...commandArgs].map(quoteWindowsCmdArg).join(' ');
+    return {
+      command: comspec,
+      commandArgs: ['/d', '/s', '/c', commandLine],
+      mode: 'windows-cmd-wrapper',
+    };
+  }
+
+  return {
+    command,
+    commandArgs,
+    mode: 'direct',
+  };
+}
+
 function runStep(label, command, commandArgs) {
-  console.log(`[IGNITION PREFLIGHT] ${label}: ${command} ${commandArgs.join(' ')}`);
-  const result = spawnSync(command, commandArgs, {
+  console.log(formatStep(label, command, commandArgs));
+  const execution = resolveStepExecution(command, commandArgs);
+  const result = spawnSync(execution.command, execution.commandArgs, {
     cwd: process.cwd(),
     stdio: 'inherit',
   });
 
   if (result.error || result.status !== 0) {
-    throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
+    const details = [
+      `executionMode=${execution.mode}`,
+      `command=${execution.command}`,
+      `args=${JSON.stringify(execution.commandArgs)}`,
+      `status=${result.status ?? 'null'}`,
+      `signal=${result.signal ?? 'null'}`,
+      `error=${result.error ? result.error.message : 'null'}`,
+    ].join(', ');
+    throw new Error(`${label} failed (${details})`);
   }
 }
 
@@ -83,7 +128,15 @@ export async function run() {
   });
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
+export function isMainModule(argv = process.argv, metaUrl = import.meta.url) {
+  if (!argv?.[1]) {
+    return false;
+  }
+
+  return metaUrl === pathToFileURL(resolve(argv[1])).href;
+}
+
+if (isMainModule()) {
   run().catch((error) => {
     console.error(`[IGNITION PREFLIGHT] failed: ${error.message}`);
     process.exit(1);
