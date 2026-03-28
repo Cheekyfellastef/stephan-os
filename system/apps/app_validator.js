@@ -877,10 +877,6 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   ).trim();
   const buildStampLabel = `Stephanos Build: ${buildStamp}`;
 
-  const currentHostname = extractHostname(currentOrigin);
-  const launcherPathname = String(globalThis.location?.pathname || "/");
-  const localLauncherShell = isLoopbackHost(currentHostname) && ["/", "/index.html"].includes(launcherPathname);
-
   const launcherShellUrl = resolveCanonicalLauncherShellUrl(currentOrigin);
   let runtimeLaunchUrl = '';
   let launchStrategy = 'workspace';
@@ -912,15 +908,6 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   let launcherEntry = launcherShellUrl;
   let runtimeEntry = runtimeLaunchUrl;
   let launchEntry = runtimeLaunchUrl;
-  if (localLauncherShell) {
-    launcherEntry = launcherShellUrl;
-    runtimeEntry = runtimeLaunchUrl;
-    launchEntry = runtimeLaunchUrl;
-    launchUrl = runtimeLaunchUrl;
-    if (runtimeLaunchUrl) {
-      launchStrategy = 'navigate';
-    }
-  }
 
   const launchableRuntime = Boolean(launchUrl);
   const staleStateCleared = Boolean(

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { validateApps, validateStephanosRuntime } from '../system/apps/app_validator.js';
 
-function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/' } = {}) {
+function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/', runtimeReachable = true } = {}) {
   return async (url, options = {}) => {
     const requestUrl = String(url);
 
@@ -12,6 +12,7 @@ function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/' } = {}
         requestUrl === 'http://localhost:5173/'
         || requestUrl === 'http://127.0.0.1:5173/'
         || requestUrl === 'http://127.0.0.1:4173/apps/stephanos/dist/'
+        || requestUrl.includes('/apps/stephanos/dist/')
       ) {
         return { ok: true, status: 200, text: async () => '' };
       }
@@ -41,7 +42,7 @@ function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/' } = {}
       };
     }
 
-    if (requestUrl === 'http://localhost:8787/api/health') {
+    if (requestUrl.endsWith('/api/health')) {
       return {
         ok: true,
         status: 200,
@@ -50,7 +51,7 @@ function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/' } = {}
       };
     }
 
-    if (requestUrl === 'http://localhost:8787/api/ai/providers/health') {
+    if (requestUrl.endsWith('/api/ai/providers/health')) {
       return {
         ok: true,
         status: 200,
@@ -59,7 +60,7 @@ function createStephanosFetchMock({ runtimeUrl = 'http://localhost:5173/' } = {}
       };
     }
 
-    if (requestUrl === runtimeUrl || requestUrl === 'http://127.0.0.1:5173/') {
+    if ((requestUrl === runtimeUrl || requestUrl === 'http://127.0.0.1:5173/') && runtimeReachable) {
       return {
         ok: true,
         status: 200,
@@ -212,6 +213,39 @@ test('validateApps keeps separated Stephanos entries authoritative while app.ent
     assert.equal(app.launchEntry, 'http://localhost:5173/');
     assert.equal(app.entry, app.launchEntry);
     assert.notEqual(app.launcherEntry, app.runtimeEntry);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.location = originalLocation;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
+test('validateStephanosRuntime keeps launcher tile interaction semantics aligned between localhost and hosted roots', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocation = globalThis.location;
+  const originalLocalStorage = globalThis.localStorage;
+
+  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+
+  try {
+    const runScenario = async ({ origin, pathname }) => {
+      globalThis.window = { location: { origin, pathname } };
+      globalThis.location = { pathname };
+      globalThis.fetch = createStephanosFetchMock({ runtimeReachable: false });
+      return validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+    };
+
+    const localhostStatus = await runScenario({ origin: 'http://127.0.0.1:4173', pathname: '/' });
+    const hostedStatus = await runScenario({ origin: 'https://launcher.stephanos.example', pathname: '/' });
+
+    assert.equal(localhostStatus.state, 'healthy');
+    assert.equal(hostedStatus.state, 'healthy');
+    assert.equal(localhostStatus.launchStrategy, hostedStatus.launchStrategy);
+    assert.equal(localhostStatus.launchStrategy, 'workspace');
+    assert.equal(Boolean(localhostStatus.launchEntry), true);
+    assert.equal(Boolean(hostedStatus.launchEntry), true);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;
