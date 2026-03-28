@@ -177,7 +177,7 @@ function Get-CockpitSurfaces([string]$ResolvedBootMode) {
 }
 
 function Open-CockpitSurface([string]$Url, [string]$Label) {
-  Write-LiveLog "Opening $Label: $Url"
+  Write-LiveLog "Opening ${Label}: $Url"
 
   $openAttempts = @(
     [ordered]@{
@@ -214,7 +214,7 @@ function Open-CockpitSurface([string]$Url, [string]$Label) {
       Write-LiveLog "Open attempt $($attempt.Name) returned non-success for $Label"
     }
     catch {
-      Write-LiveLog "Open attempt $($attempt.Name) failed for $Label: $($_.Exception.Message)"
+      Write-LiveLog "Open attempt $($attempt.Name) failed for ${Label}: $($_.Exception.Message)"
     }
   }
 
