@@ -106,6 +106,8 @@ export function createUIRenderer() {
       return container;
     }
 
+    // Always enforce stack-shell hit-testing defaults so runtime/state transitions
+    // cannot leave the stack as an invisible click-capturing layer.
     container.style.display = container.style.display || "none";
     container.style.position = "fixed";
     container.style.inset = "0";

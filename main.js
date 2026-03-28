@@ -425,9 +425,125 @@ async function hydrateLauncherBuildProof() {
 
 window.openSystemPanel = function() {};
 
+function hardenPanelStackContainer(container = document.getElementById("stephanos-panel-stack")) {
+  if (!container?.style) {
+    return null;
+  }
+
+  container.style.position = "fixed";
+  container.style.inset = "0";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "4500";
+  return container;
+}
+
+function formatLayerNode(node) {
+  if (!node) {
+    return "null";
+  }
+
+  const id = node.id ? `#${node.id}` : "";
+  const className = typeof node.className === "string" && node.className.trim().length > 0
+    ? `.${node.className.trim().replace(/\s+/g, ".")}`
+    : "";
+  return `${node.tagName?.toLowerCase?.() || "node"}${id}${className}`;
+}
+
+window.inspectLauncherHitTesting = function inspectLauncherHitTesting({ tileIndex = 0 } = {}) {
+  const registry = document.getElementById("project-registry");
+  const tiles = Array.from(registry?.querySelectorAll?.(".app-tile") || []);
+  const safeIndex = Number.isFinite(Number(tileIndex))
+    ? Math.max(0, Math.min(tiles.length - 1, Number(tileIndex)))
+    : 0;
+  const tile = tiles[safeIndex] || null;
+  const panelStack = hardenPanelStackContainer();
+  const surfaceIds = [
+    "project-registry",
+    "stephanos-panel-stack",
+    "stephanos-layout",
+    "launcher-diagnostics-panel",
+    "launcher-build-proof",
+    "system-panel-popup",
+  ];
+
+  const targetRect = tile?.getBoundingClientRect?.() || null;
+  const centerPoint = targetRect
+    ? {
+      x: targetRect.left + (targetRect.width / 2),
+      y: targetRect.top + (targetRect.height / 2),
+    }
+    : null;
+  const hitElement = centerPoint ? document.elementFromPoint(centerPoint.x, centerPoint.y) : null;
+
+  const summarizeNode = (node) => {
+    if (!node) {
+      return null;
+    }
+    const rect = node.getBoundingClientRect?.() || null;
+    const computed = globalThis.getComputedStyle?.(node);
+    return {
+      selector: formatLayerNode(node),
+      rect: rect
+        ? {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left,
+          right: rect.right,
+          bottom: rect.bottom,
+        }
+        : null,
+      computedStyle: {
+        pointerEvents: computed?.pointerEvents || node.style?.pointerEvents || "",
+        position: computed?.position || node.style?.position || "",
+        zIndex: computed?.zIndex || node.style?.zIndex || "",
+      },
+    };
+  };
+
+  const surfaceSummaries = surfaceIds
+    .map((id) => ({ id, element: document.getElementById(id) }))
+    .filter((entry) => entry.element)
+    .map((entry) => ({
+      id: entry.id,
+      ...summarizeNode(entry.element),
+    }));
+
+  const bodyOrder = Array.from(document.body?.children || []).map((node, index) => {
+    const computed = globalThis.getComputedStyle?.(node);
+    return {
+      index,
+      selector: formatLayerNode(node),
+      pointerEvents: computed?.pointerEvents || node.style?.pointerEvents || "",
+      position: computed?.position || node.style?.position || "",
+      zIndex: computed?.zIndex || node.style?.zIndex || "",
+    };
+  });
+
+  const report = {
+    tileIndex: safeIndex,
+    tileCount: tiles.length,
+    targetPoint: centerPoint,
+    hitElement: summarizeNode(hitElement),
+    registry: summarizeNode(registry),
+    tile: summarizeNode(tile),
+    panelStack: summarizeNode(panelStack),
+    surfaces: surfaceSummaries,
+    bodyOrder,
+  };
+
+  console.groupCollapsed?.(`[Launcher Hit-Test] tile ${safeIndex}/${Math.max(tiles.length - 1, 0)}`);
+  console.log?.("Launcher hit-test report:", report);
+  console.table?.(bodyOrder);
+  console.groupEnd?.();
+  return report;
+};
+
 window.setPanelState = function(panelId, enabled) {
   const panel = document.getElementById(panelId);
-  const container = document.getElementById("stephanos-panel-stack");
+  const container = hardenPanelStackContainer();
   const currentMemory = readPersistedStephanosSessionMemory();
   persistStephanosSessionMemory({
     ...currentMemory,
@@ -443,13 +559,19 @@ window.setPanelState = function(panelId, enabled) {
     },
   });
 
-  if (!panel) return;
+  if (!panel) {
+    if (container) {
+      const anyVisible = Array.from(container.children).some((p) => p.style.display !== "none");
+      container.style.display = anyVisible ? "block" : "none";
+    }
+    return;
+  }
 
   panel.style.display = enabled ? "block" : "none";
 
   if (!container) return;
 
-  const anyVisible = Array.from(container.children).some(p => p.style.display !== "none");
+  const anyVisible = Array.from(container.children).some((p) => p.style.display !== "none");
 
   container.style.display = anyVisible ? "block" : "none";
 };
