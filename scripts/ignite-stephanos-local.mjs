@@ -103,18 +103,94 @@ function runStepCapture(label, command, commandArgs) {
 }
 
 export function isGitWorkingTreeClean(statusOutput) {
-  return String(statusOutput || '').trim().length === 0;
+  return evaluateGitStatusForIgnition(statusOutput).meaningfulEntries.length === 0;
 }
 
 export function shouldAutoPull(argvArgs = args) {
   return !argvArgs.has('--skip-auto-pull');
 }
 
+const APPROVED_LOCAL_DIR_PREFIXES = [
+  'node_modules/',
+  'stephanos-server/node_modules/',
+  'stephanos-ui/node_modules/',
+  'apps/stephanos/dist/',
+];
+
+const APPROVED_LOCAL_FILE_PATHS = new Set([
+  'package-lock.json',
+  'stephanos-server/package-lock.json',
+  'stephanos-ui/package-lock.json',
+]);
+
+function normalizeGitPath(rawPath) {
+  const trimmed = String(rawPath || '').trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function isApprovedLocalDirtPath(path) {
+  if (APPROVED_LOCAL_FILE_PATHS.has(path)) {
+    return true;
+  }
+
+  return APPROVED_LOCAL_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+function parsePorcelainStatusLine(line) {
+  const status = line.slice(0, 2);
+  const pathSegment = line.slice(3).trim();
+  const rawPaths = pathSegment.includes(' -> ') ? pathSegment.split(' -> ') : [pathSegment];
+  const paths = rawPaths.map(normalizeGitPath).filter(Boolean);
+  return { status, paths, rawLine: line };
+}
+
+export function evaluateGitStatusForIgnition(statusOutput) {
+  const lines = String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  const entries = lines.map(parsePorcelainStatusLine);
+  const approvedEntries = [];
+  const meaningfulEntries = [];
+
+  for (const entry of entries) {
+    const approved = entry.paths.every((path) => isApprovedLocalDirtPath(path));
+    if (approved) {
+      approvedEntries.push(entry);
+    }
+    else {
+      meaningfulEntries.push(entry);
+    }
+  }
+
+  return {
+    entries,
+    approvedEntries,
+    meaningfulEntries,
+  };
+}
+
 function runGitPullPreflight() {
   console.log('[IGNITION] git status check starting');
   const statusResult = runStepCapture('git-status', 'git', ['status', '--porcelain']);
+  const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
 
-  if (!isGitWorkingTreeClean(statusResult.stdout)) {
+  if (statusAssessment.approvedEntries.length > 0) {
+    console.log(`[IGNITION] approved local dirt ignored (${statusAssessment.approvedEntries.length} entries)`);
+    for (const entry of statusAssessment.approvedEntries) {
+      console.log(`[IGNITION] approved local dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
+    }
+  }
+
+  if (statusAssessment.meaningfulEntries.length > 0) {
+    console.error('[IGNITION] meaningful local dirt detected');
+    for (const entry of statusAssessment.meaningfulEntries) {
+      console.error(`[IGNITION] meaningful local dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
+    }
     console.error('[IGNITION] git pull blocked');
     throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
   }
