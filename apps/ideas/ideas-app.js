@@ -1,6 +1,6 @@
-import { createSimulationNodeStore, SIMULATION_NODE_CATEGORIES } from '../../shared/runtime/simulationNodeStore.mjs';
+import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
 
-const store = createSimulationNodeStore({ category: SIMULATION_NODE_CATEGORIES.ideas });
+const persistence = createIdeasPersistence(window);
 const IDEAS_APP_ID = 'ideas';
 const IDEAS_DATA_PORT_VERSION = 1;
 
@@ -71,60 +71,50 @@ const elements = {
   importLastReason: document.getElementById('ideas-import-last-reason'),
 };
 
-function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+let state = { records: [] };
+let hydrationCompleted = false;
+let hydrationSource = 'unknown';
+
+function readAll() {
+  return [...state.records].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
 
-function sanitizeIdeaRecord(record) {
-  if (!isRecord(record)) {
-    return null;
-  }
-
-  const title = typeof record.title === 'string' ? record.title.trim() : '';
-  const id = typeof record.id === 'string' ? record.id.trim() : '';
-  if (!title || !id) {
-    return null;
-  }
-
-  return {
-    id,
-    title,
-    summary: typeof record.summary === 'string' ? record.summary.trim() : '',
-    tags: Array.isArray(record.tags) ? record.tags.filter((tag) => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean) : [],
-    media: Array.isArray(record.media)
-      ? record.media
-        .filter((media) => isRecord(media))
-        .map((media) => ({
-          type: typeof media.type === 'string' ? media.type : '',
-          title: typeof media.title === 'string' ? media.title : '',
-          source: typeof media.source === 'string' ? media.source : '',
-          notes: typeof media.notes === 'string' ? media.notes : '',
-        }))
-      : [],
-    createdAt: typeof record.createdAt === 'string' ? record.createdAt : '',
-    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
-  };
+async function writeAll(records) {
+  const sanitized = sanitizeIdeasState({ records });
+  state = sanitized;
+  await persistence.saveState({
+    state,
+    ui: {},
+    hydrationCompleted,
+  });
+  return sanitized.records;
 }
 
-function sanitizeIdeasState(value) {
-  if (!isRecord(value)) {
-    return { records: [] };
+async function upsert(record) {
+  const now = new Date().toISOString();
+  const prepared = sanitizeIdeasState({
+    records: [{
+      ...record,
+      id: (typeof record.id === 'string' && record.id.trim()) || `ideas_${Date.now()}`,
+      createdAt: record.createdAt || now,
+      updatedAt: now,
+    }],
+  }).records[0];
+
+  if (!prepared) {
+    throw new Error('Invalid idea record.');
   }
 
-  const records = Array.isArray(value.records)
-    ? value.records.map(sanitizeIdeaRecord).filter(Boolean)
-    : [];
-
-  return { records };
+  const next = [prepared, ...readAll().filter((entry) => entry.id !== prepared.id)];
+  await writeAll(next);
 }
 
 function createIdeasExportPayload() {
-  const state = sanitizeIdeasState({ records: store.readAll() });
   return {
     app: IDEAS_APP_ID,
     version: IDEAS_DATA_PORT_VERSION,
     exportedAt: new Date().toISOString(),
-    state,
+    state: sanitizeIdeasState({ records: readAll() }),
     ui: {},
   };
 }
@@ -141,7 +131,7 @@ function parseImportPayload(rawText) {
     return { ok: false, message: 'Import failed: invalid JSON.' };
   }
 
-  if (!isRecord(parsed) || parsed.app !== IDEAS_APP_ID) {
+  if (!parsed || parsed.app !== IDEAS_APP_ID) {
     return { ok: false, message: 'Import failed: wrong app payload. Expected app "ideas".' };
   }
 
@@ -150,11 +140,7 @@ function parseImportPayload(rawText) {
     return { ok: false, message: `Import failed: unsupported version. Expected 1-${IDEAS_DATA_PORT_VERSION}.` };
   }
 
-  if (!isRecord(parsed.state)) {
-    return { ok: false, message: 'Import failed: missing state payload.' };
-  }
-
-  if (!Array.isArray(parsed.state.records)) {
+  if (!parsed.state || !Array.isArray(parsed.state.records)) {
     return { ok: false, message: 'Import failed: state.records must be an array.' };
   }
 
@@ -203,16 +189,8 @@ function formatDate(value) {
   return Number.isNaN(parsed.getTime()) ? 'unknown' : parsed.toLocaleString();
 }
 
-function seedIfEmpty() {
-  if (store.readAll().length > 0) {
-    return;
-  }
-
-  store.writeAll(SEEDED_IDEAS);
-}
-
 function renderIdeas() {
-  const records = store.readAll();
+  const records = readAll();
   elements.ideasList.innerHTML = '';
 
   if (!records.length) {
@@ -253,8 +231,8 @@ function renderIdeas() {
   });
 }
 
-function applyImportedIdeas(records, successMessage) {
-  const appliedRecords = store.writeAll(records);
+async function applyImportedIdeas(records, successMessage) {
+  const appliedRecords = await writeAll(records);
   renderIdeas();
   setDataPortStatus(`${successMessage} (${appliedRecords.length} record${appliedRecords.length === 1 ? '' : 's'} imported.)`, 'success');
   setImportDebugStatus({
@@ -303,20 +281,33 @@ function clearForm() {
   elements.mediaType.value = 'text';
 }
 
-elements.saveButton?.addEventListener('click', () => {
+function setLoadingState(isLoading) {
+  if (elements.saveButton) elements.saveButton.disabled = isLoading;
+  if (elements.seedButton) elements.seedButton.disabled = isLoading;
+  if (isLoading) {
+    elements.status.textContent = 'Hydrating Ideas from shared backend…';
+  }
+}
+
+elements.saveButton?.addEventListener('click', async () => {
   try {
+    if (!hydrationCompleted) {
+      elements.status.textContent = 'Ideas is still hydrating shared data. Try again in a moment.';
+      return;
+    }
+
     const payload = getFormPayload();
-    store.upsert(payload);
+    await upsert(payload);
     clearForm();
-    elements.status.textContent = 'Idea record saved.';
+    elements.status.textContent = `Idea record saved (${hydrationSource}).`;
     renderIdeas();
   } catch (error) {
     elements.status.textContent = error?.message || 'Failed to save record.';
   }
 });
 
-elements.seedButton?.addEventListener('click', () => {
-  store.writeAll(SEEDED_IDEAS);
+elements.seedButton?.addEventListener('click', async () => {
+  await writeAll(SEEDED_IDEAS);
   elements.status.textContent = 'Seed ideas restored.';
   renderIdeas();
 });
@@ -357,7 +348,7 @@ elements.dataPortCopy?.addEventListener('click', async () => {
   }
 });
 
-elements.dataPortImport?.addEventListener('click', () => {
+elements.dataPortImport?.addEventListener('click', async () => {
   const text = elements.dataPortText?.value || '';
   const parsed = parseImportPayload(text);
   if (!parsed.ok) {
@@ -366,7 +357,7 @@ elements.dataPortImport?.addEventListener('click', () => {
     return;
   }
 
-  applyImportedIdeas(parsed.state.records, 'Import success: Ideas state applied');
+  await applyImportedIdeas(parsed.state.records, 'Import success: Ideas state applied');
 });
 
 elements.dataPortImportClipboard?.addEventListener('click', async () => {
@@ -387,7 +378,7 @@ elements.dataPortImportClipboard?.addEventListener('click', async () => {
       elements.dataPortText.value = `${clipboardText.trim()}\n`;
     }
 
-    applyImportedIdeas(parsed.state.records, 'Clipboard import success: Ideas state applied');
+    await applyImportedIdeas(parsed.state.records, 'Clipboard import success: Ideas state applied');
   } catch (error) {
     const message = 'Clipboard import failed. Paste JSON into the text area and use Import From Text.';
     setDataPortStatus(message, 'error');
@@ -447,7 +438,7 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
       return;
     }
 
-    applyImportedIdeas(parsed.state.records, 'Import success: Ideas JSON file applied');
+    await applyImportedIdeas(parsed.state.records, 'Import success: Ideas JSON file applied');
   } catch (error) {
     const message = 'Import failed: unable to read selected file.';
     setDataPortStatus(message, 'error');
@@ -459,6 +450,21 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   }
 });
 
-seedIfEmpty();
-renderIdeas();
-setImportDebugStatus({ success: false, recordCount: 0, reason: 'No import attempt yet.' });
+(async function initIdeas() {
+  setLoadingState(true);
+  setImportDebugStatus({ success: false, recordCount: 0, reason: 'No import attempt yet.' });
+
+  const loaded = await persistence.loadStateWithMeta();
+  state = sanitizeIdeasState(loaded.state);
+  hydrationSource = loaded.meta.source || 'unknown';
+  hydrationCompleted = true;
+
+  if (!state.records.length) {
+    elements.status.textContent = 'No shared Ideas records yet. Use Save or Re-seed examples.';
+  } else {
+    elements.status.textContent = `Ideas hydrated from ${hydrationSource}.`;
+  }
+
+  setLoadingState(false);
+  renderIdeas();
+})();
