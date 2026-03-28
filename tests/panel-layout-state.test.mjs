@@ -315,7 +315,37 @@ test('createPanel normalizes pre-existing panel stack container to click-through
   const ui = createUIRenderer();
   ui.createPanel('stephanos-laws-panel', 'Laws');
 
-  const panelStack = documentRef.getElementById('stephanos-panel-stack');
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+  assert.ok(panelStack);
+  assert.equal(panelStack.style.position, 'fixed');
+  assert.equal(panelStack.style.inset, '0');
+  assert.equal(panelStack.style.pointerEvents, 'none');
+  assert.equal(panelStack.style.zIndex, '4500');
+});
+
+test('createPanel re-hardens reused panel stack container on subsequent panel creation', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  ui.createPanel('stephanos-laws-panel', 'Laws');
+
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+  assert.ok(panelStack);
+  documentRef.nodes.set('stephanos-panel-stack', panelStack);
+  panelStack.style.position = 'absolute';
+  panelStack.style.pointerEvents = 'auto';
+  panelStack.style.zIndex = '9999';
+  panelStack.style.inset = 'auto';
+
+  ui.createPanel('stephanos-build-panel', 'Build Proof');
+
   assert.equal(panelStack.style.position, 'fixed');
   assert.equal(panelStack.style.inset, '0');
   assert.equal(panelStack.style.pointerEvents, 'none');
