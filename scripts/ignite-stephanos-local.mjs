@@ -74,6 +74,68 @@ function runStep(label, command, commandArgs) {
   }
 }
 
+function runStepCapture(label, command, commandArgs) {
+  console.log(formatStep(label, command, commandArgs));
+  const execution = resolveStepExecution(command, commandArgs);
+  const result = spawnSync(execution.command, execution.commandArgs, {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  });
+
+  if (result.error || result.status !== 0) {
+    const details = [
+      `executionMode=${execution.mode}`,
+      `command=${execution.command}`,
+      `args=${JSON.stringify(execution.commandArgs)}`,
+      `status=${result.status ?? 'null'}`,
+      `signal=${result.signal ?? 'null'}`,
+      `error=${result.error ? result.error.message : 'null'}`,
+      `stderr=${JSON.stringify(result.stderr || '')}`,
+    ].join(', ');
+    throw new Error(`${label} failed (${details})`);
+  }
+
+  return {
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
+export function isGitWorkingTreeClean(statusOutput) {
+  return String(statusOutput || '').trim().length === 0;
+}
+
+export function shouldAutoPull(argvArgs = args) {
+  return !argvArgs.has('--skip-auto-pull');
+}
+
+function runGitPullPreflight() {
+  console.log('[IGNITION] git status check starting');
+  const statusResult = runStepCapture('git-status', 'git', ['status', '--porcelain']);
+
+  if (!isGitWorkingTreeClean(statusResult.stdout)) {
+    console.error('[IGNITION] git pull blocked');
+    throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
+  }
+
+  console.log('[IGNITION] git status clean');
+  console.log('[IGNITION] git fetch starting');
+  runStep('git-fetch', 'git', ['fetch', '--prune', '--tags']);
+  console.log('[IGNITION] git fetch passed');
+
+  console.log('[IGNITION] git pull --ff-only starting');
+  try {
+    runStep('git-pull-ff-only', 'git', ['pull', '--ff-only']);
+  }
+  catch (error) {
+    console.error('[IGNITION] git pull blocked');
+    throw new Error(`blocked for safety: remote pull requires manual merge/rebase or has another fast-forward-only conflict (${error.message}).`);
+  }
+
+  console.log('[IGNITION] git pull passed');
+}
+
 function printPreflightSummary({ decision, expectedMetadata, distMetadata, buildAction, verifyResult, processResult, finalResult }) {
   console.log('[IGNITION PREFLIGHT] --- summary ---');
   console.log(`[IGNITION PREFLIGHT] source fingerprint: ${expectedMetadata.sourceFingerprint}`);
@@ -88,6 +150,7 @@ function printPreflightSummary({ decision, expectedMetadata, distMetadata, build
 
 export async function run() {
   const preflightState = readLocalBuildState();
+  const autoPullEnabled = shouldAutoPull();
 
   if (args.has('--probe-existing-server')) {
     const probe = await probeExistingLocalServer({
@@ -118,15 +181,42 @@ export async function run() {
 
   await runIgnitionPlan({
     preflightState,
+    runPreflight: async () => {
+      if (autoPullEnabled) {
+        runGitPullPreflight();
+      }
+      else {
+        console.log('[IGNITION] git auto-pull skipped (--skip-auto-pull)');
+      }
+
+      console.log('[IGNITION] launcher guardrail starting');
+      try {
+        runStep('guard-launcher-scripts', npmCommand, ['run', 'stephanos:guard:scripts']);
+      }
+      catch (error) {
+        throw new Error(`blocked for safety: guardrail failed (${error.message}).`);
+      }
+      console.log('[IGNITION] launcher guardrail passed');
+    },
     runBuild: async () => {
       console.log('[IGNITION] build starting');
-      runStep('build', npmCommand, ['run', 'stephanos:build']);
+      try {
+        runStep('build', npmCommand, ['run', 'stephanos:build']);
+      }
+      catch (error) {
+        throw new Error(`blocked for safety: build failed (${error.message}).`);
+      }
       buildAction = `passed (${preflightState.decision.state})`;
       console.log('[IGNITION] build passed');
     },
     runVerify: async () => {
       console.log('[IGNITION] verify starting');
-      runStep('verify', npmCommand, ['run', 'stephanos:verify']);
+      try {
+        runStep('verify', npmCommand, ['run', 'stephanos:verify']);
+      }
+      catch (error) {
+        throw new Error(`blocked for safety: verify failed (${error.message}).`);
+      }
       verifyResult = 'passed';
       console.log('[IGNITION] verify passed');
     },
