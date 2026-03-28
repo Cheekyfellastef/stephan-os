@@ -23,7 +23,7 @@ test('resolveStepExecution wraps Windows npm commands via cmd.exe', () => {
   assert.equal(resolved.mode, 'windows-cmd-wrapper');
   assert.match(resolved.command.toLowerCase(), /cmd\.exe$/);
   assert.deepEqual(resolved.commandArgs.slice(0, 3), ['/d', '/s', '/c']);
-  assert.match(resolved.commandArgs[3], /"npm\.cmd" "run" "stephanos:build"/);
+  assert.equal(resolved.commandArgs[3], 'npm run stephanos:build');
 });
 
 test('resolveStepExecution keeps non-Windows commands direct', () => {

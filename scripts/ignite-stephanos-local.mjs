@@ -23,10 +23,22 @@ function quoteWindowsCmdArg(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
 
+function escapeWindowsCmdToken(value) {
+  const token = String(value);
+  const escapedMeta = token.replace(/([&|<>()^])/g, '^$1');
+
+  if (/\s/.test(escapedMeta) || escapedMeta.includes('"')) {
+    return quoteWindowsCmdArg(escapedMeta);
+  }
+
+  return escapedMeta;
+}
+
 export function resolveStepExecution(command, commandArgs, platform = process.platform) {
   if (isWindowsNpmCommand(command, platform)) {
     const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
-    const commandLine = [command, ...commandArgs].map(quoteWindowsCmdArg).join(' ');
+    const npmInvocation = command.toLowerCase().endsWith('.cmd') ? command.slice(0, -4) : command;
+    const commandLine = [npmInvocation, ...commandArgs].map(escapeWindowsCmdToken).join(' ');
     return {
       command: comspec,
       commandArgs: ['/d', '/s', '/c', commandLine],
