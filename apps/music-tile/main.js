@@ -101,9 +101,11 @@ function renderDebug() {
   }, null, 2);
 }
 
-function buildAndRenderJourney() {
+function buildAndRenderJourney({ persistSelection = true } = {}) {
   state.selection = getSelectionFromUI();
-  saveMusicTileState(state.selection);
+  if (persistSelection) {
+    saveMusicTileState(state.selection);
+  }
 
   const result = buildJourney(state.selection, TRACK_LIBRARY);
   state.lastJourney = result;
@@ -150,10 +152,11 @@ function initialize() {
   loadMusicTileState().then((persisted) => {
     state.selection = persisted.selection;
     applySelectionToUI(state.selection);
-    buildAndRenderJourney();
-    console.info('[MusicTileState] Loaded tile data state', {
+    buildAndRenderJourney({ persistSelection: false });
+    console.info('[TILE DATA][music-tile] hydrate', {
       appId: 'music-tile',
-      durableStorage: 'shared-tile-state-contract'
+      sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
+      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null
     });
   });
 

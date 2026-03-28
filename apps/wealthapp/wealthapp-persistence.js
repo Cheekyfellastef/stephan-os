@@ -4,6 +4,7 @@
   const LOCAL_UI_STORAGE_KEY = 'stephanos.wealth.app.ui.local.v1';
   const STORAGE_VERSION = 1;
   const WRITE_DEBOUNCE_MS = 180;
+  const LOG_PREFIX = '[TILE DATA][wealthapp]';
 
   const FIELD_DEFINITIONS = {
     isa: { defaultValue: 2200, min: 0, max: 100000000 },
@@ -173,6 +174,9 @@
   };
 
   const storage = {
+    log(event, payload = {}) {
+      console.info(LOG_PREFIX, event, payload);
+    },
     readLocalUiState() {
       const target = this.get();
       if (!target) {
@@ -206,7 +210,7 @@
         return null;
       }
     },
-    async load() {
+    async loadWithMeta() {
       const tileDataClient = global.StephanosTileDataContract?.client;
       if (tileDataClient?.loadDurableState) {
         const response = await tileDataClient.loadDurableState({
@@ -217,27 +221,54 @@
           legacyKeys: [STORAGE_KEY],
         });
 
+        this.log('load', {
+          appId: APP_ID,
+          sourceUsedOnLoad: response?.source || 'unknown',
+          backendUrlResolved: tileDataClient.apiBaseUrl || '',
+          backendLoadSucceeded: response?.source === 'shared-backend',
+          localFallbackUsed: response?.source !== 'shared-backend',
+          localFallbackReason: response?.source === 'default-state'
+            ? 'defaults'
+            : (response?.source || ''),
+          sharedDataOverwrittenByDefaults: false,
+        });
+
         return {
-          ...sanitizePersistedState(response?.state || createDefaultState()),
-          ui: this.readLocalUiState(),
+          state: {
+            ...sanitizePersistedState(response?.state || createDefaultState()),
+            ui: this.readLocalUiState(),
+          },
+          meta: {
+            source: response?.source || 'unknown',
+            diagnostics: response?.diagnostics || null,
+          },
         };
       }
 
       const target = this.get();
       if (!target) {
-        return createDefaultState();
+        return {
+          state: createDefaultState(),
+          meta: { source: 'default-state', diagnostics: null },
+        };
       }
 
       try {
         const raw = target.getItem(STORAGE_KEY);
         if (!raw) {
-          return createDefaultState();
+          return {
+            state: createDefaultState(),
+            meta: { source: 'default-state', diagnostics: null },
+          };
         }
 
         const parsed = sanitizePersistedState(JSON.parse(raw));
         return {
-          ...parsed,
-          ui: this.readLocalUiState(),
+          state: {
+            ...parsed,
+            ui: this.readLocalUiState(),
+          },
+          meta: { source: 'legacy-local-fallback', diagnostics: null },
         };
       } catch (error) {
         try {
@@ -245,8 +276,15 @@
         } catch (removeError) {
           // Ignore local-only cleanup failures.
         }
-        return createDefaultState();
+        return {
+          state: createDefaultState(),
+          meta: { source: 'default-state', diagnostics: null },
+        };
       }
+    },
+    async load() {
+      const loaded = await this.loadWithMeta();
+      return loaded.state;
     },
     async save(state) {
       const sanitized = sanitizePersistedState(state);
@@ -258,11 +296,20 @@
 
       const tileDataClient = global.StephanosTileDataContract?.client;
       if (tileDataClient?.saveDurableState) {
-        await tileDataClient.saveDurableState({
+        const response = await tileDataClient.saveDurableState({
           appId: APP_ID,
           schemaVersion: STORAGE_VERSION,
           state: durablePayload,
           sanitizeState: (value) => sanitizePersistedState({ ...value, ui: {} }),
+        });
+        this.log('save', {
+          appId: APP_ID,
+          sourceUsedOnSave: response?.source || 'unknown',
+          backendUrlResolved: tileDataClient.apiBaseUrl || '',
+          backendSaveSucceeded: Boolean(response?.ok),
+          savePayloadSummary: {
+            inputCount: Object.keys(durablePayload.inputs || {}).length,
+          },
         });
         return true;
       }
@@ -731,12 +778,13 @@
 
     toolbarRefs.fileInput.addEventListener('change', handleImportSelection);
 
-    void storage.load().then((loadedState) => {
-      applyState(loadedState);
+    void storage.loadWithMeta().then((loaded) => {
+      applyState(loaded.state);
       publishAiContext(controls);
-      console.info('[WealthAppPersistence] Loaded tile data state', {
+      console.info('[TILE DATA][wealthapp] hydrate', {
         appId: APP_ID,
-        durableStorage: 'shared-tile-state-contract',
+        sourceUsedOnLoad: loaded?.meta?.source || 'unknown',
+        backendDiagnostics: loaded?.meta?.diagnostics || null,
         localUiStorageKey: LOCAL_UI_STORAGE_KEY,
       });
     });
@@ -783,6 +831,7 @@
     validateImportPayload,
     parseImportedText,
     sanitizePersistedState,
+    loadStateWithMeta: () => storage.loadWithMeta(),
     loadState: () => storage.load(),
     saveState: (state) => storage.save(state),
     clearState: () => storage.clear(),

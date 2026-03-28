@@ -5,12 +5,29 @@ import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../apps/wealth-simulation-scenarios/scenario-persistence.js', import.meta.url), 'utf8');
 
-function loadPersistence() {
+function createLocalStorage(entries = {}) {
+  const map = new Map(Object.entries(entries));
+  return {
+    getItem(key) {
+      return map.has(key) ? map.get(key) : null;
+    },
+    setItem(key, value) {
+      map.set(key, String(value));
+    },
+    removeItem(key) {
+      map.delete(key);
+    },
+  };
+}
+
+function loadPersistence(overrides = {}) {
   const window = {
     document: {
       readyState: 'loading',
       addEventListener() {},
     },
+    localStorage: createLocalStorage(),
+    ...overrides,
   };
 
   vm.runInNewContext(source, { window, console, Date, JSON, Number, Object, Array, String, Boolean, Promise, Blob, setTimeout, clearTimeout });
@@ -20,6 +37,7 @@ function loadPersistence() {
 test('createExportPayload includes scenario metadata and preserves per-scenario state', () => {
   const persistence = loadPersistence();
   const payload = persistence.createExportPayload({
+    version: 1,
     selectedScenario: 'energy-shock',
     scenarios: {
       'base-case': {
@@ -43,14 +61,14 @@ test('createExportPayload includes scenario metadata and preserves per-scenario 
 
   assert.equal(payload.app, 'wealth-simulation-scenarios');
   assert.equal(payload.version, 1);
-  assert.equal(payload.selectedScenario, 'energy-shock');
-  assert.equal(JSON.stringify(payload.scenarios['base-case']), JSON.stringify({
+  assert.equal(payload.state.selectedScenario, 'energy-shock');
+  assert.equal(JSON.stringify(payload.state.scenarios['base-case']), JSON.stringify({
     inputs: {
       ISA: 12000,
       'Return Rate': 0.05,
     },
   }));
-  assert.equal(JSON.stringify(payload.scenarios['energy-shock']), JSON.stringify({
+  assert.equal(JSON.stringify(payload.state.scenarios['energy-shock']), JSON.stringify({
     inputs: {
       'Desired Income': 42000,
       'Include Stress Toggle': true,
@@ -89,18 +107,20 @@ test('parseImportedText sanitizes scenarios and rejects invalid JSON', () => {
     app: 'wealth-simulation-scenarios',
     version: 1,
     exportedAt: '2026-03-22T00:00:00.000Z',
-    selectedScenario: 'cash-buffer-defense',
-    scenarios: {
-      'cash-buffer-defense': {
-        inputs: {
-          'Return Rate': '0.04',
-          'Savings Mode': true,
-          unsupported: ['drop'],
+    state: {
+      selectedScenario: 'cash-buffer-defense',
+      scenarios: {
+        'cash-buffer-defense': {
+          inputs: {
+            'Return Rate': '0.04',
+            'Savings Mode': true,
+            unsupported: ['drop'],
+          },
         },
-      },
-      '': {
-        inputs: {
-          ignored: 1,
+        '': {
+          inputs: {
+            ignored: 1,
+          },
         },
       },
     },
@@ -129,4 +149,54 @@ test('parseImportedText sanitizes scenarios and rejects invalid JSON', () => {
   const badJson = persistence.parseImportedText('{ nope');
   assert.equal(badJson.ok, false);
   assert.equal(badJson.code, 'invalid-json');
+});
+
+test('loadStateWithMeta prefers shared backend state and preserves local UI-only state', async () => {
+  const localStorage = createLocalStorage({
+    'stephanos.wealth.scenarios': JSON.stringify({
+      version: 1,
+      selectedScenario: 'base-case',
+      scenarios: {
+        'base-case': { inputs: { ISA: 999 } },
+      },
+    }),
+    'stephanos.wealth.scenarios.ui.local.v1': JSON.stringify({
+      activeTab: 'config',
+    }),
+  });
+
+  const persistence = loadPersistence({
+    localStorage,
+    StephanosTileDataContract: {
+      client: {
+        apiBaseUrl: 'http://192.168.0.198:8787',
+        async loadDurableState() {
+          return {
+            source: 'shared-backend',
+            state: {
+              version: 1,
+              selectedScenario: 'energy-shock',
+              scenarios: {
+                'energy-shock': {
+                  inputs: {
+                    'Desired Income': 41000,
+                  },
+                },
+              },
+              ui: {
+                discardedFromDurable: true,
+              },
+            },
+            diagnostics: { status: 200 },
+          };
+        },
+      },
+    },
+  });
+
+  const loaded = await persistence.loadStateWithMeta();
+  assert.equal(loaded.meta.source, 'shared-backend');
+  assert.equal(loaded.state.selectedScenario, 'energy-shock');
+  assert.equal(JSON.stringify(loaded.state.scenarios['energy-shock'].inputs), JSON.stringify({ 'Desired Income': 41000 }));
+  assert.equal(JSON.stringify(loaded.state.ui), JSON.stringify({ activeTab: 'config' }));
 });

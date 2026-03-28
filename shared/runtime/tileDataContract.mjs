@@ -1,4 +1,9 @@
-const DEFAULT_BACKEND_PORT = 8787;
+import {
+  readPersistedStephanosHomeNode,
+  readPersistedStephanosLastKnownNode,
+  resolveStephanosBackendBaseUrl,
+} from './stephanosHomeNode.mjs';
+
 const SHARED_TILE_MIRROR_PREFIX = 'stephanos.tile.shared.mirror.v1';
 
 function normalizeString(value, fallback = '') {
@@ -22,27 +27,32 @@ function isStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function';
 }
 
-function detectApiBaseUrl(locationObj = globalThis.location) {
-  const explicit = normalizeString(globalThis.__STEPHANOS_BACKEND_BASE_URL || '');
-  if (explicit) {
-    return explicit.replace(/\/$/, '');
-  }
-
-  const origin = normalizeString(locationObj?.origin || '');
-  const hostname = normalizeString(locationObj?.hostname || '').toLowerCase();
-  const port = normalizeString(locationObj?.port || '');
-
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    if (port && Number(port) !== DEFAULT_BACKEND_PORT) {
-      return `http://127.0.0.1:${DEFAULT_BACKEND_PORT}`;
-    }
-  }
-
-  return origin;
+function detectApiBaseUrl({ locationObj = globalThis.location, storage, explicitBaseUrl = globalThis.__STEPHANOS_BACKEND_BASE_URL } = {}) {
+  return resolveStephanosBackendBaseUrl({
+    currentOrigin: normalizeString(locationObj?.origin || ''),
+    manualNode: readPersistedStephanosHomeNode(storage),
+    lastKnownNode: readPersistedStephanosLastKnownNode(storage),
+    explicitBaseUrl: normalizeString(explicitBaseUrl || ''),
+  }).replace(/\/$/, '');
 }
 
 function createMirrorStorageKey(appId) {
   return `${SHARED_TILE_MIRROR_PREFIX}.${normalizeString(appId, 'unknown')}`;
+}
+
+function summarizeState(value) {
+  if (!value || typeof value !== 'object') {
+    return { type: typeof value };
+  }
+
+  return {
+    keys: Object.keys(value),
+    approxBytes: JSON.stringify(value).length,
+  };
+}
+
+function hasObjectState(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 export function createStephanosTileDataClient({
@@ -50,12 +60,13 @@ export function createStephanosTileDataClient({
   storage = globalThis.localStorage,
   locationObj = globalThis.location,
   logger = console,
+  explicitBaseUrl = globalThis.__STEPHANOS_BACKEND_BASE_URL,
 } = {}) {
-  const apiBaseUrl = detectApiBaseUrl(locationObj);
+  const apiBaseUrl = detectApiBaseUrl({ locationObj, storage, explicitBaseUrl });
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
-    target.info('[Stephanos TileData]', event, payload);
+    target.info('[TILE DATA]', event, payload);
   }
 
   function readLocalState(key) {
@@ -81,7 +92,17 @@ export function createStephanosTileDataClient({
 
   async function requestTileState(path, { method = 'GET', body } = {}) {
     if (typeof fetchImpl !== 'function' || !apiBaseUrl) {
-      return { ok: false, status: 0, json: null, diagnostics: { reason: 'fetch-or-api-base-unavailable' } };
+      return {
+        ok: false,
+        status: 0,
+        json: null,
+        diagnostics: {
+          reason: 'fetch-or-api-base-unavailable',
+          method,
+          path,
+          apiBaseUrl,
+        },
+      };
     }
 
     try {
@@ -143,17 +164,22 @@ export function createStephanosTileDataClient({
     const mirrorKey = createMirrorStorageKey(normalizedAppId);
     writeLocalState(mirrorKey, payload);
 
+    const source = response.ok ? 'shared-backend' : 'local-mirror-fallback';
     log('save', {
       appId: normalizedAppId,
-      source: response.ok ? 'shared-backend' : 'local-mirror-fallback',
-      status: response.status,
-      apiBaseUrl,
+      sourceUsedOnSave: source,
+      backendUrlResolved: apiBaseUrl,
+      backendSaveSucceeded: response.ok,
+      localFallbackUsed: !response.ok,
+      localFallbackReason: response.ok ? '' : (response.diagnostics?.error || `http-${response.status || 0}`),
+      savePayloadSummary: summarizeState(sanitizedState),
+      diagnostics: response.diagnostics,
     });
 
     return {
       ok: response.ok,
       state: sanitizedState,
-      source: response.ok ? 'shared-backend' : 'local-mirror-fallback',
+      source,
       diagnostics: response.diagnostics,
     };
   }
@@ -173,13 +199,21 @@ export function createStephanosTileDataClient({
 
     const response = await requestTileState(`/api/tile-state/${encodeURIComponent(normalizedAppId)}`);
     const remoteState = response.json?.data?.state;
-    if (response.ok && remoteState && typeof remoteState === 'object') {
+    if (response.ok && hasObjectState(remoteState)) {
       const sanitizedState = sanitizeState(remoteState);
       writeLocalState(createMirrorStorageKey(normalizedAppId), {
         schemaVersion,
         state: sanitizedState,
       });
-      log('load', { appId: normalizedAppId, source: 'shared-backend', status: response.status, apiBaseUrl });
+      log('load', {
+        appId: normalizedAppId,
+        sourceUsedOnLoad: 'shared-backend',
+        backendUrlResolved: apiBaseUrl,
+        backendLoadSucceeded: true,
+        localFallbackUsed: false,
+        sharedDataOverwrittenByDefaults: false,
+        diagnostics: response.diagnostics,
+      });
       return {
         state: sanitizedState,
         source: 'shared-backend',
@@ -194,7 +228,7 @@ export function createStephanosTileDataClient({
       const legacyRaw = safeJsonParse(legacyStorage.getItem(detectedLegacy));
       const sanitizedLegacy = sanitizeState(legacyRaw);
       let migrationSaved = false;
-      if (migrateLegacy) {
+      if (migrateLegacy && response.status === 404) {
         const migration = await saveDurableState({
           appId: normalizedAppId,
           state: sanitizedLegacy,
@@ -204,10 +238,16 @@ export function createStephanosTileDataClient({
         migrationSaved = migration.ok;
       }
 
-      log('legacy-detected', {
+      log('load', {
         appId: normalizedAppId,
+        sourceUsedOnLoad: migrationSaved ? 'legacy-migration' : 'local-fallback',
+        backendUrlResolved: apiBaseUrl,
+        backendLoadSucceeded: response.ok,
+        localFallbackUsed: true,
+        localFallbackReason: migrationSaved ? 'legacy-migrated-after-backend-404' : 'legacy-detected-without-authoritative-backend-slot',
         legacyKey: detectedLegacy,
-        migrated: migrationSaved,
+        sharedDataOverwrittenByDefaults: false,
+        diagnostics: response.diagnostics,
       });
 
       return {
@@ -220,9 +260,18 @@ export function createStephanosTileDataClient({
     }
 
     const mirrorState = readLocalState(createMirrorStorageKey(normalizedAppId));
-    if (mirrorState?.state && typeof mirrorState.state === 'object') {
+    if (hasObjectState(mirrorState?.state)) {
       const sanitizedMirror = sanitizeState(mirrorState.state);
-      log('load', { appId: normalizedAppId, source: 'local-mirror-fallback', status: response.status, apiBaseUrl });
+      log('load', {
+        appId: normalizedAppId,
+        sourceUsedOnLoad: 'local-fallback',
+        backendUrlResolved: apiBaseUrl,
+        backendLoadSucceeded: response.ok,
+        localFallbackUsed: true,
+        localFallbackReason: response.diagnostics?.error || `http-${response.status || 0}`,
+        sharedDataOverwrittenByDefaults: false,
+        diagnostics: response.diagnostics,
+      });
       return {
         state: sanitizedMirror,
         source: 'local-mirror-fallback',
@@ -232,7 +281,16 @@ export function createStephanosTileDataClient({
     }
 
     const sanitizedDefault = sanitizeState(defaultState);
-    log('load', { appId: normalizedAppId, source: 'default-state', status: response.status, apiBaseUrl });
+    log('load', {
+      appId: normalizedAppId,
+      sourceUsedOnLoad: 'defaults',
+      backendUrlResolved: apiBaseUrl,
+      backendLoadSucceeded: false,
+      localFallbackUsed: false,
+      localFallbackReason: response.diagnostics?.error || `http-${response.status || 0}`,
+      sharedDataOverwrittenByDefaults: false,
+      diagnostics: response.diagnostics,
+    });
     return {
       state: sanitizedDefault,
       source: 'default-state',

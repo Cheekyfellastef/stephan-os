@@ -70,6 +70,7 @@
   let saveTimer = null;
   let statusTimer = null;
   let dataPortText = '';
+  let persistenceHydrated = false;
 
   const setUiState = (uiPatch) => {
     persistedState.ui = {
@@ -249,6 +250,9 @@
   };
 
   const flushState = () => {
+    if (!persistenceHydrated) {
+      return;
+    }
     persistedState.selectedScenario = activeScenarioId;
     void persistence?.saveState?.(persistedState);
     persistence?.publishAiContextSnapshot?.(persistedState);
@@ -667,20 +671,24 @@
   });
 
   render();
-  void persistence?.loadState?.().then((loadedState) => {
-    persistedState = persistence?.sanitizePersistedState?.(loadedState) || createDefaultState();
+  void (persistence?.loadStateWithMeta?.() || Promise.resolve({
+    state: createDefaultState(),
+    meta: { source: 'default-state', diagnostics: null },
+  })).then((loaded) => {
+    persistedState = persistence?.sanitizePersistedState?.(loaded?.state) || createDefaultState();
     activeScenarioId = scenarioIds.has(persistedState.selectedScenario) ? persistedState.selectedScenario : 'base-case';
-    console.info('[ScenarioPersistence] Loaded tile data state', {
+    persistenceHydrated = true;
+    console.info('[TILE DATA][wealth-simulation-scenarios] hydrate', {
       appId: persistence?.APP_ID || 'wealth-simulation-scenarios',
-      durableStorage: 'shared-tile-state-contract',
-      localUiStorageKey: 'stephanos.wealth.scenarios.ui.local.v1',
+      sourceUsedOnLoad: loaded?.meta?.source || 'unknown',
+      backendDiagnostics: loaded?.meta?.diagnostics || null,
     });
     render();
-  });
-  waitForAppInputs(() => {
-    ensureDefaultInputs();
-    applyScenarioInputs(activeScenarioId);
-    saveCurrentScenarioInputs();
+    waitForAppInputs(() => {
+      ensureDefaultInputs();
+      applyScenarioInputs(activeScenarioId);
+      saveCurrentScenarioInputs();
+    });
   });
   scheduleDecorate();
 })();

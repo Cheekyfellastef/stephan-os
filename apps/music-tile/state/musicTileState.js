@@ -1,6 +1,7 @@
 const STORAGE_KEY = 'stephanos.musicTile.state.v1';
 const SCHEMA_VERSION = 1;
 const APP_ID = 'music-tile';
+const LOG_PREFIX = '[TILE DATA][music-tile]';
 
 export const DEFAULT_SELECTION = {
   era: 'afterlife-modern',
@@ -47,7 +48,26 @@ export function loadMusicTileState() {
         selection: sanitizeSelection(value?.selection)
       }),
       legacyKeys: [STORAGE_KEY],
-    }).then((response) => response.state);
+    }).then((response) => {
+      console.info(LOG_PREFIX, 'load', {
+        appId: APP_ID,
+        sourceUsedOnLoad: response?.source || 'unknown',
+        backendUrlResolved: tileDataClient.apiBaseUrl || '',
+        backendLoadSucceeded: response?.source === 'shared-backend',
+        localFallbackUsed: response?.source !== 'shared-backend',
+        localFallbackReason: response?.source === 'default-state'
+          ? 'defaults'
+          : (response?.source || ''),
+        sharedDataOverwrittenByDefaults: false
+      });
+      return {
+        ...response.state,
+        __tileDataMeta: {
+          source: response?.source || 'unknown',
+          diagnostics: response?.diagnostics || null
+        }
+      };
+    });
   }
 
   const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -68,7 +88,11 @@ export function loadMusicTileState() {
 
   return Promise.resolve({
     version: SCHEMA_VERSION,
-    selection: sanitizeSelection(parsed.selection)
+    selection: sanitizeSelection(parsed.selection),
+    __tileDataMeta: {
+      source: 'legacy-local-fallback',
+      diagnostics: null
+    }
   });
 }
 
@@ -80,7 +104,7 @@ export function saveMusicTileState(selection) {
 
   const tileDataClient = window.StephanosTileDataContract?.client;
   if (tileDataClient?.saveDurableState) {
-    tileDataClient.saveDurableState({
+    void tileDataClient.saveDurableState({
       appId: APP_ID,
       schemaVersion: SCHEMA_VERSION,
       state: payload,
@@ -88,6 +112,14 @@ export function saveMusicTileState(selection) {
         version: SCHEMA_VERSION,
         selection: sanitizeSelection(value?.selection)
       }),
+    }).then((response) => {
+      console.info(LOG_PREFIX, 'save', {
+        appId: APP_ID,
+        sourceUsedOnSave: response?.source || 'unknown',
+        backendUrlResolved: tileDataClient.apiBaseUrl || '',
+        backendSaveSucceeded: Boolean(response?.ok),
+        savePayloadSummary: { keys: Object.keys(payload.selection || {}) }
+      });
     });
     return payload;
   }
