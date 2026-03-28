@@ -14,6 +14,7 @@ import {
   resolveAllowedOrigins,
 } from './config/runtimeConfig.js';
 import { memoryService } from './services/memoryService.js';
+import { durableMemoryService } from './services/durableMemoryService.js';
 
 const logger = createLogger('server');
 const app = express();
@@ -50,6 +51,7 @@ app.get('/api/health', (req, res) => {
 });
 
 memoryService.load();
+durableMemoryService.load();
 
 app.use('/api/ai', aiRouter);
 app.use('/api/memory', memoryRouter);

@@ -1,5 +1,8 @@
+import { requestStephanosBackend } from './backendClient.mjs';
+
 export const STEPHANOS_DURABLE_MEMORY_STORAGE_KEY = 'stephanos.durable.memory.v2';
 export const STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION = 2;
+const STEPHANOS_DURABLE_MEMORY_API_PATH = '/api/memory/durable';
 
 export const STEPHANOS_MEMORY_RECORD_TYPES = Object.freeze([
   'operator.preference',
@@ -96,6 +99,25 @@ function normalizeRecordShape(record = {}, { source = 'runtime', surface = 'loca
   };
 }
 
+function normalizeMemoryState(raw = {}, defaults = {}) {
+  if (!raw || typeof raw !== 'object' || typeof raw.records !== 'object') {
+    return createDefaultState();
+  }
+
+  const records = Object.fromEntries(
+    Object.entries(raw.records || {}).map(([key, value]) => {
+      const normalized = normalizeRecordShape(value || {}, defaults);
+      return [key, normalized];
+    }),
+  );
+
+  return {
+    schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
+    records,
+  };
+}
+
 function readStorageState(storage, storageKey) {
   if (!isStorageAvailable(storage)) {
     return createDefaultState();
@@ -107,23 +129,7 @@ function readStorageState(storage, storageKey) {
       return createDefaultState();
     }
 
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.records !== 'object') {
-      return createDefaultState();
-    }
-
-    const records = Object.fromEntries(
-      Object.entries(parsed.records || {}).map(([key, value]) => {
-        const normalized = normalizeRecordShape(value || {});
-        return [key, normalized];
-      }),
-    );
-
-    return {
-      schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-      records,
-    };
+    return normalizeMemoryState(JSON.parse(raw));
   } catch {
     return createDefaultState();
   }
@@ -158,11 +164,189 @@ function createStorageAdapter({
     mode: 'browser-local-storage',
     readState: () => readStorageState(storage, storageKey),
     writeState: (state) => writeStorageState(storage, storageKey, state),
+    hydrate: async () => ({
+      source: 'local-storage',
+      hydrationCompleted: true,
+      fallbackReason: '',
+    }),
+    diagnostics() {
+      return {
+        stateClass: 'local-only-fallback',
+        sourceUsedOnLoad: 'local-storage',
+        sourceUsedOnSave: 'local-storage',
+        hydrationCompleted: true,
+      };
+    },
+  };
+}
+
+export function createStephanosSharedMemoryAdapter({
+  runtimeContext = {},
+  fetchImpl = globalThis.fetch,
+  storage = globalThis.localStorage,
+  mirrorStorageKey = STEPHANOS_DURABLE_MEMORY_STORAGE_KEY,
+  logger = console,
+  preferSharedBackend = true,
+} = {}) {
+  let cache = readStorageState(storage, mirrorStorageKey);
+  let hydrated = false;
+  let hydrationSource = 'local-mirror';
+  let fallbackReason = 'not-hydrated';
+  let lastSaveSource = 'none';
+  let lastDiagnostics = null;
+
+  function log(event, payload = {}) {
+    const target = logger && typeof logger.info === 'function' ? logger : console;
+    target.info('[SHARED MEMORY]', event, payload);
+  }
+
+  function updateMirror(nextState) {
+    cache = normalizeMemoryState(nextState);
+    writeStorageState(storage, mirrorStorageKey, cache);
+  }
+
+  async function loadFromBackend() {
+    return requestStephanosBackend({
+      path: STEPHANOS_DURABLE_MEMORY_API_PATH,
+      method: 'GET',
+      runtimeContext,
+      fetchImpl,
+      diagnostics: (entry) => {
+        lastDiagnostics = entry;
+      },
+    });
+  }
+
+  async function saveToBackend(state, source = 'memory-runtime') {
+    return requestStephanosBackend({
+      path: STEPHANOS_DURABLE_MEMORY_API_PATH,
+      method: 'PUT',
+      body: {
+        schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+        records: state.records || {},
+        source,
+      },
+      runtimeContext,
+      fetchImpl,
+      diagnostics: (entry) => {
+        lastDiagnostics = entry;
+      },
+    });
+  }
+
+  async function hydrate() {
+    if (hydrated) {
+      return {
+        source: hydrationSource,
+        hydrationCompleted: true,
+        fallbackReason,
+      };
+    }
+
+    try {
+      const response = await loadFromBackend();
+      const backendState = normalizeMemoryState(response?.json?.data || {});
+      updateMirror(backendState);
+      hydrationSource = 'shared-backend';
+      fallbackReason = '';
+      hydrated = true;
+      log('load', {
+        sourceUsedOnLoad: hydrationSource,
+        sourceUsedOnSave: lastSaveSource,
+        hydrationCompleted: true,
+        fallbackReason,
+        resolvedBackendUrl: response.baseUrl,
+        memoryRecordCount: Object.keys(backendState.records || {}).length,
+        stateClass: 'shared-durable-truth',
+      });
+      return {
+        source: hydrationSource,
+        hydrationCompleted: true,
+        fallbackReason,
+      };
+    } catch (error) {
+      hydrated = true;
+      hydrationSource = 'local-mirror-fallback';
+      fallbackReason = normalizeString(error?.code || error?.message, 'backend-unavailable');
+      log('load', {
+        sourceUsedOnLoad: hydrationSource,
+        sourceUsedOnSave: lastSaveSource,
+        hydrationCompleted: true,
+        fallbackReason,
+        memoryRecordCount: Object.keys(cache.records || {}).length,
+        stateClass: 'local-fallback-mirror',
+      });
+      return {
+        source: hydrationSource,
+        hydrationCompleted: true,
+        fallbackReason,
+      };
+    }
+  }
+
+  function readState() {
+    return normalizeMemoryState(cache);
+  }
+
+  function writeState(state) {
+    const normalizedState = normalizeMemoryState(state);
+    updateMirror(normalizedState);
+
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      lastSaveSource = 'local-mirror-fallback';
+      return;
+    }
+
+    void saveToBackend(normalizedState)
+      .then((response) => {
+        lastSaveSource = 'shared-backend';
+        fallbackReason = '';
+        log('save', {
+          sourceUsedOnLoad: hydrationSource,
+          sourceUsedOnSave: lastSaveSource,
+          hydrationCompleted: hydrated,
+          fallbackReason,
+          resolvedBackendUrl: response.baseUrl,
+          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+          stateClass: 'shared-durable-truth',
+        });
+      })
+      .catch((error) => {
+        lastSaveSource = 'local-mirror-fallback';
+        fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
+        log('save', {
+          sourceUsedOnLoad: hydrationSource,
+          sourceUsedOnSave: lastSaveSource,
+          hydrationCompleted: hydrated,
+          fallbackReason,
+          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+          stateClass: 'local-fallback-mirror',
+        });
+      });
+  }
+
+  return {
+    mode: 'shared-backend-with-local-mirror',
+    readState,
+    writeState,
+    hydrate,
+    diagnostics() {
+      return {
+        stateClass: lastSaveSource === 'shared-backend' || hydrationSource === 'shared-backend'
+          ? 'shared-durable-truth'
+          : 'local-fallback-mirror',
+        sourceUsedOnLoad: hydrationSource,
+        sourceUsedOnSave: lastSaveSource,
+        hydrationCompleted: hydrated,
+        fallbackReason,
+        backendDiagnostics: lastDiagnostics,
+      };
+    },
   };
 }
 
 export function createStephanosMemory({
-  adapter = createStorageAdapter(),
+  adapter = createStephanosSharedMemoryAdapter(),
   source = 'runtime',
   surface = detectMemorySurfaceMode(),
 } = {}) {
@@ -330,6 +514,17 @@ export function createStephanosMemory({
   return {
     surfaceMode: detectMemorySurfaceMode(),
     adapterMode: adapter.mode || 'custom',
+    hydrate: typeof adapter.hydrate === 'function' ? adapter.hydrate : async () => ({
+      source: 'adapter-without-hydrate',
+      hydrationCompleted: true,
+      fallbackReason: '',
+    }),
+    getDiagnostics: typeof adapter.diagnostics === 'function' ? adapter.diagnostics : () => ({
+      stateClass: 'unknown',
+      sourceUsedOnLoad: 'unknown',
+      sourceUsedOnSave: 'unknown',
+      hydrationCompleted: false,
+    }),
     saveRecord,
     createRecord: saveRecord,
     getRecord,
@@ -401,3 +596,5 @@ export function createStephanosMemoryGateway(memory, { namespace = 'continuity',
     persistEventRecord,
   };
 }
+
+export { createStorageAdapter as createStephanosLocalMemoryAdapter };

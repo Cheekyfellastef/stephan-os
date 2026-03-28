@@ -1,5 +1,6 @@
 import express from 'express';
 import { memoryService } from '../services/memoryService.js';
+import { durableMemoryService } from '../services/durableMemoryService.js';
 import { normalizeError } from '../services/errors.js';
 
 const router = express.Router();
@@ -14,6 +15,37 @@ function parseMemoryFilters(query = {}) {
 router.get('/', (req, res) => {
   const items = memoryService.listMemory(parseMemoryFilters(req.query));
   res.json({ success: true, data: { items, total: items.length } });
+});
+
+
+router.get('/durable', (_req, res) => {
+  const state = durableMemoryService.getStore();
+  res.json({
+    success: true,
+    data: {
+      ...state,
+      storage: 'shared-json-store',
+    },
+  });
+});
+
+router.put('/durable', (req, res, next) => {
+  try {
+    const state = durableMemoryService.setStore({
+      schemaVersion: req.body?.schemaVersion,
+      records: req.body?.records,
+    }, req.body?.source || 'runtime');
+
+    res.json({
+      success: true,
+      data: {
+        ...state,
+        storage: 'shared-json-store',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.get('/search', (req, res) => {
