@@ -330,14 +330,19 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? Boolean(resolveStephanosLaunchTarget(safeProject))
       : Boolean(String(safeProject.entry || '').trim());
     const launchInProgress = safeProject.validationState === 'launching';
+    const launchError = safeProject.validationState === 'error';
     const launchableWhilePending = launchInProgress && hasLaunchTarget;
-    const blockLaunch = safeProject.validationState === 'error'
+    const launchableWhileErrored = launchError && hasLaunchTarget;
+    const blockLaunch = !hasLaunchTarget
       || (launchInProgress && !launchableWhilePending);
 
     tile.className = 'app-tile';
 
-    if (safeProject.validationState === 'error') {
+    if (launchError) {
       tile.classList.add('app-tile-error');
+      if (launchableWhileErrored) {
+        tile.classList.add('app-tile-error-launchable');
+      }
     } else if (safeProject.validationState === 'launching') {
       tile.classList.add('app-tile-pending');
     } else if (safeProject.dependencyState === 'degraded') {
