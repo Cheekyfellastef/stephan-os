@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSystemPanelStateController, installDraggablePanel } from '../modules/system-panel/system-panel.js';
+import {
+  createSystemPanelStateController,
+  installDraggablePanel,
+  readSystemPanelPopupState,
+  writeSystemPanelPopupState,
+} from '../modules/system-panel/system-panel.js';
 import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 
 function createStorage(seed = {}) {
@@ -209,6 +214,136 @@ test('system panel drag start normalizes transform-centered coordinates before o
 
     assert.equal(panel.style.left, '352px');
     assert.equal(panel.style.top, '320px');
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
+test('system panel popup state persists with shared session ui layout contract', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+
+  const defaults = readSystemPanelPopupState(storage);
+  assert.equal(defaults.state.visible, false);
+  assert.equal(defaults.state.collapsed, false);
+  assert.equal(defaults.source, 'defaults');
+
+  writeSystemPanelPopupState(
+    {
+      visible: true,
+      collapsed: true,
+      position: { x: 312, y: 144 },
+    },
+    storage,
+  );
+
+  const restored = readSystemPanelPopupState(storage);
+  assert.equal(restored.state.visible, true);
+  assert.equal(restored.state.collapsed, true);
+  assert.deepEqual(restored.state.position, { x: 312, y: 144 });
+
+  const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  assert.deepEqual(memory.session.ui.uiLayout.systemPanelPopup, {
+    visible: true,
+    collapsed: true,
+    position: { x: 312, y: 144 },
+  });
+});
+
+test('system panel popup state migrates legacy key without losing valid state', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      systemPanelPopupState: {
+        visible: true,
+        collapsed: false,
+        position: { x: 410, y: 255 },
+      },
+    }),
+  });
+
+  const restore = readSystemPanelPopupState(storage);
+  assert.equal(restore.source, 'systemPanelPopupState');
+  assert.equal(restore.migrated, true);
+  assert.deepEqual(restore.state, {
+    visible: true,
+    collapsed: false,
+    position: { x: 410, y: 255 },
+  });
+
+  const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  assert.deepEqual(memory.session.ui.uiLayout.systemPanelPopup, restore.state);
+  assert.equal(Object.prototype.hasOwnProperty.call(memory.session.ui.uiLayout, 'systemPanelPopupState'), false);
+});
+
+test('system panel drag commit callback receives persisted bounded position', () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    innerWidth: 700,
+    innerHeight: 540,
+  };
+
+  try {
+    const listeners = new Map();
+    const commits = [];
+    const handle = {
+      addEventListener(type, fn) {
+        listeners.set(type, fn);
+      },
+      setPointerCapture() {},
+    };
+
+    const panel = {
+      style: {
+        left: '',
+        top: '',
+        transform: 'none',
+      },
+      querySelector(selector) {
+        if (selector === '.drag-handle') {
+          return handle;
+        }
+        return null;
+      },
+      classList: {
+        add() {},
+        remove() {},
+      },
+      getBoundingClientRect() {
+        const width = 160;
+        const height = 120;
+        return {
+          left: Number.parseFloat(this.style.left) || 40,
+          top: Number.parseFloat(this.style.top) || 40,
+          width,
+          height,
+        };
+      },
+    };
+
+    installDraggablePanel(panel, '.drag-handle', {
+      onPositionCommit(position) {
+        commits.push(position);
+      },
+    });
+
+    listeners.get('pointerdown')({
+      button: 0,
+      clientX: 60,
+      clientY: 60,
+      target: { closest: () => null },
+      pointerId: 1,
+      preventDefault() {},
+    });
+    listeners.get('pointermove')({
+      clientX: 280,
+      clientY: 220,
+    });
+    listeners.get('pointerup')({});
+
+    assert.equal(commits.length, 1);
+    assert.equal(Number.isFinite(commits[0].x), true);
+    assert.equal(Number.isFinite(commits[0].y), true);
   } finally {
     globalThis.window = originalWindow;
   }
