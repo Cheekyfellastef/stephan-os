@@ -23,7 +23,8 @@
     "stephanos:serve": "node scripts/ignite-stephanos-local.mjs",
     "stephanos:precommit": "npm run stephanos:build && npm run stephanos:verify",
     "predeploy": "npm run stephanos:build && npm run stephanos:verify",
-    "deploy": "npm run predeploy && echo \"Stephanos dist is verified and ready to publish from apps/stephanos/dist\""
+    "deploy": "npm run predeploy && echo \"Stephanos dist is verified and ready to publish from apps/stephanos/dist\"",
+    "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
