@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStephanosMemory, createStephanosMemoryGateway } from './stephanosMemory.mjs';
+import {
+  STEPHANOS_DURABLE_MEMORY_STORAGE_KEY,
+  createStephanosMemory,
+  createStephanosMemoryGateway,
+  createStephanosSharedMemoryAdapter,
+} from './stephanosMemory.mjs';
 
 function createInMemoryAdapter() {
   let state = null;
@@ -16,6 +21,21 @@ function createInMemoryAdapter() {
     },
     writeState(nextState) {
       state = nextState;
+    },
+  };
+}
+
+function createStorage(entries = {}) {
+  const store = new Map(Object.entries(entries));
+  return {
+    getItem(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    setItem(key, value) {
+      store.set(key, String(value));
+    },
+    removeItem(key) {
+      store.delete(key);
     },
   };
 }
@@ -124,4 +144,94 @@ test('stephanos memory gateway persists structured event records', () => {
   assert.equal(record.type, 'tile.event');
   assert.equal(record.source, 'continuity-gateway-test');
   assert.equal(record.payload.tileId, 'wealthapp');
+});
+
+test('shared memory adapter hydrates from shared backend and mirrors locally for localhost/hosted parity', async () => {
+  const storage = createStorage();
+  const requests = [];
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url, method: options.method || 'GET' });
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            schemaVersion: 2,
+            updatedAt: '2026-03-28T00:00:00.000Z',
+            records: {
+              'continuity::shared-note': {
+                schemaVersion: 2,
+                type: 'continuity.note',
+                source: 'server',
+                scope: 'runtime',
+                summary: 'Shared note',
+                payload: { text: 'same for hosted and localhost' },
+                tags: ['shared'],
+                importance: 'normal',
+                retentionHint: 'default',
+                createdAt: '2026-03-28T00:00:00.000Z',
+                updatedAt: '2026-03-28T00:00:00.000Z',
+                surface: 'shared',
+              },
+            },
+          },
+        });
+      },
+    };
+  };
+
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage,
+    fetchImpl,
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+  });
+
+  const hydration = await adapter.hydrate();
+  assert.equal(hydration.source, 'shared-backend');
+  assert.equal(adapter.readState().records['continuity::shared-note'].summary, 'Shared note');
+  assert.equal(requests[0].method, 'GET');
+  assert.equal(requests[0].url, 'http://localhost:8787/api/memory/durable');
+  assert.ok(storage.getItem(STEPHANOS_DURABLE_MEMORY_STORAGE_KEY));
+});
+
+test('shared memory adapter falls back to local mirror when backend is unavailable and reports diagnostics', async () => {
+  const storage = createStorage({
+    [STEPHANOS_DURABLE_MEMORY_STORAGE_KEY]: JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: '2026-03-28T00:00:00.000Z',
+      records: {
+        'continuity::local-note': {
+          schemaVersion: 2,
+          type: 'continuity.note',
+          source: 'local',
+          scope: 'runtime',
+          summary: 'local fallback',
+          payload: {},
+          tags: [],
+          importance: 'normal',
+          retentionHint: 'default',
+          createdAt: '2026-03-28T00:00:00.000Z',
+          updatedAt: '2026-03-28T00:00:00.000Z',
+          surface: 'localhost',
+        },
+      },
+    }),
+  });
+
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage,
+    fetchImpl: async () => {
+      throw new Error('offline');
+    },
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+  });
+
+  const hydration = await adapter.hydrate();
+  assert.equal(hydration.source, 'local-mirror-fallback');
+  assert.equal(adapter.readState().records['continuity::local-note'].summary, 'local fallback');
+  assert.equal(adapter.diagnostics().stateClass, 'local-fallback-mirror');
 });

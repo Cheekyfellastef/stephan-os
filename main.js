@@ -1152,6 +1152,14 @@ async function startStephanos() {
       surface: "launcher-root",
       source: "launcher-runtime",
     });
+    const memoryHydration = await stephanosMemory.hydrate();
+    console.info("[AI CONTINUITY] memory-hydrated", {
+      sourceUsedOnLoad: memoryHydration?.source || "unknown",
+      hydrationCompleted: memoryHydration?.hydrationCompleted === true,
+      fallbackReason: memoryHydration?.fallbackReason || "",
+      stateClass: "shared-durable-truth",
+      diagnostics: stephanosMemory.getDiagnostics?.() || null,
+    });
     const stephanosMemoryGateway = createStephanosMemoryGateway(stephanosMemory, {
       namespace: "continuity",
       source: "launcher-continuity-gateway",
