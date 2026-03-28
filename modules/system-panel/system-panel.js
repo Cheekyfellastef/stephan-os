@@ -129,7 +129,7 @@ function renderToggleRow(toggle, checked) {
   `;
 }
 
-function installDraggablePanel(panel, handleSelector = '.stephanos-system-panel-header') {
+export function installDraggablePanel(panel, handleSelector = '.stephanos-system-panel-header') {
   const handle = panel.querySelector(handleSelector);
   if (!handle) {
     return;
@@ -154,9 +154,11 @@ function installDraggablePanel(panel, handleSelector = '.stephanos-system-panel-
       return;
     }
     const bounds = panel.getBoundingClientRect();
+    applyPosition(bounds.left, bounds.top);
+    const normalizedBounds = panel.getBoundingClientRect();
     dragState = {
-      offsetX: event.clientX - bounds.left,
-      offsetY: event.clientY - bounds.top,
+      offsetX: event.clientX - normalizedBounds.left,
+      offsetY: event.clientY - normalizedBounds.top,
     };
     panel.classList.add('stephanos-panel-dragging');
     handle.setPointerCapture?.(event.pointerId);

@@ -88,10 +88,17 @@ h1 {
   margin: auto;
 }
 
-#stephanos-panel-stack,
 #stephanos-panel-container {
   max-width: 1000px;
   margin: 20px auto 0;
+}
+
+#stephanos-panel-stack {
+  position: fixed;
+  inset: 0;
+  max-width: none;
+  margin: 0;
+  pointer-events: none;
 }
 
 .stephanos-panel {

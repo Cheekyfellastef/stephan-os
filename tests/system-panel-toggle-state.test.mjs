@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSystemPanelStateController } from '../modules/system-panel/system-panel.js';
+import { createSystemPanelStateController, installDraggablePanel } from '../modules/system-panel/system-panel.js';
 import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 
 function createStorage(seed = {}) {
@@ -133,4 +133,83 @@ test('system panel controller restores persisted toggle preferences', () => {
   assert.equal(restored.session.ui.uiLayout.truthPanelVisible, true);
   assert.equal(restored.session.ui.uiLayout.realitySyncEnabled, true);
   assert.equal(restored.session.ui.uiLayout['stephanos-build-panel'], false);
+});
+
+test('system panel drag start normalizes transform-centered coordinates before offset math', () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    innerWidth: 500,
+    innerHeight: 500,
+  };
+
+  try {
+    const listeners = new Map();
+    const handle = {
+      addEventListener(type, fn) {
+        listeners.set(type, fn);
+      },
+      setPointerCapture() {},
+    };
+
+    const panel = {
+      style: {
+        left: '',
+        top: '',
+        transform: 'translate(-50%, -50%)',
+      },
+      querySelector(selector) {
+        if (selector === '.drag-handle') {
+          return handle;
+        }
+        return null;
+      },
+      classList: {
+        add() {},
+        remove() {},
+      },
+      getBoundingClientRect() {
+        const width = 140;
+        const height = 120;
+        if (this.style.transform !== 'none') {
+          return {
+            left: 400,
+            top: 320,
+            width,
+            height,
+          };
+        }
+        return {
+          left: Number.parseFloat(this.style.left) || 0,
+          top: Number.parseFloat(this.style.top) || 0,
+          width,
+          height,
+        };
+      },
+    };
+
+    installDraggablePanel(panel, '.drag-handle');
+
+    listeners.get('pointerdown')({
+      button: 0,
+      clientX: 430,
+      clientY: 350,
+      target: { closest: () => null },
+      pointerId: 7,
+      preventDefault() {},
+    });
+
+    assert.equal(panel.style.transform, 'none');
+    assert.equal(panel.style.left, '352px');
+    assert.equal(panel.style.top, '320px');
+
+    listeners.get('pointermove')({
+      clientX: 430,
+      clientY: 350,
+    });
+
+    assert.equal(panel.style.left, '352px');
+    assert.equal(panel.style.top, '320px');
+  } finally {
+    globalThis.window = originalWindow;
+  }
 });
