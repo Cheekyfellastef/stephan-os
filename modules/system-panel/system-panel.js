@@ -11,6 +11,71 @@ export const moduleDefinition = {
 };
 
 const TOGGLE_DEFINITIONS = getSystemPanelToggleDefinitions();
+const SYSTEM_PANEL_POPUP_LAYOUT_KEY = 'systemPanelPopup';
+const LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY = 'systemPanelPopupState';
+
+function normalizePopupState(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const position = source.position && typeof source.position === 'object'
+    ? source.position
+    : {};
+
+  return {
+    visible: source.visible === true,
+    collapsed: source.collapsed === true,
+    position: {
+      x: Number.isFinite(Number(position.x)) ? Number(position.x) : null,
+      y: Number.isFinite(Number(position.y)) ? Number(position.y) : null,
+    },
+  };
+}
+
+export function readSystemPanelPopupState(storage = globalThis.localStorage) {
+  const layout = readLayoutState(storage);
+  const current = normalizePopupState(layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
+  if (
+    layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]
+    || !layout[LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]
+  ) {
+    return {
+      state: current,
+      source: layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY] ? SYSTEM_PANEL_POPUP_LAYOUT_KEY : 'defaults',
+      migrated: false,
+    };
+  }
+
+  const legacy = normalizePopupState(layout[LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
+  writeLayoutState(
+    {
+      [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: legacy,
+      [LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]: undefined,
+    },
+    storage,
+  );
+  return {
+    state: legacy,
+    source: LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY,
+    migrated: true,
+  };
+}
+
+export function writeSystemPanelPopupState(partialPopupState = {}, storage = globalThis.localStorage) {
+  const currentLayout = readLayoutState(storage);
+  const currentPopupState = normalizePopupState(currentLayout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
+  const nextPopupState = normalizePopupState({
+    ...currentPopupState,
+    ...partialPopupState,
+    position: {
+      ...(currentPopupState.position || {}),
+      ...(partialPopupState?.position && typeof partialPopupState.position === 'object'
+        ? partialPopupState.position
+        : {}),
+    },
+  });
+  writeLayoutState({ [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: nextPopupState }, storage);
+  console.info('[SystemPanel] persisted popup state', nextPopupState);
+  return nextPopupState;
+}
 
 
 function readLayoutState(storage = globalThis.localStorage) {
@@ -129,7 +194,11 @@ function renderToggleRow(toggle, checked) {
   `;
 }
 
-export function installDraggablePanel(panel, handleSelector = '.stephanos-system-panel-header') {
+export function installDraggablePanel(
+  panel,
+  handleSelector = '.stephanos-system-panel-header',
+  { onPositionCommit = null } = {},
+) {
   const handle = panel.querySelector(handleSelector);
   if (!handle) {
     return;
@@ -173,6 +242,13 @@ export function installDraggablePanel(panel, handleSelector = '.stephanos-system
   });
 
   const clearDragState = () => {
+    if (dragState) {
+      const left = Number.parseFloat(panel.style.left);
+      const top = Number.parseFloat(panel.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        onPositionCommit?.({ x: left, y: top });
+      }
+    }
     dragState = null;
     panel.classList.remove('stephanos-panel-dragging');
   };
@@ -188,11 +264,18 @@ export function init() {
   }
 
   const controller = createSystemPanelStateController();
+  const popupRestore = readSystemPanelPopupState();
+  const popupState = popupRestore.state;
+  console.info('[SystemPanel] popup restore', {
+    source: popupRestore.source,
+    migrated: popupRestore.migrated,
+    restored: popupState,
+  });
   panel = document.createElement('div');
   panel.id = 'stephanos-system-panel';
   panel.className = 'stephanos-system-panel';
-  panel.style.display = 'none';
-  panel.dataset.collapsed = 'false';
+  panel.style.display = popupState.visible ? 'block' : 'none';
+  panel.dataset.collapsed = popupState.collapsed ? 'true' : 'false';
 
   const moduleControls = controller.toggleDefinitions
     .filter((entry) => entry.type === 'panel')
@@ -256,6 +339,7 @@ export function init() {
     content.style.display = collapsed ? 'none' : 'block';
     knobButton.textContent = collapsed ? '◎' : '◉';
     knobButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    writeSystemPanelPopupState({ collapsed });
   });
 
   panel.querySelector('.system-panel-close')?.addEventListener('click', () => {
@@ -286,10 +370,23 @@ export function init() {
   });
 
   document.body.appendChild(panel);
-  installDraggablePanel(panel);
+  if (popupState.position.x != null && popupState.position.y != null) {
+    panel.style.left = `${popupState.position.x}px`;
+    panel.style.top = `${popupState.position.y}px`;
+    panel.style.transform = 'none';
+  }
+  content.style.display = popupState.collapsed ? 'none' : 'block';
+  knobButton.textContent = popupState.collapsed ? '◎' : '◉';
+  knobButton.setAttribute('aria-expanded', popupState.collapsed ? 'false' : 'true');
+  installDraggablePanel(panel, '.stephanos-system-panel-header', {
+    onPositionCommit(position) {
+      writeSystemPanelPopupState({ position });
+    },
+  });
 
   window.openSystemPanel = function openSystemPanel() {
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    writeSystemPanelPopupState({ visible: panel.style.display !== 'none' });
     if (panel.style.display !== 'none') {
       refreshMirrorStatus();
     }
