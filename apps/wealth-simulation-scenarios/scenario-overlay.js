@@ -62,7 +62,7 @@
 
   const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
   const createDefaultState = persistence?.createDefaultState || (() => ({ version: 1, selectedScenario: 'base-case', scenarios: {}, ui: {} }));
-  let persistedState = persistence?.loadState?.() || createDefaultState();
+  let persistedState = createDefaultState();
   let activeScenarioId = scenarioIds.has(persistedState.selectedScenario) ? persistedState.selectedScenario : 'base-case';
   let defaultInputs = null;
   let isApplyingSnapshot = false;
@@ -250,7 +250,7 @@
 
   const flushState = () => {
     persistedState.selectedScenario = activeScenarioId;
-    persistence?.saveState?.(persistedState);
+    void persistence?.saveState?.(persistedState);
     persistence?.publishAiContextSnapshot?.(persistedState);
   };
 
@@ -458,7 +458,7 @@
       isApplyingSnapshot = false;
     }
 
-    persistence?.clearState?.();
+    void persistence?.clearState?.();
     setStatus('', 'info');
     render();
   };
@@ -561,7 +561,7 @@
                 .join('')}
             </div>
             <p class="scenario-config__hint" style="margin-top: 12px;">
-              Local persistence stores the selected scenario and simulator inputs under <code>${persistence?.STORAGE_KEY || 'stephanos.wealth.scenarios'}</code>.
+              Durable simulator data now uses shared backend tile-state storage (<code>/api/tile-state/${persistence?.APP_ID || 'wealth-simulation-scenarios'}</code>) while UI tab state stays local.
             </p>
           </section>
           <div class="scenario-lab-toast">
@@ -667,6 +667,16 @@
   });
 
   render();
+  void persistence?.loadState?.().then((loadedState) => {
+    persistedState = persistence?.sanitizePersistedState?.(loadedState) || createDefaultState();
+    activeScenarioId = scenarioIds.has(persistedState.selectedScenario) ? persistedState.selectedScenario : 'base-case';
+    console.info('[ScenarioPersistence] Loaded tile data state', {
+      appId: persistence?.APP_ID || 'wealth-simulation-scenarios',
+      durableStorage: 'shared-tile-state-contract',
+      localUiStorageKey: 'stephanos.wealth.scenarios.ui.local.v1',
+    });
+    render();
+  });
   waitForAppInputs(() => {
     ensureDefaultInputs();
     applyScenarioInputs(activeScenarioId);

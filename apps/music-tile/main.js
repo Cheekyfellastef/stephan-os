@@ -147,11 +147,15 @@ function openFullJourney() {
 }
 
 function initialize() {
-  const persisted = loadMusicTileState();
-  state.selection = persisted.selection;
-
-  applySelectionToUI(state.selection);
-  buildAndRenderJourney();
+  loadMusicTileState().then((persisted) => {
+    state.selection = persisted.selection;
+    applySelectionToUI(state.selection);
+    buildAndRenderJourney();
+    console.info('[MusicTileState] Loaded tile data state', {
+      appId: 'music-tile',
+      durableStorage: 'shared-tile-state-contract'
+    });
+  });
 
   elements.build.addEventListener('click', buildAndRenderJourney);
   elements.reset.addEventListener('click', resetSelection);

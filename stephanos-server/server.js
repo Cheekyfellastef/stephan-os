@@ -4,6 +4,7 @@ import cors from 'cors';
 import http from 'node:http';
 import aiRouter from './routes/ai.js';
 import memoryRouter from './routes/memory.js';
+import tileStateRouter from './routes/tile-state.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -52,6 +53,7 @@ memoryService.load();
 
 app.use('/api/ai', aiRouter);
 app.use('/api/memory', memoryRouter);
+app.use('/api/tile-state', tileStateRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
