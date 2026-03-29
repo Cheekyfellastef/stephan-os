@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import aiRouter from './routes/ai.js';
+import aiAdminRouter from './routes/ai-admin.js';
 import memoryRouter from './routes/memory.js';
 import tileStateRouter from './routes/tile-state.js';
 import { createLogger } from './utils/logger.js';
@@ -54,6 +55,7 @@ memoryService.load();
 durableMemoryService.load();
 
 app.use('/api/ai', aiRouter);
+app.use('/api/ai-admin', aiAdminRouter);
 app.use('/api/memory', memoryRouter);
 app.use('/api/tile-state', tileStateRouter);
 

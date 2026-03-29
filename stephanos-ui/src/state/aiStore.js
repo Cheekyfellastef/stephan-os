@@ -532,15 +532,18 @@ export function AIStoreProvider({ children }) {
   }, [provider, draftProviderConfigs, savedProviderConfigs, sessionRestoreDiagnostics]);
 
   const updateDraftProviderConfig = useCallback((providerKey, patch) => {
+    const sanitizedPatch = patch && typeof patch === 'object'
+      ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'apiKey'))
+      : {};
     setDraftProviderConfigs((prev) => ({
       ...prev,
-      [providerKey]: normalizeProviderDraft(providerKey, { ...prev[providerKey], ...patch }),
+      [providerKey]: normalizeProviderDraft(providerKey, { ...prev[providerKey], ...sanitizedPatch, apiKey: '' }),
     }));
     setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'draft', message: '', errors: {} } }));
   }, []);
 
   const saveDraftProviderConfig = useCallback((providerKey) => {
-    const draft = normalizeProviderDraft(providerKey, draftProviderConfigs[providerKey]);
+    const draft = normalizeProviderDraft(providerKey, { ...draftProviderConfigs[providerKey], apiKey: '' });
     const validation = validateProviderDraft(providerKey, draft);
     if (!validation.isValid) {
       setProviderDraftStatus((prev) => ({ ...prev, [providerKey]: { ...prev[providerKey], mode: 'draft', message: 'Fix validation errors before saving.', errors: validation.errors } }));
