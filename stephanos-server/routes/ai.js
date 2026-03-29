@@ -8,9 +8,29 @@ import { ERROR_CODES, normalizeError } from '../services/errors.js';
 import { assistantContextService } from '../services/assistantContextService.js';
 import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
+import { providerSecretStore } from '../services/providerSecretStore.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
+
+function stripRawSecretsFromConfig(config = {}) {
+  const source = config && typeof config === 'object' ? config : {};
+  const { apiKey, ...rest } = source;
+  return rest;
+}
+
+function buildServerOwnedProviderConfigs(input = {}) {
+  const safeClientConfigs = Object.fromEntries(
+    Object.entries(input || {}).map(([provider, config]) => [provider, stripRawSecretsFromConfig(config)]),
+  );
+  const secretOverlay = providerSecretStore.buildProviderConfigOverlay();
+  return Object.fromEntries(
+    Object.keys({ ...safeClientConfigs, ...secretOverlay }).map((provider) => [
+      provider,
+      { ...(safeClientConfigs[provider] || {}), ...(secretOverlay[provider] || {}) },
+    ]),
+  );
+}
 
 
 function formatTileContextForPrompt(tileContext = {}) {
@@ -49,7 +69,10 @@ const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /me
 
 router.post('/providers/health', async (req, res) => {
   const { provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
-  const snapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' } });
+  const serverOwnedProviderConfigs = buildServerOwnedProviderConfigs(providerConfigs);
+  const snapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: serverOwnedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' } });
+  snapshot.secretAuthority = 'backend-local-secret-store';
+  snapshot.secretStatus = providerSecretStore.getMaskedStatusSnapshot();
   res.json({ success: true, data: snapshot });
 });
 
@@ -58,7 +81,7 @@ router.post('/chat', async (req, res) => {
   const { prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfig = {}, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
-  const mergedProviderConfigs = { ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) };
+  const mergedProviderConfigs = buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
   const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
   const assembledTileContext = normalizedRuntimeContext.tileContext && typeof normalizedRuntimeContext.tileContext === 'object'
     ? normalizedRuntimeContext.tileContext
@@ -173,6 +196,7 @@ Use these memories when they help, but do not repeat them unless they are releva
       ollama_available_models: llmResult.diagnostics?.ollama?.availableModels || providerHealthSnapshot?.ollama?.models || [],
       ollama_request_ok: Boolean(llmResult.ok && (llmResult.actualProviderUsed || llmResult.provider) === 'ollama'),
       ollama_error: llmResult.error?.message || null,
+      secret_authority: 'backend-local-secret-store',
     };
     const requestTrace = {
       ui_requested_provider: provider,

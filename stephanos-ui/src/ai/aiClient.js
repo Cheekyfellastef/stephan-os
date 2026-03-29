@@ -10,6 +10,16 @@ function createTransportError({ code, message, details }) {
   return { ok: false, code, message, details, isTransportError: true };
 }
 
+function stripSecretsFromProviderConfigs(providerConfigs = {}) {
+  return Object.fromEntries(
+    Object.entries(providerConfigs || {}).map(([provider, config]) => {
+      const source = config && typeof config === 'object' ? config : {};
+      const { apiKey, ...rest } = source;
+      return [provider, rest];
+    }),
+  );
+}
+
 async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig()) {
   const apiConfig = getApiConfig();
   const timeoutMs = Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
@@ -49,6 +59,7 @@ async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeCo
 }
 
 export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true, runtimeConfig = getApiRuntimeConfig(), tileContext = null }) {
+  const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const runtimeContext = {
     ...runtimeConfig,
     ...(tileContext && typeof tileContext === 'object' ? { tileContext } : {}),
@@ -57,8 +68,8 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, rout
     prompt,
     provider,
     routeMode,
-    providerConfig: providerConfigs?.[provider] || {},
-    providerConfigs,
+    providerConfig: safeProviderConfigs?.[provider] || {},
+    providerConfigs: safeProviderConfigs,
     fallbackEnabled,
     fallbackOrder,
     devMode,
@@ -87,10 +98,14 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, rout
 }
 
 export async function getProviderHealth(payload, runtimeConfig = getApiRuntimeConfig()) {
+  const safePayload = {
+    ...(payload || {}),
+    providerConfigs: stripSecretsFromProviderConfigs(payload?.providerConfigs || {}),
+  };
   const result = await requestJson('/api/ai/providers/health', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(safePayload),
   }, runtimeConfig);
 
   return { ok: result.ok, status: result.status, data: result.data?.data || {} };
@@ -102,6 +117,20 @@ export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
 }
 
 export { getApiRuntimeConfig };
+
+export async function getLocalProviderSecretStatus(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/ai-admin/provider-secrets', {}, runtimeConfig);
+  return { ok: result.ok, status: result.status, data: result.data?.data || {} };
+}
+
+export async function setLocalProviderSecret(provider, apiKey, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson(`/api/ai-admin/provider-secrets/${encodeURIComponent(provider)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey: String(apiKey || '') }),
+  }, runtimeConfig);
+  return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
+}
 
 export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestMemory('/api/memory', {}, runtimeConfig);

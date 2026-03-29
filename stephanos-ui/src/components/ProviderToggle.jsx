@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getApiRuntimeConfig } from '../ai/aiClient';
+import { getApiRuntimeConfig, setLocalProviderSecret } from '../ai/aiClient';
 import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
@@ -100,8 +100,29 @@ export function resolveHomeNodeDraftSync({ currentDraft, preference, isEditing }
   };
 }
 
-function renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }) {
-
+function renderStandardField({
+  field,
+  providerKey,
+  draft,
+  draftState,
+  updateDraftProviderConfig,
+  secretDrafts,
+  setSecretDrafts,
+}) {
+  if (field.key === 'apiKey') {
+    return (
+      <label key={field.key}>
+        <span>{field.label}</span>
+        <input
+          type="password"
+          value={secretDrafts[providerKey] ?? ''}
+          autoComplete="off"
+          onChange={(event) => setSecretDrafts((prev) => ({ ...prev, [providerKey]: event.target.value }))}
+          placeholder="Enter new key (stored backend-only)"
+        />
+      </label>
+    );
+  }
   return (
     <label key={field.key}>
       <span>{field.label}</span>
@@ -157,6 +178,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [homeNodeDraft, setHomeNodeDraft] = useState(() => buildHomeNodeDraftFromPreference(homeNodePreference));
   const [isEditingHomeNode, setIsEditingHomeNode] = useState(false);
   const [homeNodeSaveResult, setHomeNodeSaveResult] = useState('');
+  const [secretDrafts, setSecretDrafts] = useState({});
 
   useEffect(() => {
     const syncResult = resolveHomeNodeDraftSync({
@@ -217,6 +239,30 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     updateDraftProviderConfig,
     rememberSuccessfulOllamaConnection,
   });
+
+  const handleSaveProvider = async (providerKey) => {
+    const saveResult = saveDraftProviderConfig(providerKey);
+    if (!saveResult?.ok) {
+      return;
+    }
+
+    const pendingSecret = String(secretDrafts[providerKey] || '').trim();
+    if (!pendingSecret) {
+      return;
+    }
+
+    const secretSave = await setLocalProviderSecret(providerKey, pendingSecret, runtimeConfig);
+    if (!secretSave.ok) {
+      setUiDiagnostics((prev) => ({
+        ...prev,
+        providerSecretSaveError: secretSave.error || `Failed to store ${providerKey} secret.`,
+      }));
+      return;
+    }
+
+    setSecretDrafts((prev) => ({ ...prev, [providerKey]: '' }));
+    setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: '' }));
+  };
 
   const handleRunOllamaDiscovery = async ({ manualAddress = '' } = {}) => {
     if (manualAddress) {
@@ -595,11 +641,26 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                   </label>
                 ) : null}
 
-                {FIELD_MAP[providerKey].map((field) => renderStandardField({ field, providerKey, draft, draftState, updateDraftProviderConfig }))}
+                {FIELD_MAP[providerKey].map((field) => renderStandardField({
+                  field,
+                  providerKey,
+                  draft,
+                  draftState,
+                  updateDraftProviderConfig,
+                  secretDrafts,
+                  setSecretDrafts,
+                }))}
               </div>
 
               <div className="custom-provider-actions">
-                <button type="button" className="ghost-button" onClick={() => saveDraftProviderConfig(providerKey)} disabled={!dirty}>Save</button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => handleSaveProvider(providerKey)}
+                  disabled={!dirty && !String(secretDrafts[providerKey] || '').trim()}
+                >
+                  Save
+                </button>
                 <button type="button" className="ghost-button" onClick={() => revertDraftProviderConfig(providerKey)} disabled={!dirty}>Revert</button>
                 <button type="button" className="ghost-button" onClick={() => resetProviderConfig(providerKey)}>Reset</button>
               </div>
