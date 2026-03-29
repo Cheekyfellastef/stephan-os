@@ -32,6 +32,7 @@ import {
   restoreStephanosSessionMemoryForDevice,
 } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
+import { createDefaultMissionDashboardUiState, normalizeMissionDashboardUiState } from './missionDashboardUiState';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
 import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 
@@ -49,6 +50,7 @@ const DEFAULT_UI_LAYOUT = {
   proposalPanel: true,
   activityPanel: true,
   roadmapPanel: true,
+  missionDashboardPanel: true,
   debugConsole: false,
 };
 const DEFAULT_OLLAMA_CONNECTION = {
@@ -254,6 +256,7 @@ export function AIStoreProvider({ children }) {
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState(initialSnapshot.lastRoute);
   const [uiLayout, setUiLayout] = useState(initialSnapshot.uiLayout);
+  const [missionDashboardUiState, setMissionDashboardUiStateState] = useState(normalizeMissionDashboardUiState(initialSnapshot.persistedSession?.session?.ui?.missionDashboard || createDefaultMissionDashboardUiState()));
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(initialSettings.provider);
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
@@ -384,6 +387,7 @@ export function AIStoreProvider({ children }) {
           recentRoute: lastRoute || STEPHANOS_ACTIVE_SUBVIEW,
           uiLayout: normalizeUiLayout(uiLayout),
           debugConsoleVisible: debugVisible,
+          missionDashboard: normalizeMissionDashboardUiState(missionDashboardUiState),
         },
         homeNodePreference,
       },
@@ -403,12 +407,20 @@ export function AIStoreProvider({ children }) {
     savedProviderConfigs,
     ollamaConnection,
     uiLayout,
+    missionDashboardUiState,
     lastRoute,
     commandHistory,
     workingMemory,
     projectMemory,
     debugVisible,
   ]);
+
+
+  const setMissionDashboardUiState = useCallback((nextState) => {
+    setMissionDashboardUiStateState((prev) => normalizeMissionDashboardUiState(
+      typeof nextState === 'function' ? nextState(prev) : nextState,
+    ));
+  }, []);
 
   const updateUiLayout = useCallback((updater) => {
     setUiLayout((prev) => {
@@ -628,8 +640,10 @@ export function AIStoreProvider({ children }) {
     debugData,
     setDebugData,
     uiLayout,
+    missionDashboardUiState,
     togglePanel,
     setPanelState,
+    setMissionDashboardUiState,
     provider,
     setProvider,
     providerSelectionSource,
@@ -688,6 +702,7 @@ export function AIStoreProvider({ children }) {
     debugVisible,
     debugData,
     uiLayout,
+    missionDashboardUiState,
     provider,
     providerSelectionSource,
     routeMode,
@@ -713,6 +728,7 @@ export function AIStoreProvider({ children }) {
     setDebugVisible,
     togglePanel,
     setPanelState,
+    setMissionDashboardUiState,
     setProvider,
     setRouteMode,
     setDevMode,
