@@ -1035,3 +1035,182 @@ pre {
 .memory-status.error {
   color: #ffd5d5;
 }
+
+.mission-dashboard-panel .panel-body {
+  gap: 0.8rem;
+}
+
+.mission-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  font-size: 0.84rem;
+}
+
+.mission-health-line,
+.mission-note {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.mission-note {
+  color: #a8b8d8;
+}
+
+.mission-filter-toggle,
+.mission-inline-toggle {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.mission-feedback {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.mission-feedback.success { color: #7fffb8; }
+.mission-feedback.warning { color: #ffd286; }
+.mission-feedback.error { color: #ff9a9a; }
+
+.mission-milestone-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.95fr);
+  gap: 0.85rem;
+}
+
+.mission-milestone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.mission-milestone-card {
+  border: 1px solid rgba(84, 132, 218, 0.45);
+  background: rgba(7, 14, 28, 0.85);
+  border-radius: 10px;
+  padding: 0.6rem;
+}
+
+.mission-milestone-card.selected {
+  box-shadow: inset 0 0 0 1px rgba(124, 189, 255, 0.65);
+}
+
+.mission-milestone-head {
+  all: unset;
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  cursor: pointer;
+}
+
+.mission-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.mission-status-chip {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  border: 1px solid rgba(131, 166, 214, 0.6);
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+}
+
+.mission-progress-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.45rem;
+  align-items: center;
+  font-size: 0.76rem;
+  margin-top: 0.45rem;
+}
+
+.mission-progress-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(40, 66, 110, 0.5);
+  overflow: hidden;
+}
+
+.mission-progress-fill {
+  display: block;
+  height: 100%;
+}
+
+.mission-progress-fill.low { background: #5f92e0; }
+.mission-progress-fill.medium { background: #57b9f0; }
+.mission-progress-fill.high { background: #70e2b0; }
+
+.mission-blocker-indicator {
+  color: #ffd286;
+}
+
+.mission-expand-button {
+  margin-top: 0.45rem;
+}
+
+.mission-details {
+  margin-top: 0.45rem;
+  font-size: 0.76rem;
+}
+
+.mission-details p {
+  margin: 0.2rem 0;
+}
+
+.mission-editor-pane {
+  border: 1px solid rgba(84, 132, 218, 0.45);
+  border-radius: 10px;
+  background: rgba(4, 11, 24, 0.9);
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.mission-editor-pane h3 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.mission-editor-pane label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.79rem;
+}
+
+.mission-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mission-copy-fallback {
+  border: 1px solid rgba(255, 205, 127, 0.6);
+  background: rgba(24, 15, 8, 0.96);
+  border-radius: 10px;
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mission-copy-fallback h3,
+.mission-copy-fallback p {
+  margin: 0;
+}
+
+.mission-copy-fallback textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+@media (max-width: 980px) {
+  .mission-milestone-grid {
+    grid-template-columns: 1fr;
+  }
+}

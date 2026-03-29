@@ -30,6 +30,9 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'session.ui.recentRoute',
   'session.ui.uiLayout',
   'session.ui.debugConsoleVisible',
+  'session.ui.missionDashboard.selectedMilestoneId',
+  'session.ui.missionDashboard.expandedMilestoneIds',
+  'session.ui.missionDashboard.showBlockedOnly',
   'working.recentCommands',
   'working.currentTask',
   'working.activeFocusLabel',
@@ -221,6 +224,19 @@ function normalizeProjectMemory(value = {}) {
   };
 }
 
+function normalizeMissionDashboardUi(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const expandedMilestoneIds = Array.isArray(source.expandedMilestoneIds)
+    ? [...new Set(source.expandedMilestoneIds.map((entry) => normalizeString(entry)).filter(Boolean))].slice(0, 20)
+    : [];
+
+  return {
+    selectedMilestoneId: normalizeString(source.selectedMilestoneId),
+    expandedMilestoneIds,
+    showBlockedOnly: source.showBlockedOnly === true,
+  };
+}
+
 function normalizeUiState(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const baseUiLayout = source.uiLayout && typeof source.uiLayout === 'object' ? { ...source.uiLayout } : {};
@@ -235,6 +251,7 @@ function normalizeUiState(value = {}) {
     recentRoute: normalizeString(source.recentRoute, activeSubview),
     uiLayout,
     debugConsoleVisible: source.debugConsoleVisible === true || uiLayout.debugConsole === true,
+    missionDashboard: normalizeMissionDashboardUi(source.missionDashboard),
   };
 }
 

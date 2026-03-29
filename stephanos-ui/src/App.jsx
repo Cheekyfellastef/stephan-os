@@ -10,6 +10,7 @@ import SimulationPanel from './components/SimulationPanel';
 import ProposalPanel from './components/ProposalPanel';
 import ActivityPanel from './components/ActivityPanel';
 import RoadmapPanel from './components/RoadmapPanel';
+import MissionDashboardPanel from './components/MissionDashboardPanel';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
@@ -194,6 +195,7 @@ export default function App() {
           <ProposalPanel commandHistory={commandHistory} />
           <ActivityPanel commandHistory={commandHistory} />
           <RoadmapPanel commandHistory={commandHistory} />
+          <MissionDashboardPanel />
         </div>
       </section>
 
