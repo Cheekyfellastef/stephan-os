@@ -256,3 +256,47 @@ test('local UI state remains separate from shared durable Ideas data payload', a
   const loaded = await persistence.loadStateWithMeta();
   assert.deepEqual(loaded.ui, { expandedCard: 'shared_ui_split' });
 });
+
+test('localhost and hosted edit/save converge on the same durable idea identity', async () => {
+  const backend = createSharedBackendHarness();
+  const localhost = createIdeasPersistence({
+    localStorage: createStorage(),
+    StephanosTileDataContract: { client: backend.createClient() },
+    console: { info() {} },
+  });
+  const hosted = createIdeasPersistence({
+    localStorage: createStorage(),
+    StephanosTileDataContract: { client: backend.createClient() },
+    console: { info() {} },
+  });
+
+  await localhost.saveState({
+    state: {
+      records: [{
+        id: 'idea_sync_1',
+        title: 'Initial shared idea',
+        summary: 'initial',
+        updatedAt: '2026-03-29T00:00:00.000Z',
+      }],
+    },
+    hydrationCompleted: true,
+  });
+
+  await hosted.saveState({
+    state: {
+      records: [{
+        id: 'idea_sync_1',
+        title: 'Hosted edited shared idea',
+        summary: 'hosted edit',
+        updatedAt: '2026-03-29T00:01:00.000Z',
+      }],
+    },
+    hydrationCompleted: true,
+  });
+
+  const localhostLoaded = await localhost.loadStateWithMeta();
+  assert.equal(localhostLoaded.meta.source, 'shared-backend');
+  assert.equal(localhostLoaded.state.records.length, 1);
+  assert.equal(localhostLoaded.state.records[0].id, 'idea_sync_1');
+  assert.equal(localhostLoaded.state.records[0].title, 'Hosted edited shared idea');
+});
