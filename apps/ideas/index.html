@@ -80,6 +80,10 @@
       display: grid;
       gap: 10px;
     }
+    .entry-actions {
+      display: flex;
+      gap: 8px;
+    }
 
     .media-pill {
       display: inline-flex;
@@ -162,7 +166,7 @@
     </section>
 
     <section class="card grid">
-      <h2 class="headline">Create idea record</h2>
+      <h2 id="idea-form-mode" class="headline">Create idea record</h2>
       <label>Title <input id="idea-title" type="text" maxlength="120" required /></label>
       <label>Summary <textarea id="idea-summary" rows="3" placeholder="Core concept, direction, or question..."></textarea></label>
       <label>Tags (comma-separated) <input id="idea-tags" type="text" placeholder="ideas, research, vr" /></label>
@@ -186,6 +190,7 @@
       <label>Reference notes <textarea id="media-notes" rows="2"></textarea></label>
       <div>
         <button id="save-idea" type="button">Save idea</button>
+        <button id="cancel-edit-idea" type="button" class="ghost" hidden>Cancel edit</button>
         <button id="seed-ideas" type="button" class="ghost">Re-seed examples</button>
       </div>
       <p id="save-status" class="subtle" aria-live="polite"></p>
@@ -227,6 +232,7 @@
     </section>
   </main>
 
+  <script src="../../shared/runtime/tileContextBridge.js"></script>
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
   <script type="module" src="./ideas-app.js"></script>
 </body>

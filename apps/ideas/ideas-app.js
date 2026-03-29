@@ -1,4 +1,5 @@
 import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
+import { buildIdeaActions, startIdeaEdit, upsertIdeaRecord } from './ideas-model.js';
 
 const persistence = createIdeasPersistence(window);
 const IDEAS_APP_ID = 'ideas';
@@ -54,8 +55,10 @@ const elements = {
   mediaSource: document.getElementById('media-source'),
   mediaNotes: document.getElementById('media-notes'),
   saveButton: document.getElementById('save-idea'),
+  cancelEditButton: document.getElementById('cancel-edit-idea'),
   seedButton: document.getElementById('seed-ideas'),
   status: document.getElementById('save-status'),
+  modeLabel: document.getElementById('idea-form-mode'),
   ideasList: document.getElementById('ideas-list'),
   dataPortText: document.getElementById('ideas-data-port-text'),
   dataPortStatus: document.getElementById('ideas-data-port-status'),
@@ -74,39 +77,77 @@ const elements = {
 let state = { records: [] };
 let hydrationCompleted = false;
 let hydrationSource = 'unknown';
+let editingIdeaId = null;
+
+function logIdeas(event, payload = {}) {
+  const logger = window.console || console;
+  const target = logger && typeof logger.info === 'function' ? logger : console;
+  target.info('[IDEAS TILE DATA]', event, payload);
+}
 
 function readAll() {
   return [...state.records].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
 
+function publishIdeasTileContext(records = []) {
+  const bridge = window.StephanosTileContextBridge;
+  if (!bridge?.publishTileContextSnapshot) {
+    return null;
+  }
+
+  const latestRecord = records[0] || null;
+  const snapshot = bridge.publishTileContextSnapshot(IDEAS_APP_ID, {
+    tileTitle: 'Ideas',
+    tileType: 'knowledge',
+    contextVersion: 1,
+    summary: latestRecord
+      ? `Ideas has ${records.length} record(s). Latest: ${latestRecord.title}.`
+      : 'Ideas currently has no records.',
+    structuredData: {
+      recordCount: records.length,
+      latestIdeaId: latestRecord?.id || '',
+      latestIdeaTitle: latestRecord?.title || '',
+      tagsPreview: latestRecord?.tags || [],
+    },
+    visibility: 'workspace',
+  });
+
+  logIdeas('tile-context-refresh', {
+    published: Boolean(snapshot),
+    recordCount: records.length,
+    latestIdeaId: latestRecord?.id || '',
+  });
+  return snapshot;
+}
+
 async function writeAll(records) {
+  if (!hydrationCompleted) {
+    logIdeas('save-blocked', {
+      reason: 'hydration-incomplete',
+      action: 'write-all',
+    });
+    throw new Error('Ideas is still hydrating shared data. Try again in a moment.');
+  }
+
   const sanitized = sanitizeIdeasState({ records });
   state = sanitized;
-  await persistence.saveState({
+  const saveResult = await persistence.saveState({
     state,
     ui: {},
     hydrationCompleted,
+  });
+  publishIdeasTileContext(state.records);
+  logIdeas('backend-save-success', {
+    source: saveResult?.source || 'unknown',
+    recordCount: state.records.length,
   });
   return sanitized.records;
 }
 
 async function upsert(record) {
-  const now = new Date().toISOString();
-  const prepared = sanitizeIdeasState({
-    records: [{
-      ...record,
-      id: (typeof record.id === 'string' && record.id.trim()) || `ideas_${Date.now()}`,
-      createdAt: record.createdAt || now,
-      updatedAt: now,
-    }],
-  }).records[0];
-
-  if (!prepared) {
-    throw new Error('Invalid idea record.');
-  }
-
-  const next = [prepared, ...readAll().filter((entry) => entry.id !== prepared.id)];
+  const next = upsertIdeaRecord(readAll(), record);
   await writeAll(next);
+  return next[0];
 }
 
 function createIdeasExportPayload() {
@@ -212,6 +253,9 @@ function renderIdeas() {
       `).join('')
       : '<p class="subtle">No references attached.</p>';
 
+    const actions = buildIdeaActions(record);
+    const editAction = actions.find((action) => action.type === 'edit');
+
     item.innerHTML = `
       <header>
         <h3 class="headline">${record.title}</h3>
@@ -225,6 +269,9 @@ function renderIdeas() {
         <strong>References</strong>
         <div>${mediaHtml}</div>
       </section>
+      <section class="entry-actions">
+        ${editAction ? `<button type="button" class="ghost idea-edit-button" data-idea-edit-id="${record.id}">${editAction.label}</button>` : ''}
+      </section>
     `;
 
     elements.ideasList.appendChild(item);
@@ -233,6 +280,7 @@ function renderIdeas() {
 
 async function applyImportedIdeas(records, successMessage) {
   const appliedRecords = await writeAll(records);
+  setEditMode(null);
   renderIdeas();
   setDataPortStatus(`${successMessage} (${appliedRecords.length} record${appliedRecords.length === 1 ? '' : 's'} imported.)`, 'success');
   setImportDebugStatus({
@@ -281,9 +329,35 @@ function clearForm() {
   elements.mediaType.value = 'text';
 }
 
+function setEditMode(record = null) {
+  editingIdeaId = record?.id || null;
+  if (elements.modeLabel) {
+    elements.modeLabel.textContent = editingIdeaId ? `Editing: ${record.title}` : 'Create idea record';
+  }
+
+  if (elements.cancelEditButton) {
+    elements.cancelEditButton.hidden = !editingIdeaId;
+  }
+
+  if (!record) {
+    clearForm();
+    return;
+  }
+
+  elements.title.value = record.title || '';
+  elements.summary.value = record.summary || '';
+  elements.tags.value = Array.isArray(record.tags) ? record.tags.join(', ') : '';
+  const media = Array.isArray(record.media) ? record.media[0] : null;
+  elements.mediaType.value = media?.type || 'text';
+  elements.mediaTitle.value = media?.title || '';
+  elements.mediaSource.value = media?.source || '';
+  elements.mediaNotes.value = media?.notes || '';
+}
+
 function setLoadingState(isLoading) {
   if (elements.saveButton) elements.saveButton.disabled = isLoading;
   if (elements.seedButton) elements.seedButton.disabled = isLoading;
+  if (elements.cancelEditButton) elements.cancelEditButton.disabled = isLoading;
   if (isLoading) {
     elements.status.textContent = 'Hydrating Ideas from shared backend…';
   }
@@ -291,25 +365,78 @@ function setLoadingState(isLoading) {
 
 elements.saveButton?.addEventListener('click', async () => {
   try {
+    logIdeas('edit-save-attempted', {
+      hydrationCompleted,
+      editingIdeaId: editingIdeaId || '',
+    });
+
     if (!hydrationCompleted) {
+      logIdeas('save-blocked', {
+        reason: 'hydration-incomplete',
+        action: editingIdeaId ? 'edit-save' : 'create-save',
+      });
       elements.status.textContent = 'Ideas is still hydrating shared data. Try again in a moment.';
       return;
     }
 
     const payload = getFormPayload();
-    await upsert(payload);
-    clearForm();
-    elements.status.textContent = `Idea record saved (${hydrationSource}).`;
+    const wasEditing = Boolean(editingIdeaId);
+    const savedRecord = await upsert({
+      ...payload,
+      id: editingIdeaId || undefined,
+    });
+    logIdeas('edit-save-result', {
+      mode: wasEditing ? 'updated-existing' : 'created-new',
+      savedIdeaId: savedRecord.id,
+    });
+
+    setEditMode(null);
+    elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${hydrationSource}).`;
     renderIdeas();
   } catch (error) {
     elements.status.textContent = error?.message || 'Failed to save record.';
   }
 });
 
+elements.cancelEditButton?.addEventListener('click', () => {
+  logIdeas('edit-cancelled', {
+    editingIdeaId: editingIdeaId || '',
+  });
+  setEditMode(null);
+  elements.status.textContent = 'Edit canceled.';
+});
+
 elements.seedButton?.addEventListener('click', async () => {
+  if (!hydrationCompleted) {
+    elements.status.textContent = 'Ideas is still hydrating shared data. Try again in a moment.';
+    return;
+  }
+
   await writeAll(SEEDED_IDEAS);
   elements.status.textContent = 'Seed ideas restored.';
+  setEditMode(null);
   renderIdeas();
+});
+
+elements.ideasList?.addEventListener('click', (event) => {
+  const button = event?.target?.closest?.('[data-idea-edit-id]');
+  if (!button) {
+    return;
+  }
+
+  const ideaId = button.getAttribute('data-idea-edit-id') || '';
+  const editable = startIdeaEdit(readAll(), ideaId);
+  if (!editable) {
+    elements.status.textContent = 'Unable to enter edit mode for this record.';
+    return;
+  }
+
+  logIdeas('edit-mode-started', {
+    ideaId: editable.id,
+    hydrationCompleted,
+  });
+  setEditMode(editable);
+  elements.status.textContent = `Editing idea "${editable.title}".`;
 });
 
 elements.dataPortExport?.addEventListener('click', () => {
@@ -458,6 +585,11 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   state = sanitizeIdeasState(loaded.state);
   hydrationSource = loaded.meta.source || 'unknown';
   hydrationCompleted = true;
+  logIdeas('hydration-complete', {
+    sourceUsedOnLoad: hydrationSource,
+    hydrationCompleted,
+    recordCount: state.records.length,
+  });
 
   if (!state.records.length) {
     elements.status.textContent = 'No shared Ideas records yet. Use Save or Re-seed examples.';
@@ -466,5 +598,7 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   }
 
   setLoadingState(false);
+  setEditMode(null);
   renderIdeas();
+  publishIdeasTileContext(readAll());
 })();
