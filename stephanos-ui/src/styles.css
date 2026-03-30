@@ -497,6 +497,12 @@ button:active,
   color: #a8b8d8;
 }
 
+.ai-action-context-strip {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #9fd3ff;
+}
+
 .ai-action-buttons {
   display: flex;
   flex-wrap: wrap;

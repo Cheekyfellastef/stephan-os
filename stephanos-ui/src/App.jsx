@@ -138,13 +138,20 @@ export default function App() {
           setInput={setInput}
           submitPrompt={submitPrompt}
           commandHistory={commandHistory}
-          runAiButlerAction={runAiButlerAction}
-          aiActionState={aiActionState}
         />
       </div>
     ) },
     { id: 'statusPanel', render: () => <StatusPanel /> },
-    { id: 'toolsPanel', render: () => <ToolsPanel commandHistory={commandHistory} /> },
+    {
+      id: 'toolsPanel',
+      render: () => (
+        <ToolsPanel
+          commandHistory={commandHistory}
+          runAiButlerAction={runAiButlerAction}
+          aiActionState={aiActionState}
+        />
+      ),
+    },
     { id: 'memoryPanel', render: () => <MemoryPanel commandHistory={commandHistory} /> },
     { id: 'knowledgeGraphPanel', render: () => <KnowledgeGraphPanel commandHistory={commandHistory} /> },
     { id: 'simulationListPanel', render: () => <SimulationListPanel commandHistory={commandHistory} /> },
@@ -156,8 +163,10 @@ export default function App() {
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
   ]), [
+    aiActionState,
     commandHistory,
     input,
+    runAiButlerAction,
     runtimeFingerprint,
     runtimeStatus.headline,
     runtimeStatus.dependencySummary,

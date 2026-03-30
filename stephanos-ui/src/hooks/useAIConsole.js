@@ -217,6 +217,10 @@ export function useAIConsole() {
     missingContext: [],
     generatedAt: '',
     contextPreview: null,
+    requestedProvider: '',
+    selectedProvider: '',
+    executedProvider: '',
+    fallbackUsed: null,
   });
   const {
     commandHistory,
@@ -887,6 +891,9 @@ export function useAIConsole() {
       const missingContext = Object.entries(context.missingContext || {})
         .filter(([, missing]) => missing === true)
         .map(([key]) => key);
+      missingContext.forEach((missingSource) => {
+        console.warn(`[AI ACTION] missing context source ${missingSource}`);
+      });
 
       if (!validation.hasRequiredCore) {
         const message = 'Runtime truth is unavailable; cannot request AI action yet.';
@@ -898,6 +905,10 @@ export function useAIConsole() {
           missingContext,
           generatedAt: new Date().toISOString(),
           contextPreview: context,
+          requestedProvider: provider,
+          selectedProvider: '',
+          executedProvider: '',
+          fallbackUsed: null,
         });
         console.warn('[AI ACTION] response rejected due to missing context', {
           mode,
@@ -925,7 +936,15 @@ export function useAIConsole() {
         runtimeConfig: finalizedRequestContext,
         tileContext: assembledTileContext,
       });
+      const actionExecution = normalizeExecutionMetadata({
+        data,
+        requestPayload: { provider, routeMode },
+        backendDefaultProvider: apiStatus?.backendDefaultProvider,
+      });
       console.info('[AI ACTION] response received', { mode, success: data.success !== false });
+      console.info('[AI ACTION] provider requested <x>', { requestedProvider: actionExecution.requested_provider });
+      console.info('[AI ACTION] provider executed <y>', { executedProvider: actionExecution.actual_provider_used });
+      console.info('[AI ACTION] fallback active', { fallbackUsed: actionExecution.fallback_used });
 
       if (!data?.output_text) {
         const message = 'AI action returned an empty response.';
@@ -937,6 +956,10 @@ export function useAIConsole() {
           missingContext,
           generatedAt: new Date().toISOString(),
           contextPreview: context,
+          requestedProvider: actionExecution.requested_provider || provider,
+          selectedProvider: actionExecution.selected_provider || '',
+          executedProvider: actionExecution.actual_provider_used || '',
+          fallbackUsed: actionExecution.fallback_used,
         });
         return { ok: false, error: message };
       }
@@ -949,6 +972,10 @@ export function useAIConsole() {
         missingContext,
         generatedAt: new Date().toISOString(),
         contextPreview: context,
+        requestedProvider: actionExecution.requested_provider || provider,
+        selectedProvider: actionExecution.selected_provider || '',
+        executedProvider: actionExecution.actual_provider_used || '',
+        fallbackUsed: actionExecution.fallback_used,
       });
       return { ok: true, output: data.output_text, missingContext };
     } catch (error) {
@@ -961,6 +988,10 @@ export function useAIConsole() {
         missingContext: [],
         generatedAt: new Date().toISOString(),
         contextPreview: null,
+        requestedProvider: provider,
+        selectedProvider: '',
+        executedProvider: '',
+        fallbackUsed: null,
       });
       return { ok: false, error: uiError.output };
     }
