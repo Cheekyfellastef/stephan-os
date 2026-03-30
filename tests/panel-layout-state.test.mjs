@@ -376,3 +376,58 @@ test('createPanel re-hardens reused panel stack container on subsequent panel cr
   assert.equal(panelStack.style.pointerEvents, 'none');
   assert.equal(panelStack.style.zIndex, '4500');
 });
+
+test('createPanel preserves persisted closed visibility state for late panel registration', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      'agent-console-panel': false,
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panel = ui.createPanel('agent-console-panel', 'Agents Console');
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+
+  assert.equal(panel.style.display, 'none');
+  assert.equal(panelStack.style.display, 'none');
+});
+
+test('createPanel applies default closed visibility for restorable panel with no persisted state', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panel = ui.createPanel('module-map-panel', 'Module Map');
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+
+  assert.equal(panel.style.display, 'none');
+  assert.equal(panelStack.style.display, 'none');
+});
+
+test('createPanel recovers malformed persisted visibility using safe default', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      'task-monitor-panel': 'open',
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panel = ui.createPanel('task-monitor-panel', 'Task Monitor');
+  assert.equal(panel.style.display, 'none');
+});

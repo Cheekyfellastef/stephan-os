@@ -542,6 +542,7 @@ window.inspectLauncherHitTesting = function inspectLauncherHitTesting({ tileInde
 };
 
 window.setPanelState = function(panelId, enabled) {
+  const normalizedEnabled = enabled === true;
   const panel = document.getElementById(panelId);
   const container = hardenPanelStackContainer();
   const currentMemory = readPersistedStephanosSessionMemory();
@@ -553,11 +554,17 @@ window.setPanelState = function(panelId, enabled) {
         ...currentMemory.session.ui,
         uiLayout: {
           ...(currentMemory.session.ui?.uiLayout || {}),
-          [panelId]: enabled === true,
+          [panelId]: normalizedEnabled,
         },
       },
     },
   });
+  console.info(
+    normalizedEnabled
+      ? "[WORKSPACE] persisted open action for pane"
+      : "[WORKSPACE] persisted close action for pane",
+    { paneId: panelId },
+  );
 
   if (!panel) {
     if (container) {
@@ -567,7 +574,7 @@ window.setPanelState = function(panelId, enabled) {
     return;
   }
 
-  panel.style.display = enabled ? "block" : "none";
+  panel.style.display = normalizedEnabled ? "block" : "none";
 
   if (!container) return;
 
@@ -598,9 +605,29 @@ function restoreOperatorPanelVisibility(persistedLayout = {}) {
   const restorablePanels = getSystemPanelRestorablePanelIds();
 
   restorablePanels.forEach((panelId) => {
+    const hasPersisted = Object.prototype.hasOwnProperty.call(persistedLayout, panelId);
     const persisted = persistedLayout[panelId];
     const defaultEnabled = isSystemPanelDefaultEnabled(panelId);
-    const enabled = typeof persisted === "boolean" ? persisted : defaultEnabled;
+    const enabled = hasPersisted && typeof persisted === "boolean"
+      ? persisted
+      : defaultEnabled;
+    if (hasPersisted && typeof persisted !== "boolean") {
+      console.warn("[WORKSPACE] invalid visibility state recovered to safe default", {
+        paneId: panelId,
+        persistedValue: persisted,
+        fallbackOpen: defaultEnabled,
+      });
+    } else if (hasPersisted) {
+      console.info("[WORKSPACE] restored pane visibility state from session memory", {
+        paneId: panelId,
+        restoredOpen: persisted,
+      });
+    } else {
+      console.info("[WORKSPACE] applying default visibility for pane with no persisted state", {
+        paneId: panelId,
+        defaultOpen: defaultEnabled,
+      });
+    }
     window.setPanelState(panelId, enabled);
   });
 }

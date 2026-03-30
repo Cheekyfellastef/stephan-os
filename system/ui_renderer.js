@@ -2,6 +2,10 @@ import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
 } from "../shared/runtime/stephanosSessionMemory.mjs";
+import {
+  getSystemPanelRestorablePanelIds,
+  isSystemPanelDefaultEnabled,
+} from "../shared/runtime/systemPanelToggleRegistry.mjs";
 import { attachPointerDrag } from "./pointer_drag.js";
 
 const PANEL_POSITION_KEY = "panelPositions";
@@ -10,6 +14,7 @@ const DEFAULT_PANEL_SIZE = Object.freeze({
   width: 320,
   height: 280,
 });
+const SYSTEM_RESTORABLE_PANEL_IDS = new Set(getSystemPanelRestorablePanelIds());
 
 function readUiLayout(storage = globalThis.localStorage) {
   return readPersistedStephanosSessionMemory(storage)?.session?.ui?.uiLayout || {};
@@ -30,6 +35,56 @@ function writeUiLayout(partial = {}, storage = globalThis.localStorage) {
       },
     },
   }, storage);
+}
+
+function resolvePanelVisibilityState(panelId, storage = globalThis.localStorage) {
+  const layout = readUiLayout(storage);
+  const hasPersistedVisibility = Object.prototype.hasOwnProperty.call(layout, panelId);
+  const persisted = layout[panelId];
+  const hasKnownDefault = SYSTEM_RESTORABLE_PANEL_IDS.has(panelId);
+  const defaultVisibility = hasKnownDefault ? isSystemPanelDefaultEnabled(panelId) : true;
+
+  if (hasPersistedVisibility && typeof persisted === "boolean") {
+    console.info("[WORKSPACE] late pane registration reconciled with restored visibility state", {
+      paneId: panelId,
+      restoredOpen: persisted,
+    });
+    if (persisted === false) {
+      console.info("[WORKSPACE] persisted closed state preserved for pane", { paneId: panelId });
+    }
+    return {
+      isOpen: persisted,
+      reason: "persisted",
+    };
+  }
+
+  if (hasPersistedVisibility && typeof persisted !== "boolean") {
+    console.warn("[WORKSPACE] invalid visibility state recovered to safe default", {
+      paneId: panelId,
+      persistedValue: persisted,
+      fallbackOpen: defaultVisibility,
+    });
+    return {
+      isOpen: defaultVisibility,
+      reason: "invalid-persisted",
+    };
+  }
+
+  if (hasKnownDefault) {
+    console.info("[WORKSPACE] applying default visibility for pane with no persisted state", {
+      paneId: panelId,
+      defaultOpen: defaultVisibility,
+    });
+    return {
+      isOpen: defaultVisibility,
+      reason: "defaulted",
+    };
+  }
+
+  return {
+    isOpen: true,
+    reason: "unspecified",
+  };
 }
 
 function readPanelPositions(storage = globalThis.localStorage) {
@@ -221,6 +276,7 @@ export function createUIRenderer() {
   return {
     createPanel(id, title) {
       const container = ensurePanelContainer();
+      const visibility = resolvePanelVisibilityState(id, storage);
 
       let panel = document.getElementById(id);
 
@@ -273,6 +329,10 @@ export function createUIRenderer() {
         };
         panel.dataset.contentProxyInstalled = "true";
       }
+
+      panel.style.display = visibility.isOpen ? "block" : "none";
+      const anyVisible = Array.from(container.children).some((entry) => entry.style.display !== "none");
+      container.style.display = anyVisible ? "block" : "none";
 
       return panel;
     },

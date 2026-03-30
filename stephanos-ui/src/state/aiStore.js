@@ -255,6 +255,14 @@ function createInitialMemorySnapshot() {
   const persistedSession = restoredSession.memory;
   const defaults = createDefaultStephanosSessionMemory();
   const initialApiRuntimeConfig = getApiRuntimeConfig();
+  const restoredVisibilityEntries = Object.entries(persistedSession?.session?.ui?.uiLayout || {})
+    .filter(([, value]) => typeof value === 'boolean');
+  console.info('[WORKSPACE] restored pane visibility state from session memory', {
+    panes: restoredVisibilityEntries.length,
+    open: restoredVisibilityEntries.filter(([, value]) => value === true).length,
+    closed: restoredVisibilityEntries.filter(([, value]) => value === false).length,
+  });
+
   return {
     persistedSession,
     sessionRestoreDiagnostics: restoredSession.diagnostics,
@@ -490,11 +498,21 @@ export function AIStoreProvider({ children }) {
   const setPanelState = useCallback((panelId, isOpen) => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
 
-    updateUiLayout((prev) => ({
-      ...prev,
-      [panelId]: typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen,
-    }));
-  }, [updateUiLayout]);
+    setUiLayout((prev) => {
+      const resolvedOpen = typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen;
+      const nextLayout = normalizeUiLayout({
+        ...prev,
+        [panelId]: resolvedOpen,
+      });
+      console.info(
+        resolvedOpen === true
+          ? '[WORKSPACE] persisted open action for pane'
+          : '[WORKSPACE] persisted close action for pane',
+        { paneId: panelId },
+      );
+      return nextLayout;
+    });
+  }, []);
 
   const togglePanel = useCallback((panelId) => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
