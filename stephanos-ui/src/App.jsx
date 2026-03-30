@@ -37,7 +37,15 @@ import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs'
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
 export default function App() {
-  const { input, setInput, submitPrompt, commandHistory, refreshHealth } = useAIConsole();
+  const {
+    input,
+    setInput,
+    submitPrompt,
+    commandHistory,
+    refreshHealth,
+    runAiButlerAction,
+    aiActionState,
+  } = useAIConsole();
   const {
     provider,
     getActiveProviderConfig,
@@ -125,7 +133,14 @@ export default function App() {
             <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
           </div>
         ) : null}
-        <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />
+        <AIConsole
+          input={input}
+          setInput={setInput}
+          submitPrompt={submitPrompt}
+          commandHistory={commandHistory}
+          runAiButlerAction={runAiButlerAction}
+          aiActionState={aiActionState}
+        />
       </div>
     ) },
     { id: 'statusPanel', render: () => <StatusPanel /> },
