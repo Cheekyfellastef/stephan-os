@@ -3,6 +3,7 @@ import { useAIStore } from '../state/aiStore';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { sanitizeClipboardText } from '../utils/clipboardSanitizer';
 import CollapsiblePanel from './CollapsiblePanel';
+import AiActionConsole from './tools/AiActionConsole';
 
 const CLIPBOARD_SANITISER_SESSION_KEY = 'stephanos.tools.clipboard-sanitiser.session';
 
@@ -48,7 +49,7 @@ function persistSessionState(rawInput, cleanedOutput) {
   }
 }
 
-export default function ToolsPanel({ commandHistory }) {
+export default function ToolsPanel({ commandHistory, runAiButlerAction, aiActionState }) {
   const { uiLayout, togglePanel } = useAIStore();
   const latestTools = [...commandHistory]
     .reverse()
@@ -181,6 +182,8 @@ export default function ToolsPanel({ commandHistory }) {
           ))}
         </div>
       )}
+
+      <AiActionConsole runAiButlerAction={runAiButlerAction} aiActionState={aiActionState} />
 
       <section className="clipboard-sanitiser-tool" aria-label="Clipboard Sanitiser for Codex">
         <header className="clipboard-sanitiser-header">
