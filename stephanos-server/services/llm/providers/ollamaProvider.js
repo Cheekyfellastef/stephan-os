@@ -9,6 +9,7 @@ const OLLAMA_STATE = {
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
 };
 const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 
 function parseAbsoluteUrl(value) {
   const text = String(value ?? '').trim();
@@ -24,6 +25,136 @@ function parseAbsoluteUrl(value) {
 function isLoopbackHostname(hostname = '') {
   const normalized = String(hostname || '').toLowerCase();
   return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '0.0.0.0' || normalized === '::1';
+}
+
+function parseHostnameFromUrl(value = '') {
+  try {
+    return new URL(String(value || '')).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+function pushNonLoopbackHostCandidate(candidates, host = '', source = '') {
+  const normalizedHost = String(host || '').trim();
+  if (!normalizedHost || isLoopbackHostname(normalizedHost)) return;
+  if (candidates.some((candidate) => candidate.host === normalizedHost)) return;
+  candidates.push({ host: normalizedHost, source });
+}
+
+function buildRouteContext(runtimeContext = {}) {
+  const source = runtimeContext && typeof runtimeContext === 'object' ? runtimeContext : {};
+  const sessionKind = String(source.sessionKind || '').trim();
+  const deviceContext = String(source.deviceContext || '').trim();
+  const frontendOrigin = String(source.frontendOrigin || '').trim();
+  const apiBaseUrl = String(source.apiBaseUrl || source.baseUrl || source.backendBaseUrl || '').trim();
+  const frontendHost = source.frontendHost || parseHostnameFromUrl(frontendOrigin);
+  const backendHost = source.backendHost || parseHostnameFromUrl(apiBaseUrl);
+  const homeNodeHost = source?.homeNode?.host || '';
+  const localDesktopSession = !sessionKind && !deviceContext
+    ? true
+    : (sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser');
+  const nonLocalSession = !localDesktopSession;
+  const candidates = [];
+  pushNonLoopbackHostCandidate(candidates, homeNodeHost, 'runtime-context-home-node');
+  pushNonLoopbackHostCandidate(candidates, backendHost, 'runtime-context-backend-host');
+  pushNonLoopbackHostCandidate(candidates, parseHostnameFromUrl(source?.homeNode?.backendUrl || ''), 'home-node-backend-url');
+  pushNonLoopbackHostCandidate(candidates, parseHostnameFromUrl(source?.homeNode?.uiUrl || ''), 'home-node-ui-url');
+  pushNonLoopbackHostCandidate(candidates, parseHostnameFromUrl(source?.routeDiagnostics?.['home-node']?.actualTarget || ''), 'route-diagnostics-home-node-actual-target');
+  pushNonLoopbackHostCandidate(candidates, parseHostnameFromUrl(source?.routeDiagnostics?.['home-node']?.target || ''), 'route-diagnostics-home-node-target');
+
+  return {
+    sessionKind: sessionKind || 'unknown',
+    deviceContext: deviceContext || 'unknown',
+    localDesktopSession,
+    nonLocalSession,
+    candidates,
+  };
+}
+
+function resolveOllamaRouteDecision(baseURL, runtimeContext = {}) {
+  const parsedBaseUrl = parseAbsoluteUrl(baseURL);
+  const routeContext = buildRouteContext(runtimeContext);
+  const routeNotes = [];
+  if (!parsedBaseUrl) {
+    routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} provider configured URL is invalid`);
+    return {
+      ok: false,
+      usable: false,
+      routeClass: 'invalid',
+      configuredBaseURL: baseURL,
+      effectiveBaseURL: baseURL,
+      effectiveHost: '',
+      source: 'invalid-config',
+      routeNotes,
+      routeContext,
+    };
+  }
+
+  const configuredHost = parsedBaseUrl.hostname;
+  const loopbackConfigured = isLoopbackHostname(configuredHost);
+  if (!loopbackConfigured) {
+    routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} non-loopback endpoint preserved (${configuredHost})`);
+    return {
+      ok: true,
+      usable: true,
+      routeClass: 'lan-home-node',
+      configuredBaseURL: baseURL,
+      effectiveBaseURL: parsedBaseUrl.origin,
+      effectiveHost: configuredHost,
+      source: 'configured-non-loopback',
+      routeNotes,
+      routeContext,
+    };
+  }
+
+  if (routeContext.localDesktopSession) {
+    routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} localhost endpoint allowed for local-desktop session`);
+    return {
+      ok: true,
+      usable: true,
+      routeClass: 'localhost',
+      configuredBaseURL: baseURL,
+      effectiveBaseURL: parsedBaseUrl.origin,
+      effectiveHost: configuredHost,
+      source: 'configured-localhost',
+      routeNotes,
+      routeContext,
+    };
+  }
+
+  routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} localhost endpoint rejected for non-local session`);
+  const lanCandidate = routeContext.candidates[0] || null;
+  if (!lanCandidate) {
+    routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} no usable non-loopback endpoint available`);
+    return {
+      ok: true,
+      usable: false,
+      routeClass: 'unusable-nonlocal-loopback',
+      configuredBaseURL: baseURL,
+      effectiveBaseURL: parsedBaseUrl.origin,
+      effectiveHost: configuredHost,
+      source: 'no-lan-candidate',
+      routeNotes,
+      routeContext,
+    };
+  }
+
+  const nextUrl = new URL(parsedBaseUrl.toString());
+  nextUrl.hostname = lanCandidate.host;
+  routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} LAN/home-node endpoint selected (${lanCandidate.host})`);
+  routeNotes.push(`${OLLAMA_ROUTE_NOTE_PREFIX} home-node address source ${lanCandidate.source}`);
+  return {
+    ok: true,
+    usable: true,
+    routeClass: 'lan-home-node',
+    configuredBaseURL: baseURL,
+    effectiveBaseURL: nextUrl.origin,
+    effectiveHost: nextUrl.hostname,
+    source: lanCandidate.source,
+    routeNotes,
+    routeContext,
+  };
 }
 
 function classifyOllamaFailure(error) {
@@ -65,7 +196,9 @@ function classifyOllamaFailure(error) {
 }
 
 function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure = null }) {
-  const baseURL = String(resolved?.baseURL ?? '').trim();
+  const baseURL = String(resolved?.effectiveBaseURL ?? resolved?.baseURL ?? '').trim();
+  const configuredBaseURL = String(resolved?.configuredBaseURL ?? resolved?.baseURL ?? '').trim();
+  const routeDecision = resolved?.routeDecision || {};
   if (!baseURL) {
     return {
       ok: false,
@@ -84,6 +217,10 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
       likelyWrongDevice: false,
       suggestedUrl: 'http://192.168.1.42:11434',
       baseURL,
+      configuredBaseURL,
+      routeClass: routeDecision.routeClass || 'invalid',
+      routeUsable: false,
+      routeNotes: routeDecision.routeNotes || [],
       endpoint: resolved.healthEndpoint || '',
     };
   }
@@ -109,6 +246,10 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
       likelyWrongDevice: false,
       suggestedUrl: 'http://192.168.1.42:11434',
       baseURL,
+      configuredBaseURL,
+      routeClass: routeDecision.routeClass || 'invalid',
+      routeUsable: false,
+      routeNotes: routeDecision.routeNotes || [],
       endpoint: resolved.healthEndpoint || '',
     };
   }
@@ -117,20 +258,28 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
   const suggestedUrl = `${parsedBaseUrl.protocol}//192.168.1.42:${parsedBaseUrl.port || '11434'}`;
 
   if (ok) {
+    const connectedViaLan = routeDecision.routeClass === 'lan-home-node' && !isLocalhost;
     return {
       ok: true,
       provider: 'ollama',
       badge: 'Ready',
       state: OLLAMA_STATE.CONNECTED,
-      message: 'Connected to Ollama (Local Machine)',
-      detail: 'Stephanos reached your Ollama server successfully.',
+      message: connectedViaLan ? 'Connected to Ollama (LAN/Home Node)' : 'Connected to Ollama (Local Machine)',
+      detail: connectedViaLan
+        ? 'Stephanos reached your Ollama server through a LAN/home-node address.'
+        : 'Stephanos reached your Ollama server successfully.',
       helpText: [],
       reason: null,
       failureType: null,
       isLocalhost,
       likelyWrongDevice: false,
       suggestedUrl,
-      baseURL: resolved.baseURL,
+      baseURL: resolved.effectiveBaseURL,
+      configuredBaseURL,
+      routeClass: routeDecision.routeClass || (isLocalhost ? 'localhost' : 'lan-home-node'),
+      routeUsable: true,
+      routeNotes: routeDecision.routeNotes || [],
+      endpointClass: routeDecision.routeClass || (isLocalhost ? 'localhost' : 'lan-home-node'),
       endpoint: resolved.healthEndpoint,
     };
   }
@@ -152,7 +301,12 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
       isLocalhost,
       likelyWrongDevice: false,
       suggestedUrl,
-      baseURL: resolved.baseURL,
+      baseURL: resolved.effectiveBaseURL,
+      configuredBaseURL,
+      routeClass: routeDecision.routeClass || (isLocalhost ? 'localhost' : 'lan-home-node'),
+      routeUsable: true,
+      routeNotes: routeDecision.routeNotes || [],
+      endpointClass: routeDecision.routeClass || (isLocalhost ? 'localhost' : 'lan-home-node'),
       endpoint: resolved.healthEndpoint,
     };
   }
@@ -174,7 +328,12 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
       isLocalhost,
       likelyWrongDevice: true,
       suggestedUrl,
-      baseURL: resolved.baseURL,
+      baseURL: resolved.effectiveBaseURL,
+      configuredBaseURL,
+      routeClass: routeDecision.routeClass || 'localhost',
+      routeUsable: false,
+      routeNotes: routeDecision.routeNotes || [],
+      endpointClass: routeDecision.routeClass || 'localhost',
       endpoint: resolved.healthEndpoint,
     };
   }
@@ -195,20 +354,31 @@ function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure =
     isLocalhost,
     likelyWrongDevice: false,
     suggestedUrl,
-    baseURL: resolved.baseURL,
+    baseURL: resolved.effectiveBaseURL,
+    configuredBaseURL,
+    routeClass: routeDecision.routeClass || 'lan-home-node',
+    routeUsable: false,
+    routeNotes: routeDecision.routeNotes || [],
+    endpointClass: routeDecision.routeClass || 'lan-home-node',
     endpoint: resolved.healthEndpoint,
   };
 }
 
 export function resolveOllamaConfig(config = {}) {
   const resolved = sanitizeProviderConfig('ollama', config);
+  const runtimeContext = resolved.runtimeContext && typeof resolved.runtimeContext === 'object' ? resolved.runtimeContext : {};
   const rawBaseURL = resolved.baseURL;
   const baseURL = String(rawBaseURL ?? '').trim() || DEFAULT_OLLAMA_BASE_URL;
-  const trimmedBaseURL = baseURL.replace(/\/$/, '');
+  const routeDecision = resolveOllamaRouteDecision(baseURL, runtimeContext);
+  const effectiveBaseURL = String(routeDecision.effectiveBaseURL || baseURL).trim();
+  const trimmedBaseURL = effectiveBaseURL.replace(/\/$/, '');
 
   return {
     ...resolved,
-    baseURL,
+    configuredBaseURL: baseURL,
+    baseURL: effectiveBaseURL,
+    effectiveBaseURL,
+    routeDecision,
     endpoint: `${trimmedBaseURL}/api/chat`,
     healthEndpoint: `${trimmedBaseURL}/api/tags`,
   };
@@ -237,6 +407,35 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 
 export async function checkOllamaHealth(config = {}) {
   const resolved = resolveOllamaConfig(config);
+  if (resolved.routeDecision?.routeClass === 'unusable-nonlocal-loopback') {
+    return {
+      ok: false,
+      provider: 'ollama',
+      badge: 'Unusable',
+      state: OLLAMA_STATE.LOCALHOST_MISMATCH,
+      message: 'Ollama is configured but unusable from this surface',
+      detail: 'Stephanos rejected a localhost-only Ollama endpoint for a non-local session.',
+      helpText: [
+        'Use a trusted home-network LAN address for Ollama (for example http://192.168.x.x:11434).',
+        'On Windows set OLLAMA_HOST (for example 0.0.0.0:11434), restart Ollama, and allow local-network firewall access to port 11434.',
+        'Keep Ollama exposure on trusted LAN only (not public Internet).',
+      ],
+      reason: 'Provider configured but unusable from current surface.',
+      failureType: 'localhost_mismatch',
+      isLocalhost: true,
+      likelyWrongDevice: true,
+      suggestedUrl: 'http://192.168.1.42:11434',
+      baseURL: resolved.baseURL,
+      configuredBaseURL: resolved.configuredBaseURL,
+      endpoint: resolved.healthEndpoint,
+      endpointClass: resolved.routeDecision.routeClass,
+      routeClass: resolved.routeDecision.routeClass,
+      routeUsable: false,
+      routeNotes: resolved.routeDecision.routeNotes || [],
+      models: [],
+      requestedModel: resolved.model,
+    };
+  }
   const parsedBaseUrl = parseAbsoluteUrl(resolved.baseURL);
   if (!parsedBaseUrl) {
     return {
@@ -260,6 +459,27 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const resolved = resolveOllamaConfig(config);
+  if (!resolved.routeDecision?.usable) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: resolved.model || '',
+      outputText: '',
+      error: {
+        code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+        message: 'Ollama is configured but unusable from this surface. Configure a LAN/home-node endpoint instead of localhost for non-local clients.',
+        retryable: false,
+      },
+      diagnostics: {
+        ollama: {
+          routeClass: resolved.routeDecision.routeClass,
+          configuredBaseURL: resolved.configuredBaseURL,
+          effectiveBaseURL: resolved.effectiveBaseURL,
+          routeNotes: resolved.routeDecision.routeNotes || [],
+        },
+      },
+    };
+  }
   if (!parseAbsoluteUrl(resolved.baseURL)) {
     return {
       ok: false,
@@ -289,6 +509,7 @@ export async function runOllamaProvider(request, config = {}) {
 
     console.log('[BACKEND LIVE] Ollama provider request starting', {
       baseURL: resolved.baseURL,
+      configuredBaseURL: resolved.configuredBaseURL,
       requestedModel,
       selectedModel: modelToUse,
       autoSelectedModel,
@@ -326,6 +547,7 @@ export async function runOllamaProvider(request, config = {}) {
 
     console.log('[BACKEND LIVE] Ollama provider request succeeded', {
       baseURL: resolved.baseURL,
+      configuredBaseURL: resolved.configuredBaseURL,
       requestedModel,
       selectedModel: modelToUse,
       availableModels,
@@ -342,6 +564,9 @@ export async function runOllamaProvider(request, config = {}) {
       diagnostics: {
         ollama: {
           baseURL: resolved.baseURL,
+          configuredBaseURL: resolved.configuredBaseURL,
+          routeClass: resolved.routeDecision?.routeClass,
+          routeNotes: resolved.routeDecision?.routeNotes || [],
           requestedModel,
           selectedModel: modelToUse,
           availableModels,
