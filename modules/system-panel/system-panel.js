@@ -14,6 +14,9 @@ export const moduleDefinition = {
 const TOGGLE_DEFINITIONS = getSystemPanelToggleDefinitions();
 const SYSTEM_PANEL_POPUP_LAYOUT_KEY = 'systemPanelPopup';
 const LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY = 'systemPanelPopupState';
+const SYSTEM_PANEL_SURFACE_ID = 'stephanos-system-panel';
+const SYSTEM_PANEL_COLLAPSED_LAYOUT_KEY = 'stephanos-system-panel:collapsed';
+const PANEL_POSITION_KEY = 'panelPositions';
 
 function normalizePopupState(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
@@ -33,14 +36,23 @@ function normalizePopupState(value = {}) {
 
 export function readSystemPanelPopupState(storage = globalThis.localStorage) {
   const layout = readLayoutState(storage);
-  const current = normalizePopupState(layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
+  const persistedVisibility = layout[SYSTEM_PANEL_SURFACE_ID];
+  const persistedCollapsed = layout[SYSTEM_PANEL_COLLAPSED_LAYOUT_KEY];
+  const persistedPosition = layout[PANEL_POSITION_KEY]?.[SYSTEM_PANEL_SURFACE_ID];
+  const current = normalizePopupState({
+    visible: typeof persistedVisibility === 'boolean' ? persistedVisibility : false,
+    collapsed: typeof persistedCollapsed === 'boolean' ? persistedCollapsed : false,
+    position: persistedPosition,
+  });
   if (
-    layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]
+    typeof persistedVisibility === 'boolean'
+    || typeof persistedCollapsed === 'boolean'
+    || (persistedPosition && typeof persistedPosition === 'object')
     || !layout[LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]
   ) {
     return {
       state: current,
-      source: layout[SYSTEM_PANEL_POPUP_LAYOUT_KEY] ? SYSTEM_PANEL_POPUP_LAYOUT_KEY : 'defaults',
+      source: typeof persistedVisibility === 'boolean' ? SYSTEM_PANEL_SURFACE_ID : 'defaults',
       migrated: false,
     };
   }
@@ -48,7 +60,13 @@ export function readSystemPanelPopupState(storage = globalThis.localStorage) {
   const legacy = normalizePopupState(layout[LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
   writeLayoutState(
     {
-      [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: legacy,
+      [SYSTEM_PANEL_SURFACE_ID]: legacy.visible === true,
+      [SYSTEM_PANEL_COLLAPSED_LAYOUT_KEY]: legacy.collapsed === true,
+      [PANEL_POSITION_KEY]: {
+        ...(layout[PANEL_POSITION_KEY] && typeof layout[PANEL_POSITION_KEY] === 'object' ? layout[PANEL_POSITION_KEY] : {}),
+        [SYSTEM_PANEL_SURFACE_ID]: legacy.position,
+      },
+      [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: undefined,
       [LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]: undefined,
     },
     storage,
@@ -61,8 +79,7 @@ export function readSystemPanelPopupState(storage = globalThis.localStorage) {
 }
 
 export function writeSystemPanelPopupState(partialPopupState = {}, storage = globalThis.localStorage) {
-  const currentLayout = readLayoutState(storage);
-  const currentPopupState = normalizePopupState(currentLayout[SYSTEM_PANEL_POPUP_LAYOUT_KEY]);
+  const currentPopupState = readSystemPanelPopupState(storage).state;
   const nextPopupState = normalizePopupState({
     ...currentPopupState,
     ...partialPopupState,
@@ -73,7 +90,20 @@ export function writeSystemPanelPopupState(partialPopupState = {}, storage = glo
         : {}),
     },
   });
-  writeLayoutState({ [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: nextPopupState }, storage);
+  const currentLayout = readLayoutState(storage);
+  const currentPositions = currentLayout[PANEL_POSITION_KEY] && typeof currentLayout[PANEL_POSITION_KEY] === 'object'
+    ? currentLayout[PANEL_POSITION_KEY]
+    : {};
+  writeLayoutState({
+    [SYSTEM_PANEL_SURFACE_ID]: nextPopupState.visible === true,
+    [SYSTEM_PANEL_COLLAPSED_LAYOUT_KEY]: nextPopupState.collapsed === true,
+    [PANEL_POSITION_KEY]: {
+      ...currentPositions,
+      [SYSTEM_PANEL_SURFACE_ID]: nextPopupState.position,
+    },
+    [SYSTEM_PANEL_POPUP_LAYOUT_KEY]: undefined,
+    [LEGACY_SYSTEM_PANEL_POPUP_LAYOUT_KEY]: undefined,
+  }, storage);
   console.info('[SystemPanel] persisted popup state', nextPopupState);
   return nextPopupState;
 }
@@ -219,7 +249,7 @@ export function installDraggablePanel(
 }
 
 export function init() {
-  let panel = document.getElementById('stephanos-system-panel');
+  let panel = document.getElementById(SYSTEM_PANEL_SURFACE_ID);
   if (panel) {
     return;
   }
@@ -233,7 +263,7 @@ export function init() {
     restored: popupState,
   });
   panel = document.createElement('div');
-  panel.id = 'stephanos-system-panel';
+  panel.id = SYSTEM_PANEL_SURFACE_ID;
   panel.className = 'stephanos-system-panel';
   panel.style.display = popupState.visible ? 'block' : 'none';
   panel.dataset.collapsed = popupState.collapsed ? 'true' : 'false';

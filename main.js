@@ -716,10 +716,40 @@ const buildTruthSignals = {
   lastRestartResult: "none",
 };
 const initialUiLayout = readPersistedStephanosSessionMemory()?.session?.ui?.uiLayout || {};
+function resolveLauncherSurfacePreference(layout, key, defaultVisible) {
+  const hasPersisted = Object.prototype.hasOwnProperty.call(layout, key);
+  if (hasPersisted && typeof layout[key] === "boolean") {
+    if (layout[key] === false) {
+      console.info("[WORKSPACE] persisted false respected for surface", { surfaceId: key });
+    }
+    return layout[key];
+  }
+  if (hasPersisted) {
+    console.warn("[WORKSPACE] invalid surface visibility state recovered to default", {
+      surfaceId: key,
+      persistedValue: layout[key],
+      fallbackOpen: defaultVisible,
+    });
+  } else {
+    console.info("[WORKSPACE] default applied (no persisted state)", {
+      surfaceId: key,
+      defaultOpen: defaultVisible,
+    });
+  }
+  return defaultVisible;
+}
 const launcherSurfaceVisibility = {
-  runtimeDiagnosticsVisible: initialUiLayout.runtimeDiagnosticsVisible === true || launcherDiagnostics.enabled,
-  launcherRuntimeFingerprintVisible: initialUiLayout.launcherRuntimeFingerprintVisible === true || launcherDiagnostics.enabled,
-  truthPanelVisible: initialUiLayout.truthPanelVisible === true,
+  runtimeDiagnosticsVisible: resolveLauncherSurfacePreference(
+    initialUiLayout,
+    "runtimeDiagnosticsVisible",
+    launcherDiagnostics.enabled === true,
+  ),
+  launcherRuntimeFingerprintVisible: resolveLauncherSurfacePreference(
+    initialUiLayout,
+    "launcherRuntimeFingerprintVisible",
+    launcherDiagnostics.enabled === true,
+  ),
+  truthPanelVisible: resolveLauncherSurfacePreference(initialUiLayout, "truthPanelVisible", false),
 };
 
 const realitySyncState = {

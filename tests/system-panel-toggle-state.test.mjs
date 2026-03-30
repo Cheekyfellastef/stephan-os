@@ -244,11 +244,13 @@ test('system panel popup state persists with shared session ui layout contract',
   assert.deepEqual(restored.state.position, { x: 312, y: 144 });
 
   const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
-  assert.deepEqual(memory.session.ui.uiLayout.systemPanelPopup, {
-    visible: true,
-    collapsed: true,
-    position: { x: 312, y: 144 },
+  assert.equal(memory.session.ui.uiLayout['stephanos-system-panel'], true);
+  assert.equal(memory.session.ui.uiLayout['stephanos-system-panel:collapsed'], true);
+  assert.deepEqual(memory.session.ui.uiLayout.panelPositions['stephanos-system-panel'], {
+    x: 312,
+    y: 144,
   });
+  assert.equal(Object.prototype.hasOwnProperty.call(memory.session.ui.uiLayout, 'systemPanelPopup'), false);
 });
 
 test('system panel popup state migrates legacy key without losing valid state', () => {
@@ -272,8 +274,32 @@ test('system panel popup state migrates legacy key without losing valid state', 
   });
 
   const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
-  assert.deepEqual(memory.session.ui.uiLayout.systemPanelPopup, restore.state);
+  assert.equal(memory.session.ui.uiLayout['stephanos-system-panel'], true);
+  assert.equal(memory.session.ui.uiLayout['stephanos-system-panel:collapsed'], false);
+  assert.deepEqual(memory.session.ui.uiLayout.panelPositions['stephanos-system-panel'], { x: 410, y: 255 });
   assert.equal(Object.prototype.hasOwnProperty.call(memory.session.ui.uiLayout, 'systemPanelPopupState'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(memory.session.ui.uiLayout, 'systemPanelPopup'), false);
+});
+
+test('system panel popup state restores from canonical workspace visibility keys', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      'stephanos-system-panel': false,
+      'stephanos-system-panel:collapsed': true,
+      panelPositions: {
+        'stephanos-system-panel': { x: 222, y: 188 },
+      },
+    }),
+  });
+
+  const restore = readSystemPanelPopupState(storage);
+  assert.equal(restore.source, 'stephanos-system-panel');
+  assert.equal(restore.migrated, false);
+  assert.deepEqual(restore.state, {
+    visible: false,
+    collapsed: true,
+    position: { x: 222, y: 188 },
+  });
 });
 
 test('system panel drag commit callback receives persisted bounded position', () => {
