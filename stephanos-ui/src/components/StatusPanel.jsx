@@ -65,6 +65,7 @@ export default function StatusPanel() {
   const finalRoute = runtimeStatus.finalRoute ?? {};
   const finalRouteTruth = runtimeStatus.finalRouteTruth ?? {};
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
+  const canonicalTruth = runtimeStatus.canonicalRouteRuntimeTruth ?? {};
   const adjudication = runtimeStatus.runtimeAdjudication ?? { issues: [] };
   const runtimeSessionTruth = runtimeTruth.session ?? {};
   const runtimeRouteTruth = runtimeTruth.route ?? {};
@@ -224,10 +225,10 @@ export default function StatusPanel() {
         <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
         <li>Active Provider: {routeTruthView.executedProvider}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
-        <li>Fallback Active: {runtimeTruth.fallbackActive || runtimeStatus.fallbackActive ? 'yes' : 'no'}</li>
+        <li>Fallback Active: {routeTruthView.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
-        <li>Session Kind: {runtimeSessionTruth.sessionKind || runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
+        <li>Session Kind: {canonicalTruth.sessionKind || runtimeSessionTruth.sessionKind || runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
         <li>Non-Local Session: {(runtimeSessionTruth.nonLocalSession === true) ? 'yes' : 'no'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>

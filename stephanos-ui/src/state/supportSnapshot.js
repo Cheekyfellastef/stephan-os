@@ -51,6 +51,7 @@ export function buildSupportSnapshot({
   origin,
   href,
 }) {
+  const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
   const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'n/a');
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
@@ -81,8 +82,8 @@ export function buildSupportSnapshot({
     `Launch State: ${asText(runtimeStatus?.appLaunchState)}`,
     `Route Mode: ${asText(runtimeStatus?.effectiveRouteMode)}`,
     `Requested Route Mode: ${asText(runtimeStatus?.requestedRouteMode)}`,
-    `Session Kind: ${asText(runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind)}`,
-    `Device Context: ${asText(runtimeSessionTruth?.deviceContext || runtimeStatus?.deviceContext)}`,
+    `Session Kind: ${asText(canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind)}`,
+    `Device Context: ${asText(canonicalTruth.deviceContext || runtimeSessionTruth?.deviceContext || runtimeStatus?.deviceContext)}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,
@@ -134,7 +135,7 @@ export function buildSupportSnapshot({
     `Selected Route Reachable: ${asText(routeTruthView?.selectedRouteReachableState)}`,
     `Selected Route Usable: ${asText(routeTruthView?.routeUsableState)}`,
     `Home Available: ${asYesNoUnknown(runtimeStatus?.homeNodeReachable)}`,
-    `Executable Provider: ${asText(runtimeProviderTruth?.executableProvider, 'none')}`,
+    `Executable Provider: ${asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
     '',
     'routeDiagnosticsSummary:',
     ...summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics),
