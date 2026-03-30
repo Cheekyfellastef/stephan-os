@@ -553,6 +553,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     <strong>How this works</strong>
                     <p>Same computer: localhost usually works.</p>
                     <p>Different device: Stephanos needs your PC’s address.</p>
+                    <p>Trusted home-network only: do not expose Ollama directly to the public Internet.</p>
                   </div>
 
                   <div className="provider-status-box">

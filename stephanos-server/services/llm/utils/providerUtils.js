@@ -33,10 +33,18 @@ export function buildAIRequest({ prompt = '', messages = [], systemPrompt, model
 
 function getEnvBackedDefaults(provider) {
   const defaults = PROVIDER_DEFINITIONS[provider]?.defaults || {};
+  const ollamaHost = String(process.env.OLLAMA_HOST || '').trim();
+  const normalizedOllamaHost = ollamaHost
+    ? (ollamaHost.startsWith('http://') || ollamaHost.startsWith('https://') ? ollamaHost : `http://${ollamaHost}`)
+    : '';
   const envMap = {
     groq: { apiKey: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL, baseURL: process.env.GROQ_BASE_URL },
     gemini: { apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL, baseURL: process.env.GEMINI_BASE_URL },
-    ollama: { baseURL: process.env.OLLAMA_BASE_URL, model: process.env.OLLAMA_MODEL, timeoutMs: process.env.OLLAMA_TIMEOUT_MS },
+    ollama: {
+      baseURL: process.env.OLLAMA_BASE_URL || normalizedOllamaHost,
+      model: process.env.OLLAMA_MODEL,
+      timeoutMs: process.env.OLLAMA_TIMEOUT_MS,
+    },
     openrouter: { apiKey: process.env.OPENROUTER_API_KEY, model: process.env.OPENROUTER_MODEL, baseURL: process.env.OPENROUTER_BASE_URL },
   };
 

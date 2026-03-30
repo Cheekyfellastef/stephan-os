@@ -59,7 +59,10 @@ export function resolveFallbackTelemetry({
 }
 
 async function executeProvider(provider, request, routerConfig) {
-  const config = sanitizeProviderConfig(provider, routerConfig.providerConfigs?.[provider] || {});
+  const config = sanitizeProviderConfig(provider, {
+    ...(routerConfig.providerConfigs?.[provider] || {}),
+    runtimeContext: routerConfig.runtimeContext,
+  });
   const health = await PROVIDER_HEALTH_CHECKS[provider](config);
   const result = await PROVIDER_RUNNERS[provider](request, config);
 
@@ -76,7 +79,10 @@ export async function getProviderHealthSnapshot(routerConfigInput = {}) {
   const snapshot = {};
 
   for (const provider of Object.keys(PROVIDER_DEFINITIONS)) {
-    const config = sanitizeProviderConfig(provider, routerConfig.providerConfigs?.[provider] || {});
+    const config = sanitizeProviderConfig(provider, {
+      ...(routerConfig.providerConfigs?.[provider] || {}),
+      runtimeContext: routerConfig.runtimeContext,
+    });
     const health = await PROVIDER_HEALTH_CHECKS[provider](config);
     snapshot[provider] = {
       ...health,
