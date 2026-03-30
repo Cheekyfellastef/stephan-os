@@ -17,6 +17,8 @@ import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusM
 import { useAIStore } from '../state/aiStore';
 import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
 import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
+import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
+import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -207,6 +209,15 @@ function transportErrorToUi(error) {
 
 export function useAIConsole() {
   const [input, setInput] = useState('');
+  const [aiActionState, setAiActionState] = useState({
+    mode: '',
+    isRunning: false,
+    output: '',
+    error: '',
+    missingContext: [],
+    generatedAt: '',
+    contextPreview: null,
+  });
   const {
     commandHistory,
     setCommandHistory,
@@ -237,6 +248,10 @@ export function useAIConsole() {
     setProviderHealth,
     lastExecutionMetadata,
     setLastExecutionMetadata,
+    uiLayout,
+    paneLayout,
+    runtimeStatusModel,
+    debugData,
   } = useAIStore();
 
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
@@ -843,5 +858,122 @@ export function useAIConsole() {
     setInput('');
   }
 
-  return { input, setInput, commandHistory, submitPrompt, clearConsole, refreshHealth };
+  async function runAiButlerAction(mode, { operatorNotes = '' } = {}) {
+    setAiActionState((prev) => ({
+      ...prev,
+      mode,
+      isRunning: true,
+      error: '',
+    }));
+    console.info('[AI ACTION] building mission/workspace context', { mode });
+
+    try {
+      const missionState = await readMissionDashboardStateFromMemory();
+      const context = buildAiActionContext({
+        missionState,
+        uiLayout,
+        paneLayout,
+        runtimeStatusModel,
+        commandHistory,
+        debugData,
+        operatorNotes,
+      });
+      console.info('[AI ACTION] context built from canonical state sources', {
+        mode,
+        missingContext: context.missingContext,
+      });
+
+      const validation = validateAiActionContext(context);
+      const missingContext = Object.entries(context.missingContext || {})
+        .filter(([, missing]) => missing === true)
+        .map(([key]) => key);
+
+      if (!validation.hasRequiredCore) {
+        const message = 'Runtime truth is unavailable; cannot request AI action yet.';
+        setAiActionState({
+          mode,
+          isRunning: false,
+          output: '',
+          error: message,
+          missingContext,
+          generatedAt: new Date().toISOString(),
+          contextPreview: context,
+        });
+        console.warn('[AI ACTION] response rejected due to missing context', {
+          mode,
+          missingContext,
+        });
+        return { ok: false, error: message, missingContext };
+      }
+
+      const prompt = buildMissionActionPrompt({ mode, context });
+      const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
+      const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
+      const assembledTileContext = assembleStephanosContext({
+        userPrompt: prompt,
+        runtimeContext: finalizedRequestContext,
+      });
+      console.info(`[AI ACTION] requesting ${mode}`);
+      const { data } = await sendPrompt({
+        prompt,
+        provider,
+        routeMode,
+        providerConfigs: effectiveProviderConfigs,
+        fallbackEnabled,
+        fallbackOrder,
+        devMode,
+        runtimeConfig: finalizedRequestContext,
+        tileContext: assembledTileContext,
+      });
+      console.info('[AI ACTION] response received', { mode, success: data.success !== false });
+
+      if (!data?.output_text) {
+        const message = 'AI action returned an empty response.';
+        setAiActionState({
+          mode,
+          isRunning: false,
+          output: '',
+          error: message,
+          missingContext,
+          generatedAt: new Date().toISOString(),
+          contextPreview: context,
+        });
+        return { ok: false, error: message };
+      }
+
+      setAiActionState({
+        mode,
+        isRunning: false,
+        output: data.output_text,
+        error: '',
+        missingContext,
+        generatedAt: new Date().toISOString(),
+        contextPreview: context,
+      });
+      return { ok: true, output: data.output_text, missingContext };
+    } catch (error) {
+      const uiError = transportErrorToUi(error);
+      setAiActionState({
+        mode,
+        isRunning: false,
+        output: '',
+        error: uiError.output,
+        missingContext: [],
+        generatedAt: new Date().toISOString(),
+        contextPreview: null,
+      });
+      return { ok: false, error: uiError.output };
+    }
+  }
+
+  return {
+    input,
+    setInput,
+    commandHistory,
+    submitPrompt,
+    clearConsole,
+    refreshHealth,
+    runAiButlerAction,
+    aiActionState,
+  };
 }

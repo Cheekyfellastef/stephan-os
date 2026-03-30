@@ -476,6 +476,65 @@ button:active,
   resize: vertical;
 }
 
+.ai-action-panel {
+  border: 1px solid rgba(82, 132, 212, 0.4);
+  border-radius: 10px;
+  background: rgba(4, 11, 24, 0.9);
+  padding: 0.75rem;
+  margin-bottom: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ai-action-header h3,
+.ai-action-header p {
+  margin: 0;
+}
+
+.ai-action-header p {
+  font-size: 0.82rem;
+  color: #a8b8d8;
+}
+
+.ai-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.ai-action-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ai-action-result-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.ai-action-result textarea {
+  width: 100%;
+  min-height: 180px;
+  max-height: 48vh;
+  resize: vertical;
+}
+
+.ai-action-context-warning {
+  margin: 0;
+  color: #ffd286;
+  font-size: 0.82rem;
+}
+
+.ai-action-copy-feedback {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #9be2bb;
+}
+
 .status-panel-copy-actions {
   display: flex;
   align-items: center;
@@ -1389,5 +1448,10 @@ pre {
 
   .clipboard-sanitiser-actions button {
     width: 100%;
+  }
+
+  .ai-action-buttons button {
+    width: 100%;
+    min-height: 44px;
   }
 }
