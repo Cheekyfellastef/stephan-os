@@ -101,6 +101,8 @@ test('adjudicator keeps backend and ui reachability distinct', () => {
 
   assert.equal(adjudicated.runtimeTruth.reachabilityTruth.backendReachable, false);
   assert.equal(adjudicated.runtimeTruth.reachabilityTruth.uiReachableState, 'reachable');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.backendReachable, false);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.uiReachabilityState, 'reachable');
 });
 
 test('adjudicator does not promote selected provider to executable when provider is unvalidated', () => {
@@ -238,4 +240,39 @@ test('adjudicator emits blocking issue when shared write target appears before h
 
   assert.equal(adjudicated.runtimeTruth.memory.hydrationCompleted, false);
   assert.ok(adjudicated.issues.some((issue) => issue.code === 'memory-write-before-hydration'));
+});
+
+test('adjudicator canonical truth keeps provider stages and fallback reason in one snapshot', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeSelectedProvider: 'groq',
+    selectedProvider: 'ollama',
+    activeProvider: 'groq',
+    providerHealth: {
+      groq: { ok: true, provider: 'groq' },
+      ollama: { ok: false, reason: 'offline' },
+    },
+  }));
+
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.requestedProvider, 'ollama');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.selectedProvider, 'groq');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.executedProvider, 'groq');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.fallbackActive, true);
+  assert.match(adjudicated.canonicalRouteRuntimeTruth.fallbackReason, /Requested ollama, executed groq/);
 });

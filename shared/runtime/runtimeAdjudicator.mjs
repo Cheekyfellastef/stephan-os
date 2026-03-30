@@ -99,6 +99,53 @@ function projectLegacyRuntimeTruth(runtimeTruth) {
   };
 }
 
+function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
+  const session = asObject(runtimeTruth.session);
+  const route = asObject(runtimeTruth.route);
+  const reachabilityTruth = asObject(runtimeTruth.reachabilityTruth);
+  const provider = asObject(runtimeTruth.provider);
+  const diagnostics = asObject(runtimeTruth.diagnostics);
+  const routeUsable = reachabilityTruth.selectedRouteUsable === true
+    && reachabilityTruth.uiReachableState === 'reachable';
+  const blockingCodes = issues
+    .filter((issue) => issue.severity === 'error')
+    .map((issue) => issue.code);
+  const fallbackReason = provider.fallbackReason
+    || (route.fallbackActive ? 'Fallback route active.' : '');
+
+  return {
+    sessionKind: session.sessionKind || 'unknown',
+    sessionReality: session.nonLocalSession ? 'non-local' : 'local-desktop',
+    deviceContext: session.deviceContext || 'unknown',
+    requestedRouteMode: route.requestedMode || 'auto',
+    effectiveRouteMode: route.effectiveMode || 'auto',
+    winningRoute: route.selectedRouteKind || 'unavailable',
+    winningReason: route.winningReason || '',
+    routeSource: route.source || 'route-diagnostics',
+    preferredTarget: route.preferredTarget || '',
+    actualTarget: route.actualTarget || '',
+    backendReachable: reachabilityTruth.backendReachable === true,
+    uiReachabilityState: reachabilityTruth.uiReachableState || 'unknown',
+    uiReachable: reachabilityTruth.uiReachable === true,
+    routeReachable: reachabilityTruth.selectedRouteReachable === true,
+    routeUsable,
+    localAvailable: reachabilityTruth.localAvailable === true,
+    homeNodeAvailable: reachabilityTruth.homeNodeAvailable === true,
+    cloudAvailable: reachabilityTruth.cloudAvailable === true,
+    distAvailable: reachabilityTruth.distAvailable === true,
+    requestedProvider: provider.requestedProvider || 'unknown',
+    selectedProvider: provider.selectedProvider || 'unknown',
+    executedProvider: provider.executableProvider || '',
+    providerHealthState: provider.providerHealthState || 'unknown',
+    fallbackActive: route.fallbackActive === true || provider.fallbackProviderUsed === true,
+    fallbackReason,
+    validationState: diagnostics.validationState || 'unknown',
+    appLaunchState: diagnostics.appLaunchState || 'unknown',
+    blockingIssueCodes: blockingCodes,
+    operatorSummary: diagnostics.operatorGuidance?.[0] || route.winningReason || 'No operator action required.',
+  };
+}
+
 export function adjudicateRuntimeTruth({
   runtimeContext = {},
   finalRoute = {},
@@ -326,9 +373,13 @@ export function adjudicateRuntimeTruth({
     }
   }
 
+  const canonicalRouteRuntimeTruth = buildCanonicalRouteRuntimeTruth(runtimeTruth, issues);
+
   return {
     runtimeTruth: projectLegacyRuntimeTruth(runtimeTruth),
-    runtimeTruthSnapshot: buildRuntimeTruthSnapshot({
+    canonicalRouteRuntimeTruth,
+    runtimeTruthSnapshot: canonicalRouteRuntimeTruth,
+    compatibilityRuntimeTruthSnapshot: buildRuntimeTruthSnapshot({
       runtimeContext,
       finalRoute,
       finalRouteTruth,

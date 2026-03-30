@@ -1012,8 +1012,10 @@ export function createRuntimeStatusModel({
   return {
     ...model,
     finalRouteTruth,
+    canonicalRouteRuntimeTruth: runtimeAdjudication.canonicalRouteRuntimeTruth,
     runtimeTruth: runtimeAdjudication.runtimeTruth,
     runtimeTruthSnapshot: runtimeAdjudication.runtimeTruthSnapshot,
+    compatibilityRuntimeTruthSnapshot: runtimeAdjudication.compatibilityRuntimeTruthSnapshot,
     runtimeAdjudication: {
       issues: runtimeAdjudication.issues,
       computedFromPersistence: false,

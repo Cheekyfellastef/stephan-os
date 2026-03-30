@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildFinalRouteTruthView } from './finalRouteTruthView.js';
 import { summarizeHomeNodeUsabilityTruth } from './homeNodeUsabilityTruth.js';
 
-test('buildFinalRouteTruthView uses finalRouteTruth over stale top-level projections', () => {
+test('buildFinalRouteTruthView uses canonicalRouteRuntimeTruth over stale top-level projections', () => {
   const view = buildFinalRouteTruthView({
     routeKind: 'cloud',
     preferredTarget: 'https://wrong.example',
@@ -12,20 +12,18 @@ test('buildFinalRouteTruthView uses finalRouteTruth over stale top-level project
     selectedProvider: 'mock',
     routeSelectedProvider: 'mock',
     activeProvider: 'mock',
-    finalRouteTruth: {
-      routeKind: 'home-node',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'home-node',
       preferredTarget: 'http://192.168.0.88:8787',
       actualTarget: 'http://192.168.0.88:8787',
       requestedProvider: 'ollama',
       selectedProvider: 'groq',
       executedProvider: 'gemini',
       backendReachable: true,
-      uiReachable: false,
+      uiReachabilityState: 'unreachable',
       routeUsable: false,
-    },
-    finalRoute: {
-      source: 'manual',
-      reachability: { selectedRouteReachable: false },
+      routeReachable: false,
+      routeSource: 'manual',
     },
   });
 
@@ -37,7 +35,7 @@ test('buildFinalRouteTruthView uses finalRouteTruth over stale top-level project
   assert.equal(view.executedProvider, 'gemini');
 });
 
-test('buildFinalRouteTruthView keeps requested/selected unknown without canonical provider truth', () => {
+test('buildFinalRouteTruthView keeps provider stages unknown when canonical provider truth is missing', () => {
   const view = buildFinalRouteTruthView({
     selectedProvider: 'mock',
     activeProvider: 'mock',
@@ -52,16 +50,8 @@ test('buildFinalRouteTruthView keeps requested/selected unknown without canonica
 
 test('buildFinalRouteTruthView prefers adjudicated executable provider over selected provider', () => {
   const view = buildFinalRouteTruthView({
-    runtimeTruth: {
-      selectedRoute: 'cloud',
-      provider: {
-        requestedProvider: 'ollama',
-        selectedProvider: 'groq',
-        executableProvider: 'groq',
-      },
-    },
-    finalRouteTruth: {
-      routeKind: 'cloud',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'cloud',
       requestedProvider: 'ollama',
       selectedProvider: 'groq',
       executedProvider: '',
@@ -76,8 +66,8 @@ test('buildFinalRouteTruthView prefers adjudicated executable provider over sele
 test('buildFinalRouteTruthView marks uiReachable and route usability unknown while pending', () => {
   const view = buildFinalRouteTruthView({
     appLaunchState: 'pending',
-    finalRouteTruth: {
-      routeKind: 'unavailable',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'unavailable',
     },
   });
 
@@ -85,11 +75,11 @@ test('buildFinalRouteTruthView marks uiReachable and route usability unknown whi
   assert.equal(view.routeUsableState, 'unknown');
 });
 
-test('buildFinalRouteTruthView prefers tri-state ui reachability from finalRouteTruth', () => {
+test('buildFinalRouteTruthView prefers tri-state ui reachability from canonicalRouteRuntimeTruth', () => {
   const view = buildFinalRouteTruthView({
     appLaunchState: 'ready',
-    finalRouteTruth: {
-      routeKind: 'home-node',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'home-node',
       uiReachabilityState: 'unreachable',
       uiReachable: true,
     },

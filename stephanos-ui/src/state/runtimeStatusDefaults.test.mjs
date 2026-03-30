@@ -63,3 +63,24 @@ test('ensureRuntimeStatusModel keeps ui reachability tri-state compatible with l
   assert.equal(fromTriState.finalRouteTruth.uiReachabilityState, 'reachable');
   assert.equal(fromLegacy.finalRouteTruth.uiReachabilityState, 'reachable');
 });
+
+test('ensureRuntimeStatusModel preserves canonicalRouteRuntimeTruth from runtimeTruthSnapshot compatibility payloads', () => {
+  const normalized = ensureRuntimeStatusModel({
+    runtimeTruthSnapshot: {
+      sessionKind: 'hosted-web',
+      winningRoute: 'home-node',
+      routeSource: 'manual',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      routeUsable: true,
+      blockingIssueCodes: ['provider-execution-unvalidated'],
+    },
+  });
+
+  assert.equal(normalized.canonicalRouteRuntimeTruth.sessionKind, 'hosted-web');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.winningRoute, 'home-node');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.routeSource, 'manual');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.selectedProvider, 'groq');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.executedProvider, 'groq');
+  assert.deepEqual(normalized.canonicalRouteRuntimeTruth.blockingIssueCodes, ['provider-execution-unvalidated']);
+});

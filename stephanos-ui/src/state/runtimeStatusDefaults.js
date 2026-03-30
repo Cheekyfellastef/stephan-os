@@ -142,6 +142,37 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     issues: [],
     computedFromPersistence: false,
   },
+  canonicalRouteRuntimeTruth: {
+    sessionKind: 'unknown',
+    sessionReality: 'unknown',
+    deviceContext: 'unknown',
+    requestedRouteMode: 'pending',
+    effectiveRouteMode: 'pending',
+    winningRoute: 'unavailable',
+    winningReason: '',
+    routeSource: 'unknown',
+    preferredTarget: 'unavailable',
+    actualTarget: 'unavailable',
+    backendReachable: false,
+    uiReachabilityState: 'unknown',
+    uiReachable: false,
+    routeReachable: false,
+    routeUsable: false,
+    localAvailable: false,
+    homeNodeAvailable: false,
+    cloudAvailable: false,
+    distAvailable: false,
+    requestedProvider: 'unknown',
+    selectedProvider: 'unknown',
+    executedProvider: '',
+    providerHealthState: 'unknown',
+    fallbackActive: false,
+    fallbackReason: '',
+    validationState: 'launching',
+    appLaunchState: 'pending',
+    blockingIssueCodes: [],
+    operatorSummary: '',
+  },
 });
 
 function normalizeArray(value, fallback = []) {
@@ -322,6 +353,50 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     }
     : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
 
+  const canonicalRouteRuntimeTruth = candidate.canonicalRouteRuntimeTruth && typeof candidate.canonicalRouteRuntimeTruth === 'object'
+    ? {
+      ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
+      ...candidate.canonicalRouteRuntimeTruth,
+      blockingIssueCodes: normalizeArray(candidate.canonicalRouteRuntimeTruth.blockingIssueCodes, []),
+    }
+    : candidate.runtimeTruthSnapshot && typeof candidate.runtimeTruthSnapshot === 'object'
+      ? {
+        ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
+        ...candidate.runtimeTruthSnapshot,
+        blockingIssueCodes: normalizeArray(candidate.runtimeTruthSnapshot.blockingIssueCodes, []),
+      }
+      : {
+        ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
+        sessionKind: runtimeTruth.session?.sessionKind || finalRouteTruth.sessionKind || 'unknown',
+        sessionReality: runtimeTruth.session?.nonLocalSession ? 'non-local' : 'local-desktop',
+        deviceContext: runtimeTruth.session?.deviceContext || finalRouteTruth.deviceContext || 'unknown',
+        requestedRouteMode: runtimeTruth.route?.requestedMode || finalRouteTruth.requestedRouteMode || 'pending',
+        effectiveRouteMode: runtimeTruth.route?.effectiveMode || finalRouteTruth.effectiveRouteMode || 'pending',
+        winningRoute: runtimeTruth.route?.selectedRouteKind || finalRouteTruth.routeKind || 'unavailable',
+        winningReason: runtimeTruth.route?.winningReason || finalRouteTruth.winnerReason || '',
+        routeSource: runtimeTruth.route?.source || finalRouteTruth.source || 'unknown',
+        preferredTarget: runtimeTruth.route?.preferredTarget || finalRouteTruth.preferredTarget || 'unavailable',
+        actualTarget: runtimeTruth.route?.actualTarget || finalRouteTruth.actualTarget || 'unavailable',
+        backendReachable: runtimeTruth.reachabilityTruth?.backendReachable === true || finalRouteTruth.backendReachable === true,
+        uiReachabilityState: runtimeTruth.reachabilityTruth?.uiReachableState || finalRouteTruth.uiReachabilityState || 'unknown',
+        uiReachable: runtimeTruth.reachabilityTruth?.uiReachable === true || finalRouteTruth.uiReachable === true,
+        routeReachable: runtimeTruth.reachabilityTruth?.selectedRouteReachable === true,
+        routeUsable: runtimeTruth.reachabilityTruth?.selectedRouteUsable === true || finalRouteTruth.routeUsable === true,
+        localAvailable: runtimeTruth.reachabilityTruth?.localAvailable === true,
+        homeNodeAvailable: runtimeTruth.reachabilityTruth?.homeNodeAvailable === true,
+        cloudAvailable: runtimeTruth.reachabilityTruth?.cloudAvailable === true,
+        distAvailable: runtimeTruth.reachabilityTruth?.distAvailable === true,
+        requestedProvider: runtimeTruth.provider?.requestedProvider || finalRouteTruth.requestedProvider || 'unknown',
+        selectedProvider: runtimeTruth.provider?.selectedProvider || finalRouteTruth.selectedProvider || 'unknown',
+        executedProvider: runtimeTruth.provider?.executableProvider || finalRouteTruth.executedProvider || '',
+        providerHealthState: runtimeTruth.provider?.providerHealthState || 'unknown',
+        fallbackActive: runtimeTruth.route?.fallbackActive === true || finalRouteTruth.fallbackActive === true,
+        fallbackReason: runtimeTruth.provider?.fallbackReason || '',
+        validationState: runtimeTruth.diagnostics?.validationState || finalRouteTruth.validationState || 'launching',
+        appLaunchState: runtimeTruth.diagnostics?.appLaunchState || finalRouteTruth.appLaunchState || 'pending',
+        operatorSummary: runtimeTruth.diagnostics?.operatorGuidance?.[0] || finalRouteTruth.operatorAction || '',
+      };
+
   return {
     ...baseModel,
     ...candidate,
@@ -330,6 +405,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     finalRouteTruth,
     runtimeTruth,
     runtimeAdjudication,
+    canonicalRouteRuntimeTruth,
     guardrails,
     routeKind,
     preferredTarget,
