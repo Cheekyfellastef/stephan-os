@@ -12,6 +12,7 @@ import {
   STATUS_VALUES,
 } from '../state/missionDashboardModel';
 import { normalizeMissionDashboardUiState } from '../state/missionDashboardUiState';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const MISSION_RECORD_NAMESPACE = 'mission-dashboard';
@@ -272,17 +273,22 @@ export default function MissionDashboardPanel() {
     const handoffText = buildMissionHandoffText(dashboardState);
     console.info('[MISSION HANDOFF] generating summary');
 
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(handoffText);
-        setFeedback({ tone: 'success', message: 'Mission handoff copied.' });
-        console.info('[MISSION HANDOFF] copied to clipboard');
-        return;
-      }
+    const copyResult = await writeTextToClipboard(handoffText, { navigatorObject: navigator });
+    if (copyResult.ok) {
+      setFeedback({ tone: 'success', message: 'Mission handoff copied.' });
+      console.info('[MISSION HANDOFF] copied to clipboard');
+      return;
+    }
 
+    try {
       console.warn('[MISSION HANDOFF] clipboard API unavailable, using fallback');
       setFallbackCopyText(handoffText);
-      setFeedback({ tone: 'warning', message: 'Clipboard unavailable, manual copy fallback opened.' });
+      setFeedback({
+        tone: 'warning',
+        message: copyResult.reason === 'clipboard-unavailable'
+          ? 'Clipboard unavailable, manual copy fallback opened.'
+          : 'Copy failed. Manual copy fallback opened.',
+      });
       console.info('[MISSION HANDOFF] manual copy fallback opened');
       console.info('[MISSION DASHBOARD] editor/fallback sheet opened');
     } catch (error) {
