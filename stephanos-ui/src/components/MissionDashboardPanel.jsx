@@ -58,6 +58,7 @@ export default function MissionDashboardPanel() {
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState({ tone: 'neutral', message: '' });
   const [fallbackCopyText, setFallbackCopyText] = useState('');
+  const [layoutMode, setLayoutMode] = useState('desktop');
 
   const uiState = useMemo(
     () => normalizeMissionDashboardUiState(missionDashboardUiState),
@@ -68,6 +69,22 @@ export default function MissionDashboardPanel() {
     memoryRef.current = createStephanosMemory({
       source: 'mission-dashboard',
     });
+  }, []);
+
+  useEffect(() => {
+    const evaluateLayout = () => {
+      const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280;
+      const nextMode = viewportWidth <= 680 ? 'phone' : viewportWidth <= 1080 ? 'tablet' : 'desktop';
+      setLayoutMode((prev) => {
+        if (prev !== nextMode) {
+          console.info(`[MISSION DASHBOARD] responsive layout mode: ${nextMode}`);
+        }
+        return nextMode;
+      });
+    };
+    evaluateLayout();
+    window.addEventListener('resize', evaluateLayout);
+    return () => window.removeEventListener('resize', evaluateLayout);
   }, []);
 
   useEffect(() => {
@@ -267,10 +284,12 @@ export default function MissionDashboardPanel() {
       setFallbackCopyText(handoffText);
       setFeedback({ tone: 'warning', message: 'Clipboard unavailable, manual copy fallback opened.' });
       console.info('[MISSION HANDOFF] manual copy fallback opened');
+      console.info('[MISSION DASHBOARD] editor/fallback sheet opened');
     } catch (error) {
       console.warn('[MISSION HANDOFF] copy failed, using fallback', error);
       setFallbackCopyText(handoffText);
       setFeedback({ tone: 'warning', message: 'Copy failed. Manual copy fallback opened.' });
+      console.info('[MISSION DASHBOARD] editor/fallback sheet opened');
     }
   }
 
@@ -288,6 +307,7 @@ export default function MissionDashboardPanel() {
         </button>
       )}
     >
+      <div className="mission-layout-mode" aria-live="polite">Layout mode: <strong>{layoutMode}</strong></div>
       <div className="mission-summary-strip">
         <span>Total: <strong>{metrics.totalMilestones}</strong></span>
         <span>In progress: <strong>{metrics.inProgressCount}</strong></span>

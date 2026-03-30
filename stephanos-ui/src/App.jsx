@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AIConsole from './components/AIConsole';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
@@ -12,6 +12,7 @@ import ActivityPanel from './components/ActivityPanel';
 import RoadmapPanel from './components/RoadmapPanel';
 import MissionDashboardPanel from './components/MissionDashboardPanel';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
+import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import { useAIConsole } from './hooks/useAIConsole';
@@ -48,6 +49,8 @@ export default function App() {
     runtimeStatusModel,
     uiLayout,
     togglePanel,
+    setPaneOrder,
+    paneLayout,
   } = useAIStore();
   useDebugConsole();
 
@@ -113,6 +116,83 @@ export default function App() {
     };
   }, [runtimeFingerprint]);
 
+  const paneDefinitions = useMemo(() => ([
+    { id: 'aiConsole', className: 'pane-span-2', render: () => (
+      <div className="primary-stack">
+        {startupDiagnosticsVisible ? (
+          <div className="api-banner degraded" role="status" aria-live="polite">
+            <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
+            <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
+          </div>
+        ) : null}
+        <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />
+      </div>
+    ) },
+    { id: 'statusPanel', render: () => <StatusPanel /> },
+    { id: 'toolsPanel', render: () => <ToolsPanel commandHistory={commandHistory} /> },
+    { id: 'memoryPanel', render: () => <MemoryPanel commandHistory={commandHistory} /> },
+    { id: 'knowledgeGraphPanel', render: () => <KnowledgeGraphPanel commandHistory={commandHistory} /> },
+    { id: 'simulationListPanel', render: () => <SimulationListPanel commandHistory={commandHistory} /> },
+    { id: 'simulationPanel', render: () => <SimulationPanel commandHistory={commandHistory} /> },
+    { id: 'simulationHistoryPanel', render: () => <SimulationHistoryPanel commandHistory={commandHistory} /> },
+    { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
+    { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
+    { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
+    { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
+    { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
+  ]), [
+    commandHistory,
+    input,
+    runtimeFingerprint,
+    runtimeStatus.headline,
+    runtimeStatus.dependencySummary,
+    safeApiStatus.detail,
+    setInput,
+    startupDiagnosticsVisible,
+    submitPrompt,
+  ]);
+
+  const paneMap = useMemo(() => new Map(paneDefinitions.map((pane) => [pane.id, pane])), [paneDefinitions]);
+  const orderedPanes = useMemo(() => (paneLayout.order || [])
+    .map((paneId) => paneMap.get(paneId))
+    .filter(Boolean), [paneLayout.order, paneMap]);
+  const [dragPaneId, setDragPaneId] = useState('');
+
+  function reorderPanes(sourcePaneId, targetPaneId) {
+    if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {
+      return;
+    }
+    const order = paneLayout.order || [];
+    const sourceIndex = order.indexOf(sourcePaneId);
+    const targetIndex = order.indexOf(targetPaneId);
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return;
+    }
+
+    const next = [...order];
+    next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, sourcePaneId);
+    setPaneOrder(next);
+    console.info('[PANES] pane order updated', { order: next });
+    console.info('[PANES] reflow completed after visibility change', { trigger: 'pane-order-change' });
+  }
+
+  function nudgePane(paneId, direction = 1) {
+    const order = [...(paneLayout.order || [])];
+    const index = order.indexOf(paneId);
+    if (index < 0) {
+      return;
+    }
+    const nextIndex = Math.max(0, Math.min(order.length - 1, index + direction));
+    if (nextIndex === index) {
+      return;
+    }
+    const [pane] = order.splice(index, 1);
+    order.splice(nextIndex, 0, pane);
+    setPaneOrder(order);
+    console.info('[PANES] pane order updated', { order, interaction: 'touch-nudge' });
+  }
+
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
@@ -120,6 +200,11 @@ export default function App() {
   useEffect(() => {
     console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
   }, [runtimeFingerprint]);
+
+  useEffect(() => {
+    console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
+    console.info('[PANES] layout restored from memory', { order: paneLayout.order });
+  }, [paneLayout.order]);
 
   return (
     <main className="app-shell-root">
@@ -174,29 +259,26 @@ export default function App() {
         />
       </CollapsiblePanel>
 
-      <section className="app-shell">
-        <div className="primary-stack">
-          {startupDiagnosticsVisible ? (
-            <div className="api-banner degraded" role="status" aria-live="polite">
-              <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
-              <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
+      <section className="operator-pane-wall" onDragOver={(event) => event.preventDefault()}>
+        {orderedPanes.map((pane) => (
+          <div
+            key={pane.id}
+            className={`operator-pane-slot ${pane.className || ''} ${dragPaneId === pane.id ? 'dragging' : ''}`}
+            draggable
+            onDragStart={() => setDragPaneId(pane.id)}
+            onDragEnd={() => setDragPaneId('')}
+            onDrop={() => {
+              reorderPanes(dragPaneId, pane.id);
+              setDragPaneId('');
+            }}
+          >
+            <div className="pane-order-controls" aria-label="Pane arrangement controls">
+              <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, -1)}>Move up</button>
+              <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, 1)}>Move down</button>
             </div>
-          ) : null}
-          <AIConsole input={input} setInput={setInput} submitPrompt={submitPrompt} commandHistory={commandHistory} />
-        </div>
-        <div className="side-stack">
-          <StatusPanel />
-          <ToolsPanel commandHistory={commandHistory} />
-          <MemoryPanel commandHistory={commandHistory} />
-          <KnowledgeGraphPanel commandHistory={commandHistory} />
-          <SimulationListPanel commandHistory={commandHistory} />
-          <SimulationPanel commandHistory={commandHistory} />
-          <SimulationHistoryPanel commandHistory={commandHistory} />
-          <ProposalPanel commandHistory={commandHistory} />
-          <ActivityPanel commandHistory={commandHistory} />
-          <RoadmapPanel commandHistory={commandHistory} />
-          <MissionDashboardPanel />
-        </div>
+            {pane.render()}
+          </div>
+        ))}
       </section>
 
       <footer className="runtime-diagnostic" aria-label="runtime diagnostic">
@@ -210,20 +292,6 @@ export default function App() {
         <span>source: {STEPHANOS_UI_SOURCE}</span>
         <span>fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</span>
       </footer>
-      <aside className="runtime-fingerprint-badge" aria-label="mission control runtime fingerprint">
-        <strong>Mission Control Fingerprint</strong>
-        <ul>
-          <li><b>role:</b> {runtimeFingerprint.runtimeRole}</li>
-          <li><b>route/source:</b> {runtimeFingerprint.routeSourceLabel}</li>
-          <li><b>build:</b> <code>{runtimeFingerprint.buildFingerprint}</code></li>
-          <li><b>commit:</b> <code>{runtimeFingerprint.commitHash}</code></li>
-          <li><b>built:</b> {runtimeFingerprint.buildTimestamp}</li>
-          <li><b>origin:</b> <code>{runtimeFingerprint.currentOrigin}</code></li>
-          <li><b>pathname:</b> <code>{runtimeFingerprint.currentPathname}</code></li>
-          <li><b>expected root:</b> <code>{runtimeFingerprint.expectedRootLauncherUrl}</code></li>
-          <li><b>expected dist:</b> <code>{runtimeFingerprint.expectedMissionControlDistUrl}</code></li>
-        </ul>
-      </aside>
 
       <DebugConsole />
     </main>

@@ -51,8 +51,24 @@ const DEFAULT_UI_LAYOUT = {
   activityPanel: true,
   roadmapPanel: true,
   missionDashboardPanel: true,
+  missionFingerprintPanel: true,
   debugConsole: false,
 };
+const DEFAULT_OPERATOR_PANE_ORDER = [
+  'aiConsole',
+  'statusPanel',
+  'toolsPanel',
+  'memoryPanel',
+  'knowledgeGraphPanel',
+  'simulationListPanel',
+  'simulationPanel',
+  'simulationHistoryPanel',
+  'proposalPanel',
+  'activityPanel',
+  'roadmapPanel',
+  'missionDashboardPanel',
+  'missionFingerprintPanel',
+];
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
   lastSuccessfulHost: '',
@@ -75,6 +91,25 @@ function normalizeUiLayout(value = {}) {
       defaultValue ? value[key] !== false : value[key] === true,
     ]),
   );
+}
+
+function normalizeOperatorPaneOrder(value = []) {
+  const seen = new Set();
+  const normalized = [];
+  (Array.isArray(value) ? value : []).forEach((paneId) => {
+    const normalizedPaneId = String(paneId || '');
+    if (!DEFAULT_OPERATOR_PANE_ORDER.includes(normalizedPaneId) || seen.has(normalizedPaneId)) {
+      return;
+    }
+    seen.add(normalizedPaneId);
+    normalized.push(normalizedPaneId);
+  });
+  DEFAULT_OPERATOR_PANE_ORDER.forEach((paneId) => {
+    if (!seen.has(paneId)) {
+      normalized.push(paneId);
+    }
+  });
+  return normalized;
 }
 
 function normalizeOllamaConnection(value = {}) {
@@ -230,6 +265,9 @@ function createInitialMemorySnapshot() {
     }),
     settings: normalizeStoredSettings(persistedSession),
     uiLayout: normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT),
+    paneLayout: {
+      order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
+    },
     lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
     commandHistory: sanitizePersistedCommandHistory(
       persistedSession?.working?.recentCommands || defaults.working.recentCommands,
@@ -256,6 +294,7 @@ export function AIStoreProvider({ children }) {
   const [isBusy, setIsBusy] = useState(false);
   const [lastRoute, setLastRoute] = useState(initialSnapshot.lastRoute);
   const [uiLayout, setUiLayout] = useState(initialSnapshot.uiLayout);
+  const [paneLayout, setPaneLayout] = useState(initialSnapshot.paneLayout);
   const [missionDashboardUiState, setMissionDashboardUiStateState] = useState(normalizeMissionDashboardUiState(initialSnapshot.persistedSession?.session?.ui?.missionDashboard || createDefaultMissionDashboardUiState()));
   const [debugData, setDebugData] = useState({});
   const [provider, setProviderState] = useState(initialSettings.provider);
@@ -386,6 +425,9 @@ export function AIStoreProvider({ children }) {
           activeSubview: lastRoute || STEPHANOS_ACTIVE_SUBVIEW,
           recentRoute: lastRoute || STEPHANOS_ACTIVE_SUBVIEW,
           uiLayout: normalizeUiLayout(uiLayout),
+          operatorPaneLayout: {
+            order: normalizeOperatorPaneOrder(paneLayout.order),
+          },
           debugConsoleVisible: debugVisible,
           missionDashboard: normalizeMissionDashboardUiState(missionDashboardUiState),
         },
@@ -408,6 +450,7 @@ export function AIStoreProvider({ children }) {
     ollamaConnection,
     uiLayout,
     missionDashboardUiState,
+    paneLayout,
     lastRoute,
     commandHistory,
     workingMemory,
@@ -420,6 +463,14 @@ export function AIStoreProvider({ children }) {
     setMissionDashboardUiStateState((prev) => normalizeMissionDashboardUiState(
       typeof nextState === 'function' ? nextState(prev) : nextState,
     ));
+  }, []);
+
+  const setPaneOrder = useCallback((nextOrder) => {
+    setPaneLayout((prev) => {
+      const resolvedOrder = normalizeOperatorPaneOrder(typeof nextOrder === 'function' ? nextOrder(prev.order) : nextOrder);
+      console.info('[PANES] pane order updated', { order: resolvedOrder });
+      return { ...prev, order: resolvedOrder };
+    });
   }, []);
 
   const updateUiLayout = useCallback((updater) => {
@@ -513,6 +564,7 @@ export function AIStoreProvider({ children }) {
     setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
+    setPaneLayout({ order: [...DEFAULT_OPERATOR_PANE_ORDER] });
     clearPersistedStephanosSessionMemory();
     clearPersistedStephanosHomeNode();
     persistStephanosLastKnownNode(null);
@@ -640,9 +692,11 @@ export function AIStoreProvider({ children }) {
     debugData,
     setDebugData,
     uiLayout,
+    paneLayout,
     missionDashboardUiState,
     togglePanel,
     setPanelState,
+    setPaneOrder,
     setMissionDashboardUiState,
     provider,
     setProvider,
@@ -702,6 +756,7 @@ export function AIStoreProvider({ children }) {
     debugVisible,
     debugData,
     uiLayout,
+    paneLayout,
     missionDashboardUiState,
     provider,
     providerSelectionSource,
@@ -728,6 +783,7 @@ export function AIStoreProvider({ children }) {
     setDebugVisible,
     togglePanel,
     setPanelState,
+    setPaneOrder,
     setMissionDashboardUiState,
     setProvider,
     setRouteMode,
