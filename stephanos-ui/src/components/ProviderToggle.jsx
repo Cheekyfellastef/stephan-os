@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getApiRuntimeConfig, setLocalProviderSecret } from '../ai/aiClient';
+import { clearLocalProviderSecret, getApiRuntimeConfig, setLocalProviderSecret } from '../ai/aiClient';
 import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
+import { resolveProviderSecretSaveFeedback } from '../ai/providerSecretFeedback';
 import { PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
 import { extractHostname, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
@@ -179,6 +180,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [isEditingHomeNode, setIsEditingHomeNode] = useState(false);
   const [homeNodeSaveResult, setHomeNodeSaveResult] = useState('');
   const [secretDrafts, setSecretDrafts] = useState({});
+  const [secretSaveStatus, setSecretSaveStatus] = useState({});
 
   useEffect(() => {
     const syncResult = resolveHomeNodeDraftSync({
@@ -252,16 +254,35 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     }
 
     const secretSave = await setLocalProviderSecret(providerKey, pendingSecret, runtimeConfig);
-    if (!secretSave.ok) {
+    const feedback = resolveProviderSecretSaveFeedback(secretSave, providerKey, PROVIDER_DEFINITIONS[providerKey]?.label);
+    if (feedback.type === 'error') {
       setUiDiagnostics((prev) => ({
         ...prev,
-        providerSecretSaveError: secretSave.error || `Failed to store ${providerKey} secret.`,
+        providerSecretSaveError: feedback.message,
       }));
+      setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: feedback }));
       return;
     }
 
     setSecretDrafts((prev) => ({ ...prev, [providerKey]: '' }));
+    setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: feedback }));
     setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: '' }));
+    await onTestConnection();
+  };
+
+  const handleClearProviderSecret = async (providerKey) => {
+    const clearResult = await clearLocalProviderSecret(providerKey, runtimeConfig);
+    if (!clearResult.ok) {
+      const errorMessage = clearResult.error || `Failed to clear ${providerKey} API key from backend local secret store.`;
+      setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: { type: 'error', message: errorMessage } }));
+      setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: errorMessage }));
+      return;
+    }
+
+    setSecretDrafts((prev) => ({ ...prev, [providerKey]: '' }));
+    setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: { type: 'success', message: `${PROVIDER_DEFINITIONS[providerKey]?.label || providerKey} API key cleared from backend local secret store.` } }));
+    setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: '' }));
+    await onTestConnection();
   };
 
   const handleRunOllamaDiscovery = async ({ manualAddress = '' } = {}) => {
@@ -512,6 +533,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           const draft = getDraftProviderConfig(providerKey);
           const draftState = providerDraftStatus[providerKey];
           const dirty = isDraftDirty(providerKey);
+          const hasSecretField = FIELD_MAP[providerKey]?.some((field) => field.key === 'apiKey');
+          const providerSecretStatus = secretSaveStatus[providerKey];
           const suggestedFallback = !health.ok && providerKey !== 'mock';
           const ollamaState = providerKey === 'ollama'
             ? getOllamaUiState({ health, config: draft, frontendOrigin: runtimeConfig.frontendOrigin, discovery: ollamaDiscovery })
@@ -664,7 +687,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                 </button>
                 <button type="button" className="ghost-button" onClick={() => revertDraftProviderConfig(providerKey)} disabled={!dirty}>Revert</button>
                 <button type="button" className="ghost-button" onClick={() => resetProviderConfig(providerKey)}>Reset</button>
+                {hasSecretField ? <button type="button" className="ghost-button" onClick={() => handleClearProviderSecret(providerKey)}>Clear Stored Key</button> : null}
               </div>
+              {providerSecretStatus?.message ? <p className={`provider-draft-message ${providerSecretStatus.type === 'error' ? 'field-error' : ''}`}>{providerSecretStatus.message}</p> : null}
 
               {draftState.message ? <p className="provider-draft-message">{draftState.message}</p> : null}
               {draftState.savedAt ? <p className="provider-draft-meta">Saved {new Date(draftState.savedAt).toLocaleTimeString()}</p> : null}

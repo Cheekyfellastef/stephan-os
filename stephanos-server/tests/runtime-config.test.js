@@ -129,3 +129,44 @@ test('request-aware resolver ignores loopback forwarded host when direct host is
   assert.equal(resolved.source, 'request-host-promoted');
   assert.equal(resolved.clientRouteSafe, true);
 });
+
+test('health diagnostics mark groq configured when backend local secret store is configured', () => {
+  const diagnostics = buildHealthDiagnostics(
+    {},
+    null,
+    {
+      providerSecretStatus: {
+        groq: {
+          configured: true,
+          masked: '••••••••1234',
+          updatedAt: '2026-03-31T00:00:00.000Z',
+        },
+      },
+      secretAuthority: 'backend-local-secret-store',
+    },
+  );
+
+  assert.equal(diagnostics.groq.configured, true);
+  assert.equal(diagnostics.groq.configured_via_secret_store, true);
+  assert.match(diagnostics.groq.configured_via.join(','), /backend-local-secret-store/);
+});
+
+test('health diagnostics keep groq unconfigured when env and backend local secret store are both absent', () => {
+  const diagnostics = buildHealthDiagnostics(
+    {},
+    null,
+    {
+      providerSecretStatus: {
+        groq: {
+          configured: false,
+          masked: '',
+          updatedAt: null,
+        },
+      },
+    },
+  );
+
+  assert.equal(diagnostics.groq.configured, false);
+  assert.deepEqual(diagnostics.groq.configured_via, ['missing']);
+  assert.equal(diagnostics.groq.configured_via_secret_store, false);
+});

@@ -23,7 +23,12 @@ function buildServerOwnedProviderConfigs(input = {}) {
   const safeClientConfigs = Object.fromEntries(
     Object.entries(input || {}).map(([provider, config]) => [provider, stripRawSecretsFromConfig(config)]),
   );
-  const secretOverlay = providerSecretStore.buildProviderConfigOverlay();
+  const secretOverlay = Object.fromEntries(
+    Object.entries(providerSecretStore.buildProviderConfigOverlay()).map(([provider, config]) => [provider, {
+      ...config,
+      secretAuthority: 'backend-local-secret-store',
+    }]),
+  );
   return Object.fromEntries(
     Object.keys({ ...safeClientConfigs, ...secretOverlay }).map((provider) => [
       provider,

@@ -16,6 +16,7 @@ import {
 } from './config/runtimeConfig.js';
 import { memoryService } from './services/memoryService.js';
 import { durableMemoryService } from './services/durableMemoryService.js';
+import { providerSecretStore } from './services/providerSecretStore.js';
 
 const logger = createLogger('server');
 const app = express();
@@ -48,7 +49,10 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
-  res.json(buildHealthDiagnostics(process.env, req));
+  res.json(buildHealthDiagnostics(process.env, req, {
+    providerSecretStatus: providerSecretStore.getMaskedStatusSnapshot(),
+    secretAuthority: 'backend-local-secret-store',
+  }));
 });
 
 memoryService.load();
