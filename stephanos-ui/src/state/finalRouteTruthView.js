@@ -53,7 +53,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable),
     requestedProvider: pickTruth(canonicalTruth.requestedProvider) || 'unknown',
     selectedProvider: pickTruth(canonicalTruth.selectedProvider) || 'unknown',
-    executedProvider: pickTruth(canonicalTruth.executedProvider, canonicalTruth.selectedProvider) || 'unknown',
+    executedProvider: pickTruth(canonicalTruth.executedProvider) || 'unknown',
     preferredTarget,
     actualTarget,
     source,

@@ -98,8 +98,51 @@ function normalizeConfiguredPublicBaseUrl(env = process.env) {
 
 function normalizeForwardedHost(value = '') {
   return String(value || '')
-    .split(',')[0]
-    .trim();
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isMalformedHostCandidate(hostname = '') {
+  const value = String(hostname || '').trim().toLowerCase();
+  if (!value) {
+    return true;
+  }
+  if (!/[a-z0-9]/.test(value)) {
+    return true;
+  }
+  if (value.startsWith('.') || value.endsWith('.') || value.includes('..')) {
+    return true;
+  }
+  if (/^\d+$/.test(value)) {
+    return true;
+  }
+
+  if (/^\d+(?:\.\d+){1,3}$/.test(value)) {
+    const octets = value.split('.').map((part) => Number.parseInt(part, 10));
+    if (octets.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isMalformedHostHeaderValue(host = '') {
+  const value = String(host || '').trim();
+  if (!value) {
+    return true;
+  }
+
+  let hostToken = value;
+  if (hostToken.startsWith('[')) {
+    const endBracket = hostToken.indexOf(']');
+    hostToken = endBracket >= 0 ? hostToken.slice(1, endBracket) : hostToken.slice(1);
+  } else {
+    hostToken = hostToken.replace(/:\d+$/, '');
+  }
+
+  return /^\d+$/.test(hostToken);
 }
 
 function inferRequestProtocol(request = null) {
@@ -119,14 +162,6 @@ function inferRequestProtocol(request = null) {
 }
 
 function resolveRequestHost(request = null) {
-  const forwardedHost = normalizeForwardedHost(request?.headers?.['x-forwarded-host'] || '');
-  const directHost = normalizeForwardedHost(request?.headers?.host || '');
-
-  const hostCandidates = [directHost, forwardedHost].filter(Boolean);
-  if (!hostCandidates.length) {
-    return null;
-  }
-
   const getHostname = (host) => {
     try {
       return new URL(`http://${host}`).hostname;
@@ -134,19 +169,28 @@ function resolveRequestHost(request = null) {
       return '';
     }
   };
-
-  const directHostname = getHostname(directHost);
-  const forwardedHostname = getHostname(forwardedHost);
-
-  if (directHost && directHostname && !isLoopbackHost(directHostname)) {
-    return directHost;
+  const directHosts = normalizeForwardedHost(request?.headers?.host || '');
+  const forwardedHosts = normalizeForwardedHost(request?.headers?.['x-forwarded-host'] || '');
+  const hostCandidates = [...directHosts, ...forwardedHosts]
+    .map((host) => {
+      const hostname = getHostname(host);
+      return {
+        host,
+        hostname,
+      };
+    })
+    .filter((candidate) => (
+      candidate.host
+      && candidate.hostname
+      && !isMalformedHostHeaderValue(candidate.host)
+      && !isMalformedHostCandidate(candidate.hostname)
+    ));
+  if (!hostCandidates.length) {
+    return null;
   }
 
-  if (forwardedHost && forwardedHostname && !isLoopbackHost(forwardedHostname)) {
-    return forwardedHost;
-  }
-
-  return directHost || forwardedHost;
+  const nonLoopbackCandidate = hostCandidates.find((candidate) => !isLoopbackHost(candidate.hostname));
+  return (nonLoopbackCandidate || hostCandidates[0]).host;
 }
 
 function resolveRequestOrigin(request = null) {

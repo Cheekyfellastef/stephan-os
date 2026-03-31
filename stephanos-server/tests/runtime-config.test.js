@@ -130,6 +130,27 @@ test('request-aware resolver ignores loopback forwarded host when direct host is
   assert.equal(resolved.clientRouteSafe, true);
 });
 
+test('request-aware resolver rejects malformed numeric host candidates and keeps valid LAN host', () => {
+  const resolved = resolvePublishedBackendBaseUrl({
+    env: {
+      PORT: '8787',
+      PUBLIC_BASE_URL: 'http://localhost:8787',
+    },
+    request: {
+      headers: {
+        host: '1',
+        'x-forwarded-host': '192.168.0.198:8787, localhost:8787',
+      },
+      protocol: 'http',
+      secure: false,
+    },
+  });
+
+  assert.equal(resolved.publishedBaseUrl, 'http://192.168.0.198:8787');
+  assert.equal(resolved.source, 'request-host-promoted');
+  assert.equal(resolved.clientRouteSafe, true);
+});
+
 test('health diagnostics mark groq configured when backend local secret store is configured', () => {
   const diagnostics = buildHealthDiagnostics(
     {},
