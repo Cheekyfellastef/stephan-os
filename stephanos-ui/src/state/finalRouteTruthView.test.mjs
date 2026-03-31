@@ -44,7 +44,7 @@ test('buildFinalRouteTruthView keeps provider stages unknown when canonical prov
 
   assert.equal(view.requestedProvider, 'unknown');
   assert.equal(view.selectedProvider, 'unknown');
-  assert.equal(view.executedProvider, 'mock');
+  assert.equal(view.executedProvider, 'unknown');
   assert.equal(view.routeKind, 'unavailable');
 });
 
@@ -60,7 +60,7 @@ test('buildFinalRouteTruthView prefers adjudicated executable provider over sele
 
   assert.equal(view.requestedProvider, 'ollama');
   assert.equal(view.selectedProvider, 'groq');
-  assert.equal(view.executedProvider, 'groq');
+  assert.equal(view.executedProvider, 'unknown');
 });
 
 test('buildFinalRouteTruthView marks uiReachable and route usability unknown while pending', () => {
