@@ -63,6 +63,7 @@ export default function App() {
   useDebugConsole();
 
   const safeUiLayout = uiLayout || {};
+  const safePaneLayout = paneLayout && typeof paneLayout === 'object' ? paneLayout : {};
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
@@ -176,17 +177,24 @@ export default function App() {
     submitPrompt,
   ]);
 
+  const safePaneOrder = useMemo(() => {
+    if (Array.isArray(safePaneLayout.order) && safePaneLayout.order.length > 0) {
+      return safePaneLayout.order;
+    }
+    return paneDefinitions.map((pane) => pane.id);
+  }, [paneDefinitions, safePaneLayout.order]);
+
   const paneMap = useMemo(() => new Map(paneDefinitions.map((pane) => [pane.id, pane])), [paneDefinitions]);
-  const orderedPanes = useMemo(() => (paneLayout.order || [])
+  const orderedPanes = useMemo(() => safePaneOrder
     .map((paneId) => paneMap.get(paneId))
-    .filter(Boolean), [paneLayout.order, paneMap]);
+    .filter(Boolean), [safePaneOrder, paneMap]);
   const [dragPaneId, setDragPaneId] = useState('');
 
   function reorderPanes(sourcePaneId, targetPaneId) {
     if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {
       return;
     }
-    const order = paneLayout.order || [];
+    const order = safePaneOrder;
     const sourceIndex = order.indexOf(sourcePaneId);
     const targetIndex = order.indexOf(targetPaneId);
     if (sourceIndex < 0 || targetIndex < 0) {
@@ -202,7 +210,7 @@ export default function App() {
   }
 
   function nudgePane(paneId, direction = 1) {
-    const order = [...(paneLayout.order || [])];
+    const order = [...safePaneOrder];
     const index = order.indexOf(paneId);
     if (index < 0) {
       return;
@@ -227,8 +235,8 @@ export default function App() {
 
   useEffect(() => {
     console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
-    console.info('[PANES] layout restored from memory', { order: paneLayout.order });
-  }, [paneLayout.order]);
+    console.info('[PANES] layout restored from memory', { order: safePaneOrder });
+  }, [safePaneOrder]);
 
   return (
     <main className="app-shell-root">
