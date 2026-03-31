@@ -132,6 +132,13 @@ export async function setLocalProviderSecret(provider, apiKey, runtimeConfig = g
   return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
 }
 
+export async function clearLocalProviderSecret(provider, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson(`/api/ai-admin/provider-secrets/${encodeURIComponent(provider)}`, {
+    method: 'DELETE',
+  }, runtimeConfig);
+  return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
+}
+
 export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestMemory('/api/memory', {}, runtimeConfig);
   return result.data?.items || [];

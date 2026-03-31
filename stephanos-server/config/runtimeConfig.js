@@ -223,16 +223,35 @@ export function resolvePublishedBackendBaseUrl({ env = process.env, request = nu
   };
 }
 
-function buildGroqEnvStatus(env = process.env) {
+function buildGroqEnvStatus(env = process.env, secretStatus = null) {
+  const envConfigured = Boolean(env.GROQ_API_KEY);
+  const secretConfigured = Boolean(secretStatus?.configured);
+  const configuredVia = [];
+  if (envConfigured) {
+    configuredVia.push('GROQ_API_KEY', 'GROQ_MODEL', 'GROQ_BASE_URL');
+  }
+  if (secretConfigured) {
+    configuredVia.push('backend-local-secret-store');
+  }
+
   return {
-    configured: Boolean(env.GROQ_API_KEY),
+    configured: envConfigured || secretConfigured,
     model: env.GROQ_MODEL || PROVIDER_DEFINITIONS.groq.defaults.model,
     baseURL: env.GROQ_BASE_URL || PROVIDER_DEFINITIONS.groq.defaults.baseURL,
-    configured_via: ['GROQ_API_KEY', 'GROQ_MODEL', 'GROQ_BASE_URL'],
+    configured_via: configuredVia.length ? configuredVia : ['missing'],
+    configured_via_env: envConfigured,
+    configured_via_secret_store: secretConfigured,
+    secret_authority: 'backend-local-secret-store',
+    secret_masked: secretStatus?.masked || '',
+    secret_updated_at: secretStatus?.updatedAt || null,
   };
 }
 
-export function buildHealthDiagnostics(env = process.env, request = null) {
+export function buildHealthDiagnostics(env = process.env, request = null, options = {}) {
+  const providerSecretStatus = options?.providerSecretStatus && typeof options.providerSecretStatus === 'object'
+    ? options.providerSecretStatus
+    : {};
+  const secretAuthority = options?.secretAuthority || 'backend-local-secret-store';
   const allowedOrigins = resolveAllowedOrigins(env);
   const {
     internalBaseUrl,
@@ -276,7 +295,11 @@ export function buildHealthDiagnostics(env = process.env, request = null) {
       }]),
     ),
     provider_router_path: 'browser -> /api/ai/chat -> routeLLMRequest -> provider router -> groq/gemini/ollama/mock/openrouter',
-    groq: buildGroqEnvStatus(env),
+    groq: buildGroqEnvStatus(env, providerSecretStatus.groq || null),
+    provider_secret_status: {
+      authority: secretAuthority,
+      providers: providerSecretStatus,
+    },
     ollama_routing: {
       visibility: 'server-internal-only',
       summary: 'Stephanos server calls Ollama locally on the PC home node.',

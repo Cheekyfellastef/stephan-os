@@ -5,15 +5,15 @@ import { checkGroqHealth, runGroqProvider } from '../services/llm/providers/groq
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-test('Groq health reports ready when a UI session api key is supplied', async () => {
+test('Groq health reports ready when a runtime provider api key is supplied', async () => {
   const health = await checkGroqHealth({ apiKey: 'gsk_test_session_key', model: 'openai/gpt-oss-20b' });
 
   assert.equal(health.ok, true);
-  assert.equal(health.configuredVia, 'ui session API key');
-  assert.match(health.detail, /current UI session key/i);
+  assert.equal(health.configuredVia, 'runtime provider config');
+  assert.match(health.detail, /backend-routed provider configuration/i);
 });
 
-test('Groq runner uses the UI session api key through the backend provider path', async () => {
+test('Groq runner uses the runtime provider api key through the backend provider path', async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options });
@@ -39,7 +39,7 @@ test('Groq runner uses the UI session api key through the backend provider path'
 
     assert.equal(result.ok, true);
     assert.equal(result.outputText, 'Groq backend reply');
-    assert.equal(result.diagnostics.groq.configuredVia, 'ui session API key');
+    assert.equal(result.diagnostics.groq.configuredVia, 'runtime provider config');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/chat/completions');
     assert.equal(calls[0].options.headers.Authorization, 'Bearer gsk_test_session_key');

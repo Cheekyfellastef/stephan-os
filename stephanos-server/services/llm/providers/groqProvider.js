@@ -10,15 +10,19 @@ function buildMessages(request) {
 export async function checkGroqHealth(config = {}) {
   const resolved = sanitizeProviderConfig('groq', config);
   const configuredVia = String(config?.apiKey || '').trim()
-    ? 'ui session API key'
+    ? (config?.secretAuthority === 'backend-local-secret-store'
+      ? 'backend local secret store'
+      : 'runtime provider config')
     : 'GROQ_API_KEY';
   return resolved.apiKey
     ? {
       ok: true,
       provider: 'groq',
       badge: 'Ready',
-      detail: configuredVia === 'ui session API key'
-        ? 'Groq is ready from the current UI session key.'
+      detail: configuredVia === 'backend local secret store'
+        ? 'Groq is ready from backend local secret store authority.'
+        : configuredVia === 'runtime provider config'
+        ? 'Groq is ready from backend-routed provider configuration.'
         : 'Groq backend environment is configured.',
       state: 'READY',
       configuredVia,
@@ -40,7 +44,9 @@ export async function checkGroqHealth(config = {}) {
 export async function runGroqProvider(request, config = {}) {
   const resolved = sanitizeProviderConfig('groq', config);
   const configuredVia = String(config?.apiKey || '').trim()
-    ? 'ui session API key'
+    ? (config?.secretAuthority === 'backend-local-secret-store'
+      ? 'backend local secret store'
+      : 'runtime provider config')
     : 'backend env';
 
   if (!resolved.apiKey) {
