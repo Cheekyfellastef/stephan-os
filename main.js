@@ -541,30 +541,41 @@ window.inspectLauncherHitTesting = function inspectLauncherHitTesting({ tileInde
   return report;
 };
 
-window.setPanelState = function(panelId, enabled) {
+function resolveWorkspacePaneLabel(panelId = "") {
+  if (panelId === "stephanos-build-panel") return "Build Proof";
+  if (panelId === "stephanos-laws-panel") return "Laws";
+  return panelId;
+}
+
+window.setPanelState = function(panelId, enabled, options = {}) {
   const normalizedEnabled = enabled === true;
+  const persist = options?.persist !== false;
+  const panelLabel = resolveWorkspacePaneLabel(panelId);
   const panel = document.getElementById(panelId);
   const container = hardenPanelStackContainer();
-  const currentMemory = readPersistedStephanosSessionMemory();
-  persistStephanosSessionMemory({
-    ...currentMemory,
-    session: {
-      ...currentMemory.session,
-      ui: {
-        ...currentMemory.session.ui,
-        uiLayout: {
-          ...(currentMemory.session.ui?.uiLayout || {}),
-          [panelId]: normalizedEnabled,
+
+  if (persist) {
+    const currentMemory = readPersistedStephanosSessionMemory();
+    persistStephanosSessionMemory({
+      ...currentMemory,
+      session: {
+        ...currentMemory.session,
+        ui: {
+          ...currentMemory.session.ui,
+          uiLayout: {
+            ...(currentMemory.session.ui?.uiLayout || {}),
+            [panelId]: normalizedEnabled,
+          },
         },
       },
-    },
-  });
-  console.info(
-    normalizedEnabled
-      ? "[WORKSPACE] persisted open action for pane"
-      : "[WORKSPACE] persisted close action for pane",
-    { paneId: panelId },
-  );
+    });
+    console.info(
+      normalizedEnabled
+        ? "[WORKSPACE] persisted open action for pane"
+        : "[WORKSPACE] persisted close action for pane",
+      { paneId: panelId, panelLabel },
+    );
+  }
 
   if (!panel) {
     if (container) {
@@ -618,17 +629,36 @@ function restoreOperatorPanelVisibility(persistedLayout = {}) {
         fallbackOpen: defaultEnabled,
       });
     } else if (hasPersisted) {
+      const panelLabel = resolveWorkspacePaneLabel(panelId);
+      if (panelId === "stephanos-build-panel") {
+        console.info(`[WORKSPACE] restored Build Proof visibility=${String(persisted)}`);
+      }
+      if (panelId === "stephanos-laws-panel") {
+        console.info(`[WORKSPACE] restored Laws visibility=${String(persisted)}`);
+      }
       console.info("[WORKSPACE] restored pane visibility state from session memory", {
         paneId: panelId,
+        panelLabel,
         restoredOpen: persisted,
       });
     } else {
+      const panelLabel = resolveWorkspacePaneLabel(panelId);
+      if (panelId === "stephanos-build-panel") {
+        console.info("[WORKSPACE] applied default visibility for Build Proof (no prior state)", { defaultOpen: defaultEnabled });
+      }
+      if (panelId === "stephanos-laws-panel") {
+        console.info("[WORKSPACE] applied default visibility for Laws (no prior state)", { defaultOpen: defaultEnabled });
+      }
       console.info("[WORKSPACE] applying default visibility for pane with no persisted state", {
         paneId: panelId,
+        panelLabel,
         defaultOpen: defaultEnabled,
       });
     }
-    window.setPanelState(panelId, enabled);
+    window.setPanelState(panelId, enabled, { persist: false, reason: hasPersisted ? "restore" : "default" });
+  });
+  console.info("[WORKSPACE] build/version refresh preserved workspace visibility state", {
+    paneIds: restorablePanels,
   });
 }
 
