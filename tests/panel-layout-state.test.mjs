@@ -397,6 +397,50 @@ test('createPanel preserves persisted closed visibility state for late panel reg
   assert.equal(panelStack.style.display, 'none');
 });
 
+
+test('createPanel applies default open visibility for Build Proof and Laws when no persisted state exists', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const lawsPanel = ui.createPanel('stephanos-laws-panel', 'Laws of Stephanos');
+  const buildPanel = ui.createPanel('stephanos-build-panel', 'Build Proof');
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+
+  assert.equal(lawsPanel.style.display, 'block');
+  assert.equal(buildPanel.style.display, 'block');
+  assert.equal(panelStack.style.display, 'block');
+});
+
+test('createPanel preserves persisted false for Build Proof and Laws and does not reopen by default', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      'stephanos-laws-panel': false,
+      'stephanos-build-panel': false,
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const lawsPanel = ui.createPanel('stephanos-laws-panel', 'Laws of Stephanos');
+  const buildPanel = ui.createPanel('stephanos-build-panel', 'Build Proof');
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+
+  assert.equal(lawsPanel.style.display, 'none');
+  assert.equal(buildPanel.style.display, 'none');
+  assert.equal(panelStack.style.display, 'none');
+});
+
 test('createPanel applies default closed visibility for restorable panel with no persisted state', () => {
   const storage = createStorage({
     [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
