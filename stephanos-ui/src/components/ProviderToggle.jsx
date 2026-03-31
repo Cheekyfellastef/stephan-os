@@ -243,12 +243,12 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   });
 
   const handleSaveProvider = async (providerKey) => {
+    const pendingSecret = String(secretDrafts[providerKey] || '').trim();
     const saveResult = saveDraftProviderConfig(providerKey);
-    if (!saveResult?.ok) {
+    if (!saveResult?.ok && !pendingSecret) {
       return;
     }
 
-    const pendingSecret = String(secretDrafts[providerKey] || '').trim();
     if (!pendingSecret) {
       return;
     }
@@ -264,8 +264,11 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
       return;
     }
 
+    const saveWarning = saveResult?.ok
+      ? ''
+      : ' Provider settings were not applied because draft validation failed.';
     setSecretDrafts((prev) => ({ ...prev, [providerKey]: '' }));
-    setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: feedback }));
+    setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: { ...feedback, message: `${feedback.message}${saveWarning}` } }));
     setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: '' }));
     await onTestConnection();
   };

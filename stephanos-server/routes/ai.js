@@ -9,6 +9,7 @@ import { assistantContextService } from '../services/assistantContextService.js'
 import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } from '../services/llm/providerRouter.js';
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 import { providerSecretStore } from '../services/providerSecretStore.js';
+import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -157,6 +158,7 @@ router.post('/chat', async (req, res) => {
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
     const memoryAwareSystemPrompt = [
       'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
       memorySummary ? `Relevant local memory:
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
@@ -216,6 +218,13 @@ Use these memories when they help, but do not repeat them unless they are releva
       effective_route_mode: executionMetadata.effective_route_mode,
       provider_resolution: providerResolution,
     };
+    const providerExecutionTruth = resolveProviderExecutionTruth({
+      actualProviderUsed: executionMetadata.actual_provider_used,
+      executionStatus: executionMetadata.actual_provider_used ? `ok:${executionMetadata.actual_provider_used}` : '',
+      executableProvider: executionMetadata.selected_provider,
+      selectedProvider: executionMetadata.selected_provider,
+      backendDefaultProvider: executionMetadata.backend_default_provider,
+    });
 
     console.log('[BACKEND LIVE] Execution metadata', executionMetadata);
     console.log('[BACKEND LIVE] Request trace', requestTrace);
@@ -241,6 +250,7 @@ Use these memories when they help, but do not repeat them unless they are releva
           model_used: executionMetadata.model_used,
           fallback_used: executionMetadata.fallback_used,
           fallback_reason: executionMetadata.fallback_reason,
+          provider_execution_truth: providerExecutionTruth,
           assistant_context: contextBundle,
           relevant_memory: memoryHits,
           tile_context_diagnostics: assembledTileContext?.diagnostics || null,
@@ -279,6 +289,7 @@ Use these memories when they help, but do not repeat them unless they are releva
         model_used: executionMetadata.model_used,
         fallback_used: executionMetadata.fallback_used,
         fallback_reason: executionMetadata.fallback_reason,
+        provider_execution_truth: providerExecutionTruth,
         assistant_context: contextBundle,
         relevant_memory: memoryHits,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
