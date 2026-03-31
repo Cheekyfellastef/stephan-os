@@ -45,6 +45,7 @@ function GraphPayload({ payload }) {
 export default function CommandResultCard({ entry }) {
   const tone = getResultTone(entry.response?.type);
   const executionMetadata = entry.data_payload?.execution_metadata || null;
+  const providerExecutionTruth = entry.data_payload?.provider_execution_truth || null;
   const suggestedActions = entry.data_payload?.suggested_actions ?? [];
   const isMockResponse = executionMetadata?.actual_provider_used === 'mock';
 
@@ -67,6 +68,7 @@ export default function CommandResultCard({ entry }) {
         </div>
       ) : null}
       <p>{entry.output_text}</p>
+      {providerExecutionTruth?.narration ? <p className="muted">{providerExecutionTruth.narration}</p> : null}
       {entry.error && <p className="error-text">Error [{entry.error_code ?? 'N/A'}]: {entry.error}</p>}
       <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>
       {entry.data_payload?.result && <SimulationResultCard payload={entry.data_payload} />}
