@@ -1461,3 +1461,20 @@ pre {
     min-height: 44px;
   }
 }
+
+.meaning-strip {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #00ffcc;
+  font-family: monospace;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.meaning-strip.error {
+  color: #ff4d4d;
+}
