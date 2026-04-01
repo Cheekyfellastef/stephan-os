@@ -1531,3 +1531,57 @@ pre {
   margin-top: 0.2rem;
   color: #b6d6ee;
 }
+
+.prompt-builder-panel .panel-body {
+  display: grid;
+  gap: 10px;
+}
+
+.prompt-builder-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.prompt-builder-field input,
+.prompt-builder-field select,
+.prompt-builder-output {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(145, 170, 204, 0.35);
+  background: rgba(17, 26, 41, 0.85);
+  color: #dbe8ff;
+  padding: 8px;
+}
+
+.prompt-builder-controls {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  font-size: 0.86rem;
+}
+
+.prompt-builder-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prompt-builder-output {
+  min-height: 280px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.35;
+}
+
+.prompt-builder-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prompt-builder-copy-status {
+  font-size: 0.85rem;
+  color: #a6c8ff;
+}
