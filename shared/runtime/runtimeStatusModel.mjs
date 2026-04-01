@@ -735,15 +735,19 @@ function buildDependencySummary({
   effectiveRouteMode,
   fallbackActive,
   activeProvider,
-  runtimeContext,
+  finalRouteTruth,
   nodeRoute,
   providerHealth,
 }) {
-  const selectedRoute = nodeRoute.preferredRoute ? nodeRoute.routeEvaluations[nodeRoute.preferredRoute] : null;
+  const selectedRouteKind = finalRouteTruth?.routeKind || nodeRoute?.preferredRoute || 'unavailable';
+  const selectedRoute = nodeRoute.routeEvaluations[selectedRouteKind] || null;
   const localFailureSummary = getPreferredLocalFailure(providerHealth);
+  const routeUsable = finalRouteTruth?.routeUsable === true || selectedRoute?.usable === true;
+  const executedProvider = finalRouteTruth?.executedProvider || activeProvider || '';
+  const selectedProvider = finalRouteTruth?.selectedProvider || '';
 
   if (!selectedRoute) {
-    if (backendAvailable && runtimeContext.frontendLocal) {
+    if (backendAvailable && finalRouteTruth?.sessionKind === 'local-desktop') {
       return 'Backend online, but Stephanos could not classify a valid route explicitly';
     }
 
@@ -796,6 +800,10 @@ function buildDependencySummary({
       return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} explicitly selected`;
     }
 
+    if (routeUsable && selectedProvider && executedProvider === 'mock' && selectedProvider !== 'mock') {
+      return 'Local desktop route valid; using mock provider fallback';
+    }
+
     if (localAvailable && !fallbackActive) {
       return 'Local Ollama ready';
     }
@@ -808,12 +816,12 @@ function buildDependencySummary({
       return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
     }
 
-    if (!localAvailable && !cloudAvailable) {
-      return `Local desktop route valid, but ${localFailureSummary.toLowerCase()}; cloud routing is unavailable`;
-    }
-
     if (fallbackActive) {
       return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
+    }
+
+    if (!localAvailable && !cloudAvailable) {
+      return `Local desktop route valid, but ${localFailureSummary.toLowerCase()}; cloud routing is unavailable`;
     }
 
     return selectedRoute.reason || 'Local desktop runtime ready';
@@ -878,9 +886,7 @@ export function createRuntimeStatusModel({
     ? preferredLiveProvider
     : routePlan.selectedProvider;
   const hintedProvider = normalizeProviderSelection(activeProviderHint || routeSelectedProvider);
-  const activeProvider = hintedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
-    ? routeSelectedProvider
-    : hintedProvider;
+  const activeProvider = hintedProvider;
 
   const fallbackActive = Boolean(
     activeProviderHint
@@ -895,18 +901,6 @@ export function createRuntimeStatusModel({
       ? 'cloud'
       : 'dev';
 
-  const dependencySummary = buildDependencySummary({
-    backendAvailable,
-    localAvailable: routePlan.localAvailable,
-    localPending,
-    cloudAvailable: routePlan.cloudAvailable,
-    effectiveRouteMode: routePlan.effectiveRouteMode,
-    fallbackActive,
-    activeProvider,
-    runtimeContext: normalizedRuntimeContext,
-    nodeRoute,
-    providerHealth: health,
-  });
   const finalRoute = finalizeRuntimeRouteResolution({
     runtimeContext: normalizedRuntimeContext,
     nodeRoute,
@@ -961,7 +955,7 @@ export function createRuntimeStatusModel({
       : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
     routeAdoptionMarker: STEPHANOS_ROUTE_ADOPTION_MARKER,
     providerRoutingMarker: STEPHANOS_PROVIDER_ROUTING_MARKER,
-    dependencySummary,
+    dependencySummary: '',
     headline,
     statusTone: appLaunchState === 'unavailable' ? 'unavailable' : appLaunchState === 'degraded' ? 'degraded' : 'ready',
     finalRoute,
@@ -990,7 +984,19 @@ export function createRuntimeStatusModel({
     validationState,
     appLaunchState,
   });
-  const preliminaryModel = { ...model, finalRouteTruth };
+  const dependencySummary = buildDependencySummary({
+    backendAvailable,
+    localAvailable: routePlan.localAvailable,
+    localPending,
+    cloudAvailable: routePlan.cloudAvailable,
+    effectiveRouteMode: routePlan.effectiveRouteMode,
+    fallbackActive,
+    activeProvider,
+    finalRouteTruth,
+    nodeRoute,
+    providerHealth: health,
+  });
+  const preliminaryModel = { ...model, finalRouteTruth, dependencySummary };
   const guardrails = evaluateRuntimeGuardrails(preliminaryModel);
   const runtimeAdjudication = adjudicateRuntimeTruth({
     runtimeContext: normalizedRuntimeContext,
@@ -1011,6 +1017,7 @@ export function createRuntimeStatusModel({
 
   return {
     ...model,
+    dependencySummary,
     finalRouteTruth,
     canonicalRouteRuntimeTruth: runtimeAdjudication.canonicalRouteRuntimeTruth,
     runtimeTruth: runtimeAdjudication.runtimeTruth,

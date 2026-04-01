@@ -23,6 +23,7 @@ function providerHealthStateFor(providerKey, providerHealth = {}) {
 
 function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
   if (!selectedProvider) return false;
+  if (selectedProvider === 'mock') return true;
   const selectedHealth = asObject(providerHealth)[selectedProvider];
   if (!selectedHealth || selectedHealth.ok !== true) return false;
   if (selectedHealth.provider && selectedHealth.provider !== selectedProvider) return false;
@@ -172,8 +173,9 @@ export function adjudicateRuntimeTruth({
   const selectedProviderTruth = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
   const activeProviderTruth = truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
-  const selectedProviderValidated = isSelectedProviderHealthy(selectedProviderTruth, providerHealth);
-  const executableProvider = selectedProviderValidated ? selectedProviderTruth : '';
+  const executableProviderCandidate = activeProviderTruth || selectedProviderTruth;
+  const executableProviderValidated = isSelectedProviderHealthy(executableProviderCandidate, providerHealth);
+  const executableProvider = executableProviderValidated ? executableProviderCandidate : '';
   const fallbackProviderUsed = Boolean(executableProvider && requestedProvider && executableProvider !== requestedProvider);
   const memoryTruth = normalizeMemoryTruth(context.memoryTruth);
   const tileTruth = normalizeTileTruth(context.tileTruth);
@@ -207,7 +209,7 @@ export function adjudicateRuntimeTruth({
       uiReachableState: truth.uiReachabilityState || 'unknown',
       uiReachable: asTriStateBoolean(truth.uiReachabilityState || 'unknown'),
       selectedRouteReachable: selectedEvaluation.available === true,
-      selectedRouteUsable: selectedEvaluation.usable === true,
+      selectedRouteUsable: truth.routeUsable === true || selectedEvaluation.usable === true,
       localAvailable: Boolean(routePlan.localAvailable),
       homeNodeAvailable: asObject(evaluations['home-node']).available === true,
       cloudAvailable: Boolean(routePlan.cloudAvailable),
@@ -291,7 +293,8 @@ export function adjudicateRuntimeTruth({
 
   if (runtimeTruth.provider.selectedProvider
     && activeProviderTruth === runtimeTruth.provider.selectedProvider
-    && selectedProviderValidated !== true) {
+    && executableProviderCandidate === runtimeTruth.provider.selectedProvider
+    && executableProviderValidated !== true) {
     issues.push(createIssue(
       'provider-execution-unvalidated',
       'error',

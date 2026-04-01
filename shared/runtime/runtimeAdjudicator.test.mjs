@@ -276,3 +276,68 @@ test('adjudicator canonical truth keeps provider stages and fallback reason in o
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.fallbackActive, true);
   assert.match(adjudicated.canonicalRouteRuntimeTruth.fallbackReason, /Requested ollama, executed groq/);
 });
+
+test('adjudicator keeps local-desktop route truth when provider degrades to mock fallback', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+      nodeAddressSource: 'local-backend-session',
+    },
+    finalRoute: {
+      routeKind: 'local-desktop',
+      preferredTarget: 'http://localhost:8787',
+      actualTarget: 'http://localhost:8787',
+      source: 'local-backend-session',
+      winnerReason: 'Backend online locally; local-desktop stays valid',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: {},
+    },
+    finalRouteTruth: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+      routeKind: 'local-desktop',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'local-first',
+      preferredTarget: 'http://localhost:8787',
+      actualTarget: 'http://localhost:8787',
+      source: 'local-backend-session',
+      winnerReason: 'Backend online locally; local-desktop stays valid',
+      routeUsable: true,
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'mock',
+      fallbackActive: true,
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'local-first',
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      localAvailable: true,
+      cloudAvailable: false,
+    },
+    routeEvaluations: {
+      'local-desktop': { available: true, usable: true, reason: 'Backend online locally; local-desktop stays valid' },
+      dist: { available: true, usable: true },
+    },
+    routePreferenceOrder: ['local-desktop', 'home-node', 'cloud', 'dist'],
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: 'mock',
+    providerHealth: {
+      ollama: { ok: false, reason: 'offline' },
+      mock: { ok: true, provider: 'mock' },
+    },
+    fallbackActive: true,
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.route.selectedRouteKind, 'local-desktop');
+  assert.equal(adjudicated.runtimeTruth.reachabilityTruth.selectedRouteUsable, true);
+  assert.equal(adjudicated.runtimeTruth.route.fallbackActive, true);
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'mock');
+  assert.equal(adjudicated.runtimeTruth.route.winningReason, 'Backend online locally; local-desktop stays valid');
+  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Requested ollama, executed mock/);
+});
