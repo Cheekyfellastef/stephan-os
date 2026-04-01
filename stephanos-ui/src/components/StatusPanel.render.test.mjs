@@ -347,6 +347,29 @@ test('App route/provider labels are sourced from finalRouteTruth', async () => {
   assert.match(rendered, /Executed provider: <strong>gemini<\/strong>/);
 });
 
+
+test('Meaning strip projects finalRouteTruth and fails transparently when missing', async () => {
+  const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appAliases);
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    runtimeStatusModel: {
+      finalRouteTruth: {
+        routeKind: 'local-desktop',
+        backendReachable: true,
+        providerExecution: { executableProvider: 'ollama' },
+        fallbackActive: false,
+        memoryMode: 'shared',
+      },
+    },
+  });
+  const renderedWithTruth = renderApp();
+  assert.match(renderedWithTruth, /🟢 SYSTEM HEALTHY \| 🧠 AI: OLLAMA \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: undefined });
+  const renderedWithoutTruth = renderApp();
+  assert.match(renderedWithoutTruth, /⚠️ NO RUNTIME TRUTH AVAILABLE/);
+});
+
 test('AIConsole route/provider banner is sourced from finalRouteTruth', async () => {
   const { renderAIConsole } = await importBundledModule(path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'), statusPanelAliases);
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({

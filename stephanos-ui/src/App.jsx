@@ -15,6 +15,7 @@ import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
+import MeaningStrip from './components/system/MeaningStrip';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
@@ -326,6 +327,7 @@ export default function App() {
       </footer>
 
       <DebugConsole />
+      <MeaningStrip finalRouteTruth={runtimeStatusModel?.finalRouteTruth} />
     </main>
   );
 }
