@@ -291,6 +291,25 @@ export function adjudicateRuntimeTruth({
     ));
   }
 
+  if (runtimeTruth.route.selectedRouteKind === 'home-node'
+    && runtimeTruth.reachabilityTruth.selectedRouteReachable === true
+    && runtimeTruth.reachabilityTruth.backendReachable !== true) {
+    issues.push(createIssue(
+      'home-node-lan-discovery-without-backend',
+      'warning',
+      'reachability',
+      'Home node route won by LAN reachability while backend API remained unreachable/unusable.',
+      {
+        likelyCause: 'Home-node route availability reflects LAN host discovery, but backend API readiness is independently false.',
+        suggestedAction: 'Home node discovered on LAN but backend API is not reachable or not usable. LAN/UI reachability confirms discovery, backend API reachability confirms server health, and selected route usability remains blocked until both are true.',
+        selectedRouteKind: runtimeTruth.route.selectedRouteKind,
+        selectedRouteReachable: runtimeTruth.reachabilityTruth.selectedRouteReachable,
+        backendReachable: runtimeTruth.reachabilityTruth.backendReachable,
+        selectedRouteUsable: runtimeTruth.reachabilityTruth.selectedRouteUsable,
+      },
+    ));
+  }
+
   if (runtimeTruth.provider.selectedProvider
     && activeProviderTruth === runtimeTruth.provider.selectedProvider
     && executableProviderCandidate === runtimeTruth.provider.selectedProvider

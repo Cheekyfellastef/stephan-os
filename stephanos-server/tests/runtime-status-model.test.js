@@ -103,6 +103,35 @@ test('runtime status surfaces a reachable home PC node separately from local des
   assert.equal(model.dependencySummary, 'Home PC node is reachable on the LAN');
 });
 
+test('runtime status keeps home-node selected but explicitly degraded when LAN discovery is true and backend is unavailable', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'cloud-first',
+    fallbackEnabled: true,
+    providerHealth: {
+      ollama: { ok: false },
+      groq: { ok: true },
+    },
+    backendAvailable: false,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://192.168.1.42:8787',
+      homeNode: { host: '192.168.1.42', uiPort: 5173, backendPort: 8787, source: 'manual', reachable: true },
+      preferredTarget: 'http://192.168.1.42:8787',
+      actualTargetUsed: 'http://192.168.1.42:8787',
+    },
+  });
+
+  assert.equal(model.routeKind, 'home-node');
+  assert.equal(model.routeEvaluations['home-node'].available, true);
+  assert.equal(model.routeEvaluations['home-node'].reason, 'Home node discovered on LAN but backend API is not reachable or not usable.');
+  assert.equal(model.dependencySummary, 'Home node discovered on LAN but backend API is not reachable or not usable.');
+  assert.equal(model.appLaunchState, 'degraded');
+  assert.equal(model.finalRouteTruth.backendReachable, false);
+  assert.equal(model.finalRouteTruth.routeUsable, false);
+});
+
 test('pc/local browser prefers local-desktop when backend is online even if home-node is unavailable', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'groq',
