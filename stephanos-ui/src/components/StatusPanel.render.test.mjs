@@ -343,8 +343,8 @@ test('App route/provider labels are sourced from finalRouteTruth', async () => {
   const rendered = renderApp();
   assert.match(rendered, /Route kind: <strong>home-node<\/strong>/);
   assert.match(rendered, /Requested provider: <strong>ollama<\/strong>/);
-  assert.match(rendered, /Selected provider: <strong>groq<\/strong>/);
-  assert.match(rendered, /Executed provider: <strong>gemini<\/strong>/);
+  assert.match(rendered, /Selected candidate: <strong>groq<\/strong>/);
+  assert.match(rendered, /Executable provider: <strong>gemini<\/strong>/);
 });
 
 test('AIConsole route/provider banner is sourced from finalRouteTruth', async () => {
@@ -407,8 +407,8 @@ test('StatusPanel truth rows degrade uiReachable honestly and keep provider stag
 
   const rendered = renderStatusPanel();
   assert.match(rendered, /Requested Provider: ollama/);
-  assert.match(rendered, /Route Selected Provider: groq/);
-  assert.match(rendered, /Active Provider: gemini/);
+  assert.match(rendered, /Selected Provider Candidate: groq/);
+  assert.match(rendered, /Executable Provider \(Current\): none/);
   assert.match(rendered, /Route Kind: home-node/);
   assert.match(rendered, /Selected Route UI Reachable: no/);
   assert.doesNotMatch(rendered, /Route Kind: cloud/);

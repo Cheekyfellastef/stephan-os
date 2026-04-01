@@ -514,3 +514,78 @@ test('createRuntimeStatusModel emits canonical runtimeTruth aligned with final r
   assert.equal(status.runtimeTruth.executedProvider, status.finalRouteTruth.executedProvider);
   assert.equal(status.runtimeTruth.backendReachable, true);
 });
+
+test('selected provider with unknown health never becomes executable', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {},
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'https://api.stephanos.example',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://stephanos.example',
+          actualTarget: 'https://api.stephanos.example',
+          reason: 'Cloud route is configured',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.finalRouteTruth.selectedProvider, 'groq');
+  assert.equal(status.finalRouteTruth.validatedProvider, '');
+  assert.equal(status.finalRouteTruth.executableProvider, '');
+  assert.equal(status.activeProvider, '');
+});
+
+test('no-route session shows no operational provider', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {},
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {},
+    },
+  });
+
+  assert.equal(status.finalRouteTruth.routeKind, 'unavailable');
+  assert.equal(status.finalRouteTruth.executableProvider, '');
+  assert.equal(status.runtimeTruth.provider.executableProvider, '');
+});
+
+test('saved provider preference and actualProviderUsed remain historical until validation succeeds', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: { groq: { state: 'SEARCHING' } },
+    backendAvailable: true,
+    activeProviderHint: 'groq',
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'https://api.stephanos.example',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'backend-cloud-session',
+          target: 'https://stephanos.example',
+          actualTarget: 'https://api.stephanos.example',
+          reason: 'Cloud route is configured',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.finalRouteTruth.savedPreferredProvider, 'groq');
+  assert.equal(status.finalRouteTruth.actualProviderUsed, 'groq');
+  assert.equal(status.finalRouteTruth.executableProvider, '');
+  assert.equal(status.runtimeTruth.provider.actualProviderUsed, 'groq');
+  assert.equal(status.runtimeTruth.provider.executableProvider, '');
+});

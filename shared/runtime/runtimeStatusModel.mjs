@@ -683,7 +683,7 @@ export function buildFinalRouteTruth({
   finalRoute = {},
   routePlan = {},
   backendAvailable = false,
-  activeProvider = '',
+  providerTruth = {},
   routeSelectedProvider = '',
   fallbackActive = false,
   validationState = 'healthy',
@@ -694,6 +694,7 @@ export function buildFinalRouteTruth({
   const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
   const routeKnown = appLaunchState !== 'pending' && (nodeRoute?.routeKind || 'unavailable') !== 'unavailable';
   const uiReachabilityState = routeKnown ? asTriState(selectedEvaluation?.uiReachable) : 'unknown';
+  const normalizedProviderTruth = providerTruth && typeof providerTruth === 'object' ? providerTruth : {};
 
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
@@ -718,9 +719,13 @@ export function buildFinalRouteTruth({
     cloudRouteReachable: finalRoute?.reachability?.cloudRouteReachable === true,
     fallbackActive: Boolean(fallbackActive),
     fallbackRouteActive: nodeRoute?.routeKind === 'dist',
-    requestedProvider: routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
-    selectedProvider: routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY,
-    executedProvider: activeProvider || '',
+    savedPreferredProvider: normalizedProviderTruth.savedPreferredProvider || routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
+    requestedProvider: normalizedProviderTruth.requestedProvider || routePlan.requestedProvider || DEFAULT_PROVIDER_KEY,
+    selectedProvider: normalizedProviderTruth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || DEFAULT_PROVIDER_KEY,
+    validatedProvider: normalizedProviderTruth.validatedProvider || '',
+    executableProvider: normalizedProviderTruth.executableProvider || '',
+    executedProvider: normalizedProviderTruth.executableProvider || '',
+    actualProviderUsed: normalizedProviderTruth.actualProviderUsed || '',
     validationState,
     appLaunchState,
     operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
@@ -741,6 +746,7 @@ function buildDependencySummary({
 }) {
   const selectedRoute = nodeRoute.preferredRoute ? nodeRoute.routeEvaluations[nodeRoute.preferredRoute] : null;
   const localFailureSummary = getPreferredLocalFailure(providerHealth);
+  const activeProviderLabel = PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider;
 
   if (!selectedRoute) {
     if (backendAvailable && runtimeContext.frontendLocal) {
@@ -793,7 +799,11 @@ function buildDependencySummary({
     }
 
     if (effectiveRouteMode === 'explicit') {
-      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} explicitly selected`;
+      if (!activeProvider) {
+        return 'Provider selected as candidate; validation pending before execution is allowed';
+      }
+
+      return `${activeProviderLabel} explicitly selected`;
     }
 
     if (localAvailable && !fallbackActive) {
@@ -805,7 +815,9 @@ function buildDependencySummary({
     }
 
     if (effectiveRouteMode === 'cloud-first' && cloudAvailable) {
-      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} active for cloud routing`;
+      return activeProvider
+        ? `${activeProviderLabel} active for cloud routing`
+        : 'Cloud provider candidate selected; validation pending before execution is allowed';
     }
 
     if (!localAvailable && !cloudAvailable) {
@@ -813,7 +825,9 @@ function buildDependencySummary({
     }
 
     if (fallbackActive) {
-      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
+      return activeProvider
+        ? `${activeProviderLabel} handling requests after fallback`
+        : 'Fallback route selected; provider execution blocked until validation succeeds';
     }
 
     return selectedRoute.reason || 'Local desktop runtime ready';
@@ -829,7 +843,9 @@ function buildDependencySummary({
 
   if (selectedRoute.kind === 'cloud') {
     if (fallbackActive) {
-      return `${PROVIDER_DEFINITIONS[activeProvider]?.label || activeProvider} handling requests after fallback`;
+      return activeProvider
+        ? `${activeProviderLabel} handling requests after fallback`
+        : 'Fallback route selected; provider execution blocked until validation succeeds';
     }
 
     return selectedRoute.reason || 'Cloud route ready';
@@ -877,15 +893,25 @@ export function createRuntimeStatusModel({
   const routeSelectedProvider = routePlan.selectedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
     ? preferredLiveProvider
     : routePlan.selectedProvider;
-  const hintedProvider = normalizeProviderSelection(activeProviderHint || routeSelectedProvider);
-  const activeProvider = hintedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
-    ? routeSelectedProvider
-    : hintedProvider;
+  const requestedProvider = normalizedProvider;
+  const selectedProviderCandidate = normalizeProviderSelection(routeSelectedProvider || requestedProvider);
+  const selectedProviderHealth = health[selectedProviderCandidate];
+  const selectedProviderValidated = selectedProviderHealth?.ok === true
+    && (!selectedProviderHealth?.provider || selectedProviderHealth.provider === selectedProviderCandidate);
+  const routeOperational = liveRouteAvailable
+    && (nodeRoute.routeKind === 'local-desktop' || nodeRoute.routeKind === 'home-node' || nodeRoute.routeKind === 'cloud');
+  const validatedProvider = selectedProviderValidated ? selectedProviderCandidate : '';
+  const executableProvider = routeOperational ? validatedProvider : '';
+  const historicalProvider = normalizeProviderSelection(activeProviderHint || '');
+  const actualProviderUsed = activeProviderHint
+    ? historicalProvider
+    : '';
+  const activeProvider = executableProvider;
 
   const fallbackActive = Boolean(
     activeProviderHint
     && activeProvider
-    && activeProvider !== routeSelectedProvider
+    && activeProvider !== selectedProviderCandidate
     && providerMode !== 'explicit'
   );
 
@@ -984,7 +1010,14 @@ export function createRuntimeStatusModel({
     finalRoute,
     routePlan,
     backendAvailable,
-    activeProvider,
+    providerTruth: {
+      savedPreferredProvider: normalizedProvider,
+      requestedProvider,
+      selectedProvider: selectedProviderCandidate,
+      validatedProvider,
+      executableProvider,
+      actualProviderUsed,
+    },
     routeSelectedProvider,
     fallbackActive,
     validationState,

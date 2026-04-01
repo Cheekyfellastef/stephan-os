@@ -90,6 +90,9 @@ function projectLegacyRuntimeTruth(runtimeTruth) {
     fallbackActive: runtimeTruth.route.fallbackActive,
     requestedProvider: runtimeTruth.provider.requestedProvider,
     selectedProvider: runtimeTruth.provider.selectedProvider,
+    validatedProvider: runtimeTruth.provider.validatedProvider,
+    executableProvider: runtimeTruth.provider.executableProvider,
+    actualProviderUsed: runtimeTruth.provider.actualProviderUsed,
     executedProvider: runtimeTruth.provider.executableProvider,
     validationState: runtimeTruth.diagnostics.validationState,
     appLaunchState: runtimeTruth.diagnostics.appLaunchState,
@@ -135,6 +138,9 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     distAvailable: reachabilityTruth.distAvailable === true,
     requestedProvider: provider.requestedProvider || 'unknown',
     selectedProvider: provider.selectedProvider || 'unknown',
+    validatedProvider: provider.validatedProvider || '',
+    executableProvider: provider.executableProvider || '',
+    actualProviderUsed: provider.actualProviderUsed || '',
     executedProvider: provider.executableProvider || '',
     providerHealthState: provider.providerHealthState || 'unknown',
     fallbackActive: route.fallbackActive === true || provider.fallbackProviderUsed === true,
@@ -170,7 +176,7 @@ export function adjudicateRuntimeTruth({
   const selectedEvaluation = asObject(evaluations[selectedRouteKind]);
   const requestedProvider = truth.requestedProvider || routePlan.requestedProvider || selectedProvider || 'unknown';
   const selectedProviderTruth = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
-  const activeProviderTruth = truth.executedProvider || activeProvider || '';
+  const activeProviderTruth = truth.executableProvider || truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
   const selectedProviderValidated = isSelectedProviderHealthy(selectedProviderTruth, providerHealth);
   const executableProvider = selectedProviderValidated ? selectedProviderTruth : '';
@@ -214,9 +220,12 @@ export function adjudicateRuntimeTruth({
       distAvailable: asObject(evaluations.dist).available === true,
     },
     provider: {
+      savedPreferredProvider: truth.savedPreferredProvider || selectedProvider || requestedProvider || 'unknown',
       requestedProvider,
       selectedProvider: selectedProviderTruth,
+      validatedProvider: selectedProviderValidated ? selectedProviderTruth : '',
       executableProvider,
+      actualProviderUsed: truth.actualProviderUsed || activeProviderTruth || '',
       providerHealthState: providerHealthStateFor(selectedProviderTruth, providerHealth),
       providerReason: String(
         selectedProviderHealth?.reason
