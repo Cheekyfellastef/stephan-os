@@ -16,6 +16,7 @@ import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
+import TelemetryFeed from './components/system/TelemetryFeed';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
@@ -161,6 +162,7 @@ export default function App() {
     { id: 'simulationHistoryPanel', render: () => <SimulationHistoryPanel commandHistory={commandHistory} /> },
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
+    { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
@@ -170,6 +172,7 @@ export default function App() {
     input,
     runAiButlerAction,
     runtimeFingerprint,
+    runtimeStatusModel,
     runtimeStatus.headline,
     runtimeStatus.dependencySummary,
     safeApiStatus.detail,
