@@ -221,9 +221,12 @@ export default function StatusPanel() {
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
         <li>Effective Route Mode: {runtimeStatus.effectiveRouteMode}</li>
+        <li>Preferred Provider (Saved): {runtimeProviderTruth.savedPreferredProvider || provider}</li>
         <li>Requested Provider: {routeTruthView.requestedProvider}</li>
-        <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
-        <li>Active Provider: {routeTruthView.executedProvider}</li>
+        <li>Selected Provider Candidate: {routeTruthView.selectedProvider}</li>
+        <li>Validated Provider: {runtimeProviderTruth.validatedProvider || 'none'}</li>
+        <li>Executable Provider (Current): {runtimeProviderTruth.executableProvider || 'none'}</li>
+        <li>Actual Provider Used (Last Request): {runtimeProviderTruth.actualProviderUsed || lastExecutionMetadata?.actual_provider_used || 'none'}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {routeTruthView.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
@@ -271,8 +274,8 @@ export default function StatusPanel() {
         <li>Backend URL In Use: {uiDiagnostics.backendUrlInUse || runtimeContext.apiBaseUrl || safeApiStatus.baseUrl || 'n/a'}</li>
         <li>Ollama Base URL In Use: {uiDiagnostics.ollamaBaseUrlInUse || 'n/a'}</li>
         <li>Requested Provider (UI): {uiDiagnostics.requestedProvider || provider}</li>
-        <li>Selected Provider (Route): {routeTruthView.selectedProvider}</li>
-        <li>Executed Provider (Route): {routeTruthView.executedProvider}</li>
+        <li>Selected Provider (Route Candidate): {routeTruthView.selectedProvider}</li>
+        <li>Executed Provider (Route Truth): {routeTruthView.executedProvider === 'unknown' ? 'none' : routeTruthView.executedProvider}</li>
         <li>Executable Provider (Adjudicated): {runtimeProviderTruth.executableProvider || 'n/a'}</li>
         <li>Local Available: {runtimeStatus.localAvailable ? 'yes' : 'no'}</li>
         <li>Cloud Available: {runtimeStatus.cloudAvailable ? 'yes' : 'no'}</li>
@@ -284,6 +287,7 @@ export default function StatusPanel() {
         <li>Selected Provider State: {statusSummary.healthState}</li>
         <li>Selected Provider Detail: {statusSummary.healthDetail}</li>
         <li>Selected Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
+        <li>Operator Guidance (Provider Validation): {runtimeProviderTruth.executableProvider ? 'Provider validated and executable.' : 'Provider selected but not yet validated. Run health check before expecting live execution.'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
