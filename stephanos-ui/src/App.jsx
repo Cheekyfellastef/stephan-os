@@ -17,6 +17,7 @@ import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
 import TelemetryFeed from './components/system/TelemetryFeed';
+import ActionHints from './components/system/ActionHints';
 import { useAIConsole } from './hooks/useAIConsole';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
@@ -163,6 +164,7 @@ export default function App() {
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
     { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} /> },
+    { id: 'actionHintsPanel', render: () => <ActionHints finalRouteTruth={runtimeStatusModel?.finalRouteTruth} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
