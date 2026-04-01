@@ -339,6 +339,12 @@ export function adjudicateRuntimeTruth({
   }
 
   if (!tileTruth.ready && runtimeTruth.diagnostics.appLaunchState === 'ready') {
+    const tileBlocker = tileTruth.reason
+      ? `Tile execution blocker: ${tileTruth.reason}.`
+      : 'Tile execution blocker: readiness signal is false.';
+    const tileSurface = tileTruth.launchSurface && tileTruth.launchSurface !== 'unknown'
+      ? ` Launch surface: ${tileTruth.launchSurface}.`
+      : '';
     issues.push(createIssue(
       'tile-not-ready-while-runtime-ready',
       'warning',
@@ -346,7 +352,7 @@ export function adjudicateRuntimeTruth({
       'Runtime reports ready while tile execution readiness is false.',
       {
         likelyCause: 'Tile substrate did not hydrate or interactive surface wiring is incomplete.',
-        suggestedAction: 'Expose tile readiness blockers and gate launch state until resolved.',
+        suggestedAction: `${tileBlocker}${tileSurface} Gate launch state until these blockers are resolved.`,
         tileReason: tileTruth.reason,
         tileLaunchSurface: tileTruth.launchSurface,
       },

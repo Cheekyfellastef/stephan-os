@@ -548,3 +548,69 @@ test('createRuntimeStatusModel emits canonical runtimeTruth aligned with final r
   assert.equal(status.runtimeTruth.executedProvider, status.finalRouteTruth.executedProvider);
   assert.equal(status.runtimeTruth.backendReachable, true);
 });
+
+test('createRuntimeStatusModel gates ready launch state on selected route usability and tile execution readiness', () => {
+  const degradedStatus = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          uiReachable: true,
+          usable: false,
+          blockedReason: 'Tile launch surface still hydrating.',
+        },
+      },
+      tileTruth: {
+        ready: false,
+        reason: 'Tile registry is still hydrating.',
+        launchSurface: 'mission-console',
+      },
+    },
+  });
+
+  assert.equal(degradedStatus.appLaunchState, 'degraded');
+  assert.equal(degradedStatus.finalRouteTruth.routeUsable, false);
+
+  const readyStatus = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          uiReachable: true,
+          usable: true,
+        },
+      },
+      tileTruth: {
+        ready: true,
+        launchSurface: 'mission-console',
+      },
+    },
+  });
+
+  assert.equal(readyStatus.appLaunchState, 'ready');
+  assert.equal(readyStatus.finalRouteTruth.routeUsable, true);
+});

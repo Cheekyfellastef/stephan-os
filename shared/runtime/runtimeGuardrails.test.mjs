@@ -204,7 +204,7 @@ test('guardrails catch fallback-only masking when dist is active despite a reach
   assert.ok(report.errors.some((issue) => issue.id === 'fallback-only-discipline'));
 });
 
-test('guardrails emit a warning when local-desktop truth points at a non-loopback target', () => {
+test('guardrails do not warn when local-desktop truth points at a LAN target', () => {
   const report = evaluateRuntimeGuardrails({
     appLaunchState: 'ready',
     backendAvailable: true,
@@ -228,6 +228,51 @@ test('guardrails emit a warning when local-desktop truth points at a non-loopbac
       source: 'local-backend-session',
       preferredTarget: 'http://192.168.0.198:8787',
       actualTarget: 'http://192.168.0.198:8787',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: {
+        truthfulBackendRoute: true,
+        backendMediatedProviders: true,
+        localProviders: true,
+        cloudProviders: false,
+        distFallbackOnly: false,
+        mockFallbackOnly: false,
+        selectedRouteAvailable: true,
+      },
+    },
+    routeEvaluations: {
+      'local-desktop': { available: true },
+    },
+  });
+
+  assert.equal(report.hasErrors, false);
+  assert.equal(report.hasWarnings, false);
+  assert.equal(report.warnings.some((issue) => issue.id === 'local-desktop-non-loopback-suspicious'), false);
+});
+
+test('guardrails warn when local-desktop truth points at a public non-loopback target', () => {
+  const report = evaluateRuntimeGuardrails({
+    appLaunchState: 'ready',
+    backendAvailable: true,
+    localAvailable: true,
+    cloudAvailable: false,
+    routeKind: 'local-desktop',
+    preferredTarget: 'https://example.com',
+    actualTargetUsed: 'https://example.com',
+    nodeAddressSource: 'local-backend-session',
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      finalRoute: {
+        routeKind: 'local-desktop',
+        source: 'local-backend-session',
+        preferredTarget: 'https://example.com',
+        actualTarget: 'https://example.com',
+      },
+    },
+    finalRoute: {
+      routeKind: 'local-desktop',
+      source: 'local-backend-session',
+      preferredTarget: 'https://example.com',
+      actualTarget: 'https://example.com',
       reachability: { selectedRouteReachable: true },
       providerEligibility: {
         truthfulBackendRoute: true,

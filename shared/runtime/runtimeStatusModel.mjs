@@ -109,6 +109,12 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},
+    memoryTruth: runtimeContext.memoryTruth && typeof runtimeContext.memoryTruth === 'object'
+      ? runtimeContext.memoryTruth
+      : {},
+    tileTruth: runtimeContext.tileTruth && typeof runtimeContext.tileTruth === 'object'
+      ? runtimeContext.tileTruth
+      : {},
     homeNodeOperatorOverrideActive: runtimeContext.homeNodeOperatorOverrideActive === true,
     homeNodeOperatorOverrideNodeConfigured: runtimeContext.homeNodeOperatorOverrideNodeConfigured === true,
     loopbackBackendMismatch,
@@ -908,12 +914,20 @@ export function createRuntimeStatusModel({
     localAvailable: routePlan.localAvailable,
     cloudAvailable: routePlan.cloudAvailable,
   });
+  const selectedEvaluation = nodeRoute?.preferredRoute ? nodeRoute.routeEvaluations?.[nodeRoute.preferredRoute] : null;
+  const selectedRouteReachable = selectedEvaluation?.available === true;
+  const selectedRouteUsable = selectedEvaluation?.usable === true;
+  const tileExecutionReady = normalizedRuntimeContext?.tileTruth?.ready === true
+    || normalizedRuntimeContext?.tileTruth?.executionReady === true;
 
   const launchUnavailable = validationState === 'error' && nodeRoute.routeKind === 'unavailable';
   const launchDegraded = !launchUnavailable && (
     validationState === 'launching'
     || (nodeRoute.routeKind === 'unavailable' && !routePlan.cloudAvailable)
     || (nodeRoute.routeKind !== 'cloud' && !backendAvailable)
+    || !selectedRouteReachable
+    || !selectedRouteUsable
+    || !tileExecutionReady
     || (localPending && routePlan.effectiveRouteMode !== 'cloud-first')
     || (routePlan.effectiveRouteMode === 'local-first' && !routePlan.localAvailable && nodeRoute.routeKind === 'local-desktop')
     || (routePlan.effectiveRouteMode === 'cloud-first' && !routePlan.cloudAvailable)
