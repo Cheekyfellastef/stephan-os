@@ -17,7 +17,7 @@ import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
 import TelemetryFeed from './components/system/TelemetryFeed';
-import PromptBuilder from './components/system/PromptBuilder';
+import PromptBuilder from './components/system/PromptBuilder.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
