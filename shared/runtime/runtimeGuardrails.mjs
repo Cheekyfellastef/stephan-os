@@ -2,7 +2,7 @@
 // route precedence, provider selection semantics, or live adoption behavior. The checks here
 // only assert agreed invariants so regressions surface early in tests, CI, and dev diagnostics.
 
-import { isLoopbackHost, extractHostname } from './stephanosHomeNode.mjs';
+import { isLoopbackHost, isLikelyLanHost, extractHostname } from './stephanosHomeNode.mjs';
 
 function asObject(value) {
   return value && typeof value === 'object' ? value : {};
@@ -220,7 +220,11 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
     ));
   }
 
-  if (finalRoute.routeKind === 'local-desktop' && finalRoute.actualTarget && !isLoopbackHost(actualTargetHost)) {
+  const localDesktopTargetIsLan = isLikelyLanHost(actualTargetHost);
+  if (finalRoute.routeKind === 'local-desktop'
+    && finalRoute.actualTarget
+    && !isLoopbackHost(actualTargetHost)
+    && !localDesktopTargetIsLan) {
     invariants.push(createInvariant(
       'local-desktop-non-loopback-suspicious',
       'warning',
