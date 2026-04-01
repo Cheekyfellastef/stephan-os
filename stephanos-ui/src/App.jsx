@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import AIConsole from './components/AIConsole';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
@@ -17,7 +17,10 @@ import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
 import TelemetryFeed from './components/system/TelemetryFeed';
+import PromptBuilder from './components/system/PromptBuilder';
 import { useAIConsole } from './hooks/useAIConsole';
+import { collectActionHints } from './components/system/actionHints.js';
+import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
 import { useDebugConsole } from './hooks/useDebugConsole';
 import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
@@ -110,6 +113,37 @@ export default function App() {
     }),
     [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
   );
+  const [telemetryEntries, setTelemetryEntries] = useState([]);
+  const telemetryBaselineAddedRef = useRef(false);
+  const previousTelemetryTruthRef = useRef(null);
+  const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
+  const actionHints = useMemo(() => collectActionHints(finalRouteTruth).map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth]);
+
+  useEffect(() => {
+    if (!finalRouteTruth) {
+      setTelemetryEntries([]);
+      previousTelemetryTruthRef.current = null;
+      telemetryBaselineAddedRef.current = false;
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const incoming = [];
+
+    if (!telemetryBaselineAddedRef.current) {
+      incoming.push(createTelemetryBaselineEvent(finalRouteTruth, timestamp));
+      telemetryBaselineAddedRef.current = true;
+    }
+
+    incoming.push(...extractTelemetryEvents(previousTelemetryTruthRef.current, finalRouteTruth, timestamp));
+
+    if (incoming.length > 0) {
+      setTelemetryEntries((previous) => appendTelemetryHistory(previous, incoming, TELEMETRY_MAX_HISTORY));
+    }
+
+    previousTelemetryTruthRef.current = finalRouteTruth;
+  }, [finalRouteTruth]);
+
   const ignitionModeBanner = useMemo(() => {
     const pathname = runtimeFingerprint.currentPathname || '';
     const origin = runtimeFingerprint.currentOrigin || '';
@@ -162,7 +196,8 @@ export default function App() {
     { id: 'simulationHistoryPanel', render: () => <SimulationHistoryPanel commandHistory={commandHistory} /> },
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
-    { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} /> },
+    { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
+    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
@@ -174,6 +209,8 @@ export default function App() {
     runtimeFingerprint,
     runtimeStatusModel,
     runtimeStatus.headline,
+    telemetryEntries,
+    actionHints,
     runtimeStatus.dependencySummary,
     safeApiStatus.detail,
     setInput,

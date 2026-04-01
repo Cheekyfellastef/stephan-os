@@ -1,44 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from '../CollapsiblePanel';
 import { useAIStore } from '../../state/aiStore';
-import {
-  appendTelemetryHistory,
-  createTelemetryBaselineEvent,
-  extractTelemetryEvents,
-  TELEMETRY_MAX_HISTORY,
-} from './telemetryEvents.js';
 
-export default function TelemetryFeed({ runtimeStatusModel }) {
+export default function TelemetryFeed({ runtimeStatusModel, telemetryEntries = [] }) {
   const { uiLayout, togglePanel } = useAIStore();
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
-  const [events, setEvents] = useState([]);
-  const previousTruthRef = useRef(null);
-  const baselineAddedRef = useRef(false);
-
-  useEffect(() => {
-    if (!finalRouteTruth) {
-      previousTruthRef.current = null;
-      baselineAddedRef.current = false;
-      setEvents([]);
-      return;
-    }
-
-    const timestamp = new Date().toISOString();
-    const nextEvents = [];
-
-    if (!baselineAddedRef.current) {
-      nextEvents.push(createTelemetryBaselineEvent(finalRouteTruth, timestamp));
-      baselineAddedRef.current = true;
-    }
-
-    const transitionEvents = extractTelemetryEvents(previousTruthRef.current, finalRouteTruth, timestamp);
-    nextEvents.push(...transitionEvents);
-    previousTruthRef.current = finalRouteTruth;
-
-    if (nextEvents.length > 0) {
-      setEvents((previousEvents) => appendTelemetryHistory(previousEvents, nextEvents, TELEMETRY_MAX_HISTORY));
-    }
-  }, [finalRouteTruth]);
+  const events = Array.isArray(telemetryEntries) ? telemetryEntries : [];
 
   return (
     <CollapsiblePanel
