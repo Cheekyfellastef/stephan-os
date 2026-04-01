@@ -361,6 +361,40 @@ test('createRuntimeStatusModel surfaces explicit Ollama failure reasons before t
   assert.match(status.dependencySummary, /cloud active because local Ollama is unavailable/i);
 });
 
+test('createRuntimeStatusModel keeps local-desktop route truth while mock executes as provider fallback', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: false, reason: 'Nothing answered at that Ollama address.' },
+      mock: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          source: 'local-backend-session',
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          reason: 'Backend online locally; local-desktop stays valid',
+        },
+      },
+    },
+    activeProviderHint: 'mock',
+  });
+
+  assert.equal(status.finalRouteTruth.routeKind, 'local-desktop');
+  assert.equal(status.finalRouteTruth.routeUsable, true);
+  assert.equal(status.dependencySummary, 'Local desktop route valid; using mock provider fallback');
+});
+
 
 test('createRuntimeStatusModel keeps finalRoute as the sole route truth projection for consumers', () => {
   const status = createRuntimeStatusModel({
