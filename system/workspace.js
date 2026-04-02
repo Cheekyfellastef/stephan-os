@@ -318,12 +318,28 @@ export function applyWorkspaceIframeInteractivity(iframe) {
   return iframe;
 }
 
-function createWorkspaceBackButton(documentRef, handler) {
-  const backButton = documentRef.createElement("button");
-  backButton.textContent = "◀ Return to Command Deck";
-  backButton.style.marginBottom = "10px";
-  backButton.onclick = handler;
-  return backButton;
+function createWorkspaceReturnButton(documentRef, handler, position = "top") {
+  const returnButton = documentRef.createElement("button");
+  returnButton.textContent = "Return to Command Deck";
+  returnButton.style.alignSelf = "flex-start";
+  returnButton.style.minHeight = "44px";
+  returnButton.style.padding = "10px 16px";
+  returnButton.style.margin = position === "top" ? "0 0 10px 0" : "10px 0 0 0";
+  returnButton.style.touchAction = "manipulation";
+  returnButton.onclick = handler;
+  return returnButton;
+}
+
+function appendWorkspaceReturnControls(documentRef, contentNode) {
+  const handleReturn = () => {
+    window.returnToCommandDeck();
+  };
+
+  const topReturnButton = createWorkspaceReturnButton(documentRef, handleReturn, "top");
+  const bottomReturnButton = createWorkspaceReturnButton(documentRef, handleReturn, "bottom");
+  contentNode.appendChild(topReturnButton);
+
+  return { topReturnButton, bottomReturnButton };
 }
 
 function buildWorkspaceFrameContainer(documentRef) {
@@ -462,12 +478,9 @@ export const workspace = {
       container.style.borderRadius = "8px";
       container.textContent = text;
 
-      const backButton = createWorkspaceBackButton(document, () => {
-        window.returnToCommandDeck();
-      });
-
-      content.appendChild(backButton);
+      const { bottomReturnButton } = appendWorkspaceReturnControls(document, content);
       content.appendChild(container);
+      content.appendChild(bottomReturnButton);
       context?.eventBus?.emit("workspace:opened", project);
       context?.eventBus?.emit("tile.opened", {
         tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
@@ -479,12 +492,10 @@ export const workspace = {
     }
 
     if (project?.entry) {
-      const backButton = createWorkspaceBackButton(document, () => {
-        window.returnToCommandDeck();
-      });
       const container = buildWorkspaceFrameContainer(document);
-      content.appendChild(backButton);
+      const { bottomReturnButton } = appendWorkspaceReturnControls(document, content);
       content.appendChild(container);
+      content.appendChild(bottomReturnButton);
 
       try {
         await loadDependencies(project);
