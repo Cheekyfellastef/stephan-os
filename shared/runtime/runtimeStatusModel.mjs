@@ -356,6 +356,7 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     ? false
     : (homeNodeConfiguredOverride ?? homeNodeConfigured);
   const effectiveHomeNodeReachable = effectiveHomeNodeConfigured && homeNodeReachable;
+  const homeNodeBackendUnavailable = effectiveHomeNodeReachable && !backendAvailable;
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const localDesktopProbe = diagnostics['local-desktop'] || {};
   const homeNodeProbe = diagnostics['home-node'] || {};
@@ -419,7 +420,9 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
         : effectiveHomeNodeReachable
-        ? (homeNodeMisconfigured
+        ? (homeNodeBackendUnavailable
+          ? 'Home node discovered on LAN but backend API is not reachable or not usable.'
+          : homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
           : 'Home PC node is reachable on the LAN')
         : (effectiveHomeNodeConfigured
@@ -430,10 +433,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : effectiveHomeNodeConfigured
         ? (homeNodeProbe.blockedReason || (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
         : 'home node is not configured',
+      usable: effectiveHomeNodeReachable && backendAvailable,
     }, {
       ...homeNodeProbe,
       configured: effectiveHomeNodeConfigured,
       available: effectiveHomeNodeReachable,
+      usable: effectiveHomeNodeReachable && backendAvailable,
       misconfigured: effectiveHomeNodeReachable && (homeNodeMisconfigured || Boolean(homeNodeProbe.misconfigured)),
       source: homeNodeOverrideActive
         ? 'local-operator-override'
@@ -441,7 +446,9 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
         : homeNodeProbe.reason || (effectiveHomeNodeReachable
-        ? (homeNodeMisconfigured
+        ? (homeNodeBackendUnavailable
+          ? 'Home node discovered on LAN but backend API is not reachable or not usable.'
+          : homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
           : 'Home PC node is reachable on the LAN')
         : (effectiveHomeNodeConfigured
@@ -770,6 +777,10 @@ function buildDependencySummary({
   }
 
   if (selectedRoute.kind === 'home-node') {
+    if (!backendAvailable) {
+      return 'Home node discovered on LAN but backend API is not reachable or not usable.';
+    }
+
     if (selectedRoute.misconfigured) {
       return 'Home PC node reachable · published client route misconfigured';
     }

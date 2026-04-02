@@ -103,6 +103,11 @@ test('adjudicator keeps backend and ui reachability distinct', () => {
   assert.equal(adjudicated.runtimeTruth.reachabilityTruth.uiReachableState, 'reachable');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.backendReachable, false);
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.uiReachabilityState, 'reachable');
+  assert.ok(adjudicated.issues.some((issue) => issue.code === 'home-node-lan-discovery-without-backend'));
+  assert.match(
+    adjudicated.runtimeTruth.diagnostics.operatorGuidance[0],
+    /LAN\/UI reachability confirms discovery, backend API reachability confirms server health/i,
+  );
 });
 
 test('adjudicator does not promote selected provider to executable when provider is unvalidated', () => {
