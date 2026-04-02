@@ -1776,3 +1776,19 @@ pre {
     font-size: 0.86rem;
   }
 }
+
+
+.cockpit-surface-mode .operator-pane-wall,
+.cockpit-surface-mode .provider-dock,
+.cockpit-surface-mode .runtime-diagnostic {
+  display: none;
+}
+
+.cockpit-surface-stage {
+  padding: 16px;
+}
+
+.cockpit-panel-standalone {
+  max-width: 1100px;
+  margin: 0 auto;
+}
