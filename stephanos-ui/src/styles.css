@@ -1633,13 +1633,17 @@ pre {
 }
 
 .cockpit-connection .wire-base {
+  fill: none;
   stroke: rgba(87, 132, 170, 0.26);
   stroke-width: 3;
+  stroke-linejoin: round;
 }
 
 .cockpit-connection .wire-energy {
+  fill: none;
   stroke-width: 6;
   stroke-linecap: round;
+  stroke-linejoin: round;
   stroke-dasharray: 2 16;
   opacity: 0;
 }

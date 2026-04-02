@@ -12,7 +12,7 @@ const NODE_LAYOUT = Object.freeze({
   hostedSurface: { x: 210, y: 380, label: 'Hosted surface' },
   backend: { x: 500, y: 305, label: 'Backend' },
   aiProviders: { x: 790, y: 230, label: 'AI provider cluster' },
-  memory: { x: 500, y: 515, label: 'Memory' },
+  memory: { x: 500, y: 462, label: 'Memory' },
   operator: { x: 500, y: 620, label: 'Operator' },
 });
 
@@ -156,6 +156,58 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
+function toRoutedPath(points = []) {
+  if (!Array.isArray(points) || points.length === 0) return '';
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`).join(' ');
+}
+
+function buildConnectionPath(connection, from, to) {
+  switch (connection.id) {
+    case 'operator-localSurface':
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: from.x, y: 560 },
+        { x: 320, y: 560 },
+        { x: 320, y: to.y },
+        { x: to.x, y: to.y },
+      ]);
+    case 'operator-hostedSurface':
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: from.x, y: 560 },
+        { x: 355, y: 560 },
+        { x: 355, y: to.y },
+        { x: to.x, y: to.y },
+      ]);
+    case 'localSurface-backend':
+    case 'hostedSurface-backend':
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: 355, y: from.y },
+        { x: 355, y: to.y },
+        { x: to.x, y: to.y },
+      ]);
+    case 'backend-aiProviders':
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: 650, y: from.y },
+        { x: 650, y: to.y },
+        { x: to.x, y: to.y },
+      ]);
+    case 'backend-memory':
+    case 'backend-execution':
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: to.x, y: to.y },
+      ]);
+    default:
+      return toRoutedPath([
+        { x: from.x, y: from.y },
+        { x: to.x, y: to.y },
+      ]);
+  }
+}
+
 export default function CockpitPanel({ forceOpen = false, standalone = false } = {}) {
   const {
     runtimeStatusModel,
@@ -245,6 +297,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
             const from = NODE_LAYOUT[connection.from];
             const to = NODE_LAYOUT[connection.to];
             const state = cockpitModel.connectionStates[connection.id] || 'unknown';
+            const routedPath = buildConnectionPath(connection, from, to);
 
             return (
               <g
@@ -260,8 +313,8 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
                 role="button"
                 tabIndex={0}
               >
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} className="wire-base" />
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} className="wire-energy" />
+                <path d={routedPath} className="wire-base" />
+                <path d={routedPath} className="wire-energy" />
               </g>
             );
           })}
