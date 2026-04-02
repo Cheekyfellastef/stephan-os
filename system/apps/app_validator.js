@@ -629,8 +629,10 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     currentOrigin,
     manualNode,
     lastKnownNode: homeNodeDiscovery.preferredNode || lastKnownNode,
+    explicitBaseUrl: globalThis?.__STEPHANOS_BACKEND_BASE_URL || '',
   });
   const localDesktopSession = isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin);
+  const hostedWebSession = !localDesktopSession;
   const localDesktopBackendBaseUrl = 'http://localhost:8787';
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
@@ -645,10 +647,20 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       runtimeContext: { baseUrl: localDesktopBackendBaseUrl, frontendOrigin: currentOrigin },
     })
     : backendProbe;
+  const backendProbeBaseUrl = backendProbe.backendBaseUrl || backendBaseUrl;
+  const backendProbeHost = extractHostname(backendProbeBaseUrl);
+  const frontendHost = extractHostname(currentOrigin);
+  const frontendOriginMasqueradingBackend = hostedWebSession
+    && Boolean(currentOrigin)
+    && Boolean(frontendHost)
+    && frontendHost === backendProbeHost
+    && !backendProbe.ok;
   const effectiveBackendProbe = backendProbe.ok ? backendProbe : localDesktopBackendProbe;
   const effectiveBackendBaseUrl = backendProbe.ok
     ? backendBaseUrl
-    : (localDesktopBackendProbe.ok ? localDesktopBackendBaseUrl : backendBaseUrl);
+    : (localDesktopBackendProbe.ok
+      ? localDesktopBackendBaseUrl
+      : (frontendOriginMasqueradingBackend ? '' : backendBaseUrl));
   const localDesktopCapableSession = localDesktopSession || isLoopbackHost(extractHostname(effectiveBackendBaseUrl));
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
@@ -720,7 +732,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const distPreferredTarget = distLive && distTarget ? { ...distTarget, validStephanosTarget: true } : null;
 
   const providerPreferences = readPersistedProviderPreferences();
-  const providerHealthProbe = healthyBackend
+  const providerHealthProbe = healthyBackend && effectiveBackendBaseUrl
     ? await requestStephanosBackendSafely({
       path: '/api/ai/providers/health',
       method: 'POST',
@@ -753,8 +765,8 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       frontendOrigin: currentOrigin,
       apiBaseUrl: effectiveBackendBaseUrl,
       homeNode: preferredHomeNode ? (homeNodeRouteAvailable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
-      preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || currentOrigin,
-      actualTargetUsed: effectiveBackendBaseUrl,
+      preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || '',
+      actualTargetUsed: effectiveBackendBaseUrl || '',
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
       routeDiagnostics: {
@@ -835,17 +847,23 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
               : 'Bundled dist runtime is unavailable'),
         },
         cloud: {
-          configured: false,
-          available: false,
-          misconfigured: false,
-          target: '',
-          actualTarget: '',
-          backendReachable: false,
-          uiReachable: false,
-          usable: false,
-          source: 'cloud-route-unavailable',
-          reason: 'No explicit cloud Stephanos runtime route was published',
-          blockedReason: 'no cloud-backed route is currently ready',
+          configured: healthyBackend && Boolean(publishedBackendBaseUrl),
+          available: healthyBackend && Boolean(publishedBackendBaseUrl),
+          misconfigured: backendPublishedRouteMisconfigured,
+          target: healthyBackend ? publishedBackendBaseUrl : '',
+          actualTarget: healthyBackend ? publishedBackendBaseUrl : '',
+          backendReachable: healthyBackend,
+          uiReachable: healthyBackend,
+          usable: healthyBackend && !backendPublishedRouteMisconfigured,
+          source: healthyBackend ? 'backend-cloud-session' : 'cloud-route-unavailable',
+          reason: healthyBackend
+            ? (backendPublishedRouteMisconfigured
+              ? 'A cloud-backed Stephanos route was published but is misconfigured'
+              : 'A cloud-backed Stephanos route is ready')
+            : 'No explicit cloud Stephanos runtime route was published',
+          blockedReason: healthyBackend
+            ? (backendPublishedRouteMisconfigured ? 'published cloud route is misconfigured' : '')
+            : 'no cloud-backed route is currently ready',
         },
       },
     },

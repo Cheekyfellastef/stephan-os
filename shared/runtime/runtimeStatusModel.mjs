@@ -892,7 +892,8 @@ export function createRuntimeStatusModel({
     ? preferredLiveProvider
     : routePlan.selectedProvider;
   const hintedProvider = normalizeProviderSelection(activeProviderHint || routeSelectedProvider);
-  const activeProvider = hintedProvider;
+  const executableProviderHealthy = Boolean(hintedProvider && health[hintedProvider]?.ok === true);
+  const activeProvider = executableProviderHealthy ? hintedProvider : '';
 
   const fallbackActive = Boolean(
     activeProviderHint
