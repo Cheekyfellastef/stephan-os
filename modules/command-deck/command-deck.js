@@ -1,6 +1,7 @@
 import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
+import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
 
 function normaliseProject(project) {
   if (typeof project === 'string') {
@@ -207,12 +208,12 @@ function launchProject(project, context, trigger = {}) {
       reason: 'avoid iframe-based local ignition/recovery from invalid frame contexts',
       target: resolvedEntry,
     });
-    window.location.assign(resolvedEntry);
+    window.location.assign(withCommandDeckDestination(resolvedEntry, window));
     return;
   }
 
   if (project.launchStrategy === 'navigate') {
-    window.location.assign(resolvedEntry);
+    window.location.assign(withCommandDeckDestination(resolvedEntry, window));
     return;
   }
 
