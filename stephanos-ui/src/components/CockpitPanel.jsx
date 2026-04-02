@@ -50,6 +50,16 @@ function providerHealthStateToState(value) {
   return 'unknown';
 }
 
+function isExecutionActive(runtimeStatus) {
+  const executionTruth = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
+  const executionStatus = String(runtimeStatus?.executionStatus || '').trim().toLowerCase();
+  const activeSignals = new Set(['active', 'busy', 'running', 'streaming', 'executing', 'in-progress']);
+  if (activeSignals.has(executionTruth) || activeSignals.has(executionStatus)) {
+    return true;
+  }
+  return false;
+}
+
 function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory }) {
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
   const reachability = runtimeTruth.reachabilityTruth ?? {};
@@ -77,6 +87,8 @@ function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHe
       || workingMemory?.missionNote
       || projectMemory?.currentMilestone,
   );
+
+  const executionActive = isExecutionActive(runtimeStatus);
 
   const nodeStates = {
     operator: launchState === 'pending' ? 'unknown' : 'alive',
@@ -106,10 +118,10 @@ function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHe
   }
 
   if (nodeStates.backend !== 'dead') {
-    nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : 'active';
+    nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : (executionActive ? 'active' : 'alive');
   }
 
-  if (nodeStates.aiProviders === 'alive' && routeTruthView.executedProvider !== 'unknown') {
+  if (executionActive && nodeStates.aiProviders === 'alive' && routeTruthView.executedProvider !== 'unknown') {
     nodeStates.aiProviders = 'active';
   }
 
@@ -117,22 +129,41 @@ function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHe
     nodeStates.memory = 'active';
   }
 
-  return { nodeStates, activeSurface };
+  return { nodeStates, activeSurface, executionActive };
 }
 
-function deriveConnectionState({ connection, nodeStates, activeSurface, fallbackActive, routeUsableState, uiReachableState }) {
+function deriveConnectionState({
+  connection,
+  nodeStates,
+  activeSurface,
+  fallbackActive,
+  routeUsableState,
+  routeReachableState,
+  uiReachableState,
+  executionActive,
+}) {
   const fromState = nodeStates[connection.from] || 'unknown';
   const toState = nodeStates[connection.to] || 'unknown';
   const hasDead = fromState === 'dead' || toState === 'dead';
   if (hasDead) return 'broken';
 
-  if (routeUsableState === 'no' || uiReachableState === 'no') {
+  if (routeReachableState === 'no' || uiReachableState === 'no') {
     if (
       connection.id === 'localSurface-backend'
       || connection.id === 'hostedSurface-backend'
       || connection.id.startsWith('operator-')
     ) {
       return 'broken';
+    }
+  }
+
+  if (routeUsableState === 'no') {
+    if (
+      connection.id === 'localSurface-backend'
+      || connection.id === 'hostedSurface-backend'
+      || connection.id.startsWith('operator-')
+    ) {
+      return routeReachableState === 'no' ? 'broken' : 'degraded';
     }
   }
 
@@ -143,7 +174,8 @@ function deriveConnectionState({ connection, nodeStates, activeSurface, fallback
   const isActivePath =
     (activeSurface === 'localSurface' && ['operator-localSurface', 'localSurface-backend'].includes(connection.id))
     || (activeSurface === 'hostedSurface' && ['operator-hostedSurface', 'hostedSurface-backend'].includes(connection.id))
-    || ['backend-aiProviders', 'backend-memory', 'backend-execution'].includes(connection.id);
+    || (connection.id === 'backend-memory' && nodeStates.memory === 'active')
+    || ((connection.id === 'backend-aiProviders' || connection.id === 'backend-execution') && executionActive === true);
 
   if (isActivePath && fromState !== 'unknown' && toState !== 'unknown') return 'active';
 
@@ -173,7 +205,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
 
   const cockpitModel = useMemo(() => {
-    const { nodeStates, activeSurface } = deriveNodeStates({
+    const { nodeStates, activeSurface, executionActive } = deriveNodeStates({
       runtimeStatus,
       routeTruthView,
       apiStatus: apiStatus || {},
@@ -191,7 +223,9 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
           activeSurface,
           fallbackActive: routeTruthView.fallbackActive === true,
           routeUsableState: routeTruthView.routeUsableState,
+          routeReachableState: routeTruthView.selectedRouteReachableState,
           uiReachableState: routeTruthView.uiReachableState,
+          executionActive,
         }),
       ]),
     );
@@ -302,3 +336,5 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
     </CollapsiblePanel>
   );
 }
+
+export { deriveConnectionState, deriveNodeStates, isExecutionActive };
