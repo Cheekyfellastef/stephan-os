@@ -21,10 +21,7 @@ const SYSTEM_PANEL_TOGGLE_DEFINITIONS = Object.freeze([
   { id: 'reality-sync', label: 'Reality Sync / Auto Truth Refresh', type: 'surface' },
 ]);
 
-const RESTORE_ENABLED_BY_DEFAULT = new Set([
-  'stephanos-laws-panel',
-  'stephanos-build-panel',
-]);
+const RESTORE_ENABLED_BY_DEFAULT = new Set();
 
 export function getSystemPanelToggleDefinitions() {
   return SYSTEM_PANEL_TOGGLE_DEFINITIONS;

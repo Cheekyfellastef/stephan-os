@@ -4,7 +4,7 @@ import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import CollapsiblePanel from './CollapsiblePanel';
 
-const COCKPIT_VIEWBOX = '0 0 1000 620';
+const COCKPIT_VIEWBOX = '0 0 1000 700';
 
 const NODE_LAYOUT = Object.freeze({
   execution: { x: 500, y: 80, label: 'Execution node' },
@@ -12,8 +12,8 @@ const NODE_LAYOUT = Object.freeze({
   hostedSurface: { x: 210, y: 380, label: 'Hosted surface' },
   backend: { x: 500, y: 305, label: 'Backend' },
   aiProviders: { x: 790, y: 230, label: 'AI provider cluster' },
-  memory: { x: 500, y: 530, label: 'Memory' },
-  operator: { x: 500, y: 585, label: 'Operator' },
+  memory: { x: 500, y: 515, label: 'Memory' },
+  operator: { x: 500, y: 620, label: 'Operator' },
 });
 
 const CONNECTIONS = Object.freeze([
