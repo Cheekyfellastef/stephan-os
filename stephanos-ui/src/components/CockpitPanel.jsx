@@ -57,69 +57,78 @@ const CONNECTIONS = Object.freeze([
   { id: 'backend-execution', from: 'backend', to: 'execution', label: 'Backend ↔ Tile execution node' },
 ]);
 
-const CONNECTION_LAYOUT = Object.freeze({
+const TRACE_MAP = Object.freeze({
   'operator-localSurface': {
     fromPort: 'northWest',
     toPort: 'eastUpper',
+    flow: 'forward',
     via: [
-      { x: 432, y: 598 },
-      { x: 432, y: 530 },
-      { x: 292, y: 530 },
-      { x: 292, y: 214 },
+      { x: 470, y: 544 },
+      { x: 356, y: 544 },
+      { x: 356, y: 214 },
     ],
+    breakPoint: { x: 356, y: 458 },
   },
   'operator-hostedSurface': {
     fromPort: 'northEast',
     toPort: 'eastLower',
+    flow: 'forward',
     via: [
-      { x: 406, y: 598 },
-      { x: 406, y: 566 },
-      { x: 328, y: 566 },
-      { x: 328, y: 396 },
+      { x: 530, y: 574 },
+      { x: 384, y: 574 },
+      { x: 384, y: 396 },
     ],
+    breakPoint: { x: 384, y: 518 },
   },
   'localSurface-backend': {
     fromPort: 'eastUpper',
     toPort: 'westUpper',
+    flow: 'forward',
     via: [
-      { x: 314, y: 214 },
-      { x: 314, y: 258 },
-      { x: 436, y: 258 },
-      { x: 436, y: 289 },
+      { x: 320, y: 214 },
+      { x: 320, y: 258 },
+      { x: 458, y: 258 },
     ],
+    breakPoint: { x: 392, y: 258 },
   },
   'hostedSurface-backend': {
     fromPort: 'eastLower',
     toPort: 'westLower',
+    flow: 'forward',
     via: [
-      { x: 350, y: 396 },
-      { x: 350, y: 348 },
-      { x: 430, y: 348 },
-      { x: 430, y: 325 },
+      { x: 346, y: 396 },
+      { x: 346, y: 348 },
+      { x: 458, y: 348 },
     ],
+    breakPoint: { x: 414, y: 348 },
   },
   'backend-aiProviders': {
     fromPort: 'east',
     toPort: 'west',
+    flow: 'forward',
     via: [
-      { x: 622, y: 305 },
-      { x: 622, y: 230 },
-      { x: 726, y: 230 },
+      { x: 612, y: 305 },
+      { x: 612, y: 230 },
     ],
+    breakPoint: { x: 612, y: 258 },
   },
   'backend-memory': {
     fromPort: 'south',
     toPort: 'north',
+    flow: 'forward',
     via: [
       { x: 500, y: 388 },
     ],
+    breakPoint: { x: 500, y: 402 },
   },
   'backend-execution': {
     fromPort: 'north',
     toPort: 'south',
+    flow: 'reverse',
     via: [
       { x: 500, y: 210 },
     ],
+    breakPoint: { x: 500, y: 170 },
   },
 });
 
@@ -302,7 +311,7 @@ function getNodePortPoint(nodeId, portId) {
 }
 
 function buildConnectionPath(connection) {
-  const route = CONNECTION_LAYOUT[connection.id];
+  const route = TRACE_MAP[connection.id];
   if (!route) return '';
 
   const start = getNodePortPoint(connection.from, route.fromPort);
@@ -400,11 +409,12 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
           {CONNECTIONS.map((connection) => {
             const state = cockpitModel.connectionStates[connection.id] || 'unknown';
             const routedPath = buildConnectionPath(connection);
+            const trace = TRACE_MAP[connection.id];
 
             return (
               <g
                 key={connection.id}
-                className={`cockpit-connection ${stateClassName(state)} ${detailId === connection.id ? 'selected' : ''}`}
+                className={`cockpit-connection ${stateClassName(state)} ${trace?.flow === 'reverse' ? 'flow-reverse' : 'flow-forward'} ${detailId === connection.id ? 'selected' : ''}`}
                 onClick={() => setDetailId(connection.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
@@ -420,6 +430,23 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
                 <path d={routedPath} className="wire-state" />
                 <path d={routedPath} className="wire-energy" />
                 <path d={routedPath} className="wire-energy-secondary" />
+                {state === 'broken' && trace?.breakPoint ? (
+                  <g className="wire-break-marker">
+                    <circle cx={trace.breakPoint.x} cy={trace.breakPoint.y} r="8.5" />
+                    <line
+                      x1={trace.breakPoint.x - 5}
+                      y1={trace.breakPoint.y - 5}
+                      x2={trace.breakPoint.x + 5}
+                      y2={trace.breakPoint.y + 5}
+                    />
+                    <line
+                      x1={trace.breakPoint.x + 5}
+                      y1={trace.breakPoint.y - 5}
+                      x2={trace.breakPoint.x - 5}
+                      y2={trace.breakPoint.y + 5}
+                    />
+                  </g>
+                ) : null}
               </g>
             );
           })}

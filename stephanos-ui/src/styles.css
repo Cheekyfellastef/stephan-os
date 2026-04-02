@@ -1702,6 +1702,24 @@ pre {
   filter: drop-shadow(0 0 12px rgba(128, 225, 255, 0.58));
 }
 
+.cockpit-connection.flow-reverse .wire-energy,
+.cockpit-connection.flow-reverse .wire-energy-secondary {
+  animation-direction: reverse;
+}
+
+.cockpit-connection .wire-break-marker circle {
+  fill: rgba(2, 8, 18, 0.97);
+  stroke: rgba(255, 133, 150, 0.95);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 8px rgba(241, 108, 130, 0.64));
+}
+
+.cockpit-connection .wire-break-marker line {
+  stroke: rgba(255, 149, 168, 0.98);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
 .truth-alive .node-ring,
 .truth-active .node-ring {
   stroke: rgba(120, 225, 255, 0.9);
@@ -1820,6 +1838,10 @@ pre {
   stroke-dasharray: 14 22;
   opacity: 0.86;
   animation: none;
+}
+
+.truth-broken .wire-break-marker {
+  opacity: 1;
 }
 
 .truth-dead .node-ring,
