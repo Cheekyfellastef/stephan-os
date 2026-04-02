@@ -22,25 +22,32 @@ function readLauncherQueryUrl(windowRef = globalThis.window) {
   }
 }
 
-function deriveLauncherPathname(windowRef = globalThis.window) {
+function deriveLauncherShellUrl(windowRef = globalThis.window) {
   try {
+    const currentHref = String(windowRef?.location?.href || '').trim();
+    const currentOrigin = String(windowRef?.location?.origin || '').trim();
     const pathname = String(windowRef?.location?.pathname || '/').trim() || '/';
     const segments = pathname.split('/').filter(Boolean);
 
-    if (segments.length === 0) {
-      return '/';
+    let launcherPath = '/';
+    if (segments.length > 0) {
+      const appsSegmentIndex = segments.indexOf('apps');
+      if (appsSegmentIndex > 0) {
+        launcherPath = `/${segments.slice(0, appsSegmentIndex).join('/')}/`;
+      } else if (appsSegmentIndex < 0) {
+        launcherPath = `/${segments[0]}/`;
+      }
     }
 
-    const appsSegmentIndex = segments.indexOf('apps');
-    if (appsSegmentIndex === 0) {
-      return '/';
+    if (currentOrigin) {
+      return new URL(launcherPath, `${currentOrigin}/`).href;
     }
 
-    if (appsSegmentIndex > 0) {
-      return `/${segments.slice(0, appsSegmentIndex).join('/')}/`;
+    if (currentHref) {
+      return new URL(launcherPath, currentHref).href;
     }
 
-    return `/${segments[0]}/`;
+    return launcherPath;
   } catch {
     return '/';
   }
@@ -50,7 +57,7 @@ export function resolveCommandDeckDestinationPath(windowRef = globalThis.window)
   const launcherMetaUrl = readLauncherMetaUrl(windowRef);
   if (launcherMetaUrl) {
     try {
-      return new URL(launcherMetaUrl, windowRef?.location?.href || '').pathname || '/';
+      return new URL(launcherMetaUrl, windowRef?.location?.href || '').href;
     } catch {
       // fall through to query/path-derived launcher path
     }
@@ -59,13 +66,13 @@ export function resolveCommandDeckDestinationPath(windowRef = globalThis.window)
   const launcherQueryUrl = readLauncherQueryUrl(windowRef);
   if (launcherQueryUrl) {
     try {
-      return new URL(launcherQueryUrl, windowRef?.location?.href || '').pathname || '/';
+      return new URL(launcherQueryUrl, windowRef?.location?.href || '').href;
     } catch {
       // fall through to path-derived launcher path
     }
   }
 
-  return deriveLauncherPathname(windowRef);
+  return deriveLauncherShellUrl(windowRef);
 }
 
 export function withCommandDeckDestination(targetUrl, windowRef = globalThis.window) {

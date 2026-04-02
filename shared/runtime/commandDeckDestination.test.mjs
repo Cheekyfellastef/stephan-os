@@ -24,7 +24,7 @@ test('resolveCommandDeckDestinationPath honors launcher meta when present', () =
     },
   };
 
-  assert.equal(resolveCommandDeckDestinationPath(mockWindow), '/stephan-os/');
+  assert.equal(resolveCommandDeckDestinationPath(mockWindow), 'https://example.github.io/stephan-os/');
 });
 
 test('resolveCommandDeckDestinationPath falls back to launcher query contract for cross-origin runtimes', () => {
@@ -37,7 +37,7 @@ test('resolveCommandDeckDestinationPath falls back to launcher query contract fo
     document: { querySelector() { return null; } },
   };
 
-  assert.equal(resolveCommandDeckDestinationPath(mockWindow), '/stephan-os/');
+  assert.equal(resolveCommandDeckDestinationPath(mockWindow), 'https://example.github.io/stephan-os/');
 });
 
 test('withCommandDeckDestination injects launcher-shell URL contract for top-level launches', () => {
@@ -55,4 +55,19 @@ test('withCommandDeckDestination injects launcher-shell URL contract for top-lev
   assert.equal(parsed.origin, 'http://127.0.0.1:5173');
   assert.equal(parsed.searchParams.get('surface'), 'cockpit');
   assert.equal(parsed.searchParams.get('stephanosLauncherShellUrl'), 'https://example.github.io/stephan-os/');
+});
+
+
+test('resolveCommandDeckDestinationPath keeps localhost launcher origin for dev runtimes', () => {
+  const encodedLauncher = encodeURIComponent('http://127.0.0.1:4173/');
+  const mockWindow = {
+    location: {
+      href: `http://127.0.0.1:5173/?surface=cockpit&stephanosLauncherShellUrl=${encodedLauncher}`,
+      origin: 'http://127.0.0.1:5173',
+      pathname: '/',
+    },
+    document: { querySelector() { return null; } },
+  };
+
+  assert.equal(resolveCommandDeckDestinationPath(mockWindow), 'http://127.0.0.1:4173/');
 });
