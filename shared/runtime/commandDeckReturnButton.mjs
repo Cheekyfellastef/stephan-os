@@ -1,43 +1,9 @@
+import { resolveCommandDeckDestinationPath } from './commandDeckDestination.mjs';
+
 const CONTROL_ATTRIBUTE = 'data-command-deck-return-control';
 const CONTROL_LABEL = 'Return to Command Deck';
 const CONTROL_STYLE_ID = 'command-deck-return-controls-style';
 const BUTTON_CLASS = 'command-deck-return-button';
-
-function resolveCommandDeckBasePath(windowRef = globalThis.window) {
-  const explicitUrl = String(
-    windowRef?.document?.querySelector?.('meta[name="stephanos-launcher-shell-url"]')?.getAttribute('content') || ''
-  ).trim();
-
-  if (explicitUrl) {
-    try {
-      return new URL(explicitUrl, windowRef.location?.href || '').pathname || '/';
-    } catch {
-      // fall through to path-derived launcher base.
-    }
-  }
-
-  try {
-    const pathname = String(windowRef?.location?.pathname || '/').trim() || '/';
-    const segments = pathname.split('/').filter(Boolean);
-
-    if (segments.length === 0) {
-      return '/';
-    }
-
-    const appsSegmentIndex = segments.indexOf('apps');
-    if (appsSegmentIndex === 0) {
-      return '/';
-    }
-
-    if (appsSegmentIndex > 0) {
-      return `/${segments.slice(0, appsSegmentIndex).join('/')}/`;
-    }
-
-    return `/${segments[0]}/`;
-  } catch {
-    return '/';
-  }
-}
 
 export function ensureCommandDeckReturnButtonStyles(documentRef = globalThis.document) {
   if (!documentRef?.head || documentRef.getElementById(CONTROL_STYLE_ID)) {
@@ -70,7 +36,7 @@ export function ensureCommandDeckReturnButtonStyles(documentRef = globalThis.doc
 }
 
 export function getCommandDeckBasePath(windowRef = globalThis.window) {
-  return resolveCommandDeckBasePath(windowRef);
+  return resolveCommandDeckDestinationPath(windowRef);
 }
 
 export function createCommandDeckReturnButton({
@@ -94,7 +60,7 @@ export function createCommandDeckReturnButton({
   const clickHandler = typeof onClick === 'function'
     ? onClick
     : () => {
-      windowRef.location.assign(resolveCommandDeckBasePath(windowRef));
+      windowRef.location.assign(resolveCommandDeckDestinationPath(windowRef));
     };
   button.addEventListener('click', clickHandler);
   return button;

@@ -4,6 +4,7 @@ import { clearActiveTileContextHint, setActiveTileContextHint } from "../shared/
 import { recordStartupLaunchTrigger } from "../shared/runtime/startupLaunchDiagnostics.mjs";
 import { createCommandDeckReturnButton } from "../shared/runtime/commandDeckReturnButton.mjs";
 import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
+import { withCommandDeckDestination } from "../shared/runtime/commandDeckDestination.mjs";
 
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
@@ -435,7 +436,7 @@ export const workspace = {
         resolvedEntryUrl,
         reason: "validated-route navigation",
       });
-      window.location.assign(resolvedEntryUrl);
+      window.location.assign(withCommandDeckDestination(resolvedEntryUrl, window));
       return;
     }
 
@@ -455,7 +456,7 @@ export const workspace = {
         sessionId: launch.sessionId,
         target: project.entry,
       });
-      window.location.href = project.entry;
+      window.location.href = withCommandDeckDestination(project.entry, window);
       return;
     }
 
