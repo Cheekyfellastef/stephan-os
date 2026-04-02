@@ -20,7 +20,11 @@ test('runtime status uses cloud-first in hosted auto mode when home node is unav
     },
     backendAvailable: true,
     validationState: 'healthy',
-    runtimeContext: { frontendOrigin: 'https://stephanos.example', apiBaseUrl: 'https://api.stephanos.example' },
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'https://api.stephanos.example',
+      tileTruth: { ready: true },
+    },
   });
 
   assert.equal(model.effectiveRouteMode, 'cloud-first');
