@@ -16,6 +16,37 @@ const NODE_LAYOUT = Object.freeze({
   operator: { x: 500, y: 620, label: 'Operator' },
 });
 
+const NODE_PORTS = Object.freeze({
+  execution: {
+    south: { x: 0, y: 42 },
+  },
+  localSurface: {
+    eastUpper: { x: 42, y: -16 },
+    eastLower: { x: 42, y: 16 },
+  },
+  hostedSurface: {
+    eastUpper: { x: 42, y: -16 },
+    eastLower: { x: 42, y: 16 },
+  },
+  backend: {
+    westUpper: { x: -42, y: -16 },
+    westLower: { x: -42, y: 20 },
+    east: { x: 42, y: 0 },
+    north: { x: 0, y: -42 },
+    south: { x: 0, y: 42 },
+  },
+  aiProviders: {
+    west: { x: -42, y: 0 },
+  },
+  memory: {
+    north: { x: 0, y: -42 },
+  },
+  operator: {
+    northWest: { x: -30, y: -22 },
+    northEast: { x: 30, y: -22 },
+  },
+});
+
 const CONNECTIONS = Object.freeze([
   { id: 'operator-localSurface', from: 'operator', to: 'localSurface', label: 'Operator → Local surface' },
   { id: 'operator-hostedSurface', from: 'operator', to: 'hostedSurface', label: 'Operator → Hosted surface' },
@@ -25,6 +56,72 @@ const CONNECTIONS = Object.freeze([
   { id: 'backend-memory', from: 'backend', to: 'memory', label: 'Backend ↔ Memory' },
   { id: 'backend-execution', from: 'backend', to: 'execution', label: 'Backend ↔ Tile execution node' },
 ]);
+
+const CONNECTION_LAYOUT = Object.freeze({
+  'operator-localSurface': {
+    fromPort: 'northWest',
+    toPort: 'eastUpper',
+    via: [
+      { x: 432, y: 598 },
+      { x: 432, y: 530 },
+      { x: 292, y: 530 },
+      { x: 292, y: 214 },
+    ],
+  },
+  'operator-hostedSurface': {
+    fromPort: 'northEast',
+    toPort: 'eastLower',
+    via: [
+      { x: 406, y: 598 },
+      { x: 406, y: 566 },
+      { x: 328, y: 566 },
+      { x: 328, y: 396 },
+    ],
+  },
+  'localSurface-backend': {
+    fromPort: 'eastUpper',
+    toPort: 'westUpper',
+    via: [
+      { x: 314, y: 214 },
+      { x: 314, y: 258 },
+      { x: 436, y: 258 },
+      { x: 436, y: 289 },
+    ],
+  },
+  'hostedSurface-backend': {
+    fromPort: 'eastLower',
+    toPort: 'westLower',
+    via: [
+      { x: 350, y: 396 },
+      { x: 350, y: 348 },
+      { x: 430, y: 348 },
+      { x: 430, y: 325 },
+    ],
+  },
+  'backend-aiProviders': {
+    fromPort: 'east',
+    toPort: 'west',
+    via: [
+      { x: 622, y: 305 },
+      { x: 622, y: 230 },
+      { x: 726, y: 230 },
+    ],
+  },
+  'backend-memory': {
+    fromPort: 'south',
+    toPort: 'north',
+    via: [
+      { x: 500, y: 388 },
+    ],
+  },
+  'backend-execution': {
+    fromPort: 'north',
+    toPort: 'south',
+    via: [
+      { x: 500, y: 210 },
+    ],
+  },
+});
 
 function toStateFromBoolean(value) {
   if (value === true) return 'alive';
@@ -197,64 +294,22 @@ function buildOrthogonalTrace(points = []) {
   return commands.join(' ');
 }
 
-function buildConnectionPath(connection, from, to) {
-  const routeMap = {
-    'operator-localSurface': [
-      { x: from.x, y: from.y },
-      { x: from.x, y: 552 },
-      { x: 280, y: 552 },
-      { x: 280, y: to.y },
-      { x: to.x, y: to.y },
-    ],
-    'operator-hostedSurface': [
-      { x: from.x, y: from.y },
-      { x: from.x, y: 586 },
-      { x: 320, y: 586 },
-      { x: 320, y: to.y },
-      { x: to.x, y: to.y },
-    ],
-    'localSurface-backend': [
-      { x: from.x, y: from.y },
-      { x: 336, y: from.y },
-      { x: 336, y: 274 },
-      { x: to.x, y: 274 },
-      { x: to.x, y: to.y },
-    ],
-    'hostedSurface-backend': [
-      { x: from.x, y: from.y },
-      { x: 370, y: from.y },
-      { x: 370, y: 338 },
-      { x: to.x, y: 338 },
-      { x: to.x, y: to.y },
-    ],
-    'backend-aiProviders': [
-      { x: from.x, y: from.y },
-      { x: 648, y: from.y },
-      { x: 648, y: to.y },
-      { x: to.x, y: to.y },
-    ],
-    'backend-memory': [
-      { x: from.x, y: from.y },
-      { x: from.x, y: to.y },
-    ],
-    'backend-execution': [
-      { x: from.x, y: from.y },
-      { x: from.x, y: to.y },
-    ],
-  };
+function getNodePortPoint(nodeId, portId) {
+  const node = NODE_LAYOUT[nodeId];
+  const port = NODE_PORTS[nodeId]?.[portId];
+  if (!node || !port) return null;
+  return { x: node.x + port.x, y: node.y + port.y };
+}
 
-  const points = routeMap[connection.id];
-  if (points) {
-    return buildOrthogonalTrace(points);
-  }
+function buildConnectionPath(connection) {
+  const route = CONNECTION_LAYOUT[connection.id];
+  if (!route) return '';
 
-  switch (connection.id) {
-    default:
-      return buildOrthogonalTrace([
-        { x: from.x, y: from.y },
-        { x: to.x, y: to.y },
-      ]);
-  }
+  const start = getNodePortPoint(connection.from, route.fromPort);
+  const end = getNodePortPoint(connection.to, route.toPort);
+  if (!start || !end) return '';
+
+  return buildOrthogonalTrace([start, ...route.via, end]);
 }
 
 export default function CockpitPanel({ forceOpen = false, standalone = false } = {}) {
@@ -343,10 +398,8 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
       <div className="cockpit-shell">
         <svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos routing truth cockpit">
           {CONNECTIONS.map((connection) => {
-            const from = NODE_LAYOUT[connection.from];
-            const to = NODE_LAYOUT[connection.to];
             const state = cockpitModel.connectionStates[connection.id] || 'unknown';
-            const routedPath = buildConnectionPath(connection, from, to);
+            const routedPath = buildConnectionPath(connection);
 
             return (
               <g
@@ -366,6 +419,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
                 <path d={routedPath} className="wire-base" />
                 <path d={routedPath} className="wire-state" />
                 <path d={routedPath} className="wire-energy" />
+                <path d={routedPath} className="wire-energy-secondary" />
               </g>
             );
           })}
@@ -389,6 +443,15 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
               >
                 <circle r="42" className="node-ring" />
                 <circle r="25" className="node-core" />
+                {Object.entries(NODE_PORTS[nodeId] || {}).map(([portId, port]) => (
+                  <circle
+                    key={portId}
+                    cx={port.x}
+                    cy={port.y}
+                    r="4.2"
+                    className="node-port"
+                  />
+                ))}
                 <text y="66" textAnchor="middle" className="node-label">{node.label}</text>
               </g>
             );
