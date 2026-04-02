@@ -175,7 +175,7 @@ test('provider/router keeps live local-desktop route truth even when mock is the
 
   assert.equal(model.routeKind, 'local-desktop');
   assert.equal(model.preferredRoute, 'local-desktop');
-  assert.equal(model.activeProvider, 'ollama');
+  assert.equal(model.activeProvider, '');
   assert.equal(model.routeSelectedProvider, 'ollama');
   assert.equal(model.nodeAddressSource, 'local-backend-session');
   assert.equal(model.preferredTarget, 'http://localhost:8787');
