@@ -57,7 +57,7 @@ const CONNECTIONS = Object.freeze([
   { id: 'backend-execution', from: 'backend', to: 'execution', label: 'Backend ↔ Tile execution node' },
 ]);
 
-const TRACE_MAP = Object.freeze({
+export const TRACE_MAP = Object.freeze({
   'operator-localSurface': {
     fromPort: 'northWest',
     toPort: 'eastUpper',
@@ -262,7 +262,7 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
-function buildOrthogonalTrace(points = []) {
+export function buildOrthogonalTrace(points = []) {
   if (!Array.isArray(points) || points.length === 0) return '';
   if (points.length === 1) return `M${points[0].x},${points[0].y}`;
 
@@ -303,14 +303,14 @@ function buildOrthogonalTrace(points = []) {
   return commands.join(' ');
 }
 
-function getNodePortPoint(nodeId, portId) {
+export function getNodePortPoint(nodeId, portId) {
   const node = NODE_LAYOUT[nodeId];
   const port = NODE_PORTS[nodeId]?.[portId];
   if (!node || !port) return null;
   return { x: node.x + port.x, y: node.y + port.y };
 }
 
-function buildConnectionPath(connection) {
+export function buildConnectionPath(connection) {
   const route = TRACE_MAP[connection.id];
   if (!route) return '';
 
@@ -319,6 +319,96 @@ function buildConnectionPath(connection) {
   if (!start || !end) return '';
 
   return buildOrthogonalTrace([start, ...route.via, end]);
+}
+
+function normalizeSegmentOrientation(segment) {
+  if (segment.x1 < segment.x2 || segment.y1 < segment.y2) {
+    return segment;
+  }
+  if (segment.x1 === segment.x2 && segment.y1 === segment.y2) {
+    return segment;
+  }
+  return {
+    ...segment,
+    x1: segment.x2,
+    y1: segment.y2,
+    x2: segment.x1,
+    y2: segment.y1,
+  };
+}
+
+function segmentsOverlap(a, b) {
+  if (a.orientation !== b.orientation) return false;
+  if (a.orientation === 'vertical') {
+    if (a.x1 !== b.x1) return false;
+    const aMin = Math.min(a.y1, a.y2);
+    const aMax = Math.max(a.y1, a.y2);
+    const bMin = Math.min(b.y1, b.y2);
+    const bMax = Math.max(b.y1, b.y2);
+    return Math.max(aMin, bMin) < Math.min(aMax, bMax);
+  }
+  if (a.y1 !== b.y1) return false;
+  const aMin = Math.min(a.x1, a.x2);
+  const aMax = Math.max(a.x1, a.x2);
+  const bMin = Math.min(b.x1, b.x2);
+  const bMax = Math.max(b.x1, b.x2);
+  return Math.max(aMin, bMin) < Math.min(aMax, bMax);
+}
+
+function segmentsCross(a, b) {
+  if (a.orientation === b.orientation) return false;
+  const vertical = a.orientation === 'vertical' ? a : b;
+  const horizontal = a.orientation === 'horizontal' ? a : b;
+  const vx = vertical.x1;
+  const hy = horizontal.y1;
+  const verticalMin = Math.min(vertical.y1, vertical.y2);
+  const verticalMax = Math.max(vertical.y1, vertical.y2);
+  const horizontalMin = Math.min(horizontal.x1, horizontal.x2);
+  const horizontalMax = Math.max(horizontal.x1, horizontal.x2);
+  return vx > horizontalMin && vx < horizontalMax && hy > verticalMin && hy < verticalMax;
+}
+
+export function validateTraceMapNoShorts(connections = CONNECTIONS) {
+  const allSegments = [];
+
+  connections.forEach((connection) => {
+    const route = TRACE_MAP[connection.id];
+    if (!route) return;
+    const start = getNodePortPoint(connection.from, route.fromPort);
+    const end = getNodePortPoint(connection.to, route.toPort);
+    if (!start || !end) return;
+    const points = [start, ...route.via, end];
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
+      if (previous.x !== current.x && previous.y !== current.y) {
+        continue;
+      }
+      const orientation = previous.x === current.x ? 'vertical' : 'horizontal';
+      allSegments.push(normalizeSegmentOrientation({
+        connectionId: connection.id,
+        orientation,
+        x1: previous.x,
+        y1: previous.y,
+        x2: current.x,
+        y2: current.y,
+      }));
+    }
+  });
+
+  const shorts = [];
+  for (let index = 0; index < allSegments.length; index += 1) {
+    for (let peerIndex = index + 1; peerIndex < allSegments.length; peerIndex += 1) {
+      const a = allSegments[index];
+      const b = allSegments[peerIndex];
+      if (a.connectionId === b.connectionId) continue;
+      if (segmentsOverlap(a, b) || segmentsCross(a, b)) {
+        shorts.push({ a: a.connectionId, b: b.connectionId });
+      }
+    }
+  }
+
+  return shorts;
 }
 
 export default function CockpitPanel({ forceOpen = false, standalone = false } = {}) {
@@ -338,6 +428,13 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
 
   const cockpitModel = useMemo(() => {
+    if (import.meta.env?.DEV) {
+      const shorts = validateTraceMapNoShorts(CONNECTIONS);
+      if (shorts.length > 0) {
+        console.warn('[Cockpit] trace short detected in explicit map', shorts);
+      }
+    }
+
     const { nodeStates, activeSurface } = deriveNodeStates({
       runtimeStatus,
       routeTruthView,
@@ -430,6 +527,27 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
                 <path d={routedPath} className="wire-state" />
                 <path d={routedPath} className="wire-energy" />
                 <path d={routedPath} className="wire-energy-secondary" />
+                <circle className="wire-pulse wire-pulse-primary" r="4.2" aria-hidden="true">
+                  <animateMotion
+                    dur={state === 'active' ? '1.1s' : state === 'degraded' ? '2.1s' : '3.4s'}
+                    repeatCount="indefinite"
+                    keyPoints={trace?.flow === 'reverse' ? '1;0' : '0;1'}
+                    keyTimes="0;1"
+                    calcMode="linear"
+                    path={routedPath}
+                  />
+                </circle>
+                <circle className="wire-pulse wire-pulse-secondary" r="2.8" aria-hidden="true">
+                  <animateMotion
+                    dur={state === 'active' ? '1.5s' : state === 'degraded' ? '2.8s' : '4.4s'}
+                    repeatCount="indefinite"
+                    begin="-0.45s"
+                    keyPoints={trace?.flow === 'reverse' ? '1;0' : '0;1'}
+                    keyTimes="0;1"
+                    calcMode="linear"
+                    path={routedPath}
+                  />
+                </circle>
                 {state === 'broken' && trace?.breakPoint ? (
                   <g className="wire-break-marker">
                     <circle cx={trace.breakPoint.x} cy={trace.breakPoint.y} r="8.5" />

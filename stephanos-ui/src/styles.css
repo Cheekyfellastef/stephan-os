@@ -1608,10 +1608,10 @@ pre {
   border-radius: 12px;
   border: 1px solid rgba(112, 201, 255, 0.28);
   background:
-    linear-gradient(90deg, rgba(62, 128, 182, 0.08) 1px, transparent 1px) 0 0 / 46px 46px,
-    linear-gradient(rgba(62, 128, 182, 0.08) 1px, transparent 1px) 0 0 / 46px 46px,
-    radial-gradient(circle at 50% 34%, rgba(28, 98, 159, 0.26), transparent 58%),
-    linear-gradient(180deg, rgba(1, 12, 25, 0.94), rgba(1, 5, 12, 0.99));
+    linear-gradient(90deg, rgba(57, 106, 158, 0.08) 1px, transparent 1px) 0 0 / 46px 46px,
+    linear-gradient(rgba(57, 106, 158, 0.08) 1px, transparent 1px) 0 0 / 46px 46px,
+    radial-gradient(circle at 50% 34%, rgba(19, 70, 119, 0.2), transparent 56%),
+    linear-gradient(180deg, rgba(1, 8, 18, 0.95), rgba(1, 4, 10, 0.995));
 }
 
 .cockpit-node,
@@ -1658,34 +1658,34 @@ pre {
 .cockpit-connection .wire-halo {
   fill: none;
   stroke: rgba(75, 133, 176, 0.22);
-  stroke-width: 16;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-width: 14;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
   opacity: 0.28;
 }
 
 .cockpit-connection .wire-base {
   fill: none;
-  stroke: rgba(101, 170, 215, 0.32);
-  stroke-width: 7.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke: rgba(96, 158, 200, 0.36);
+  stroke-width: 8;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
 }
 
 .cockpit-connection .wire-state {
   fill: none;
   stroke: rgba(125, 206, 255, 0.2);
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-width: 3.4;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
 }
 
 .cockpit-connection .wire-energy {
   fill: none;
   stroke: rgba(149, 228, 255, 0.96);
   stroke-width: 3.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
   stroke-dasharray: 2 24;
   opacity: 0;
   filter: drop-shadow(0 0 8px rgba(92, 190, 255, 0.45));
@@ -1695,8 +1695,8 @@ pre {
   fill: none;
   stroke: rgba(178, 241, 255, 0.95);
   stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
   stroke-dasharray: 8 38;
   opacity: 0;
   filter: drop-shadow(0 0 12px rgba(128, 225, 255, 0.58));
@@ -1718,6 +1718,21 @@ pre {
   stroke: rgba(255, 149, 168, 0.98);
   stroke-width: 1.8;
   stroke-linecap: round;
+}
+
+.cockpit-connection .wire-pulse {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cockpit-connection .wire-pulse-primary {
+  fill: rgba(159, 238, 255, 0.98);
+  filter: drop-shadow(0 0 7px rgba(107, 214, 255, 0.8));
+}
+
+.cockpit-connection .wire-pulse-secondary {
+  fill: rgba(214, 251, 255, 0.95);
+  filter: drop-shadow(0 0 6px rgba(166, 241, 255, 0.84));
 }
 
 .truth-alive .node-ring,
@@ -1764,6 +1779,14 @@ pre {
   animation: cockpitFlowSlow 4.6s linear infinite reverse;
 }
 
+.truth-alive .wire-pulse-primary {
+  opacity: 0.52;
+}
+
+.truth-alive .wire-pulse-secondary {
+  opacity: 0.32;
+}
+
 .truth-active .wire-halo {
   stroke: rgba(66, 189, 250, 0.52);
   opacity: 0.46;
@@ -1785,6 +1808,11 @@ pre {
   opacity: 0.84;
   stroke: rgba(198, 247, 255, 0.98);
   animation: cockpitFlowFast 0.92s linear infinite reverse;
+}
+
+.truth-active .wire-pulse-primary,
+.truth-active .wire-pulse-secondary {
+  opacity: 1;
 }
 
 .truth-degraded .node-ring {
@@ -1814,15 +1842,27 @@ pre {
 
 .truth-degraded .wire-energy {
   opacity: 0.85;
-  stroke: rgba(255, 222, 164, 0.85);
+  stroke: rgba(255, 186, 123, 0.85);
   stroke-dasharray: 3 24;
   animation: cockpitFlow 2.1s linear infinite, cockpitFlicker 1.2s steps(2, end) infinite;
 }
 
 .truth-degraded .wire-energy-secondary {
   opacity: 0.46;
-  stroke: rgba(255, 239, 185, 0.86);
+  stroke: rgba(255, 216, 164, 0.86);
   animation: cockpitFlowSlow 3s linear infinite reverse, cockpitFlicker 1.2s steps(2, end) infinite;
+}
+
+.truth-degraded .wire-pulse-primary {
+  opacity: 0.8;
+  fill: rgba(255, 186, 123, 0.94);
+  animation: cockpitFlicker 1.2s steps(2, end) infinite;
+}
+
+.truth-degraded .wire-pulse-secondary {
+  opacity: 0.42;
+  fill: rgba(255, 216, 164, 0.9);
+  animation: cockpitFlicker 1.2s steps(2, end) infinite;
 }
 
 .truth-broken .wire-halo {
@@ -1837,6 +1877,11 @@ pre {
   stroke: rgba(243, 106, 127, 0.86);
   stroke-dasharray: 14 22;
   opacity: 0.86;
+  animation: none;
+}
+
+.truth-broken .wire-pulse {
+  opacity: 0;
   animation: none;
 }
 
@@ -1870,6 +1915,11 @@ pre {
   animation: none;
 }
 
+.truth-dead .wire-pulse {
+  opacity: 0;
+  animation: none;
+}
+
 .truth-unknown .node-ring,
 .truth-unknown .node-core {
   stroke: rgba(127, 145, 170, 0.52);
@@ -1899,6 +1949,14 @@ pre {
 
 .truth-unknown .wire-energy-secondary {
   opacity: 0.16;
+}
+
+.truth-unknown .wire-pulse-primary {
+  opacity: 0.24;
+}
+
+.truth-unknown .wire-pulse-secondary {
+  opacity: 0.14;
 }
 
 .cockpit-node.selected .node-ring,
