@@ -156,7 +156,7 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
-export default function CockpitPanel() {
+export default function CockpitPanel({ forceOpen = false, standalone = false } = {}) {
   const {
     runtimeStatusModel,
     apiStatus,
@@ -167,6 +167,7 @@ export default function CockpitPanel() {
     togglePanel,
   } = useAIStore();
   const [detailId, setDetailId] = useState('backend');
+  const isOpen = forceOpen ? true : uiLayout.cockpitPanel !== false;
 
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
@@ -234,9 +235,9 @@ export default function CockpitPanel() {
       panelId="cockpitPanel"
       title="Cockpit"
       description="Read-only routing truth cockpit. Light and flow represent live runtime truth only."
-      className="cockpit-panel"
-      isOpen={uiLayout.cockpitPanel !== false}
-      onToggle={() => togglePanel('cockpitPanel')}
+      className={`cockpit-panel ${standalone ? 'cockpit-panel-standalone' : ''}`}
+      isOpen={isOpen}
+      onToggle={forceOpen ? () => {} : () => togglePanel('cockpitPanel')}
     >
       <div className="cockpit-shell">
         <svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos routing truth cockpit">

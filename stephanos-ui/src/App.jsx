@@ -232,6 +232,15 @@ export default function App() {
     .map((paneId) => paneMap.get(paneId))
     .filter(Boolean), [safePaneOrder, paneMap]);
   const [dragPaneId, setDragPaneId] = useState('');
+  const cockpitSurfaceMode = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const surface = String(params.get('surface') || params.get('app') || '').trim().toLowerCase();
+    return surface === 'cockpit';
+  }, []);
 
   function reorderPanes(sourcePaneId, targetPaneId) {
     if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {
@@ -280,6 +289,20 @@ export default function App() {
     console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
     console.info('[PANES] layout restored from memory', { order: safePaneOrder });
   }, [safePaneOrder]);
+
+  if (cockpitSurfaceMode) {
+    return (
+      <main className="app-shell-root cockpit-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <section className="cockpit-surface-stage">
+          <CockpitPanel forceOpen standalone />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell-root">
