@@ -156,52 +156,101 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
-function toRoutedPath(points = []) {
+function buildOrthogonalTrace(points = []) {
   if (!Array.isArray(points) || points.length === 0) return '';
-  return points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`).join(' ');
+  if (points.length === 1) return `M${points[0].x},${points[0].y}`;
+
+  const commands = [`M${points[0].x},${points[0].y}`];
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+
+    if (!next) {
+      commands.push(`L${current.x},${current.y}`);
+      continue;
+    }
+
+    const incomingDx = current.x - previous.x;
+    const incomingDy = current.y - previous.y;
+    const outgoingDx = next.x - current.x;
+    const outgoingDy = next.y - current.y;
+
+    const incomingSpan = Math.hypot(incomingDx, incomingDy);
+    const outgoingSpan = Math.hypot(outgoingDx, outgoingDy);
+    const cornerRadius = Math.min(22, incomingSpan / 2, outgoingSpan / 2);
+
+    const entry = {
+      x: current.x - Math.sign(incomingDx) * cornerRadius,
+      y: current.y - Math.sign(incomingDy) * cornerRadius,
+    };
+    const exit = {
+      x: current.x + Math.sign(outgoingDx) * cornerRadius,
+      y: current.y + Math.sign(outgoingDy) * cornerRadius,
+    };
+
+    commands.push(`L${entry.x},${entry.y}`);
+    commands.push(`Q${current.x},${current.y} ${exit.x},${exit.y}`);
+  }
+
+  return commands.join(' ');
 }
 
 function buildConnectionPath(connection, from, to) {
+  const routeMap = {
+    'operator-localSurface': [
+      { x: from.x, y: from.y },
+      { x: from.x, y: 552 },
+      { x: 280, y: 552 },
+      { x: 280, y: to.y },
+      { x: to.x, y: to.y },
+    ],
+    'operator-hostedSurface': [
+      { x: from.x, y: from.y },
+      { x: from.x, y: 586 },
+      { x: 320, y: 586 },
+      { x: 320, y: to.y },
+      { x: to.x, y: to.y },
+    ],
+    'localSurface-backend': [
+      { x: from.x, y: from.y },
+      { x: 336, y: from.y },
+      { x: 336, y: 274 },
+      { x: to.x, y: 274 },
+      { x: to.x, y: to.y },
+    ],
+    'hostedSurface-backend': [
+      { x: from.x, y: from.y },
+      { x: 370, y: from.y },
+      { x: 370, y: 338 },
+      { x: to.x, y: 338 },
+      { x: to.x, y: to.y },
+    ],
+    'backend-aiProviders': [
+      { x: from.x, y: from.y },
+      { x: 648, y: from.y },
+      { x: 648, y: to.y },
+      { x: to.x, y: to.y },
+    ],
+    'backend-memory': [
+      { x: from.x, y: from.y },
+      { x: from.x, y: to.y },
+    ],
+    'backend-execution': [
+      { x: from.x, y: from.y },
+      { x: from.x, y: to.y },
+    ],
+  };
+
+  const points = routeMap[connection.id];
+  if (points) {
+    return buildOrthogonalTrace(points);
+  }
+
   switch (connection.id) {
-    case 'operator-localSurface':
-      return toRoutedPath([
-        { x: from.x, y: from.y },
-        { x: from.x, y: 560 },
-        { x: 320, y: 560 },
-        { x: 320, y: to.y },
-        { x: to.x, y: to.y },
-      ]);
-    case 'operator-hostedSurface':
-      return toRoutedPath([
-        { x: from.x, y: from.y },
-        { x: from.x, y: 560 },
-        { x: 355, y: 560 },
-        { x: 355, y: to.y },
-        { x: to.x, y: to.y },
-      ]);
-    case 'localSurface-backend':
-    case 'hostedSurface-backend':
-      return toRoutedPath([
-        { x: from.x, y: from.y },
-        { x: 355, y: from.y },
-        { x: 355, y: to.y },
-        { x: to.x, y: to.y },
-      ]);
-    case 'backend-aiProviders':
-      return toRoutedPath([
-        { x: from.x, y: from.y },
-        { x: 650, y: from.y },
-        { x: 650, y: to.y },
-        { x: to.x, y: to.y },
-      ]);
-    case 'backend-memory':
-    case 'backend-execution':
-      return toRoutedPath([
-        { x: from.x, y: from.y },
-        { x: to.x, y: to.y },
-      ]);
     default:
-      return toRoutedPath([
+      return buildOrthogonalTrace([
         { x: from.x, y: from.y },
         { x: to.x, y: to.y },
       ]);
@@ -313,7 +362,9 @@ export default function CockpitPanel({ forceOpen = false, standalone = false } =
                 role="button"
                 tabIndex={0}
               >
+                <path d={routedPath} className="wire-halo" />
                 <path d={routedPath} className="wire-base" />
+                <path d={routedPath} className="wire-state" />
                 <path d={routedPath} className="wire-energy" />
               </g>
             );
