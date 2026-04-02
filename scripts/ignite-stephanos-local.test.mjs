@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
+  classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
+  evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
   isGitWorkingTreeClean,
   isMainModule,
@@ -115,13 +117,27 @@ test('ignition status evaluator blocks unexpected tracked deletions outside allo
 test('preflight restores approved tracked generated dirt before pull', () => {
   const steps = [];
   runGitPullPreflightWithDeps({
-    captureStep: () => ({
-      stdout: [
-        ' M apps/stephanos/dist/index.html',
-        '?? node_modules/foo/index.js',
-      ].join('\n'),
-      stderr: '',
-    }),
+    captureStep: (label) => {
+      if (label === 'git-status') {
+        return {
+          stdout: [
+            ' M apps/stephanos/dist/index.html',
+            '?? node_modules/foo/index.js',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+      if (label === 'git-branch') {
+        return { stdout: 'main\n', stderr: '' };
+      }
+      if (label === 'git-upstream') {
+        return { stdout: 'origin/main\n', stderr: '' };
+      }
+      if (label === 'git-ahead-behind') {
+        return { stdout: '0\t0\n', stderr: '' };
+      }
+      throw new Error(`unexpected capture label: ${label}`);
+    },
     runStepFn: (label, command, args) => {
       steps.push({ label, command, args });
     },
@@ -149,13 +165,27 @@ test('preflight restores approved tracked generated dirt before pull', () => {
 test('preflight keeps approved untracked local noise non-blocking without restore', () => {
   const steps = [];
   runGitPullPreflightWithDeps({
-    captureStep: () => ({
-      stdout: [
-        '?? node_modules/foo/index.js',
-        '?? apps/stephanos/dist/assets/chunk-abc123.js',
-      ].join('\n'),
-      stderr: '',
-    }),
+    captureStep: (label) => {
+      if (label === 'git-status') {
+        return {
+          stdout: [
+            '?? node_modules/foo/index.js',
+            '?? apps/stephanos/dist/assets/chunk-abc123.js',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+      if (label === 'git-branch') {
+        return { stdout: 'main\n', stderr: '' };
+      }
+      if (label === 'git-upstream') {
+        return { stdout: 'origin/main\n', stderr: '' };
+      }
+      if (label === 'git-ahead-behind') {
+        return { stdout: '0\t0\n', stderr: '' };
+      }
+      throw new Error(`unexpected capture label: ${label}`);
+    },
     runStepFn: (label, command, args) => {
       steps.push({ label, command, args });
     },
@@ -208,7 +238,159 @@ test('preflight blocks mixed approved and meaningful dirt', () => {
   );
 });
 
+test('preflight blocks when require-published-head is enabled and branch is ahead', () => {
+  assert.throws(
+    () => runGitPullPreflightWithDeps({
+      argvArgs: new Set(['--require-published-head']),
+      captureStep: (label) => {
+        if (label === 'git-status') {
+          return { stdout: '', stderr: '' };
+        }
+        if (label === 'git-branch') {
+          return { stdout: 'main\n', stderr: '' };
+        }
+        if (label === 'git-upstream') {
+          return { stdout: 'origin/main\n', stderr: '' };
+        }
+        if (label === 'git-ahead-behind') {
+          return { stdout: '1\t0\n', stderr: '' };
+        }
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: (stepLabel) => {
+        if (stepLabel !== 'git-fetch') {
+          throw new Error(`unexpected runStep label: ${stepLabel}`);
+        }
+      },
+    }),
+    /remote publication parity required but local HEAD is not publish-backed/i,
+  );
+});
+
+test('preflight blocks when branch has no upstream configured', () => {
+  assert.throws(
+    () => runGitPullPreflightWithDeps({
+      captureStep: (label) => {
+        if (label === 'git-status') {
+          return { stdout: '', stderr: '' };
+        }
+        if (label === 'git-branch') {
+          return { stdout: 'feature/no-upstream\n', stderr: '' };
+        }
+        if (label === 'git-upstream') {
+          throw new Error('fatal: no upstream configured');
+        }
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: (stepLabel) => {
+        if (stepLabel !== 'git-fetch') {
+          throw new Error(`unexpected runStep label: ${stepLabel}`);
+        }
+      },
+    }),
+    /no upstream tracking branch/i,
+  );
+});
+
 test('shouldAutoPull is true unless skip flag is provided', () => {
   assert.equal(shouldAutoPull(new Set()), true);
   assert.equal(shouldAutoPull(new Set(['--skip-auto-pull'])), false);
+});
+
+test('classifyPublicationTruth maps git publication states with operator guidance', () => {
+  const healthy = classifyPublicationTruth({
+    branch: 'main',
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    aheadCount: 0,
+    behindCount: 0,
+  });
+  assert.equal(healthy.publicationState, 'healthy-synced');
+  assert.equal(healthy.headPublished, true);
+
+  const ahead = classifyPublicationTruth({
+    branch: 'main',
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    aheadCount: 2,
+    behindCount: 0,
+  });
+  assert.equal(ahead.publicationState, 'unpublished-local-only');
+  assert.equal(ahead.headPublished, false);
+  assert.match(ahead.operatorAction, /not published to remote truth/i);
+
+  const behind = classifyPublicationTruth({
+    branch: 'main',
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    aheadCount: 0,
+    behindCount: 1,
+  });
+  assert.equal(behind.publicationState, 'stale-behind');
+
+  const diverged = classifyPublicationTruth({
+    branch: 'main',
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    aheadCount: 1,
+    behindCount: 1,
+  });
+  assert.equal(diverged.publicationState, 'diverged');
+
+  const untracked = classifyPublicationTruth({
+    branch: 'feature/no-upstream',
+    hasUpstream: false,
+  });
+  assert.equal(untracked.publicationState, 'unknown-untracked');
+
+  const detached = classifyPublicationTruth({
+    detachedHead: true,
+    hasUpstream: false,
+  });
+  assert.equal(detached.publicationState, 'detached-head');
+});
+
+test('evaluateGitPublicationTruthWithDeps reports ahead/behind publication truth', () => {
+  const calls = [];
+  const result = evaluateGitPublicationTruthWithDeps({
+    captureStep: (label, command, args) => {
+      calls.push({ label, command, args });
+      if (label === 'git-branch') {
+        return { stdout: 'main\n' };
+      }
+      if (label === 'git-upstream') {
+        return { stdout: 'origin/main\n' };
+      }
+      if (label === 'git-ahead-behind') {
+        return { stdout: '2\t0\n' };
+      }
+      throw new Error(`unexpected label ${label}`);
+    },
+  });
+
+  assert.equal(result.branch, 'main');
+  assert.equal(result.upstreamBranch, 'origin/main');
+  assert.equal(result.aheadCount, 2);
+  assert.equal(result.behindCount, 0);
+  assert.equal(result.headPublished, false);
+  assert.equal(result.publicationState, 'unpublished-local-only');
+  assert.deepEqual(calls.map((entry) => entry.label), ['git-branch', 'git-upstream', 'git-ahead-behind']);
+});
+
+test('evaluateGitPublicationTruthWithDeps handles missing upstream as untracked state', () => {
+  const result = evaluateGitPublicationTruthWithDeps({
+    captureStep: (label) => {
+      if (label === 'git-branch') {
+        return { stdout: 'feature/no-upstream\n' };
+      }
+      if (label === 'git-upstream') {
+        throw new Error('fatal: no upstream configured');
+      }
+      throw new Error(`unexpected label ${label}`);
+    },
+  });
+
+  assert.equal(result.hasUpstream, false);
+  assert.equal(result.publicationState, 'unknown-untracked');
+  assert.equal(result.headPublished, false);
 });

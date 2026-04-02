@@ -110,6 +110,181 @@ export function shouldAutoPull(argvArgs = args) {
   return !argvArgs.has('--skip-auto-pull');
 }
 
+function parseGitCountPair(value = '') {
+  const [aheadRaw = '0', behindRaw = '0'] = String(value || '').trim().split('\t');
+  const aheadCount = Number.parseInt(aheadRaw, 10);
+  const behindCount = Number.parseInt(behindRaw, 10);
+  return {
+    aheadCount: Number.isFinite(aheadCount) ? aheadCount : 0,
+    behindCount: Number.isFinite(behindCount) ? behindCount : 0,
+  };
+}
+
+function normalizeCaptureStdout(result) {
+  return String(result?.stdout || '').trim();
+}
+
+export function classifyPublicationTruth({
+  branch,
+  detachedHead = false,
+  hasUpstream = false,
+  upstreamBranch = '',
+  aheadCount = 0,
+  behindCount = 0,
+  workingTreeDirty = false,
+} = {}) {
+  const diverged = aheadCount > 0 && behindCount > 0;
+  const headPublished = !detachedHead && hasUpstream && aheadCount === 0;
+
+  if (detachedHead) {
+    return {
+      publicationState: 'detached-head',
+      publicationSummary: 'HEAD is detached; local source truth is not mapped to a tracked publication branch.',
+      operatorAction: 'Checkout a branch with upstream tracking before treating local build success as remote CI/PR truth.',
+      blockedForRemoteTruth: true,
+      diverged,
+      headPublished: false,
+    };
+  }
+
+  if (!hasUpstream) {
+    return {
+      publicationState: 'unknown-untracked',
+      publicationSummary: 'Current branch has no upstream tracking branch.',
+      operatorAction: `Set upstream for ${branch || 'current branch'} and push before assuming remote CI/PR truth includes local source fixes.`,
+      blockedForRemoteTruth: true,
+      diverged,
+      headPublished: false,
+    };
+  }
+
+  if (workingTreeDirty) {
+    return {
+      publicationState: 'local-uncommitted',
+      publicationSummary: 'Working tree has meaningful local modifications that are not publish-backed.',
+      operatorAction: 'Commit/stash/discard local source changes. Remote CI/PR truth cannot include uncommitted fixes.',
+      blockedForRemoteTruth: true,
+      diverged,
+      headPublished,
+    };
+  }
+
+  if (diverged) {
+    return {
+      publicationState: 'diverged',
+      publicationSummary: `Local ${branch || 'branch'} and ${upstreamBranch || 'upstream'} have diverged.`,
+      operatorAction: 'Rebase or merge to converge local and upstream history before treating local build success as publish-backed truth.',
+      blockedForRemoteTruth: true,
+      diverged,
+      headPublished: false,
+    };
+  }
+
+  if (aheadCount > 0) {
+    return {
+      publicationState: 'unpublished-local-only',
+      publicationSummary: `Local ${branch || 'branch'} is ahead of ${upstreamBranch || 'upstream'} by ${aheadCount} commit(s).`,
+      operatorAction: 'Local source fix exists but is not published to remote truth. Commit/push before treating local build success as CI/PR-authoritative.',
+      blockedForRemoteTruth: true,
+      diverged,
+      headPublished: false,
+    };
+  }
+
+  if (behindCount > 0) {
+    return {
+      publicationState: 'stale-behind',
+      publicationSummary: `Local ${branch || 'branch'} is behind ${upstreamBranch || 'upstream'} by ${behindCount} commit(s).`,
+      operatorAction: 'Pull/rebase to align local source truth with published upstream before relying on local diagnostics as current remote truth.',
+      blockedForRemoteTruth: false,
+      diverged,
+      headPublished: true,
+    };
+  }
+
+  return {
+    publicationState: 'healthy-synced',
+    publicationSummary: `Local ${branch || 'branch'} HEAD is published and synchronized with ${upstreamBranch || 'upstream'}.`,
+    operatorAction: 'No publication action required.',
+    blockedForRemoteTruth: false,
+    diverged: false,
+    headPublished: true,
+  };
+}
+
+export function evaluateGitPublicationTruthWithDeps({
+  captureStep = runStepCapture,
+  statusAssessment = null,
+} = {}) {
+  const headBranch = normalizeCaptureStdout(captureStep('git-branch', 'git', ['rev-parse', '--abbrev-ref', 'HEAD']));
+  const detachedHead = headBranch === 'HEAD';
+  let upstreamBranch = '';
+  let hasUpstream = false;
+  try {
+    const upstreamResult = captureStep('git-upstream', 'git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    upstreamBranch = normalizeCaptureStdout(upstreamResult);
+    hasUpstream = upstreamBranch.length > 0 && upstreamBranch !== '@{u}';
+  } catch {
+    upstreamBranch = '';
+    hasUpstream = false;
+  }
+  const workingTreeDirty = Array.isArray(statusAssessment?.meaningfulEntries) && statusAssessment.meaningfulEntries.length > 0;
+
+  let aheadCount = 0;
+  let behindCount = 0;
+  if (hasUpstream) {
+    const countResult = captureStep('git-ahead-behind', 'git', ['rev-list', '--left-right', '--count', 'HEAD...@{u}']);
+    const parsedCounts = parseGitCountPair(normalizeCaptureStdout(countResult));
+    aheadCount = parsedCounts.aheadCount;
+    behindCount = parsedCounts.behindCount;
+  }
+
+  const classification = classifyPublicationTruth({
+    branch: headBranch,
+    detachedHead,
+    hasUpstream,
+    upstreamBranch,
+    aheadCount,
+    behindCount,
+    workingTreeDirty,
+  });
+
+  return {
+    branch: headBranch,
+    detachedHead,
+    hasUpstream,
+    upstreamBranch,
+    workingTreeDirty,
+    aheadCount,
+    behindCount,
+    diverged: classification.diverged,
+    headPublished: classification.headPublished,
+    publicationState: classification.publicationState,
+    publicationSummary: classification.publicationSummary,
+    operatorAction: classification.operatorAction,
+    blockedForRemoteTruth: classification.blockedForRemoteTruth,
+  };
+}
+
+function formatPublicationParityLine(publicationTruth) {
+  const upstreamLabel = publicationTruth.hasUpstream ? publicationTruth.upstreamBranch : 'none';
+  const branchLabel = publicationTruth.detachedHead ? 'detached-HEAD' : publicationTruth.branch;
+  return `branch=${branchLabel}, upstream=${upstreamLabel}, ahead=${publicationTruth.aheadCount}, behind=${publicationTruth.behindCount}, headPublished=${publicationTruth.headPublished ? 'yes' : 'no'}, state=${publicationTruth.publicationState}`;
+}
+
+function reportPublicationParity(publicationTruth, { label = 'publication parity', forceWarning = false } = {}) {
+  const prefix = forceWarning || publicationTruth.blockedForRemoteTruth
+    ? '[IGNITION] publication warning'
+    : '[IGNITION] publication status';
+  console.log(`[IGNITION] ${label}: ${formatPublicationParityLine(publicationTruth)}`);
+  console.log(`${prefix}: ${publicationTruth.publicationSummary}`);
+  console.log(`${prefix}: ${publicationTruth.operatorAction}`);
+}
+
+function shouldRequirePublishedHead(argvArgs = args) {
+  return argvArgs.has('--require-published-head');
+}
+
 const APPROVED_LOCAL_DIR_PREFIXES = [
   'node_modules/',
   'stephanos-server/node_modules/',
@@ -209,6 +384,7 @@ export function collectApprovedTrackedGeneratedRestorePaths(statusAssessment) {
 export function runGitPullPreflightWithDeps({
   captureStep = runStepCapture,
   runStepFn = runStep,
+  argvArgs = args,
 } = {}) {
   console.log('[IGNITION] git status check starting');
   const statusResult = captureStep('git-status', 'git', ['status', '--porcelain']);
@@ -227,6 +403,8 @@ export function runGitPullPreflightWithDeps({
     for (const entry of statusAssessment.meaningfulEntries) {
       console.error(`[IGNITION] meaningful local dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
     }
+    const publicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
+    reportPublicationParity(publicationTruth, { label: 'publication parity (dirty working tree)', forceWarning: true });
     console.error('[IGNITION] git pull blocked');
     throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
   }
@@ -243,6 +421,24 @@ export function runGitPullPreflightWithDeps({
   runStepFn('git-fetch', 'git', ['fetch', '--prune', '--tags']);
   console.log('[IGNITION] git fetch passed');
 
+  const prePullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
+  reportPublicationParity(prePullPublicationTruth, { label: 'publication parity (pre-pull)' });
+
+  if (shouldRequirePublishedHead(argvArgs) && !prePullPublicationTruth.headPublished) {
+    console.error('[IGNITION] publication parity blocked by --require-published-head');
+    throw new Error(`blocked for safety: remote publication parity required but local HEAD is not publish-backed (${prePullPublicationTruth.publicationState}). ${prePullPublicationTruth.operatorAction}`);
+  }
+
+  if (prePullPublicationTruth.detachedHead) {
+    console.error('[IGNITION] git pull blocked');
+    throw new Error('blocked for safety: detached HEAD cannot be reconciled with tracked remote publication truth. Checkout a tracking branch before ignition pull.');
+  }
+
+  if (!prePullPublicationTruth.hasUpstream) {
+    console.error('[IGNITION] git pull blocked');
+    throw new Error('blocked for safety: current branch has no upstream tracking branch. Configure upstream before ignition pull.');
+  }
+
   console.log('[IGNITION] git pull --ff-only starting');
   try {
     runStepFn('git-pull-ff-only', 'git', ['pull', '--ff-only']);
@@ -253,18 +449,35 @@ export function runGitPullPreflightWithDeps({
   }
 
   console.log('[IGNITION] git pull passed');
+  const postPullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
+  reportPublicationParity(postPullPublicationTruth, { label: 'publication parity (post-pull)' });
+  return postPullPublicationTruth;
 }
 
 function runGitPullPreflight() {
-  runGitPullPreflightWithDeps();
+  return runGitPullPreflightWithDeps();
 }
 
-function printPreflightSummary({ decision, expectedMetadata, distMetadata, buildAction, verifyResult, processResult, finalResult }) {
+function printPreflightSummary({
+  decision,
+  expectedMetadata,
+  distMetadata,
+  buildAction,
+  verifyResult,
+  processResult,
+  finalResult,
+  publicationTruth,
+}) {
   console.log('[IGNITION PREFLIGHT] --- summary ---');
   console.log(`[IGNITION PREFLIGHT] source fingerprint: ${expectedMetadata.sourceFingerprint}`);
   console.log(`[IGNITION PREFLIGHT] source marker: ${expectedMetadata.runtimeMarker}`);
   console.log(`[IGNITION PREFLIGHT] dist marker: ${distMetadata?.runtimeMarker || 'missing'}`);
   console.log(`[IGNITION PREFLIGHT] parity state: ${decision.state} (${decision.reason})`);
+  if (publicationTruth) {
+    console.log(`[IGNITION PREFLIGHT] publication parity: ${formatPublicationParityLine(publicationTruth)}`);
+    console.log(`[IGNITION PREFLIGHT] publication summary: ${publicationTruth.publicationSummary}`);
+    console.log(`[IGNITION PREFLIGHT] publication operator action: ${publicationTruth.operatorAction}`);
+  }
   console.log(`[IGNITION PREFLIGHT] build action: ${buildAction}`);
   console.log(`[IGNITION PREFLIGHT] verify result: ${verifyResult}`);
   console.log(`[IGNITION PREFLIGHT] process reuse: ${processResult}`);
@@ -274,6 +487,7 @@ function printPreflightSummary({ decision, expectedMetadata, distMetadata, build
 export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
+  let publicationTruth = null;
 
   if (args.has('--probe-existing-server')) {
     const probe = await probeExistingLocalServer({
@@ -306,10 +520,15 @@ export async function run() {
     preflightState,
     runPreflight: async () => {
       if (autoPullEnabled) {
-        runGitPullPreflight();
+        publicationTruth = runGitPullPreflightWithDeps();
       }
       else {
         console.log('[IGNITION] git auto-pull skipped (--skip-auto-pull)');
+        publicationTruth = evaluateGitPublicationTruthWithDeps();
+        reportPublicationParity(publicationTruth, { label: 'publication parity (auto-pull skipped)' });
+        if (shouldRequirePublishedHead(args) && !publicationTruth.headPublished) {
+          throw new Error(`blocked for safety: remote publication parity required but local HEAD is not publish-backed (${publicationTruth.publicationState}). ${publicationTruth.operatorAction}`);
+        }
       }
 
       console.log('[IGNITION] launcher guardrail starting');
@@ -348,6 +567,7 @@ export async function run() {
       const refreshedState = readLocalBuildState();
       printPreflightSummary({
         ...refreshedState,
+        publicationTruth,
         buildAction,
         verifyResult,
         processResult: 'delegated to dist server launch handoff',
