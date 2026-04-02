@@ -2,6 +2,7 @@ import { loadDependencies } from "./apps/dependency_loader.js";
 import { createStephanosRuntimeTargets, getStephanosPreferredRuntimeTarget } from "../shared/runtime/stephanosLocalUrls.mjs";
 import { clearActiveTileContextHint, setActiveTileContextHint } from "../shared/runtime/tileContextRegistry.mjs";
 import { recordStartupLaunchTrigger } from "../shared/runtime/startupLaunchDiagnostics.mjs";
+import { createCommandDeckReturnButton } from "../shared/runtime/commandDeckReturnButton.mjs";
 import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
 
 function renderAppLoadError(container, message) {
@@ -319,14 +320,16 @@ export function applyWorkspaceIframeInteractivity(iframe) {
 }
 
 function createWorkspaceReturnButton(documentRef, handler, position = "top") {
-  const returnButton = documentRef.createElement("button");
-  returnButton.textContent = "Return to Command Deck";
+  const returnButton = createCommandDeckReturnButton({
+    documentRef,
+    windowRef: globalThis.window,
+    onClick: handler,
+  });
+  if (!returnButton) {
+    return null;
+  }
   returnButton.style.alignSelf = "flex-start";
-  returnButton.style.minHeight = "44px";
-  returnButton.style.padding = "10px 16px";
   returnButton.style.margin = position === "top" ? "0 0 10px 0" : "10px 0 0 0";
-  returnButton.style.touchAction = "manipulation";
-  returnButton.onclick = handler;
   return returnButton;
 }
 
@@ -337,7 +340,9 @@ function appendWorkspaceReturnControls(documentRef, contentNode) {
 
   const topReturnButton = createWorkspaceReturnButton(documentRef, handleReturn, "top");
   const bottomReturnButton = createWorkspaceReturnButton(documentRef, handleReturn, "bottom");
-  contentNode.appendChild(topReturnButton);
+  if (topReturnButton) {
+    contentNode.appendChild(topReturnButton);
+  }
 
   return { topReturnButton, bottomReturnButton };
 }
