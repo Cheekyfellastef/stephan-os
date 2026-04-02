@@ -13,6 +13,7 @@ import RoadmapPanel from './components/RoadmapPanel';
 import MissionDashboardPanel from './components/MissionDashboardPanel';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
+import CockpitPanel from './components/CockpitPanel';
 import ProviderToggle from './components/ProviderToggle';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
@@ -197,6 +198,7 @@ export default function App() {
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
     { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
+    { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel /> },
     { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
