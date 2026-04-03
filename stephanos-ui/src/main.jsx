@@ -94,3 +94,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </AIStoreProvider>
   </React.StrictMode>,
 );
+
+installRuntimeReturnControls();
