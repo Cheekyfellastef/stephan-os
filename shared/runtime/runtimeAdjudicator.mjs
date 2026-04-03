@@ -354,7 +354,17 @@ export function adjudicateRuntimeTruth({
     ));
   }
 
-  if (!tileTruth.ready && runtimeTruth.diagnostics.appLaunchState === 'ready') {
+  const hostedCloudCanonicalReady = runtimeTruth.session.sessionKind === 'hosted-web'
+    && runtimeTruth.route.selectedRouteKind === 'cloud'
+    && runtimeTruth.diagnostics.appLaunchState === 'ready'
+    && runtimeTruth.route.fallbackActive !== true
+    && runtimeTruth.reachabilityTruth.selectedRouteReachable === true
+    && runtimeTruth.reachabilityTruth.selectedRouteUsable === true
+    && runtimeTruth.reachabilityTruth.backendReachable === true
+    && runtimeTruth.reachabilityTruth.cloudAvailable === true
+    && isLiveCloudProvider(runtimeTruth.provider.executableProvider);
+
+  if (!tileTruth.ready && runtimeTruth.diagnostics.appLaunchState === 'ready' && !hostedCloudCanonicalReady) {
     const tileBlocker = tileTruth.reason
       ? `Tile execution blocker: ${tileTruth.reason}.`
       : 'Tile execution blocker: readiness signal is false.';

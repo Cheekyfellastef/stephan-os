@@ -51,6 +51,39 @@ function isLiveCloudProvider(providerKey = '') {
   return !['none', 'n/a', 'unknown', 'mock', 'ollama'].includes(provider);
 }
 
+function isHostedCloudCanonicalReady({
+  sessionKind,
+  selectedRouteKind,
+  selectedRouteReachableState,
+  routeUsableState,
+  backendReachableState,
+  cloudAvailable,
+  fallbackActive,
+  executableProvider,
+  launchState,
+} = {}) {
+  return sessionKind === 'hosted-web'
+    && selectedRouteKind === 'cloud'
+    && String(selectedRouteReachableState || '').trim().toLowerCase() === 'yes'
+    && String(routeUsableState || '').trim().toLowerCase() === 'yes'
+    && String(backendReachableState || '').trim().toLowerCase() === 'yes'
+    && cloudAvailable === true
+    && fallbackActive !== true
+    && String(launchState || '').trim().toLowerCase() === 'ready'
+    && isLiveCloudProvider(executableProvider);
+}
+
+function isTileReadinessContradictionWarning(message = '') {
+  const normalized = String(message || '').trim().toLowerCase();
+  return normalized.includes('runtime reports ready while tile execution readiness is false');
+}
+
+function formatParityState(value) {
+  if (value === true) return 'in-sync';
+  if (value === false) return 'stale';
+  return 'unknown';
+}
+
 function buildHostedBackendTargetGuidance({
   sessionKind,
   selectedRouteKind,
@@ -133,14 +166,27 @@ export function buildSupportSnapshot({
   const backendTargetFallbackUsed = runtimeContext?.backendTargetFallbackUsed === true;
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
-  const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
-    sessionKind: canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind,
+  const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
+  const executableProvider = canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider;
+  const hostedCloudCanonicalReady = isHostedCloudCanonicalReady({
+    sessionKind,
     selectedRouteKind,
     selectedRouteReachableState: routeTruthView?.selectedRouteReachableState,
     routeUsableState: routeTruthView?.routeUsableState,
     backendReachableState: routeTruthView?.backendReachableState,
     cloudAvailable: runtimeStatus?.cloudAvailable,
-    executableProvider: canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider,
+    fallbackActive: routeTruthView?.fallbackActive,
+    executableProvider,
+    launchState: runtimeStatus?.appLaunchState,
+  });
+  const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
+    sessionKind,
+    selectedRouteKind,
+    selectedRouteReachableState: routeTruthView?.selectedRouteReachableState,
+    routeUsableState: routeTruthView?.routeUsableState,
+    backendReachableState: routeTruthView?.backendReachableState,
+    cloudAvailable: runtimeStatus?.cloudAvailable,
+    executableProvider,
     backendTargetInvalidReason: runtimeContext?.backendTargetInvalidReason,
     backendTargetResolvedUrl: runtimeContext?.backendTargetResolvedUrl,
     backendTargetResolutionSource: runtimeContext?.backendTargetResolutionSource,
@@ -155,13 +201,15 @@ export function buildSupportSnapshot({
   if (hostedBackendTargetGuidance?.blockingIssue) {
     blockingIssues.push(hostedBackendTargetGuidance.blockingIssue);
   }
-  const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || []).map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown');
+  const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || [])
+    .map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown')
+    .filter((warning) => !(hostedCloudCanonicalReady && isTileReadinessContradictionWarning(warning)));
 
   const guidanceItems = [];
   if (routeTruthView?.operatorReason && routeTruthView.operatorReason !== 'n/a') {
     guidanceItems.push(routeTruthView.operatorReason);
   }
-  if (runtimeContext?.restoreDecision) {
+  if (runtimeContext?.restoreDecision && !hostedCloudCanonicalReady) {
     guidanceItems.push(runtimeContext.restoreDecision);
   }
   if (hostedBackendTargetGuidance?.operatorGuidance) {
@@ -233,6 +281,7 @@ export function buildSupportSnapshot({
     `UI Build Timestamp: ${asText(runtimeStatus?.uiBuildTimestamp, 'unknown')}`,
     `UI Runtime ID: ${asText(runtimeStatus?.uiRuntimeId)}`,
     `UI Runtime Marker: ${asText(runtimeStatus?.uiRuntimeMarker)}`,
+    `Source/Dist Parity: ${formatParityState(runtimeStatus?.runtimeTruth?.sourceDistParityOk ?? runtimeStatus?.sourceDistParityOk ?? null)}`,
     `UI Build Target: ${asText(runtimeStatus?.uiBuildTarget)}`,
     `UI Build Target Identifier: ${asText(runtimeStatus?.uiBuildTargetIdentifier)}`,
     `UI Source: ${asText(runtimeStatus?.uiSource)}`,

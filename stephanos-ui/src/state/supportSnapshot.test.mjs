@@ -208,13 +208,14 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
     runtimeProviderTruth: {},
     runtimeDiagnosticsTruth: {
       blockingIssues: [],
-      invariantWarnings: [],
+      invariantWarnings: [{ message: 'Runtime reports ready while tile execution readiness is false.' }],
     },
     runtimeContext: {
       backendTargetResolutionSource: 'unresolved',
       backendTargetResolvedUrl: '',
       backendTargetFallbackUsed: false,
       backendTargetInvalidReason: 'No non-loopback backend target resolved for hosted session.',
+      restoreDecision: 'Ignored loopback backend target for non-local session; using current home-node/network context instead.',
       routeDiagnostics: {},
     },
     safeApiStatus: {},
@@ -231,8 +232,33 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
   assert.match(snapshot, /routeDiagnosticsSummary:\n- backend-target: informational \(No non-loopback backend target resolved for hosted session\.\)/);
   assert.match(snapshot, /- cloud-execution: operational \(groq\)/);
   assert.match(snapshot, /blockingIssues:\n- n\/a/);
+  assert.match(snapshot, /invariantWarnings:\n- n\/a/);
   assert.doesNotMatch(snapshot, /Backend target unresolved:/);
   assert.doesNotMatch(snapshot, /Resolve a reachable non-loopback backend target for hosted-web/);
+  assert.doesNotMatch(snapshot, /Runtime reports ready while tile execution readiness is false\./);
+  assert.doesNotMatch(snapshot, /Ignored loopback backend target for non-local session/);
+});
+
+test('buildSupportSnapshot reports parity state from runtime truth markers', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeTruth: {
+        sourceDistParityOk: false,
+      },
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-03T00:00:04.000Z' },
+  });
+
+  assert.match(snapshot, /Source\/Dist Parity: stale/);
 });
 
 test('buildSupportSnapshot suppresses "No operator action required." guidance when blocking issues exist', () => {
