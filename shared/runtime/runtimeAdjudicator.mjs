@@ -30,6 +30,12 @@ function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
   return true;
 }
 
+function isLiveCloudProvider(providerKey = '') {
+  const provider = String(providerKey || '').trim().toLowerCase();
+  if (!provider) return false;
+  return !['none', 'n/a', 'unknown', 'mock', 'ollama'].includes(provider);
+}
+
 function createIssue(code, severity, category, message, details = {}) {
   return {
     code,
@@ -106,8 +112,14 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
   const reachabilityTruth = asObject(runtimeTruth.reachabilityTruth);
   const provider = asObject(runtimeTruth.provider);
   const diagnostics = asObject(runtimeTruth.diagnostics);
+  const hostedCloudExecutionOperational = session.sessionKind === 'hosted-web'
+    && route.selectedRouteKind === 'cloud'
+    && reachabilityTruth.selectedRouteReachable === true
+    && reachabilityTruth.backendReachable === true
+    && reachabilityTruth.cloudAvailable === true
+    && isLiveCloudProvider(provider.executableProvider);
   const routeUsable = reachabilityTruth.selectedRouteUsable === true
-    && reachabilityTruth.uiReachableState === 'reachable';
+    && (reachabilityTruth.uiReachableState === 'reachable' || hostedCloudExecutionOperational);
   const blockingCodes = issues
     .filter((issue) => issue.severity === 'error')
     .map((issue) => issue.code);

@@ -45,12 +45,20 @@ function isNoOperatorActionGuidance(value = '') {
   return String(value || '').trim().toLowerCase() === 'no operator action required.';
 }
 
+function isLiveCloudProvider(providerKey = '') {
+  const provider = String(providerKey || '').trim().toLowerCase();
+  if (!provider) return false;
+  return !['none', 'n/a', 'unknown', 'mock', 'ollama'].includes(provider);
+}
+
 function buildHostedBackendTargetGuidance({
   sessionKind,
   selectedRouteKind,
   selectedRouteReachableState,
   routeUsableState,
-  executedProvider,
+  backendReachableState,
+  cloudAvailable,
+  executableProvider,
   backendTargetInvalidReason,
   backendTargetResolvedUrl,
   backendTargetResolutionSource,
@@ -61,7 +69,15 @@ function buildHostedBackendTargetGuidance({
   const unresolved = !backendTargetResolvedUrl || backendTargetResolvedUrl === 'n/a';
   const routeReachable = String(selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
   const routeUsable = String(routeUsableState || '').trim().toLowerCase() === 'yes';
-  const cloudExecutionOperational = selectedRouteKind === 'cloud' && routeReachable && routeUsable;
+  const backendReachable = String(backendReachableState || '').trim().toLowerCase() === 'yes';
+  const cloudRouteAvailable = cloudAvailable === true;
+  const cloudProviderOperational = isLiveCloudProvider(executableProvider);
+  const cloudExecutionOperational = selectedRouteKind === 'cloud'
+    && routeReachable
+    && routeUsable
+    && backendReachable
+    && cloudRouteAvailable
+    && cloudProviderOperational;
   if (!hostedSession || (!routeUnavailable && !backendTargetInvalidReason && !unresolved)) {
     return null;
   }
@@ -75,7 +91,7 @@ function buildHostedBackendTargetGuidance({
   const blocked = routeUnavailable || !routeUsable || !routeReachable;
   const statusLabel = blocked ? 'blocked' : 'informational';
   const executionLabel = cloudExecutionOperational
-    ? asText(executedProvider, 'cloud provider')
+    ? asText(executableProvider, 'cloud provider')
     : 'none';
 
   return {
@@ -122,7 +138,9 @@ export function buildSupportSnapshot({
     selectedRouteKind,
     selectedRouteReachableState: routeTruthView?.selectedRouteReachableState,
     routeUsableState: routeTruthView?.routeUsableState,
-    executedProvider: canonicalTruth.executedProvider || routeTruthView?.executedProvider,
+    backendReachableState: routeTruthView?.backendReachableState,
+    cloudAvailable: runtimeStatus?.cloudAvailable,
+    executableProvider: canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider,
     backendTargetInvalidReason: runtimeContext?.backendTargetInvalidReason,
     backendTargetResolvedUrl: runtimeContext?.backendTargetResolvedUrl,
     backendTargetResolutionSource: runtimeContext?.backendTargetResolutionSource,

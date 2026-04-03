@@ -182,6 +182,7 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
       appLaunchState: 'ready',
       requestedRouteMode: 'auto',
       effectiveRouteMode: 'cloud-first',
+      cloudAvailable: true,
       canonicalRouteRuntimeTruth: {
         sessionKind: 'hosted-web',
         executedProvider: 'groq',

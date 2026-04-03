@@ -962,7 +962,26 @@ export function createRuntimeStatusModel({
     localAvailable: routePlan.localAvailable,
     cloudAvailable: routePlan.cloudAvailable,
   });
-  const selectedEvaluation = nodeRoute?.preferredRoute ? nodeRoute.routeEvaluations?.[nodeRoute.preferredRoute] : null;
+  const selectedRouteKey = nodeRoute?.preferredRoute || '';
+  const selectedEvaluationRaw = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
+  const hostedCloudExecutionConfirmed = normalizedRuntimeContext.sessionKind === 'hosted-web'
+    && selectedRouteKey === 'cloud'
+    && selectedEvaluationRaw?.available === true
+    && backendAvailable
+    && routePlan.cloudAvailable
+    && Boolean(activeProvider)
+    && CLOUD_PROVIDER_KEYS.includes(activeProvider)
+    && health[activeProvider]?.ok === true;
+  if (hostedCloudExecutionConfirmed && selectedRouteKey === 'cloud') {
+    nodeRoute.routeEvaluations = {
+      ...nodeRoute.routeEvaluations,
+      cloud: {
+        ...nodeRoute.routeEvaluations.cloud,
+        usable: true,
+      },
+    };
+  }
+  const selectedEvaluation = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
   const selectedRouteReachable = selectedEvaluation?.available === true;
   const selectedRouteUsable = selectedEvaluation?.usable === true;
   const tileExecutionReady = normalizedRuntimeContext?.tileTruth?.ready === true
