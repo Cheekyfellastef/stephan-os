@@ -47,6 +47,23 @@ export function createError(code, message, options = {}) {
 }
 
 export function normalizeError(error) {
-  if (error instanceof AppError) return error;
-  return new AppError(ERROR_CODES.TOOL_EXECUTION_FAILED, error?.message ?? 'Unknown error.', { status: 500 });
+  if (error instanceof AppError) {
+    return error;
+  }
+
+  const rawStatus = Number(error?.status ?? error?.statusCode);
+  const hasValidStatus = Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599;
+  const status = hasValidStatus ? rawStatus : 500;
+
+  const appError = new AppError(
+    error?.code || ERROR_CODES.TOOL_EXECUTION_FAILED,
+    error?.message ?? 'Unknown error.',
+    {
+      status,
+      details: error?.details ?? null,
+    },
+  );
+
+  appError.statusCode = status;
+  return appError;
 }
