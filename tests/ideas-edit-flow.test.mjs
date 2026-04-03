@@ -5,7 +5,7 @@ import { sanitizeIdeasState } from '../apps/ideas/ideas-persistence.js';
 
 test('each stored idea exposes Edit functionality', () => {
   const actions = buildIdeaActions({ id: 'idea_1', title: 'Idea' });
-  assert.equal(actions.some((action) => action.type === 'edit' && action.label === 'Edit'), true);
+  assert.deepEqual(actions, [{ type: 'edit', label: 'Edit' }]);
 });
 
 test('editing an idea updates existing record rather than creating duplicate', () => {
@@ -53,6 +53,20 @@ test('canceling edit does not mutate stored durable data', () => {
   editDraft.title = 'Changed in draft only';
 
   assert.equal(records[0].title, 'Immutable until save');
+});
+
+test('startIdeaEdit only enters edit mode for targeted idea id', () => {
+  const records = sanitizeIdeasState({
+    records: [
+      { id: 'idea_1', title: 'One' },
+      { id: 'idea_2', title: 'Two' },
+    ],
+  }).records;
+
+  const targeted = startIdeaEdit(records, 'idea_2');
+  assert.ok(targeted);
+  assert.equal(targeted.id, 'idea_2');
+  assert.equal(startIdeaEdit(records, 'missing'), null);
 });
 
 test('local-only edit UI state does not pollute durable ideas data', () => {

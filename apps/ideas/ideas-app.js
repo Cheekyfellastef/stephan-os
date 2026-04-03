@@ -79,11 +79,52 @@ let state = { records: [] };
 let hydrationCompleted = false;
 let hydrationSource = 'unknown';
 let editingIdeaId = null;
+let lastSaveSource = 'none';
+let lastExecutionMode = 'unknown';
+let lastSaveError = '';
 
-function setTileLinkStatus(message) {
-  if (elements.linkStatus) {
-    elements.linkStatus.textContent = message;
+function describeMemoryStatus() {
+  if (!hydrationCompleted) {
+    return 'memory unavailable (hydrating)';
   }
+
+  if (lastSaveError) {
+    return `memory unavailable (${lastSaveError})`;
+  }
+
+  if (hydrationSource === 'shared-backend' && lastSaveSource !== 'legacy-local-fallback') {
+    return 'memory linked (shared durable)';
+  }
+
+  if (hydrationSource === 'shared-backend' && lastSaveSource === 'legacy-local-fallback') {
+    return 'memory degraded (legacy local fallback)';
+  }
+
+  if (hydrationSource.includes('fallback') || hydrationSource === 'default-state' || hydrationSource === 'unknown') {
+    return `memory degraded (${hydrationSource})`;
+  }
+
+  return `memory unavailable (${hydrationSource})`;
+}
+
+function describeExecutionStatus() {
+  if (lastExecutionMode === 'execution-loop-bridge' || lastExecutionMode === 'post-message-bridge') {
+    return `tile loop linked (${lastExecutionMode})`;
+  }
+
+  if (lastExecutionMode === 'execution-loop-unavailable' || lastExecutionMode === 'missing-bridge') {
+    return `tile loop unavailable (${lastExecutionMode})`;
+  }
+
+  return `tile loop ${lastExecutionMode}`;
+}
+
+function refreshLinkStatus() {
+  if (!elements.linkStatus) {
+    return;
+  }
+
+  elements.linkStatus.textContent = `Tile link: ${describeMemoryStatus()}; ${describeExecutionStatus()}.`;
 }
 
 function logIdeas(event, payload = {}) {
@@ -130,7 +171,8 @@ function publishIdeasTileContext(records = []) {
 function publishIdeasExecutionEvent({ action, summary, result = {}, tags = [] } = {}) {
   const bridge = window.StephanosTileContextBridge;
   if (!bridge?.publishTileExecutionEvent) {
-    setTileLinkStatus('Tile link: isolated (execution loop unavailable).');
+    lastExecutionMode = 'missing-bridge';
+    refreshLinkStatus();
     return {
       ok: false,
       reason: 'missing-bridge',
@@ -146,10 +188,11 @@ function publishIdeasExecutionEvent({ action, summary, result = {}, tags = [] } 
     source: 'ideas-tile',
   });
   if (response?.ok) {
-    setTileLinkStatus(`Tile link: linked (${response.mode}).`);
+    lastExecutionMode = response.mode || 'execution-loop-bridge';
   } else {
-    setTileLinkStatus('Tile link: isolated (degraded local-only event flow).');
+    lastExecutionMode = response?.reason || 'execution-loop-unavailable';
   }
+  refreshLinkStatus();
   logIdeas('tile-execution-event', {
     ok: Boolean(response?.ok),
     action,
@@ -168,12 +211,33 @@ async function writeAll(records) {
   }
 
   const sanitized = sanitizeIdeasState({ records });
-  state = sanitized;
   const saveResult = await persistence.saveState({
-    state,
+    state: sanitized,
     ui: {},
     hydrationCompleted,
   });
+  if (!saveResult?.ok) {
+    const reason = saveResult?.reason || saveResult?.source || 'save-failed';
+    lastSaveError = reason;
+    lastSaveSource = saveResult?.source || 'unknown';
+    refreshLinkStatus();
+    publishIdeasExecutionEvent({
+      action: 'ideas.persist.failed',
+      summary: `Ideas persistence failed (${reason}).`,
+      result: {
+        reason,
+        source: saveResult?.source || 'unknown',
+        recordCount: sanitized.records.length,
+      },
+      tags: ['save-failed'],
+    });
+    throw new Error(`Failed to persist Ideas state: ${reason}.`);
+  }
+
+  state = sanitized;
+  lastSaveSource = saveResult?.source || 'unknown';
+  lastSaveError = '';
+  refreshLinkStatus();
   publishIdeasTileContext(state.records);
   publishIdeasExecutionEvent({
     action: 'ideas.persist',
@@ -387,6 +451,10 @@ function setEditMode(record = null) {
     elements.cancelEditButton.hidden = !editingIdeaId;
   }
 
+  if (elements.saveButton) {
+    elements.saveButton.textContent = editingIdeaId ? 'Update idea' : 'Save idea';
+  }
+
   if (!record) {
     clearForm();
     return;
@@ -413,7 +481,7 @@ function setLoadingState(isLoading) {
 
 elements.saveButton?.addEventListener('click', async () => {
   try {
-    logIdeas('edit-save-attempted', {
+    logIdeas('edit-save', {
       hydrationCompleted,
       editingIdeaId: editingIdeaId || '',
     });
@@ -438,16 +506,33 @@ elements.saveButton?.addEventListener('click', async () => {
       savedIdeaId: savedRecord.id,
     });
 
+    publishIdeasExecutionEvent({
+      action: wasEditing ? 'ideas.update' : 'ideas.create',
+      summary: wasEditing
+        ? `Updated idea "${savedRecord.title}".`
+        : `Created idea "${savedRecord.title}".`,
+      result: {
+        ideaId: savedRecord.id,
+        recordCount: state.records.length,
+        source: lastSaveSource,
+      },
+      tags: [wasEditing ? 'update' : 'create', lastSaveSource],
+    });
+
     setEditMode(null);
-    elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${hydrationSource}).`;
+    elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${lastSaveSource}).`;
     renderIdeas();
   } catch (error) {
+    logIdeas('edit-save-failed', {
+      message: error?.message || 'Failed to save record.',
+      editingIdeaId: editingIdeaId || '',
+    });
     elements.status.textContent = error?.message || 'Failed to save record.';
   }
 });
 
 elements.cancelEditButton?.addEventListener('click', () => {
-  logIdeas('edit-cancelled', {
+  logIdeas('edit-cancel', {
     editingIdeaId: editingIdeaId || '',
   });
   setEditMode(null);
@@ -480,6 +565,7 @@ elements.ideasList?.addEventListener('click', (event) => {
   }
 
   logIdeas('edit-mode-started', {
+    event: 'edit-start',
     ideaId: editable.id,
     hydrationCompleted,
   });
@@ -633,14 +719,15 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   state = sanitizeIdeasState(loaded.state);
   hydrationSource = loaded.meta.source || 'unknown';
   hydrationCompleted = true;
+  lastSaveSource = hydrationSource;
+  lastExecutionMode = 'execution-loop-unavailable';
+  lastSaveError = '';
   logIdeas('hydration-complete', {
     sourceUsedOnLoad: hydrationSource,
     hydrationCompleted,
     recordCount: state.records.length,
   });
-  setTileLinkStatus(hydrationSource === 'shared-backend'
-    ? 'Tile link: shared memory linked.'
-    : `Tile link: degraded (${hydrationSource}).`);
+  refreshLinkStatus();
 
   if (!state.records.length) {
     elements.status.textContent = 'No shared Ideas records yet. Use Save or Re-seed examples.';
