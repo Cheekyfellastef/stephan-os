@@ -8,6 +8,7 @@ import {
   normalizeStephanosHomeNode,
   probeStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
+  resolveStephanosBackendTarget,
 } from '../shared/runtime/stephanosHomeNode.mjs';
 import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 import { validateStephanosRuntime } from '../system/apps/app_validator.js';
@@ -137,15 +138,24 @@ test('resolveStephanosBackendBaseUrl uses the current LAN host before falling ba
   );
 });
 
-test('resolveStephanosBackendBaseUrl keeps hosted-web origins truthful when no home node is configured', () => {
+test('resolveStephanosBackendBaseUrl leaves hosted-web backend target unresolved when no explicit target exists', () => {
   assert.equal(
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
-    'https://cheekyfellastef.github.io',
+    '',
   );
   assert.notEqual(
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
     'http://localhost:8787',
   );
+});
+
+test('resolveStephanosBackendTarget reports static-origin same-origin /api fallback as invalid', () => {
+  const target = resolveStephanosBackendTarget({ currentOrigin: 'https://cheekyfellastef.github.io' });
+  assert.equal(target.resolved, false);
+  assert.equal(target.resolvedUrl, '');
+  assert.equal(target.resolutionSource, 'unresolved-hosted-session');
+  assert.equal(target.fallbackUsed, false);
+  assert.match(target.invalidReason, /same-origin \/api is invalid on static host/i);
 });
 
 test('resolveStephanosBackendBaseUrl ignores malformed manual backend URL and falls back safely', () => {
@@ -168,6 +178,13 @@ test('probeStephanosHomeNode keeps the candidate LAN backend when health still p
     {
       fetchImpl: async () => ({
         ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          backend_target_endpoint: 'http://localhost:8787/api/ai/chat',
+        }),
         json: async () => ({
           ok: true,
           service: 'stephanos-server',
@@ -220,6 +237,61 @@ test('validateStephanosRuntime boot path does not throw when no home node is con
     assert.equal(status.runtimeStatusModel.runtimeContext.homeNode.configured, false);
     assert.equal(status.runtimeStatusModel.runtimeContext.homeNode.host, '');
     assert.equal(status.runtimeTargets.some((target) => target.kind === 'home-node'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
+test('validateStephanosRuntime hosted-web emits backend target diagnostics and skips provider health when backend target is unresolved', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const requests = [];
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem() {
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), method: options.method || 'GET' });
+    if (options.method === 'HEAD') {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html');
+    const routeDiagnostics = status.runtimeStatusModel.runtimeContext.routeDiagnostics;
+    assert.equal(routeDiagnostics.backendTargetResolutionSource, 'unresolved-hosted-session');
+    assert.equal(routeDiagnostics.backendTargetResolvedUrl, '');
+    assert.equal(routeDiagnostics.backendTargetFallbackUsed, false);
+    assert.match(routeDiagnostics.backendTargetInvalidReason, /same-origin \/api is invalid on static host/i);
+    assert.match(status.runtimeStatusModel.dependencySummary, /Hosted session has no valid backend target/i);
+    const runtimeDiagnostics = status.runtimeStatusModel.runtimeTruth?.diagnostics || {};
+    assert.equal(
+      (runtimeDiagnostics.blockingIssues || []).some((issue) => issue.code === 'hosted-backend-target-unresolved'),
+      true,
+    );
+    assert.equal(
+      (runtimeDiagnostics.operatorGuidance || []).some((guidance) => /Hosted session has no usable backend target/i.test(guidance)),
+      true,
+    );
+    assert.equal(
+      requests.some((request) => request.url.includes('/api/ai/providers/health')),
+      false,
+    );
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;

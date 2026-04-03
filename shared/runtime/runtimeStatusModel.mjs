@@ -309,6 +309,10 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     backendReachable: merged.backendReachable === true ? true : (merged.backendReachable === false ? false : null),
     uiReachable: merged.uiReachable === true ? true : (merged.uiReachable === false ? false : null),
     usable: merged.usable !== false && Boolean(merged.available),
+    backendTargetResolutionSource: String(merged.backendTargetResolutionSource || ''),
+    backendTargetResolvedUrl: String(merged.backendTargetResolvedUrl || ''),
+    backendTargetFallbackUsed: merged.backendTargetFallbackUsed === true,
+    backendTargetInvalidReason: String(merged.backendTargetInvalidReason || ''),
   };
 }
 
@@ -476,6 +480,10 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         ? 'A cloud-backed Stephanos route is ready'
         : 'No cloud-backed Stephanos route is currently ready',
       blockedReason: hostedCloudSession ? '' : 'no cloud-backed route is currently ready',
+      backendTargetResolutionSource: diagnostics.backendTargetResolutionSource || '',
+      backendTargetResolvedUrl: diagnostics.backendTargetResolvedUrl || '',
+      backendTargetFallbackUsed: diagnostics.backendTargetFallbackUsed === true,
+      backendTargetInvalidReason: diagnostics.backendTargetInvalidReason || '',
     }, diagnostics.cloud),
   };
 
@@ -491,7 +499,9 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     }
   }
 
-  const preferredRoute = preferenceOrder.find((routeKey) => evaluations[routeKey]?.available) || null;
+  const preferredRoute = preferenceOrder.find((routeKey) => evaluations[routeKey]?.available && evaluations[routeKey]?.usable !== false)
+    || preferenceOrder.find((routeKey) => evaluations[routeKey]?.available)
+    || null;
 
   return {
     evaluations,
@@ -502,7 +512,15 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
 }
 
 function summarizeSelectedRoute(routeKey, route, runtimeContext, backendAvailable, validationState) {
+  const backendTargetInvalidReason = String(runtimeContext.routeDiagnostics?.backendTargetInvalidReason || '').trim();
   if (!routeKey || !route) {
+    if (runtimeContext.sessionKind === 'hosted-web' && backendTargetInvalidReason) {
+      return {
+        headline: 'Hosted backend target unresolved',
+        summary: `Hosted session has no valid backend target; ${backendTargetInvalidReason}.`,
+      };
+    }
+
     if (backendAvailable && runtimeContext.frontendLocal) {
       return {
         headline: 'Backend online but route classification failed',
@@ -747,12 +765,20 @@ function buildDependencySummary({
 }) {
   const selectedRouteKind = finalRouteTruth?.routeKind || nodeRoute?.preferredRoute || 'unavailable';
   const selectedRoute = nodeRoute.routeEvaluations[selectedRouteKind] || null;
+  const explicitBackendTargetInvalidReason = String(
+    nodeRoute?.routeEvaluations?.cloud?.backendTargetInvalidReason
+    || '',
+  ).trim();
   const localFailureSummary = getPreferredLocalFailure(providerHealth);
   const routeUsable = finalRouteTruth?.routeUsable === true || selectedRoute?.usable === true;
   const executedProvider = finalRouteTruth?.executedProvider || activeProvider || '';
   const selectedProvider = finalRouteTruth?.selectedProvider || '';
 
   if (!selectedRoute) {
+    if (finalRouteTruth?.sessionKind === 'hosted-web' && explicitBackendTargetInvalidReason) {
+      return `Hosted session has no valid backend target; ${explicitBackendTargetInvalidReason}.`;
+    }
+
     if (backendAvailable && finalRouteTruth?.sessionKind === 'local-desktop') {
       return 'Backend online, but Stephanos could not classify a valid route explicitly';
     }

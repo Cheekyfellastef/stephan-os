@@ -115,6 +115,48 @@ test('guardrails catch loopback contamination in non-local sessions', () => {
   assert.ok(report.errors.some((issue) => issue.id === 'home-node-loopback-target'));
 });
 
+test('guardrails emit hosted-backend-target-unresolved when hosted session backend target is invalid', () => {
+  const report = evaluateRuntimeGuardrails({
+    appLaunchState: 'unavailable',
+    backendAvailable: false,
+    localAvailable: false,
+    cloudAvailable: false,
+    routeKind: 'unavailable',
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      routeDiagnostics: {
+        backendTargetInvalidReason: 'same-origin /api is invalid on static host',
+      },
+      finalRoute: {
+        routeKind: 'unavailable',
+        source: 'route-diagnostics',
+        preferredTarget: '',
+        actualTarget: '',
+      },
+    },
+    finalRoute: {
+      routeKind: 'unavailable',
+      source: 'route-diagnostics',
+      preferredTarget: '',
+      actualTarget: '',
+      reachability: { selectedRouteReachable: false },
+      providerEligibility: {
+        truthfulBackendRoute: false,
+        backendMediatedProviders: false,
+        localProviders: false,
+        cloudProviders: false,
+        distFallbackOnly: false,
+        mockFallbackOnly: true,
+        selectedRouteAvailable: false,
+      },
+    },
+    routeEvaluations: {},
+  });
+
+  assert.equal(report.hasErrors, true);
+  assert.ok(report.errors.some((issue) => issue.id === 'hosted-backend-target-unresolved'));
+});
+
 test('guardrails catch truth fragmentation when top-level route fields diverge from finalRoute', () => {
   const report = evaluateRuntimeGuardrails({
     appLaunchState: 'ready',

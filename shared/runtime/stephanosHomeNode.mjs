@@ -28,6 +28,15 @@ function safeUrlParse(value = '') {
   }
 }
 
+function isLikelyStaticHostedOrigin(hostname = '') {
+  const value = String(hostname || '').trim().toLowerCase();
+  if (!value) return false;
+  return value.endsWith('.github.io')
+    || value.endsWith('.pages.dev')
+    || value.endsWith('.netlify.app')
+    || value.endsWith('.vercel.app');
+}
+
 export function isLoopbackHost(hostname = '') {
   return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).trim().toLowerCase());
 }
@@ -771,19 +780,51 @@ export function resolveStephanosBackendBaseUrl({
   lastKnownNode = null,
   explicitBaseUrl = '',
 } = {}) {
+  return resolveStephanosBackendTarget({
+    currentOrigin,
+    manualNode,
+    lastKnownNode,
+    explicitBaseUrl,
+  }).resolvedUrl;
+}
+
+export function resolveStephanosBackendTarget({
+  currentOrigin = '',
+  manualNode = null,
+  lastKnownNode = null,
+  explicitBaseUrl = '',
+} = {}) {
   const explicit = safeUrlParse(explicitBaseUrl);
   if (explicit?.origin) {
-    return explicit.origin;
+    return {
+      resolvedUrl: explicit.origin,
+      resolutionSource: 'explicit-backend-target',
+      fallbackUsed: false,
+      invalidReason: '',
+      resolved: true,
+    };
   }
 
   const current = safeUrlParse(currentOrigin);
   const currentHost = current?.hostname || '';
-  const currentIsNonLoopback = Boolean(currentHost) && !isLoopbackHost(currentHost);
+  const currentIsHostedWeb = Boolean(currentHost) && !isLoopbackHost(currentHost);
   if (current?.hostname && isLikelyLanHost(current.hostname) && !isLoopbackHost(current.hostname)) {
     if (normalizePort(current.port, DEFAULT_HOME_NODE_UI_PORT) === DEFAULT_HOME_NODE_BACKEND_PORT) {
-      return current.origin;
+      return {
+        resolvedUrl: current.origin,
+        resolutionSource: 'current-lan-origin',
+        fallbackUsed: false,
+        invalidReason: '',
+        resolved: true,
+      };
     }
-    return createStephanosHomeNodeUrls({ host: current.hostname, backendPort: DEFAULT_HOME_NODE_BACKEND_PORT }).backendUrl;
+    return {
+      resolvedUrl: createStephanosHomeNodeUrls({ host: current.hostname, backendPort: DEFAULT_HOME_NODE_BACKEND_PORT }).backendUrl,
+      resolutionSource: 'current-lan-origin',
+      fallbackUsed: false,
+      invalidReason: '',
+      resolved: true,
+    };
   }
 
   const manual = normalizeStephanosHomeNode(manualNode, { source: 'manual' });
@@ -797,15 +838,36 @@ export function resolveStephanosBackendBaseUrl({
   if (preferredNode?.backendUrl) {
     const backendParsed = safeUrlParse(preferredNode.backendUrl);
     if (backendParsed?.origin && !isMalformedStephanosHost(backendParsed.hostname || '')) {
-      return backendParsed.origin;
+      return {
+        resolvedUrl: backendParsed.origin,
+        resolutionSource: preferredNode.source === 'lastKnown' ? 'last-known-home-node-target' : 'manual-home-node-target',
+        fallbackUsed: false,
+        invalidReason: '',
+        resolved: true,
+      };
     }
   }
 
-  if (currentIsNonLoopback && current?.origin) {
-    return current.origin;
+  if (currentIsHostedWeb) {
+    const staticOrigin = isLikelyStaticHostedOrigin(currentHost);
+    return {
+      resolvedUrl: '',
+      resolutionSource: 'unresolved-hosted-session',
+      fallbackUsed: false,
+      invalidReason: staticOrigin
+        ? 'same-origin /api is invalid on static host'
+        : 'hosted session requires explicit backend/home-node/cloud target',
+      resolved: false,
+    };
   }
 
-  return `http://localhost:${DEFAULT_HOME_NODE_BACKEND_PORT}`;
+  return {
+    resolvedUrl: `http://localhost:${DEFAULT_HOME_NODE_BACKEND_PORT}`,
+    resolutionSource: 'localhost-default',
+    fallbackUsed: true,
+    invalidReason: '',
+    resolved: true,
+  };
 }
 
 export function summarizeStephanosHomeNode(node) {

@@ -1,7 +1,7 @@
 import {
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
-  resolveStephanosBackendBaseUrl,
+  resolveStephanosBackendTarget,
 } from './stephanosHomeNode.mjs';
 
 const DEFAULT_BACKEND_TIMEOUT_MS = 5000;
@@ -27,7 +27,7 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
   const manualNode = runtimeContext.manualNode || readPersistedStephanosHomeNode(storage);
   const lastKnownNode = runtimeContext.lastKnownNode || readPersistedStephanosLastKnownNode(storage);
 
-  return resolveStephanosBackendBaseUrl({
+  return resolveStephanosBackendTarget({
     currentOrigin: resolveFrontendOrigin(runtimeContext),
     manualNode,
     lastKnownNode,
@@ -70,7 +70,16 @@ export async function requestStephanosBackend({
     throw new Error('Fetch is unavailable; cannot contact Stephanos backend.');
   }
 
-  const baseUrl = resolveBackendBaseUrl(runtimeContext);
+  const backendTarget = resolveBackendBaseUrl(runtimeContext);
+  const baseUrl = backendTarget?.resolvedUrl || '';
+  if (!baseUrl) {
+    const unresolvedError = new Error(backendTarget?.invalidReason || 'Stephanos backend target is unresolved.');
+    unresolvedError.code = 'backend-target-unresolved';
+    unresolvedError.baseUrl = '';
+    unresolvedError.path = path;
+    unresolvedError.resolutionSource = backendTarget?.resolutionSource || 'unresolved';
+    throw unresolvedError;
+  }
   const url = joinBackendUrl(baseUrl, path);
   const requestHeaders = {
     Accept: 'application/json',
@@ -160,4 +169,6 @@ export async function requestStephanosBackend({
   }
 }
 
-export { resolveBackendBaseUrl as resolveStephanosBackendClientBaseUrl };
+export function resolveStephanosBackendClientBaseUrl(runtimeContext = {}) {
+  return resolveBackendBaseUrl(runtimeContext)?.resolvedUrl || '';
+}

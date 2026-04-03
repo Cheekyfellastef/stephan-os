@@ -55,3 +55,16 @@ test('requestStephanosBackend throws structured HTTP errors', async () => {
     /offline/,
   );
 });
+
+test('requestStephanosBackend rejects unresolved hosted-web backend targets before fetch', async () => {
+  await assert.rejects(
+    () => requestStephanosBackend({
+      path: '/api/health',
+      runtimeContext: { frontendOrigin: 'https://cheekyfellastef.github.io' },
+      fetchImpl: async () => {
+        throw new Error('fetch should not be called for unresolved backend targets');
+      },
+    }),
+    /same-origin \/api is invalid on static host/i,
+  );
+});
