@@ -677,3 +677,30 @@ test('createRuntimeStatusModel records unresolved hosted backend target metadata
   assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
   assert.match(status.runtimeContext.backendTargetInvalidReason, /No non-loopback backend target resolved/);
 });
+
+test('createRuntimeStatusModel rejects same-origin static-host fallback backend target in hosted-web sessions', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://cheekyfellastef.github.io',
+      preferredTarget: 'https://cheekyfellastef.github.io',
+      actualTargetUsed: 'https://cheekyfellastef.github.io',
+      backendTargetResolutionSource: 'currentOrigin',
+      nodeAddressSource: 'currentOrigin',
+    },
+  });
+
+  assert.equal(status.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'unresolved');
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.equal(status.runtimeContext.backendTargetFallbackUsed, false);
+  assert.match(status.runtimeContext.backendTargetInvalidReason, /Same-origin static-host backend fallback is invalid/);
+});

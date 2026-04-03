@@ -41,6 +41,10 @@ function hasMeaningfulDiagnostics(lines = []) {
   return Array.isArray(lines) && lines.some((line) => line !== '- n/a');
 }
 
+function isNoOperatorActionGuidance(value = '') {
+  return String(value || '').trim().toLowerCase() === 'no operator action required.';
+}
+
 function buildHostedBackendTargetGuidance({
   sessionKind,
   selectedRouteKind,
@@ -127,6 +131,14 @@ export function buildSupportSnapshot({
   }
   if (hostedBackendTargetGuidance?.operatorGuidance) {
     guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
+  }
+  const hasBlockingIssues = blockingIssues.length > 0;
+  if (hasBlockingIssues) {
+    for (let i = guidanceItems.length - 1; i >= 0; i -= 1) {
+      if (isNoOperatorActionGuidance(guidanceItems[i])) {
+        guidanceItems.splice(i, 1);
+      }
+    }
   }
   if (blockingIssues.length === 0 && invariantWarnings.length === 0 && !hostedBackendTargetGuidance) {
     guidanceItems.push('No blocking route invariants detected.');

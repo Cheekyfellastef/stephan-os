@@ -650,6 +650,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const backendProbeBaseUrl = backendProbe.backendBaseUrl || backendBaseUrl;
   const backendProbeHost = extractHostname(backendProbeBaseUrl);
   const frontendHost = extractHostname(currentOrigin);
+  const hostedStaticOrigin = hostedWebSession && frontendHost.endsWith('.github.io');
   const frontendOriginMasqueradingBackend = hostedWebSession
     && Boolean(currentOrigin)
     && Boolean(frontendHost)
@@ -661,7 +662,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     : (localDesktopBackendProbe.ok
       ? localDesktopBackendBaseUrl
       : (frontendOriginMasqueradingBackend ? '' : backendBaseUrl));
-  const localDesktopCapableSession = localDesktopSession || isLoopbackHost(extractHostname(effectiveBackendBaseUrl));
+  const localDesktopCapableSession = localDesktopSession;
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
     .trim()
@@ -750,6 +751,14 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     || homeNodeTarget?.url
     || distPreferredTarget?.url
     || (entryExists ? hostedDistUrl : '');
+  const staticHostedFallbackInvalid = hostedStaticOrigin && !healthyBackend;
+  const backendTargetResolvedUrl = staticHostedFallbackInvalid ? '' : effectiveBackendBaseUrl;
+  const backendTargetResolutionSource = staticHostedFallbackInvalid
+    ? 'unresolved'
+    : (backendTargetResolvedUrl ? (preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics')) : 'unresolved');
+  const backendTargetInvalidReason = staticHostedFallbackInvalid
+    ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
+    : '';
 
   const runtimeStatusModel = createRuntimeStatusModel({
     appId: 'stephanos',
@@ -766,8 +775,12 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       apiBaseUrl: effectiveBackendBaseUrl,
       homeNode: preferredHomeNode ? (homeNodeRouteAvailable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
       preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || '',
-      actualTargetUsed: effectiveBackendBaseUrl || '',
+      actualTargetUsed: backendTargetResolvedUrl || '',
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
+      backendTargetResolutionSource,
+      backendTargetResolvedUrl,
+      backendTargetFallbackUsed: false,
+      backendTargetInvalidReason,
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
       routeDiagnostics: {
         'local-desktop': {
@@ -848,7 +861,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
         },
         cloud: {
           configured: healthyBackend && Boolean(publishedBackendBaseUrl),
-          available: healthyBackend && Boolean(publishedBackendBaseUrl),
+          available: healthyBackend && Boolean(publishedBackendBaseUrl) && !backendPublishedRouteMisconfigured,
           misconfigured: backendPublishedRouteMisconfigured,
           target: healthyBackend ? publishedBackendBaseUrl : '',
           actualTarget: healthyBackend ? publishedBackendBaseUrl : '',
