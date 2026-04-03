@@ -176,6 +176,61 @@ test('buildSupportSnapshot emits hosted backend-target diagnostics and operator 
   assert.doesNotMatch(snapshot, /operatorGuidance:\n- n\/a/);
 });
 
+test('buildSupportSnapshot keeps unresolved hosted backend-target metadata informational when cloud route is usable', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'hosted-web',
+        executedProvider: 'groq',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'cloud',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      executedProvider: 'groq',
+      operatorReason: 'No operator action required.',
+    },
+    runtimeSessionTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+    },
+    runtimeRouteTruth: {
+      winningReason: 'cloud route ready',
+    },
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {
+      blockingIssues: [],
+      invariantWarnings: [],
+    },
+    runtimeContext: {
+      backendTargetResolutionSource: 'unresolved',
+      backendTargetResolvedUrl: '',
+      backendTargetFallbackUsed: false,
+      backendTargetInvalidReason: 'No non-loopback backend target resolved for hosted session.',
+      routeDiagnostics: {},
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-03T00:00:02.500Z' },
+  });
+
+  assert.match(snapshot, /Selected Route Kind: cloud/);
+  assert.match(snapshot, /Selected Route Reachable: yes/);
+  assert.match(snapshot, /Selected Route Usable: yes/);
+  assert.match(snapshot, /Execution Truth: n\/a/);
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- backend-target: informational \(No non-loopback backend target resolved for hosted session\.\)/);
+  assert.match(snapshot, /- cloud-execution: operational \(groq\)/);
+  assert.match(snapshot, /blockingIssues:\n- n\/a/);
+  assert.doesNotMatch(snapshot, /Backend target unresolved:/);
+  assert.doesNotMatch(snapshot, /Resolve a reachable non-loopback backend target for hosted-web/);
+});
+
 test('buildSupportSnapshot suppresses "No operator action required." guidance when blocking issues exist', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
