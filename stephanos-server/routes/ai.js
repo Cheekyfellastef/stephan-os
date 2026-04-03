@@ -10,6 +10,8 @@ import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } fr
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
+import { durableMemoryService } from '../services/durableMemoryService.js';
+import { activityLogService } from '../services/activityLogService.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -71,6 +73,112 @@ function formatTileContextForPrompt(tileContext = {}) {
 }
 
 const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /memory list /memory save <text> /memory find <query> /memory propose <id|recent> /proposals /proposals list /proposals stats /proposals show <id> /proposals accept <id> /proposals reject <id> /activity /activity list /activity recent /activity show <id> /roadmap /roadmap list /roadmap add <text> /roadmap done <id> /roadmap show <id> /kg help /simulate help /simulate history list /simulate history show <runId> /simulate history clear /simulate compare <runIdA> <runIdB> /clear';
+
+function safeString(value, fallback = '') {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || fallback;
+}
+
+function createContinuityRecord({ id, type, summary, payload = {}, tags = [], source = 'ai-route' }) {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 2,
+    type,
+    source,
+    scope: 'runtime',
+    summary: safeString(summary),
+    payload: payload && typeof payload === 'object' ? payload : {},
+    tags: Array.isArray(tags) ? tags.map((tag) => safeString(tag)).filter(Boolean) : [],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: now,
+    updatedAt: now,
+    surface: 'shared',
+    id: safeString(id),
+  };
+}
+
+function buildContinuityRecordKey(record = {}) {
+  return `continuity::${safeString(record.id)}`;
+}
+
+function persistAiContinuityArtifacts({
+  prompt = '',
+  route = '',
+  executionMetadata = {},
+  outputText = '',
+  memoryHits = [],
+  tileContext = null,
+}) {
+  try {
+    const state = durableMemoryService.getStore();
+    const records = { ...(state.records || {}) };
+    const baseId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const promptPreview = String(prompt || '').slice(0, 280);
+    const outputPreview = String(outputText || '').slice(0, 420);
+    const tags = ['ai.continuity', `route.${safeString(route, 'assistant')}`];
+    const tileLinked = Boolean(tileContext?.activeTileContext || (Array.isArray(tileContext?.relevantTileContexts) && tileContext.relevantTileContexts.length > 0));
+
+    const intentRecord = createContinuityRecord({
+      id: `${baseId}-intent`,
+      type: 'ai.decision',
+      summary: `Operator intent captured for ${safeString(route, 'assistant')} route.`,
+      payload: {
+        promptPreview,
+        route: safeString(route, 'assistant'),
+        requestedProvider: executionMetadata.requested_provider || '',
+        selectedProvider: executionMetadata.selected_provider || '',
+      },
+      tags: [...tags, 'ai.intent'],
+      source: 'ai-continuity-intent',
+    });
+    const outcomeRecord = createContinuityRecord({
+      id: `${baseId}-outcome`,
+      type: 'ai.summary',
+      summary: `AI outcome recorded (${executionMetadata.actual_provider_used || 'unknown-provider'}).`,
+      payload: {
+        outputPreview,
+        provider: executionMetadata.actual_provider_used || '',
+        model: executionMetadata.model_used || '',
+        fallbackUsed: executionMetadata.fallback_used === true,
+        fallbackReason: executionMetadata.fallback_reason || '',
+        memoryHitCount: Array.isArray(memoryHits) ? memoryHits.length : 0,
+        tileLinked,
+      },
+      tags: [...tags, 'ai.outcome', tileLinked ? 'tile-linked' : 'tile-unlinked'],
+      source: 'ai-continuity-outcome',
+    });
+
+    records[buildContinuityRecordKey(intentRecord)] = intentRecord;
+    records[buildContinuityRecordKey(outcomeRecord)] = outcomeRecord;
+
+    durableMemoryService.setStore({
+      schemaVersion: 2,
+      records,
+    }, 'ai-route-continuity');
+
+    activityLogService.record({
+      type: 'ai.continuity.persisted',
+      subsystem: 'ai',
+      summary: `Stored AI continuity artifacts for ${safeString(route, 'assistant')} route.`,
+      payload: {
+        provider: executionMetadata.actual_provider_used || '',
+        fallbackUsed: executionMetadata.fallback_used === true,
+        tileLinked,
+      },
+    });
+    logger.info('[AI CONTINUITY] persisted ai continuity artifacts', {
+      route,
+      provider: executionMetadata.actual_provider_used || '',
+      tileLinked,
+    });
+  } catch (error) {
+    logger.warn('[AI CONTINUITY] unable to persist continuity artifacts', {
+      message: error?.message || 'unknown-error',
+      code: error?.code || '',
+    });
+  }
+}
 
 
 router.post('/providers/health', async (req, res) => {
@@ -230,6 +338,14 @@ Use these memories when they help, but do not repeat them unless they are releva
     console.log('[BACKEND LIVE] Request trace', requestTrace);
 
     if (!llmResult.ok) {
+      persistAiContinuityArtifacts({
+        prompt,
+        route: decision.route,
+        executionMetadata,
+        outputText: llmResult.error?.message || 'AI provider failed.',
+        memoryHits,
+        tileContext: assembledTileContext,
+      });
       return res.status(502).json(buildErrorResponse({
         route: decision.route,
         command: parsedCommand.isSlash ? parsedCommand.raw : null,
@@ -269,6 +385,15 @@ Use these memories when they help, but do not repeat them unless they are releva
         },
       }));
     }
+
+    persistAiContinuityArtifacts({
+      prompt,
+      route: decision.route,
+      executionMetadata,
+      outputText: llmResult.outputText,
+      memoryHits,
+      tileContext: assembledTileContext,
+    });
 
     return res.json(buildSuccessResponse({
       type: 'assistant_response',

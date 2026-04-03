@@ -58,6 +58,7 @@ const elements = {
   cancelEditButton: document.getElementById('cancel-edit-idea'),
   seedButton: document.getElementById('seed-ideas'),
   status: document.getElementById('save-status'),
+  linkStatus: document.getElementById('ideas-link-status'),
   modeLabel: document.getElementById('idea-form-mode'),
   ideasList: document.getElementById('ideas-list'),
   dataPortText: document.getElementById('ideas-data-port-text'),
@@ -78,6 +79,12 @@ let state = { records: [] };
 let hydrationCompleted = false;
 let hydrationSource = 'unknown';
 let editingIdeaId = null;
+
+function setTileLinkStatus(message) {
+  if (elements.linkStatus) {
+    elements.linkStatus.textContent = message;
+  }
+}
 
 function logIdeas(event, payload = {}) {
   const logger = window.console || console;
@@ -120,6 +127,37 @@ function publishIdeasTileContext(records = []) {
   return snapshot;
 }
 
+function publishIdeasExecutionEvent({ action, summary, result = {}, tags = [] } = {}) {
+  const bridge = window.StephanosTileContextBridge;
+  if (!bridge?.publishTileExecutionEvent) {
+    setTileLinkStatus('Tile link: isolated (execution loop unavailable).');
+    return {
+      ok: false,
+      reason: 'missing-bridge',
+    };
+  }
+
+  const response = bridge.publishTileExecutionEvent(IDEAS_APP_ID, {
+    tileTitle: 'Ideas',
+    action,
+    summary,
+    result,
+    tags: ['ideas', ...tags],
+    source: 'ideas-tile',
+  });
+  if (response?.ok) {
+    setTileLinkStatus(`Tile link: linked (${response.mode}).`);
+  } else {
+    setTileLinkStatus('Tile link: isolated (degraded local-only event flow).');
+  }
+  logIdeas('tile-execution-event', {
+    ok: Boolean(response?.ok),
+    action,
+    mode: response?.mode || response?.reason || 'unknown',
+  });
+  return response;
+}
+
 async function writeAll(records) {
   if (!hydrationCompleted) {
     logIdeas('save-blocked', {
@@ -137,6 +175,16 @@ async function writeAll(records) {
     hydrationCompleted,
   });
   publishIdeasTileContext(state.records);
+  publishIdeasExecutionEvent({
+    action: 'ideas.persist',
+    summary: `Ideas persisted ${state.records.length} record(s) through ${saveResult?.source || 'unknown'} path.`,
+    result: {
+      source: saveResult?.source || 'unknown',
+      recordCount: state.records.length,
+      hydrationSource,
+    },
+    tags: [saveResult?.source || 'unknown'],
+  });
   logIdeas('backend-save-success', {
     source: saveResult?.source || 'unknown',
     recordCount: state.records.length,
@@ -590,6 +638,9 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
     hydrationCompleted,
     recordCount: state.records.length,
   });
+  setTileLinkStatus(hydrationSource === 'shared-backend'
+    ? 'Tile link: shared memory linked.'
+    : `Tile link: degraded (${hydrationSource}).`);
 
   if (!state.records.length) {
     elements.status.textContent = 'No shared Ideas records yet. Use Save or Re-seed examples.';

@@ -39,8 +39,72 @@
     }
   }
 
+  function resolveExecutionLoopTarget() {
+    if (global.StephanosExecutionLoop && typeof global.StephanosExecutionLoop.publishTileEvent === 'function') {
+      return global.StephanosExecutionLoop;
+    }
+
+    const parentWindow = global.parent;
+    if (parentWindow && parentWindow !== global && parentWindow.StephanosExecutionLoop && typeof parentWindow.StephanosExecutionLoop.publishTileEvent === 'function') {
+      return parentWindow.StephanosExecutionLoop;
+    }
+
+    return null;
+  }
+
+  function publishTileExecutionEvent(tileId, payload = {}) {
+    const normalizedTileId = String(tileId || '').trim();
+    if (!normalizedTileId) {
+      return {
+        ok: false,
+        reason: 'tile-id-required',
+      };
+    }
+
+    const eventPayload = {
+      tileId: normalizedTileId,
+      tileTitle: String(payload.tileTitle || normalizedTileId).trim(),
+      action: String(payload.action || 'unknown').trim(),
+      summary: String(payload.summary || '').trim(),
+      result: payload.result && typeof payload.result === 'object' ? payload.result : {},
+      tags: Array.isArray(payload.tags) ? payload.tags : [],
+      source: String(payload.source || 'tile-runtime').trim(),
+      timestamp: new Date().toISOString(),
+    };
+
+    const loopTarget = resolveExecutionLoopTarget();
+    if (loopTarget) {
+      loopTarget.publishTileEvent(eventPayload);
+      return {
+        ok: true,
+        mode: 'execution-loop-bridge',
+      };
+    }
+
+    try {
+      if (global.parent && global.parent !== global && typeof global.parent.postMessage === 'function') {
+        global.parent.postMessage({
+          type: 'stephanos:tile-execution-event',
+          payload: eventPayload,
+        }, '*');
+        return {
+          ok: true,
+          mode: 'post-message-bridge',
+        };
+      }
+    } catch {
+      // no-op
+    }
+
+    return {
+      ok: false,
+      reason: 'execution-loop-unavailable',
+    };
+  }
+
   global.StephanosTileContextBridge = {
     publishTileContextSnapshot,
+    publishTileExecutionEvent,
     readRegistry,
     storageKey: REGISTRY_KEY,
   };

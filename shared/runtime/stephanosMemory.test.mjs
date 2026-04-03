@@ -235,3 +235,89 @@ test('shared memory adapter falls back to local mirror when backend is unavailab
   assert.equal(adapter.readState().records['continuity::local-note'].summary, 'local fallback');
   assert.equal(adapter.diagnostics().stateClass, 'local-fallback-mirror');
 });
+
+test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
+  const storage = createStorage();
+  let putCount = 0;
+  const fetchImpl = async (_url, options = {}) => {
+    const method = options.method || 'GET';
+    if (method === 'GET') {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: {
+              schemaVersion: 2,
+              updatedAt: '2026-04-03T10:00:00.000Z',
+              records: {
+                'continuity::canonical': {
+                  schemaVersion: 2,
+                  type: 'continuity.note',
+                  source: 'server',
+                  scope: 'runtime',
+                  summary: 'Canonical backend truth',
+                  payload: { side: 'backend' },
+                  tags: ['shared'],
+                  importance: 'normal',
+                  retentionHint: 'default',
+                  createdAt: '2026-04-03T10:00:00.000Z',
+                  updatedAt: '2026-04-03T10:00:00.000Z',
+                  surface: 'shared',
+                },
+              },
+            },
+          });
+        },
+      };
+    }
+
+    putCount += 1;
+    return {
+      ok: false,
+      status: 409,
+      async text() {
+        return JSON.stringify({
+          success: false,
+          error_code: 'DURABLE_MEMORY_CONFLICT',
+          error: 'conflict',
+        });
+      },
+    };
+  };
+
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage,
+    fetchImpl,
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+  });
+
+  await adapter.hydrate();
+  adapter.writeState({
+    schemaVersion: 2,
+    updatedAt: '2026-04-03T10:00:00.000Z',
+    records: {
+      'continuity::local-change': {
+        schemaVersion: 2,
+        type: 'continuity.note',
+        source: 'local',
+        scope: 'runtime',
+        summary: 'Stale local change',
+        payload: {},
+        tags: [],
+        importance: 'normal',
+        retentionHint: 'default',
+        createdAt: '2026-04-03T10:01:00.000Z',
+        updatedAt: '2026-04-03T10:01:00.000Z',
+        surface: 'localhost',
+      },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(putCount, 1);
+  assert.equal(adapter.readState().records['continuity::canonical'].summary, 'Canonical backend truth');
+  assert.equal(adapter.diagnostics().fallbackReason, 'backend-memory-conflict-resolved-by-rehydrate');
+});

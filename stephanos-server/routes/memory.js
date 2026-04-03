@@ -33,8 +33,11 @@ router.put('/durable', (req, res, next) => {
   try {
     const state = durableMemoryService.setStore({
       schemaVersion: req.body?.schemaVersion,
+      updatedAt: req.body?.updatedAt,
       records: req.body?.records,
-    }, req.body?.source || 'runtime');
+    }, req.body?.source || 'runtime', {
+      ifUnmodifiedSince: req.body?.ifUnmodifiedSince,
+    });
 
     res.json({
       success: true,
