@@ -271,3 +271,53 @@ test('buildSupportSnapshot suppresses "No operator action required." guidance wh
   assert.match(snapshot, /blockingIssues:\n- Backend route is unresolved\./);
   assert.doesNotMatch(snapshot, /operatorGuidance:\n- No operator action required\./);
 });
+
+test('buildSupportSnapshot keeps unresolved hosted backend-target blocking when no hosted cloud path is usable', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      cloudAvailable: false,
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'hosted-web',
+        executedProvider: 'n/a',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      backendReachableState: 'no',
+      executedProvider: 'n/a',
+      operatorReason: 'No operator action required.',
+    },
+    runtimeSessionTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {
+      blockingIssues: [],
+      invariantWarnings: [],
+    },
+    runtimeContext: {
+      backendTargetResolutionSource: 'unresolved',
+      backendTargetResolvedUrl: '',
+      backendTargetFallbackUsed: false,
+      backendTargetInvalidReason: 'No non-loopback backend target resolved for hosted session.',
+      routeDiagnostics: {},
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-03T00:00:03.500Z' },
+  });
+
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- backend-target: blocked \(No non-loopback backend target resolved for hosted session\.\)/);
+  assert.match(snapshot, /- cloud-execution: not confirmed/);
+  assert.match(snapshot, /blockingIssues:\n- Backend target unresolved: No non-loopback backend target resolved for hosted session\./);
+  assert.match(snapshot, /operatorGuidance:\n- Resolve a reachable non-loopback backend target for hosted-web/);
+});

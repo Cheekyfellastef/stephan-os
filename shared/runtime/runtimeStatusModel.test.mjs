@@ -772,6 +772,48 @@ test('createRuntimeStatusModel overrides hosted cloud metadata blockers when clo
   assert.equal(status.routeEvaluations.cloud.usable, true);
 });
 
+test('createRuntimeStatusModel keeps hosted cloud launch state ready from canonical cloud operational truth without tile metadata', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: '',
+      preferredTarget: '',
+      actualTargetUsed: '',
+      backendTargetResolutionSource: 'unresolved',
+      backendTargetResolvedUrl: '',
+      backendTargetInvalidReason: 'No non-loopback backend target resolved for hosted session.',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          usable: true,
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+    },
+    activeProviderHint: 'groq',
+  });
+
+  assert.equal(status.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.routeEvaluations.cloud.available, true);
+  assert.equal(status.routeEvaluations.cloud.usable, true);
+  assert.equal(status.finalRouteTruth.routeKind, 'cloud');
+  assert.equal(status.finalRouteTruth.routeUsable, true);
+  assert.equal(status.finalRouteTruth.executedProvider, 'groq');
+  assert.equal(status.appLaunchState, 'ready');
+  assert.equal(status.fallbackActive, false);
+  assert.equal(status.runtimeTruth.diagnostics.blockingIssues.length, 0);
+});
+
 test('createRuntimeStatusModel rejects same-origin static-host fallback backend target in hosted-web sessions', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'groq',

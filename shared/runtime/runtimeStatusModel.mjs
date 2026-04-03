@@ -986,8 +986,20 @@ export function createRuntimeStatusModel({
   const selectedEvaluation = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
   const selectedRouteReachable = selectedEvaluation?.available === true;
   const selectedRouteUsable = selectedEvaluation?.usable === true;
+  const selectedRouteBlocked = Boolean(selectedEvaluation?.blockedReason);
   const tileExecutionReady = normalizedRuntimeContext?.tileTruth?.ready === true
     || normalizedRuntimeContext?.tileTruth?.executionReady === true;
+  const hostedCloudLaunchReady = normalizedRuntimeContext.sessionKind === 'hosted-web'
+    && selectedRouteKey === 'cloud'
+    && selectedRouteReachable
+    && selectedRouteUsable
+    && !selectedRouteBlocked
+    && backendAvailable
+    && routePlan.cloudAvailable
+    && Boolean(activeProvider)
+    && CLOUD_PROVIDER_KEYS.includes(activeProvider)
+    && health[activeProvider]?.ok === true
+    && !fallbackActive;
 
   const launchUnavailable = validationState === 'error' && nodeRoute.routeKind === 'unavailable';
   const launchDegraded = !launchUnavailable && (
@@ -1001,7 +1013,7 @@ export function createRuntimeStatusModel({
     || (routePlan.effectiveRouteMode === 'local-first' && !routePlan.localAvailable && nodeRoute.routeKind === 'local-desktop')
     || (routePlan.effectiveRouteMode === 'cloud-first' && !routePlan.cloudAvailable)
     || fallbackActive
-  );
+  ) && !hostedCloudLaunchReady;
   const appLaunchState = launchUnavailable ? 'unavailable' : (launchDegraded ? 'degraded' : 'ready');
 
   const headline = appLaunchState === 'unavailable'
