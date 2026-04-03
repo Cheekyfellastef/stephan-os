@@ -69,6 +69,10 @@ async function logDevStartupHealthCheck() {
 }
 
 void logDevStartupHealthCheck();
+
+if (typeof installTopLevelCommandDeckReturnControls !== 'function') {
+  throw new Error('installTopLevelCommandDeckReturnControls must be a function export from shared/runtime/commandDeckReturnControls.mjs');
+}
 installTopLevelCommandDeckReturnControls();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
