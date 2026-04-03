@@ -175,3 +175,40 @@ test('buildSupportSnapshot emits hosted backend-target diagnostics and operator 
   assert.doesNotMatch(snapshot, /No operator action required\./);
   assert.doesNotMatch(snapshot, /operatorGuidance:\n- n\/a/);
 });
+
+test('buildSupportSnapshot suppresses "No operator action required." guidance when blocking issues exist', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'unavailable',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'hosted-web',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      operatorReason: 'No operator action required.',
+    },
+    runtimeSessionTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {
+      blockingIssues: [{ message: 'Backend route is unresolved.' }],
+      invariantWarnings: [],
+    },
+    runtimeContext: {
+      routeDiagnostics: {},
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-03T00:00:03.000Z' },
+  });
+
+  assert.match(snapshot, /blockingIssues:\n- Backend route is unresolved\./);
+  assert.doesNotMatch(snapshot, /operatorGuidance:\n- No operator action required\./);
+});

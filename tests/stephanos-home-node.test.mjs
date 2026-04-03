@@ -137,14 +137,14 @@ test('resolveStephanosBackendBaseUrl uses the current LAN host before falling ba
   );
 });
 
-test('resolveStephanosBackendBaseUrl keeps hosted-web origins truthful when no home node is configured', () => {
+test('resolveStephanosBackendBaseUrl avoids static GitHub Pages origin fallback when no home node is configured', () => {
   assert.equal(
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
-    'https://cheekyfellastef.github.io',
+    'http://localhost:8787',
   );
   assert.notEqual(
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
-    'http://localhost:8787',
+    'https://cheekyfellastef.github.io',
   );
 });
 
@@ -168,6 +168,12 @@ test('probeStephanosHomeNode keeps the candidate LAN backend when health still p
     {
       fetchImpl: async () => ({
         ok: true,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          backend_target_endpoint: 'http://localhost:8787/api/ai/chat',
+        }),
         json: async () => ({
           ok: true,
           service: 'stephanos-server',

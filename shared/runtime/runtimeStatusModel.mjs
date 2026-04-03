@@ -39,6 +39,10 @@ function parseHostname(value = '') {
   }
 }
 
+function isStaticGithubPagesOrigin(value = '') {
+  return parseHostname(value).endsWith('.github.io');
+}
+
 function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
   const candidateHost = parseHostname(candidate);
   if (candidate && !isMalformedStephanosHost(candidateHost) && (allowLoopback || !isLoopbackHost(candidateHost))) {
@@ -72,7 +76,9 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     && runtimeContext.routeDiagnostics?.['local-desktop']?.configured === true;
   const deviceContext = launcherLocal || localDesktopBackendSession
     ? 'pc-local-browser'
-    : (homeNode.reachable || (homeNode.configured && isLikelyLanHost(homeNode.host)) || isLikelyLanHost(backendHost))
+    : (homeNode.reachable
+      || (homeNode.configured && isLikelyLanHost(homeNode.host))
+      || (Boolean(backendHost) && !isLoopbackHost(backendHost) && isLikelyLanHost(backendHost)))
       ? 'lan-companion'
       : 'off-network';
   const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
@@ -86,19 +92,30 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
     { allowLoopback: launcherLocal },
   );
-  const backendTargetResolvedUrl = String(runtimeContext.backendTargetResolvedUrl || compatibleActualTarget || '').trim();
-  const backendTargetResolutionSource = String(
-    runtimeContext.backendTargetResolutionSource
-    || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
-    || 'unresolved',
-  ).trim() || 'unresolved';
-  const backendTargetFallbackUsed = runtimeContext.backendTargetFallbackUsed === true
-    || (!runtimeContext.backendTargetResolvedUrl && Boolean(compatibleActualTarget));
+  const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
+  const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
+  const backendTargetResolvedUrlRaw = String(runtimeResolvedBackendTarget || compatibleActualTarget || '').trim();
+  const sameOriginStaticHostedFallbackInvalid = sessionKind === 'hosted-web'
+    && isStaticGithubPagesOrigin(frontendOrigin)
+    && Boolean(frontendOrigin)
+    && backendTargetResolvedUrlRaw === frontendOrigin;
+  const backendTargetResolvedUrl = sameOriginStaticHostedFallbackInvalid ? '' : backendTargetResolvedUrlRaw;
+  const backendTargetResolutionSource = sameOriginStaticHostedFallbackInvalid
+    ? 'unresolved'
+    : (backendTargetResolutionSourceRaw
+      || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
+      || 'unresolved');
+  const backendTargetFallbackUsed = sameOriginStaticHostedFallbackInvalid
+    ? false
+    : (runtimeContext.backendTargetFallbackUsed === true
+      || (!runtimeResolvedBackendTarget && Boolean(compatibleActualTarget)));
   const backendTargetInvalidReason = String(
     runtimeContext.backendTargetInvalidReason
-    || ((sessionKind === 'hosted-web' && !backendTargetResolvedUrl)
-      ? 'No non-loopback backend target resolved for hosted session.'
-      : ''),
+    || (sameOriginStaticHostedFallbackInvalid
+      ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
+      : ((sessionKind === 'hosted-web' && !backendTargetResolvedUrl)
+        ? 'No non-loopback backend target resolved for hosted session.'
+        : '')),
   ).trim();
 
   return {

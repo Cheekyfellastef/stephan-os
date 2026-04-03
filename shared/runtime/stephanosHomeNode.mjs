@@ -779,6 +779,7 @@ export function resolveStephanosBackendBaseUrl({
   const current = safeUrlParse(currentOrigin);
   const currentHost = current?.hostname || '';
   const currentIsNonLoopback = Boolean(currentHost) && !isLoopbackHost(currentHost);
+  const currentIsStaticGithubPagesHost = currentHost.endsWith('.github.io');
   if (current?.hostname && isLikelyLanHost(current.hostname) && !isLoopbackHost(current.hostname)) {
     if (normalizePort(current.port, DEFAULT_HOME_NODE_UI_PORT) === DEFAULT_HOME_NODE_BACKEND_PORT) {
       return current.origin;
@@ -801,7 +802,7 @@ export function resolveStephanosBackendBaseUrl({
     }
   }
 
-  if (currentIsNonLoopback && current?.origin) {
+  if (currentIsNonLoopback && current?.origin && !currentIsStaticGithubPagesHost) {
     return current.origin;
   }
 
