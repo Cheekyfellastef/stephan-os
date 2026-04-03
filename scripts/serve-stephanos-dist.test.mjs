@@ -88,6 +88,7 @@ test('existing server reuse requires runtime marker parity and not just health',
     runtimeStatusReady: true,
     moduleMimeReady: true,
     sourceTruthReady: true,
+    scriptEntryMatchesExpected: true,
   };
 
   assert.equal(
@@ -119,6 +120,7 @@ test('existing server reuse rejects stale responses when served index marker div
       runtimeStatusReady: true,
       moduleMimeReady: true,
       sourceTruthReady: true,
+      scriptEntryMatchesExpected: true,
       markerMatchesExpected: false,
     }),
     false,
@@ -137,6 +139,7 @@ test('existing server reuse rejects module MIME mismatches even when marker pari
       runtimeStatusReady: true,
       moduleMimeReady: false,
       sourceTruthReady: true,
+      scriptEntryMatchesExpected: true,
       markerMatchesExpected: true,
     }),
     false,
@@ -155,7 +158,27 @@ test('existing server reuse rejects missing runtime-status route even when healt
       runtimeStatusReady: false,
       moduleMimeReady: true,
       sourceTruthReady: true,
+      scriptEntryMatchesExpected: true,
       markerMatchesExpected: true,
+    }),
+    false,
+  );
+});
+
+test('existing server reuse rejects stale served script entry references even when marker parity passes', () => {
+  assert.equal(
+    canReuseStephanosServer({
+      payload: {
+        service: 'stephanos-dist-server',
+        distMountPath: '/apps/stephanos/dist/',
+        staticRootPath: '/workspace/stephan-os',
+      },
+      runtimeReady: true,
+      runtimeStatusReady: true,
+      moduleMimeReady: true,
+      sourceTruthReady: true,
+      markerMatchesExpected: true,
+      scriptEntryMatchesExpected: false,
     }),
     false,
   );
