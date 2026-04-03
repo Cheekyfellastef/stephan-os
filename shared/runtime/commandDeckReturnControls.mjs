@@ -49,8 +49,10 @@ function createReturnControlContainer(documentRef, windowRef, position) {
 export function installTopLevelCommandDeckReturnControls({
   windowRef = globalThis.window,
   documentRef = windowRef?.document,
+  allowEmbedded = false,
 } = {}) {
-  if (!shouldInjectTopLevelControls(windowRef) || !documentRef?.body) {
+  const canInject = allowEmbedded || shouldInjectTopLevelControls(windowRef);
+  if (!canInject || !documentRef?.body) {
     return false;
   }
 

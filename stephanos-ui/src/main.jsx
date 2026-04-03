@@ -69,7 +69,9 @@ async function logDevStartupHealthCheck() {
 }
 
 void logDevStartupHealthCheck();
-installTopLevelCommandDeckReturnControls();
+const runtimeHost = String(window.location.hostname || '').trim().toLowerCase();
+const allowEmbeddedReturnControls = runtimeHost === 'localhost' || runtimeHost === '127.0.0.1' || runtimeHost === '::1';
+installTopLevelCommandDeckReturnControls({ allowEmbedded: allowEmbeddedReturnControls });
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
