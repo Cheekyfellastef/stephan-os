@@ -1280,6 +1280,61 @@ async function startStephanos() {
         "ai.decision.made",
       ],
     });
+    const executionLoopState = {
+      sharedMemorySource: memoryHydration?.source || 'unknown',
+      memoryHydrationState: memoryHydration?.hydrationState || 'unknown',
+      aiContinuityState: 'context-ready',
+      tileIntegrationState: 'partial',
+      eventCount: 0,
+      lastEventAt: '',
+    };
+    function publishTileEventToLoop(tileEvent = {}) {
+      const tileId = String(tileEvent.tileId || '').trim();
+      if (!tileId) {
+        return {
+          ok: false,
+          reason: 'tile-id-required',
+        };
+      }
+
+      const summary = String(tileEvent.summary || `${tileId} action`).trim();
+      executionLoopState.eventCount += 1;
+      executionLoopState.lastEventAt = new Date().toISOString();
+      executionLoopState.tileIntegrationState = 'linked';
+      stephanosContinuity.pushEvent({
+        name: 'tile.execution',
+        summary,
+        source: String(tileEvent.source || 'tile-runtime').trim(),
+      });
+      stephanosMemoryGateway.persistTypedRecord({
+        id: `tile-event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: 'tile.result',
+        summary,
+        payload: {
+          tileId,
+          tileTitle: String(tileEvent.tileTitle || tileId).trim(),
+          action: String(tileEvent.action || 'unknown').trim(),
+          result: tileEvent.result && typeof tileEvent.result === 'object' ? tileEvent.result : {},
+          tags: Array.isArray(tileEvent.tags) ? tileEvent.tags : [],
+        },
+        tags: ['tile.link', `tile.${tileId}`],
+      });
+      console.info('[EXECUTION LOOP]', 'tile-event-persisted', {
+        tileId,
+        action: tileEvent.action || 'unknown',
+      });
+      return { ok: true };
+    }
+    function getExecutionLoopStatus() {
+      return {
+        sharedMemorySource: executionLoopState.sharedMemorySource,
+        memoryHydrationState: executionLoopState.memoryHydrationState,
+        aiContinuityState: executionLoopState.aiContinuityState,
+        tileIntegrationState: executionLoopState.tileIntegrationState,
+        eventCount: executionLoopState.eventCount,
+        lastEventAt: executionLoopState.lastEventAt,
+      };
+    }
     const taskQueue = createTaskQueue();
 
     initializeStephanosOperatorPanels(uiRenderer);
@@ -1291,6 +1346,18 @@ async function startStephanos() {
     window.stephanosMemory = stephanosMemory;
     window.stephanosContinuity = stephanosContinuity;
     window.stephanosEvents = eventBus;
+    window.StephanosExecutionLoop = {
+      publishTileEvent: publishTileEventToLoop,
+      getStatus: getExecutionLoopStatus,
+    };
+
+    window.addEventListener('message', (event) => {
+      const message = event?.data;
+      if (!message || message.type !== 'stephanos:tile-execution-event') {
+        return;
+      }
+      publishTileEventToLoop(message.payload || {});
+    });
 
     const agentRegistry = createAgentRegistry();
     services.registerService("agentRegistry", agentRegistry);

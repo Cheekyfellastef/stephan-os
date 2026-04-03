@@ -190,6 +190,7 @@ export function createStephanosSharedMemoryAdapter({
 } = {}) {
   let cache = readStorageState(storage, mirrorStorageKey);
   let hydrated = false;
+  let hydrationState = 'idle';
   let hydrationSource = 'local-mirror';
   let fallbackReason = 'not-hydrated';
   let lastSaveSource = 'none';
@@ -223,6 +224,8 @@ export function createStephanosSharedMemoryAdapter({
       method: 'PUT',
       body: {
         schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+        updatedAt: state.updatedAt || '',
+        ifUnmodifiedSince: state.updatedAt || '',
         records: state.records || {},
         source,
       },
@@ -239,17 +242,20 @@ export function createStephanosSharedMemoryAdapter({
       return {
         source: hydrationSource,
         hydrationCompleted: true,
+        hydrationState,
         fallbackReason,
       };
     }
 
     try {
+      hydrationState = 'hydrating';
       const response = await loadFromBackend();
       const backendState = normalizeMemoryState(response?.json?.data || {});
       updateMirror(backendState);
       hydrationSource = 'shared-backend';
       fallbackReason = '';
       hydrated = true;
+      hydrationState = 'ready';
       log('load', {
         sourceUsedOnLoad: hydrationSource,
         sourceUsedOnSave: lastSaveSource,
@@ -262,12 +268,14 @@ export function createStephanosSharedMemoryAdapter({
       return {
         source: hydrationSource,
         hydrationCompleted: true,
+        hydrationState,
         fallbackReason,
       };
     } catch (error) {
       hydrated = true;
       hydrationSource = 'local-mirror-fallback';
       fallbackReason = normalizeString(error?.code || error?.message, 'backend-unavailable');
+      hydrationState = 'degraded';
       log('load', {
         sourceUsedOnLoad: hydrationSource,
         sourceUsedOnSave: lastSaveSource,
@@ -279,6 +287,7 @@ export function createStephanosSharedMemoryAdapter({
       return {
         source: hydrationSource,
         hydrationCompleted: true,
+        hydrationState,
         fallbackReason,
       };
     }
@@ -289,6 +298,7 @@ export function createStephanosSharedMemoryAdapter({
   }
 
   function writeState(state) {
+    const previousState = normalizeMemoryState(cache);
     const normalizedState = normalizeMemoryState(state);
     updateMirror(normalizedState);
 
@@ -301,6 +311,7 @@ export function createStephanosSharedMemoryAdapter({
       .then((response) => {
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
+        hydrationState = 'ready';
         log('save', {
           sourceUsedOnLoad: hydrationSource,
           sourceUsedOnSave: lastSaveSource,
@@ -312,8 +323,25 @@ export function createStephanosSharedMemoryAdapter({
         });
       })
       .catch((error) => {
+        const isConflict = Number(error?.status) === 409 || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
         lastSaveSource = 'local-mirror-fallback';
-        fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
+        fallbackReason = isConflict
+          ? 'backend-memory-conflict'
+          : normalizeString(error?.code || error?.message, 'backend-save-failed');
+        hydrationState = isConflict ? 'degraded' : hydrationState;
+        if (isConflict) {
+          void loadFromBackend()
+            .then((response) => {
+              const backendState = normalizeMemoryState(response?.json?.data || {});
+              updateMirror(backendState);
+              hydrationSource = 'shared-backend';
+              fallbackReason = 'backend-memory-conflict-resolved-by-rehydrate';
+              hydrationState = 'ready';
+            })
+            .catch(() => {
+              updateMirror(previousState);
+            });
+        }
         log('save', {
           sourceUsedOnLoad: hydrationSource,
           sourceUsedOnSave: lastSaveSource,
@@ -338,6 +366,7 @@ export function createStephanosSharedMemoryAdapter({
         sourceUsedOnLoad: hydrationSource,
         sourceUsedOnSave: lastSaveSource,
         hydrationCompleted: hydrated,
+        hydrationState,
         fallbackReason,
         backendDiagnostics: lastDiagnostics,
       };

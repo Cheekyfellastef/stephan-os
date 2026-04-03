@@ -106,8 +106,21 @@ export class DurableMemoryService {
     return sanitizeStore(this.store);
   }
 
-  setStore(payload = {}, source = 'runtime') {
+  setStore(payload = {}, source = 'runtime', options = {}) {
     this.load();
+    const ifUnmodifiedSince = normalizeString(options?.ifUnmodifiedSince);
+    const currentUpdatedAt = normalizeString(this.store?.updatedAt);
+    if (ifUnmodifiedSince && currentUpdatedAt && ifUnmodifiedSince !== currentUpdatedAt) {
+      const conflictError = new Error('Durable memory write rejected because canonical state changed since client hydration.');
+      conflictError.code = 'DURABLE_MEMORY_CONFLICT';
+      conflictError.status = 409;
+      conflictError.details = {
+        ifUnmodifiedSince,
+        currentUpdatedAt,
+      };
+      throw conflictError;
+    }
+
     this.store = sanitizeStore({
       ...payload,
       updatedAt: new Date().toISOString(),
