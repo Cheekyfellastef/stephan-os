@@ -723,6 +723,9 @@ test('createRuntimeStatusModel keeps hosted cloud route usable when cloud execut
   assert.equal(status.finalRouteTruth.routeKind, 'cloud');
   assert.equal(status.finalRouteTruth.routeUsable, true);
   assert.equal(status.finalRouteTruth.executedProvider, 'groq');
+  assert.equal(status.appLaunchState, 'ready');
+  assert.equal(status.fallbackActive, false);
+  assert.equal(status.finalRouteTruth.fallbackActive, false);
 });
 
 test('createRuntimeStatusModel overrides hosted cloud metadata blockers when cloud execution is confirmed', () => {

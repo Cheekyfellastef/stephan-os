@@ -188,11 +188,15 @@ export function adjudicateRuntimeTruth({
   const executableProviderCandidate = activeProviderTruth || selectedProviderTruth;
   const executableProviderValidated = isSelectedProviderHealthy(executableProviderCandidate, providerHealth);
   const executableProvider = executableProviderValidated ? executableProviderCandidate : '';
-  const fallbackProviderUsed = Boolean(executableProvider && requestedProvider && executableProvider !== requestedProvider);
+  const fallbackProviderUsed = Boolean(
+    executableProvider
+    && selectedProviderTruth
+    && executableProvider !== selectedProviderTruth,
+  );
   const memoryTruth = normalizeMemoryTruth(context.memoryTruth);
   const tileTruth = normalizeTileTruth(context.tileTruth);
   const fallbackReason = fallbackProviderUsed
-    ? `Requested ${requestedProvider}, executed ${executableProvider}.`
+    ? `Selected ${selectedProviderTruth}, executed ${executableProvider}.`
     : (truth.fallbackActive === true || fallbackActive === true)
       ? 'Fallback route active.'
       : '';

@@ -191,7 +191,7 @@ test('adjudicator promotes selected provider to executable when health is ok and
   assert.equal(adjudicated.runtimeTruth.selectedProvider, 'ollama');
 });
 
-test('adjudicator marks fallback provider usage when executable provider differs from requested provider', () => {
+test('adjudicator treats hosted cloud provider selection drift from requested intent as non-fallback when executable matches selected provider', () => {
   const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
     finalRouteTruth: {
       sessionKind: 'hosted-web',
@@ -220,8 +220,8 @@ test('adjudicator marks fallback provider usage when executable provider differs
   }));
 
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'groq');
-  assert.equal(adjudicated.runtimeTruth.provider.fallbackProviderUsed, true);
-  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Requested ollama, executed groq/);
+  assert.equal(adjudicated.runtimeTruth.provider.fallbackProviderUsed, false);
+  assert.equal(adjudicated.runtimeTruth.provider.fallbackReason, '');
 });
 
 test('adjudicator emits blocking issue when shared write target appears before hydration completes', () => {
@@ -273,8 +273,42 @@ test('adjudicator canonical truth keeps provider stages and fallback reason in o
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.requestedProvider, 'ollama');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.selectedProvider, 'groq');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.executedProvider, 'groq');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.fallbackActive, false);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.fallbackReason, '');
+});
+
+test('adjudicator marks fallback when executable provider differs from selected provider', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeSelectedProvider: 'groq',
+    selectedProvider: 'groq',
+    activeProvider: 'gemini',
+    providerHealth: {
+      groq: { ok: false, reason: 'rate-limited' },
+      gemini: { ok: true, provider: 'gemini' },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'gemini');
+  assert.equal(adjudicated.runtimeTruth.provider.fallbackProviderUsed, true);
+  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Selected groq, executed gemini/);
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.fallbackActive, true);
-  assert.match(adjudicated.canonicalRouteRuntimeTruth.fallbackReason, /Requested ollama, executed groq/);
 });
 
 test('adjudicator keeps local-desktop route truth when provider degrades to mock fallback', () => {
@@ -339,5 +373,5 @@ test('adjudicator keeps local-desktop route truth when provider degrades to mock
   assert.equal(adjudicated.runtimeTruth.route.fallbackActive, true);
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'mock');
   assert.equal(adjudicated.runtimeTruth.route.winningReason, 'Backend online locally; local-desktop stays valid');
-  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Requested ollama, executed mock/);
+  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Selected ollama, executed mock/);
 });

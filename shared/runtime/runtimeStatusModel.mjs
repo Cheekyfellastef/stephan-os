@@ -942,13 +942,6 @@ export function createRuntimeStatusModel({
   const executableProviderHealthy = Boolean(hintedProvider && health[hintedProvider]?.ok === true);
   const activeProvider = executableProviderHealthy ? hintedProvider : '';
 
-  const fallbackActive = Boolean(
-    activeProviderHint
-    && activeProvider
-    && activeProvider !== routeSelectedProvider
-    && providerMode !== 'explicit'
-  );
-
   const activeRouteKind = LOCAL_PROVIDER_KEYS.includes(activeProvider)
     ? 'local'
     : CLOUD_PROVIDER_KEYS.includes(activeProvider)
@@ -972,6 +965,15 @@ export function createRuntimeStatusModel({
     && Boolean(activeProvider)
     && CLOUD_PROVIDER_KEYS.includes(activeProvider)
     && health[activeProvider]?.ok === true;
+  const hostedCloudOperationalSelection = hostedCloudExecutionConfirmed
+    && activeProvider === routeSelectedProvider;
+  const fallbackActive = Boolean(
+    activeProvider
+    && routeSelectedProvider
+    && activeProvider !== routeSelectedProvider
+    && providerMode !== 'explicit'
+    && !hostedCloudOperationalSelection
+  );
   if (hostedCloudExecutionConfirmed && selectedRouteKey === 'cloud') {
     nodeRoute.routeEvaluations = {
       ...nodeRoute.routeEvaluations,
