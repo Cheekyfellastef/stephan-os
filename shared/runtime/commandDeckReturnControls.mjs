@@ -56,19 +56,34 @@ export function installTopLevelCommandDeckReturnControls({
     return false;
   }
 
-  if (documentRef.querySelector(`[${CONTROL_ATTRIBUTE}="top"]`) || documentRef.querySelector(`[${CONTROL_ATTRIBUTE}="bottom"]`)) {
+  const hasTopControl = Boolean(documentRef.querySelector(`[${CONTROL_ATTRIBUTE}="top"]`));
+  const hasBottomControl = Boolean(documentRef.querySelector(`[${CONTROL_ATTRIBUTE}="bottom"]`));
+  if (hasTopControl && hasBottomControl) {
     return false;
   }
 
   ensureControlStyles(documentRef);
-  const topControl = createReturnControlContainer(documentRef, windowRef, 'top');
-  const bottomControl = createReturnControlContainer(documentRef, windowRef, 'bottom');
-  if (!topControl || !bottomControl) {
-    return false;
+  let installedAnyControl = false;
+
+  if (!hasTopControl) {
+    const topControl = createReturnControlContainer(documentRef, windowRef, 'top');
+    if (!topControl) {
+      return false;
+    }
+    documentRef.body.prepend(topControl);
+    installedAnyControl = true;
   }
-  documentRef.body.prepend(topControl);
-  documentRef.body.appendChild(bottomControl);
-  return true;
+
+  if (!hasBottomControl) {
+    const bottomControl = createReturnControlContainer(documentRef, windowRef, 'bottom');
+    if (!bottomControl) {
+      return false;
+    }
+    documentRef.body.appendChild(bottomControl);
+    installedAnyControl = true;
+  }
+
+  return installedAnyControl;
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {

@@ -98,3 +98,24 @@ test('installTopLevelCommandDeckReturnControls injects top and bottom controls w
   assert.equal(bodyChildren[0].getAttribute('data-command-deck-return-control'), 'top');
   assert.equal(bodyChildren[1].getAttribute('data-command-deck-return-control'), 'bottom');
 });
+
+test('installTopLevelCommandDeckReturnControls restores any missing top-level control', () => {
+  const { documentRef, bodyChildren } = createMockDocument();
+  const selfRef = {};
+  const windowRef = {
+    document: documentRef,
+    self: selfRef,
+    top: selfRef,
+    location: { assign() {}, href: 'http://127.0.0.1:4173/apps/stephanos/dist/' },
+  };
+
+  const initialInstall = installTopLevelCommandDeckReturnControls({ windowRef, documentRef, allowEmbedded: true });
+  assert.equal(initialInstall, true);
+  bodyChildren.splice(0, 1);
+
+  const repairedInstall = installTopLevelCommandDeckReturnControls({ windowRef, documentRef, allowEmbedded: true });
+  assert.equal(repairedInstall, true);
+  assert.equal(bodyChildren.length, 2);
+  assert.equal(bodyChildren[0].getAttribute('data-command-deck-return-control'), 'top');
+  assert.equal(bodyChildren[1].getAttribute('data-command-deck-return-control'), 'bottom');
+});
