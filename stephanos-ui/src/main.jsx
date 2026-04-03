@@ -10,9 +10,6 @@ import {
 } from "./runtimeInfo";
 import { createStephanosLocalUrls } from "../../shared/runtime/stephanosLocalUrls.mjs";
 import { installTopLevelCommandDeckReturnControls } from "../../shared/runtime/commandDeckReturnControls.mjs";
-HEAD;
-
-cockpit - stable - baseline;
 
 // LIVE SOURCE OF TRUTH: this Vite entry boots the Stephanos Mission Console UI from stephanos-ui/src.
 // Production output is generated into apps/stephanos/dist and embedded by the root launcher.
@@ -99,8 +96,3 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     </AIStoreProvider>
   </React.StrictMode>,
 );
-
-if (typeof installTopLevelCommandDeckReturnControls !== "function") {
-  throw new Error("Stephanos runtime return-control installer is unavailable");
-}
-installTopLevelCommandDeckReturnControls();
