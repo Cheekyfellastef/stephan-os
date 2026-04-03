@@ -83,9 +83,23 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   );
   const compatibleActualTarget = resolveCompatibleUrl(
     runtimeContext.actualTargetUsed,
-    homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : '') || frontendOrigin,
+    homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
     { allowLoopback: launcherLocal },
   );
+  const backendTargetResolvedUrl = String(runtimeContext.backendTargetResolvedUrl || compatibleActualTarget || '').trim();
+  const backendTargetResolutionSource = String(
+    runtimeContext.backendTargetResolutionSource
+    || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
+    || 'unresolved',
+  ).trim() || 'unresolved';
+  const backendTargetFallbackUsed = runtimeContext.backendTargetFallbackUsed === true
+    || (!runtimeContext.backendTargetResolvedUrl && Boolean(compatibleActualTarget));
+  const backendTargetInvalidReason = String(
+    runtimeContext.backendTargetInvalidReason
+    || ((sessionKind === 'hosted-web' && !backendTargetResolvedUrl)
+      ? 'No non-loopback backend target resolved for hosted session.'
+      : ''),
+  ).trim();
 
   return {
     frontendOrigin,
@@ -109,6 +123,10 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
       ? runtimeContext.routeDiagnostics
       : {},
+    backendTargetResolutionSource,
+    backendTargetResolvedUrl,
+    backendTargetFallbackUsed,
+    backendTargetInvalidReason,
     memoryTruth: runtimeContext.memoryTruth && typeof runtimeContext.memoryTruth === 'object'
       ? runtimeContext.memoryTruth
       : {},
@@ -371,9 +389,19 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     : (runtimeContext.backendLocal
       ? 'Backend online locally; local-desktop stays valid and will use bundled dist UI until a live UI probe is available'
       : 'Backend online from local desktop session; using bundled dist UI until a live UI probe is published');
+  const localDesktopProbeGapBlockedReason = 'backend is online locally, but no explicit live UI route was published';
   const localDesktopBlockedReason = localDesktopProbeAvailable
     ? ''
-    : 'backend is online locally, but no explicit live UI route was published';
+    : localDesktopProbeGapBlockedReason;
+  const localDesktopExplicitBlockedReason = String(localDesktopProbe.blockedReason || '').trim();
+  const localDesktopHasExplicitBlocker = Boolean(
+    localDesktopExplicitBlockedReason
+    && localDesktopExplicitBlockedReason !== localDesktopProbeGapBlockedReason,
+  );
+  const localDesktopUsable = localDesktopAvailable && !(
+    localDesktopProbe.usable === false
+    && localDesktopHasExplicitBlocker
+  );
 
   const evaluations = {
     'local-desktop': createRouteEvaluation('local-desktop', {
@@ -392,6 +420,7 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           ? (localDesktopProbe.blockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session',
+      usable: localDesktopUsable,
     }, {
       ...localDesktopProbe,
       available: localDesktopAvailable,
@@ -407,6 +436,7 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           ? localDesktopBlockedReason
           : 'backend is offline')
         : 'not a local desktop session'),
+      usable: localDesktopUsable,
     }),
     'home-node': createRouteEvaluation('home-node', {
       configured: effectiveHomeNodeConfigured,

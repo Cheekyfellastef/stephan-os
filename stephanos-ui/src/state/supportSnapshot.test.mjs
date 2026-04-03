@@ -123,3 +123,55 @@ test('buildSupportSnapshot does not promote selected provider to executable when
   assert.match(snapshot, /Selected Provider State: unknown/);
   assert.doesNotMatch(snapshot, /Executable Provider: ollama/);
 });
+
+
+test('buildSupportSnapshot emits hosted backend-target diagnostics and operator guidance when unresolved', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'unavailable',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'hosted-web',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      backendReachableState: 'no',
+      operatorReason: 'n/a',
+    },
+    runtimeSessionTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+    },
+    runtimeRouteTruth: {
+      winningReason: '',
+    },
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {
+      blockingIssues: [],
+      invariantWarnings: [],
+    },
+    runtimeContext: {
+      backendTargetResolutionSource: 'session-restore',
+      backendTargetResolvedUrl: '',
+      backendTargetFallbackUsed: false,
+      backendTargetInvalidReason: 'Saved backend target was loopback and rejected for hosted session.',
+      routeDiagnostics: {},
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-03T00:00:02.000Z' },
+  });
+
+  assert.match(snapshot, /Backend Target Resolution Source: session-restore/);
+  assert.match(snapshot, /Backend Target Resolved URL: n\/a/);
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- backend-target: blocked \(Saved backend target was loopback and rejected for hosted session\.\)/);
+  assert.match(snapshot, /blockingIssues:\n- Backend target unresolved: Saved backend target was loopback and rejected for hosted session\./);
+  assert.match(snapshot, /operatorGuidance:\n- Resolve a reachable non-loopback backend target for hosted-web/);
+  assert.doesNotMatch(snapshot, /No operator action required\./);
+  assert.doesNotMatch(snapshot, /operatorGuidance:\n- n\/a/);
+});

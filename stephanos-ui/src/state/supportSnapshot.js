@@ -36,6 +36,46 @@ function summarizeRouteDiagnostics(routeDiagnostics) {
   return entries.length > 0 ? entries : ['- n/a'];
 }
 
+
+function hasMeaningfulDiagnostics(lines = []) {
+  return Array.isArray(lines) && lines.some((line) => line !== '- n/a');
+}
+
+function buildHostedBackendTargetGuidance({
+  sessionKind,
+  selectedRouteKind,
+  backendTargetInvalidReason,
+  backendTargetResolvedUrl,
+  backendTargetResolutionSource,
+  backendTargetFallbackUsed,
+} = {}) {
+  const hostedSession = sessionKind === 'hosted-web';
+  const routeUnavailable = selectedRouteKind === 'unavailable';
+  const unresolved = !backendTargetResolvedUrl || backendTargetResolvedUrl === 'n/a';
+  if (!hostedSession || (!routeUnavailable && !backendTargetInvalidReason && !unresolved)) {
+    return null;
+  }
+
+  const reason = asText(
+    backendTargetInvalidReason,
+    unresolved
+      ? 'Hosted runtime could not resolve a non-loopback backend target.'
+      : 'Hosted backend target is unresolved.',
+  );
+
+  return {
+    reason,
+    summary: [
+      `- backend-target: blocked (${reason})`,
+      `- resolution-source: ${asText(backendTargetResolutionSource, 'unresolved')}`,
+      `- fallback-used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
+    ],
+    blockingIssue: `Backend target unresolved: ${reason}`,
+    operatorGuidance: 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.',
+  };
+}
+
+
 export function buildSupportSnapshot({
   runtimeStatus,
   routeTruthView,
@@ -54,7 +94,28 @@ export function buildSupportSnapshot({
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
   const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'n/a');
+  const backendTargetResolutionSource = asText(runtimeContext?.backendTargetResolutionSource, 'n/a');
+  const backendTargetResolvedUrl = asText(runtimeContext?.backendTargetResolvedUrl, 'n/a');
+  const backendTargetFallbackUsed = runtimeContext?.backendTargetFallbackUsed === true;
+  const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
+  const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
+  const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
+    sessionKind: canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind,
+    selectedRouteKind,
+    backendTargetInvalidReason: runtimeContext?.backendTargetInvalidReason,
+    backendTargetResolvedUrl: runtimeContext?.backendTargetResolvedUrl,
+    backendTargetResolutionSource: runtimeContext?.backendTargetResolutionSource,
+    backendTargetFallbackUsed,
+  });
+  const routeDiagnosticsSummary = summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics);
+  const effectiveRouteDiagnosticsSummary = hasMeaningfulDiagnostics(routeDiagnosticsSummary)
+    ? routeDiagnosticsSummary
+    : (hostedBackendTargetGuidance?.summary || routeDiagnosticsSummary);
+
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
+  if (hostedBackendTargetGuidance?.blockingIssue) {
+    blockingIssues.push(hostedBackendTargetGuidance.blockingIssue);
+  }
   const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || []).map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown');
 
   const guidanceItems = [];
@@ -64,7 +125,10 @@ export function buildSupportSnapshot({
   if (runtimeContext?.restoreDecision) {
     guidanceItems.push(runtimeContext.restoreDecision);
   }
-  if (blockingIssues.length === 0 && invariantWarnings.length === 0) {
+  if (hostedBackendTargetGuidance?.operatorGuidance) {
+    guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
+  }
+  if (blockingIssues.length === 0 && invariantWarnings.length === 0 && !hostedBackendTargetGuidance) {
     guidanceItems.push('No blocking route invariants detected.');
   }
 
@@ -127,7 +191,11 @@ export function buildSupportSnapshot({
     `UI Source: ${asText(runtimeStatus?.uiSource)}`,
     `UI Source Fingerprint: ${asText(runtimeStatus?.uiSourceFingerprint)}`,
     `Debug Console: ${asText(runtimeStatus?.debugConsole)}`,
-    `Selected Route Kind: ${asText(routeTruthView?.routeKind, 'n/a')}`,
+    `Backend Target Resolution Source: ${backendTargetResolutionSource}`,
+    `Backend Target Resolved URL: ${backendTargetResolvedUrl}`,
+    `Backend Target Fallback Used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
+    `Backend Target Invalid Reason: ${backendTargetInvalidReason}`,
+    `Selected Route Kind: ${selectedRouteKind}`,
     `Preferred Target: ${asText(routeTruthView?.preferredTarget, 'n/a')}`,
     `Actual Target Used: ${asText(routeTruthView?.actualTarget, 'n/a')}`,
     `Winning Reason: ${asText(runtimeRouteTruth?.winningReason || routeTruthView?.winnerReason, 'n/a')}`,
@@ -138,7 +206,7 @@ export function buildSupportSnapshot({
     `Executable Provider: ${asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
     '',
     'routeDiagnosticsSummary:',
-    ...summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics),
+    ...effectiveRouteDiagnosticsSummary,
     '',
     'blockingIssues:',
     ...asList(blockingIssues),

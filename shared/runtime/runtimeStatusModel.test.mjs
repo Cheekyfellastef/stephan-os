@@ -614,3 +614,66 @@ test('createRuntimeStatusModel gates ready launch state on selected route usabil
   assert.equal(readyStatus.appLaunchState, 'ready');
   assert.equal(readyStatus.finalRouteTruth.routeUsable, true);
 });
+
+
+test('createRuntimeStatusModel keeps local-desktop usable truth coherent with winning route and executable provider', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          usable: false,
+          blockedReason: 'backend is online locally, but no explicit live UI route was published',
+          reason: 'Backend online locally; local-desktop stays valid and will use bundled dist UI until a live UI probe is available',
+        },
+      },
+      tileTruth: {
+        ready: true,
+        launchSurface: 'mission-console',
+      },
+    },
+  });
+
+  assert.equal(status.finalRouteTruth.routeKind, 'local-desktop');
+  assert.equal(status.finalRouteTruth.routeUsable, true);
+  assert.equal(status.finalRouteTruth.executedProvider, 'ollama');
+  assert.equal(status.finalRouteTruth.winnerReason.includes('Backend online locally'), true);
+  assert.equal(status.dependencySummary, 'Local Ollama ready');
+});
+
+test('createRuntimeStatusModel records unresolved hosted backend target metadata in runtime context', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: '',
+      preferredTarget: '',
+      actualTargetUsed: '',
+      nodeAddressSource: 'session-restore',
+    },
+  });
+
+  assert.equal(status.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'unresolved');
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.match(status.runtimeContext.backendTargetInvalidReason, /No non-loopback backend target resolved/);
+});
