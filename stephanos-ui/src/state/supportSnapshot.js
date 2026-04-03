@@ -48,6 +48,9 @@ function isNoOperatorActionGuidance(value = '') {
 function buildHostedBackendTargetGuidance({
   sessionKind,
   selectedRouteKind,
+  selectedRouteReachableState,
+  routeUsableState,
+  executedProvider,
   backendTargetInvalidReason,
   backendTargetResolvedUrl,
   backendTargetResolutionSource,
@@ -56,6 +59,9 @@ function buildHostedBackendTargetGuidance({
   const hostedSession = sessionKind === 'hosted-web';
   const routeUnavailable = selectedRouteKind === 'unavailable';
   const unresolved = !backendTargetResolvedUrl || backendTargetResolvedUrl === 'n/a';
+  const routeReachable = String(selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
+  const routeUsable = String(routeUsableState || '').trim().toLowerCase() === 'yes';
+  const cloudExecutionOperational = selectedRouteKind === 'cloud' && routeReachable && routeUsable;
   if (!hostedSession || (!routeUnavailable && !backendTargetInvalidReason && !unresolved)) {
     return null;
   }
@@ -66,16 +72,24 @@ function buildHostedBackendTargetGuidance({
       ? 'Hosted runtime could not resolve a non-loopback backend target.'
       : 'Hosted backend target is unresolved.',
   );
+  const blocked = routeUnavailable || !routeUsable || !routeReachable;
+  const statusLabel = blocked ? 'blocked' : 'informational';
+  const executionLabel = cloudExecutionOperational
+    ? asText(executedProvider, 'cloud provider')
+    : 'none';
 
   return {
     reason,
     summary: [
-      `- backend-target: blocked (${reason})`,
+      `- backend-target: ${statusLabel} (${reason})`,
       `- resolution-source: ${asText(backendTargetResolutionSource, 'unresolved')}`,
       `- fallback-used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
+      `- cloud-execution: ${cloudExecutionOperational ? `operational (${executionLabel})` : 'not confirmed'}`,
     ],
-    blockingIssue: `Backend target unresolved: ${reason}`,
-    operatorGuidance: 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.',
+    blockingIssue: blocked ? `Backend target unresolved: ${reason}` : '',
+    operatorGuidance: blocked
+      ? 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.'
+      : '',
   };
 }
 
@@ -106,6 +120,9 @@ export function buildSupportSnapshot({
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     sessionKind: canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind,
     selectedRouteKind,
+    selectedRouteReachableState: routeTruthView?.selectedRouteReachableState,
+    routeUsableState: routeTruthView?.routeUsableState,
+    executedProvider: canonicalTruth.executedProvider || routeTruthView?.executedProvider,
     backendTargetInvalidReason: runtimeContext?.backendTargetInvalidReason,
     backendTargetResolvedUrl: runtimeContext?.backendTargetResolvedUrl,
     backendTargetResolutionSource: runtimeContext?.backendTargetResolutionSource,

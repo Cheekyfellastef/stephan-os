@@ -678,6 +678,53 @@ test('createRuntimeStatusModel records unresolved hosted backend target metadata
   assert.match(status.runtimeContext.backendTargetInvalidReason, /No non-loopback backend target resolved/);
 });
 
+test('createRuntimeStatusModel keeps hosted cloud route usable when cloud execution is ready even if backend target metadata is unresolved', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: '',
+      preferredTarget: '',
+      actualTargetUsed: '',
+      nodeAddressSource: 'route-diagnostics',
+      backendTargetResolutionSource: 'unresolved',
+      backendTargetResolvedUrl: '',
+      backendTargetInvalidReason: 'No non-loopback backend target resolved for hosted session.',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          usable: true,
+          source: 'backend-cloud-session',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+      tileTruth: {
+        ready: true,
+        launchSurface: 'mission-console',
+      },
+    },
+    activeProviderHint: 'groq',
+  });
+
+  assert.equal(status.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'unresolved');
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.match(status.runtimeContext.backendTargetInvalidReason, /No non-loopback backend target resolved/);
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.cloudRouteReachable, true);
+  assert.equal(status.finalRouteTruth.routeKind, 'cloud');
+  assert.equal(status.finalRouteTruth.routeUsable, true);
+  assert.equal(status.finalRouteTruth.executedProvider, 'groq');
+});
+
 test('createRuntimeStatusModel rejects same-origin static-host fallback backend target in hosted-web sessions', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'groq',
