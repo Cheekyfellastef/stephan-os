@@ -146,6 +146,7 @@ const expectedFields = [
   'buildTargetIdentifier',
   'runtimeId',
   'runtimeMarker',
+  'gitCommit',
   'sourceTruth',
 ];
 
@@ -156,6 +157,8 @@ for (const [label, metadata] of metadataSources) {
         ? 'Stephanos dist was not generated from the live Vite source'
         : field === 'sourceFingerprint'
           ? 'Stephanos dist metadata is stale'
+          : field === 'gitCommit'
+            ? 'Stephanos dist metadata commit marker is stale (served dist appears behind current repository commit)'
           : `Stephanos dist metadata mismatch for ${field}`;
       fail(`${message}: expected "${expectedMetadata[field]}", found "${metadata?.[field]}" in ${label}. Rebuild with: npm run stephanos:build`);
     }

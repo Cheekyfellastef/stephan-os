@@ -20,7 +20,27 @@ test('verify fails fast when dist metadata is stale', () => {
   try {
     assert.throws(
       () => execFileSync('node', [verifyScriptPath], { encoding: 'utf8' }),
-      /Stephanos dist metadata mismatch for runtimeMarker|inconsistent between dist\/index\.html and stephanos-build\.json/,
+      /metadata mismatch for runtimeMarker|metadata is stale|inconsistent between dist\/index\.html and stephanos-build\.json/,
+    );
+  } finally {
+    writeFileSync(metadataPath, originalMetadataRaw);
+  }
+});
+
+test('verify fails when dist metadata git commit marker is stale', () => {
+  const originalMetadataRaw = readFileSync(metadataPath, 'utf8');
+  const originalMetadata = JSON.parse(originalMetadataRaw);
+  const staleMetadata = {
+    ...originalMetadata,
+    gitCommit: 'stale123',
+  };
+
+  writeFileSync(metadataPath, `${JSON.stringify(staleMetadata, null, 2)}\n`);
+
+  try {
+    assert.throws(
+      () => execFileSync('node', [verifyScriptPath], { encoding: 'utf8' }),
+      /commit marker is stale|metadata mismatch for gitCommit|metadata is stale|inconsistent between dist\/index\.html and stephanos-build\.json/,
     );
   } finally {
     writeFileSync(metadataPath, originalMetadataRaw);
