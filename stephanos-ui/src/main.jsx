@@ -6,6 +6,8 @@ import { buildApiUrl } from './ai/apiConfig';
 import './styles.css';
 import { STEPHANOS_UI_BOOT_LOG, STEPHANOS_UI_BUILD_METADATA } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
+import { installTopLevelCommandDeckReturnControls } from '../../shared/runtime/commandDeckReturnControls.mjs';
+
 
 // LIVE SOURCE OF TRUTH: this Vite entry boots the Stephanos Mission Console UI from stephanos-ui/src.
 // Production output is generated into apps/stephanos/dist and embedded by the root launcher.
