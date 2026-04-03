@@ -57,6 +57,36 @@ test('hosted cloud unresolved backend-target informational issues do not degrade
   assert.match(projection.summary, /blockingIssues n\/a/);
 });
 
+
+test('hosted canonical cloud ready truth is not overridden by compatibility degraded/dist hints', () => {
+  const projection = buildStephanosTileTruthProjection(createProject({
+    dependencyState: 'degraded',
+    runtimeStatusModel: {
+      appLaunchState: 'degraded',
+      preferredRoute: 'dist',
+      selectedRoute: 'dist',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+    },
+  }));
+
+  assert.equal(projection.launchState, 'ready');
+  assert.equal(projection.routeKind, 'cloud');
+  assert.equal(projection.executableProvider, 'groq');
+  assert.equal(projection.fallbackActive, 'no');
+  assert.equal(projection.drift, true);
+  assert.match(projection.diagnosticLabel, /route:dist->cloud/);
+  assert.doesNotMatch(projection.summary, /launch degraded/);
+  assert.doesNotMatch(projection.summary, /route dist/);
+});
+
 test('hosted cloud with executable groq and no fallback projects cloud/groq truth', () => {
   const projection = buildStephanosTileTruthProjection(createProject());
   assert.equal(projection.routeKind, 'cloud');

@@ -315,7 +315,7 @@ test('renderProjectRegistry shows explicit diagnostic when Stephanos canonical l
     renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
     const tile = globalThis.document.getElementById('project-registry').children[0];
     assert.match(tile.__innerHTML, /Truth drift detected/);
-    assert.equal(tile.className.includes('app-tile-degraded'), true);
+    assert.equal(tile.className.includes('app-tile-degraded'), false);
   } finally {
     globalThis.document = originalDocument;
   }
