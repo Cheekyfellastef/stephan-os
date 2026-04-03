@@ -32,6 +32,12 @@ function toYesNoUnknown(value) {
   return 'unknown';
 }
 
+function asBooleanOrNull(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
 function buildCanonicalSnapshot(runtimeStatusModel = {}) {
   const canonical = runtimeStatusModel?.canonicalRouteRuntimeTruth;
   const compatibility = runtimeStatusModel?.runtimeTruthSnapshot;
@@ -46,38 +52,88 @@ function buildCanonicalSnapshot(runtimeStatusModel = {}) {
   return { snapshot: null, source: 'unavailable' };
 }
 
+function pickRouteKind(snapshot = {}) {
+  return normalizeRouteKind(snapshot?.winningRoute || snapshot?.selectedRouteKind || snapshot?.routeKind);
+}
+
+function pickLaunchState(snapshot = {}, runtimeStatusModel = {}, project = {}) {
+  const canonicalLaunchState = normalizeLaunchState(snapshot?.appLaunchState || snapshot?.launchState);
+  if (snapshot && typeof snapshot === 'object') {
+    return canonicalLaunchState;
+  }
+  return normalizeLaunchState(runtimeStatusModel?.appLaunchState || project?.dependencyState);
+}
+
+function buildCompatibilityProjection(runtimeStatusModel = {}, project = {}) {
+  const finalRoute = runtimeStatusModel?.finalRoute;
+  const finalRouteTruth = runtimeStatusModel?.finalRouteTruth;
+
+  return {
+    launchState: normalizeLaunchState(runtimeStatusModel?.appLaunchState || project?.dependencyState),
+    routeKind: normalizeRouteKind(
+      runtimeStatusModel?.preferredRoute
+      || runtimeStatusModel?.selectedRoute
+      || finalRouteTruth?.routeKind
+      || finalRoute?.routeKind,
+    ),
+    selectedRouteReachable: toYesNoUnknown(
+      runtimeStatusModel?.cloudRouteReachable === true
+        ? true
+        : asBooleanOrNull(runtimeStatusModel?.backendReachable),
+    ),
+    selectedRouteUsable: toYesNoUnknown(asBooleanOrNull(runtimeStatusModel?.routeUsable)),
+    executableProvider: normalizeProvider(runtimeStatusModel?.executedProvider),
+    fallbackActive: toYesNoUnknown(asBooleanOrNull(runtimeStatusModel?.fallbackActive)),
+    blockingIssues: normalizeBlockingIssues(runtimeStatusModel?.blockingIssueCodes),
+  };
+}
+
 export function buildStephanosTileTruthProjection(project = {}) {
   const runtimeStatusModel = project?.runtimeStatusModel && typeof project.runtimeStatusModel === 'object'
     ? project.runtimeStatusModel
     : {};
   const { snapshot, source } = buildCanonicalSnapshot(runtimeStatusModel);
 
-  const canonicalLaunchState = normalizeLaunchState(snapshot?.appLaunchState);
-  const canonicalRouteKind = normalizeRouteKind(snapshot?.winningRoute);
+  const launchState = pickLaunchState(snapshot, runtimeStatusModel, project);
+  const canonicalRouteKind = pickRouteKind(snapshot || {});
   const canonicalProvider = normalizeProvider(snapshot?.executedProvider);
   const canonicalFallbackState = toYesNoUnknown(snapshot?.fallbackActive);
   const canonicalBlockingIssues = normalizeBlockingIssues(snapshot?.blockingIssueCodes);
   const selectedRouteReachable = toYesNoUnknown(snapshot?.routeReachable);
   const selectedRouteUsable = toYesNoUnknown(snapshot?.routeUsable);
 
-  const compatibilityLaunchState = normalizeLaunchState(runtimeStatusModel?.appLaunchState || project?.dependencyState);
-  const hasCanonical = source !== 'unavailable' && canonicalLaunchState !== 'unknown';
-  const launchState = hasCanonical ? canonicalLaunchState : compatibilityLaunchState;
   const tone = launchState === 'ready' || launchState === 'degraded' || launchState === 'unavailable'
     ? launchState
     : 'unavailable';
 
-  const drift = hasCanonical
-    && compatibilityLaunchState !== 'unknown'
-    && canonicalLaunchState !== compatibilityLaunchState;
+  const hasCanonical = source !== 'unavailable';
+  const compatibility = buildCompatibilityProjection(runtimeStatusModel, project);
+  const driftFields = [];
+
+  if (hasCanonical) {
+    if (compatibility.launchState !== 'unknown' && launchState !== 'unknown' && compatibility.launchState !== launchState) {
+      driftFields.push(`launch:${compatibility.launchState}->${launchState}`);
+    }
+    if (compatibility.routeKind !== 'unknown' && canonicalRouteKind !== 'unknown' && compatibility.routeKind !== canonicalRouteKind) {
+      driftFields.push(`route:${compatibility.routeKind}->${canonicalRouteKind}`);
+    }
+    if (compatibility.executableProvider !== 'unknown' && canonicalProvider !== 'unknown' && compatibility.executableProvider !== canonicalProvider) {
+      driftFields.push(`provider:${compatibility.executableProvider}->${canonicalProvider}`);
+    }
+    if (compatibility.fallbackActive !== 'unknown' && canonicalFallbackState !== 'unknown' && compatibility.fallbackActive !== canonicalFallbackState) {
+      driftFields.push(`fallback:${compatibility.fallbackActive}->${canonicalFallbackState}`);
+    }
+  }
+
+  const drift = driftFields.length > 0;
 
   const routeOperational = canonicalRouteKind === 'cloud'
     && selectedRouteReachable === 'yes'
     && selectedRouteUsable === 'yes';
 
   const summary = [
-    `launch ${launchState === 'unknown' ? 'unavailable' : launchState}`,
-    `route ${canonicalRouteKind === 'unknown' ? 'unavailable' : canonicalRouteKind}`,
+    `launch ${launchState === 'unknown' ? 'unknown' : launchState}`,
+    `route ${canonicalRouteKind === 'unknown' ? 'unknown' : canonicalRouteKind}`,
     `selected route reachable ${selectedRouteReachable}`,
     `selected route usable ${selectedRouteUsable}`,
     `executable provider ${canonicalProvider}`,
@@ -97,9 +153,10 @@ export function buildStephanosTileTruthProjection(project = {}) {
     selectedRouteReachable,
     selectedRouteUsable,
     drift,
+    driftFields,
     summary,
     diagnosticLabel: drift
-      ? 'Truth drift detected: canonical runtime launch state disagrees with compatibility projection.'
+      ? `Truth drift detected: compatibility projection disagrees with canonical truth (${driftFields.join(', ')}).`
       : '',
   };
 }

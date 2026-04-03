@@ -437,7 +437,7 @@ export function renderProjectRegistry(projects, context, options = {}) {
       }
     } else if (safeProject.validationState === 'launching') {
       tile.classList.add('app-tile-pending');
-    } else if ((isStephanos && stephanosTruth?.tone === 'degraded') || safeProject.dependencyState === 'degraded') {
+    } else if ((isStephanos && stephanosTruth?.tone === 'degraded') || (!isStephanos && safeProject.dependencyState === 'degraded')) {
       tile.classList.add('app-tile-degraded');
     }
 
