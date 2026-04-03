@@ -283,3 +283,40 @@ test('renderProjectRegistry keeps tile DOM stable when render state is unchanged
     globalThis.document = originalDocument;
   }
 });
+
+test('renderProjectRegistry shows explicit diagnostic when Stephanos canonical launch state drifts from compatibility state', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'stephanos',
+    folder: 'stephanos',
+    name: 'Stephanos OS',
+    entry: 'apps/stephanos/dist/index.html',
+    launchEntry: 'http://localhost:5173/',
+    runtimeEntry: 'http://localhost:5173/',
+    launcherEntry: 'http://127.0.0.1:4173/',
+    dependencyState: 'degraded',
+    runtimeStatusModel: {
+      appLaunchState: 'degraded',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+    },
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const tile = globalThis.document.getElementById('project-registry').children[0];
+    assert.match(tile.__innerHTML, /Truth drift detected/);
+    assert.equal(tile.className.includes('app-tile-degraded'), true);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
