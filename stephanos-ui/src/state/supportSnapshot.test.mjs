@@ -190,6 +190,7 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
     },
     routeTruthView: {
       routeKind: 'cloud',
+      fallbackActive: false,
       selectedRouteReachableState: 'yes',
       routeUsableState: 'yes',
       backendReachableState: 'yes',
@@ -222,8 +223,10 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
   });
 
   assert.match(snapshot, /Selected Route Kind: cloud/);
+  assert.match(snapshot, /Launch State: ready/);
   assert.match(snapshot, /Selected Route Reachable: yes/);
   assert.match(snapshot, /Selected Route Usable: yes/);
+  assert.match(snapshot, /Fallback Active: no/);
   assert.match(snapshot, /Execution Truth: n\/a/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- backend-target: informational \(No non-loopback backend target resolved for hosted session\.\)/);
   assert.match(snapshot, /- cloud-execution: operational \(groq\)/);
