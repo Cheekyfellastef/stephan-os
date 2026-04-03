@@ -4,6 +4,7 @@ import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import { buildSupportSnapshot } from '../state/supportSnapshot';
+import { deriveContinuityLoopSnapshot } from '../state/continuityLoopSnapshot.js';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -73,6 +74,7 @@ export default function StatusPanel() {
   const runtimeProviderTruth = runtimeTruth.provider ?? {};
   const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  const continuitySnapshot = deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory: safeCommandHistory });
   const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
   const reachability = runtimeTruth.reachabilityRaw ?? runtimeTruth.reachability ?? finalRoute.reachability ?? {};
   const runtimeContext = runtimeStatus.runtimeContext ?? {};
@@ -247,6 +249,14 @@ export default function StatusPanel() {
         <li>Cloud Providers Eligible: {providerEligibility.cloudProviders ? 'yes' : 'pending'}</li>
         <li>Mock Fallback Only: {providerEligibility.mockFallbackOnly ? 'yes' : 'pending'}</li>
         <li>Runtime Truth Contract: core truth persisted separately; runtime truth adjudicated per-session</li>
+        <li>[CONTINUITY LOOP] Canonical Loop State: {continuitySnapshot.continuityLoopState}</li>
+        <li>[SHARED MEMORY] Source: {continuitySnapshot.sharedMemorySource}</li>
+        <li>[SHARED MEMORY] Hydration: {continuitySnapshot.sharedMemoryHydrationState}</li>
+        <li>[SHARED MEMORY] Fallback Reason: {continuitySnapshot.sharedMemoryFallbackReason}</li>
+        <li>[TILE LINK] State: {continuitySnapshot.tileLinkState}</li>
+        <li>[AI CONTINUITY] State: {continuitySnapshot.aiContinuityState}</li>
+        <li>[AI CONTINUITY] Mode: {continuitySnapshot.aiContinuityMode}</li>
+        <li>[EXECUTION LOOP] Last Event: {continuitySnapshot.lastContinuityEventType} @ {continuitySnapshot.lastContinuityEventAt || 'n/a'}</li>
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>
         <li>Guardrails Detail: {primaryGuardrailMessage}</li>
@@ -332,6 +342,7 @@ export default function StatusPanel() {
         <li>UI Source Fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</li>
         <li>Route Adoption Marker: {STEPHANOS_ROUTE_ADOPTION_MARKER}</li>
         <li>Provider Routing Marker: {STEPHANOS_PROVIDER_ROUTING_MARKER}</li>
+        <li>[CONTINUITY LOOP] Recent Activity: {continuitySnapshot.recentContinuityEvents.length > 0 ? continuitySnapshot.recentContinuityEvents.map((event) => event.summary).join(' | ') : 'none observed'}</li>
         <li>Debug Console: F1</li>
       </ul>
       <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary || 'Diagnostics pending'}</p>
