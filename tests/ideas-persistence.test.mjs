@@ -300,3 +300,33 @@ test('localhost and hosted edit/save converge on the same durable idea identity'
   assert.equal(localhostLoaded.state.records[0].id, 'idea_sync_1');
   assert.equal(localhostLoaded.state.records[0].title, 'Hosted edited shared idea');
 });
+
+test('Ideas save reports failure when shared backend update fails', async () => {
+  const storage = createStorage();
+  const tileDataClient = {
+    apiBaseUrl: 'https://hosted.example.com',
+    async saveDurableState() {
+      return {
+        ok: false,
+        source: 'local-mirror-fallback',
+        diagnostics: { status: 503 },
+      };
+    },
+  };
+
+  const persistence = createIdeasPersistence({
+    localStorage: storage,
+    StephanosTileDataContract: { client: tileDataClient },
+    console: { info() {} },
+  });
+
+  const result = await persistence.saveState({
+    state: {
+      records: [{ id: 'idea_backend_down', title: 'Backend unavailable' }],
+    },
+    hydrationCompleted: true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.source, 'local-mirror-fallback');
+});

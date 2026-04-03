@@ -24,7 +24,6 @@ function buildIdeaActions(record) {
 
   return [
     { type: 'edit', label: 'Edit' },
-    { type: 'delete', label: 'Delete' },
   ];
 }
 
