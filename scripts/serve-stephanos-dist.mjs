@@ -238,18 +238,34 @@ async function probeServedRuntimeMarker(url) {
     const runtimeMarkerMatch =
       html.match(/<meta\b[^>]*\bname=["']stephanos-build-runtime-marker["'][^>]*\bcontent=["']([^"']+)["'][^>]*>/i) ||
       html.match(/<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*\bname=["']stephanos-build-runtime-marker["'][^>]*>/i);
+    const scriptEntryMatch =
+      html.match(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*\btype=["']module["'][^>]*>/i) ||
+      html.match(/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>/i);
     return {
       ok: Boolean(runtimeMarkerMatch?.[1]),
       status: response.status,
       runtimeMarker: runtimeMarkerMatch?.[1] || null,
+      scriptEntry: scriptEntryMatch?.[1] || null,
     };
   } catch {
     return {
       ok: false,
       status: null,
       runtimeMarker: null,
+      scriptEntry: null,
     };
   }
+}
+
+function extractModuleScriptEntryFromHtml(html) {
+  if (typeof html !== 'string' || html.length === 0) {
+    return null;
+  }
+
+  const scriptEntryMatch =
+    html.match(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*\btype=["']module["'][^>]*>/i) ||
+    html.match(/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>/i);
+  return scriptEntryMatch?.[1] || null;
 }
 
 async function probeJavaScriptMime(url) {
@@ -370,10 +386,17 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
     const sourceTruthReady = sourceTruthProbe.ok;
     const healthRuntimeMarker = payload?.runtimeMarker || null;
     const servedRuntimeMarker = servedRuntimeMarkerProbe.runtimeMarker || null;
+    const expectedScriptEntry = existsSync(stephanosDistIndexPath)
+      ? extractModuleScriptEntryFromHtml(readFileSync(stephanosDistIndexPath, 'utf8'))
+      : null;
+    const servedScriptEntry = servedRuntimeMarkerProbe.scriptEntry || null;
     const markerMatchesExpected =
       Boolean(expectedRuntimeMarker) &&
       expectedRuntimeMarker === healthRuntimeMarker &&
       expectedRuntimeMarker === servedRuntimeMarker;
+    const scriptEntryMatchesExpected =
+      Boolean(expectedScriptEntry) &&
+      expectedScriptEntry === servedScriptEntry;
 
     return {
       reusable: canReuseStephanosServer({
@@ -383,17 +406,21 @@ async function probeExistingStephanosServer(expectedRuntimeMarker) {
         moduleMimeReady,
         sourceTruthReady,
         markerMatchesExpected,
+        scriptEntryMatchesExpected,
       }),
       runtimeReady,
       runtimeStatusReady,
       moduleMimeReady,
       sourceTruthReady,
       markerMatchesExpected,
+      scriptEntryMatchesExpected,
       expectedRuntimeMarker: expectedRuntimeMarker || null,
       observedRuntimeMarkers: {
         health: healthRuntimeMarker,
         servedIndex: servedRuntimeMarker,
       },
+      expectedScriptEntry,
+      observedScriptEntry: servedScriptEntry,
       servedRuntimeMarkerProbe,
       moduleMimeChecks: {
         runtimeStatusModel: runtimeStatusModuleMime,
@@ -415,6 +442,7 @@ export function canReuseStephanosServer({
   moduleMimeReady,
   sourceTruthReady,
   markerMatchesExpected,
+  scriptEntryMatchesExpected,
 }) {
   return (
     payload?.service === 'stephanos-dist-server' &&
@@ -424,7 +452,8 @@ export function canReuseStephanosServer({
     runtimeStatusReady &&
     moduleMimeReady &&
     sourceTruthReady &&
-    markerMatchesExpected
+    markerMatchesExpected &&
+    scriptEntryMatchesExpected
   );
 }
 
@@ -682,12 +711,37 @@ if (isMainModule) {
     console.log(`[DIST SERVER LIVE] Expected runtime marker from local dist metadata: ${expectedRuntimeMarker || 'unavailable'}`);
     console.log(`[DIST SERVER LIVE] Existing server marker (health): ${existingServer.observedRuntimeMarkers?.health || 'unavailable'}`);
     console.log(`[DIST SERVER LIVE] Existing server marker (served index): ${existingServer.observedRuntimeMarkers?.servedIndex || 'unavailable'}`);
+    console.log(`[DIST SERVER LIVE] Expected served script entry: ${existingServer.expectedScriptEntry || 'unavailable'}`);
+    console.log(`[DIST SERVER LIVE] Existing server script entry: ${existingServer.observedScriptEntry || 'unavailable'}`);
     if (existingServer.reusable) {
       console.log(`[DIST SERVER LIVE] Stephanos dist server already running on ${port}, reusing current process`);
       console.log(`[DIST SERVER LIVE] Stephanos static root: ${relative(repoRoot, staticRootPath) || '.'}`);
       console.log(`[DIST SERVER LIVE] Open the built runtime at ${existingServer.runtimeUrl}`);
       console.log(`[DIST SERVER LIVE] Open the launcher shell at ${launcherShellUrl}`);
       await finishWithSuccessWithoutForcedExit(server);
+      return;
+    }
+
+    if (existingServer.payload?.service === 'stephanos-dist-server' && existingServer.runtimeReady && !existingServer.scriptEntryMatchesExpected) {
+      console.error(`[DIST SERVER LIVE] Existing Stephanos server on port ${port} is stale; dist index script entry mismatch.`);
+      console.error(`[DIST SERVER LIVE] expected script entry=${existingServer.expectedScriptEntry || 'unavailable'}`);
+      console.error(`[DIST SERVER LIVE] observed script entry=${existingServer.observedScriptEntry || 'unavailable'}`);
+      const restartResponse = await requestExistingServerRestart({
+        expectedRuntimeMarker,
+        reason: 'dist-script-entry-mismatch',
+      });
+      if (!restartResponse.ok) {
+        console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current dist index.`);
+        process.exit(1);
+        return;
+      }
+      const closed = await waitForPortToClose(port);
+      if (!closed) {
+        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
+        process.exit(1);
+        return;
+      }
+      server.listen(port, host);
       return;
     }
 

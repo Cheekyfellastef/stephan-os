@@ -54,6 +54,17 @@ function metadataMatchesExpected(metadata, expectedMetadata) {
   return requiredFields.every((field) => metadata[field] === expectedMetadata[field]);
 }
 
+function extractModuleScriptEntryFromHtml(html) {
+  if (typeof html !== 'string' || html.length === 0) {
+    return null;
+  }
+
+  const scriptEntryMatch =
+    html.match(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*\btype=["']module["'][^>]*>/i) ||
+    html.match(/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>/i);
+  return scriptEntryMatch?.[1] || null;
+}
+
 export function evaluateBuildPreflight({
   expectedMetadata,
   distIndexExists,
@@ -119,6 +130,10 @@ export async function probeExistingLocalServer({ port = 4173, expectedRuntimeMar
 
     const runtimeMarkerMatch = runtimeHtml.match(/<meta\b[^>]*\bname=["']stephanos-build-runtime-marker["'][^>]*\bcontent=["']([^"']+)["'][^>]*>/i);
     const servedRuntimeMarker = runtimeMarkerMatch?.[1] || null;
+    const servedScriptEntry = extractModuleScriptEntryFromHtml(runtimeHtml);
+    const expectedScriptEntry = existsSync(stephanosDistIndexPath)
+      ? extractModuleScriptEntryFromHtml(readFileSync(stephanosDistIndexPath, 'utf8'))
+      : null;
     const sourceTruthEntries = Array.isArray(sourceTruthPayload?.launcherCriticalSourceTruth)
       ? sourceTruthPayload.launcherCriticalSourceTruth
       : [];
@@ -133,10 +148,14 @@ export async function probeExistingLocalServer({ port = 4173, expectedRuntimeMar
       Boolean(expectedRuntimeMarker) &&
       healthPayload?.runtimeMarker === expectedRuntimeMarker &&
       servedRuntimeMarker === expectedRuntimeMarker;
+    const scriptEntryMatches =
+      Boolean(expectedScriptEntry) &&
+      servedScriptEntry === expectedScriptEntry;
 
     const reusable =
       healthPayload?.service === 'stephanos-dist-server' &&
       markerMatches &&
+      scriptEntryMatches &&
       mismatches.length === 0;
 
     return {
@@ -147,6 +166,10 @@ export async function probeExistingLocalServer({ port = 4173, expectedRuntimeMar
         health: healthPayload?.runtimeMarker || null,
         servedIndex: servedRuntimeMarker,
         expected: expectedRuntimeMarker || null,
+      },
+      observedScriptEntries: {
+        servedIndex: servedScriptEntry || null,
+        expected: expectedScriptEntry || null,
       },
     };
   } catch {
