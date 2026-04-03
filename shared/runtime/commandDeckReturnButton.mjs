@@ -1,6 +1,6 @@
 import { resolveCommandDeckDestinationPath } from './commandDeckDestination.mjs';
 
-const CONTROL_ATTRIBUTE = 'data-command-deck-return-control';
+const CONTROL_ATTRIBUTE = 'data-command-deck-return-button';
 const CONTROL_LABEL = 'Return to Command Deck';
 const CONTROL_STYLE_ID = 'command-deck-return-controls-style';
 const BUTTON_CLASS = 'command-deck-return-button';
