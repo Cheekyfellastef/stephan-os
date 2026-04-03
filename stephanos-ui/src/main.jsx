@@ -77,4 +77,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>,
 );
 
-installRuntimeReturnControls();
+if (typeof installTopLevelCommandDeckReturnControls !== 'function') {
+  throw new Error('Stephanos runtime return-control installer is unavailable');
+}
+installTopLevelCommandDeckReturnControls();
