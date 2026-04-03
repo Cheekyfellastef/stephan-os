@@ -49,12 +49,22 @@ function resolveStephanosLaunchTarget(project) {
   const compatibilityEntry = String(project?.entry || '').trim();
   const launcherEntry = String(project?.launcherEntry || '').trim();
 
-  const resolved = String(
+  let resolved = String(
     launchEntry
     || runtimeEntry
     || compatibilityEntry
     || ''
   ).trim();
+
+  if (launchEntry && runtimeEntry && launcherEntry && launchEntry === launcherEntry && runtimeEntry !== launcherEntry) {
+    console.warn(`[CommandDeck] [LAW:${STEPHANOS_LAW_IDS.RUNTIME_TARGET_DISTINCT}] Stephanos launchEntry matched launcher shell URL; restoring runtimeEntry as authoritative launch target.`, {
+      launchEntry,
+      runtimeEntry,
+      launcherEntry,
+      compatibilityEntry,
+    });
+    resolved = runtimeEntry;
+  }
 
   if (!launchEntry && (runtimeEntry || compatibilityEntry)) {
     console.warn(`[CommandDeck] [LAW:${STEPHANOS_LAW_IDS.ENTRY_SEPARATION}] Stephanos launchEntry missing; using compatibility fallback order launchEntry -> runtimeEntry -> entry`, {

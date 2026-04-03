@@ -92,6 +92,18 @@ test('command-deck Stephanos target resolution prefers launchEntry then runtimeE
   );
 });
 
+test('command-deck Stephanos target resolution restores runtimeEntry when launchEntry collapses to launcherEntry', () => {
+  assert.equal(
+    resolveStephanosLaunchTargetForTest({
+      launchEntry: 'http://127.0.0.1:4173/',
+      runtimeEntry: 'http://127.0.0.1:5173/',
+      launcherEntry: 'http://127.0.0.1:4173/',
+      entry: './apps/stephanos/dist/index.html',
+    }),
+    'http://127.0.0.1:5173/',
+  );
+});
+
 test('renderProjectRegistry does not inject secondary surfaces into primary launcher body by default', () => {
   const originalDocument = globalThis.document;
   globalThis.document = createDocumentFixture();
