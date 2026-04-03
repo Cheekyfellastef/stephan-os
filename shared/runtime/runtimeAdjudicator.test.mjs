@@ -375,3 +375,127 @@ test('adjudicator keeps local-desktop route truth when provider degrades to mock
   assert.equal(adjudicated.runtimeTruth.route.winningReason, 'Backend online locally; local-desktop stays valid');
   assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /Selected ollama, executed mock/);
 });
+
+test('adjudicator suppresses tile-readiness contradiction warning for hosted cloud canonical ready truth', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      nodeAddressSource: 'route-diagnostics',
+      tileTruth: {
+        ready: false,
+        reason: 'tile registry still hydrating',
+        launchSurface: 'mission-console',
+      },
+    },
+    finalRoute: {
+      routeKind: 'cloud',
+      preferredTarget: 'https://stephanos.example',
+      actualTarget: 'https://api.stephanos.example',
+      source: 'backend-cloud-session',
+      winnerReason: 'A cloud-backed Stephanos route is ready',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: {},
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      routeKind: 'cloud',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      preferredTarget: 'https://stephanos.example',
+      actualTarget: 'https://api.stephanos.example',
+      source: 'backend-cloud-session',
+      winnerReason: 'A cloud-backed Stephanos route is ready',
+      routeUsable: true,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true, reason: 'A cloud-backed Stephanos route is ready' },
+      dist: { available: true, usable: true },
+    },
+    routePreferenceOrder: ['cloud', 'dist'],
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: { groq: { ok: true } },
+    fallbackActive: false,
+    appLaunchState: 'ready',
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.diagnostics.invariantWarnings.some((issue) => issue.code === 'tile-not-ready-while-runtime-ready'), false);
+});
+
+test('adjudicator keeps tile-readiness contradiction warning when canonical hosted cloud truth is not ready', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      nodeAddressSource: 'route-diagnostics',
+      tileTruth: {
+        ready: false,
+        reason: 'tile registry still hydrating',
+        launchSurface: 'mission-console',
+      },
+    },
+    finalRoute: {
+      routeKind: 'cloud',
+      preferredTarget: 'https://stephanos.example',
+      actualTarget: 'https://api.stephanos.example',
+      source: 'backend-cloud-session',
+      winnerReason: 'A cloud-backed Stephanos route is ready',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: {},
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      routeKind: 'cloud',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      preferredTarget: 'https://stephanos.example',
+      actualTarget: 'https://api.stephanos.example',
+      source: 'backend-cloud-session',
+      winnerReason: 'A cloud-backed Stephanos route is ready',
+      routeUsable: true,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true, reason: 'A cloud-backed Stephanos route is ready' },
+      dist: { available: true, usable: true },
+    },
+    routePreferenceOrder: ['cloud', 'dist'],
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: '',
+    providerHealth: { groq: { ok: false } },
+    fallbackActive: false,
+    appLaunchState: 'ready',
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.diagnostics.invariantWarnings.some((issue) => issue.code === 'tile-not-ready-while-runtime-ready'), true);
+});

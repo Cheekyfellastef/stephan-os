@@ -40,7 +40,7 @@ test('verify fails when dist metadata git commit marker is stale', () => {
   try {
     assert.throws(
       () => execFileSync('node', [verifyScriptPath], { encoding: 'utf8' }),
-      /commit marker is stale|metadata mismatch for gitCommit|metadata is stale|inconsistent between dist\/index\.html and stephanos-build\.json/,
+      /commit marker is stale \(served dist appears behind current repository commit\)|metadata mismatch for gitCommit|metadata is stale|inconsistent between dist\/index\.html and stephanos-build\.json/,
     );
   } finally {
     writeFileSync(metadataPath, originalMetadataRaw);
