@@ -58,11 +58,13 @@ function normalizeMemoryTruth(memoryTruth = {}) {
 
   return {
     hydrationCompleted,
+    hydrationState: String(source.hydrationState || (hydrationCompleted ? 'ready' : 'hydrating')),
     sourceUsedOnLoad,
     writeTarget,
     durabilityClass: String(source.stateClass || 'runtime-session'),
     fallbackReason,
     degraded,
+    recordCount: Number.isFinite(Number(source.recordCount)) ? Number(source.recordCount) : -1,
   };
 }
 

@@ -368,6 +368,7 @@ export function createStephanosSharedMemoryAdapter({
         hydrationCompleted: hydrated,
         hydrationState,
         fallbackReason,
+        recordCount: Object.keys(cache.records || {}).length,
         backendDiagnostics: lastDiagnostics,
       };
     },
