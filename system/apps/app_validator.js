@@ -25,7 +25,7 @@ import {
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   isValidStephanosHomeNode,
-  resolveStephanosBackendBaseUrl,
+  resolveStephanosBackendTarget,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
 import { requestStephanosBackend } from "../../shared/runtime/backendClient.mjs";
 import { STEPHANOS_LAW_IDS } from "../../shared/runtime/stephanosLaws.mjs";
@@ -625,22 +625,31 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     lastKnownNode,
   });
   const preferredHomeNode = [homeNodeDiscovery.preferredNode, manualNode, lastKnownNode].find((node) => isValidStephanosHomeNode(node)) || null;
-  const backendBaseUrl = resolveStephanosBackendBaseUrl({
+  const backendTarget = resolveStephanosBackendTarget({
     currentOrigin,
     manualNode,
     lastKnownNode: homeNodeDiscovery.preferredNode || lastKnownNode,
     explicitBaseUrl: globalThis?.__STEPHANOS_BACKEND_BASE_URL || '',
   });
+  const backendBaseUrl = backendTarget.resolvedUrl || '';
   const localDesktopSession = isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin);
   const hostedWebSession = !localDesktopSession;
   const localDesktopBackendBaseUrl = 'http://localhost:8787';
   const statusProbe = await fetchJsonSafely(STEPHANOS_STATUS_URL);
   const runtimeProbe = await fetchJsonSafely(STEPHANOS_HEALTH_URL);
   const distMetadataProbe = await fetchJsonSafely(toFetchPath(STEPHANOS_DIST_METADATA));
-  const backendProbe = await requestStephanosBackendSafely({
-    path: '/api/health',
-    runtimeContext: { baseUrl: backendBaseUrl, frontendOrigin: currentOrigin },
-  });
+  const backendProbe = backendBaseUrl
+    ? await requestStephanosBackendSafely({
+      path: '/api/health',
+      runtimeContext: { baseUrl: backendBaseUrl, frontendOrigin: currentOrigin },
+    })
+    : {
+      ok: false,
+      status: 0,
+      requestPath: '/api/health',
+      backendBaseUrl: '',
+      reason: backendTarget.invalidReason || 'backend target unresolved',
+    };
   const localDesktopBackendProbe = localDesktopSession && backendBaseUrl !== localDesktopBackendBaseUrl
     ? await requestStephanosBackendSafely({
       path: '/api/health',
@@ -733,6 +742,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
 
   const providerPreferences = readPersistedProviderPreferences();
   const providerHealthProbe = healthyBackend && effectiveBackendBaseUrl
+    && backendTarget.resolved
     ? await requestStephanosBackendSafely({
       path: '/api/ai/providers/health',
       method: 'POST',
@@ -770,6 +780,10 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
       publishedClientRouteState: backendPublishedRouteMisconfigured ? 'misconfigured' : (healthyBackend ? 'ready' : 'unavailable'),
       routeDiagnostics: {
+        backendTargetResolutionSource: backendTarget.resolutionSource || 'unknown',
+        backendTargetResolvedUrl: effectiveBackendBaseUrl || '',
+        backendTargetFallbackUsed: backendTarget.fallbackUsed === true,
+        backendTargetInvalidReason: backendTarget.invalidReason || '',
         'local-desktop': {
           configured: localDesktopCapableSession,
           available: localDesktopCapableSession && healthyBackend,

@@ -54,6 +54,7 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
   const finalRouteTruth = asObject(model.finalRouteTruth);
   const runtimeContextFinalRoute = asObject(runtimeContext.finalRoute);
   const routeEvaluations = asObject(model.routeEvaluations);
+  const routeDiagnostics = asObject(runtimeContext.routeDiagnostics);
   const selectedRoute = finalRoute.routeKind ? asObject(routeEvaluations)[finalRoute.routeKind] : null;
   const providerEligibility = asObject(finalRoute.providerEligibility);
   const reachability = asObject(finalRoute.reachability);
@@ -196,6 +197,7 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
   }
 
   const nonLocalSession = runtimeContext.sessionKind && runtimeContext.sessionKind !== 'local-desktop';
+  const hostedBackendTargetInvalidReason = asString(routeDiagnostics.backendTargetInvalidReason);
   const preferredTargetHost = extractHostname(finalRoute.preferredTarget || '');
   const actualTargetHost = extractHostname(finalRoute.actualTarget || '');
   if (nonLocalSession && (isLoopbackHost(preferredTargetHost) || isLoopbackHost(actualTargetHost))) {
@@ -207,6 +209,22 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
         sessionKind: runtimeContext.sessionKind,
         preferredTarget: finalRoute.preferredTarget || '',
         actualTarget: finalRoute.actualTarget || '',
+      },
+    ));
+  }
+
+  if (runtimeContext.sessionKind === 'hosted-web' && hostedBackendTargetInvalidReason) {
+    invariants.push(createInvariant(
+      'hosted-backend-target-unresolved',
+      'error',
+      'Hosted session backend target is unresolved or invalid; backend/provider truth must stay blocked until a valid target is configured.',
+      {
+        likelyCause: hostedBackendTargetInvalidReason,
+        suggestedAction: [
+          'Hosted session has no usable backend target.',
+          'Same-origin /api is invalid on static host.',
+          'Check published home-node/cloud backend route configuration.',
+        ].join(' '),
       },
     ));
   }
