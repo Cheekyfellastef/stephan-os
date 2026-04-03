@@ -2,6 +2,7 @@ import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../..
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
+import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
 
 function normaliseProject(project) {
   if (typeof project === 'string') {
@@ -371,6 +372,7 @@ function createProjectRegistryRenderSignature(projects, options = {}) {
         dependencySummary: project.runtimeStatusModel?.dependencySummary || '',
         preferredTarget: project.runtimeStatusModel?.preferredTarget || '',
         forensicBoundary: project.runtimeStatusModel?.routeForensics?.firstBadTransition || '',
+        stephanosTruth: isStephanosProject(project) ? buildStephanosTileTruthProjection(project) : null,
       },
       buildStampLabel: project.buildStampLabel,
       buildMarker: project.buildMarker,
@@ -426,6 +428,8 @@ export function renderProjectRegistry(projects, context, options = {}) {
 
     tile.className = 'app-tile';
 
+    const stephanosTruth = isStephanos ? buildStephanosTileTruthProjection(safeProject) : null;
+
     if (launchError) {
       tile.classList.add('app-tile-error');
       if (launchableWhileErrored) {
@@ -433,20 +437,25 @@ export function renderProjectRegistry(projects, context, options = {}) {
       }
     } else if (safeProject.validationState === 'launching') {
       tile.classList.add('app-tile-pending');
-    } else if (safeProject.dependencyState === 'degraded') {
+    } else if ((isStephanos && stephanosTruth?.tone === 'degraded') || safeProject.dependencyState === 'degraded') {
       tile.classList.add('app-tile-degraded');
     }
 
     const runtimeSummary = safeProject.runtimeStatusModel?.dependencySummary;
     const forensicBoundary = safeProject.runtimeStatusModel?.routeForensics?.firstBadTransition;
-    const runtimeDetail = safeProject.runtimeStatusModel?.preferredTarget
+    const compatibilityRuntimeDetail = safeProject.runtimeStatusModel?.preferredTarget
       ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
       : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
+    const runtimeDetail = isStephanos
+      ? stephanosTruth?.summary || compatibilityRuntimeDetail
+      : compatibilityRuntimeDetail;
     const issueLabel = safeProject.validationState === 'error' || safeProject.validationState === 'launching'
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
-      : runtimeDetail
-        ? `<div class="app-tile-detail">${runtimeDetail}</div>`
-        : '';
+      : stephanosTruth?.drift
+        ? `<div class="app-tile-issue">${stephanosTruth.diagnosticLabel}</div><div class="app-tile-detail">${runtimeDetail}</div>`
+        : runtimeDetail
+          ? `<div class="app-tile-detail">${runtimeDetail}</div>`
+          : '';
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
