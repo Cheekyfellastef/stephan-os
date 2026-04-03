@@ -71,7 +71,21 @@ async function logDevStartupHealthCheck() {
 void logDevStartupHealthCheck();
 const runtimeHost = String(window.location.hostname || '').trim().toLowerCase();
 const allowEmbeddedReturnControls = runtimeHost === 'localhost' || runtimeHost === '127.0.0.1' || runtimeHost === '::1';
-installTopLevelCommandDeckReturnControls({ allowEmbedded: allowEmbeddedReturnControls });
+
+function installRuntimeReturnControls() {
+  const installControls = () => {
+    installTopLevelCommandDeckReturnControls({ allowEmbedded: allowEmbeddedReturnControls });
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installControls, { once: true });
+    return;
+  }
+
+  installControls();
+}
+
+installRuntimeReturnControls();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
