@@ -326,9 +326,11 @@ export default function App() {
         <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
           COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
+        <RuntimeCommandDeckReturnControl position="top" />
         <section className="cockpit-surface-stage">
           <CockpitPanel forceOpen standalone />
         </section>
+        <RuntimeCommandDeckReturnControl position="bottom" />
         <DebugConsole />
       </main>
     );
