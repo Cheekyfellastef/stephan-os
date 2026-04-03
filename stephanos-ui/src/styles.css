@@ -54,6 +54,16 @@ body {
   color: inherit;
 }
 
+.runtime-command-deck-return-control {
+  margin: 0 0 14px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.runtime-command-deck-return-control--bottom {
+  margin: 14px 0;
+}
+
 .graph-structured,
 .simulation-chart {
   display: grid;

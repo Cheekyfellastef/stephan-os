@@ -39,8 +39,38 @@ import {
 } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
 import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs';
+import { createCommandDeckReturnButton } from '../../shared/runtime/commandDeckReturnButton.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
+
+function RuntimeCommandDeckReturnControl({ position }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof document === 'undefined' || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const button = createCommandDeckReturnButton({ documentRef: document, windowRef: window });
+    if (!button) {
+      return undefined;
+    }
+
+    container.replaceChildren(button);
+    return () => {
+      container.replaceChildren();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`runtime-command-deck-return-control runtime-command-deck-return-control--${position}`}
+      data-command-deck-return-control={position}
+    />
+  );
+}
 
 export default function App() {
   const {
@@ -309,6 +339,7 @@ export default function App() {
       <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
         IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
       </div>
+      <RuntimeCommandDeckReturnControl position="top" />
       <CollapsiblePanel
         panelId="providerControlsPanel"
         title="AI Provider Controls"
@@ -391,6 +422,7 @@ export default function App() {
         <span>fingerprint: {STEPHANOS_UI_SOURCE_FINGERPRINT.slice(0, 12)}…</span>
       </footer>
 
+      <RuntimeCommandDeckReturnControl position="bottom" />
       <DebugConsole />
       <MeaningStrip finalRouteTruth={runtimeStatusModel?.finalRouteTruth} />
     </main>
