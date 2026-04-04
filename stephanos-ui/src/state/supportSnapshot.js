@@ -294,6 +294,8 @@ export function buildSupportSnapshot({
     `Last Freshness Reason: ${asText(runtimeStatus?.lastFreshnessReason)}`,
     `Last Override Denial Reason: ${asText(runtimeStatus?.lastOverrideDenialReason)}`,
     `Last Freshness Warning: ${asText(runtimeStatus?.lastFreshnessWarning)}`,
+    `AI Policy Mode: ${asText(runtimeStatus?.lastAiPolicyMode, 'local-first-cloud-when-needed')}`,
+    `AI Policy Reason: ${asText(runtimeStatus?.lastAiPolicyReason, 'Local-first policy applied.')}`,
     `Execution Truth: ${asText(runtimeStatus?.executionTruth)}`,
     `Execution Status: ${asText(runtimeStatus?.executionStatus)}`,
     `Route: ${asText(runtimeStatus?.route)}`,

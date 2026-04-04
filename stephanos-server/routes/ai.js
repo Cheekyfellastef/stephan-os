@@ -329,6 +329,8 @@ Use these memories when they help, but do not repeat them unless they are releva
       ollama_request_ok: Boolean(llmResult.ok && (llmResult.actualProviderUsed || llmResult.provider) === 'ollama'),
       ollama_error: llmResult.error?.message || null,
       secret_authority: 'backend-local-secret-store',
+      ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
+      ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -346,6 +348,8 @@ Use these memories when they help, but do not repeat them unless they are releva
       override_denial_reason: routeDecision?.overrideDeniedReason || null,
       freshness_warning: routeDecision?.freshnessWarning || null,
       freshness_routed: Boolean(routeDecision?.freshnessRouted),
+      ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
+      ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
       route_mode: routeMode,
       effective_route_mode: executionMetadata.effective_route_mode,
       provider_resolution: providerResolution,

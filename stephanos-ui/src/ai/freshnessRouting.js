@@ -133,9 +133,16 @@ export function resolveFreshnessRoutingDecision({
   runtimeStatus = {},
   routeTruthView = {},
 } = {}) {
+  const aiPolicy = {
+    aiPolicyMode: 'local-first-cloud-when-needed',
+    localPreferred: true,
+    cloudAllowedForFreshness: true,
+    cloudReasonRequired: true,
+  };
   const requested = String(requestedProvider || 'ollama');
-  const cloudRouteUsable = runtimeStatus?.cloudAvailable === true
-    && String(routeTruthView?.routeUsableState || '').toLowerCase() === 'yes';
+  const backendReachable = String(routeTruthView?.backendReachableState || '').toLowerCase() === 'yes'
+    || runtimeStatus?.backendReachable === true;
+  const cloudRouteUsable = runtimeStatus?.cloudAvailable === true && backendReachable;
   const groqHealthy = providerHealthy(providerHealth, 'groq');
   const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
   const groqCapability = providerHealth?.groq?.providerCapability || {};
@@ -153,6 +160,7 @@ export function resolveFreshnessRoutingDecision({
   let freshnessWarning = null;
   let freshnessRouted = false;
   let fallbackReasonCode = null;
+  let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
   if (!cloudRouteUsable) freshRouteFailureReasons.push('cloud-route-unusable');
@@ -166,32 +174,38 @@ export function resolveFreshnessRoutingDecision({
       selectedProvider = 'groq';
       selectedAnswerMode = 'fresh-web';
       freshnessRouted = true;
+      policyReason = 'Cloud routing allowed and selected because current real-world truth is required.';
     } else {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Fresh route unavailable; answer may be stale.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
+      policyReason = 'Fresh cloud route was required but unavailable; using truthful stale-risk fallback.';
     }
   } else if (classification?.freshnessNeed === 'medium') {
     if (explicitFreshness && freshRouteAvailable) {
       selectedProvider = 'groq';
       selectedAnswerMode = 'fresh-web';
       freshnessRouted = true;
+      policyReason = 'Prompt requested recency; cloud route selected for fresher truth.';
     } else if (explicitFreshness && !freshRouteAvailable) {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Answered without live web route; verify current facts.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
+      policyReason = 'Prompt requested recency but fresh cloud route was unavailable.';
     } else if (!freshRouteAvailable && classification?.staleRisk !== 'low') {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Answered locally; current details may be stale.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
+      policyReason = 'Medium freshness risk without fresh cloud path; local stale-risk fallback used.';
     }
   } else if (!localRouteAvailable && freshRouteAvailable) {
     selectedProvider = 'groq';
     selectedAnswerMode = 'fresh-web';
     freshnessRouted = true;
+    policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   }
 
   const requestedProviderForRequest = selectedProvider;
@@ -209,6 +223,8 @@ export function resolveFreshnessRoutingDecision({
     requestedProviderForRequest,
     selectedAnswerMode,
     freshnessWarning,
+    aiPolicy,
+    policyReason,
     overrideRequested,
     overrideDeniedReason,
     freshRouteAvailable,

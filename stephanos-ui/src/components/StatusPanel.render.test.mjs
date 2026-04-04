@@ -190,6 +190,8 @@ test('StatusPanel renders freshness routing metadata from last execution', async
       stale_risk: 'high',
       freshness_reason: 'current office-holder query',
       freshness_warning: 'Fresh route unavailable; answer may be stale.',
+      ai_policy_mode: 'local-first-cloud-when-needed',
+      ai_policy_reason: 'Fresh cloud route was required but unavailable; using truthful stale-risk fallback.',
     },
   });
   const rendered = renderStatusPanel();
@@ -197,6 +199,8 @@ test('StatusPanel renders freshness routing metadata from last execution', async
   assert.match(rendered, /Last Freshness Need: high/);
   assert.match(rendered, /Last Answer Mode: fallback-stale-risk/);
   assert.match(rendered, /Last Freshness Warning: Fresh route unavailable; answer may be stale\./);
+  assert.match(rendered, /AI Policy Mode: local-first-cloud-when-needed/);
+  assert.match(rendered, /AI Policy Reason: Fresh cloud route was required but unavailable; using truthful stale-risk fallback\./);
 });
 
 test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime truth', async () => {
