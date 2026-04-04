@@ -28,6 +28,8 @@ function createBaseStore(overrides = {}) {
     fallbackOrder: ['groq', 'gemini', 'mock'],
     providerHealth: {},
     getActiveProviderConfig: () => ({ baseURL: '', model: '' }),
+    getEffectiveProviderConfig: () => ({ baseURL: '', model: '' }),
+    getEffectiveProviderConfigs: () => ({ ollama: { baseURL: '', model: '' } }),
     getActiveProviderConfigSource: () => 'saved:session',
     uiDiagnostics: {
       componentMarker: 'test-marker',

@@ -39,6 +39,7 @@ export default function StatusPanel() {
     fallbackOrder,
     providerHealth,
     getActiveProviderConfig,
+    getEffectiveProviderConfig,
     getActiveProviderConfigSource,
     uiDiagnostics,
     lastExecutionMetadata,
@@ -126,7 +127,9 @@ export default function StatusPanel() {
   const browserWindow = typeof window !== 'undefined' ? window : null;
   const browserNavigator = typeof navigator !== 'undefined' ? navigator : null;
   const snapshotProviderKey = routeTruthView.selectedProvider || routeTruthView.executedProvider || provider;
-  const snapshotProviderConfig = getEffectiveProviderConfig(snapshotProviderKey) || activeConfig;
+  const snapshotProviderConfig = (typeof getEffectiveProviderConfig === 'function'
+    ? getEffectiveProviderConfig(snapshotProviderKey)
+    : null) || activeConfig;
   const snapshotStatusSummary = buildProviderStatusSummary(
     snapshotProviderKey,
     snapshotProviderConfig,
