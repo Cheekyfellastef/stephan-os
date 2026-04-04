@@ -315,7 +315,10 @@ Use these memories when they help, but do not repeat them unless they are releva
       backend_default_provider: DEFAULT_PROVIDER_KEY,
       route_mode: routeMode,
       effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
-      requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
+      requested_provider: routeDecision?.requestedProviderForRequest
+        || llmResult.requestedProvider
+        || providerResolution.requestedProvider,
+      routing_requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
       selected_provider: llmResult.diagnostics?.selectedProvider || providerHealthSnapshot?.routing?.selectedProvider || providerResolution.resolvedProvider,
       actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
       model_used: llmResult.modelUsed || llmResult.model || '',
@@ -343,7 +346,8 @@ Use these memories when they help, but do not repeat them unless they are releva
     const requestTrace = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
-      requested_provider: executionMetadata.requested_provider,
+      requested_provider: executionMetadata.requested_provider_for_request,
+      routing_requested_provider: executionMetadata.routing_requested_provider,
       selected_provider: executionMetadata.selected_provider,
       actual_provider_used: executionMetadata.actual_provider_used,
       model_used: executionMetadata.model_used,

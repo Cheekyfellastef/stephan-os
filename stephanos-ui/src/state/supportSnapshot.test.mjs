@@ -148,6 +148,36 @@ test('buildSupportSnapshot does not promote selected provider to executable when
   assert.doesNotMatch(snapshot, /Executable Provider: ollama/);
 });
 
+test('buildSupportSnapshot prefers last request provider truth over stale route truth provider', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      requestedRouteMode: 'explicit',
+      effectiveRouteMode: 'explicit',
+      lastRequestedProvider: 'groq',
+      lastRequestedProviderForRequest: 'groq',
+      lastActualProviderUsed: 'groq',
+    },
+    routeTruthView: {
+      requestedProvider: 'ollama',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-04T00:00:02.000Z' },
+  });
+
+  assert.match(snapshot, /Last Requested Provider For Request: groq/);
+  assert.match(snapshot, /Last Requested Provider: groq/);
+  assert.doesNotMatch(snapshot, /Last Requested Provider: ollama/);
+});
+
 
 test('buildSupportSnapshot emits hosted backend-target diagnostics and operator guidance when unresolved', () => {
   const snapshot = buildSupportSnapshot({
@@ -372,7 +402,7 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target blocking when 
   assert.match(snapshot, /operatorGuidance:\n- Resolve a reachable non-loopback backend target for hosted-web/);
 });
 
-test('buildSupportSnapshot prefers adjudicated requested provider over stale last-requested metadata', () => {
+test('buildSupportSnapshot prefers last request provider metadata over stale adjudicated provider truth', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
       lastRequestedProvider: 'groq',
@@ -393,6 +423,6 @@ test('buildSupportSnapshot prefers adjudicated requested provider over stale las
     now: { toISOString: () => '2026-04-04T00:00:00.000Z' },
   });
 
-  assert.match(snapshot, /Last Requested Provider: ollama/);
-  assert.doesNotMatch(snapshot, /Last Requested Provider: groq/);
+  assert.match(snapshot, /Last Requested Provider: groq/);
+  assert.doesNotMatch(snapshot, /Last Requested Provider: ollama/);
 });

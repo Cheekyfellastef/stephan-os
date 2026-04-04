@@ -11,6 +11,9 @@ test('Groq health reports ready when a runtime provider api key is supplied', as
   assert.equal(health.ok, true);
   assert.equal(health.configuredVia, 'runtime provider config');
   assert.match(health.detail, /backend-routed provider configuration/i);
+  assert.equal(health.providerCapability.candidateFreshRouteAvailable, true);
+  assert.equal(health.providerCapability.candidateFreshWebModel, 'compound-beta-mini');
+  assert.equal(health.providerCapability.freshWebPath, '/responses:web_search');
 });
 
 test('Groq runner uses the runtime provider api key through the backend provider path', async () => {
@@ -154,10 +157,47 @@ test('Groq runner prioritizes fresh candidate model over request model for high-
   }
 });
 
+test('Groq runner keeps stale-risk path explicit when no fresh candidate is configured', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      json: async () => ({
+        model: 'openai/gpt-oss-20b',
+        choices: [{ message: { content: 'Fallback stale-risk answer' } }],
+      }),
+    };
+  };
+
+  try {
+    const result = await runGroqProvider({
+      messages: [{ role: 'user', content: 'latest weather now' }],
+      freshnessContext: { freshnessNeed: 'high' },
+    }, {
+      apiKey: 'gsk_test_session_key',
+      baseURL: 'https://api.groq.com/openai/v1',
+      model: 'openai/gpt-oss-20b',
+      freshWebModel: '',
+      freshWebModelCandidates: [],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.groq.freshWebModelCandidateAvailable, false);
+    assert.equal(result.diagnostics.groq.freshWebActive, false);
+    assert.equal(result.diagnostics.groq.freshWebPath, '');
+    assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/chat/completions');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('Groq health remains explicit when only non-fresh model is configured', async () => {
   const health = await checkGroqHealth({
     apiKey: 'gsk_test_session_key',
     model: 'openai/gpt-oss-20b',
+    freshWebModel: '',
+    freshWebModelCandidates: [],
   });
 
   assert.equal(health.ok, true);
