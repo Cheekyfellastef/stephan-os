@@ -83,6 +83,10 @@ function providerHealthy(providerHealth = {}, providerKey = '') {
 
 function providerTransportReachable(providerHealth = {}, providerKey = '') {
   const health = providerHealth?.[providerKey] || {};
+  const capabilityTruth = health?.providerCapability || {};
+  if (typeof capabilityTruth.transportReachable === 'boolean') {
+    return capabilityTruth.transportReachable;
+  }
   const explicitReachability = [
     health?.transportReachable,
     health?.transport?.reachable,
@@ -99,6 +103,10 @@ function providerTransportReachable(providerHealth = {}, providerKey = '') {
 
 function resolveWebCapabilityState(providerHealth = {}, providerKey = '') {
   const health = providerHealth?.[providerKey] || {};
+  const capabilityTruth = health?.providerCapability || {};
+  if (typeof capabilityTruth.supportsFreshWeb === 'boolean') {
+    return capabilityTruth.supportsFreshWeb ? 'supported' : 'unsupported';
+  }
   const explicitSignals = [
     health?.capabilities?.freshWeb,
     health?.capabilities?.webLookup,
@@ -130,10 +138,12 @@ export function resolveFreshnessRoutingDecision({
     && String(routeTruthView?.routeUsableState || '').toLowerCase() === 'yes';
   const groqHealthy = providerHealthy(providerHealth, 'groq');
   const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
+  const groqCapability = providerHealth?.groq?.providerCapability || {};
   const webCapabilityState = resolveWebCapabilityState(providerHealth, 'groq');
   const freshRouteAvailable = cloudRouteUsable
     && groqHealthy
     && groqTransportReachable
+    && groqCapability.supportsCurrentAnswers !== false
     && webCapabilityState !== 'unsupported';
   const localRouteAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
   const explicitFreshness = classification?.explicitFreshness === true;
@@ -148,6 +158,7 @@ export function resolveFreshnessRoutingDecision({
   if (!cloudRouteUsable) freshRouteFailureReasons.push('cloud-route-unusable');
   if (!groqHealthy) freshRouteFailureReasons.push('provider-unhealthy');
   if (!groqTransportReachable) freshRouteFailureReasons.push('transport-unreachable');
+  if (groqCapability.supportsCurrentAnswers === false) freshRouteFailureReasons.push('current-answers-unsupported');
   if (webCapabilityState === 'unsupported') freshRouteFailureReasons.push('web-capability-unsupported');
 
   if (classification?.freshnessNeed === 'high') {
@@ -195,6 +206,7 @@ export function resolveFreshnessRoutingDecision({
       cloudRouteUsable,
       providerHealthy: groqHealthy,
       providerTransportReachable: groqTransportReachable,
+      providerCapability: groqCapability,
       webCapabilityState,
       failureReasons: freshRouteFailureReasons,
     },

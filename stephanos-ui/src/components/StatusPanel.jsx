@@ -329,6 +329,9 @@ export default function StatusPanel() {
         <li>Selected Provider State: {statusSummary.healthState}</li>
         <li>Selected Provider Detail: {statusSummary.healthDetail}</li>
         <li>Selected Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
+        <li>Selected Provider Supports Fresh Web: {String(statusSummary.providerCapability?.supportsFreshWeb ?? 'unknown')}</li>
+        <li>Selected Provider Supports Current Answers: {String(statusSummary.providerCapability?.supportsCurrentAnswers ?? 'unknown')}</li>
+        <li>Selected Provider Capability Reason: {statusSummary.providerCapability?.capabilityReason || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>

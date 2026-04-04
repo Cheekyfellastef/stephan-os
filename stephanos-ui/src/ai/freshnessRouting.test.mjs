@@ -82,3 +82,31 @@ test('fresh route blocks unsupported explicit web capability signal', () => {
   assert.equal(decision.fallbackReasonCode, 'web-capability-unsupported');
   assert.equal(decision.freshRouteValidation.webCapabilityState, 'unsupported');
 });
+
+test('fresh route uses explicit provider capability truth contract when present', () => {
+  const classification = classifyPromptFreshness('Who is the current UK prime minister?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification: { ...classification, freshnessNeed: 'high', explicitFreshness: true },
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          provider: 'groq',
+          available: true,
+          transportReachable: true,
+          supportsFreshWeb: true,
+          supportsBrowserSearch: true,
+          supportsCurrentAnswers: true,
+          capabilityReason: 'compound model configured',
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true },
+    routeTruthView: { routeUsableState: 'yes' },
+  });
+
+  assert.equal(decision.selectedAnswerMode, 'fresh-web');
+  assert.equal(decision.freshRouteValidation.providerCapability.supportsFreshWeb, true);
+});
