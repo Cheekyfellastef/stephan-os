@@ -29,6 +29,9 @@ export default function AIConsole({
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const safeUiLayout = uiLayout || {};
   const safeCommandHistory = Array.isArray(commandHistory) ? commandHistory : [];
+  const latestCommand = safeCommandHistory.length > 0 ? safeCommandHistory[safeCommandHistory.length - 1] : null;
+  const continuityMode = latestCommand?.continuity_mode || 'recording-only';
+  const continuityRecords = Array.isArray(latestCommand?.continuity_context?.records) ? latestCommand.continuity_context.records : [];
   const activeHealth = safeProviderHealth[provider] || {};
   const ollamaState = provider === 'ollama'
     ? getOllamaUiState({ health: activeHealth, config: getActiveProviderConfig(), frontendOrigin: safeApiStatus.frontendOrigin })
@@ -66,6 +69,7 @@ export default function AIConsole({
         <strong>{runtimeStatus.headline}</strong>
         <span>{runtimeStatus.dependencySummary}</span>
         <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
+        <span>Continuity mode: {continuityMode}</span>
       </div>
       {provider === 'ollama' && !runtimeStatus.localAvailable ? (
         <div className="api-banner degraded">
@@ -87,6 +91,15 @@ export default function AIConsole({
         {safeCommandHistory.length === 0 ? (
           <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
         ) : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
+        {latestCommand?.continuity_context ? (
+          <details>
+            <summary>Continuity Context Used ({continuityRecords.length})</summary>
+            <p className="muted">{latestCommand.continuity_context.summary || 'No continuity summary available.'}</p>
+            <ul className="compact-list">
+              {continuityRecords.map((record) => <li key={record.id || `${record.subsystem}-${record.timestamp}`}>{record.timestamp} · {record.subsystem} · {record.summary}</li>)}
+            </ul>
+          </details>
+        ) : null}
       </div>
       <form className="command-form" onSubmit={onSubmit}>
         <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />

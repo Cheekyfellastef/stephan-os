@@ -58,7 +58,19 @@ async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeCo
   return result.data;
 }
 
-export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = [], devMode = true, runtimeConfig = getApiRuntimeConfig(), tileContext = null }) {
+export async function sendPrompt({
+  prompt,
+  provider = DEFAULT_PROVIDER_KEY,
+  routeMode = 'auto',
+  providerConfigs = {},
+  fallbackEnabled = true,
+  fallbackOrder = [],
+  devMode = true,
+  runtimeConfig = getApiRuntimeConfig(),
+  tileContext = null,
+  continuityContext = null,
+  continuityMode = '',
+}) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const runtimeContext = {
     ...runtimeConfig,
@@ -74,6 +86,8 @@ export async function sendPrompt({ prompt, provider = DEFAULT_PROVIDER_KEY, rout
     fallbackOrder,
     devMode,
     runtimeContext,
+    continuityMode: String(continuityMode || '').trim() || 'recording-only',
+    ...(continuityContext && typeof continuityContext === 'object' ? { continuityContext } : {}),
   };
 
   console.debug('[Stephanos UI] Dispatching /api/ai/chat request', {

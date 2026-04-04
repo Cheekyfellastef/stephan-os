@@ -211,7 +211,7 @@ export default function App() {
         <AIConsole
           input={input}
           setInput={setInput}
-          submitPrompt={submitPrompt}
+          submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries })}
           commandHistory={commandHistory}
         />
       </div>

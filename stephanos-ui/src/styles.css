@@ -1700,6 +1700,19 @@ pre {
   animation: none;
 }
 
+.truth-inconsistent .node-ring,
+.truth-inconsistent .wire-base,
+.truth-inconsistent .wire-energy,
+.truth-inconsistent .node-core {
+  stroke: rgba(255, 191, 64, 0.95);
+  fill: rgba(255, 191, 64, 0.2);
+}
+
+.truth-inconsistent.cockpit-trace-animated .wire-energy,
+.truth-inconsistent.cockpit-trace-animated .node-core {
+  animation: cockpit-energy-flow 1.2s linear infinite;
+}
+
 .truth-broken .wire-base,
 .truth-broken .wire-energy {
   stroke: rgba(170, 58, 58, 0.65);
