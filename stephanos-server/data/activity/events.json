@@ -371,7 +371,19 @@
         "tileLinked": false
       },
       "timestamp": "2026-04-04T22:19:00.942Z"
+    },
+    {
+      "id": "evt_1775342691768_7w8wov",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-04T22:44:51.768Z"
     }
   ],
-  "updated_at": "2026-04-04T22:19:00.942Z"
+  "updated_at": "2026-04-04T22:44:51.768Z"
 }
