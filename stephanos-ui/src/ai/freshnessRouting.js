@@ -192,7 +192,13 @@ export function resolveFreshnessRoutingDecision({
     && groqTransportReachable
     && groqSupportsCurrentAnswers !== false
     && webCapabilityState !== 'unsupported';
-  const localRouteAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
+  const cloudRouteAvailable = cloudRouteUsable && groqHealthy && groqTransportReachable;
+  const homeNodeUsable = String(routeTruthView?.homeNodeUsableState || '').toLowerCase() === 'yes'
+    || runtimeStatus?.homeNodeAvailable === true;
+  const localRouteCandidateAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
+  const localRouteAvailable = hostedSession
+    ? localRouteCandidateAvailable && homeNodeUsable
+    : localRouteCandidateAvailable;
   const explicitFreshness = classification?.explicitFreshness === true;
 
   let selectedProvider = requested;
@@ -253,11 +259,29 @@ export function resolveFreshnessRoutingDecision({
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
       policyReason = 'Medium freshness risk without fresh cloud path; local stale-risk fallback used.';
     }
-  } else if (!localRouteAvailable && freshRouteAvailable) {
+  } else if (classification?.freshnessNeed !== 'low' && !localRouteAvailable && freshRouteAvailable) {
     selectedProvider = 'groq';
     selectedAnswerMode = 'fresh-cloud';
     freshnessRouted = true;
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
+  } else if (classification?.freshnessNeed === 'low' && hostedSession) {
+    if (!localRouteAvailable && cloudRouteAvailable) {
+      selectedProvider = 'groq';
+      selectedAnswerMode = 'cloud-basic';
+      freshnessRouted = true;
+      policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
+    } else if (localRouteAvailable) {
+      selectedProvider = requested === 'groq' && cloudRouteAvailable ? 'groq' : 'ollama';
+      selectedAnswerMode = selectedProvider === 'ollama' ? 'local-private' : 'cloud-basic';
+      policyReason = selectedProvider === 'ollama'
+        ? 'Hosted session has a reachable home-node bridge; local-private remains policy-valid.'
+        : 'Hosted session selected cloud-basic because requested provider is cloud-capable and reachable.';
+    } else if (!cloudRouteAvailable) {
+      selectedProvider = requested === 'groq' ? 'groq' : requested;
+      selectedAnswerMode = 'route-unavailable';
+      fallbackReasonCode = 'no-viable-execution-path';
+      policyReason = 'Hosted low-freshness request has no reachable cloud or local execution path.';
+    }
   }
 
   const requestedProviderForRequest = selectedProvider;
@@ -281,6 +305,7 @@ export function resolveFreshnessRoutingDecision({
     overrideRequested,
     overrideDeniedReason,
     freshRouteAvailable,
+    cloudRouteAvailable,
     localRouteAvailable,
     fallbackReasonCode,
     candidateFreshModel: candidateFreshModel || null,

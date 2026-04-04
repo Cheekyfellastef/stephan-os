@@ -72,3 +72,38 @@ test('blocks hosted high-freshness route-unavailable mode even when local route 
   assert.equal(gate.dispatchAllowed, false);
   assert.equal(gate.reasonCode, 'groq-current-answers-unsupported');
 });
+
+test('allows hosted cloud-basic dispatch when cloud route is viable and no local path exists', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.cloudRouteViable, true);
+});
+
+test('returns no-viable-execution-path for hosted cloud-basic when cloud and local are both unavailable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      localRouteAvailable: false,
+      cloudRouteAvailable: false,
+      freshRouteAvailable: false,
+      fallbackReasonCode: 'no-viable-execution-path',
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'no-viable-execution-path');
+});
