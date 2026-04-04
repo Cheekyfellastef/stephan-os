@@ -202,15 +202,40 @@ function buildExecutionSummary(executionMetadata) {
   return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}`;
 }
 
-function transportErrorToUi(error) {
+function transportErrorToUi(error, { routeDecision = null } = {}) {
+  const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
+  if (!error?.code && routeFailureReason === 'web-capability-unsupported') {
+    return {
+      error: 'Fresh-web route override is unsupported by the active provider capability set.',
+      errorCode: 'UNSUPPORTED_ROUTE_OVERRIDE',
+      output: 'Fresh-web route override is unsupported by provider capabilities. Routed to stale-risk fallback instead.',
+    };
+  }
+  if (!error?.code && routeFailureReason === 'provider-unhealthy') {
+    return {
+      error: 'Fresh-web provider is currently unavailable.',
+      errorCode: 'PROVIDER_UNAVAILABLE',
+      output: 'Fresh-web provider is unavailable. Stephanos is using stale-risk fallback to preserve continuity.',
+    };
+  }
+  if (!error?.code && routeFailureReason === 'transport-unreachable') {
+    return {
+      error: 'Fresh-web provider transport is unreachable from the current backend route.',
+      errorCode: 'PROVIDER_TRANSPORT_UNREACHABLE',
+      output: 'Provider transport network path is unreachable. Stephanos downgraded to stale-risk fallback.',
+    };
+  }
   if (!error?.code) {
-    return { error: 'Unexpected transport error.', errorCode: 'UNKNOWN_TRANSPORT_ERROR', output: 'Unable to process request due to an unknown network issue.' };
+    return { error: 'Unexpected transport error.', errorCode: 'UNKNOWN_TRANSPORT_ERROR', output: 'Unable to process request due to an unknown network issue. Check provider health and freshness route diagnostics.' };
   }
   if (error.code === 'BACKEND_OFFLINE') {
     return { error: error.message, errorCode: error.code, output: `${BACKEND_UNREACHABLE_MESSAGE} Start stephanos-server or update VITE_API_BASE_URL to a reachable API.` };
   }
   if (error.code === 'TIMEOUT') {
     return { error: error.message, errorCode: error.code, output: 'Request timed out. Try again or increase VITE_API_TIMEOUT_MS.' };
+  }
+  if (error.code === 'NETWORK_TRANSPORT_UNREACHABLE') {
+    return { error: error.message, errorCode: error.code, output: 'Network transport failed before backend response. Check browser-to-backend reachability and CORS/published client route truth.' };
   }
   if (error.code === 'INVALID_JSON') {
     return { error: error.message, errorCode: error.code, output: 'Backend responded with invalid JSON. Check server logs for serialization issues.' };
@@ -781,6 +806,8 @@ export function useAIConsole() {
       fallbackOrder,
     });
 
+    let activeRouteDecision = null;
+
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
@@ -818,13 +845,36 @@ export function useAIConsole() {
       const freshnessClassification = classifyPromptFreshness(prompt, {
         localPrivateHint: parsed?.route === 'system',
       });
+      const refreshedProviderHealthResult = await getProviderHealth({
+        provider,
+        routeMode,
+        providerConfigs: effectiveProviderConfigs,
+        fallbackEnabled,
+        fallbackOrder,
+        devMode,
+        runtimeContext: finalizedRequestContext,
+      }, finalizedRequestContext).catch((error) => {
+        console.warn('[Stephanos UI] Provider health refresh failed prior to freshness route selection', {
+          message: error?.message || 'unknown-error',
+          code: error?.code || '',
+        });
+        return null;
+      });
+      const refreshedProviderHealth = refreshedProviderHealthResult?.data && typeof refreshedProviderHealthResult.data === 'object'
+        ? refreshedProviderHealthResult.data
+        : providerHealth;
+      if (refreshedProviderHealthResult && Object.keys(refreshedProviderHealth).length) {
+        setProviderHealth(refreshedProviderHealth);
+      }
+
       const freshnessRouteDecision = resolveFreshnessRoutingDecision({
         classification: freshnessClassification,
         requestedProvider: provider,
-        providerHealth,
+        providerHealth: refreshedProviderHealth,
         runtimeStatus,
         routeTruthView,
       });
+      activeRouteDecision = freshnessRouteDecision;
       const requestedProvider = freshnessRouteDecision.selectedProvider || provider;
       const { data, requestPayload } = await sendPrompt({
         prompt,
@@ -945,7 +995,9 @@ export function useAIConsole() {
         continuity_context_records: continuityContext?.records || [],
       });
     } catch (error) {
-      const uiError = transportErrorToUi(error);
+      const uiError = transportErrorToUi(error, {
+        routeDecision: activeRouteDecision,
+      });
       setStatus('error');
       setLastExecutionMetadata(null);
       setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));

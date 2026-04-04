@@ -42,7 +42,14 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
   } catch (error) {
     if (error?.isTransportError) throw error;
     if (error?.name === 'AbortError') throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
-    throw createTransportError({ code: 'BACKEND_OFFLINE', message: 'Unable to reach backend API. Check that the server is running and reachable.', details: { reason: error?.message } });
+    const networkLikeFailure = error instanceof TypeError || /network|failed to fetch|load failed|cors/i.test(String(error?.message || ''));
+    throw createTransportError({
+      code: networkLikeFailure ? 'NETWORK_TRANSPORT_UNREACHABLE' : 'BACKEND_OFFLINE',
+      message: networkLikeFailure
+        ? 'Backend transport request failed before a response was received. Check network/CORS/reachability from this frontend origin.'
+        : 'Unable to reach backend API. Check that the server is running and reachable.',
+      details: { reason: error?.message },
+    });
   } finally {
     clearTimeout(timeout);
   }
