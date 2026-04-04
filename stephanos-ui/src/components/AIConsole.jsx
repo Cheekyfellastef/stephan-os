@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
@@ -14,6 +14,9 @@ export default function AIConsole({
   submitPrompt,
   commandHistory,
 }) {
+  const endOfMessagesRef = useRef(null);
+  const containerRef = useRef(null);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const {
     isBusy,
     apiStatus,
@@ -44,6 +47,29 @@ export default function AIConsole({
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    endOfMessagesRef.current?.scrollIntoView();
+  }, []);
+
+  useEffect(() => {
+    if (!autoScrollEnabled) return;
+    if (!endOfMessagesRef.current) return;
+
+    endOfMessagesRef.current.scrollIntoView({
+      behavior: 'smooth',
+      block: 'end',
+    });
+  }, [autoScrollEnabled, safeCommandHistory]);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const threshold = 50;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setAutoScrollEnabled(isNearBottom);
+  };
 
   const onSubmit = (event) => {
     event.preventDefault();
@@ -81,7 +107,11 @@ export default function AIConsole({
           </span>
         </div>
       ) : null}
-      <div className="output-panel">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="output-panel ai-console-messages"
+      >
         {showStartupPlaceholder ? (
           <div className="api-banner degraded" role="status" aria-live="polite">
             <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
@@ -100,6 +130,7 @@ export default function AIConsole({
             </ul>
           </details>
         ) : null}
+        <div ref={endOfMessagesRef} />
       </div>
       <form className="command-form" onSubmit={onSubmit}>
         <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />
