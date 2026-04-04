@@ -194,11 +194,23 @@ export function resolveFreshnessRoutingDecision({
     freshnessRouted = true;
   }
 
+  const requestedProviderForRequest = selectedProvider;
+  const overrideRequested = requestedProviderForRequest !== requested;
+  const overrideDeniedReason = (
+    classification?.freshnessNeed === 'high'
+    && requestedProviderForRequest !== 'groq'
+  )
+    ? (fallbackReasonCode || 'fresh-route-unavailable')
+    : null;
+
   return {
     freshnessRouted,
     selectedProvider,
+    requestedProviderForRequest,
     selectedAnswerMode,
     freshnessWarning,
+    overrideRequested,
+    overrideDeniedReason,
     freshRouteAvailable,
     localRouteAvailable,
     fallbackReasonCode,

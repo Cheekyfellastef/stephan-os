@@ -158,7 +158,9 @@ export default function StatusPanel() {
       fallbackEnabled,
       providerEndpoint: snapshotProviderEndpointDisplay,
       providerModel: snapshotStatusSummary.model,
+      lastUiDefaultProvider: lastExecutionMetadata?.ui_default_provider || provider,
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
+      lastRequestedProviderForRequest: lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider,
       lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
       lastRequestedProvider: routeTruthView.requestedProvider || lastExecutionMetadata?.requested_provider,
       lastSelectedProvider: lastExecutionMetadata?.selected_provider,
@@ -171,6 +173,7 @@ export default function StatusPanel() {
       lastFreshnessReason: lastExecutionMetadata?.freshness_reason || 'n/a',
       lastStaleRisk: lastExecutionMetadata?.stale_risk || 'n/a',
       lastAnswerMode: lastExecutionMetadata?.selected_answer_mode || 'n/a',
+      lastOverrideDenialReason: lastExecutionMetadata?.override_denial_reason || 'n/a',
       lastFreshnessWarning: lastExecutionMetadata?.freshness_warning || 'n/a',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
@@ -343,6 +346,8 @@ export default function StatusPanel() {
         <li>Provider Endpoint: {providerEndpointDisplay}</li>
         <li>Provider Model: {statusSummary.model}</li>
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
+        <li>Last UI Default Provider: {lastExecutionMetadata?.ui_default_provider || provider || 'n/a'}</li>
+        <li>Last Requested Provider For Request: {lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider || 'n/a'}</li>
         <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Last Route Mode: {lastExecutionMetadata?.route_mode || 'n/a'}</li>
         <li>Last Effective Route Mode: {lastExecutionMetadata?.effective_route_mode || 'n/a'}</li>
@@ -357,6 +362,7 @@ export default function StatusPanel() {
         <li>Last Answer Mode: {lastExecutionMetadata?.selected_answer_mode || 'n/a'}</li>
         <li>Last Stale Risk: {lastExecutionMetadata?.stale_risk || 'n/a'}</li>
         <li>Last Freshness Reason: {lastExecutionMetadata?.freshness_reason || 'n/a'}</li>
+        <li>Last Override Denial Reason: {lastExecutionMetadata?.override_denial_reason || 'n/a'}</li>
         <li>Last Freshness Warning: {lastExecutionMetadata?.freshness_warning || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
         <li>Execution Provider (Truth): {routeTruthView.executedProvider}</li>

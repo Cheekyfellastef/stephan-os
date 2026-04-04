@@ -156,7 +156,15 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
 
   return {
+    ui_default_provider: executionMetadata.ui_default_provider
+      || requestTrace.ui_default_provider
+      || requestPayload.routeDecision?.defaultProvider
+      || requestPayload.provider,
     ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
+    requested_provider_for_request: executionMetadata.requested_provider_for_request
+      || requestTrace.requested_provider_for_request
+      || requestPayload.routeDecision?.requestedProviderForRequest
+      || requestPayload.provider,
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
     route_mode: executionMetadata.route_mode || requestTrace.route_mode || requestPayload.routeMode || 'auto',
     effective_route_mode: executionMetadata.effective_route_mode || requestTrace.effective_route_mode || requestPayload.routeMode || 'auto',
@@ -170,6 +178,10 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     freshness_reason: executionMetadata.freshness_reason || requestTrace.freshness_reason || requestPayload.freshnessContext?.freshnessReason || 'n/a',
     stale_risk: executionMetadata.stale_risk || requestTrace.stale_risk || requestPayload.freshnessContext?.staleRisk || 'low',
     selected_answer_mode: executionMetadata.selected_answer_mode || requestTrace.selected_answer_mode || requestPayload.routeDecision?.selectedAnswerMode || 'local-private',
+    override_denial_reason: executionMetadata.override_denial_reason
+      || requestTrace.override_denial_reason
+      || requestPayload.routeDecision?.overrideDeniedReason
+      || null,
     freshness_warning: executionMetadata.freshness_warning || requestTrace.freshness_warning || requestPayload.routeDecision?.freshnessWarning || null,
     freshness_routed: Boolean(executionMetadata.freshness_routed ?? requestTrace.freshness_routed ?? requestPayload.routeDecision?.freshnessRouted ?? false),
   };
@@ -188,7 +200,7 @@ function deriveExecutionStatus(executionMetadata) {
 }
 
 function buildExecutionSummary(executionMetadata) {
-  const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI requested ${executionMetadata.ui_requested_provider}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
+  const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI default ${executionMetadata.ui_default_provider}. Request provider ${executionMetadata.requested_provider_for_request}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
   const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}.`;
 
@@ -232,6 +244,8 @@ function createRouteUnavailableResult({
       timing_ms: Math.round(performance.now() - startedAt),
       data: {
         request_trace: {
+          ui_default_provider: requestPayload.routeDecision?.defaultProvider || requestPayload.provider,
+          requested_provider_for_request: requestPayload.routeDecision?.requestedProviderForRequest || requestPayload.provider,
           requested_provider: requestPayload.provider,
           selected_provider: routeDecision?.selectedProvider || requestPayload.provider,
           fallback_used: routeDecision?.selectedAnswerMode === 'fallback-stale-risk',
@@ -240,6 +254,7 @@ function createRouteUnavailableResult({
           freshness_reason: requestPayload.freshnessContext?.freshnessReason || 'n/a',
           stale_risk: requestPayload.freshnessContext?.staleRisk || 'low',
           selected_answer_mode: routeDecision?.selectedAnswerMode || 'local-private',
+          override_denial_reason: routeDecision?.overrideDeniedReason || null,
           freshness_warning: routeDecision?.freshnessWarning || null,
           freshness_routed: Boolean(routeDecision?.freshnessRouted),
           selected_route_kind: routeKind,
@@ -964,6 +979,7 @@ export function useAIConsole() {
           runtimeStatus: requestRuntimeStatus,
           routeTruthView: requestRouteTruthView,
         }),
+        defaultProvider: provider,
         requestRouteTruth,
       };
       activeRouteDecision = freshnessRouteDecision;
@@ -971,10 +987,13 @@ export function useAIConsole() {
         ...prev,
         runtimeContext: finalizedRequestContext,
       }));
-      const requestedProvider = freshnessRouteDecision.selectedProvider || provider;
+      const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
+        || freshnessRouteDecision.selectedProvider
+        || provider;
+      const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;
       const requestPayload = {
         provider: requestedProvider,
-        routeMode,
+        routeMode: routeModeForRequest,
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
       };
@@ -1000,7 +1019,7 @@ export function useAIConsole() {
       const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
         prompt,
         provider: requestedProvider,
-        routeMode,
+        routeMode: routeModeForRequest,
         providerConfigs: effectiveProviderConfigs,
         fallbackEnabled,
         fallbackOrder,
