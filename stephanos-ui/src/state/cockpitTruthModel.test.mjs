@@ -124,3 +124,66 @@ test('cockpit model animates backend-memory trace when telemetry memory transiti
   assert.equal(model.connectionStates['backend-memory'], 'active');
   assert.ok(model.animatedConnectionIds.includes('backend-memory'));
 });
+
+test('cockpit model keeps non-selected surface inactive instead of degraded', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      localAvailable: true,
+      cloudAvailable: true,
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        reachabilityTruth: { localAvailable: true, cloudAvailable: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'no',
+      uiReachableState: 'yes',
+      executedProvider: 'ollama',
+      selectedProvider: 'ollama',
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.localSurface, 'degraded');
+  assert.equal(model.nodeStates.hostedSurface, 'inactive');
+  assert.equal(model.connectionStates['operator-localSurface'], 'degraded');
+  assert.equal(model.connectionStates['operator-hostedSurface'], 'inactive');
+});
+
+test('cockpit model degrades provider path when selected and executed providers mismatch', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      localAvailable: true,
+      cloudAvailable: true,
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        reachabilityTruth: { localAvailable: true, cloudAvailable: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      uiReachableState: 'yes',
+      selectedProvider: 'ollama',
+      executedProvider: 'groq',
+      providerMismatch: true,
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.aiProviders, 'degraded');
+  assert.equal(model.connectionStates['backend-aiProviders'], 'degraded');
+});
