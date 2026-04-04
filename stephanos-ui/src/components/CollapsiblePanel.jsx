@@ -9,6 +9,7 @@ export default function CollapsiblePanel({
   children,
   actions = null,
   titleAs = 'h2',
+  keepMountedWhenClosed = false,
 }) {
   const TitleTag = titleAs;
   const rootClassName = ['panel', 'collapsible-panel', className, isOpen ? 'is-open' : 'is-collapsed']
@@ -17,6 +18,7 @@ export default function CollapsiblePanel({
   const bodyId = `${panelId}-body`;
   const toggleLabel = `${isOpen ? 'Collapse' : 'Expand'} ${title}`;
 
+  const shouldRenderBody = isOpen || keepMountedWhenClosed;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
       <div className="panel-header-row">
@@ -40,7 +42,7 @@ export default function CollapsiblePanel({
         {actions ? <div className="panel-header-actions">{actions}</div> : null}
       </div>
       <div id={bodyId} className="panel-body" hidden={!isOpen} aria-hidden={!isOpen}>
-        {children}
+        {shouldRenderBody ? children : null}
       </div>
     </Component>
   );

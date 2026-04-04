@@ -27,6 +27,7 @@ import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
 import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
+import { deriveContinuityLoopSnapshot } from './state/continuityLoopSnapshot';
 import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
@@ -115,10 +116,46 @@ export default function App() {
     [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
   );
   const [telemetryEntries, setTelemetryEntries] = useState([]);
+  const [metricsTick, setMetricsTick] = useState(() => Date.now());
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
+  const continuitySnapshot = useMemo(
+    () => deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory, telemetryEntries, now: metricsTick }),
+    [runtimeStatus, commandHistory, telemetryEntries, metricsTick],
+  );
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth).map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const tickId = window.setInterval(() => setMetricsTick(Date.now()), 1000);
+    return () => window.clearInterval(tickId);
+  }, []);
+
+  const runtimeDiagnostics = useMemo(() => {
+    const totalPanels = Object.keys(safeUiLayout).filter((panelId) => panelId.endsWith('Panel')).length;
+    const activePanels = Object.entries(safeUiLayout)
+      .filter(([panelId, value]) => panelId.endsWith('Panel') && value !== false)
+      .length;
+    const tenSecondsAgo = metricsTick - 10_000;
+    const eventRate = telemetryEntries.filter((entry) => Date.parse(entry.timestamp) >= tenSecondsAgo).length / 10;
+    return {
+      activeTimerCount: 2,
+      activeListenerCount: 2,
+      telemetryHistoryLength: telemetryEntries.length,
+      continuityEventCount: continuitySnapshot.recentContinuityEvents.length,
+      activePanels,
+      totalPanels,
+      animationActiveCount: continuitySnapshot.recentActivityActive ? 1 : 0,
+      eventRatePerSecond: Number.isFinite(eventRate) ? Number(eventRate.toFixed(2)) : 0,
+    };
+  }, [continuitySnapshot.recentActivityActive, continuitySnapshot.recentContinuityEvents.length, metricsTick, safeUiLayout, telemetryEntries]);
+
+  useEffect(() => {
+    setUiDiagnostics((prev) => ({ ...prev, runtimeDiagnostics }));
+  }, [runtimeDiagnostics, setUiDiagnostics]);
 
   useEffect(() => {
     if (!finalRouteTruth) {

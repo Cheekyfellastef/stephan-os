@@ -19,6 +19,7 @@ import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from
 import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
 import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
+import { appendCommandHistory } from './commandHistory.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -566,8 +567,10 @@ export function useAIConsole() {
   }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext]);
 
   useEffect(() => {
-    refreshHealth();
-  }, [refreshHealth]);
+    void refreshHealth();
+    // Intentionally execute only once at mount; interval and visibility handlers perform subsequent refreshes.
+    // This prevents dependency churn from creating refresh feedback loops.
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -816,7 +819,7 @@ export function useAIConsole() {
         response: data,
       };
 
-      setCommandHistory((prev) => [...prev, entry]);
+      setCommandHistory((prev) => appendCommandHistory(prev, entry));
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 
@@ -873,7 +876,7 @@ export function useAIConsole() {
       setLastExecutionMetadata(null);
       setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));
 
-      setCommandHistory((prev) => [...prev, {
+      setCommandHistory((prev) => appendCommandHistory(prev, {
         id: `cmd_${Date.now()}`,
         raw_input: prompt,
         parsed_command: parsed,
@@ -887,7 +890,7 @@ export function useAIConsole() {
         error: uiError.error,
         error_code: uiError.errorCode,
         response: { type: 'assistant_response', route: 'assistant', success: false, output_text: uiError.output, error: uiError.error, error_code: uiError.errorCode },
-      }]);
+      }));
     } finally {
       setIsBusy(false);
     }
