@@ -261,9 +261,14 @@ export function useAIConsole() {
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
   const runtimeConfig = useMemo(() => getApiRuntimeConfig(), [runtimeConfigKey]);
   const startupOllamaSyncAttemptedRef = useRef(false);
+  const providerHealthRef = useRef(providerHealth);
   const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
   const ollamaDraftConfig = effectiveProviderConfigs.ollama || {};
   const ollamaHealth = providerHealth.ollama || {};
+
+  useEffect(() => {
+    providerHealthRef.current = providerHealth;
+  }, [providerHealth]);
 
   const buildRuntimeContextFromHealth = useCallback((resolvedRuntimeContext, health = {}) => {
     const backendBaseUrl = health.baseUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '';
@@ -540,7 +545,7 @@ export function useAIConsole() {
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
-      const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealth, false);
+      const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealthRef.current, false);
       setApiStatus({
         state: 'offline',
         label: 'Backend offline',
@@ -558,10 +563,44 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, providerHealth]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext]);
 
   useEffect(() => {
     refreshHealth();
+  }, [refreshHealth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    let intervalId = null;
+    const runRefresh = () => {
+      void refreshHealth();
+    };
+    const restartPolling = () => {
+      if (intervalId != null) {
+        window.clearInterval(intervalId);
+      }
+      const pollIntervalMs = document.visibilityState === 'visible' ? 60_000 : 180_000;
+      intervalId = window.setInterval(runRefresh, pollIntervalMs);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runRefresh();
+      }
+      restartPolling();
+    };
+
+    restartPolling();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (intervalId != null) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [refreshHealth]);
 
   useEffect(() => {

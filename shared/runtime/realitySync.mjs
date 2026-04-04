@@ -1,4 +1,5 @@
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_HIDDEN_POLL_INTERVAL_MS = 180_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 15_000;
 const DEFAULT_MAX_ATTEMPTS_PER_MARKER = 1;
 const REALITY_SYNC_SESSION_KEY = 'stephanos.realitySync.v1';
@@ -125,14 +126,17 @@ export function createRealitySyncController({
   healthUrl = './__stephanos/health',
   distMetadataUrl = './apps/stephanos/dist/stephanos-build.json',
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  hiddenPollIntervalMs = DEFAULT_HIDDEN_POLL_INTERVAL_MS,
   refreshCooldownMs = DEFAULT_REFRESH_COOLDOWN_MS,
   maxAutoRefreshAttemptsPerMarker = DEFAULT_MAX_ATTEMPTS_PER_MARKER,
   onStateChange = null,
   onRefreshRequest = null,
   enabled = true,
+  documentImpl = globalThis.document,
 } = {}) {
   let timerId = null;
   let inFlight = false;
+  let lastCheckAtMs = 0;
   const persisted = parseJsonStorage(storage, REALITY_SYNC_SESSION_KEY) || {};
   let state = {
     enabled: normalizeBoolean(enabled, true),
@@ -274,6 +278,7 @@ export function createRealitySyncController({
 
     inFlight = true;
     try {
+      lastCheckAtMs = now();
       const latestTruth = await fetchLatestTruth();
       const isStale = evaluateStaleness({
         displayedMarker: state.displayedMarker,
@@ -311,17 +316,36 @@ export function createRealitySyncController({
 
     if (!timerId) {
       timerId = setIntervalImpl(() => {
+        if (documentImpl?.visibilityState === 'hidden') {
+          const elapsedMs = now() - lastCheckAtMs;
+          if (elapsedMs < hiddenPollIntervalMs) {
+            return;
+          }
+        }
         void checkNow({ reason: 'poll' });
       }, pollIntervalMs);
     }
 
+    if (documentImpl?.addEventListener) {
+      documentImpl.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     return { ...state };
+  }
+
+  function handleVisibilityChange() {
+    if (documentImpl?.visibilityState === 'visible') {
+      void checkNow({ reason: 'visibility' });
+    }
   }
 
   function dispose() {
     if (timerId != null) {
       clearIntervalImpl(timerId);
       timerId = null;
+    }
+    if (documentImpl?.removeEventListener) {
+      documentImpl.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   }
 

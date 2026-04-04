@@ -37,6 +37,7 @@ test('cockpit continuity mapping keeps backend-memory trace inactive without rea
   });
 
   assert.equal(model.connectionStates['backend-memory'], 'degraded');
+  assert.deepEqual(model.animatedConnectionIds, []);
 });
 
 test('deriveConnectionState marks backend-memory trace active when continuity activity is recent', () => {
@@ -53,4 +54,39 @@ test('deriveConnectionState marks backend-memory trace active when continuity ac
   });
 
   assert.equal(state, 'active');
+});
+
+test('cockpit model only animates traces with real recent activity or active execution', () => {
+  const recentTimestamp = new Date().toISOString();
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      executionTruth: 'idle',
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        tile: { ready: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      uiReachableState: 'yes',
+      executedProvider: 'groq',
+      selectedProvider: 'groq',
+    },
+    commandHistory: [],
+    telemetryEntries: [{
+      id: 'evt-1',
+      subsystem: 'MEMORY',
+      change: 'continuity memory write observed',
+      timestamp: recentTimestamp,
+    }],
+  });
+
+  assert.deepEqual(model.animatedConnectionIds, ['backend-aiProviders', 'backend-memory', 'backend-execution']);
+  assert.deepEqual(model.animatedNodeIds, ['memory', 'execution', 'aiProviders']);
 });

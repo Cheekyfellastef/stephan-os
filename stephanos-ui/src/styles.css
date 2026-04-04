@@ -1666,7 +1666,7 @@ pre {
 }
 
 .truth-active .node-core {
-  animation: cockpitPulse 1.6s linear infinite;
+  animation: none;
 }
 
 .truth-alive .wire-energy {
@@ -1677,7 +1677,15 @@ pre {
 .truth-active .wire-energy {
   opacity: 0.95;
   stroke: rgba(120, 218, 255, 0.95);
+  animation: none;
+}
+
+.truth-active.cockpit-trace-animated .wire-energy {
   animation: cockpitFlow 1.4s linear infinite;
+}
+
+.truth-active.cockpit-trace-animated .node-core {
+  animation: cockpitPulse 1.6s linear infinite;
 }
 
 .truth-degraded .node-ring,
@@ -1686,7 +1694,7 @@ pre {
 .truth-degraded .node-core {
   stroke: rgba(241, 197, 108, 0.82);
   fill: rgba(139, 113, 41, 0.35);
-  animation: cockpitFlicker 1.1s steps(2, end) infinite;
+  animation: none;
 }
 
 .truth-broken .wire-base,
