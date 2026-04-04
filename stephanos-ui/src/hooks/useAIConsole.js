@@ -298,21 +298,21 @@ function createRouteUnavailableResult({
 
 function transportErrorToUi(error, { routeDecision = null } = {}) {
   const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
-  if (!error?.code && routeFailureReason === 'web-capability-unsupported') {
+  if (!error?.code && routeFailureReason === 'groq-web-capability-unsupported') {
     return {
       error: 'Fresh-web route override is unsupported by the active provider capability set.',
       errorCode: 'UNSUPPORTED_ROUTE_OVERRIDE',
       output: 'Fresh-web route override is unsupported by provider capabilities. Routed to stale-risk fallback instead.',
     };
   }
-  if (!error?.code && routeFailureReason === 'provider-unhealthy') {
+  if (!error?.code && routeFailureReason === 'groq-provider-unhealthy') {
     return {
       error: 'Fresh-web provider is currently unavailable.',
       errorCode: 'PROVIDER_UNAVAILABLE',
       output: 'Fresh-web provider is unavailable. Stephanos is using stale-risk fallback to preserve continuity.',
     };
   }
-  if (!error?.code && routeFailureReason === 'transport-unreachable') {
+  if (!error?.code && routeFailureReason === 'groq-transport-unreachable') {
     return {
       error: 'Fresh-web provider transport is unreachable from the current backend route.',
       errorCode: 'PROVIDER_TRANSPORT_UNREACHABLE',

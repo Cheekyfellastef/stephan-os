@@ -126,6 +126,34 @@ function resolveWebCapabilityState(providerHealth = {}, providerKey = '') {
   return 'unknown';
 }
 
+function resolveCurrentAnswerCapability(providerHealth = {}, providerKey = '') {
+  const health = providerHealth?.[providerKey] || {};
+  const capabilityTruth = health?.providerCapability || {};
+  const explicitCurrentAnswerSupport = [
+    capabilityTruth.supportsCurrentAnswers,
+    health?.capabilities?.currentAnswers,
+    health?.capabilities?.freshCurrentAnswers,
+    health?.config?.supportsCurrentAnswers,
+  ].find((value) => typeof value === 'boolean');
+  if (typeof explicitCurrentAnswerSupport === 'boolean') {
+    return explicitCurrentAnswerSupport;
+  }
+
+  const explicitFreshWebSupport = [
+    capabilityTruth.supportsFreshWeb,
+    capabilityTruth.supportsBrowserSearch,
+    health?.capabilities?.freshWeb,
+    health?.capabilities?.browserSearch,
+    health?.capabilities?.webLookup,
+    health?.capabilities?.webEnabled,
+  ].find((value) => typeof value === 'boolean');
+  if (typeof explicitFreshWebSupport === 'boolean') {
+    return explicitFreshWebSupport;
+  }
+
+  return null;
+}
+
 export function resolveFreshnessRoutingDecision({
   classification,
   requestedProvider = 'ollama',
@@ -147,10 +175,11 @@ export function resolveFreshnessRoutingDecision({
   const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
   const groqCapability = providerHealth?.groq?.providerCapability || {};
   const webCapabilityState = resolveWebCapabilityState(providerHealth, 'groq');
+  const groqSupportsCurrentAnswers = resolveCurrentAnswerCapability(providerHealth, 'groq');
   const freshRouteAvailable = cloudRouteUsable
     && groqHealthy
     && groqTransportReachable
-    && groqCapability.supportsCurrentAnswers !== false
+    && groqSupportsCurrentAnswers !== false
     && webCapabilityState !== 'unsupported';
   const localRouteAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
   const explicitFreshness = classification?.explicitFreshness === true;
@@ -163,11 +192,11 @@ export function resolveFreshnessRoutingDecision({
   let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
-  if (!cloudRouteUsable) freshRouteFailureReasons.push('cloud-route-unusable');
-  if (!groqHealthy) freshRouteFailureReasons.push('provider-unhealthy');
-  if (!groqTransportReachable) freshRouteFailureReasons.push('transport-unreachable');
-  if (groqCapability.supportsCurrentAnswers === false) freshRouteFailureReasons.push('current-answers-unsupported');
-  if (webCapabilityState === 'unsupported') freshRouteFailureReasons.push('web-capability-unsupported');
+  if (!cloudRouteUsable) freshRouteFailureReasons.push('groq-cloud-route-unusable');
+  if (!groqHealthy) freshRouteFailureReasons.push('groq-provider-unhealthy');
+  if (!groqTransportReachable) freshRouteFailureReasons.push('groq-transport-unreachable');
+  if (groqSupportsCurrentAnswers === false) freshRouteFailureReasons.push('groq-current-answers-unsupported');
+  if (webCapabilityState === 'unsupported') freshRouteFailureReasons.push('groq-web-capability-unsupported');
 
   if (classification?.freshnessNeed === 'high') {
     if (freshRouteAvailable) {
@@ -235,6 +264,7 @@ export function resolveFreshnessRoutingDecision({
       providerHealthy: groqHealthy,
       providerTransportReachable: groqTransportReachable,
       providerCapability: groqCapability,
+      providerSupportsCurrentAnswers: groqSupportsCurrentAnswers,
       webCapabilityState,
       failureReasons: freshRouteFailureReasons,
     },

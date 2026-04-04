@@ -87,55 +87,57 @@ export default function AIConsole({
       isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
-        <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
-        <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
-      </div>
-      <div className={`api-banner ${runtimeStatus.statusTone}`}>
-        <strong>{runtimeStatus.headline}</strong>
-        <span>{runtimeStatus.dependencySummary}</span>
-        <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
-        <span>Continuity mode: {continuityMode}</span>
-      </div>
-      {provider === 'ollama' && !runtimeStatus.localAvailable ? (
-        <div className="api-banner degraded">
-          <strong>{runtimeStatus.cloudAvailable ? 'Cloud route available' : ollamaState.title}</strong>
-          <span>
-            {runtimeStatus.cloudAvailable
-              ? `Stephanos can keep routing requests through ${routeTruthView.executedProvider} while your local Ollama node is offline.`
-              : (ollamaState.helpText[0] || 'Bring Ollama online or configure a cloud provider.')}
-          </span>
+      <div className="mission-console-shell">
+        <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
+          <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
+          <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
         </div>
-      ) : null}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="output-panel ai-console-messages"
-      >
-        {showStartupPlaceholder ? (
-          <div className="api-banner degraded" role="status" aria-live="polite">
-            <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
-            <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
+        <div className={`api-banner ${runtimeStatus.statusTone}`}>
+          <strong>{runtimeStatus.headline}</strong>
+          <span>{runtimeStatus.dependencySummary}</span>
+          <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
+          <span>Continuity mode: {continuityMode}</span>
+        </div>
+        {provider === 'ollama' && !runtimeStatus.localAvailable ? (
+          <div className="api-banner degraded">
+            <strong>{runtimeStatus.cloudAvailable ? 'Cloud route available' : ollamaState.title}</strong>
+            <span>
+              {runtimeStatus.cloudAvailable
+                ? `Stephanos can keep routing requests through ${routeTruthView.executedProvider} while your local Ollama node is offline.`
+                : (ollamaState.helpText[0] || 'Bring Ollama online or configure a cloud provider.')}
+            </span>
           </div>
         ) : null}
-        {safeCommandHistory.length === 0 ? (
-          <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
-        ) : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
-        {latestCommand?.continuity_context ? (
-          <details>
-            <summary>Continuity Context Used ({continuityRecords.length})</summary>
-            <p className="muted">{latestCommand.continuity_context.summary || 'No continuity summary available.'}</p>
-            <ul className="compact-list">
-              {continuityRecords.map((record) => <li key={record.id || `${record.subsystem}-${record.timestamp}`}>{record.timestamp} · {record.subsystem} · {record.summary}</li>)}
-            </ul>
-          </details>
-        ) : null}
-        <div ref={endOfMessagesRef} />
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          className="output-panel ai-console-messages"
+        >
+          {showStartupPlaceholder ? (
+            <div className="api-banner degraded" role="status" aria-live="polite">
+              <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
+              <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
+            </div>
+          ) : null}
+          {safeCommandHistory.length === 0 ? (
+            <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
+          ) : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
+          {latestCommand?.continuity_context ? (
+            <details>
+              <summary>Continuity Context Used ({continuityRecords.length})</summary>
+              <p className="muted">{latestCommand.continuity_context.summary || 'No continuity summary available.'}</p>
+              <ul className="compact-list">
+                {continuityRecords.map((record) => <li key={record.id || `${record.subsystem}-${record.timestamp}`}>{record.timestamp} · {record.subsystem} · {record.summary}</li>)}
+              </ul>
+            </details>
+          ) : null}
+          <div ref={endOfMessagesRef} />
+        </div>
+        <form className="command-form mission-console-input" onSubmit={onSubmit}>
+          <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />
+          <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
+        </form>
       </div>
-      <form className="command-form" onSubmit={onSubmit}>
-        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />
-        <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
-      </form>
     </CollapsiblePanel>
   );
 }
