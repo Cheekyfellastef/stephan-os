@@ -12,6 +12,35 @@ import {
 
 const logger = createLogger('llm-router');
 
+function normalizeProviderCapabilityTruth(provider, health = {}) {
+  const explicit = health?.providerCapability && typeof health.providerCapability === 'object'
+    ? health.providerCapability
+    : null;
+  if (explicit) {
+    return {
+      provider,
+      available: explicit.available === true,
+      transportReachable: explicit.transportReachable === true,
+      supportsFreshWeb: explicit.supportsFreshWeb === true,
+      supportsBrowserSearch: explicit.supportsBrowserSearch === true,
+      supportsCurrentAnswers: explicit.supportsCurrentAnswers === true,
+      capabilityReason: String(explicit.capabilityReason || health.detail || 'Capability truth unavailable.'),
+    };
+  }
+
+  return {
+    provider,
+    available: health?.ok === true,
+    transportReachable: health?.transportReachable === true || health?.ok === true,
+    supportsFreshWeb: false,
+    supportsBrowserSearch: false,
+    supportsCurrentAnswers: false,
+    capabilityReason: provider === 'groq'
+      ? 'Groq capability truth unavailable from provider health diagnostics.'
+      : `${provider} does not expose fresh-web capability in this backend route.`,
+  };
+}
+
 function summarizeAttemptFailure(provider, attempt) {
   if (!attempt) return null;
   if (attempt.result?.ok && attempt.result?.outputText) return null;
@@ -84,8 +113,11 @@ export async function getProviderHealthSnapshot(routerConfigInput = {}) {
       runtimeContext: routerConfig.runtimeContext,
     });
     const health = await PROVIDER_HEALTH_CHECKS[provider](config);
+    const providerCapability = normalizeProviderCapabilityTruth(provider, health);
     snapshot[provider] = {
       ...health,
+      transportReachable: health?.transportReachable === true || providerCapability.transportReachable,
+      providerCapability,
       active: routerConfig.provider === provider,
       fallback: routerConfig.fallbackOrder.includes(provider) && provider !== routerConfig.provider,
       config: redactSecrets(config),

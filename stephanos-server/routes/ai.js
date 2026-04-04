@@ -192,7 +192,19 @@ router.post('/providers/health', async (req, res) => {
 
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfig = {}, providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
+  const {
+    prompt,
+    provider = DEFAULT_PROVIDER_KEY,
+    routeMode = 'auto',
+    providerConfig = {},
+    providerConfigs = {},
+    fallbackEnabled = true,
+    fallbackOrder = undefined,
+    devMode = true,
+    runtimeContext = {},
+    freshnessContext = null,
+    routeDecision = null,
+  } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
   const mergedProviderConfigs = buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
@@ -276,6 +288,8 @@ Use these memories when they help, but do not repeat them unless they are releva
     const llmResult = await routeLLMRequest({
       messages: [{ role: 'user', content: prompt }],
       systemPrompt: memoryAwareSystemPrompt,
+      freshnessContext,
+      routeDecision,
     }, {
       provider,
       providerConfigs: mergedProviderConfigs,
@@ -305,6 +319,7 @@ Use these memories when they help, but do not repeat them unless they are releva
       model_used: llmResult.modelUsed || llmResult.model || '',
       fallback_used: Boolean(llmResult.fallbackUsed),
       fallback_reason: llmResult.fallbackReason || null,
+      provider_capability: providerHealthSnapshot?.[llmResult.actualProviderUsed || llmResult.provider]?.providerCapability || null,
       ollama_base_url: llmResult.diagnostics?.ollama?.baseURL || providerHealthSnapshot?.ollama?.baseURL || null,
       ollama_model_requested: llmResult.diagnostics?.ollama?.requestedModel || mergedProviderConfigs?.ollama?.model || null,
       ollama_model_selected: llmResult.diagnostics?.ollama?.selectedModel || null,
@@ -322,6 +337,12 @@ Use these memories when they help, but do not repeat them unless they are releva
       model_used: executionMetadata.model_used,
       fallback_used: executionMetadata.fallback_used,
       fallback_reason: executionMetadata.fallback_reason,
+      freshness_need: freshnessContext?.freshnessNeed || 'low',
+      freshness_reason: freshnessContext?.freshnessReason || 'n/a',
+      stale_risk: freshnessContext?.staleRisk || 'low',
+      selected_answer_mode: routeDecision?.selectedAnswerMode || 'local-private',
+      freshness_warning: routeDecision?.freshnessWarning || null,
+      freshness_routed: Boolean(routeDecision?.freshnessRouted),
       route_mode: routeMode,
       effective_route_mode: executionMetadata.effective_route_mode,
       provider_resolution: providerResolution,

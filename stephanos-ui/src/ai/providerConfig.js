@@ -97,6 +97,7 @@ export function buildProviderStatusSummary(providerKey, config, apiBaseUrl, heal
     healthDetail: health?.message || health?.detail || 'Health not checked yet.',
     healthReason: health?.reason || '',
     healthState: health?.state || 'UNKNOWN',
+    providerCapability: health?.providerCapability || null,
   };
 }
 

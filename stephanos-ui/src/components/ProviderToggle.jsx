@@ -570,6 +570,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     <p><strong>Configured via:</strong> {health.configuredVia || 'missing'}</p>
                     <p><strong>Resolved model:</strong> {health.model || draft.model || 'n/a'}</p>
                     <p><strong>Resolved base URL:</strong> {health.baseURL || draft.baseURL || 'n/a'}</p>
+                    <p><strong>Supports fresh web:</strong> {String(health.providerCapability?.supportsFreshWeb ?? 'unknown')}</p>
+                    <p><strong>Supports current answers:</strong> {String(health.providerCapability?.supportsCurrentAnswers ?? 'unknown')}</p>
+                    <p><strong>Capability reason:</strong> {health.providerCapability?.capabilityReason || 'n/a'}</p>
                   </div>
                 </div>
               ) : null}

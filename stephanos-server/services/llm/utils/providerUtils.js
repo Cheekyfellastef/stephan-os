@@ -17,7 +17,17 @@ export function normalizeMessages(messages = [], prompt = '') {
   return [{ role: 'user', content: prompt || '' }];
 }
 
-export function buildAIRequest({ prompt = '', messages = [], systemPrompt, model, temperature, maxTokens, stream = false } = {}) {
+export function buildAIRequest({
+  prompt = '',
+  messages = [],
+  systemPrompt,
+  model,
+  temperature,
+  maxTokens,
+  stream = false,
+  freshnessContext = null,
+  routeDecision = null,
+} = {}) {
   return {
     messages: normalizeMessages(messages, prompt).map((message) => ({
       role: ['system', 'user', 'assistant'].includes(message?.role) ? message.role : 'user',
@@ -28,6 +38,8 @@ export function buildAIRequest({ prompt = '', messages = [], systemPrompt, model
     temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : undefined,
     maxTokens: Number.isFinite(Number(maxTokens)) ? Number(maxTokens) : undefined,
     stream: Boolean(stream),
+    freshnessContext: freshnessContext && typeof freshnessContext === 'object' ? { ...freshnessContext } : null,
+    routeDecision: routeDecision && typeof routeDecision === 'object' ? { ...routeDecision } : null,
   };
 }
 

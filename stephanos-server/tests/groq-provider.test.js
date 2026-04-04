@@ -47,3 +47,37 @@ test('Groq runner uses the runtime provider api key through the backend provider
     globalThis.fetch = ORIGINAL_FETCH;
   }
 });
+
+test('Groq runner uses responses web-search route for high freshness when model is fresh-web capable', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      json: async () => ({
+        model: 'compound-beta-mini',
+        output_text: 'Live web answer from Groq',
+        usage: { total_tokens: 18 },
+      }),
+    };
+  };
+
+  try {
+    const result = await runGroqProvider({
+      messages: [{ role: 'user', content: 'Who is the current UK prime minister?' }],
+      freshnessContext: { freshnessNeed: 'high' },
+    }, {
+      apiKey: 'gsk_test_session_key',
+      baseURL: 'https://api.groq.com/openai/v1',
+      model: 'compound-beta-mini',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.outputText, 'Live web answer from Groq');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/responses');
+    assert.match(String(calls[0].options.body || ''), /web_search/);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
