@@ -326,3 +326,82 @@ test('low-freshness local system prompt remains local-first on Ollama', () => {
   assert.equal(decision.requestedProviderForRequest, 'ollama');
   assert.equal(decision.selectedAnswerMode, 'local-private');
 });
+
+test('hosted low-freshness request uses cloud-basic when local/home bridge is unavailable', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'groq',
+    providerHealth: {
+      groq: { ok: true, transportReachable: true },
+      ollama: { ok: true },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: true,
+      localAvailable: true,
+      homeNodeAvailable: false,
+      backendReachable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+      homeNodeUsableState: 'no',
+    },
+  });
+
+  assert.equal(decision.selectedProvider, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'cloud-basic');
+  assert.match(decision.policyReason, /zero-cost cloud reasoning path/i);
+});
+
+test('hosted low-freshness request returns route-unavailable when neither cloud nor local path is reachable', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'groq',
+    providerHealth: {
+      groq: { ok: false, transportReachable: false },
+      ollama: { ok: false },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: false,
+      localAvailable: false,
+      homeNodeAvailable: false,
+      backendReachable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+      homeNodeUsableState: 'no',
+    },
+  });
+
+  assert.equal(decision.selectedAnswerMode, 'route-unavailable');
+  assert.equal(decision.fallbackReasonCode, 'no-viable-execution-path');
+});
+
+test('hosted low-freshness request keeps local-private only when home-node bridge is reachable', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: { ok: true, transportReachable: true },
+      ollama: { ok: true },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: true,
+      localAvailable: true,
+      homeNodeAvailable: true,
+      backendReachable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+      homeNodeUsableState: 'yes',
+    },
+  });
+
+  assert.equal(decision.selectedProvider, 'ollama');
+  assert.equal(decision.selectedAnswerMode, 'local-private');
+});
