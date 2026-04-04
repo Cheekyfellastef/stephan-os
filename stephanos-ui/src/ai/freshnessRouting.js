@@ -81,6 +81,43 @@ function providerHealthy(providerHealth = {}, providerKey = '') {
   return health?.ok === true || String(health?.state || '').toLowerCase() === 'healthy';
 }
 
+function providerTransportReachable(providerHealth = {}, providerKey = '') {
+  const health = providerHealth?.[providerKey] || {};
+  const explicitReachability = [
+    health?.transportReachable,
+    health?.transport?.reachable,
+    health?.network?.reachable,
+    health?.connectivity?.reachable,
+  ].find((value) => typeof value === 'boolean');
+
+  if (typeof explicitReachability === 'boolean') {
+    return explicitReachability;
+  }
+
+  return providerHealthy(providerHealth, providerKey);
+}
+
+function resolveWebCapabilityState(providerHealth = {}, providerKey = '') {
+  const health = providerHealth?.[providerKey] || {};
+  const explicitSignals = [
+    health?.capabilities?.freshWeb,
+    health?.capabilities?.webLookup,
+    health?.capabilities?.webEnabled,
+    health?.capabilities?.internetAccess,
+    health?.config?.freshWeb,
+    health?.config?.webLookup,
+    health?.config?.webEnabled,
+  ].filter((value) => typeof value === 'boolean');
+
+  if (explicitSignals.some((value) => value === true)) {
+    return 'supported';
+  }
+  if (explicitSignals.some((value) => value === false)) {
+    return 'unsupported';
+  }
+  return 'unknown';
+}
+
 export function resolveFreshnessRoutingDecision({
   classification,
   requestedProvider = 'ollama',
@@ -89,9 +126,15 @@ export function resolveFreshnessRoutingDecision({
   routeTruthView = {},
 } = {}) {
   const requested = String(requestedProvider || 'ollama');
-  const freshRouteAvailable = providerHealthy(providerHealth, 'groq')
-    && runtimeStatus?.cloudAvailable === true
-    && String(routeTruthView?.routeUsableState || '').toLowerCase() !== 'no';
+  const cloudRouteUsable = runtimeStatus?.cloudAvailable === true
+    && String(routeTruthView?.routeUsableState || '').toLowerCase() === 'yes';
+  const groqHealthy = providerHealthy(providerHealth, 'groq');
+  const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
+  const webCapabilityState = resolveWebCapabilityState(providerHealth, 'groq');
+  const freshRouteAvailable = cloudRouteUsable
+    && groqHealthy
+    && groqTransportReachable
+    && webCapabilityState !== 'unsupported';
   const localRouteAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
   const explicitFreshness = classification?.explicitFreshness === true;
 
@@ -99,6 +142,13 @@ export function resolveFreshnessRoutingDecision({
   let selectedAnswerMode = 'local-private';
   let freshnessWarning = null;
   let freshnessRouted = false;
+  let fallbackReasonCode = null;
+
+  const freshRouteFailureReasons = [];
+  if (!cloudRouteUsable) freshRouteFailureReasons.push('cloud-route-unusable');
+  if (!groqHealthy) freshRouteFailureReasons.push('provider-unhealthy');
+  if (!groqTransportReachable) freshRouteFailureReasons.push('transport-unreachable');
+  if (webCapabilityState === 'unsupported') freshRouteFailureReasons.push('web-capability-unsupported');
 
   if (classification?.freshnessNeed === 'high') {
     if (freshRouteAvailable) {
@@ -109,6 +159,7 @@ export function resolveFreshnessRoutingDecision({
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Fresh route unavailable; answer may be stale.';
+      fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
     }
   } else if (classification?.freshnessNeed === 'medium') {
     if (explicitFreshness && freshRouteAvailable) {
@@ -119,10 +170,12 @@ export function resolveFreshnessRoutingDecision({
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Answered without live web route; verify current facts.';
+      fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
     } else if (!freshRouteAvailable && classification?.staleRisk !== 'low') {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
       freshnessWarning = 'Answered locally; current details may be stale.';
+      fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
     }
   } else if (!localRouteAvailable && freshRouteAvailable) {
     selectedProvider = 'groq';
@@ -137,5 +190,13 @@ export function resolveFreshnessRoutingDecision({
     freshnessWarning,
     freshRouteAvailable,
     localRouteAvailable,
+    fallbackReasonCode,
+    freshRouteValidation: {
+      cloudRouteUsable,
+      providerHealthy: groqHealthy,
+      providerTransportReachable: groqTransportReachable,
+      webCapabilityState,
+      failureReasons: freshRouteFailureReasons,
+    },
   };
 }

@@ -44,4 +44,41 @@ test('no fresh route available falls back with stale-risk mode', () => {
 
   assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
   assert.match(decision.freshnessWarning || '', /stale/i);
+  assert.equal(decision.fallbackReasonCode, 'cloud-route-unusable');
+});
+
+test('fresh route requires provider transport reachability', () => {
+  const classification = classifyPromptFreshness('Who is the US president today?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: { ok: true, transportReachable: false },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true },
+    routeTruthView: { routeUsableState: 'yes' },
+  });
+
+  assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
+  assert.equal(decision.fallbackReasonCode, 'transport-unreachable');
+  assert.equal(decision.freshRouteValidation.providerTransportReachable, false);
+});
+
+test('fresh route blocks unsupported explicit web capability signal', () => {
+  const classification = classifyPromptFreshness('What is the latest NVIDIA stock price?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: { ok: true, capabilities: { webEnabled: false } },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true },
+    routeTruthView: { routeUsableState: 'yes' },
+  });
+
+  assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
+  assert.equal(decision.fallbackReasonCode, 'web-capability-unsupported');
+  assert.equal(decision.freshRouteValidation.webCapabilityState, 'unsupported');
 });
