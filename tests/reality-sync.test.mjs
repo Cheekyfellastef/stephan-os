@@ -128,3 +128,44 @@ test('reality sync falls back cleanly when authoritative endpoints are unavailab
   assert.equal(state.isStale, false);
   controller.dispose();
 });
+
+test('reality sync suppresses hidden-tab polling until hidden interval elapses', async () => {
+  let pollCallback = null;
+  let nowMs = Date.parse('2026-04-03T01:00:00.000Z');
+  let fetchCalls = 0;
+  const documentStub = {
+    visibilityState: 'hidden',
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const controller = createRealitySyncController({
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return { ok: false, status: 404, async json() { return {}; } };
+    },
+    now: () => nowMs,
+    setIntervalImpl(callback) {
+      pollCallback = callback;
+      return 1;
+    },
+    clearIntervalImpl() {},
+    pollIntervalMs: 1_000,
+    hiddenPollIntervalMs: 10_000,
+    documentImpl: documentStub,
+    enabled: false,
+  });
+
+  controller.init();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(fetchCalls, 3);
+
+  pollCallback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(fetchCalls, 3);
+
+  nowMs += 10_000;
+  pollCallback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(fetchCalls, 6);
+  controller.dispose();
+});

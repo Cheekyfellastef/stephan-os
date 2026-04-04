@@ -209,5 +209,22 @@ export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {
     ]),
   );
 
-  return { nodeStates, connectionStates, activeSurface, continuitySnapshot };
+  const animatedConnectionIds = CONNECTIONS
+    .filter((connection) => {
+      if (connection.id === 'backend-memory') {
+        return continuitySnapshot.recentActivityActive === true;
+      }
+      if (connection.id === 'backend-execution' || connection.id === 'backend-aiProviders') {
+        return executionActive === true;
+      }
+      return false;
+    })
+    .map((connection) => connection.id);
+  const animatedNodeIds = [
+    continuitySnapshot.recentActivityActive === true ? 'memory' : null,
+    executionActive === true ? 'execution' : null,
+    executionActive === true ? 'aiProviders' : null,
+  ].filter(Boolean);
+
+  return { nodeStates, connectionStates, activeSurface, continuitySnapshot, animatedConnectionIds, animatedNodeIds };
 }
