@@ -154,6 +154,27 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const requestTrace = data.data?.request_trace || {};
   const actualProviderUsed = executionMetadata.actual_provider_used || data.data?.actual_provider_used || data.data?.provider || null;
   const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
+  const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
+  const routeDecision = requestPayload.routeDecision || {};
+  const defaultSelectedAnswerMode = executionMetadata.selected_answer_mode
+    || requestTrace.selected_answer_mode
+    || routeDecision?.selectedAnswerMode
+    || 'local-private';
+  const shouldPromoteHostedCloudBasic = freshnessNeed === 'low'
+    && routeDecision?.aiPolicy?.aiPolicyMode === 'hosted-cloud-first-for-freshness'
+    && String(executionMetadata.selected_provider || requestTrace.selected_provider || routeDecision?.selectedProvider || '').trim().toLowerCase() === 'groq'
+    && routeDecision?.cloudRouteAvailable === true
+    && routeDecision?.localRouteAvailable === false
+    && defaultSelectedAnswerMode === 'local-private';
+  const selectedAnswerMode = shouldPromoteHostedCloudBasic ? 'cloud-basic' : defaultSelectedAnswerMode;
+  const defaultPolicyReason = executionMetadata.ai_policy_reason
+    || requestTrace.ai_policy_reason
+    || routeDecision?.policyReason
+    || 'Local-first policy applied.';
+  const aiPolicyReason = shouldPromoteHostedCloudBasic
+    && defaultPolicyReason === 'Local-private default for low-freshness or private/system reasoning.'
+    ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
+    : defaultPolicyReason;
 
   return {
     ui_default_provider: executionMetadata.ui_default_provider
@@ -177,10 +198,10 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     model_used: modelUsed,
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
-    freshness_need: executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low',
+    freshness_need: freshnessNeed,
     freshness_reason: executionMetadata.freshness_reason || requestTrace.freshness_reason || requestPayload.freshnessContext?.freshnessReason || 'n/a',
     stale_risk: executionMetadata.stale_risk || requestTrace.stale_risk || requestPayload.freshnessContext?.staleRisk || 'low',
-    selected_answer_mode: executionMetadata.selected_answer_mode || requestTrace.selected_answer_mode || requestPayload.routeDecision?.selectedAnswerMode || 'local-private',
+    selected_answer_mode: selectedAnswerMode,
     override_denial_reason: executionMetadata.override_denial_reason
       || requestTrace.override_denial_reason
       || requestPayload.routeDecision?.overrideDeniedReason
@@ -191,10 +212,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.ai_policy_mode
       || requestPayload.routeDecision?.aiPolicy?.aiPolicyMode
       || 'local-first-cloud-when-needed',
-    ai_policy_reason: executionMetadata.ai_policy_reason
-      || requestTrace.ai_policy_reason
-      || requestPayload.routeDecision?.policyReason
-      || 'Local-first policy applied.',
+    ai_policy_reason: aiPolicyReason,
     groq_endpoint_used: executionMetadata.groq_endpoint_used || requestTrace.groq_endpoint_used || null,
     groq_model_used: executionMetadata.groq_model_used || requestTrace.groq_model_used || null,
     groq_fresh_web_active: Boolean(executionMetadata.groq_fresh_web_active ?? requestTrace.groq_fresh_web_active ?? false),

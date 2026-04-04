@@ -405,3 +405,29 @@ test('hosted low-freshness request keeps local-private only when home-node bridg
   assert.equal(decision.selectedProvider, 'ollama');
   assert.equal(decision.selectedAnswerMode, 'local-private');
 });
+
+test('hosted session-kind alias still resolves low-freshness Groq requests to cloud-basic', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'groq',
+    providerHealth: {
+      groq: { ok: true, transportReachable: true },
+      ollama: { ok: true },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted_web',
+      cloudAvailable: true,
+      localAvailable: true,
+      homeNodeAvailable: false,
+      backendReachable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+      homeNodeUsableState: 'no',
+    },
+  });
+
+  assert.equal(decision.selectedProvider, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'cloud-basic');
+});
