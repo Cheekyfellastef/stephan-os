@@ -52,6 +52,9 @@ function resolveFreshWebExecutionPlan(resolved = {}) {
 function buildGroqCapabilityTruth({ resolved, hasApiKey }) {
   const executionPlan = resolveFreshWebExecutionPlan(resolved);
   const supportsFreshWeb = hasApiKey && executionPlan.candidateFreshRouteAvailable;
+  const zeroCostPolicy = true;
+  const paidFreshRoutesEnabled = false;
+  const freshCapabilityMode = 'zero-cost-only';
   return {
     provider: 'groq',
     available: hasApiKey,
@@ -65,10 +68,13 @@ function buildGroqCapabilityTruth({ resolved, hasApiKey }) {
     supportsFreshWeb,
     supportsBrowserSearch: supportsFreshWeb,
     supportsCurrentAnswers: supportsFreshWeb,
+    zeroCostPolicy,
+    paidFreshRoutesEnabled,
+    freshCapabilityMode,
     capabilityReason: supportsFreshWeb
       ? `Groq fresh-web route enabled via model "${executionPlan.selectedFreshWebModel}" (${executionPlan.selectedFreshWebSource}) on /responses with web_search.`
       : hasApiKey
-        ? `Groq is configured but no fresh-web capable model candidate was found. Configured model "${executionPlan.configuredModel || 'n/a'}" is not marked fresh-web capable (requires a compound/search model).`
+        ? `Groq is configured with zero-cost-only policy and no zero-cost fresh route configured. Configured model "${executionPlan.configuredModel || 'n/a'}" is not marked fresh-web capable (requires explicit opt-in compound/search model).`
         : 'Groq API key is missing.',
   };
 }
