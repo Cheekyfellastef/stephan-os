@@ -81,3 +81,50 @@ test('Groq runner uses responses web-search route for high freshness when model 
     globalThis.fetch = ORIGINAL_FETCH;
   }
 });
+
+test('Groq runner uses configured fresh-web candidate model for high-freshness prompts', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      json: async () => ({
+        model: 'compound-beta-mini',
+        output_text: 'Fresh route used candidate model',
+      }),
+    };
+  };
+
+  try {
+    const result = await runGroqProvider({
+      messages: [{ role: 'user', content: 'latest CPI release today?' }],
+      freshnessContext: { freshnessNeed: 'high' },
+    }, {
+      apiKey: 'gsk_test_session_key',
+      baseURL: 'https://api.groq.com/openai/v1',
+      model: 'openai/gpt-oss-20b',
+      freshWebModel: 'compound-beta-mini',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.groq.freshWebActive, true);
+    assert.equal(result.diagnostics.groq.selectedModel, 'compound-beta-mini');
+    assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/responses');
+    assert.match(String(calls[0].options.body || ''), /compound-beta-mini/);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('Groq health remains explicit when only non-fresh model is configured', async () => {
+  const health = await checkGroqHealth({
+    apiKey: 'gsk_test_session_key',
+    model: 'openai/gpt-oss-20b',
+  });
+
+  assert.equal(health.ok, true);
+  assert.equal(health.providerCapability.supportsFreshWeb, false);
+  assert.equal(health.providerCapability.configuredModelSupportsFreshWeb, false);
+  assert.equal(health.providerCapability.candidateFreshRouteAvailable, false);
+  assert.match(health.providerCapability.capabilityReason, /no fresh-web capable model candidate/i);
+});

@@ -331,6 +331,12 @@ Use these memories when they help, but do not repeat them unless they are releva
       secret_authority: 'backend-local-secret-store',
       ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
       ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
+      groq_endpoint_used: llmResult.diagnostics?.groq?.endpoint || null,
+      groq_model_used: llmResult.diagnostics?.groq?.selectedModel || null,
+      groq_fresh_web_active: Boolean(llmResult.diagnostics?.groq?.freshWebActive),
+      groq_fresh_web_candidate_available: Boolean(llmResult.diagnostics?.groq?.freshWebModelCandidateAvailable),
+      groq_fresh_web_path: llmResult.diagnostics?.groq?.freshWebPath || null,
+      groq_capability_reason: providerHealthSnapshot?.groq?.providerCapability?.capabilityReason || null,
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -352,6 +358,12 @@ Use these memories when they help, but do not repeat them unless they are releva
       ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
       route_mode: routeMode,
       effective_route_mode: executionMetadata.effective_route_mode,
+      groq_endpoint_used: executionMetadata.groq_endpoint_used,
+      groq_model_used: executionMetadata.groq_model_used,
+      groq_fresh_web_active: executionMetadata.groq_fresh_web_active,
+      groq_fresh_web_candidate_available: executionMetadata.groq_fresh_web_candidate_available,
+      groq_fresh_web_path: executionMetadata.groq_fresh_web_path,
+      groq_capability_reason: executionMetadata.groq_capability_reason,
       provider_resolution: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({

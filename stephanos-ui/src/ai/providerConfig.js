@@ -34,7 +34,7 @@ export {
 
 export const NON_SECRET_PROVIDER_FIELDS = {
   mock: ['enabled', 'latencyMs', 'failRate', 'mode', 'model'],
-  groq: ['baseURL', 'model'],
+  groq: ['baseURL', 'model', 'freshWebModel', 'freshWebModelCandidates'],
   gemini: ['baseURL', 'model'],
   ollama: ['baseURL', 'model', 'timeoutMs'],
   openrouter: ['baseURL', 'model', 'enabled'],

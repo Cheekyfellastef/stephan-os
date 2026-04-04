@@ -37,6 +37,8 @@ export const PROVIDER_DEFINITIONS = {
     defaults: {
       baseURL: 'https://api.groq.com/openai/v1',
       model: 'openai/gpt-oss-20b',
+      freshWebModel: '',
+      freshWebModelCandidates: [],
       apiKey: '',
     },
   },

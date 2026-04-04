@@ -19,6 +19,8 @@ const FIELD_MAP = {
   ],
   groq: [
     { key: 'model', label: 'Model', type: 'text' },
+    { key: 'freshWebModel', label: 'Fresh web model (optional)', type: 'text' },
+    { key: 'freshWebModelCandidates', label: 'Fresh web model candidates (comma-separated)', type: 'text' },
     { key: 'baseURL', label: 'Base URL', type: 'text' },
     { key: 'apiKey', label: 'API key', type: 'password' },
   ],
@@ -569,9 +571,14 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     <p>{health.detail || 'Groq health has not been checked yet.'}</p>
                     <p><strong>Configured via:</strong> {health.configuredVia || 'missing'}</p>
                     <p><strong>Resolved model:</strong> {health.model || draft.model || 'n/a'}</p>
+                    <p><strong>Configured fresh web model:</strong> {draft.freshWebModel || 'n/a'}</p>
                     <p><strong>Resolved base URL:</strong> {health.baseURL || draft.baseURL || 'n/a'}</p>
                     <p><strong>Supports fresh web:</strong> {String(health.providerCapability?.supportsFreshWeb ?? 'unknown')}</p>
                     <p><strong>Supports current answers:</strong> {String(health.providerCapability?.supportsCurrentAnswers ?? 'unknown')}</p>
+                    <p><strong>Configured model supports fresh web:</strong> {String(health.providerCapability?.configuredModelSupportsFreshWeb ?? 'unknown')}</p>
+                    <p><strong>Fresh candidate available:</strong> {String(health.providerCapability?.candidateFreshRouteAvailable ?? 'unknown')}</p>
+                    <p><strong>Fresh candidate model:</strong> {health.providerCapability?.candidateFreshWebModel || 'n/a'}</p>
+                    <p><strong>Fresh web path:</strong> {health.providerCapability?.freshWebPath || 'n/a'}</p>
                     <p><strong>Capability reason:</strong> {health.providerCapability?.capabilityReason || 'n/a'}</p>
                   </div>
                 </div>

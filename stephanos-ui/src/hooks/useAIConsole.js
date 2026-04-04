@@ -192,6 +192,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.ai_policy_reason
       || requestPayload.routeDecision?.policyReason
       || 'Local-first policy applied.',
+    groq_endpoint_used: executionMetadata.groq_endpoint_used || requestTrace.groq_endpoint_used || null,
+    groq_model_used: executionMetadata.groq_model_used || requestTrace.groq_model_used || null,
+    groq_fresh_web_active: Boolean(executionMetadata.groq_fresh_web_active ?? requestTrace.groq_fresh_web_active ?? false),
+    groq_fresh_web_candidate_available: Boolean(
+      executionMetadata.groq_fresh_web_candidate_available
+      ?? requestTrace.groq_fresh_web_candidate_available
+      ?? false,
+    ),
+    groq_fresh_web_path: executionMetadata.groq_fresh_web_path || requestTrace.groq_fresh_web_path || null,
+    groq_capability_reason: executionMetadata.groq_capability_reason || requestTrace.groq_capability_reason || null,
   };
 }
 
