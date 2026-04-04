@@ -71,8 +71,8 @@ test('no fresh route available falls back with stale-risk mode', () => {
 
   assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
   assert.match(decision.freshnessWarning || '', /stale/i);
-  assert.equal(decision.fallbackReasonCode, 'cloud-route-unusable');
-  assert.equal(decision.overrideDeniedReason, 'cloud-route-unusable');
+  assert.equal(decision.fallbackReasonCode, 'groq-cloud-route-unusable');
+  assert.equal(decision.overrideDeniedReason, 'groq-cloud-route-unusable');
 });
 
 test('fresh route requires provider transport reachability', () => {
@@ -89,7 +89,7 @@ test('fresh route requires provider transport reachability', () => {
   });
 
   assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
-  assert.equal(decision.fallbackReasonCode, 'transport-unreachable');
+  assert.equal(decision.fallbackReasonCode, 'groq-transport-unreachable');
   assert.equal(decision.freshRouteValidation.providerTransportReachable, false);
 });
 
@@ -107,8 +107,47 @@ test('fresh route blocks unsupported explicit web capability signal', () => {
   });
 
   assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
-  assert.equal(decision.fallbackReasonCode, 'web-capability-unsupported');
-  assert.equal(decision.freshRouteValidation.webCapabilityState, 'unsupported');
+  assert.equal(decision.fallbackReasonCode, 'groq-current-answers-unsupported');
+  assert.equal(decision.freshRouteValidation.providerSupportsCurrentAnswers, false);
+});
+
+test('low-freshness prompt keeps default local provider without override', () => {
+  const classification = classifyPromptFreshness('What is the capital of England?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: { groq: { ok: true }, ollama: { ok: true } },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.requestedProviderForRequest, 'ollama');
+  assert.equal(decision.overrideDeniedReason, null);
+  assert.equal(decision.selectedAnswerMode, 'local-private');
+});
+
+test('high freshness override denial reason is explicit about groq capability truth', () => {
+  const classification = classifyPromptFreshness('Who is the current UK prime minister?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: false,
+          supportsFreshWeb: false,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.requestedProviderForRequest, 'ollama');
+  assert.equal(decision.selectedAnswerMode, 'fallback-stale-risk');
+  assert.equal(decision.overrideDeniedReason, 'groq-current-answers-unsupported');
 });
 
 test('fresh route uses explicit provider capability truth contract when present', () => {

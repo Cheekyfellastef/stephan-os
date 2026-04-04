@@ -331,6 +331,32 @@ body {
   scroll-behavior: smooth;
 }
 
+.mission-console .panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(72vh, 760px);
+}
+
+.mission-console-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.mission-console .ai-console-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin-bottom: 0;
+}
+
+.mission-console-input {
+  flex: 0 0 auto;
+}
+
 .command-form {
   display: flex;
   gap: 0.5rem;
