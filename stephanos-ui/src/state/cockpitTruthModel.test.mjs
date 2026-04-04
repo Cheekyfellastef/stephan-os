@@ -90,3 +90,37 @@ test('cockpit model only animates traces with real recent activity or active exe
   assert.deepEqual(model.animatedConnectionIds, ['backend-aiProviders', 'backend-memory', 'backend-execution']);
   assert.deepEqual(model.animatedNodeIds, ['memory', 'execution', 'aiProviders']);
 });
+
+test('cockpit model animates backend-memory trace when telemetry memory transition is recent', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'idle',
+      executionTruth: 'idle',
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        tile: { ready: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      uiReachableState: 'yes',
+      executedProvider: 'groq',
+      selectedProvider: 'groq',
+    },
+    commandHistory: [],
+    telemetryEntries: [{
+      id: 'evt-1',
+      subsystem: 'MEMORY',
+      change: 'degraded → live',
+      timestamp: new Date().toISOString(),
+    }],
+  });
+
+  assert.equal(model.connectionStates['backend-memory'], 'active');
+  assert.ok(model.animatedConnectionIds.includes('backend-memory'));
+});

@@ -17,6 +17,21 @@ function normalizeTimestamp(value) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
 }
 
+function isContinuityRelevantTelemetryEvent(event = {}) {
+  const subsystem = normalizeText(event?.subsystem).toLowerCase();
+  const change = normalizeText(event?.change).toLowerCase();
+  const reason = normalizeText(event?.reason).toLowerCase();
+  const impact = normalizeText(event?.impact).toLowerCase();
+  const searchable = `${change} ${reason} ${impact}`.trim();
+  const continuitySignals = ['memory', 'tile', 'continuity', 'provider', 'execution', 'ai'];
+
+  if (['memory', 'provider', 'tile', 'continuity'].includes(subsystem)) {
+    return true;
+  }
+
+  return continuitySignals.some((signal) => searchable.includes(signal));
+}
+
 function classifySharedMemorySource(memoryTruth = {}) {
   const source = normalizeText(memoryTruth.sourceUsedOnLoad || memoryTruth.hydrationSource, 'unknown');
   if (source === 'shared-backend') return 'backend';
@@ -75,8 +90,7 @@ function buildRecentEvents({ commandHistory = [], telemetryEntries = [] } = {}) 
 
   const telemetryEvents = asArray(telemetryEntries)
     .map((event) => {
-      const change = normalizeText(event?.change).toLowerCase();
-      if (!change.includes('memory') && !change.includes('tile') && !change.includes('continuity')) {
+      if (!isContinuityRelevantTelemetryEvent(event)) {
         return null;
       }
       return {
