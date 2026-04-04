@@ -11,7 +11,7 @@ export function evaluateRequestDispatchGate({
   const localRouteViable = backendReachable && routeDecision?.localRouteAvailable === true;
   const selectedAnswerMode = routeDecision?.selectedAnswerMode || 'local-private';
 
-  const modeRequiresFreshRoute = selectedAnswerMode === 'fresh-web';
+  const modeRequiresFreshRoute = selectedAnswerMode === 'fresh-web' || selectedAnswerMode === 'fresh-cloud';
   const modePrefersLocalExecution = selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk';
 
   const dispatchAllowed = modeRequiresFreshRoute
@@ -33,7 +33,7 @@ export function evaluateRequestDispatchGate({
 
   const reasonCode = !backendReachable
     ? 'backend-unreachable'
-    : selectedAnswerMode === 'fresh-web'
+    : modeRequiresFreshRoute
       ? routeDecision?.fallbackReasonCode || 'fresh-route-unavailable'
       : 'no-viable-execution-path';
 

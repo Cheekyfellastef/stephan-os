@@ -6,6 +6,10 @@ const FRESHNESS_HIGH_PATTERNS = [
   /\b(real[-\s]?time|live)\b/i,
   /\b(verify|check)\b.*\b(web|internet|online|source)\b/i,
 ];
+const OFFICE_HOLDER_PATTERNS = [
+  /\b(who is|who's)\s+(the\s+)?(uk|u\.?k\.?|united kingdom|us|u\.?s\.?|united states)\s+(prime minister|president)\b/i,
+  /\b(who is|who's)\s+(the\s+)?(prime minister|president)\b/i,
+];
 
 const LOCAL_PRIVATE_PATTERNS = [
   /\bdebug\b.*\b(local|route|truth|stephanos|system)\b/i,
@@ -25,7 +29,8 @@ function hasExplicitFreshnessPhrase(prompt = '') {
 export function classifyPromptFreshness(prompt, context = {}) {
   const normalizedPrompt = String(prompt || '').trim();
   const explicitFreshness = hasExplicitFreshnessPhrase(normalizedPrompt);
-  const currentAffairsLikely = includesAnyPattern(normalizedPrompt, FRESHNESS_HIGH_PATTERNS);
+  const officeHolderLikely = includesAnyPattern(normalizedPrompt, OFFICE_HOLDER_PATTERNS);
+  const currentAffairsLikely = includesAnyPattern(normalizedPrompt, FRESHNESS_HIGH_PATTERNS) || officeHolderLikely;
   const localPrivateLikely = includesAnyPattern(normalizedPrompt, LOCAL_PRIVATE_PATTERNS)
     || context?.localPrivateHint === true;
 
@@ -41,14 +46,16 @@ export function classifyPromptFreshness(prompt, context = {}) {
   }
 
   if (currentAffairsLikely && !localPrivateLikely) {
+    const officeHolderNeedsCurrentTruth = officeHolderLikely;
+    const highFreshness = explicitFreshness || officeHolderNeedsCurrentTruth;
     return {
-      freshnessNeed: explicitFreshness ? 'high' : 'medium',
-      freshnessReason: explicitFreshness
+      freshnessNeed: highFreshness ? 'high' : 'medium',
+      freshnessReason: highFreshness
         ? 'prompt requests current or latest information'
         : 'prompt appears current-affairs or frequently changing',
       currentAffairsLikely: true,
       webLookupRecommended: true,
-      staleRisk: explicitFreshness ? 'high' : 'medium',
+      staleRisk: highFreshness ? 'high' : 'medium',
       explicitFreshness,
     };
   }
@@ -201,7 +208,7 @@ export function resolveFreshnessRoutingDecision({
   if (classification?.freshnessNeed === 'high') {
     if (freshRouteAvailable) {
       selectedProvider = 'groq';
-      selectedAnswerMode = 'fresh-web';
+      selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
       policyReason = 'Cloud routing allowed and selected because current real-world truth is required.';
     } else {
@@ -214,7 +221,7 @@ export function resolveFreshnessRoutingDecision({
   } else if (classification?.freshnessNeed === 'medium') {
     if (explicitFreshness && freshRouteAvailable) {
       selectedProvider = 'groq';
-      selectedAnswerMode = 'fresh-web';
+      selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
       policyReason = 'Prompt requested recency; cloud route selected for fresher truth.';
     } else if (explicitFreshness && !freshRouteAvailable) {
@@ -232,7 +239,7 @@ export function resolveFreshnessRoutingDecision({
     }
   } else if (!localRouteAvailable && freshRouteAvailable) {
     selectedProvider = 'groq';
-    selectedAnswerMode = 'fresh-web';
+    selectedAnswerMode = 'fresh-cloud';
     freshnessRouted = true;
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   }
