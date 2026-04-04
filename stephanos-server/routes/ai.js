@@ -335,8 +335,10 @@ Use these memories when they help, but do not repeat them unless they are releva
       groq_model_used: llmResult.diagnostics?.groq?.selectedModel || null,
       groq_fresh_web_active: Boolean(llmResult.diagnostics?.groq?.freshWebActive),
       groq_fresh_web_candidate_available: Boolean(llmResult.diagnostics?.groq?.freshWebModelCandidateAvailable),
+      groq_fresh_candidate_model: llmResult.diagnostics?.groq?.freshWebModelCandidate || routeDecision?.candidateFreshModel || null,
       groq_fresh_web_path: llmResult.diagnostics?.groq?.freshWebPath || null,
       groq_capability_reason: providerHealthSnapshot?.groq?.providerCapability?.capabilityReason || null,
+      stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -362,8 +364,10 @@ Use these memories when they help, but do not repeat them unless they are releva
       groq_model_used: executionMetadata.groq_model_used,
       groq_fresh_web_active: executionMetadata.groq_fresh_web_active,
       groq_fresh_web_candidate_available: executionMetadata.groq_fresh_web_candidate_available,
+      groq_fresh_candidate_model: executionMetadata.groq_fresh_candidate_model,
       groq_fresh_web_path: executionMetadata.groq_fresh_web_path,
       groq_capability_reason: executionMetadata.groq_capability_reason,
+      stale_fallback_attempted: executionMetadata.stale_fallback_attempted,
       provider_resolution: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({

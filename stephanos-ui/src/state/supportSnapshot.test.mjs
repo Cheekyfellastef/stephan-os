@@ -16,6 +16,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastAnswerMode: 'fresh-web',
       lastAiPolicyMode: 'local-first-cloud-when-needed',
       lastAiPolicyReason: 'Cloud routing allowed and selected because current real-world truth is required.',
+      lastGroqFreshCandidateModel: 'compound-beta-mini',
+      lastStaleFallbackAttempted: 'no',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -80,6 +82,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Selected Provider Configured Model: openai\/gpt-oss-20b/);
   assert.match(snapshot, /Selected Provider Fresh Candidate Available: true/);
   assert.match(snapshot, /Selected Provider Fresh Candidate Model: compound-beta-mini/);
+  assert.match(snapshot, /Last Groq Fresh Candidate Model: compound-beta-mini/);
+  assert.match(snapshot, /Last Stale Fallback Attempted: no/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

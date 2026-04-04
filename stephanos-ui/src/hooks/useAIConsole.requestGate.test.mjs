@@ -55,3 +55,20 @@ test('blocks with route unavailable only when no viable execution path exists', 
   assert.equal(gate.dispatchAllowed, false);
   assert.equal(gate.reasonCode, 'cloud-route-unusable');
 });
+
+test('blocks hosted high-freshness route-unavailable mode even when local route exists', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'route-unavailable',
+      localRouteAvailable: true,
+      freshRouteAvailable: false,
+      fallbackReasonCode: 'groq-current-answers-unsupported',
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'groq-current-answers-unsupported');
+});
