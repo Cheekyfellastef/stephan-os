@@ -23,6 +23,7 @@ import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../st
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
 import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/freshnessRouting';
 import { appendCommandHistory } from './commandHistory.js';
+import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -203,6 +204,7 @@ function buildExecutionSummary(executionMetadata) {
 }
 
 
+
 function createRouteUnavailableResult({
   prompt,
   parsed,
@@ -213,7 +215,7 @@ function createRouteUnavailableResult({
   continuityLookup,
   requestPayload,
 }) {
-  const fallbackReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || 'selected-route-unusable';
+  const fallbackReason = routeDecision?.fallbackReasonCode || routeDecision?.requestDispatchGate?.reasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || 'selected-route-unusable';
   const routeKind = routeDecision?.requestRouteTruth?.routeKind || 'unavailable';
   const output = routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
     ? `Fresh route unavailable; safe stale fallback used. (${fallbackReason})`
@@ -976,8 +978,13 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
       };
-      const selectedRouteUsableAtRequest = requestRouteTruthView.routeUsableState === 'yes';
-      const routeDispatchBlocked = selectedRouteUsableAtRequest !== true;
+      const requestDispatchGate = evaluateRequestDispatchGate({
+        routeDecision: freshnessRouteDecision,
+        routeTruthView: requestRouteTruthView,
+        runtimeStatus: requestRuntimeStatus,
+      });
+      freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
+      const routeDispatchBlocked = requestDispatchGate.dispatchAllowed !== true;
       const routeUnavailableResult = routeDispatchBlocked
         ? createRouteUnavailableResult({
           prompt,
