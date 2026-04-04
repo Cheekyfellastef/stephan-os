@@ -184,6 +184,14 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || null,
     freshness_warning: executionMetadata.freshness_warning || requestTrace.freshness_warning || requestPayload.routeDecision?.freshnessWarning || null,
     freshness_routed: Boolean(executionMetadata.freshness_routed ?? requestTrace.freshness_routed ?? requestPayload.routeDecision?.freshnessRouted ?? false),
+    ai_policy_mode: executionMetadata.ai_policy_mode
+      || requestTrace.ai_policy_mode
+      || requestPayload.routeDecision?.aiPolicy?.aiPolicyMode
+      || 'local-first-cloud-when-needed',
+    ai_policy_reason: executionMetadata.ai_policy_reason
+      || requestTrace.ai_policy_reason
+      || requestPayload.routeDecision?.policyReason
+      || 'Local-first policy applied.',
   };
 }
 
@@ -202,7 +210,7 @@ function deriveExecutionStatus(executionMetadata) {
 function buildExecutionSummary(executionMetadata) {
   const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI default ${executionMetadata.ui_default_provider}. Request provider ${executionMetadata.requested_provider_for_request}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
-  const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}.`;
+  const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}. Policy ${executionMetadata.ai_policy_mode}: ${executionMetadata.ai_policy_reason}`;
 
   if (executionMetadata.fallback_used) {
     return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}`;
@@ -257,6 +265,8 @@ function createRouteUnavailableResult({
           override_denial_reason: routeDecision?.overrideDeniedReason || null,
           freshness_warning: routeDecision?.freshnessWarning || null,
           freshness_routed: Boolean(routeDecision?.freshnessRouted),
+          ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
+          ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
           selected_route_kind: routeKind,
           selected_route_usable: false,
           route_unavailable_reason: fallbackReason,

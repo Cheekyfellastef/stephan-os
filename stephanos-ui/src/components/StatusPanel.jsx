@@ -175,6 +175,8 @@ export default function StatusPanel() {
       lastAnswerMode: lastExecutionMetadata?.selected_answer_mode || 'n/a',
       lastOverrideDenialReason: lastExecutionMetadata?.override_denial_reason || 'n/a',
       lastFreshnessWarning: lastExecutionMetadata?.freshness_warning || 'n/a',
+      lastAiPolicyMode: lastExecutionMetadata?.ai_policy_mode || 'local-first-cloud-when-needed',
+      lastAiPolicyReason: lastExecutionMetadata?.ai_policy_reason || 'Local-first policy applied.',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
@@ -364,6 +366,8 @@ export default function StatusPanel() {
         <li>Last Freshness Reason: {lastExecutionMetadata?.freshness_reason || 'n/a'}</li>
         <li>Last Override Denial Reason: {lastExecutionMetadata?.override_denial_reason || 'n/a'}</li>
         <li>Last Freshness Warning: {lastExecutionMetadata?.freshness_warning || 'n/a'}</li>
+        <li>AI Policy Mode: {lastExecutionMetadata?.ai_policy_mode || 'local-first-cloud-when-needed'}</li>
+        <li>AI Policy Reason: {lastExecutionMetadata?.ai_policy_reason || 'Local-first policy applied.'}</li>
         <li>Execution Truth: {executionTruth}</li>
         <li>Execution Provider (Truth): {routeTruthView.executedProvider}</li>
         <li>Recovery Guidance: {routeTruthView.operatorReason || homeNodeAction || 'n/a'}</li>

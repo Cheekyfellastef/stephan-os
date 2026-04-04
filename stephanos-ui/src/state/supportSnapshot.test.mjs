@@ -14,6 +14,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       uiBuildTimestamp: '2026-03-25T00:00:00.000Z',
       lastFreshnessNeed: 'high',
       lastAnswerMode: 'fresh-web',
+      lastAiPolicyMode: 'local-first-cloud-when-needed',
+      lastAiPolicyReason: 'Cloud routing allowed and selected because current real-world truth is required.',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -70,6 +72,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Selected Provider State: healthy/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
+  assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);
+  assert.match(snapshot, /AI Policy Reason: Cloud routing allowed and selected because current real-world truth is required\./);
   assert.match(snapshot, /Truth Inconsistent: no/);
   assert.match(snapshot, /Route Usability Conflict: no/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud \[selected\]: usable \(public route reachable\)/);
