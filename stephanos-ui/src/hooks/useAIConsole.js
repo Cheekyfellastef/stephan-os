@@ -168,7 +168,10 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
     route_mode: executionMetadata.route_mode || requestTrace.route_mode || requestPayload.routeMode || 'auto',
     effective_route_mode: executionMetadata.effective_route_mode || requestTrace.effective_route_mode || requestPayload.routeMode || 'auto',
-    requested_provider: executionMetadata.requested_provider || requestTrace.requested_provider || requestPayload.provider,
+    requested_provider: executionMetadata.requested_provider
+      || requestTrace.requested_provider
+      || executionMetadata.requested_provider_for_request
+      || requestPayload.provider,
     selected_provider: executionMetadata.selected_provider || requestTrace.selected_provider || requestPayload.provider,
     actual_provider_used: actualProviderUsed,
     model_used: modelUsed,

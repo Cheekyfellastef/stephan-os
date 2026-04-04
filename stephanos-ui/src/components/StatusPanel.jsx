@@ -162,7 +162,9 @@ export default function StatusPanel() {
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
       lastRequestedProviderForRequest: lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider,
       lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
-      lastRequestedProvider: routeTruthView.requestedProvider || lastExecutionMetadata?.requested_provider,
+      lastRequestedProvider: lastExecutionMetadata?.requested_provider
+        || lastExecutionMetadata?.requested_provider_for_request
+        || routeTruthView.requestedProvider,
       lastSelectedProvider: lastExecutionMetadata?.selected_provider,
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
       lastModelUsed: lastExecutionMetadata?.model_used,
