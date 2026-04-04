@@ -202,6 +202,73 @@ function buildExecutionSummary(executionMetadata) {
   return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}`;
 }
 
+
+function createRouteUnavailableResult({
+  prompt,
+  parsed,
+  startedAt,
+  routeDecision,
+  continuityMode,
+  continuityContext,
+  continuityLookup,
+  requestPayload,
+}) {
+  const fallbackReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || 'selected-route-unusable';
+  const routeKind = routeDecision?.requestRouteTruth?.routeKind || 'unavailable';
+  const output = routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
+    ? `Fresh route unavailable; safe stale fallback used. (${fallbackReason})`
+    : `Selected route unusable at request time (${routeKind}).`;
+
+  return {
+    data: {
+      type: 'assistant_response',
+      route: 'assistant',
+      success: false,
+      output_text: output,
+      error: output,
+      error_code: 'ROUTE_UNAVAILABLE',
+      timing_ms: Math.round(performance.now() - startedAt),
+      data: {
+        request_trace: {
+          requested_provider: requestPayload.provider,
+          selected_provider: routeDecision?.selectedProvider || requestPayload.provider,
+          fallback_used: routeDecision?.selectedAnswerMode === 'fallback-stale-risk',
+          fallback_reason: fallbackReason,
+          freshness_need: requestPayload.freshnessContext?.freshnessNeed || 'low',
+          freshness_reason: requestPayload.freshnessContext?.freshnessReason || 'n/a',
+          stale_risk: requestPayload.freshnessContext?.staleRisk || 'low',
+          selected_answer_mode: routeDecision?.selectedAnswerMode || 'local-private',
+          freshness_warning: routeDecision?.freshnessWarning || null,
+          freshness_routed: Boolean(routeDecision?.freshnessRouted),
+          selected_route_kind: routeKind,
+          selected_route_usable: false,
+          route_unavailable_reason: fallbackReason,
+        },
+      },
+    },
+    requestPayload,
+    entry: {
+      id: `cmd_${Date.now()}`,
+      raw_input: prompt,
+      parsed_command: parsed,
+      route: 'assistant',
+      tool_used: null,
+      success: false,
+      output_text: output,
+      data_payload: null,
+      timing_ms: Math.round(performance.now() - startedAt),
+      timestamp: new Date().toISOString(),
+      error: output,
+      error_code: 'ROUTE_UNAVAILABLE',
+      response: { type: 'assistant_response', route: 'assistant', success: false, output_text: output, error: output, error_code: 'ROUTE_UNAVAILABLE' },
+      continuity_mode: continuityMode,
+      continuity_context: continuityContext,
+      continuity_retrieval_state: continuityLookup.retrievalState,
+      continuity_retrieval_reason: continuityLookup.reason,
+    },
+  };
+}
+
 function transportErrorToUi(error, { routeDecision = null } = {}) {
   const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
   if (!error?.code && routeFailureReason === 'web-capability-unsupported') {
@@ -226,7 +293,18 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
     };
   }
   if (!error?.code) {
-    return { error: 'Unexpected transport error.', errorCode: 'UNKNOWN_TRANSPORT_ERROR', output: 'Unable to process request due to an unknown network issue. Check provider health and freshness route diagnostics.' };
+    if (routeFailureReason) {
+      return {
+        error: 'Selected route is unusable for transport dispatch.',
+        errorCode: 'SELECTED_ROUTE_UNUSABLE',
+        output: `Selected route unusable at request time (${routeFailureReason}). No transport dispatch was attempted.`,
+      };
+    }
+    return {
+      error: 'Selected route is unavailable for transport dispatch.',
+      errorCode: 'ROUTE_UNAVAILABLE',
+      output: 'Fresh route unavailable or backend unavailable. Stephanos preserved metadata without dispatching transport.',
+    };
   }
   if (error.code === 'BACKEND_OFFLINE') {
     return { error: error.message, errorCode: error.code, output: `${BACKEND_UNREACHABLE_MESSAGE} Start stephanos-server or update VITE_API_BASE_URL to a reachable API.` };
@@ -811,13 +889,14 @@ export function useAIConsole() {
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
-      const routeTruthView = buildFinalRouteTruthView(runtimeStatusModel);
+      const requestBaselineRuntimeStatus = finalizeRuntimeContext(finalizedRequestContext).runtimeStatus;
+      const routeTruthView = buildFinalRouteTruthView(requestBaselineRuntimeStatus);
       const continuityAllowed = routeTruthView.routeUsableState === 'yes' && routeTruthView.truthInconsistent !== true;
       const continuityLookup = continuityAllowed
         ? getContinuityContext({
           commandHistory,
           telemetryEntries,
-          sharedMemorySource: runtimeStatusModel?.runtimeTruth?.memory?.sourceUsedOnLoad === 'shared-backend' ? 'backend' : 'fallback',
+          sharedMemorySource: requestBaselineRuntimeStatus?.runtimeTruth?.memory?.sourceUsedOnLoad === 'shared-backend' ? 'backend' : 'fallback',
         })
         : {
           records: [],
@@ -867,16 +946,51 @@ export function useAIConsole() {
         setProviderHealth(refreshedProviderHealth);
       }
 
-      const freshnessRouteDecision = resolveFreshnessRoutingDecision({
-        classification: freshnessClassification,
-        requestedProvider: provider,
-        providerHealth: refreshedProviderHealth,
-        runtimeStatus,
-        routeTruthView,
-      });
+      const requestRuntimeStatus = finalizeRuntimeContext(finalizedRequestContext, refreshedProviderHealth).runtimeStatus;
+      const requestRouteTruthView = buildFinalRouteTruthView(requestRuntimeStatus);
+      const requestRouteTruth = {
+        routeKind: requestRouteTruthView.routeKind,
+        routeUsableState: requestRouteTruthView.routeUsableState,
+        selectedRouteReachableState: requestRouteTruthView.selectedRouteReachableState,
+        backendReachableState: requestRouteTruthView.backendReachableState,
+      };
+      const freshnessRouteDecision = {
+        ...resolveFreshnessRoutingDecision({
+          classification: freshnessClassification,
+          requestedProvider: provider,
+          providerHealth: refreshedProviderHealth,
+          runtimeStatus: requestRuntimeStatus,
+          routeTruthView: requestRouteTruthView,
+        }),
+        requestRouteTruth,
+      };
       activeRouteDecision = freshnessRouteDecision;
+      setApiStatus((prev) => ({
+        ...prev,
+        runtimeContext: finalizedRequestContext,
+      }));
       const requestedProvider = freshnessRouteDecision.selectedProvider || provider;
-      const { data, requestPayload } = await sendPrompt({
+      const requestPayload = {
+        provider: requestedProvider,
+        routeMode,
+        freshnessContext: freshnessClassification,
+        routeDecision: freshnessRouteDecision,
+      };
+      const selectedRouteUsableAtRequest = requestRouteTruthView.routeUsableState === 'yes';
+      const routeDispatchBlocked = selectedRouteUsableAtRequest !== true;
+      const routeUnavailableResult = routeDispatchBlocked
+        ? createRouteUnavailableResult({
+          prompt,
+          parsed,
+          startedAt,
+          routeDecision: freshnessRouteDecision,
+          continuityMode,
+          continuityContext,
+          continuityLookup,
+          requestPayload,
+        })
+        : null;
+      const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
         prompt,
         provider: requestedProvider,
         routeMode,
@@ -907,7 +1021,7 @@ export function useAIConsole() {
 
       const executionMetadata = normalizeExecutionMetadata({
         data,
-        requestPayload,
+        requestPayload: effectiveRequestPayload,
         backendDefaultProvider: apiStatus.backendDefaultProvider,
       });
 
@@ -957,7 +1071,7 @@ export function useAIConsole() {
       setLastExecutionMetadata(executionMetadata);
 
       setDebugData({
-        request_payload: requestPayload,
+        request_payload: effectiveRequestPayload,
         response_payload: data,
         parsed_command: parsed,
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
@@ -965,7 +1079,7 @@ export function useAIConsole() {
         error_code: data.error_code ?? data.debug?.error_code ?? null,
         ui_requested_provider: executionMetadata.ui_requested_provider,
         backend_default_provider: executionMetadata.backend_default_provider,
-        requested_provider: requestPayload.provider,
+        requested_provider: effectiveRequestPayload.provider,
         selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,
         model_used: executionMetadata.model_used,
