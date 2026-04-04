@@ -98,3 +98,21 @@ test('continuity snapshot keeps recent continuity activity bounded and meaningfu
   assert.equal(snapshot.recentContinuityEvents.length, 5);
   assert.ok(snapshot.recentContinuityEvents.every((event) => event.type === 'memory.save.persisted'));
 });
+
+test('continuity snapshot treats MEMORY subsystem telemetry transitions as real continuity activity', () => {
+  const snapshot = deriveContinuityLoopSnapshot({
+    runtimeStatus: runtimeStatusWithTruth(),
+    commandHistory: [],
+    telemetryEntries: [{
+      id: 'memory-mode-transition',
+      subsystem: 'MEMORY',
+      change: 'degraded → live',
+      timestamp: '2026-04-03T02:00:00.000Z',
+    }],
+    now: Date.parse('2026-04-03T02:00:05.000Z'),
+  });
+
+  assert.equal(snapshot.lastContinuityEventType, 'memory');
+  assert.equal(snapshot.recentActivityActive, true);
+  assert.equal(snapshot.recentContinuityEvents.length, 1);
+});
