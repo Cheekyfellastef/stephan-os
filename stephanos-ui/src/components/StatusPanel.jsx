@@ -87,6 +87,7 @@ export default function StatusPanel() {
     `overwritten:${uiDiagnostics.homeNodeInputStateOverwritten ? 'yes' : 'no'}`,
   ].join(' · ');
   const homeNodeAttempts = Array.isArray(homeNodeStatus?.attempts) ? homeNodeStatus.attempts : [];
+  const runtimeDiagnostics = uiDiagnostics.runtimeDiagnostics || {};
   const homeNodeAttemptSummary = homeNodeAttempts.length
     ? homeNodeAttempts.map((attempt) => {
       const base = `${attempt.source || 'unknown'}:${attempt.host || 'unknown'}`;
@@ -276,6 +277,13 @@ export default function StatusPanel() {
         <li>Home Node Input Editing Active: {uiDiagnostics.homeNodeInputEditingActive ? 'yes' : 'no'}</li>
         <li>Home Node Input Overwrite Source: {uiDiagnostics.homeNodeInputOverwriteSource || 'none'}</li>
         <li>Home Node Input Interaction Audit: {interactionAuditSummary}</li>
+        <li>Diagnostics Active Timers: {runtimeDiagnostics.activeTimerCount ?? 0}</li>
+        <li>Diagnostics Active Listeners: {runtimeDiagnostics.activeListenerCount ?? 0}</li>
+        <li>Diagnostics Telemetry History Length: {runtimeDiagnostics.telemetryHistoryLength ?? 0}</li>
+        <li>Diagnostics Continuity Event Count: {runtimeDiagnostics.continuityEventCount ?? 0}</li>
+        <li>Diagnostics Active Panels: {runtimeDiagnostics.activePanels ?? 0}/{runtimeDiagnostics.totalPanels ?? 0}</li>
+        <li>Diagnostics Animation Active Count: {runtimeDiagnostics.animationActiveCount ?? 0}</li>
+        <li>Diagnostics Event Rate (/s): {runtimeDiagnostics.eventRatePerSecond ?? 0}</li>
         <li>Node Address Source: {routeTruthView.source}</li>
         <li>Backend Reachable: {routeTruthView.backendReachableState}</li>
         <li>Backend URL In Use: {uiDiagnostics.backendUrlInUse || runtimeContext.apiBaseUrl || safeApiStatus.baseUrl || 'n/a'}</li>
