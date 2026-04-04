@@ -309,7 +309,9 @@ Use these memories when they help, but do not repeat them unless they are releva
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
     const executionMetadata = {
+      ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
+      requested_provider_for_request: routeDecision?.requestedProviderForRequest || provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
       route_mode: routeMode,
       effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
@@ -341,6 +343,7 @@ Use these memories when they help, but do not repeat them unless they are releva
       freshness_reason: freshnessContext?.freshnessReason || 'n/a',
       stale_risk: freshnessContext?.staleRisk || 'low',
       selected_answer_mode: routeDecision?.selectedAnswerMode || 'local-private',
+      override_denial_reason: routeDecision?.overrideDeniedReason || null,
       freshness_warning: routeDecision?.freshnessWarning || null,
       freshness_routed: Boolean(routeDecision?.freshnessRouted),
       route_mode: routeMode,
