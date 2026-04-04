@@ -168,6 +168,16 @@ export default function StatusPanel() {
       lastSelectedProvider: lastExecutionMetadata?.selected_provider,
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
       lastModelUsed: lastExecutionMetadata?.model_used,
+      lastOllamaModelDefault: lastExecutionMetadata?.ollama_model_default || 'n/a',
+      lastOllamaModelPreferred: lastExecutionMetadata?.ollama_model_preferred || 'n/a',
+      lastOllamaModelRequested: lastExecutionMetadata?.ollama_model_requested || 'n/a',
+      lastOllamaModelSelected: lastExecutionMetadata?.ollama_model_selected || 'n/a',
+      lastOllamaReasoningMode: lastExecutionMetadata?.ollama_reasoning_mode || 'n/a',
+      lastOllamaEscalationActive: String(lastExecutionMetadata?.ollama_escalation_active ?? 'n/a'),
+      lastOllamaEscalationReason: lastExecutionMetadata?.ollama_escalation_reason || 'n/a',
+      lastOllamaFallbackModel: lastExecutionMetadata?.ollama_fallback_model || 'n/a',
+      lastOllamaFallbackModelUsed: String(lastExecutionMetadata?.ollama_fallback_model_used ?? 'n/a'),
+      lastOllamaFallbackReason: lastExecutionMetadata?.ollama_fallback_reason || 'n/a',
       lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
       lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
       lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
@@ -378,6 +388,16 @@ export default function StatusPanel() {
         <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
         <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
         <li>Last Model Used: {lastExecutionMetadata?.model_used || 'n/a'}</li>
+        <li>Last Ollama Default Model: {lastExecutionMetadata?.ollama_model_default || 'n/a'}</li>
+        <li>Last Ollama Preferred Model: {lastExecutionMetadata?.ollama_model_preferred || 'n/a'}</li>
+        <li>Last Ollama Requested Model: {lastExecutionMetadata?.ollama_model_requested || 'n/a'}</li>
+        <li>Last Ollama Selected Model: {lastExecutionMetadata?.ollama_model_selected || 'n/a'}</li>
+        <li>Last Ollama Reasoning Mode: {lastExecutionMetadata?.ollama_reasoning_mode || 'n/a'}</li>
+        <li>Last Ollama Escalation Active: {String(lastExecutionMetadata?.ollama_escalation_active ?? 'n/a')}</li>
+        <li>Last Ollama Escalation Reason: {lastExecutionMetadata?.ollama_escalation_reason || 'n/a'}</li>
+        <li>Last Ollama Fallback Model: {lastExecutionMetadata?.ollama_fallback_model || 'n/a'}</li>
+        <li>Last Ollama Fallback Model Used: {String(lastExecutionMetadata?.ollama_fallback_model_used ?? 'n/a')}</li>
+        <li>Last Ollama Fallback Reason: {lastExecutionMetadata?.ollama_fallback_reason || 'n/a'}</li>
         <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
         <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
         <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>

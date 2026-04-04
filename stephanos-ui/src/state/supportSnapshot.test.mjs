@@ -190,6 +190,38 @@ test('buildSupportSnapshot prefers last request provider truth over stale route 
   assert.doesNotMatch(snapshot, /Last Requested Provider: ollama/);
 });
 
+test('buildSupportSnapshot includes Ollama model ladder execution truth fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastOllamaModelDefault: 'qwen:14b',
+      lastOllamaModelPreferred: 'qwen:32b',
+      lastOllamaModelRequested: 'qwen:14b',
+      lastOllamaModelSelected: 'qwen:32b',
+      lastOllamaReasoningMode: 'deep',
+      lastOllamaEscalationActive: 'true',
+      lastOllamaEscalationReason: 'operator-or-prompt requested deep reasoning',
+      lastOllamaFallbackModel: 'gpt-oss:20b',
+      lastOllamaFallbackModelUsed: 'false',
+      lastOllamaFallbackReason: 'n/a',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-04T00:00:03.000Z' },
+  });
+
+  assert.match(snapshot, /Last Ollama Default Model: qwen:14b/);
+  assert.match(snapshot, /Last Ollama Selected Model: qwen:32b/);
+  assert.match(snapshot, /Last Ollama Escalation Active: true/);
+  assert.match(snapshot, /Last Ollama Fallback Model: gpt-oss:20b/);
+});
+
 
 test('buildSupportSnapshot emits hosted backend-target diagnostics and operator guidance when unresolved', () => {
   const snapshot = buildSupportSnapshot({

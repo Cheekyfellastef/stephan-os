@@ -66,7 +66,7 @@ export const PROVIDER_DEFINITIONS = {
     targetSummary: 'local/offline model engine',
     defaults: {
       baseURL: 'http://localhost:11434',
-      model: 'gpt-oss:20b',
+      model: 'qwen:14b',
       timeoutMs: 8000,
     },
   },
