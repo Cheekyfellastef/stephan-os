@@ -181,6 +181,24 @@ test('StatusPanel renders truthful placeholders when providerEligibility is miss
   assert.match(rendered, /Cloud Providers Eligible: pending/);
 });
 
+test('StatusPanel renders freshness routing metadata from last execution', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases, 'status-panel');
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    lastExecutionMetadata: {
+      freshness_need: 'high',
+      selected_answer_mode: 'fallback-stale-risk',
+      stale_risk: 'high',
+      freshness_reason: 'current office-holder query',
+      freshness_warning: 'Fresh route unavailable; answer may be stale.',
+    },
+  });
+  const rendered = renderStatusPanel();
+
+  assert.match(rendered, /Last Freshness Need: high/);
+  assert.match(rendered, /Last Answer Mode: fallback-stale-risk/);
+  assert.match(rendered, /Last Freshness Warning: Fresh route unavailable; answer may be stale\./);
+});
+
 test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime truth', async () => {
   const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases, 'status-panel');
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({

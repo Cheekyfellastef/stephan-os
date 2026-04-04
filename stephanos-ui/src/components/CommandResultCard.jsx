@@ -65,6 +65,10 @@ export default function CommandResultCard({ entry }) {
             Backend default: {executionMetadata.backend_default_provider || 'n/a'} · Model: {executionMetadata.model_used || 'n/a'} · Response truth: {isMockResponse ? 'mock' : 'live'}
             {executionMetadata.fallback_used ? ` · Fallback reason: ${executionMetadata.fallback_reason || 'unspecified'}` : isMockResponse ? ' · Mock answered directly' : ' · No fallback'}
           </span>
+          <span>
+            Freshness Need: {executionMetadata.freshness_need || 'low'} · Answer Mode: {executionMetadata.selected_answer_mode || 'local-private'} · Stale Risk: {executionMetadata.stale_risk || 'low'}
+            {executionMetadata.freshness_warning ? ` · Warning: ${executionMetadata.freshness_warning}` : ''}
+          </span>
         </div>
       ) : null}
       <p>{entry.output_text}</p>

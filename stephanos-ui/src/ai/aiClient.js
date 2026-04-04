@@ -70,6 +70,8 @@ export async function sendPrompt({
   tileContext = null,
   continuityContext = null,
   continuityMode = '',
+  freshnessContext = null,
+  routeDecision = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const runtimeContext = {
@@ -88,6 +90,8 @@ export async function sendPrompt({
     runtimeContext,
     continuityMode: String(continuityMode || '').trim() || 'recording-only',
     ...(continuityContext && typeof continuityContext === 'object' ? { continuityContext } : {}),
+    ...(freshnessContext && typeof freshnessContext === 'object' ? { freshnessContext } : {}),
+    ...(routeDecision && typeof routeDecision === 'object' ? { routeDecision } : {}),
   };
 
   console.debug('[Stephanos UI] Dispatching /api/ai/chat request', {
