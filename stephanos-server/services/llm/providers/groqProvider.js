@@ -169,8 +169,9 @@ export async function runGroqProvider(request, config = {}) {
 
   const freshnessNeed = normalizeFreshnessNeed(request);
   const shouldUseFreshWebRoute = freshnessNeed === 'high' && freshWebPlan.candidateFreshRouteAvailable;
+  const routeDecisionFreshModel = String(request?.routeDecision?.candidateFreshModel || '').trim();
   const selectedModel = shouldUseFreshWebRoute
-    ? (request.model || freshWebPlan.selectedFreshWebModel || resolved.freshWebModel || resolved.model)
+    ? (routeDecisionFreshModel || freshWebPlan.selectedFreshWebModel || resolved.freshWebModel || request.model || resolved.model)
     : (request.model || resolved.model);
 
   try {
@@ -220,6 +221,7 @@ export async function runGroqProvider(request, config = {}) {
             freshWebActive: shouldUseFreshWebRoute,
             selectedModel,
             freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+            freshWebModelCandidate: routeDecisionFreshModel || freshWebPlan.selectedFreshWebModel || '',
             freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
           },
         },
@@ -248,6 +250,7 @@ export async function runGroqProvider(request, config = {}) {
           freshWebActive: shouldUseFreshWebRoute,
           selectedModel: raw?.model || selectedModel || resolved.model,
           freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+          freshWebModelCandidate: routeDecisionFreshModel || freshWebPlan.selectedFreshWebModel || '',
           freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
           providerCapability,
         },
@@ -271,6 +274,7 @@ export async function runGroqProvider(request, config = {}) {
           freshWebActive: shouldUseFreshWebRoute,
           selectedModel,
           freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+          freshWebModelCandidate: routeDecisionFreshModel || freshWebPlan.selectedFreshWebModel || '',
           freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
         },
       },

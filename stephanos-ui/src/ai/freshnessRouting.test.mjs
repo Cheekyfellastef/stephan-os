@@ -202,6 +202,63 @@ test('high-freshness PM question requests Groq when cloud fresh route is availab
   assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
 });
 
+test('hosted high-freshness request pins to groq fresh route when fresh candidate exists', () => {
+  const classification = classifyPromptFreshness('Who is the current US president today?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+          candidateFreshRouteAvailable: true,
+          candidateFreshWebModel: 'compound-beta-mini',
+          freshWebPath: '/responses:web_search',
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { sessionKind: 'hosted-web', cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedProvider, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
+  assert.equal(decision.candidateFreshModel, 'compound-beta-mini');
+});
+
+test('hosted high-freshness request degrades truthfully to route-unavailable when groq fresh candidate is unavailable', () => {
+  const classification = classifyPromptFreshness('Who is the current UK prime minister?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: false,
+          supportsFreshWeb: false,
+          transportReachable: true,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { sessionKind: 'hosted-web', cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedProvider, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'route-unavailable');
+  assert.equal(decision.staleFallbackAttempted, false);
+  assert.equal(decision.overrideDeniedReason, null);
+  assert.equal(decision.fallbackReasonCode, 'groq-current-answers-unsupported');
+});
+
 test('office-holder U.S. president question is treated as high freshness and requests Groq', () => {
   const classification = classifyPromptFreshness('Who is the U.S. president?');
   const decision = resolveFreshnessRoutingDecision({

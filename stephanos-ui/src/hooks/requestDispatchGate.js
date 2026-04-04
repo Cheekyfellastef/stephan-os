@@ -13,6 +13,18 @@ export function evaluateRequestDispatchGate({
 
   const modeRequiresFreshRoute = selectedAnswerMode === 'fresh-web' || selectedAnswerMode === 'fresh-cloud';
   const modePrefersLocalExecution = selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk';
+  const modeRouteUnavailable = selectedAnswerMode === 'route-unavailable';
+
+  if (modeRouteUnavailable) {
+    return {
+      dispatchAllowed: false,
+      reasonCode: routeDecision?.fallbackReasonCode || 'fresh-route-unavailable',
+      selectedAnswerMode,
+      freshRouteViable,
+      localRouteViable,
+      backendReachable,
+    };
+  }
 
   const dispatchAllowed = modeRequiresFreshRoute
     ? freshRouteViable || localRouteViable

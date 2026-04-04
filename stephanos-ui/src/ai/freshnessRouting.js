@@ -168,9 +168,11 @@ export function resolveFreshnessRoutingDecision({
   runtimeStatus = {},
   routeTruthView = {},
 } = {}) {
+  const sessionKind = String(runtimeStatus?.sessionKind || routeTruthView?.sessionKind || '').trim().toLowerCase();
+  const hostedSession = sessionKind === 'hosted-web';
   const aiPolicy = {
-    aiPolicyMode: 'local-first-cloud-when-needed',
-    localPreferred: true,
+    aiPolicyMode: hostedSession ? 'hosted-cloud-first-for-freshness' : 'local-first-cloud-when-needed',
+    localPreferred: hostedSession ? false : true,
     cloudAllowedForFreshness: true,
     cloudReasonRequired: true,
   };
@@ -181,6 +183,8 @@ export function resolveFreshnessRoutingDecision({
   const groqHealthy = providerHealthy(providerHealth, 'groq');
   const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
   const groqCapability = providerHealth?.groq?.providerCapability || {};
+  const candidateFreshModel = String(groqCapability?.candidateFreshWebModel || '').trim();
+  const candidateFreshPath = String(groqCapability?.freshWebPath || '').trim();
   const webCapabilityState = resolveWebCapabilityState(providerHealth, 'groq');
   const groqSupportsCurrentAnswers = resolveCurrentAnswerCapability(providerHealth, 'groq');
   const freshRouteAvailable = cloudRouteUsable
@@ -196,6 +200,7 @@ export function resolveFreshnessRoutingDecision({
   let freshnessWarning = null;
   let freshnessRouted = false;
   let fallbackReasonCode = null;
+  let staleFallbackAttempted = false;
   let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
@@ -210,13 +215,22 @@ export function resolveFreshnessRoutingDecision({
       selectedProvider = 'groq';
       selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
-      policyReason = 'Cloud routing allowed and selected because current real-world truth is required.';
+      policyReason = hostedSession
+        ? 'Hosted high-freshness request pinned to Groq fresh-cloud path.'
+        : 'Cloud routing allowed and selected because current real-world truth is required.';
     } else {
-      selectedProvider = localRouteAvailable ? 'ollama' : requested;
-      selectedAnswerMode = 'fallback-stale-risk';
-      freshnessWarning = 'Fresh route unavailable; answer may be stale.';
+      selectedProvider = hostedSession
+        ? 'groq'
+        : (localRouteAvailable ? 'ollama' : requested);
+      selectedAnswerMode = hostedSession ? 'route-unavailable' : 'fallback-stale-risk';
+      staleFallbackAttempted = hostedSession ? false : localRouteAvailable;
+      freshnessWarning = hostedSession
+        ? 'Fresh route unavailable for hosted high-freshness request; no local fallback was attempted.'
+        : 'Fresh route unavailable; answer may be stale.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
-      policyReason = 'Fresh cloud route was required but unavailable; using truthful stale-risk fallback.';
+      policyReason = hostedSession
+        ? 'Hosted high-freshness requests do not inherit local/default-provider fallback when Groq fresh route is unavailable.'
+        : 'Fresh cloud route was required but unavailable; using truthful stale-risk fallback.';
     }
   } else if (classification?.freshnessNeed === 'medium') {
     if (explicitFreshness && freshRouteAvailable) {
@@ -227,12 +241,14 @@ export function resolveFreshnessRoutingDecision({
     } else if (explicitFreshness && !freshRouteAvailable) {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
+      staleFallbackAttempted = localRouteAvailable;
       freshnessWarning = 'Answered without live web route; verify current facts.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
       policyReason = 'Prompt requested recency but fresh cloud route was unavailable.';
     } else if (!freshRouteAvailable && classification?.staleRisk !== 'low') {
       selectedProvider = localRouteAvailable ? 'ollama' : requested;
       selectedAnswerMode = 'fallback-stale-risk';
+      staleFallbackAttempted = localRouteAvailable;
       freshnessWarning = 'Answered locally; current details may be stale.';
       fallbackReasonCode = freshRouteFailureReasons[0] || 'fresh-route-unavailable';
       policyReason = 'Medium freshness risk without fresh cloud path; local stale-risk fallback used.';
@@ -259,6 +275,7 @@ export function resolveFreshnessRoutingDecision({
     requestedProviderForRequest,
     selectedAnswerMode,
     freshnessWarning,
+    staleFallbackAttempted,
     aiPolicy,
     policyReason,
     overrideRequested,
@@ -266,6 +283,8 @@ export function resolveFreshnessRoutingDecision({
     freshRouteAvailable,
     localRouteAvailable,
     fallbackReasonCode,
+    candidateFreshModel: candidateFreshModel || null,
+    candidateFreshPath: candidateFreshPath || null,
     freshRouteValidation: {
       cloudRouteUsable,
       providerHealthy: groqHealthy,

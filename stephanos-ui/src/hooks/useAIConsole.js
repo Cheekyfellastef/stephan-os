@@ -200,8 +200,18 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? requestTrace.groq_fresh_web_candidate_available
       ?? false,
     ),
+    groq_fresh_candidate_model: executionMetadata.groq_fresh_candidate_model
+      || requestTrace.groq_fresh_candidate_model
+      || requestPayload.routeDecision?.candidateFreshModel
+      || null,
     groq_fresh_web_path: executionMetadata.groq_fresh_web_path || requestTrace.groq_fresh_web_path || null,
     groq_capability_reason: executionMetadata.groq_capability_reason || requestTrace.groq_capability_reason || null,
+    stale_fallback_attempted: Boolean(
+      executionMetadata.stale_fallback_attempted
+      ?? requestTrace.stale_fallback_attempted
+      ?? requestPayload.routeDecision?.staleFallbackAttempted
+      ?? false,
+    ),
   };
 }
 
@@ -275,8 +285,11 @@ function createRouteUnavailableResult({
           override_denial_reason: routeDecision?.overrideDeniedReason || null,
           freshness_warning: routeDecision?.freshnessWarning || null,
           freshness_routed: Boolean(routeDecision?.freshnessRouted),
+          stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
           ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
           ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
+          groq_fresh_candidate_model: routeDecision?.candidateFreshModel || null,
+          groq_fresh_web_path: routeDecision?.candidateFreshPath || null,
           selected_route_kind: routeKind,
           selected_route_usable: false,
           route_unavailable_reason: fallbackReason,
