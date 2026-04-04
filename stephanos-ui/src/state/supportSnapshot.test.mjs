@@ -12,6 +12,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       cloudAvailable: true,
       uiVersion: '1.2.3',
       uiBuildTimestamp: '2026-03-25T00:00:00.000Z',
+      lastFreshnessNeed: 'high',
+      lastAnswerMode: 'fresh-web',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -66,6 +68,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Requested Route Mode: auto/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);
+  assert.match(snapshot, /Last Freshness Need: high/);
+  assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /Truth Inconsistent: no/);
   assert.match(snapshot, /Route Usability Conflict: no/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud: usable \(public route reachable\)/);

@@ -167,6 +167,11 @@ export default function StatusPanel() {
       lastResponseTruth: responseTruth,
       lastFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a',
       lastFallbackReason: lastExecutionMetadata?.fallback_reason,
+      lastFreshnessNeed: lastExecutionMetadata?.freshness_need || 'n/a',
+      lastFreshnessReason: lastExecutionMetadata?.freshness_reason || 'n/a',
+      lastStaleRisk: lastExecutionMetadata?.stale_risk || 'n/a',
+      lastAnswerMode: lastExecutionMetadata?.selected_answer_mode || 'n/a',
+      lastFreshnessWarning: lastExecutionMetadata?.freshness_warning || 'n/a',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
@@ -345,6 +350,11 @@ export default function StatusPanel() {
         <li>Last Response Truth: {responseTruth}</li>
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
+        <li>Last Freshness Need: {lastExecutionMetadata?.freshness_need || 'n/a'}</li>
+        <li>Last Answer Mode: {lastExecutionMetadata?.selected_answer_mode || 'n/a'}</li>
+        <li>Last Stale Risk: {lastExecutionMetadata?.stale_risk || 'n/a'}</li>
+        <li>Last Freshness Reason: {lastExecutionMetadata?.freshness_reason || 'n/a'}</li>
+        <li>Last Freshness Warning: {lastExecutionMetadata?.freshness_warning || 'n/a'}</li>
         <li>Execution Truth: {executionTruth}</li>
         <li>Execution Provider (Truth): {routeTruthView.executedProvider}</li>
         <li>Recovery Guidance: {routeTruthView.operatorReason || homeNodeAction || 'n/a'}</li>

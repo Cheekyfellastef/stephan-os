@@ -21,6 +21,7 @@ import { buildContinuitySummary, getContinuityContext } from '../state/continuit
 import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
 import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
+import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/freshnessRouting';
 import { appendCommandHistory } from './commandHistory.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -164,6 +165,12 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     model_used: modelUsed,
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
+    freshness_need: executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low',
+    freshness_reason: executionMetadata.freshness_reason || requestTrace.freshness_reason || requestPayload.freshnessContext?.freshnessReason || 'n/a',
+    stale_risk: executionMetadata.stale_risk || requestTrace.stale_risk || requestPayload.freshnessContext?.staleRisk || 'low',
+    selected_answer_mode: executionMetadata.selected_answer_mode || requestTrace.selected_answer_mode || requestPayload.routeDecision?.selectedAnswerMode || 'local-private',
+    freshness_warning: executionMetadata.freshness_warning || requestTrace.freshness_warning || requestPayload.routeDecision?.freshnessWarning || null,
+    freshness_routed: Boolean(executionMetadata.freshness_routed ?? requestTrace.freshness_routed ?? requestPayload.routeDecision?.freshnessRouted ?? false),
   };
 }
 
@@ -182,16 +189,17 @@ function deriveExecutionStatus(executionMetadata) {
 function buildExecutionSummary(executionMetadata) {
   const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI requested ${executionMetadata.ui_requested_provider}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
+  const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}.`;
 
   if (executionMetadata.fallback_used) {
-    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}`;
+    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}`;
   }
 
   if (executionMetadata.actual_provider_used === 'mock') {
-    return `${summaryPrefix}${modelSuffix}. Mock answered directly.`;
+    return `${summaryPrefix}${modelSuffix}. Mock answered directly.${freshnessSuffix}`;
   }
 
-  return `${summaryPrefix}${modelSuffix}.`;
+  return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}`;
 }
 
 function transportErrorToUi(error) {
@@ -807,9 +815,20 @@ export function useAIConsole() {
         userPrompt: prompt,
         runtimeContext: finalizedRequestContext,
       });
+      const freshnessClassification = classifyPromptFreshness(prompt, {
+        localPrivateHint: parsed?.route === 'system',
+      });
+      const freshnessRouteDecision = resolveFreshnessRoutingDecision({
+        classification: freshnessClassification,
+        requestedProvider: provider,
+        providerHealth,
+        runtimeStatus,
+        routeTruthView,
+      });
+      const requestedProvider = freshnessRouteDecision.selectedProvider || provider;
       const { data, requestPayload } = await sendPrompt({
         prompt,
-        provider,
+        provider: requestedProvider,
         routeMode,
         providerConfigs: effectiveProviderConfigs,
         fallbackEnabled,
@@ -819,7 +838,17 @@ export function useAIConsole() {
         tileContext: assembledTileContext,
         continuityContext,
         continuityMode,
+        freshnessContext: freshnessClassification,
+        routeDecision: freshnessRouteDecision,
       });
+
+      if (
+        data.success
+        && freshnessRouteDecision.selectedAnswerMode === 'fallback-stale-risk'
+        && freshnessRouteDecision.freshnessWarning
+      ) {
+        data.output_text = `[Freshness warning] ${freshnessRouteDecision.freshnessWarning}\n\n${data.output_text}`;
+      }
 
       const providerHealth = data.data?.provider_health || {};
       if (Object.keys(providerHealth).length) {
@@ -892,6 +921,12 @@ export function useAIConsole() {
         model_used: executionMetadata.model_used,
         fallback_used: executionMetadata.fallback_used,
         fallback_reason: executionMetadata.fallback_reason,
+        freshness_need: executionMetadata.freshness_need,
+        freshness_reason: executionMetadata.freshness_reason,
+        stale_risk: executionMetadata.stale_risk,
+        selected_answer_mode: executionMetadata.selected_answer_mode,
+        freshness_warning: executionMetadata.freshness_warning,
+        freshness_routed: executionMetadata.freshness_routed,
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
