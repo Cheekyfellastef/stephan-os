@@ -5,15 +5,19 @@ import { checkGroqHealth, runGroqProvider } from '../services/llm/providers/groq
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-test('Groq health reports ready when a runtime provider api key is supplied', async () => {
+test('Groq health reports ready with zero-cost defaults and no fresh candidate by default', async () => {
   const health = await checkGroqHealth({ apiKey: 'gsk_test_session_key', model: 'openai/gpt-oss-20b' });
 
   assert.equal(health.ok, true);
   assert.equal(health.configuredVia, 'runtime provider config');
   assert.match(health.detail, /backend-routed provider configuration/i);
-  assert.equal(health.providerCapability.candidateFreshRouteAvailable, true);
-  assert.equal(health.providerCapability.candidateFreshWebModel, 'compound-beta-mini');
-  assert.equal(health.providerCapability.freshWebPath, '/responses:web_search');
+  assert.equal(health.providerCapability.candidateFreshRouteAvailable, false);
+  assert.equal(health.providerCapability.candidateFreshWebModel, '');
+  assert.equal(health.providerCapability.freshWebPath, '');
+  assert.equal(health.providerCapability.zeroCostPolicy, true);
+  assert.equal(health.providerCapability.paidFreshRoutesEnabled, false);
+  assert.equal(health.providerCapability.freshCapabilityMode, 'zero-cost-only');
+  assert.match(health.providerCapability.capabilityReason, /no zero-cost fresh route configured/i);
 });
 
 test('Groq runner uses the runtime provider api key through the backend provider path', async () => {
@@ -204,5 +208,8 @@ test('Groq health remains explicit when only non-fresh model is configured', asy
   assert.equal(health.providerCapability.supportsFreshWeb, false);
   assert.equal(health.providerCapability.configuredModelSupportsFreshWeb, false);
   assert.equal(health.providerCapability.candidateFreshRouteAvailable, false);
-  assert.match(health.providerCapability.capabilityReason, /no fresh-web capable model candidate/i);
+  assert.equal(health.providerCapability.zeroCostPolicy, true);
+  assert.equal(health.providerCapability.paidFreshRoutesEnabled, false);
+  assert.equal(health.providerCapability.freshCapabilityMode, 'zero-cost-only');
+  assert.match(health.providerCapability.capabilityReason, /no zero-cost fresh route configured/i);
 });

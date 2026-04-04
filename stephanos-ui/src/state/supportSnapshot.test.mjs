@@ -17,6 +17,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastAiPolicyMode: 'local-first-cloud-when-needed',
       lastAiPolicyReason: 'Cloud routing allowed and selected because current real-world truth is required.',
       lastGroqFreshCandidateModel: 'compound-beta-mini',
+      lastZeroCostPolicy: 'true',
+      lastPaidFreshRoutesEnabled: 'false',
+      lastFreshCapabilityMode: 'zero-cost-only',
       lastStaleFallbackAttempted: 'no',
     },
     routeTruthView: {
@@ -69,6 +72,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
         candidateFreshRouteAvailable: true,
         candidateFreshWebModel: 'compound-beta-mini',
         freshWebPath: '/responses:web_search',
+        zeroCostPolicy: true,
+        paidFreshRoutesEnabled: false,
+        freshCapabilityMode: 'zero-cost-only',
       },
     },
     now: { toISOString: () => '2026-03-25T00:00:01.000Z' },
@@ -82,7 +88,13 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Selected Provider Configured Model: openai\/gpt-oss-20b/);
   assert.match(snapshot, /Selected Provider Fresh Candidate Available: true/);
   assert.match(snapshot, /Selected Provider Fresh Candidate Model: compound-beta-mini/);
+  assert.match(snapshot, /Zero Cost Policy: true/);
+  assert.match(snapshot, /Paid Fresh Routes Enabled: false/);
+  assert.match(snapshot, /Fresh Capability Mode: zero-cost-only/);
   assert.match(snapshot, /Last Groq Fresh Candidate Model: compound-beta-mini/);
+  assert.match(snapshot, /Last Zero Cost Policy: true/);
+  assert.match(snapshot, /Last Paid Fresh Routes Enabled: false/);
+  assert.match(snapshot, /Last Fresh Capability Mode: zero-cost-only/);
   assert.match(snapshot, /Last Stale Fallback Attempted: no/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);

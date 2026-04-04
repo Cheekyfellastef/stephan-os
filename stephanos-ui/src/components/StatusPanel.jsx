@@ -175,6 +175,9 @@ export default function StatusPanel() {
       lastGroqFreshCandidateModel: lastExecutionMetadata?.groq_fresh_candidate_model || 'n/a',
       lastGroqFreshWebPath: lastExecutionMetadata?.groq_fresh_web_path || 'n/a',
       lastGroqCapabilityReason: lastExecutionMetadata?.groq_capability_reason || 'n/a',
+      lastZeroCostPolicy: String(lastExecutionMetadata?.zero_cost_policy ?? statusSummary.providerCapability?.zeroCostPolicy ?? 'n/a'),
+      lastPaidFreshRoutesEnabled: String(lastExecutionMetadata?.paid_fresh_routes_enabled ?? statusSummary.providerCapability?.paidFreshRoutesEnabled ?? 'n/a'),
+      lastFreshCapabilityMode: lastExecutionMetadata?.fresh_capability_mode || statusSummary.providerCapability?.freshCapabilityMode || 'n/a',
       lastResponseTruth: responseTruth,
       lastFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a',
       lastFallbackReason: lastExecutionMetadata?.fallback_reason,
@@ -352,6 +355,9 @@ export default function StatusPanel() {
         <li>Selected Provider Fresh Candidate Model: {statusSummary.providerCapability?.candidateFreshWebModel || 'n/a'}</li>
         <li>Selected Provider Fresh Web Path: {statusSummary.providerCapability?.freshWebPath || 'n/a'}</li>
         <li>Selected Provider Capability Reason: {statusSummary.providerCapability?.capabilityReason || 'n/a'}</li>
+        <li>Zero Cost Policy: {String(statusSummary.providerCapability?.zeroCostPolicy ?? 'unknown')}</li>
+        <li>Paid Fresh Routes Enabled: {String(statusSummary.providerCapability?.paidFreshRoutesEnabled ?? 'unknown')}</li>
+        <li>Fresh Capability Mode: {statusSummary.providerCapability?.freshCapabilityMode || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
         <li>Active Provider Config Source: {getActiveProviderConfigSource()}</li>
@@ -378,6 +384,9 @@ export default function StatusPanel() {
         <li>Last Groq Fresh Candidate Available: {String(lastExecutionMetadata?.groq_fresh_web_candidate_available ?? 'n/a')}</li>
         <li>Last Groq Fresh Web Path: {lastExecutionMetadata?.groq_fresh_web_path || 'n/a'}</li>
         <li>Last Groq Capability Reason: {lastExecutionMetadata?.groq_capability_reason || 'n/a'}</li>
+        <li>Last Zero Cost Policy: {String(lastExecutionMetadata?.zero_cost_policy ?? 'n/a')}</li>
+        <li>Last Paid Fresh Routes Enabled: {String(lastExecutionMetadata?.paid_fresh_routes_enabled ?? 'n/a')}</li>
+        <li>Last Fresh Capability Mode: {lastExecutionMetadata?.fresh_capability_mode || 'n/a'}</li>
         <li>Last Response Truth: {responseTruth}</li>
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>

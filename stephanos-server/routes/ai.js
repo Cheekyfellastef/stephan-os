@@ -341,6 +341,9 @@ Use these memories when they help, but do not repeat them unless they are releva
       groq_fresh_candidate_model: llmResult.diagnostics?.groq?.freshWebModelCandidate || routeDecision?.candidateFreshModel || null,
       groq_fresh_web_path: llmResult.diagnostics?.groq?.freshWebPath || null,
       groq_capability_reason: providerHealthSnapshot?.groq?.providerCapability?.capabilityReason || null,
+      zero_cost_policy: providerHealthSnapshot?.groq?.providerCapability?.zeroCostPolicy ?? true,
+      paid_fresh_routes_enabled: providerHealthSnapshot?.groq?.providerCapability?.paidFreshRoutesEnabled ?? false,
+      fresh_capability_mode: providerHealthSnapshot?.groq?.providerCapability?.freshCapabilityMode || 'zero-cost-only',
       stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
     };
     const requestTrace = {
@@ -371,6 +374,9 @@ Use these memories when they help, but do not repeat them unless they are releva
       groq_fresh_candidate_model: executionMetadata.groq_fresh_candidate_model,
       groq_fresh_web_path: executionMetadata.groq_fresh_web_path,
       groq_capability_reason: executionMetadata.groq_capability_reason,
+      zero_cost_policy: executionMetadata.zero_cost_policy,
+      paid_fresh_routes_enabled: executionMetadata.paid_fresh_routes_enabled,
+      fresh_capability_mode: executionMetadata.fresh_capability_mode,
       stale_fallback_attempted: executionMetadata.stale_fallback_attempted,
       provider_resolution: providerResolution,
     };
