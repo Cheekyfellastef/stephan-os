@@ -18,7 +18,7 @@ test('classifies Stephanos continuity and local debugging prompts as low freshne
   assert.equal(localDebug.freshnessNeed, 'low');
 });
 
-test('latest phrasing prefers fresh-web routing when available', () => {
+test('latest phrasing prefers fresh-cloud routing when available', () => {
   const classification = classifyPromptFreshness('What is the latest Bethesda update?');
   const decision = resolveFreshnessRoutingDecision({
     classification,
@@ -28,7 +28,7 @@ test('latest phrasing prefers fresh-web routing when available', () => {
     routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
   });
 
-  assert.equal(decision.selectedAnswerMode, 'fresh-web');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
   assert.equal(decision.selectedProvider, 'groq');
   assert.equal(decision.aiPolicy.aiPolicyMode, 'local-first-cloud-when-needed');
 });
@@ -55,7 +55,7 @@ test('high-freshness request can use cloud route even when canonical selected ro
 
   assert.equal(decision.selectedProvider, 'groq');
   assert.equal(decision.requestedProviderForRequest, 'groq');
-  assert.equal(decision.selectedAnswerMode, 'fresh-web');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
   assert.equal(decision.overrideDeniedReason, null);
 });
 
@@ -174,6 +174,98 @@ test('fresh route uses explicit provider capability truth contract when present'
     routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
   });
 
-  assert.equal(decision.selectedAnswerMode, 'fresh-web');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
   assert.equal(decision.freshRouteValidation.providerCapability.supportsFreshWeb, true);
+});
+
+test('high-freshness PM question requests Groq when cloud fresh route is available', () => {
+  const classification = classifyPromptFreshness('Who is the current UK prime minister?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
+});
+
+test('office-holder U.S. president question is treated as high freshness and requests Groq', () => {
+  const classification = classifyPromptFreshness('Who is the U.S. president?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(classification.freshnessNeed, 'high');
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
+});
+
+test('Champions League holders question requests Groq when explicit currentness is high freshness', () => {
+  const classification = classifyPromptFreshness('Who are the current UEFA Champions League holders?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(classification.freshnessNeed, 'high');
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
+});
+
+test('low-freshness local system prompt remains local-first on Ollama', () => {
+  const classification = classifyPromptFreshness('Help me debug local route truth for this repo.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(classification.freshnessNeed, 'low');
+  assert.equal(decision.requestedProviderForRequest, 'ollama');
+  assert.equal(decision.selectedAnswerMode, 'local-private');
 });

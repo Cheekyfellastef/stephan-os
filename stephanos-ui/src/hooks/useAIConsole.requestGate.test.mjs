@@ -42,7 +42,7 @@ test('keeps fallback-stale-risk executable when fresh route is unavailable', () 
 test('blocks with route unavailable only when no viable execution path exists', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
-      selectedAnswerMode: 'fresh-web',
+      selectedAnswerMode: 'fresh-cloud',
       localRouteAvailable: false,
       freshRouteAvailable: false,
       fallbackReasonCode: 'cloud-route-unusable',
