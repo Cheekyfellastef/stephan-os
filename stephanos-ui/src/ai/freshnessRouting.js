@@ -169,7 +169,7 @@ export function resolveFreshnessRoutingDecision({
   routeTruthView = {},
 } = {}) {
   const sessionKind = String(runtimeStatus?.sessionKind || routeTruthView?.sessionKind || '').trim().toLowerCase();
-  const hostedSession = sessionKind === 'hosted-web';
+  const hostedSession = sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
   const aiPolicy = {
     aiPolicyMode: hostedSession ? 'hosted-cloud-first-for-freshness' : 'local-first-cloud-when-needed',
     localPreferred: hostedSession ? false : true,
@@ -282,6 +282,20 @@ export function resolveFreshnessRoutingDecision({
       fallbackReasonCode = 'no-viable-execution-path';
       policyReason = 'Hosted low-freshness request has no reachable cloud or local execution path.';
     }
+  }
+
+  const shouldForceHostedCloudBasic = classification?.freshnessNeed === 'low'
+    && hostedSession
+    && !localRouteAvailable
+    && cloudRouteAvailable
+    && selectedProvider === 'groq'
+    && selectedAnswerMode !== 'cloud-basic';
+
+  if (shouldForceHostedCloudBasic) {
+    selectedAnswerMode = 'cloud-basic';
+    freshnessRouted = true;
+    fallbackReasonCode = null;
+    policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
   }
 
   const requestedProviderForRequest = selectedProvider;

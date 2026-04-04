@@ -11,17 +11,25 @@ export function evaluateRequestDispatchGate({
   const cloudRouteViable = backendReachable && (routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true;
   const localRouteViable = backendReachable && routeDecision?.localRouteAvailable === true;
   const selectedAnswerMode = routeDecision?.selectedAnswerMode || 'local-private';
+  const selectedProvider = String(routeDecision?.selectedProvider || '').trim().toLowerCase();
+  const shouldPromoteToCloudBasic = (
+    (selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk')
+    && selectedProvider === 'groq'
+    && !localRouteViable
+    && cloudRouteViable
+  );
+  const effectiveAnswerMode = shouldPromoteToCloudBasic ? 'cloud-basic' : selectedAnswerMode;
 
-  const modeRequiresFreshRoute = selectedAnswerMode === 'fresh-web' || selectedAnswerMode === 'fresh-cloud';
-  const modeRequiresCloudRoute = selectedAnswerMode === 'cloud-basic';
-  const modePrefersLocalExecution = selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk';
-  const modeRouteUnavailable = selectedAnswerMode === 'route-unavailable';
+  const modeRequiresFreshRoute = effectiveAnswerMode === 'fresh-web' || effectiveAnswerMode === 'fresh-cloud';
+  const modeRequiresCloudRoute = effectiveAnswerMode === 'cloud-basic';
+  const modePrefersLocalExecution = effectiveAnswerMode === 'local-private' || effectiveAnswerMode === 'fallback-stale-risk';
+  const modeRouteUnavailable = effectiveAnswerMode === 'route-unavailable';
 
   if (modeRouteUnavailable) {
     return {
       dispatchAllowed: false,
       reasonCode: routeDecision?.fallbackReasonCode || 'fresh-route-unavailable',
-      selectedAnswerMode,
+      selectedAnswerMode: effectiveAnswerMode,
       freshRouteViable,
       cloudRouteViable,
       localRouteViable,
@@ -41,7 +49,7 @@ export function evaluateRequestDispatchGate({
     return {
       dispatchAllowed: true,
       reasonCode: null,
-      selectedAnswerMode,
+      selectedAnswerMode: effectiveAnswerMode,
       freshRouteViable,
       cloudRouteViable,
       localRouteViable,
@@ -60,7 +68,7 @@ export function evaluateRequestDispatchGate({
   return {
     dispatchAllowed: false,
     reasonCode,
-    selectedAnswerMode,
+    selectedAnswerMode: effectiveAnswerMode,
     freshRouteViable,
     cloudRouteViable,
     localRouteViable,

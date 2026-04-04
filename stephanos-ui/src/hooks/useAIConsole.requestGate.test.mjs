@@ -107,3 +107,22 @@ test('returns no-viable-execution-path for hosted cloud-basic when cloud and loc
   assert.equal(gate.dispatchAllowed, false);
   assert.equal(gate.reasonCode, 'no-viable-execution-path');
 });
+
+test('promotes stale hosted local-private label to cloud-basic when Groq cloud route is viable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'local-private',
+      selectedProvider: 'groq',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.selectedAnswerMode, 'cloud-basic');
+  assert.equal(gate.reasonCode, null);
+});
