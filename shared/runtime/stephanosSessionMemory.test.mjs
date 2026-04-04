@@ -50,14 +50,14 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
           groq: { baseURL: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-20b' },
           gemini: { baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-2.5-flash' },
           mock: { enabled: true, latencyMs: 500, failRate: 0, mode: 'echo', model: 'stephanos-mock-v1' },
-          ollama: { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', timeoutMs: 8000 },
+          ollama: { baseURL: 'http://localhost:11434', model: 'qwen:14b', timeoutMs: 8000 },
           openrouter: { baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-oss-20b', enabled: false },
         },
         ollamaConnection: {
           lastSuccessfulBaseURL: 'http://192.168.0.8:11434',
           lastSuccessfulHost: '192.168.0.8',
           recentHosts: ['192.168.0.8'],
-          lastSelectedModel: 'gpt-oss:20b',
+          lastSelectedModel: 'qwen:14b',
         },
       },
       ui: {

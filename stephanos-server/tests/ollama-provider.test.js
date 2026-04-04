@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getProviderHealthSnapshot } from '../services/llm/router/routeLLMRequest.js';
-import { checkOllamaHealth, resolveOllamaConfig } from '../services/llm/providers/ollamaProvider.js';
+import { checkOllamaHealth, resolveOllamaConfig, runOllamaProvider } from '../services/llm/providers/ollamaProvider.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -16,6 +16,95 @@ test('resolveOllamaConfig ignores blank URL values and keeps localhost default',
   assert.equal(nil.baseURL, 'http://localhost:11434');
   assert.equal(missing.baseURL, 'http://localhost:11434');
   assert.equal(undefinedValue.baseURL, 'http://localhost:11434');
+  assert.equal(missing.model, 'qwen:14b');
+});
+
+test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:14b', message: { content: 'ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Summarize this local module.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.model, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.defaultModel, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.fallbackModelUsed, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:32b', message: { content: 'deep ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Please do a deep architecture root cause analysis and multi-step debug plan.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
+    assert.equal(result.diagnostics.ollama.escalationActive, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'gpt-oss:20b' }, { name: 'llama3.2:3b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'gpt-oss:20b', message: { content: 'fallback ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Explain this local bug.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'gpt-oss:20b');
+    assert.equal(result.diagnostics.ollama.fallbackModelUsed, true);
+    assert.match(result.diagnostics.ollama.fallbackReason, /unavailable/i);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
 });
 
 test('checkOllamaHealth returns misconfigured result for malformed URL', async () => {
