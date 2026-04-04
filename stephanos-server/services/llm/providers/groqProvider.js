@@ -17,20 +17,58 @@ function modelSupportsFreshWeb(model = '') {
   return normalized.includes('compound') || normalized.includes('search');
 }
 
+function parseFreshWebModelCandidates(resolved = {}) {
+  const configuredCandidates = Array.isArray(resolved?.freshWebModelCandidates)
+    ? resolved.freshWebModelCandidates
+    : [];
+  const configuredFreshModel = String(resolved?.freshWebModel || '').trim();
+  const configuredModel = String(resolved?.model || '').trim();
+  return [...new Set([
+    configuredFreshModel,
+    ...configuredCandidates,
+    configuredModel,
+  ].map((candidate) => String(candidate || '').trim()).filter(Boolean))];
+}
+
+function resolveFreshWebExecutionPlan(resolved = {}) {
+  const configuredModel = String(resolved?.model || '').trim();
+  const candidates = parseFreshWebModelCandidates(resolved);
+  const freshCapableModel = candidates.find((model) => modelSupportsFreshWeb(model)) || '';
+  const configuredModelSupportsFreshWeb = modelSupportsFreshWeb(configuredModel);
+  const candidateFreshRouteAvailable = Boolean(freshCapableModel);
+
+  return {
+    configuredModel,
+    configuredModelSupportsFreshWeb,
+    candidateFreshRouteAvailable,
+    selectedFreshWebModel: freshCapableModel || configuredModel,
+    selectedFreshWebSource: freshCapableModel
+      ? (freshCapableModel === configuredModel ? 'configured-model' : 'configured-fresh-candidate')
+      : 'none',
+    selectedFreshWebPath: freshCapableModel ? '/responses:web_search' : '',
+  };
+}
+
 function buildGroqCapabilityTruth({ resolved, hasApiKey }) {
-  const freshWebModel = String(resolved?.freshWebModel || resolved?.model || '').trim();
-  const supportsFreshWeb = hasApiKey && modelSupportsFreshWeb(freshWebModel);
+  const executionPlan = resolveFreshWebExecutionPlan(resolved);
+  const supportsFreshWeb = hasApiKey && executionPlan.candidateFreshRouteAvailable;
   return {
     provider: 'groq',
     available: hasApiKey,
     transportReachable: hasApiKey,
+    configuredModel: executionPlan.configuredModel || 'n/a',
+    configuredModelSupportsFreshWeb: executionPlan.configuredModelSupportsFreshWeb,
+    configuredModelSupportsCurrentAnswers: executionPlan.configuredModelSupportsFreshWeb,
+    candidateFreshRouteAvailable: executionPlan.candidateFreshRouteAvailable,
+    candidateFreshWebModel: executionPlan.candidateFreshRouteAvailable ? executionPlan.selectedFreshWebModel : '',
+    freshWebPath: executionPlan.selectedFreshWebPath || '',
     supportsFreshWeb,
     supportsBrowserSearch: supportsFreshWeb,
     supportsCurrentAnswers: supportsFreshWeb,
     capabilityReason: supportsFreshWeb
-      ? `Groq fresh-web route enabled via model "${freshWebModel}".`
+      ? `Groq fresh-web route enabled via model "${executionPlan.selectedFreshWebModel}" (${executionPlan.selectedFreshWebSource}) on /responses with web_search.`
       : hasApiKey
-        ? `Groq is configured but model "${freshWebModel || 'n/a'}" is not marked fresh-web capable (requires a compound/search model).`
+        ? `Groq is configured but no fresh-web capable model candidate was found. Configured model "${executionPlan.configuredModel || 'n/a'}" is not marked fresh-web capable (requires a compound/search model).`
         : 'Groq API key is missing.',
   };
 }
@@ -102,6 +140,7 @@ export async function checkGroqHealth(config = {}) {
 
 export async function runGroqProvider(request, config = {}) {
   const resolved = sanitizeProviderConfig('groq', config);
+  const freshWebPlan = resolveFreshWebExecutionPlan(resolved);
   const providerCapability = buildGroqCapabilityTruth({ resolved, hasApiKey: Boolean(resolved.apiKey) });
   const configuredVia = String(config?.apiKey || '').trim()
     ? (config?.secretAuthority === 'backend-local-secret-store'
@@ -129,7 +168,10 @@ export async function runGroqProvider(request, config = {}) {
   }
 
   const freshnessNeed = normalizeFreshnessNeed(request);
-  const shouldUseFreshWebRoute = freshnessNeed === 'high' && providerCapability.supportsFreshWeb;
+  const shouldUseFreshWebRoute = freshnessNeed === 'high' && freshWebPlan.candidateFreshRouteAvailable;
+  const selectedModel = shouldUseFreshWebRoute
+    ? (request.model || freshWebPlan.selectedFreshWebModel || resolved.freshWebModel || resolved.model)
+    : (request.model || resolved.model);
 
   try {
     const endpoint = shouldUseFreshWebRoute ? '/responses' : '/chat/completions';
@@ -141,7 +183,7 @@ export async function runGroqProvider(request, config = {}) {
       },
       body: JSON.stringify(shouldUseFreshWebRoute
         ? {
-          model: request.model || resolved.freshWebModel || resolved.model,
+          model: selectedModel,
           input: buildResponsesInput(request),
           instructions: request.systemPrompt || undefined,
           tools: [{ type: 'web_search' }],
@@ -149,7 +191,7 @@ export async function runGroqProvider(request, config = {}) {
           temperature: request.temperature ?? 0.2,
         }
         : {
-          model: request.model || resolved.model,
+          model: selectedModel,
           messages: buildMessages(request),
           temperature: request.temperature ?? 0.3,
           max_tokens: request.maxTokens,
@@ -162,7 +204,7 @@ export async function runGroqProvider(request, config = {}) {
       return {
         ok: false,
         provider: 'groq',
-        model: resolved.model,
+        model: selectedModel || resolved.model,
         outputText: '',
         raw,
         error: {
@@ -175,6 +217,10 @@ export async function runGroqProvider(request, config = {}) {
             endpoint,
             providerCapability,
             freshWebAttempted: shouldUseFreshWebRoute,
+            freshWebActive: shouldUseFreshWebRoute,
+            selectedModel,
+            freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+            freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
           },
         },
       };
@@ -188,17 +234,21 @@ export async function runGroqProvider(request, config = {}) {
     return {
       ok: true,
       provider: 'groq',
-      model: raw?.model || resolved.model,
+      model: raw?.model || selectedModel || resolved.model,
       outputText: responseOutputText,
       usage: raw?.usage,
       raw,
       diagnostics: {
         groq: {
           baseURL: resolved.baseURL,
-          model: raw?.model || resolved.model,
+          model: raw?.model || selectedModel || resolved.model,
           configuredVia,
           endpoint,
           freshWebAttempted: shouldUseFreshWebRoute,
+          freshWebActive: shouldUseFreshWebRoute,
+          selectedModel: raw?.model || selectedModel || resolved.model,
+          freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+          freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
           providerCapability,
         },
       },
@@ -218,6 +268,10 @@ export async function runGroqProvider(request, config = {}) {
         groq: {
           providerCapability,
           freshWebAttempted: shouldUseFreshWebRoute,
+          freshWebActive: shouldUseFreshWebRoute,
+          selectedModel,
+          freshWebModelCandidateAvailable: freshWebPlan.candidateFreshRouteAvailable,
+          freshWebPath: shouldUseFreshWebRoute ? '/responses:web_search' : '',
         },
       },
     };

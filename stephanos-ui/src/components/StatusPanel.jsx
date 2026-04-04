@@ -166,6 +166,12 @@ export default function StatusPanel() {
       lastSelectedProvider: lastExecutionMetadata?.selected_provider,
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
       lastModelUsed: lastExecutionMetadata?.model_used,
+      lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
+      lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
+      lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
+      lastGroqFreshCandidateAvailable: String(lastExecutionMetadata?.groq_fresh_web_candidate_available ?? 'n/a'),
+      lastGroqFreshWebPath: lastExecutionMetadata?.groq_fresh_web_path || 'n/a',
+      lastGroqCapabilityReason: lastExecutionMetadata?.groq_capability_reason || 'n/a',
       lastResponseTruth: responseTruth,
       lastFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a',
       lastFallbackReason: lastExecutionMetadata?.fallback_reason,
@@ -336,6 +342,11 @@ export default function StatusPanel() {
         <li>Selected Provider Reason: {statusSummary.healthReason || 'n/a'}</li>
         <li>Selected Provider Supports Fresh Web: {String(statusSummary.providerCapability?.supportsFreshWeb ?? 'unknown')}</li>
         <li>Selected Provider Supports Current Answers: {String(statusSummary.providerCapability?.supportsCurrentAnswers ?? 'unknown')}</li>
+        <li>Selected Provider Configured Model: {statusSummary.providerCapability?.configuredModel || statusSummary.model || 'n/a'}</li>
+        <li>Selected Provider Configured Model Supports Fresh Web: {String(statusSummary.providerCapability?.configuredModelSupportsFreshWeb ?? 'unknown')}</li>
+        <li>Selected Provider Fresh Candidate Available: {String(statusSummary.providerCapability?.candidateFreshRouteAvailable ?? 'unknown')}</li>
+        <li>Selected Provider Fresh Candidate Model: {statusSummary.providerCapability?.candidateFreshWebModel || 'n/a'}</li>
+        <li>Selected Provider Fresh Web Path: {statusSummary.providerCapability?.freshWebPath || 'n/a'}</li>
         <li>Selected Provider Capability Reason: {statusSummary.providerCapability?.capabilityReason || 'n/a'}</li>
         <li>Provider Selection Source: {providerSelectionSource}</li>
         <li>Stored Route Mode: {routeMode}</li>
@@ -357,6 +368,12 @@ export default function StatusPanel() {
         <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
         <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
         <li>Last Model Used: {lastExecutionMetadata?.model_used || 'n/a'}</li>
+        <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
+        <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
+        <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>
+        <li>Last Groq Fresh Candidate Available: {String(lastExecutionMetadata?.groq_fresh_web_candidate_available ?? 'n/a')}</li>
+        <li>Last Groq Fresh Web Path: {lastExecutionMetadata?.groq_fresh_web_path || 'n/a'}</li>
+        <li>Last Groq Capability Reason: {lastExecutionMetadata?.groq_capability_reason || 'n/a'}</li>
         <li>Last Response Truth: {responseTruth}</li>
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>

@@ -61,6 +61,13 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
     statusSummary: {
       healthState: 'healthy',
       healthReason: 'provider online',
+      providerCapability: {
+        configuredModel: 'openai/gpt-oss-20b',
+        configuredModelSupportsFreshWeb: false,
+        candidateFreshRouteAvailable: true,
+        candidateFreshWebModel: 'compound-beta-mini',
+        freshWebPath: '/responses:web_search',
+      },
     },
     now: { toISOString: () => '2026-03-25T00:00:01.000Z' },
     href: 'https://console.stephanos.example/status',
@@ -70,6 +77,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Requested Route Mode: auto/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);
+  assert.match(snapshot, /Selected Provider Configured Model: openai\/gpt-oss-20b/);
+  assert.match(snapshot, /Selected Provider Fresh Candidate Available: true/);
+  assert.match(snapshot, /Selected Provider Fresh Candidate Model: compound-beta-mini/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

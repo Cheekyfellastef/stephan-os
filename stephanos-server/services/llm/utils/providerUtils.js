@@ -50,7 +50,13 @@ function getEnvBackedDefaults(provider) {
     ? (ollamaHost.startsWith('http://') || ollamaHost.startsWith('https://') ? ollamaHost : `http://${ollamaHost}`)
     : '';
   const envMap = {
-    groq: { apiKey: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL, baseURL: process.env.GROQ_BASE_URL },
+    groq: {
+      apiKey: process.env.GROQ_API_KEY,
+      model: process.env.GROQ_MODEL,
+      baseURL: process.env.GROQ_BASE_URL,
+      freshWebModel: process.env.GROQ_FRESH_WEB_MODEL,
+      freshWebModelCandidates: process.env.GROQ_FRESH_WEB_MODEL_CANDIDATES,
+    },
     gemini: { apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL, baseURL: process.env.GEMINI_BASE_URL },
     ollama: {
       baseURL: process.env.OLLAMA_BASE_URL || normalizedOllamaHost,
@@ -79,6 +85,15 @@ export function sanitizeProviderConfig(provider, config = {}) {
   if ('baseURL' in merged) merged.baseURL = String(merged.baseURL || '').trim();
   if ('baseURL' in merged && merged.baseURL === '' && defaults.baseURL) merged.baseURL = String(defaults.baseURL).trim();
   if ('model' in merged) merged.model = String(merged.model || '').trim();
+  if ('freshWebModel' in merged) merged.freshWebModel = String(merged.freshWebModel || '').trim();
+  if ('freshWebModelCandidates' in merged) {
+    const rawCandidates = Array.isArray(merged.freshWebModelCandidates)
+      ? merged.freshWebModelCandidates
+      : String(merged.freshWebModelCandidates || '').split(',');
+    merged.freshWebModelCandidates = [...new Set(rawCandidates
+      .map((candidate) => String(candidate || '').trim())
+      .filter(Boolean))];
+  }
   if ('latencyMs' in merged) merged.latencyMs = Math.max(0, Number(merged.latencyMs) || defaults.latencyMs || 0);
   if ('failRate' in merged) merged.failRate = Math.max(0, Math.min(1, Number(merged.failRate) || 0));
   if ('timeoutMs' in merged) merged.timeoutMs = Math.max(1000, Number(merged.timeoutMs) || defaults.timeoutMs || 8000);

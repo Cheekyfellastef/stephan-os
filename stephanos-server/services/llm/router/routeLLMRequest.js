@@ -24,6 +24,12 @@ function normalizeProviderCapabilityTruth(provider, health = {}) {
       supportsFreshWeb: explicit.supportsFreshWeb === true,
       supportsBrowserSearch: explicit.supportsBrowserSearch === true,
       supportsCurrentAnswers: explicit.supportsCurrentAnswers === true,
+      configuredModel: String(explicit.configuredModel || ''),
+      configuredModelSupportsFreshWeb: explicit.configuredModelSupportsFreshWeb === true,
+      configuredModelSupportsCurrentAnswers: explicit.configuredModelSupportsCurrentAnswers === true,
+      candidateFreshRouteAvailable: explicit.candidateFreshRouteAvailable === true,
+      candidateFreshWebModel: String(explicit.candidateFreshWebModel || ''),
+      freshWebPath: String(explicit.freshWebPath || ''),
       capabilityReason: String(explicit.capabilityReason || health.detail || 'Capability truth unavailable.'),
     };
   }
@@ -35,6 +41,12 @@ function normalizeProviderCapabilityTruth(provider, health = {}) {
     supportsFreshWeb: false,
     supportsBrowserSearch: false,
     supportsCurrentAnswers: false,
+    configuredModel: '',
+    configuredModelSupportsFreshWeb: false,
+    configuredModelSupportsCurrentAnswers: false,
+    candidateFreshRouteAvailable: false,
+    candidateFreshWebModel: '',
+    freshWebPath: '',
     capabilityReason: provider === 'groq'
       ? 'Groq capability truth unavailable from provider health diagnostics.'
       : `${provider} does not expose fresh-web capability in this backend route.`,
