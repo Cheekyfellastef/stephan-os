@@ -335,7 +335,31 @@
         "tileLinked": false
       },
       "timestamp": "2026-04-04T20:27:28.637Z"
+    },
+    {
+      "id": "evt_1775337005104_m5xkei",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-04T21:10:05.104Z"
+    },
+    {
+      "id": "evt_1775337035497_mqbrv7",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-04T21:10:35.497Z"
     }
   ],
-  "updated_at": "2026-04-04T20:27:28.638Z"
+  "updated_at": "2026-04-04T21:10:35.498Z"
 }
