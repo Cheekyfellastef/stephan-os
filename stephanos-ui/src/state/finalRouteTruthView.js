@@ -25,6 +25,11 @@ function pickTruth(...candidates) {
   return '';
 }
 
+function isKnownProvider(value) {
+  const provider = String(value || '').trim().toLowerCase();
+  return provider.length > 0 && !['unknown', 'n/a', 'none', 'pending', 'unavailable'].includes(provider);
+}
+
 // UI truth projection contract:
 // - runtimeStatus.canonicalRouteRuntimeTruth is canonical runtime route/provider/session truth.
 // - this helper is the only approved projection layer for route/provider/operator UI labels.
@@ -56,9 +61,28 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
       pickTruth(canonicalTruth.uiReachabilityState, finalRouteTruth.uiReachabilityState, runtimeReachabilityTruth.uiReachableState),
       canonicalTruth.uiReachable ?? finalRouteTruth.uiReachable ?? runtimeReachabilityTruth.uiReachable,
     );
+  const canonicalRouteUsable = canonicalTruth.routeUsable;
+  const fallbackRouteUsable = finalRouteTruth.routeUsable === true || runtimeReachabilityTruth.selectedRouteUsable === true
+    ? true
+    : (finalRouteTruth.routeUsable ?? runtimeReachabilityTruth.selectedRouteUsable);
+  const reconciledRouteUsable = canonicalRouteUsable === false
+    && fallbackRouteUsable === true
+    && canonicalTruth.routeReachable === true
+    && (canonicalTruth.backendReachable ?? finalRouteTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true
+    && uiReachableState === 'yes'
+      ? true
+      : (canonicalRouteUsable ?? fallbackRouteUsable);
   const routeUsableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
-    : asBooleanState(canonicalTruth.routeUsable ?? finalRouteTruth.routeUsable ?? runtimeReachabilityTruth.selectedRouteUsable);
+    : asBooleanState(reconciledRouteUsable);
+
+  const selectedProvider = pickTruth(canonicalTruth.selectedProvider, finalRouteTruth.selectedProvider, runtimeProviderTruth.selectedProvider, runtimeTruth.selectedProvider) || 'unknown';
+  const executedProvider = pickTruth(canonicalTruth.executedProvider, finalRouteTruth.executedProvider, runtimeProviderTruth.executableProvider, runtimeTruth.executedProvider) || 'unknown';
+  const providerMismatch = isKnownProvider(selectedProvider) && isKnownProvider(executedProvider) && selectedProvider !== executedProvider;
+  const truthInconsistent = routeUsableState === 'no'
+    && (canonicalTruth.routeReachable === true || runtimeReachabilityTruth.selectedRouteReachable === true)
+    && (canonicalTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true
+    && uiReachableState === 'yes';
 
   return {
     routeKind,
@@ -68,8 +92,8 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeUsableState,
     homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable ?? finalRouteTruth.homeNodeUsable ?? runtimeReachabilityTruth.homeNodeAvailable),
     requestedProvider: pickTruth(canonicalTruth.requestedProvider, finalRouteTruth.requestedProvider, runtimeProviderTruth.requestedProvider, runtimeTruth.requestedProvider) || 'unknown',
-    selectedProvider: pickTruth(canonicalTruth.selectedProvider, finalRouteTruth.selectedProvider, runtimeProviderTruth.selectedProvider, runtimeTruth.selectedProvider) || 'unknown',
-    executedProvider: pickTruth(canonicalTruth.executedProvider, finalRouteTruth.executedProvider, runtimeProviderTruth.executableProvider, runtimeTruth.executedProvider) || 'unknown',
+    selectedProvider,
+    executedProvider,
     preferredTarget,
     actualTarget,
     source,
@@ -81,5 +105,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
       : canonicalTruth.routeReachable === false
         ? 'no'
         : 'pending',
+    providerMismatch,
+    truthInconsistent,
   };
 }

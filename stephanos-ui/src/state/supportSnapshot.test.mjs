@@ -347,3 +347,28 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target blocking when 
   assert.match(snapshot, /blockingIssues:\n- Backend target unresolved: No non-loopback backend target resolved for hosted session\./);
   assert.match(snapshot, /operatorGuidance:\n- Resolve a reachable non-loopback backend target for hosted-web/);
 });
+
+test('buildSupportSnapshot prefers adjudicated requested provider over stale last-requested metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRequestedProvider: 'groq',
+    },
+    routeTruthView: {
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-04T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /Last Requested Provider: ollama/);
+  assert.doesNotMatch(snapshot, /Last Requested Provider: groq/);
+});

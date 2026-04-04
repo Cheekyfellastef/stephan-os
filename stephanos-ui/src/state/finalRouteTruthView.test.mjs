@@ -98,3 +98,36 @@ test('summarizeHomeNodeUsabilityTruth prevents backend-only availability inflati
   assert.equal(truth.fallbackActive, true);
   assert.match(truth.routeReason, /UI\/client reachability is still unknown/);
 });
+
+test('buildFinalRouteTruthView reconciles stale canonical routeUsable=false when live reachability truth is fully healthy', () => {
+  const view = buildFinalRouteTruthView({
+    appLaunchState: 'ready',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local-desktop',
+      routeUsable: false,
+      routeReachable: true,
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    runtimeTruth: {
+      reachabilityTruth: {
+        selectedRouteUsable: true,
+        backendReachable: true,
+      },
+    },
+  });
+
+  assert.equal(view.routeUsableState, 'yes');
+});
+
+test('buildFinalRouteTruthView exposes providerMismatch when selected and executed providers diverge', () => {
+  const view = buildFinalRouteTruthView({
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local-desktop',
+      selectedProvider: 'ollama',
+      executedProvider: 'groq',
+    },
+  });
+
+  assert.equal(view.providerMismatch, true);
+});

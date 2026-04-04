@@ -54,6 +54,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
   const reachability = runtimeTruth.reachabilityTruth ?? {};
   const providerTruth = runtimeTruth.provider ?? {};
   const routeKind = String(routeTruthView.routeKind || '').toLowerCase();
+  const routeUsable = String(routeTruthView.routeUsableState || '').toLowerCase();
   const launchState = String(runtimeStatus.appLaunchState || '').toLowerCase();
 
   const localSurfaceBase = toStateFromBoolean(runtimeStatus.localAvailable ?? reachability.localAvailable);
@@ -98,9 +99,19 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates.aiProviders = nodeStates.aiProviders === 'dead' ? 'dead' : 'degraded';
   }
 
-  const activeSurface = routeKind.includes('cloud') ? 'hostedSurface' : 'localSurface';
-  if (nodeStates[activeSurface] !== 'dead') {
-    nodeStates[activeSurface] = 'active';
+  const selectedSurface = routeKind.includes('cloud')
+    ? 'hostedSurface'
+    : routeKind === 'unavailable'
+      ? null
+      : 'localSurface';
+  const inactiveSurface = selectedSurface === 'localSurface' ? 'hostedSurface' : 'localSurface';
+
+  if (nodeStates[inactiveSurface] !== 'dead' && nodeStates[inactiveSurface] !== 'unknown') {
+    nodeStates[inactiveSurface] = 'inactive';
+  }
+
+  if (selectedSurface && nodeStates[selectedSurface] !== 'dead') {
+    nodeStates[selectedSurface] = routeUsable === 'no' ? 'degraded' : 'alive';
   }
 
   if (nodeStates.backend !== 'dead') {
@@ -111,13 +122,22 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates.aiProviders = 'active';
   }
 
+  if (routeTruthView.providerMismatch || routeTruthView.truthInconsistent) {
+    if (nodeStates.aiProviders !== 'dead') {
+      nodeStates.aiProviders = 'degraded';
+    }
+    if (selectedSurface && nodeStates[selectedSurface] !== 'dead') {
+      nodeStates[selectedSurface] = 'degraded';
+    }
+  }
+
   if (continuitySnapshot.recentActivityActive) {
     nodeStates.memory = nodeStates.memory === 'dead' ? 'dead' : 'active';
   } else if (continuitySnapshot.continuityLoopState === 'degraded') {
     nodeStates.memory = nodeStates.memory === 'dead' ? 'dead' : 'degraded';
   }
 
-  return { nodeStates, activeSurface, executionActive };
+  return { nodeStates, activeSurface: selectedSurface, executionActive };
 }
 
 export function deriveConnectionState({
@@ -131,6 +151,8 @@ export function deriveConnectionState({
   executionActive,
   continuitySnapshot,
 }) {
+  const selectedOperatorLink = activeSurface === 'hostedSurface' ? 'operator-hostedSurface' : 'operator-localSurface';
+  const selectedSurfaceBackendLink = activeSurface === 'hostedSurface' ? 'hostedSurface-backend' : 'localSurface-backend';
   const fromState = nodeStates[connection.from] || 'unknown';
   const toState = nodeStates[connection.to] || 'unknown';
   const hasDead = fromState === 'dead' || toState === 'dead';
@@ -148,12 +170,15 @@ export function deriveConnectionState({
 
   if (routeUsableState === 'no') {
     if (
-      connection.id === 'localSurface-backend'
-      || connection.id === 'hostedSurface-backend'
-      || connection.id.startsWith('operator-')
+      connection.id === selectedSurfaceBackendLink
+      || connection.id === selectedOperatorLink
     ) {
       return routeReachableState === 'no' ? 'broken' : 'degraded';
     }
+  }
+
+  if ((fromState === 'inactive' || toState === 'inactive') && connection.id.startsWith('operator-')) {
+    return 'inactive';
   }
 
   if (fallbackActive && (connection.id === 'localSurface-backend' || connection.id === 'hostedSurface-backend')) {
@@ -163,9 +188,7 @@ export function deriveConnectionState({
   const isContinuityActivityLink = connection.id === 'backend-memory' && continuitySnapshot.recentActivityActive;
   const isExecutionActivityLink = connection.id === 'backend-execution' && executionActive === true;
   const isActivePath =
-    (activeSurface === 'localSurface' && ['operator-localSurface', 'localSurface-backend'].includes(connection.id))
-    || (activeSurface === 'hostedSurface' && ['operator-hostedSurface', 'hostedSurface-backend'].includes(connection.id))
-    || isContinuityActivityLink
+    isContinuityActivityLink
     || ((connection.id === 'backend-aiProviders') && executionActive === true)
     || isExecutionActivityLink;
 
@@ -176,6 +199,7 @@ export function deriveConnectionState({
   }
 
   if (fromState === 'degraded' || toState === 'degraded') return 'degraded';
+  if (fromState === 'inactive' || toState === 'inactive') return 'inactive';
   if (fromState === 'unknown' || toState === 'unknown') return 'unknown';
   return 'alive';
 }

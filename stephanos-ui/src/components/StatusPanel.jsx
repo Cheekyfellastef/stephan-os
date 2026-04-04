@@ -125,6 +125,20 @@ export default function StatusPanel() {
   const sessionRestoreReason = safeSessionRestoreDiagnostics.reasons?.[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
   const browserWindow = typeof window !== 'undefined' ? window : null;
   const browserNavigator = typeof navigator !== 'undefined' ? navigator : null;
+  const snapshotProviderKey = routeTruthView.selectedProvider || routeTruthView.executedProvider || provider;
+  const snapshotProviderConfig = getEffectiveProviderConfig(snapshotProviderKey) || activeConfig;
+  const snapshotStatusSummary = buildProviderStatusSummary(
+    snapshotProviderKey,
+    snapshotProviderConfig,
+    safeApiStatus.baseUrl,
+    safeProviderHealth[snapshotProviderKey],
+  );
+  const snapshotProviderEndpointDisplay = resolveProviderEndpointForDisplay({
+    providerKey: snapshotProviderKey,
+    config: snapshotProviderConfig,
+    runtimeContext,
+    sessionRestoreDiagnostics,
+  });
   const notifyCopyResult = (message, tone) => {
     setCopyNotice({ message, tone });
     globalThis.setTimeout(() => {
@@ -138,11 +152,11 @@ export default function StatusPanel() {
       activeProviderConfigSource: getActiveProviderConfigSource(),
       devMode,
       fallbackEnabled,
-      providerEndpoint: providerEndpointDisplay,
-      providerModel: statusSummary.model,
+      providerEndpoint: snapshotProviderEndpointDisplay,
+      providerModel: snapshotStatusSummary.model,
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
       lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
-      lastRequestedProvider: lastExecutionMetadata?.requested_provider,
+      lastRequestedProvider: routeTruthView.requestedProvider || lastExecutionMetadata?.requested_provider,
       lastSelectedProvider: lastExecutionMetadata?.selected_provider,
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
       lastModelUsed: lastExecutionMetadata?.model_used,
@@ -174,7 +188,7 @@ export default function StatusPanel() {
     runtimeDiagnosticsTruth,
     runtimeContext,
     safeApiStatus,
-    statusSummary,
+    statusSummary: snapshotStatusSummary,
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,
   });

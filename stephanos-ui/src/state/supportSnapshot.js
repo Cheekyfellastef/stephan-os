@@ -263,7 +263,7 @@ export function buildSupportSnapshot({
     `Provider Model: ${asText(runtimeStatus?.providerModel || statusSummary?.model)}`,
     `Last UI Requested Provider: ${asText(runtimeStatus?.lastUiRequestedProvider)}`,
     `Last Backend Default Provider: ${asText(runtimeStatus?.lastBackendDefaultProvider || safeApiStatus?.backendDefaultProvider)}`,
-    `Last Requested Provider: ${asText(runtimeStatus?.lastRequestedProvider || routeTruthView?.requestedProvider)}`,
+    `Last Requested Provider: ${asText(routeTruthView?.requestedProvider || runtimeStatus?.lastRequestedProvider)}`,
     `Last Selected Provider: ${asText(runtimeStatus?.lastSelectedProvider || routeTruthView?.selectedProvider)}`,
     `Last Actual Provider Used: ${asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider)}`,
     `Last Model Used: ${asText(runtimeStatus?.lastModelUsed)}`,
