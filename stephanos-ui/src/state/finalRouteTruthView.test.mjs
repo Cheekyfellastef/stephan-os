@@ -108,16 +108,21 @@ test('buildFinalRouteTruthView reconciles stale canonical routeUsable=false when
       routeReachable: true,
       backendReachable: true,
       uiReachabilityState: 'reachable',
+      providerHealthState: 'READY',
+      executedProvider: 'ollama',
     },
     runtimeTruth: {
       reachabilityTruth: {
-        selectedRouteUsable: true,
         backendReachable: true,
       },
     },
   });
 
   assert.equal(view.routeUsableState, 'yes');
+  assert.equal(view.routeReconciled, true);
+  assert.equal(view.routeReconciliationReason, 'live-backend+provider-confirmed');
+  assert.equal(view.routeUsabilityConflict, true);
+  assert.equal(view.truthInconsistent, true);
 });
 
 test('buildFinalRouteTruthView exposes providerMismatch when selected and executed providers diverge', () => {
@@ -130,4 +135,32 @@ test('buildFinalRouteTruthView exposes providerMismatch when selected and execut
   });
 
   assert.equal(view.providerMismatch, true);
+});
+
+test('buildFinalRouteTruthView preserves degraded launch state when blocking issues exist', () => {
+  const view = buildFinalRouteTruthView({
+    appLaunchState: 'degraded',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local-desktop',
+      routeUsable: false,
+      routeReachable: true,
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+      providerHealthState: 'CONNECTED',
+      executedProvider: 'groq',
+      blockingIssueCodes: ['ROUTE_BLOCKED'],
+    },
+    runtimeTruth: {
+      diagnostics: {
+        blockingIssues: [{ code: 'ROUTE_BLOCKED' }],
+      },
+      reachabilityTruth: {
+        selectedRouteUsable: true,
+        backendReachable: true,
+      },
+    },
+  });
+
+  assert.equal(view.routeUsableState, 'yes');
+  assert.equal(view.effectiveLaunchState, 'degraded');
 });

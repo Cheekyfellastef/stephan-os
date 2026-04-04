@@ -49,13 +49,13 @@ export function isExecutionActive(runtimeStatus, continuitySnapshot) {
   return appLaunchState === 'ready' && continuitySnapshot?.recentActivityActive === true;
 }
 
-export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory, continuitySnapshot }) {
+export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory, continuitySnapshot, continuityRetrievalActive = false }) {
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
   const reachability = runtimeTruth.reachabilityTruth ?? {};
   const providerTruth = runtimeTruth.provider ?? {};
   const routeKind = String(routeTruthView.routeKind || '').toLowerCase();
   const routeUsable = String(routeTruthView.routeUsableState || '').toLowerCase();
-  const launchState = String(runtimeStatus.appLaunchState || '').toLowerCase();
+  const launchState = String(routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState || '').toLowerCase();
 
   const localSurfaceBase = toStateFromBoolean(runtimeStatus.localAvailable ?? reachability.localAvailable);
   const hostedSurfaceBase = toStateFromBoolean(runtimeStatus.cloudAvailable ?? reachability.cloudAvailable);
@@ -122,16 +122,21 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates.aiProviders = 'active';
   }
 
-  if (routeTruthView.providerMismatch || routeTruthView.truthInconsistent) {
+  if (routeTruthView.providerMismatch) {
     if (nodeStates.aiProviders !== 'dead') {
       nodeStates.aiProviders = 'degraded';
     }
+  }
+
+  if (routeTruthView.truthInconsistent) {
     if (selectedSurface && nodeStates[selectedSurface] !== 'dead') {
-      nodeStates[selectedSurface] = 'degraded';
+      nodeStates[selectedSurface] = 'inconsistent';
     }
   }
 
   if (continuitySnapshot.recentActivityActive) {
+    nodeStates.memory = nodeStates.memory === 'dead' ? 'dead' : 'active';
+  } else if (continuityRetrievalActive) {
     nodeStates.memory = nodeStates.memory === 'dead' ? 'dead' : 'active';
   } else if (continuitySnapshot.continuityLoopState === 'degraded') {
     nodeStates.memory = nodeStates.memory === 'dead' ? 'dead' : 'degraded';
@@ -198,6 +203,7 @@ export function deriveConnectionState({
     return 'degraded';
   }
 
+  if (fromState === 'inconsistent' || toState === 'inconsistent') return 'inconsistent';
   if (fromState === 'degraded' || toState === 'degraded') return 'degraded';
   if (fromState === 'inactive' || toState === 'inactive') return 'inactive';
   if (fromState === 'unknown' || toState === 'unknown') return 'unknown';
@@ -206,6 +212,8 @@ export function deriveConnectionState({
 
 export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {}, providerHealth = {}, workingMemory, projectMemory, commandHistory = [], telemetryEntries = [] }) {
   const continuitySnapshot = deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory, telemetryEntries });
+  const latestCommand = Array.isArray(commandHistory) && commandHistory.length > 0 ? commandHistory[commandHistory.length - 1] : null;
+  const continuityRetrievalActive = String(latestCommand?.continuity_mode || '').trim().toLowerCase() === 'retrieval-active';
   const { nodeStates, activeSurface, executionActive } = deriveNodeStates({
     runtimeStatus,
     routeTruthView,
@@ -214,6 +222,7 @@ export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {
     workingMemory,
     projectMemory,
     continuitySnapshot,
+    continuityRetrievalActive,
   });
 
   const connectionStates = Object.fromEntries(
@@ -245,7 +254,7 @@ export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {
     })
     .map((connection) => connection.id);
   const animatedNodeIds = [
-    continuitySnapshot.recentActivityActive === true ? 'memory' : null,
+    continuitySnapshot.recentActivityActive === true || continuityRetrievalActive ? 'memory' : null,
     executionActive === true ? 'execution' : null,
     executionActive === true ? 'aiProviders' : null,
   ].filter(Boolean);

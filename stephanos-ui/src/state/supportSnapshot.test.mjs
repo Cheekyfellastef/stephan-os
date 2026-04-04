@@ -66,6 +66,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Requested Route Mode: auto/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);
+  assert.match(snapshot, /Truth Inconsistent: no/);
+  assert.match(snapshot, /Route Usability Conflict: no/);
   assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud: usable \(public route reachable\)/);
   assert.match(snapshot, /invariantWarnings:\n- minor drift detected/);
 });

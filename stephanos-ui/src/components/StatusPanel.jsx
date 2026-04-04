@@ -60,6 +60,7 @@ export default function StatusPanel() {
   const safeWorkingMemory = workingMemory || { recentCommands: [], currentTask: '', activeFocusLabel: '', missionNote: '' };
   const safeProjectMemory = projectMemory || { currentMilestone: '' };
   const latest = safeCommandHistory[safeCommandHistory.length - 1];
+  const continuityMode = latest?.continuity_mode || 'recording-only';
   const activeConfig = getActiveProviderConfig();
   const statusSummary = buildProviderStatusSummary(provider, activeConfig, safeApiStatus.baseUrl, safeProviderHealth[provider]);
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
@@ -239,6 +240,7 @@ export default function StatusPanel() {
       ) : null}
       <ul>
         <li>Launch State: {runtimeStatus.appLaunchState}</li>
+        <li>Effective Launch State: {routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}</li>
         <li>Requested Route Mode: {runtimeStatus.requestedRouteMode}</li>
         <li>Effective Route Mode: {runtimeStatus.effectiveRouteMode}</li>
         <li>Requested Provider: {routeTruthView.requestedProvider}</li>
@@ -260,6 +262,8 @@ export default function StatusPanel() {
         <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
         <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
         <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>
+        <li>Truth Inconsistent: {routeTruthView.truthInconsistent ? 'yes' : 'no'}</li>
+        <li>Route Reconciled: {routeTruthView.routeReconciled ? 'yes' : 'no'} ({routeTruthView.routeReconciliationReason || 'n/a'})</li>
         <li>Adjudicated UI Reachable: {runtimeReachabilityTruth.uiReachableState || 'unknown'}</li>
         <li>Home Node Usable: {routeTruthView.homeNodeUsableState}</li>
         <li>Backend-Mediated Providers Eligible: {providerEligibility.backendMediatedProviders ? 'yes' : 'pending'}</li>
@@ -274,6 +278,7 @@ export default function StatusPanel() {
         <li>[TILE LINK] State: {continuitySnapshot.tileLinkState}</li>
         <li>[AI CONTINUITY] State: {continuitySnapshot.aiContinuityState}</li>
         <li>[AI CONTINUITY] Mode: {continuitySnapshot.aiContinuityMode}</li>
+        <li>[AI CONTINUITY] Request Mode: {continuityMode}</li>
         <li>[EXECUTION LOOP] Last Event: {continuitySnapshot.lastContinuityEventType} @ {continuitySnapshot.lastContinuityEventAt || 'n/a'}</li>
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>

@@ -187,3 +187,65 @@ test('cockpit model degrades provider path when selected and executed providers 
   assert.equal(model.nodeStates.aiProviders, 'degraded');
   assert.equal(model.connectionStates['backend-aiProviders'], 'degraded');
 });
+
+test('cockpit model marks route contradiction as inconsistent (amber) instead of degraded', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      localAvailable: true,
+      cloudAvailable: true,
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        reachabilityTruth: { localAvailable: true, cloudAvailable: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      truthInconsistent: true,
+      uiReachableState: 'yes',
+      executedProvider: 'ollama',
+      selectedProvider: 'ollama',
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.localSurface, 'inconsistent');
+  assert.equal(model.connectionStates['operator-localSurface'], 'inconsistent');
+});
+
+test('cockpit model treats retrieval-active continuity mode as active memory flow', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      uiReachableState: 'yes',
+      executedProvider: 'groq',
+      selectedProvider: 'groq',
+    },
+    commandHistory: [{
+      id: 'cmd-1',
+      continuity_mode: 'retrieval-active',
+      timestamp: new Date().toISOString(),
+    }],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.memory, 'active');
+  assert.ok(model.animatedNodeIds.includes('memory'));
+});

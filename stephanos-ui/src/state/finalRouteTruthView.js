@@ -30,6 +30,20 @@ function isKnownProvider(value) {
   return provider.length > 0 && !['unknown', 'n/a', 'none', 'pending', 'unavailable'].includes(provider);
 }
 
+function normalizeProviderState(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function hasBlockingIssues(runtimeDiagnosticsTruth = {}, canonicalTruth = {}) {
+  if (Array.isArray(runtimeDiagnosticsTruth?.blockingIssues) && runtimeDiagnosticsTruth.blockingIssues.length > 0) {
+    return true;
+  }
+  if (Array.isArray(canonicalTruth?.blockingIssueCodes) && canonicalTruth.blockingIssueCodes.length > 0) {
+    return true;
+  }
+  return false;
+}
+
 // UI truth projection contract:
 // - runtimeStatus.canonicalRouteRuntimeTruth is canonical runtime route/provider/session truth.
 // - this helper is the only approved projection layer for route/provider/operator UI labels.
@@ -49,6 +63,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const runtimeRouteTruth = runtimeTruth.route ?? {};
   const runtimeReachabilityTruth = runtimeTruth.reachabilityTruth ?? {};
   const runtimeProviderTruth = runtimeTruth.provider ?? {};
+  const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
 
   const routeKind = pickTruth(canonicalTruth.winningRoute, finalRouteTruth.routeKind, runtimeRouteTruth.selectedRouteKind, finalRoute.routeKind) || 'unavailable';
   const preferredTarget = pickTruth(canonicalTruth.preferredTarget, finalRouteTruth.preferredTarget, runtimeRouteTruth.preferredTarget, finalRoute.preferredTarget) || 'unavailable';
@@ -72,17 +87,35 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     && uiReachableState === 'yes'
       ? true
       : (canonicalRouteUsable ?? fallbackRouteUsable);
-  const routeUsableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
+  const preReconciliationRouteUsableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
     : asBooleanState(reconciledRouteUsable);
-
   const selectedProvider = pickTruth(canonicalTruth.selectedProvider, finalRouteTruth.selectedProvider, runtimeProviderTruth.selectedProvider, runtimeTruth.selectedProvider) || 'unknown';
   const executedProvider = pickTruth(canonicalTruth.executedProvider, finalRouteTruth.executedProvider, runtimeProviderTruth.executableProvider, runtimeTruth.executedProvider) || 'unknown';
+  const providerState = normalizeProviderState(
+    pickTruth(canonicalTruth.providerHealthState, finalRouteTruth.providerHealthState, runtimeProviderTruth.providerHealthState),
+  );
+  const executableProviderValid = isKnownProvider(executedProvider);
+  const backendReachable = (canonicalTruth.backendReachable ?? finalRouteTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true;
+  const selectedRouteReachable = canonicalTruth.routeReachable === true || runtimeReachabilityTruth.selectedRouteReachable === true;
+  const liveProviderConnected = ['READY', 'CONNECTED'].includes(providerState);
+  const liveUsabilitySignalsMet = backendReachable
+    && selectedRouteReachable
+    && uiReachableState === 'yes'
+    && liveProviderConnected
+    && executableProviderValid;
+  const routeUsabilityConflict = preReconciliationRouteUsableState === 'no' && liveUsabilitySignalsMet;
+  const routeReconciled = routeUsabilityConflict;
+  const routeReconciliationReason = routeReconciled ? 'live-backend+provider-confirmed' : '';
+  const routeUsableState = routeReconciled ? 'yes' : preReconciliationRouteUsableState;
   const providerMismatch = isKnownProvider(selectedProvider) && isKnownProvider(executedProvider) && selectedProvider !== executedProvider;
-  const truthInconsistent = routeUsableState === 'no'
-    && (canonicalTruth.routeReachable === true || runtimeReachabilityTruth.selectedRouteReachable === true)
-    && (canonicalTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true
-    && uiReachableState === 'yes';
+  const truthInconsistent = routeUsabilityConflict;
+  const blockingIssuesPresent = hasBlockingIssues(runtimeDiagnosticsTruth, canonicalTruth);
+  const effectiveLaunchState = runtimeStatus.appLaunchState === 'degraded'
+    && routeReconciled
+    && !blockingIssuesPresent
+    ? 'ready'
+    : runtimeStatus.appLaunchState;
 
   return {
     routeKind,
@@ -106,6 +139,11 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
         ? 'no'
         : 'pending',
     providerMismatch,
+    routeUsabilityConflict,
     truthInconsistent,
+    routeReconciled,
+    routeReconciliationReason,
+    providerState,
+    effectiveLaunchState,
   };
 }

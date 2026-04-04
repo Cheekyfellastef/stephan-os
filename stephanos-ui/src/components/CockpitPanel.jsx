@@ -90,7 +90,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
         title: node.label,
         state: cockpitModel.nodeStates[detailId] || 'unknown',
         facts: [
-          `Launch state: ${runtimeStatus.appLaunchState}`,
+          `Launch state: ${routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}`,
           `Route kind: ${routeTruthView.routeKind}`,
           `Fallback active: ${routeTruthView.fallbackActive ? 'yes' : 'no'}`,
           `Continuity loop: ${cockpitModel.continuitySnapshot.continuityLoopState}`,
@@ -191,4 +191,3 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     </CollapsiblePanel>
   );
 }
-

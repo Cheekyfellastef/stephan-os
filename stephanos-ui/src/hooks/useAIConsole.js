@@ -16,6 +16,8 @@ import {
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { useAIStore } from '../state/aiStore';
 import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
+import { buildFinalRouteTruthView } from '../state/finalRouteTruthView.js';
+import { buildContinuitySummary, getContinuityContext } from '../state/continuityRetrieval.js';
 import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
 import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
@@ -749,7 +751,7 @@ export function useAIConsole() {
     routeMode,
   ]);
 
-  async function submitPrompt(rawPrompt) {
+  async function submitPrompt(rawPrompt, { telemetryEntries = [] } = {}) {
     const prompt = rawPrompt.trim();
     if (!prompt) return;
     if (prompt === '/clear') {
@@ -774,6 +776,33 @@ export function useAIConsole() {
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
+      const routeTruthView = buildFinalRouteTruthView(runtimeStatusModel);
+      const continuityAllowed = routeTruthView.routeUsableState === 'yes' && routeTruthView.truthInconsistent !== true;
+      const continuityLookup = continuityAllowed
+        ? getContinuityContext({
+          commandHistory,
+          telemetryEntries,
+          sharedMemorySource: runtimeStatusModel?.runtimeTruth?.memory?.sourceUsedOnLoad === 'shared-backend' ? 'backend' : 'fallback',
+        })
+        : {
+          records: [],
+          source: 'fallback',
+          retrievalState: 'degraded',
+          reason: continuityAllowed
+            ? 'Continuity retrieval unavailable.'
+            : 'Route truth is not eligible for continuity retrieval.',
+        };
+      const continuityMode = !continuityAllowed
+        ? 'recording-only'
+        : continuityLookup.retrievalState === 'degraded'
+          ? 'degraded'
+          : 'retrieval-active';
+      const continuityContext = continuityAllowed
+        ? {
+          summary: buildContinuitySummary(continuityLookup.records),
+          records: continuityLookup.records,
+        }
+        : null;
       const assembledTileContext = assembleStephanosContext({
         userPrompt: prompt,
         runtimeContext: finalizedRequestContext,
@@ -788,6 +817,8 @@ export function useAIConsole() {
         devMode,
         runtimeConfig: finalizedRequestContext,
         tileContext: assembledTileContext,
+        continuityContext,
+        continuityMode,
       });
 
       const providerHealth = data.data?.provider_health || {};
@@ -817,6 +848,10 @@ export function useAIConsole() {
         error: data.error,
         error_code: data.error_code ?? data.debug?.error_code ?? null,
         response: data,
+        continuity_mode: continuityMode,
+        continuity_context: continuityContext,
+        continuity_retrieval_state: continuityLookup.retrievalState,
+        continuity_retrieval_reason: continuityLookup.reason,
       };
 
       setCommandHistory((prev) => appendCommandHistory(prev, entry));
@@ -869,6 +904,10 @@ export function useAIConsole() {
         final_route: finalizedRequestContext.finalRoute || null,
         request_trace: data.data?.request_trace || null,
         tile_context_diagnostics: data.data?.tile_context_diagnostics || assembledTileContext?.diagnostics || null,
+        continuity_mode: continuityMode,
+        continuity_retrieval: continuityLookup,
+        continuity_context_summary: continuityContext?.summary || '',
+        continuity_context_records: continuityContext?.records || [],
       });
     } catch (error) {
       const uiError = transportErrorToUi(error);
