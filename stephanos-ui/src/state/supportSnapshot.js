@@ -11,12 +11,18 @@ function asList(value) {
   return value.map((item) => `- ${asText(item, 'n/a')}`);
 }
 
-function summarizeRouteDiagnostics(routeDiagnostics) {
+function summarizeRouteDiagnostics(routeDiagnostics, { selectedRouteKind = '' } = {}) {
   if (!routeDiagnostics || typeof routeDiagnostics !== 'object') {
     return ['- n/a'];
   }
 
-  const entries = Object.entries(routeDiagnostics).slice(0, 4).map(([key, details]) => {
+  const selectedKey = String(selectedRouteKind || '').trim();
+  const orderedEntries = Object.entries(routeDiagnostics).sort(([left], [right]) => {
+    if (left === selectedKey) return -1;
+    if (right === selectedKey) return 1;
+    return 0;
+  });
+  const entries = orderedEntries.slice(0, 4).map(([key, details]) => {
     if (!details || typeof details !== 'object') {
       return `- ${key}: n/a`;
     }
@@ -30,7 +36,12 @@ function summarizeRouteDiagnostics(routeDiagnostics) {
             ? 'unavailable'
             : 'unknown';
     const reason = asText(details.reason || details.blockedReason || details.operatorReason, 'n/a');
-    return `- ${key}: ${state} (${reason})`;
+    const routeLabel = key === selectedKey
+      ? `${key} [selected]`
+      : selectedKey
+        ? `${key} [candidate]`
+        : key;
+    return `- ${routeLabel}: ${state} (${reason})`;
   });
 
   return entries.length > 0 ? entries : ['- n/a'];
@@ -192,7 +203,9 @@ export function buildSupportSnapshot({
     backendTargetResolutionSource: runtimeContext?.backendTargetResolutionSource,
     backendTargetFallbackUsed,
   });
-  const routeDiagnosticsSummary = summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics);
+  const routeDiagnosticsSummary = summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics, {
+    selectedRouteKind,
+  });
   const effectiveRouteDiagnosticsSummary = hasMeaningfulDiagnostics(routeDiagnosticsSummary)
     ? routeDiagnosticsSummary
     : (hostedBackendTargetGuidance?.summary || routeDiagnosticsSummary);

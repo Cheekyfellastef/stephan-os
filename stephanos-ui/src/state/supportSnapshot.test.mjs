@@ -72,7 +72,7 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /Truth Inconsistent: no/);
   assert.match(snapshot, /Route Usability Conflict: no/);
-  assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud: usable \(public route reachable\)/);
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- cloud \[selected\]: usable \(public route reachable\)/);
   assert.match(snapshot, /invariantWarnings:\n- minor drift detected/);
 });
 
