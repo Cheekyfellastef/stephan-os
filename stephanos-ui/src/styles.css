@@ -326,6 +326,11 @@ body {
   margin-bottom: 1rem;
 }
 
+.ai-console-messages {
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
 .command-form {
   display: flex;
   gap: 0.5rem;
