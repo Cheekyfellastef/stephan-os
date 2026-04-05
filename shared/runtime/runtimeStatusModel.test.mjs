@@ -840,3 +840,30 @@ test('createRuntimeStatusModel rejects same-origin static-host fallback backend 
   assert.equal(status.runtimeContext.backendTargetFallbackUsed, false);
   assert.match(status.runtimeContext.backendTargetInvalidReason, /Same-origin static-host backend fallback is invalid/);
 });
+
+test('createRuntimeStatusModel rejects malformed hosted backend target URL and keeps route truth explicit', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://1:8787',
+      preferredTarget: 'http://1:8787',
+      actualTargetUsed: 'http://1:8787',
+      backendTargetResolutionSource: 'manual',
+      backendTargetResolvedUrl: 'http://1:8787',
+      nodeAddressSource: 'manual',
+    },
+  });
+
+  assert.equal(status.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'invalid');
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.match(status.runtimeContext.backendTargetInvalidReason, /malformed|unresolved/i);
+});

@@ -26,6 +26,7 @@ import {
   readPersistedStephanosLastKnownNode,
   isValidStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
+  validateStephanosBackendTargetUrl,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
 import { requestStephanosBackend } from "../../shared/runtime/backendClient.mjs";
 import { STEPHANOS_LAW_IDS } from "../../shared/runtime/stephanosLaws.mjs";
@@ -649,6 +650,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     : backendProbe;
   const backendProbeBaseUrl = backendProbe.backendBaseUrl || backendBaseUrl;
   const backendProbeHost = extractHostname(backendProbeBaseUrl);
+  const backendBaseUrlValidation = validateStephanosBackendTargetUrl(backendBaseUrl, { allowLoopback: localDesktopSession });
   const frontendHost = extractHostname(currentOrigin);
   const hostedStaticOrigin = hostedWebSession && frontendHost.endsWith('.github.io');
   const frontendOriginMasqueradingBackend = hostedWebSession
@@ -661,7 +663,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     ? backendBaseUrl
     : (localDesktopBackendProbe.ok
       ? localDesktopBackendBaseUrl
-      : (frontendOriginMasqueradingBackend ? '' : backendBaseUrl));
+      : (frontendOriginMasqueradingBackend || !backendBaseUrlValidation.ok ? '' : backendBaseUrl));
   const localDesktopCapableSession = localDesktopSession;
   const launcherStatus = statusProbe.ok ? statusProbe.json : runtimeProbe.ok ? runtimeProbe.json?.launcherStatus : null;
   const launcherState = String(launcherStatus?.state || statusProbe.json?.state || runtimeProbe.json?.state || '')
@@ -752,13 +754,23 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     || distPreferredTarget?.url
     || (entryExists ? hostedDistUrl : '');
   const staticHostedFallbackInvalid = hostedStaticOrigin && !healthyBackend;
-  const backendTargetResolvedUrl = staticHostedFallbackInvalid ? '' : effectiveBackendBaseUrl;
+  const effectiveBackendValidation = validateStephanosBackendTargetUrl(
+    effectiveBackendBaseUrl,
+    { allowLoopback: localDesktopSession },
+  );
+  const backendTargetResolvedUrl = (staticHostedFallbackInvalid || !effectiveBackendValidation.ok)
+    ? ''
+    : effectiveBackendBaseUrl;
   const backendTargetResolutionSource = staticHostedFallbackInvalid
     ? 'unresolved'
-    : (backendTargetResolvedUrl ? (preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics')) : 'unresolved');
+    : (!effectiveBackendValidation.ok && effectiveBackendBaseUrl
+      ? 'invalid'
+      : (backendTargetResolvedUrl ? (preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics')) : 'unresolved'));
   const backendTargetInvalidReason = staticHostedFallbackInvalid
     ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
-    : '';
+    : (!effectiveBackendValidation.ok && effectiveBackendBaseUrl
+      ? effectiveBackendValidation.reason
+      : '');
 
   const runtimeStatusModel = createRuntimeStatusModel({
     appId: 'stephanos',

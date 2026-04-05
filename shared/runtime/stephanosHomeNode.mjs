@@ -58,6 +58,28 @@ function isValidIpv4Host(hostname = '') {
   return !octets.some((part) => Number.isNaN(part) || part < 0 || part > 255);
 }
 
+function parseIpv4Octets(hostname = '') {
+  const value = String(hostname).trim();
+  if (!isValidIpv4Host(value)) {
+    return null;
+  }
+
+  return value.split('.').map((part) => Number.parseInt(part, 10));
+}
+
+export function isUnroutableStephanosIpv4Host(hostname = '') {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) {
+    return false;
+  }
+
+  const [first, second, third, fourth] = octets;
+  if (first === 0) return true;
+  if (first >= 224) return true;
+  if (first === 255 && second === 255 && third === 255 && fourth === 255) return true;
+  return false;
+}
+
 export function isMalformedStephanosHost(hostname = '') {
   const value = String(hostname).trim().toLowerCase();
   if (!value) {
@@ -78,7 +100,77 @@ export function isMalformedStephanosHost(hostname = '') {
     return true;
   }
 
+  if (isUnroutableStephanosIpv4Host(value)) {
+    return true;
+  }
+
   return false;
+}
+
+export function validateStephanosBackendTargetUrl(target = '', {
+  allowLoopback = false,
+} = {}) {
+  const rawTarget = String(target || '').trim();
+  if (!rawTarget) {
+    return {
+      ok: false,
+      reason: 'Backend target is empty.',
+      normalizedUrl: '',
+      hostname: '',
+      sourceUrl: rawTarget,
+    };
+  }
+
+  const parsed = safeUrlParse(rawTarget);
+  if (!parsed) {
+    return {
+      ok: false,
+      reason: 'Backend target is not a valid URL.',
+      normalizedUrl: '',
+      hostname: '',
+      sourceUrl: rawTarget,
+    };
+  }
+
+  const protocol = String(parsed.protocol || '').toLowerCase();
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    return {
+      ok: false,
+      reason: `Backend target protocol "${protocol || 'unknown'}" is unsupported.`,
+      normalizedUrl: '',
+      hostname: parsed.hostname || '',
+      sourceUrl: rawTarget,
+    };
+  }
+
+  const hostname = String(parsed.hostname || '').trim().toLowerCase();
+  if (!hostname || isMalformedStephanosHost(hostname)) {
+    return {
+      ok: false,
+      reason: `Backend target hostname "${hostname || rawTarget}" is malformed or unresolved.`,
+      normalizedUrl: '',
+      hostname,
+      sourceUrl: rawTarget,
+    };
+  }
+
+  if (!allowLoopback && isLoopbackHost(hostname)) {
+    return {
+      ok: false,
+      reason: 'Loopback backend targets are invalid for hosted/non-local sessions.',
+      normalizedUrl: '',
+      hostname,
+      sourceUrl: rawTarget,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: '',
+    normalizedUrl: parsed.origin,
+    hostname,
+    sourceUrl: rawTarget,
+  };
 }
 
 export function isLikelyLanHost(hostname = '') {
@@ -771,9 +863,9 @@ export function resolveStephanosBackendBaseUrl({
   lastKnownNode = null,
   explicitBaseUrl = '',
 } = {}) {
-  const explicit = safeUrlParse(explicitBaseUrl);
-  if (explicit?.origin) {
-    return explicit.origin;
+  const explicit = validateStephanosBackendTargetUrl(explicitBaseUrl, { allowLoopback: true });
+  if (explicit.ok && explicit.normalizedUrl) {
+    return explicit.normalizedUrl;
   }
 
   const current = safeUrlParse(currentOrigin);
@@ -796,9 +888,9 @@ export function resolveStephanosBackendBaseUrl({
       : null;
 
   if (preferredNode?.backendUrl) {
-    const backendParsed = safeUrlParse(preferredNode.backendUrl);
-    if (backendParsed?.origin && !isMalformedStephanosHost(backendParsed.hostname || '')) {
-      return backendParsed.origin;
+    const preferredTarget = validateStephanosBackendTargetUrl(preferredNode.backendUrl, { allowLoopback: true });
+    if (preferredTarget.ok && preferredTarget.normalizedUrl) {
+      return preferredTarget.normalizedUrl;
     }
   }
 

@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STEPHANOS_HOME_NODE_STORAGE_KEY,
+  isMalformedStephanosHost,
   normalizeStephanosHomeNode,
+  resolveStephanosBackendBaseUrl,
   discoverStephanosHomeNode,
   probeStephanosHomeNode,
   readPersistedStephanosHomeNode,
+  validateStephanosBackendTargetUrl,
 } from './stephanosHomeNode.mjs';
 
 test('probeStephanosHomeNode keeps reachable manual LAN backend even when health payload publishes localhost backend values', async () => {
@@ -89,6 +92,28 @@ test('normalizeStephanosHomeNode rejects malformed numeric host values', () => {
   assert.equal(normalized.configured, false);
   assert.equal(normalized.host, '');
   assert.equal(normalized.backendUrl, '');
+});
+
+test('isMalformedStephanosHost rejects numeric shorthand canonicalized to 0.0.0.1', () => {
+  assert.equal(isMalformedStephanosHost('0.0.0.1'), true);
+  assert.equal(isMalformedStephanosHost('192.168.0.198'), false);
+});
+
+test('validateStephanosBackendTargetUrl rejects http://1:8787 for hosted sessions', () => {
+  const validation = validateStephanosBackendTargetUrl('http://1:8787', { allowLoopback: false });
+
+  assert.equal(validation.ok, false);
+  assert.match(validation.reason, /malformed|unresolved/i);
+});
+
+test('resolveStephanosBackendBaseUrl ignores malformed explicit backend target and falls back to valid manual home-node', () => {
+  const resolved = resolveStephanosBackendBaseUrl({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    explicitBaseUrl: 'http://1:8787',
+    manualNode: { host: '192.168.0.198', backendPort: 8787, source: 'manual' },
+  });
+
+  assert.equal(resolved, 'http://192.168.0.198:8787');
 });
 
 test('readPersistedStephanosHomeNode clears malformed stored manual host values', () => {
