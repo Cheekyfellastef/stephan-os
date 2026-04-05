@@ -21,3 +21,7 @@ test('local admin request denies hosted origin', () => {
 test('local admin request denies non-loopback ip', () => {
   assert.equal(isLocalAdminRequest(buildRequest({ ip: '192.168.1.88' })), false);
 });
+
+test('local admin request allows localhost host header without explicit port', () => {
+  assert.equal(isLocalAdminRequest(buildRequest({ host: 'localhost' })), true);
+});

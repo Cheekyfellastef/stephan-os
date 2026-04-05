@@ -29,11 +29,18 @@ function isLoopbackOrigin(origin = '') {
   }
 }
 
+function isLoopbackHostHeader(host = '') {
+  const normalized = String(host || '').trim().toLowerCase();
+  if (!normalized) return false;
+  const hostOnly = normalized.split(':')[0];
+  return hostOnly === 'localhost' || hostOnly === '127.0.0.1' || hostOnly === '[::1]';
+}
+
 export function isLocalAdminRequest(req) {
   const requestIp = getRequestIp(req);
   const requestOrigin = String(req.headers.origin || '');
   const requestHost = String(req.headers.host || '');
-  const hostLooksLoopback = requestHost.startsWith('localhost:') || requestHost.startsWith('127.0.0.1:');
+  const hostLooksLoopback = isLoopbackHostHeader(requestHost);
   return isLoopbackIp(requestIp) && isLoopbackOrigin(requestOrigin) && hostLooksLoopback;
 }
 

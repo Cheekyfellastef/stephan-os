@@ -223,6 +223,25 @@ export async function openRepoPowerShell(runtimeConfig = getApiRuntimeConfig()) 
   };
 }
 
+export async function focusRepoPowerShell(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/local/focus-repo-powershell', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  }, runtimeConfig);
+
+  return {
+    ok: result.ok,
+    status: result.status,
+    focused: result.data?.focused === true,
+    pid: Number.isFinite(Number(result.data?.pid)) ? Number(result.data?.pid) : null,
+    repoPath: String(result.data?.repoPath || ''),
+    reason: String(result.data?.reason || result.data?.error || ''),
+    focusApplied: result.data?.focusApplied === true,
+    topmostApplied: result.data?.topmostApplied === true,
+  };
+}
+
 export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestMemory('/api/memory', {}, runtimeConfig);
   return result.data?.items || [];
