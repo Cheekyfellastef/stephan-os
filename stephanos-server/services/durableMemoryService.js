@@ -6,7 +6,7 @@ import { createLogger } from '../utils/logger.js';
 const logger = createLogger('durable-memory-service');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, '../data');
+const DATA_DIR = path.resolve(__dirname, '../data/memory');
 const DURABLE_MEMORY_FILE = path.join(DATA_DIR, 'durable-memory.json');
 const SCHEMA_VERSION = 2;
 
