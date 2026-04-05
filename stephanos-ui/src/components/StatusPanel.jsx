@@ -220,6 +220,14 @@ export default function StatusPanel() {
       lastMemorySourceRef: lastExecutionMetadata?.memory_source_ref || 'n/a',
       lastMemoryConfidence: lastExecutionMetadata?.memory_confidence || 'n/a',
       lastMemoryClass: lastExecutionMetadata?.memory_class || 'durable',
+      lastTileActionType: lastExecutionMetadata?.tile_action_type || 'n/a',
+      lastTileSource: lastExecutionMetadata?.tile_source || 'n/a',
+      lastMemoryCandidateSubmitted: String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a'),
+      lastTileMemoryPromoted: String(lastExecutionMetadata?.memory_promoted ?? 'n/a'),
+      lastTileMemoryReason: lastExecutionMetadata?.memory_reason || 'n/a',
+      lastRetrievalContributionSubmitted: String(lastExecutionMetadata?.retrieval_contribution_submitted ?? 'n/a'),
+      lastRetrievalIngested: String(lastExecutionMetadata?.retrieval_ingested ?? 'n/a'),
+      lastRetrievalSourceRef: lastExecutionMetadata?.retrieval_source_ref || 'n/a',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
@@ -336,6 +344,14 @@ export default function StatusPanel() {
         <li>[MEMORY ADJUDICATION] Promoted: {String(lastExecutionMetadata?.memory_promoted ?? 'n/a')}</li>
         <li>[MEMORY ADJUDICATION] Reason: {lastExecutionMetadata?.memory_reason || 'n/a'}</li>
         <li>[MEMORY ADJUDICATION] Source: {lastExecutionMetadata?.memory_source_type || 'n/a'} · {lastExecutionMetadata?.memory_source_ref || 'n/a'}</li>
+        <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
+        <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
+        <li>[TILE ACTION] Memory Candidate Submitted: {String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a')}</li>
+        <li>[TILE ACTION] Memory Promoted: {String(lastExecutionMetadata?.memory_promoted ?? 'n/a')}</li>
+        <li>[TILE ACTION] Memory Reason: {lastExecutionMetadata?.memory_reason || 'n/a'}</li>
+        <li>[TILE ACTION] Retrieval Contribution Submitted: {String(lastExecutionMetadata?.retrieval_contribution_submitted ?? 'n/a')}</li>
+        <li>[TILE ACTION] Retrieval Ingested: {String(lastExecutionMetadata?.retrieval_ingested ?? 'n/a')}</li>
+        <li>[TILE ACTION] Retrieval Source Ref: {lastExecutionMetadata?.retrieval_source_ref || 'n/a'}</li>
         <li>[EXECUTION LOOP] Last Event: {continuitySnapshot.lastContinuityEventType} @ {continuitySnapshot.lastContinuityEventAt || 'n/a'}</li>
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>

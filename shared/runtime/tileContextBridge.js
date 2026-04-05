@@ -1,5 +1,6 @@
 (function (global) {
   const REGISTRY_KEY = 'stephanos.ai.tile-context.registry.v1';
+  const RETRIEVAL_KEY_PREFIX = 'stephanos.retrieval.tile-corpus.v1.';
 
   function readRegistry() {
     try {
@@ -9,6 +10,21 @@
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch {
       return {};
+    }
+  }
+
+  function readRetrievalCorpus(tileId) {
+    const normalizedTileId = String(tileId || '').trim();
+    if (!normalizedTileId) {
+      return [];
+    }
+
+    try {
+      const raw = global.localStorage?.getItem(`${RETRIEVAL_KEY_PREFIX}${normalizedTileId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
   }
 
@@ -50,6 +66,32 @@
     }
 
     return null;
+  }
+
+  function fetchTileContextBundle({ tileId = '', includeRetrieval = false, memoryLimit = 8, retrievalLimit = 4 } = {}) {
+    const normalizedTileId = String(tileId || '').trim();
+    const registry = readRegistry();
+    const tileSnapshot = normalizedTileId ? (registry[normalizedTileId] || null) : null;
+
+    const memoryRecords = global.parent?.stephanosMemory?.listRecords
+      ? global.parent.stephanosMemory.listRecords({ tag: normalizedTileId ? `tile.${normalizedTileId}` : undefined }).slice(0, Math.max(1, Number(memoryLimit) || 8))
+      : [];
+
+    const retrieval = includeRetrieval
+      ? readRetrievalCorpus(normalizedTileId).slice(0, Math.max(1, Number(retrievalLimit) || 4))
+      : [];
+
+    return {
+      tileId: normalizedTileId,
+      tileSnapshot,
+      memoryRecords,
+      retrieval,
+      runtimeTruth: {
+        source: global.parent?.stephanosMemory ? 'shared-runtime' : 'tile-local',
+        includeRetrieval: includeRetrieval === true,
+      },
+      fetchedAt: new Date().toISOString(),
+    };
   }
 
   function publishTileExecutionEvent(tileId, payload = {}) {
@@ -105,6 +147,7 @@
   global.StephanosTileContextBridge = {
     publishTileContextSnapshot,
     publishTileExecutionEvent,
+    fetchTileContextBundle,
     readRegistry,
     storageKey: REGISTRY_KEY,
   };

@@ -1,5 +1,8 @@
 import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
 import { buildIdeaActions, startIdeaEdit, upsertIdeaRecord } from './ideas-model.js';
+import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
+import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
+import { createTileRetrievalBridge } from '../../shared/runtime/tileRetrievalBridge.js';
 
 const persistence = createIdeasPersistence(window);
 const IDEAS_APP_ID = 'ideas';
@@ -73,6 +76,10 @@ const elements = {
   importLastResult: document.getElementById('ideas-import-last-result'),
   importRecordCount: document.getElementById('ideas-import-record-count'),
   importLastReason: document.getElementById('ideas-import-last-reason'),
+  contextReadButton: document.getElementById('ideas-load-context'),
+  submitMemoryButton: document.getElementById('ideas-submit-memory-candidate'),
+  submitRetrievalButton: document.getElementById('ideas-submit-retrieval-contribution'),
+  contractStatus: document.getElementById('ideas-contract-status'),
 };
 
 let state = { records: [] };
@@ -82,6 +89,20 @@ let editingIdeaId = null;
 let lastSaveSource = 'none';
 let lastExecutionMode = 'unknown';
 let lastSaveError = '';
+let lastContractStatus = 'No tile contract actions yet.';
+
+const tileEventBridge = createTileEventBridge({
+  tileId: IDEAS_APP_ID,
+  tileSource: 'ideas-tile',
+});
+const tileMemoryBridge = createTileMemoryBridge({
+  tileId: IDEAS_APP_ID,
+  tileSource: 'ideas-tile',
+});
+const tileRetrievalBridge = createTileRetrievalBridge({
+  tileId: IDEAS_APP_ID,
+  tileSource: 'ideas-tile',
+});
 
 function describeMemoryStatus() {
   if (!hydrationCompleted) {
@@ -125,6 +146,13 @@ function refreshLinkStatus() {
   }
 
   elements.linkStatus.textContent = `Tile link: ${describeMemoryStatus()}; ${describeExecutionStatus()}.`;
+}
+
+function setContractStatus(message) {
+  lastContractStatus = String(message || '').trim() || 'No tile contract actions yet.';
+  if (elements.contractStatus) {
+    elements.contractStatus.textContent = `Tile contract: ${lastContractStatus}`;
+  }
 }
 
 function logIdeas(event, payload = {}) {
@@ -197,6 +225,26 @@ function publishIdeasExecutionEvent({ action, summary, result = {}, tags = [] } 
     ok: Boolean(response?.ok),
     action,
     mode: response?.mode || response?.reason || 'unknown',
+  });
+  return response;
+}
+
+function emitTileContractEvent({ type, payload, sourceRef, tags = [], retrievalEligible = false } = {}) {
+  const response = tileEventBridge.emitEvent({
+    type,
+    payload,
+    sourceRef,
+    tags,
+    retrievalEligible,
+  });
+  publishIdeasExecutionEvent({
+    action: type,
+    summary: `${type} emitted from tile contract bridge.`,
+    result: {
+      artifact: response.artifact,
+      execution_metadata: response.executionMetadata,
+    },
+    tags: ['tile-contract', ...tags],
   });
   return response;
 }
@@ -518,6 +566,17 @@ elements.saveButton?.addEventListener('click', async () => {
       },
       tags: [wasEditing ? 'update' : 'create', lastSaveSource],
     });
+    emitTileContractEvent({
+      type: wasEditing ? 'idea.updated' : 'idea.created',
+      payload: {
+        ideaId: savedRecord.id,
+        title: savedRecord.title,
+        tags: savedRecord.tags || [],
+      },
+      sourceRef: `idea:${savedRecord.id}`,
+      tags: ['ideas', wasEditing ? 'update' : 'create'],
+    });
+    setContractStatus(`${wasEditing ? 'Updated' : 'Created'} idea artifact ${savedRecord.id}.`);
 
     setEditMode(null);
     elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${lastSaveSource}).`;
@@ -549,6 +608,60 @@ elements.seedButton?.addEventListener('click', async () => {
   elements.status.textContent = 'Seed ideas restored.';
   setEditMode(null);
   renderIdeas();
+});
+
+elements.contextReadButton?.addEventListener('click', () => {
+  const bundle = window.StephanosTileContextBridge?.fetchTileContextBundle?.({
+    tileId: IDEAS_APP_ID,
+    includeRetrieval: true,
+  });
+  const memoryCount = Array.isArray(bundle?.memoryRecords) ? bundle.memoryRecords.length : 0;
+  const retrievalCount = Array.isArray(bundle?.retrieval) ? bundle.retrieval.length : 0;
+  emitTileContractEvent({
+    type: 'tile.context.read',
+    payload: {
+      memoryCount,
+      retrievalCount,
+      runtimeTruth: bundle?.runtimeTruth || {},
+    },
+    sourceRef: 'tile:ideas:context-read',
+    tags: ['context-read'],
+  });
+  setContractStatus(`Context read complete (memory=${memoryCount}, retrieval=${retrievalCount}).`);
+});
+
+elements.submitMemoryButton?.addEventListener('click', () => {
+  const latest = readAll()[0];
+  if (!latest) {
+    setContractStatus('Memory candidate skipped: no saved ideas yet.');
+    return;
+  }
+
+  const result = tileMemoryBridge.submitMemoryCandidate({
+    key: `idea.insight.${latest.id}`,
+    value: latest.summary || latest.title,
+    sourceRef: `idea:${latest.id}`,
+    reason: 'Operator promoted latest idea insight for durable continuity memory.',
+    type: 'tile.result',
+    tags: ['ideas', 'memory-candidate'],
+  });
+  setContractStatus(`Memory candidate adjudicated (${result.promoted ? 'promoted' : 'rejected'}).`);
+});
+
+elements.submitRetrievalButton?.addEventListener('click', () => {
+  const latest = readAll()[0];
+  if (!latest) {
+    setContractStatus('Retrieval contribution skipped: no saved ideas yet.');
+    return;
+  }
+
+  const result = tileRetrievalBridge.contributeDocument({
+    document: `${latest.title}\n${latest.summary}\nTags: ${(latest.tags || []).join(', ')}`,
+    sourceRef: `idea:${latest.id}`,
+    tags: ['ideas', 'retrieval'],
+    triggerReindex: true,
+  });
+  setContractStatus(`Retrieval contribution ${result.ingested ? 'ingested' : 'blocked'} (allowlisted=${result.allowlisted}).`);
 });
 
 elements.ideasList?.addEventListener('click', (event) => {
@@ -739,4 +852,5 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   setEditMode(null);
   renderIdeas();
   publishIdeasTileContext(readAll());
+  setContractStatus(lastContractStatus);
 })();
