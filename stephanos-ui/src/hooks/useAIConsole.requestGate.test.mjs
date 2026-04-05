@@ -126,3 +126,42 @@ test('promotes stale hosted local-private label to cloud-basic when Groq cloud r
   assert.equal(gate.selectedAnswerMode, 'cloud-basic');
   assert.equal(gate.reasonCode, null);
 });
+
+
+test('allows hosted Groq cloud-basic dispatch when backend reachability is unknown but cloud route truth is viable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      selectedProvider: 'groq',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+    },
+    routeTruthView: {
+      backendReachableState: 'unknown',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.backendReachabilityState, 'unknown');
+  assert.equal(gate.reasonCode, null);
+});
+
+test('blocks dispatch when backend reachability is explicitly no', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      selectedProvider: 'groq',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+    },
+    routeTruthView: {
+      backendReachableState: 'no',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'backend-unreachable');
+  assert.equal(gate.backendReachabilityState, 'no');
+});

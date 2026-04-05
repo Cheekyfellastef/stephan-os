@@ -3,6 +3,20 @@ function normalizeClipboardText(value) {
   return String(value);
 }
 
+function resolveClipboardFailureReason(error) {
+  const errorName = String(error?.name || '').toLowerCase();
+  if (errorName === 'notallowederror' || errorName === 'securityerror') {
+    return 'clipboard-permission-denied';
+  }
+  if (errorName === 'notsupportederror') {
+    return 'clipboard-unavailable';
+  }
+  if (errorName === 'aborterror') {
+    return 'clipboard-aborted';
+  }
+  return 'clipboard-write-failed';
+}
+
 function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } = {}) {
   if (!documentObject?.createElement || !documentObject?.body?.appendChild || !documentObject?.execCommand) {
     return false;
@@ -11,14 +25,19 @@ function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } =
   const textarea = documentObject.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', 'true');
+  textarea.setAttribute('aria-hidden', 'true');
   textarea.style.position = 'fixed';
   textarea.style.opacity = '0';
   textarea.style.pointerEvents = 'none';
   textarea.style.left = '-9999px';
+  textarea.style.top = '0';
 
   documentObject.body.appendChild(textarea);
   textarea.focus();
   textarea.select();
+  if (typeof textarea.setSelectionRange === 'function') {
+    textarea.setSelectionRange(0, textarea.value.length);
+  }
 
   let copied = false;
   try {
@@ -56,7 +75,7 @@ export async function writeTextToClipboard(
       }
       return {
         ok: false,
-        reason: 'clipboard-write-failed',
+        reason: resolveClipboardFailureReason(error),
         text: normalizedText,
         error,
       };

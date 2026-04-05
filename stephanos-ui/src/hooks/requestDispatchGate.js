@@ -1,15 +1,24 @@
+function resolveBackendReachabilityState(routeTruthView = {}, runtimeStatus = {}) {
+  const backendReachableState = String(routeTruthView?.backendReachableState || '').trim().toLowerCase();
+  if (backendReachableState === 'yes' || backendReachableState === 'no') {
+    return backendReachableState;
+  }
+  if (runtimeStatus?.backendReachable === true) return 'yes';
+  if (runtimeStatus?.backendReachable === false) return 'no';
+  return 'unknown';
+}
+
 export function evaluateRequestDispatchGate({
   routeDecision = {},
   routeTruthView = {},
   runtimeStatus = {},
 } = {}) {
-  const backendReachableState = String(routeTruthView?.backendReachableState || '').trim().toLowerCase();
-  const backendReachable = backendReachableState
-    ? backendReachableState === 'yes'
-    : runtimeStatus?.backendReachable === true;
-  const freshRouteViable = backendReachable && routeDecision?.freshRouteAvailable === true;
-  const cloudRouteViable = backendReachable && (routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true;
-  const localRouteViable = backendReachable && routeDecision?.localRouteAvailable === true;
+  const backendReachabilityState = resolveBackendReachabilityState(routeTruthView, runtimeStatus);
+  const backendReachable = backendReachabilityState !== 'no';
+  const explicitBackendUnreachable = backendReachabilityState === 'no';
+  const freshRouteViable = routeDecision?.freshRouteAvailable === true && backendReachable;
+  const cloudRouteViable = (routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true && backendReachable;
+  const localRouteViable = routeDecision?.localRouteAvailable === true && backendReachable;
   const selectedAnswerMode = routeDecision?.selectedAnswerMode || 'local-private';
   const selectedProvider = String(routeDecision?.selectedProvider || '').trim().toLowerCase();
   const shouldPromoteToCloudBasic = (
@@ -34,6 +43,7 @@ export function evaluateRequestDispatchGate({
       cloudRouteViable,
       localRouteViable,
       backendReachable,
+      backendReachabilityState,
     };
   }
 
@@ -41,9 +51,9 @@ export function evaluateRequestDispatchGate({
     ? freshRouteViable || localRouteViable
     : modeRequiresCloudRoute
       ? cloudRouteViable
-    : modePrefersLocalExecution
-      ? localRouteViable || freshRouteViable
-      : freshRouteViable || localRouteViable || cloudRouteViable;
+      : modePrefersLocalExecution
+        ? localRouteViable || freshRouteViable || cloudRouteViable
+        : freshRouteViable || localRouteViable || cloudRouteViable;
 
   if (dispatchAllowed) {
     return {
@@ -54,16 +64,17 @@ export function evaluateRequestDispatchGate({
       cloudRouteViable,
       localRouteViable,
       backendReachable,
+      backendReachabilityState,
     };
   }
 
-  const reasonCode = !backendReachable
+  const reasonCode = explicitBackendUnreachable
     ? 'backend-unreachable'
     : modeRequiresFreshRoute
       ? routeDecision?.fallbackReasonCode || 'fresh-route-unavailable'
       : modeRequiresCloudRoute
         ? routeDecision?.fallbackReasonCode || 'no-viable-execution-path'
-      : 'no-viable-execution-path';
+      : routeDecision?.fallbackReasonCode || 'no-viable-execution-path';
 
   return {
     dispatchAllowed: false,
@@ -73,5 +84,6 @@ export function evaluateRequestDispatchGate({
     cloudRouteViable,
     localRouteViable,
     backendReachable,
+    backendReachabilityState,
   };
 }

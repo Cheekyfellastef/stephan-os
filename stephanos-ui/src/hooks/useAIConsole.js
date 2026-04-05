@@ -1135,6 +1135,18 @@ export function useAIConsole() {
       });
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
       const routeDispatchBlocked = requestDispatchGate.dispatchAllowed !== true;
+      console.info('[Stephanos UI] Request dispatch gate evaluated', {
+        dispatchAllowed: requestDispatchGate.dispatchAllowed === true,
+        reasonCode: requestDispatchGate.reasonCode || null,
+        sessionKind: requestRuntimeStatus?.sessionKind || 'unknown',
+        routeKind: requestRouteTruthView.routeKind || 'unknown',
+        selectedProvider: freshnessRouteDecision.selectedProvider || provider,
+        requestedProviderForRequest: requestedProvider,
+        selectedAnswerMode: requestDispatchGate.selectedAnswerMode || freshnessRouteDecision.selectedAnswerMode || 'unknown',
+        backendReachabilityState: requestDispatchGate.backendReachabilityState || requestRouteTruthView.backendReachableState || 'unknown',
+        targetEndpointClass: finalizedRequestContext?.target || finalizedRequestContext?.strategy || 'unknown',
+        backendTargetEndpoint: finalizedRequestContext?.backendTargetEndpoint || '',
+      });
       const routeUnavailableResult = routeDispatchBlocked
         ? createRouteUnavailableResult({
           prompt,
