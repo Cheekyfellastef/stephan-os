@@ -17,6 +17,7 @@ import {
   isLikelyLanHost,
   isLoopbackHost,
   normalizeStephanosHomeNode,
+  validateStephanosBackendTargetUrl,
 } from './stephanosHomeNode.mjs';
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
@@ -44,13 +45,13 @@ function isStaticGithubPagesOrigin(value = '') {
 }
 
 function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
-  const candidateHost = parseHostname(candidate);
-  if (candidate && !isMalformedStephanosHost(candidateHost) && (allowLoopback || !isLoopbackHost(candidateHost))) {
+  const candidateValidation = validateStephanosBackendTargetUrl(candidate, { allowLoopback });
+  if (candidateValidation.ok) {
     return candidate;
   }
 
-  const fallbackHost = parseHostname(fallback);
-  if (fallback && !isMalformedStephanosHost(fallbackHost) && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+  const fallbackValidation = validateStephanosBackendTargetUrl(fallback, { allowLoopback });
+  if (fallbackValidation.ok) {
     return fallback;
   }
 
@@ -95,13 +96,21 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
   const backendTargetResolvedUrlRaw = String(runtimeResolvedBackendTarget || compatibleActualTarget || '').trim();
+  const backendTargetValidation = validateStephanosBackendTargetUrl(
+    backendTargetResolvedUrlRaw,
+    { allowLoopback: sessionKind === 'local-desktop' },
+  );
   const sameOriginStaticHostedFallbackInvalid = sessionKind === 'hosted-web'
     && isStaticGithubPagesOrigin(frontendOrigin)
     && Boolean(frontendOrigin)
     && backendTargetResolvedUrlRaw === frontendOrigin;
-  const backendTargetResolvedUrl = sameOriginStaticHostedFallbackInvalid ? '' : backendTargetResolvedUrlRaw;
+  const backendTargetResolvedUrl = (sameOriginStaticHostedFallbackInvalid || !backendTargetValidation.ok)
+    ? ''
+    : backendTargetResolvedUrlRaw;
   const backendTargetResolutionSource = sameOriginStaticHostedFallbackInvalid
     ? 'unresolved'
+    : (!backendTargetValidation.ok && backendTargetResolvedUrlRaw)
+      ? 'invalid'
     : (backendTargetResolutionSourceRaw
       || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
       || 'unresolved');
@@ -113,9 +122,11 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     runtimeContext.backendTargetInvalidReason
     || (sameOriginStaticHostedFallbackInvalid
       ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
+      : ((!backendTargetValidation.ok && backendTargetResolvedUrlRaw)
+        ? backendTargetValidation.reason
       : ((sessionKind === 'hosted-web' && !backendTargetResolvedUrl)
         ? 'No non-loopback backend target resolved for hosted session.'
-        : '')),
+        : ''))),
   ).trim();
 
   return {

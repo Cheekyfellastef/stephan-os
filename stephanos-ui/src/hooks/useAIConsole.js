@@ -8,10 +8,10 @@ import {
   createStephanosHomeNodeUrls,
   discoverStephanosHomeNode,
   extractHostname,
-  isMalformedStephanosHost,
   isLoopbackHost,
   normalizeStephanosHomeNode,
   summarizeStephanosHomeNode,
+  validateStephanosBackendTargetUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { useAIStore } from '../state/aiStore';
@@ -45,13 +45,13 @@ function summarizeDiscoveryAttempts(attempts = []) {
 }
 
 function resolveCompatibleTarget(candidate = '', fallback = '', { allowLoopback = false } = {}) {
-  const candidateHost = extractHostname(candidate);
-  if (candidate && !isMalformedStephanosHost(candidateHost) && (allowLoopback || !isLoopbackHost(candidateHost))) {
+  const candidateValidation = validateStephanosBackendTargetUrl(candidate, { allowLoopback });
+  if (candidateValidation.ok) {
     return candidate;
   }
 
-  const fallbackHost = extractHostname(fallback);
-  if (fallback && !isMalformedStephanosHost(fallbackHost) && (allowLoopback || !isLoopbackHost(fallbackHost))) {
+  const fallbackValidation = validateStephanosBackendTargetUrl(fallback, { allowLoopback });
+  if (fallbackValidation.ok) {
     return fallback;
   }
 
