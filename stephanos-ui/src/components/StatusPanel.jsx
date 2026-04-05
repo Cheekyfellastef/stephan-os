@@ -203,6 +203,16 @@ export default function StatusPanel() {
       lastFreshnessWarning: lastExecutionMetadata?.freshness_warning || 'n/a',
       lastAiPolicyMode: lastExecutionMetadata?.ai_policy_mode || 'local-first-cloud-when-needed',
       lastAiPolicyReason: lastExecutionMetadata?.ai_policy_reason || 'Local-first policy applied.',
+      lastRetrievalMode: lastExecutionMetadata?.retrieval_mode || 'none',
+      lastRetrievalEligible: String(lastExecutionMetadata?.retrieval_eligible ?? 'n/a'),
+      lastRetrievalUsed: String(lastExecutionMetadata?.retrieval_used ?? 'n/a'),
+      lastRetrievalReason: lastExecutionMetadata?.retrieval_reason || 'n/a',
+      lastRetrievedChunkCount: String(lastExecutionMetadata?.retrieved_chunk_count ?? '0'),
+      lastRetrievalIndexStatus: lastExecutionMetadata?.retrieval_index_status || 'n/a',
+      lastRetrievalQuery: lastExecutionMetadata?.retrieval_query || 'n/a',
+      lastRetrievedSources: Array.isArray(lastExecutionMetadata?.retrieved_sources)
+        ? lastExecutionMetadata.retrieved_sources.map((source) => `${source.sourceType || source.sourceId || 'source'}:${source.path || 'n/a'}#${source.chunkIndex ?? 'n/a'}`)
+        : [],
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
