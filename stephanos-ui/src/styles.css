@@ -82,6 +82,10 @@ body {
   min-width: 0;
 }
 
+.operator-pane-slot.pane-collapsed {
+  align-self: start;
+}
+
 .operator-pane-slot.pane-span-2 {
   grid-column: span 12;
 }
