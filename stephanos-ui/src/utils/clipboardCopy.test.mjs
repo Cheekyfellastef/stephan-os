@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeTextToClipboard } from './clipboardCopy.js';
 
-test('writeTextToClipboard returns clipboard-unavailable when api is missing', async () => {
-  const result = await writeTextToClipboard('hello', { navigatorObject: {} });
+test('writeTextToClipboard returns clipboard-unavailable when modern and fallback apis are missing', async () => {
+  const result = await writeTextToClipboard('hello', { navigatorObject: {}, documentObject: {} });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'clipboard-unavailable');
 });
@@ -25,7 +25,17 @@ test('writeTextToClipboard writes text when clipboard api exists', async () => {
   assert.equal(copied, 'hello');
 });
 
-test('writeTextToClipboard reports write failures for manual fallback paths', async () => {
+test('writeTextToClipboard falls back to execCommand when clipboard api fails', async () => {
+  let execCount = 0;
+  const fakeTextarea = {
+    value: '',
+    setAttribute: () => {},
+    style: {},
+    focus: () => {},
+    select: () => {},
+    remove: () => {},
+  };
+
   const result = await writeTextToClipboard('hello', {
     navigatorObject: {
       clipboard: {
@@ -33,6 +43,45 @@ test('writeTextToClipboard reports write failures for manual fallback paths', as
           throw new Error('denied');
         },
       },
+    },
+    documentObject: {
+      createElement: () => fakeTextarea,
+      body: {
+        appendChild: () => {},
+      },
+      execCommand: (cmd) => {
+        execCount += 1;
+        return cmd === 'copy';
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, 'copied-legacy-fallback');
+  assert.equal(execCount, 1);
+});
+
+test('writeTextToClipboard reports write failures when clipboard and fallback paths fail', async () => {
+  const result = await writeTextToClipboard('hello', {
+    navigatorObject: {
+      clipboard: {
+        writeText: async () => {
+          throw new Error('denied');
+        },
+      },
+    },
+    documentObject: {
+      createElement: () => ({
+        setAttribute: () => {},
+        style: {},
+        focus: () => {},
+        select: () => {},
+        remove: () => {},
+      }),
+      body: {
+        appendChild: () => {},
+      },
+      execCommand: () => false,
     },
   });
 

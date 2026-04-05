@@ -49,3 +49,47 @@ test('AIConsole avoids viewport-targeting scrollIntoView calls for message updat
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.doesNotMatch(source, /scrollIntoView\s*\(/);
 });
+
+
+test('AIConsole renders copy buttons for historical and new assistant answer panes', async () => {
+  const { renderAIConsole } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'),
+    aliases,
+    'ai-console-copy-buttons',
+  );
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore();
+
+  const rendered = renderAIConsole({
+    commandHistory: [
+      {
+        id: 'assistant-older',
+        timestamp: '2026-04-05T08:00:00.000Z',
+        raw_input: 'Earlier prompt',
+        output_text: 'Older answer',
+        route: 'assistant',
+        response: { type: 'assistant_response', route: 'assistant', debug: { selected_subsystem: 'assistant' } },
+        data_payload: { retrieval_truth: { source: 'history' } },
+      },
+      {
+        id: 'tool-1',
+        timestamp: '2026-04-05T08:05:00.000Z',
+        raw_input: '/status',
+        output_text: 'Tool output',
+        route: 'status',
+        response: { type: 'tool_result', route: 'status' },
+      },
+      {
+        id: 'assistant-new',
+        timestamp: '2026-04-05T08:10:00.000Z',
+        raw_input: 'Latest prompt',
+        output_text: 'Latest answer',
+        route: 'assistant',
+        response: { type: 'assistant_response', route: 'assistant', debug: { selected_subsystem: 'assistant' } },
+      },
+    ],
+  });
+
+  const copyMatches = rendered.match(/aria-label="Copy answer"/g) || [];
+  assert.equal(copyMatches.length, 2);
+  assert.match(rendered, /answer-pane-copy-button/);
+});
