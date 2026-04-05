@@ -1948,3 +1948,127 @@ pre {
   max-width: 1100px;
   margin: 0 auto;
 }
+
+.power-shell-merge-panel .panel-body {
+  gap: 0.75rem;
+}
+
+.primary-stack {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.power-shell-intro,
+.power-shell-note,
+.power-shell-future-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #a8d7ff;
+}
+
+.power-shell-future-note {
+  color: #8cb9df;
+}
+
+.power-shell-truth-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.power-shell-truth-card,
+.power-shell-phase-strip,
+.power-shell-box,
+.power-shell-output,
+.power-shell-raw {
+  border: 1px solid rgba(84, 132, 218, 0.45);
+  border-radius: 10px;
+  background: rgba(4, 11, 24, 0.9);
+  padding: 0.7rem;
+}
+
+.power-shell-truth-card h3,
+.power-shell-phase-strip h3,
+.power-shell-box h3,
+.power-shell-output h3,
+.power-shell-raw h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.86rem;
+}
+
+.power-shell-truth-card p {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+}
+
+.power-shell-phase-strip ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.power-shell-phase-strip li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.power-shell-commit-field {
+  display: grid;
+  gap: 0.32rem;
+  font-size: 0.8rem;
+}
+
+.power-shell-box-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.power-shell-box pre,
+.power-shell-raw pre {
+  margin: 0;
+  padding: 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(60, 126, 200, 0.26);
+  background: rgba(2, 8, 18, 0.96);
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 0.78rem;
+}
+
+.power-shell-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.power-shell-output textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+@media (max-width: 980px) {
+  .power-shell-truth-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .power-shell-box-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .power-shell-box-header .ghost-button,
+  .power-shell-controls button {
+    width: 100%;
+    min-height: 44px;
+  }
+}

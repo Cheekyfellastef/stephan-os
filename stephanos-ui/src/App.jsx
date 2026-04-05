@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AIConsole from './components/AIConsole';
+import PowerShellMergeConsolePanel from './components/PowerShellMergeConsolePanel';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
 import ToolsPanel from './components/ToolsPanel';
@@ -233,6 +234,7 @@ export default function App() {
           submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries })}
           commandHistory={commandHistory}
         />
+        <PowerShellMergeConsolePanel />
       </div>
     ) },
     { id: 'statusPanel', render: () => <StatusPanel /> },

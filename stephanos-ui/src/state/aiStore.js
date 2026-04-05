@@ -40,6 +40,7 @@ const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
   providerControlsPanel: true,
   commandDeck: true,
+  powerShellMergeConsolePanel: true,
   statusPanel: true,
   toolsPanel: true,
   memoryPanel: true,
