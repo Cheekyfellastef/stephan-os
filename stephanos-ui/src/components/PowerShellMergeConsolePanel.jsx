@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { focusRepoPowerShell, getApiRuntimeConfig, getLocalRepoShellConfig, openRepoPowerShell } from '../ai/aiClient';
+import {
+  focusRepoPowerShell,
+  getApiRuntimeConfig,
+  getLocalGitRitualState,
+  getLocalRepoShellConfig,
+  openRepoPowerShell,
+} from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
 import {
   applyCommitMessageProgress,
@@ -11,7 +17,10 @@ import {
   buildRitualBox3Payload,
   createDefaultRitualPhaseState,
   createUnknownRitualTruthSnapshot,
+  formatRitualTruthDisplay,
+  getRitualButtonState,
   isLocalShellLaunchAvailable,
+  normalizeGitRitualTruthSnapshot,
   resolveRitualRepoPath,
 } from '../state/powerShellMergeConsoleModel';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
@@ -19,7 +28,7 @@ import { DEFAULT_STEPHANOS_REPO_PATH } from '../../../shared/runtime/stephanosRe
 import CollapsiblePanel from './CollapsiblePanel';
 
 function formatLabel(value) {
-  return String(value || 'unknown');
+  return String(value ?? 'unknown');
 }
 
 function statusTone(value) {
@@ -54,37 +63,66 @@ export default function PowerShellMergeConsolePanel() {
   const [feedback, setFeedback] = useState({ tone: 'neutral', message: '' });
   const [repoPath, setRepoPath] = useState(DEFAULT_STEPHANOS_REPO_PATH);
   const [lastKnownPowerShellPid, setLastKnownPowerShellPid] = useState(null);
+  const [truthSnapshot, setTruthSnapshot] = useState(createUnknownRitualTruthSnapshot);
 
-  const truthSnapshot = useMemo(() => createUnknownRitualTruthSnapshot(), []);
   const box1Payload = useMemo(() => buildRitualBox1Payload(commitMessage), [commitMessage]);
   const box2Payload = useMemo(() => buildRitualBox2Payload(), []);
   const box3Payload = useMemo(() => buildRitualBox3Payload(), []);
   const fullPayload = useMemo(() => buildFullRitualPayload(commitMessage), [commitMessage]);
   const localShellAvailable = useMemo(() => isLocalShellLaunchAvailable(runtimeStatusModel), [runtimeStatusModel]);
   const cdCommand = useMemo(() => buildRepoCdCommand(repoPath), [repoPath]);
+  const buttonState = useMemo(() => getRitualButtonState(truthSnapshot, { manualOverride: showRawMode }), [truthSnapshot, showRawMode]);
+  const truthDisplay = useMemo(() => formatRitualTruthDisplay(truthSnapshot), [truthSnapshot]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateLocalRepoPath() {
+    async function hydrateLocalTruth() {
       const runtimeConfig = getApiRuntimeConfig();
       try {
-        const result = await getLocalRepoShellConfig(runtimeConfig);
-        if (cancelled || !result.ok) {
-          return;
+        const shellConfig = await getLocalRepoShellConfig(runtimeConfig);
+        if (!cancelled && shellConfig.ok) {
+          setRepoPath((current) => resolveRitualRepoPath({ configuredRepoPath: shellConfig.repoPath, fallbackRepoPath: current }));
         }
-        setRepoPath((current) => resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: current }));
       } catch {
         // Hosted/unavailable mode keeps default fallback path.
       }
+
+      if (!localShellAvailable) {
+        if (!cancelled) {
+          setTruthSnapshot((current) => normalizeGitRitualTruthSnapshot(current, { hosted: true }));
+        }
+        return;
+      }
+
+      try {
+        const ritualState = await getLocalGitRitualState(runtimeConfig);
+        if (cancelled) {
+          return;
+        }
+        setTruthSnapshot(normalizeGitRitualTruthSnapshot(ritualState.data, {
+          hosted: false,
+          errorMessage: ritualState.ok ? '' : 'Could not load local ritual state. Standard ritual guidance unavailable.',
+        }));
+        if (ritualState.data?.repoPath) {
+          setRepoPath((current) => resolveRitualRepoPath({ configuredRepoPath: ritualState.data.repoPath, fallbackRepoPath: current }));
+        }
+      } catch {
+        if (!cancelled) {
+          setTruthSnapshot(normalizeGitRitualTruthSnapshot({}, {
+            hosted: false,
+            errorMessage: 'Could not load local ritual state. Standard ritual guidance unavailable.',
+          }));
+        }
+      }
     }
 
-    hydrateLocalRepoPath();
+    hydrateLocalTruth();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [localShellAvailable]);
 
   function setCopyFeedback(result, successMessage) {
     if (result.ok) {
@@ -95,6 +133,10 @@ export default function PowerShellMergeConsolePanel() {
   }
 
   async function handleCopyBox1() {
+    if (!buttonState.box1.enabled) {
+      setFeedback({ tone: 'warning', message: buttonState.box1.reason || 'Box 1 is currently blocked.' });
+      return;
+    }
     if (!commitMessage.trim()) {
       setFeedback({ tone: 'warning', message: 'Enter a commit message before copying Box 1.' });
       return;
@@ -105,18 +147,30 @@ export default function PowerShellMergeConsolePanel() {
   }
 
   async function handleCopyBox2() {
+    if (!buttonState.box2.enabled) {
+      setFeedback({ tone: 'warning', message: buttonState.box2.reason || 'Box 2 is currently blocked.' });
+      return;
+    }
     const result = await writeTextToClipboard(box2Payload);
     setCopyFeedback(result, 'Copied Box 2.');
     setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box2'));
   }
 
   async function handleCopyBox3() {
+    if (!buttonState.box3.enabled) {
+      setFeedback({ tone: 'warning', message: buttonState.box3.reason || 'Box 3 is currently blocked.' });
+      return;
+    }
     const result = await writeTextToClipboard(box3Payload);
     setCopyFeedback(result, 'Copied Box 3.');
     setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box3'));
   }
 
   async function handleCopyFullRitual() {
+    if (!buttonState.copyFullRitual.enabled) {
+      setFeedback({ tone: 'warning', message: buttonState.copyFullRitual.reason || 'Full ritual copy is currently guarded.' });
+      return;
+    }
     const result = await writeTextToClipboard(fullPayload);
     setCopyFeedback(result, 'Copied full ritual.');
   }
@@ -151,16 +205,11 @@ export default function PowerShellMergeConsolePanel() {
         tone: 'warning',
         message: 'Local shell launch is only available from the local desktop runtime. Use Copy Repo Path or Copy cd Command.',
       });
-      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch unavailable in current runtime mode');
       return;
     }
 
     try {
       const runtimeConfig = getApiRuntimeConfig();
-      console.info('[POWER SHELL MERGE CONSOLE] open repo PowerShell api request start', {
-        routeKind,
-        runtimeTarget: runtimeConfig.baseUrl || 'window-origin',
-      });
       const result = await openRepoPowerShell(runtimeConfig);
       const resolvedRepoPath = resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: repoPath });
       setRepoPath(resolvedRepoPath);
@@ -169,12 +218,6 @@ export default function PowerShellMergeConsolePanel() {
       if (result.ok && result.launched) {
         const focusSummary = result.topmostApplied ? ' Brought to front and pinned on top.' : (result.focusApplied ? ' Brought to front.' : '');
         setFeedback({ tone: 'success', message: `Opened PowerShell in repo folder.${focusSummary}` });
-        console.info('[POWER SHELL MERGE CONSOLE] local shell launched', {
-          repoPath: resolvedRepoPath,
-          pid: result.pid || null,
-          focusApplied: result.focusApplied,
-          topmostApplied: result.topmostApplied,
-        });
         return;
       }
 
@@ -184,18 +227,8 @@ export default function PowerShellMergeConsolePanel() {
           ? 'Local shell launch unavailable in hosted mode.'
           : `Could not open PowerShell: ${result.reason || 'unknown reason'}.`,
       });
-      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch failed', {
-        reason: result.reason || 'unknown',
-        repoPath: resolvedRepoPath,
-        routeKind,
-        status: result.status,
-      });
     } catch (error) {
       setFeedback({ tone: 'warning', message: `Could not open PowerShell: ${error?.message || 'backend request failed'}.` });
-      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch request error', {
-        reason: error?.message || 'request-failed',
-        routeKind,
-      });
     }
   }
 
@@ -211,25 +244,17 @@ export default function PowerShellMergeConsolePanel() {
     });
 
     if (!localShellAvailable) {
-      setFeedback({
-        tone: 'warning',
-        message: 'Local shell launch is only available from the local desktop runtime.',
-      });
+      setFeedback({ tone: 'warning', message: 'Local shell launch is only available from the local desktop runtime.' });
       return;
     }
 
     try {
       const runtimeConfig = getApiRuntimeConfig();
-      console.info('[POWER SHELL MERGE CONSOLE] focus repo PowerShell api request start', {
-        runtimeTarget: runtimeConfig.baseUrl || 'window-origin',
-      });
       const result = await focusRepoPowerShell(runtimeConfig);
       if (result.ok && result.focused) {
         setFeedback({
           tone: 'success',
-          message: result.topmostApplied
-            ? 'Focused PowerShell and kept it on top.'
-            : 'Focused PowerShell window.',
+          message: result.topmostApplied ? 'Focused PowerShell and kept it on top.' : 'Focused PowerShell window.',
         });
         setLastKnownPowerShellPid(result.pid || null);
         return;
@@ -241,16 +266,8 @@ export default function PowerShellMergeConsolePanel() {
           ? 'Could not focus PowerShell: no launched shell is known yet. Open PowerShell first.'
           : `Could not focus PowerShell: ${result.reason || 'unknown reason'}.`,
       });
-      console.warn('[POWER SHELL MERGE CONSOLE] focus repo PowerShell failed', {
-        reason: result.reason || 'unknown',
-        status: result.status,
-        pid: result.pid,
-      });
     } catch (error) {
       setFeedback({ tone: 'warning', message: `Could not focus PowerShell: ${error?.message || 'backend request failed'}.` });
-      console.warn('[POWER SHELL MERGE CONSOLE] focus repo PowerShell request error', {
-        reason: error?.message || 'request-failed',
-      });
     }
   }
 
@@ -278,30 +295,42 @@ export default function PowerShellMergeConsolePanel() {
         Truth-first operator console for the 3-box PowerShell ritual. Commands stay explicit and manual while future execution hooks remain possible.
       </p>
 
+      {truthSnapshot.hostedLimitation ? <p className="power-shell-note">{truthSnapshot.hostedLimitation}</p> : null}
+      {truthSnapshot.errorMessage ? <p className="mission-feedback warning">{truthSnapshot.errorMessage}</p> : null}
+
       <section className="power-shell-truth-grid" aria-label="Ritual truth status">
         <article className="power-shell-truth-card">
           <h3>Branch + Sync State</h3>
-          <p><b>Current branch:</b> {formatLabel(truthSnapshot.branchLabel)}</p>
-          <p><b>Ahead/behind origin:</b> {formatLabel(truthSnapshot.aheadBehindLabel)}</p>
-          <p><b>Rebase likely/required:</b> {formatLabel(truthSnapshot.rebaseIndicator)}</p>
+          <p><b>Branch:</b> {formatLabel(truthSnapshot.currentBranch)}</p>
+          <p><b>Tracking:</b> {formatLabel(truthSnapshot.trackingBranch || 'unknown')}</p>
+          <p><b>Sync:</b> {truthDisplay.syncState}</p>
         </article>
         <article className="power-shell-truth-card">
           <h3>Working State</h3>
-          <p><b>Clean/dirty:</b> {formatLabel(truthSnapshot.workingStateLabel)}</p>
-          <p><b>Staged/unstaged:</b> {formatLabel(truthSnapshot.stagedSummary)}</p>
-          <p><b>Dist changes detected:</b> {formatLabel(truthSnapshot.distChangesDetected)}</p>
+          <p><b>Working Tree:</b> {truthDisplay.workingTree}</p>
+          <p><b>Staged:</b> {truthDisplay.staged} · <b>Unstaged:</b> {truthDisplay.unstaged}</p>
+          <p><b>Untracked:</b> {truthDisplay.untracked} · <b>Dist changed:</b> {formatLabel(truthDisplay.distChanged)}</p>
         </article>
         <article className="power-shell-truth-card">
-          <h3>Conflict + Build/Verify</h3>
-          <p><b>Conflict risk:</b> <span className={`health-badge ${statusTone(truthSnapshot.conflictRisk)}`}>{formatLabel(truthSnapshot.conflictRisk)}</span></p>
-          <p><b>Last build:</b> <span className={`health-badge ${statusTone(truthSnapshot.lastBuildStatus)}`}>{formatLabel(truthSnapshot.lastBuildStatus)}</span></p>
-          <p><b>Last verify:</b> <span className={`health-badge ${statusTone(truthSnapshot.lastVerifyStatus)}`}>{formatLabel(truthSnapshot.lastVerifyStatus)}</span></p>
+          <h3>Conflict / Flow State</h3>
+          <p><b>Rebase:</b> {truthDisplay.rebase} · <b>Merge:</b> {truthDisplay.merge}</p>
+          <p><b>Cherry-pick:</b> {truthDisplay.cherryPick} · <b>Conflicts:</b> {truthDisplay.conflicts}</p>
+          <p><b>Dist conflicts:</b> {truthDisplay.distConflicts}</p>
+        </article>
+        <article className="power-shell-truth-card">
+          <h3>Build + Verify Status</h3>
+          <p><b>Build:</b> <span className={`health-badge ${statusTone(truthSnapshot.buildLastResult)}`}>{formatLabel(truthSnapshot.buildLastResult)}</span></p>
+          <p><b>Verify:</b> <span className={`health-badge ${statusTone(truthSnapshot.verifyLastResult)}`}>{formatLabel(truthSnapshot.verifyLastResult)}</span></p>
+          <p className="power-shell-note">Source: build {formatLabel(truthSnapshot.buildStatusSource)} / verify {formatLabel(truthSnapshot.verifyStatusSource)}</p>
         </article>
       </section>
 
-      <section className="power-shell-phase-strip" aria-label="Ritual phase tracker">
-        <h3>Ritual Phase Tracker</h3>
+      <section className="power-shell-phase-strip" aria-label="Ritual applicability layer">
+        <h3>Ritual Applicability</h3>
         <ul>
+          <li><span>Next Action</span><span className={`health-badge ${statusTone(truthSnapshot.riskLevel)}`}>{formatLabel(truthSnapshot.nextRecommendedAction)}</span></li>
+          <li><span>Risk Level</span><span className={`health-badge ${statusTone(truthSnapshot.riskLevel)}`}>{formatLabel(truthSnapshot.riskLevel)}</span></li>
+          <li><span>Flow State</span><span className={`health-badge ${statusTone(truthSnapshot.riskLevel)}`}>{formatLabel(truthSnapshot.activeFlowState)}</span></li>
           <li><span>Box 1 · Commit + Rebase Start</span><span className={`health-badge ${phaseTone(phaseState.box1)}`}>{phaseState.box1}</span></li>
           <li><span>Box 2 · Dist Conflict Resolution + Rebuild</span><span className={`health-badge ${phaseTone(phaseState.box2)}`}>{phaseState.box2}</span></li>
           <li><span>Box 3 · Finalize + Push</span><span className={`health-badge ${phaseTone(phaseState.box3)}`}>{phaseState.box3}</span></li>
@@ -322,7 +351,6 @@ export default function PowerShellMergeConsolePanel() {
           <button type="button" className="ghost-button" onClick={handleCopyRepoPath}>Copy Repo Path</button>
           <button type="button" className="ghost-button" onClick={handleCopyCdCommand}>Copy cd Command</button>
         </div>
-        {!localShellAvailable ? <p className="power-shell-note">Local shell launch is only available from the local desktop runtime.</p> : null}
       </section>
 
       <label className="power-shell-commit-field">
@@ -338,30 +366,33 @@ export default function PowerShellMergeConsolePanel() {
       <section className="power-shell-box" aria-label="Ritual box 1">
         <div className="power-shell-box-header">
           <h3>Box 1 · Commit + Rebase Start</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox1}>Copy Box 1</button>
+          <button type="button" className="ghost-button" onClick={handleCopyBox1} disabled={!buttonState.box1.enabled} title={buttonState.box1.reason}>Copy Box 1</button>
         </div>
+        {!buttonState.box1.enabled ? <p className="power-shell-note">{buttonState.box1.reason}</p> : null}
         <pre>{box1Payload}</pre>
       </section>
 
       <section className="power-shell-box" aria-label="Ritual box 2">
         <div className="power-shell-box-header">
           <h3>Box 2 · Dist Conflict Resolution + Rebuild</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox2}>Copy Box 2</button>
+          <button type="button" className="ghost-button" onClick={handleCopyBox2} disabled={!buttonState.box2.enabled} title={buttonState.box2.reason}>Copy Box 2</button>
         </div>
         <p className="power-shell-note">Use this block if dist conflicts appear during rebase.</p>
+        {!buttonState.box2.enabled ? <p className="power-shell-note">{buttonState.box2.reason}</p> : null}
         <pre>{box2Payload}</pre>
       </section>
 
       <section className="power-shell-box" aria-label="Ritual box 3">
         <div className="power-shell-box-header">
           <h3>Box 3 · Finalize + Push</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox3}>Copy Box 3</button>
+          <button type="button" className="ghost-button" onClick={handleCopyBox3} disabled={!buttonState.box3.enabled} title={buttonState.box3.reason}>Copy Box 3</button>
         </div>
+        {!buttonState.box3.enabled ? <p className="power-shell-note">{buttonState.box3.reason}</p> : null}
         <pre>{box3Payload}</pre>
       </section>
 
       <section className="power-shell-controls">
-        <button type="button" onClick={handleCopyFullRitual}>Copy Full Ritual</button>
+        <button type="button" onClick={handleCopyFullRitual} disabled={!buttonState.copyFullRitual.enabled} title={buttonState.copyFullRitual.reason}>Copy Full Ritual</button>
         <button type="button" className="ghost-button" onClick={handleResetRitualState}>Reset Ritual State</button>
         <button type="button" className="ghost-button" onClick={() => setShowRawMode((prev) => !prev)}>
           {showRawMode ? 'Hide Raw Mode' : 'Manual Override / Raw Mode'}
@@ -385,13 +416,17 @@ export default function PowerShellMergeConsolePanel() {
       {showRawMode ? (
         <section className="power-shell-raw" aria-label="Manual override raw ritual blocks">
           <h3>Captain Manual Override</h3>
-          <p className="power-shell-note">Raw ritual blocks, no abstraction.</p>
+          <p className="power-shell-note">Raw ritual blocks stay available even when truth-aware controls are guarded.</p>
+          <div className="power-shell-controls">
+            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box1Payload), 'Copied raw Box 1.')}>Copy Raw Box 1</button>
+            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box2Payload), 'Copied raw Box 2.')}>Copy Raw Box 2</button>
+            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box3Payload), 'Copied raw Box 3.')}>Copy Raw Box 3</button>
+          </div>
           <pre>{fullPayload}</pre>
         </section>
       ) : null}
 
       {feedback.message ? <p className={`mission-feedback ${feedback.tone}`}>{feedback.message}</p> : null}
-      <p className="power-shell-future-note">Future hooks: live git truth source, real command execution, transcript logging, and assisted step execution.</p>
     </CollapsiblePanel>
   );
 }

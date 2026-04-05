@@ -2,6 +2,7 @@ import express from 'express';
 import { isLocalAdminRequest } from './ai-admin.js';
 import { getLocalShellConfig } from '../config/localShellConfig.js';
 import { focusRepoPowerShell, launchRepoPowerShell } from '../services/localShellService.js';
+import { inspectLocalGitRitualState } from '../services/gitRitualStateService.js';
 
 const router = express.Router();
 
@@ -61,6 +62,32 @@ router.get('/repo-shell-config', requireLocalDesktopRuntime, (_req, res) => {
     source: localShellConfig.source,
     windowsOnly: localShellConfig.windowsOnly,
   });
+});
+
+
+router.get('/git-ritual-state', requireLocalDesktopRuntime, (_req, res) => {
+  const localShellConfig = getLocalShellConfig();
+  localShellLog('git ritual state requested', {
+    repoPath: localShellConfig.repoPath,
+    source: localShellConfig.source,
+  });
+
+  const result = inspectLocalGitRitualState();
+  localShellLog('git ritual state response', {
+    ok: result.ok,
+    reason: result.reason || '',
+    repoPath: result.repoPath,
+    currentBranch: result.currentBranch,
+    rebaseInProgress: result.rebaseInProgress,
+    conflictsPresent: result.conflictsPresent,
+    box1Applicable: result.box1Applicable,
+    box2Applicable: result.box2Applicable,
+    box3Applicable: result.box3Applicable,
+    nextRecommendedAction: result.nextRecommendedAction,
+    riskLevel: result.riskLevel,
+  });
+
+  res.status(result.ok ? 200 : 503).json(result);
 });
 
 router.post('/open-repo-powershell', requireLocalDesktopRuntime, (_req, res) => {

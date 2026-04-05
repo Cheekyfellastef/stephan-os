@@ -24,17 +24,68 @@ function normalizePhaseStatus(value) {
   return PHASE_STATUS_VALUES.includes(value) ? value : 'pending';
 }
 
+function normalizeMaybeBoolean(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
+function normalizeBuildResult(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === 'success' || normalized === 'failed' || normalized === 'unknown') {
+    return normalized;
+  }
+  return 'unknown';
+}
+
+function yesNoUnknown(value) {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return 'unknown';
+}
+
 export function createUnknownRitualTruthSnapshot() {
   return {
-    branchLabel: 'unknown',
-    aheadBehindLabel: 'unknown',
-    rebaseIndicator: 'unknown',
-    workingStateLabel: 'unknown',
-    stagedSummary: 'unknown',
-    distChangesDetected: 'unknown',
-    conflictRisk: 'unknown',
-    lastBuildStatus: 'unknown',
-    lastVerifyStatus: 'unknown',
+    repoPath: 'unknown',
+    currentBranch: 'unknown',
+    aheadCount: null,
+    behindCount: null,
+    trackingBranch: null,
+    workingTreeDirty: null,
+    stagedChangesPresent: null,
+    unstagedChangesPresent: null,
+    untrackedChangesPresent: null,
+    changedPaths: [],
+    distChanged: null,
+    distPaths: [],
+    rebaseInProgress: null,
+    mergeInProgress: null,
+    cherryPickInProgress: null,
+    conflictsPresent: null,
+    conflictPaths: [],
+    distConflictsPresent: null,
+    pullRebaseApplicable: null,
+    box1Applicable: null,
+    box2Applicable: null,
+    box3Applicable: null,
+    nextRecommendedAction: 'unknown',
+    riskLevel: 'unknown',
+    activeFlowState: 'unknown',
+    boxBlockedReasons: {
+      box1: 'Ritual state unavailable.',
+      box2: 'Ritual state unavailable.',
+      box3: 'Ritual state unavailable.',
+    },
+    buildLastResult: 'unknown',
+    verifyLastResult: 'unknown',
+    buildStatusSource: 'unknown',
+    verifyStatusSource: 'unknown',
+    buildStatusReason: 'unknown',
+    verifyStatusReason: 'unknown',
+    hostedLimitation: '',
+    errorMessage: '',
+    truthLoaded: false,
+    truthSource: 'unknown',
   };
 }
 
@@ -124,8 +175,6 @@ export function applyCommitMessageProgress(phaseState, commitMessage) {
   return normalized;
 }
 
-
-
 export function resolveRitualRepoPath({ configuredRepoPath = '', fallbackRepoPath = '' } = {}) {
   const configured = normalizeText(configuredRepoPath);
   if (configured) {
@@ -144,6 +193,108 @@ export function isLocalShellLaunchAvailable(runtimeStatusModel = {}) {
   const sessionKind = String(truth.sessionKind || '').toLowerCase();
   const routeKind = String(truth.routeKind || '').toLowerCase();
   return sessionKind === 'local-desktop' && routeKind === 'local-desktop';
+}
+
+export function normalizeGitRitualTruthSnapshot(payload = {}, { hosted = false, errorMessage = '' } = {}) {
+  const fallback = createUnknownRitualTruthSnapshot();
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const boxBlockedReasons = source.boxBlockedReasons && typeof source.boxBlockedReasons === 'object'
+    ? {
+      box1: normalizeText(source.boxBlockedReasons.box1) || fallback.boxBlockedReasons.box1,
+      box2: normalizeText(source.boxBlockedReasons.box2) || fallback.boxBlockedReasons.box2,
+      box3: normalizeText(source.boxBlockedReasons.box3) || fallback.boxBlockedReasons.box3,
+    }
+    : fallback.boxBlockedReasons;
+
+  return {
+    ...fallback,
+    repoPath: normalizeText(source.repoPath) || fallback.repoPath,
+    currentBranch: normalizeText(source.currentBranch) || fallback.currentBranch,
+    aheadCount: Number.isFinite(Number(source.aheadCount)) ? Number(source.aheadCount) : null,
+    behindCount: Number.isFinite(Number(source.behindCount)) ? Number(source.behindCount) : null,
+    trackingBranch: normalizeText(source.trackingBranch) || null,
+    workingTreeDirty: normalizeMaybeBoolean(source.workingTreeDirty),
+    stagedChangesPresent: normalizeMaybeBoolean(source.stagedChangesPresent),
+    unstagedChangesPresent: normalizeMaybeBoolean(source.unstagedChangesPresent),
+    untrackedChangesPresent: normalizeMaybeBoolean(source.untrackedChangesPresent),
+    changedPaths: Array.isArray(source.changedPaths) ? source.changedPaths.map((value) => normalizeText(value)).filter(Boolean) : [],
+    distChanged: normalizeMaybeBoolean(source.distChanged),
+    distPaths: Array.isArray(source.distPaths) ? source.distPaths.map((value) => normalizeText(value)).filter(Boolean) : [],
+    rebaseInProgress: normalizeMaybeBoolean(source.rebaseInProgress),
+    mergeInProgress: normalizeMaybeBoolean(source.mergeInProgress),
+    cherryPickInProgress: normalizeMaybeBoolean(source.cherryPickInProgress),
+    conflictsPresent: normalizeMaybeBoolean(source.conflictsPresent),
+    conflictPaths: Array.isArray(source.conflictPaths) ? source.conflictPaths.map((value) => normalizeText(value)).filter(Boolean) : [],
+    distConflictsPresent: normalizeMaybeBoolean(source.distConflictsPresent),
+    pullRebaseApplicable: normalizeMaybeBoolean(source.pullRebaseApplicable),
+    box1Applicable: normalizeMaybeBoolean(source.box1Applicable),
+    box2Applicable: normalizeMaybeBoolean(source.box2Applicable),
+    box3Applicable: normalizeMaybeBoolean(source.box3Applicable),
+    nextRecommendedAction: normalizeText(source.nextRecommendedAction) || fallback.nextRecommendedAction,
+    riskLevel: normalizeText(source.riskLevel).toLowerCase() || fallback.riskLevel,
+    activeFlowState: normalizeText(source.activeFlowState) || fallback.activeFlowState,
+    boxBlockedReasons,
+    buildLastResult: normalizeBuildResult(source.buildLastResult),
+    verifyLastResult: normalizeBuildResult(source.verifyLastResult),
+    buildStatusSource: normalizeText(source.buildStatusSource).toLowerCase() || fallback.buildStatusSource,
+    verifyStatusSource: normalizeText(source.verifyStatusSource).toLowerCase() || fallback.verifyStatusSource,
+    buildStatusReason: normalizeText(source.buildStatusReason) || fallback.buildStatusReason,
+    verifyStatusReason: normalizeText(source.verifyStatusReason) || fallback.verifyStatusReason,
+    hostedLimitation: hosted ? 'Local Git ritual state is only available from the local desktop runtime.' : '',
+    errorMessage: normalizeText(errorMessage),
+    truthLoaded: source.ok === true,
+    truthSource: source.ok === true ? 'local-git' : 'unknown',
+  };
+}
+
+export function getRitualButtonState(truthSnapshot = createUnknownRitualTruthSnapshot(), { manualOverride = false } = {}) {
+  const unknownMode = !truthSnapshot.truthLoaded;
+
+  function deriveBoxState(boxKey, labelWhenBlocked) {
+    const applicable = truthSnapshot[`${boxKey}Applicable`];
+    const blockedReason = normalizeText(truthSnapshot.boxBlockedReasons?.[boxKey]);
+    if (applicable === true) {
+      return { enabled: true, reason: '' };
+    }
+    if (unknownMode) {
+      return {
+        enabled: manualOverride,
+        reason: manualOverride ? 'Truth unavailable. Manual override enabled.' : 'Ritual state unknown. Open Manual Override / Raw Mode.',
+      };
+    }
+    return {
+      enabled: false,
+      reason: blockedReason || labelWhenBlocked,
+    };
+  }
+
+  return {
+    box1: deriveBoxState('box1', 'Box 1 is not applicable in current flow state.'),
+    box2: deriveBoxState('box2', 'Box 2 is not applicable in current flow state.'),
+    box3: deriveBoxState('box3', 'Box 3 is not applicable in current flow state.'),
+    copyFullRitual: {
+      enabled: manualOverride || truthSnapshot.truthLoaded,
+      reason: truthSnapshot.truthLoaded ? '' : 'Ritual state unknown. Use manual override for raw copy.',
+    },
+  };
+}
+
+export function formatRitualTruthDisplay(truthSnapshot = createUnknownRitualTruthSnapshot()) {
+  return {
+    syncState: truthSnapshot.aheadCount === null || truthSnapshot.behindCount === null
+      ? 'unknown'
+      : `ahead ${truthSnapshot.aheadCount} / behind ${truthSnapshot.behindCount}`,
+    workingTree: yesNoUnknown(truthSnapshot.workingTreeDirty) === 'yes' ? 'dirty' : yesNoUnknown(truthSnapshot.workingTreeDirty) === 'no' ? 'clean' : 'unknown',
+    staged: yesNoUnknown(truthSnapshot.stagedChangesPresent),
+    unstaged: yesNoUnknown(truthSnapshot.unstagedChangesPresent),
+    untracked: yesNoUnknown(truthSnapshot.untrackedChangesPresent),
+    distChanged: yesNoUnknown(truthSnapshot.distChanged),
+    rebase: truthSnapshot.rebaseInProgress === true ? 'active' : yesNoUnknown(truthSnapshot.rebaseInProgress),
+    merge: truthSnapshot.mergeInProgress === true ? 'active' : yesNoUnknown(truthSnapshot.mergeInProgress),
+    cherryPick: truthSnapshot.cherryPickInProgress === true ? 'active' : yesNoUnknown(truthSnapshot.cherryPickInProgress),
+    conflicts: yesNoUnknown(truthSnapshot.conflictsPresent),
+    distConflicts: yesNoUnknown(truthSnapshot.distConflictsPresent),
+  };
 }
 
 export { BOX_2_COMMANDS, BOX_3_COMMANDS, RITUAL_PHASE_IDS, PHASE_STATUS_VALUES };

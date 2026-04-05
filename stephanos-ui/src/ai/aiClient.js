@@ -207,6 +207,17 @@ export async function getLocalRepoShellConfig(runtimeConfig = getApiRuntimeConfi
   };
 }
 
+
+export async function getLocalGitRitualState(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/local/git-ritual-state', {}, runtimeConfig);
+  return {
+    ok: result.ok,
+    status: result.status,
+    data: result.data && typeof result.data === 'object' ? result.data : {},
+    reason: String(result.data?.reason || result.data?.error || ''),
+  };
+}
+
 export async function openRepoPowerShell(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson('/api/local/open-repo-powershell', {
     method: 'POST',

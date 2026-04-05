@@ -33,6 +33,11 @@ test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () =>
 });
 
 
+
+test('getLocalGitRitualState queries /api/local/git-ritual-state', () => {
+  assert.match(clientSource, /requestJson\('\/api\/local\/git-ritual-state'/m);
+});
+
 test('openRepoPowerShell uses POST /api/local/open-repo-powershell', () => {
   assert.match(clientSource, /requestJson\('\/api\/local\/open-repo-powershell',[\s\S]*method:\s*'POST'/m);
 });
