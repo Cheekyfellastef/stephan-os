@@ -31,3 +31,12 @@ test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () =>
   assert.match(clientSource, /timeoutLabel:\s*'ui_request_timeout_ms'/);
   assert.doesNotMatch(clientSource, /vite_api_timeout_ms/);
 });
+
+
+test('openRepoPowerShell uses POST /api/local/open-repo-powershell', () => {
+  assert.match(clientSource, /requestJson\('\/api\/local\/open-repo-powershell',[\s\S]*method:\s*'POST'/m);
+});
+
+test('getLocalRepoShellConfig queries /api/local/repo-shell-config', () => {
+  assert.match(clientSource, /requestJson\('\/api\/local\/repo-shell-config'/m);
+});

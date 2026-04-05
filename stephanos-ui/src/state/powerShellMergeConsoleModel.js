@@ -124,4 +124,26 @@ export function applyCommitMessageProgress(phaseState, commitMessage) {
   return normalized;
 }
 
+
+
+export function resolveRitualRepoPath({ configuredRepoPath = '', fallbackRepoPath = '' } = {}) {
+  const configured = normalizeText(configuredRepoPath);
+  if (configured) {
+    return configured;
+  }
+  return normalizeText(fallbackRepoPath);
+}
+
+export function buildRepoCdCommand(repoPath = '') {
+  const safePath = String(repoPath || '').replace(/"/g, '\"');
+  return `cd "${safePath}"`;
+}
+
+export function isLocalShellLaunchAvailable(runtimeStatusModel = {}) {
+  const truth = runtimeStatusModel?.finalRouteTruth || {};
+  const sessionKind = String(truth.sessionKind || '').toLowerCase();
+  const routeKind = String(truth.routeKind || '').toLowerCase();
+  return sessionKind === 'local-desktop' && routeKind === 'local-desktop';
+}
+
 export { BOX_2_COMMANDS, BOX_3_COMMANDS, RITUAL_PHASE_IDS, PHASE_STATUS_VALUES };
