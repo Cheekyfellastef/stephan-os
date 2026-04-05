@@ -14,8 +14,9 @@ export default function AIConsole({
   submitPrompt,
   commandHistory,
 }) {
-  const endOfMessagesRef = useRef(null);
   const containerRef = useRef(null);
+  const inputRef = useRef(null);
+  const documentScrollTopRef = useRef(0);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const {
     isBusy,
@@ -48,17 +49,44 @@ export default function AIConsole({
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
 
+  const preserveDocumentScrollPosition = () => {
+    if (typeof window === 'undefined') return;
+    documentScrollTopRef.current = window.scrollY || window.pageYOffset || 0;
+  };
+
+  const restoreDocumentScrollPosition = () => {
+    if (typeof window === 'undefined') return;
+    const previousScrollTop = documentScrollTopRef.current || 0;
+    const currentScrollTop = window.scrollY || window.pageYOffset || 0;
+    if (Math.abs(currentScrollTop - previousScrollTop) < 1) return;
+
+    window.scrollTo({
+      top: previousScrollTop,
+      behavior: 'auto',
+    });
+  };
+
+  const scrollMessageContainerToBottom = (behavior = 'auto') => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior,
+    });
+  };
+
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView();
+    preserveDocumentScrollPosition();
+    scrollMessageContainerToBottom('auto');
+    restoreDocumentScrollPosition();
   }, []);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;
-    if (!endOfMessagesRef.current) return;
-
-    endOfMessagesRef.current.scrollIntoView({
-      behavior: 'smooth',
-      block: 'end',
+    preserveDocumentScrollPosition();
+    scrollMessageContainerToBottom('smooth');
+    requestAnimationFrame(() => {
+      restoreDocumentScrollPosition();
     });
   }, [autoScrollEnabled, safeCommandHistory]);
 
@@ -75,6 +103,7 @@ export default function AIConsole({
     event.preventDefault();
     submitPrompt(input);
     setInput('');
+    inputRef.current?.focus({ preventScroll: true });
   };
 
   return (
@@ -131,10 +160,15 @@ export default function AIConsole({
               </ul>
             </details>
           ) : null}
-          <div ref={endOfMessagesRef} />
         </div>
         <form className="command-form mission-console-input" onSubmit={onSubmit}>
-          <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter command or prompt..." disabled={isBusy} />
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="Enter command or prompt..."
+            disabled={isBusy}
+          />
           <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
         </form>
       </div>

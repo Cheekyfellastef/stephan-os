@@ -335,7 +335,11 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: min(72vh, 760px);
   max-height: min(72vh, 760px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
 }
 
 .mission-console-shell {
@@ -344,6 +348,9 @@ body {
   gap: 0.85rem;
   min-height: 0;
   flex: 1 1 auto;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
 }
 
 .mission-console .ai-console-messages {
@@ -351,10 +358,17 @@ body {
   min-height: 0;
   max-height: none;
   margin-bottom: 0;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
 }
 
 .mission-console-input {
   flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-top: 0.2rem;
+  background: linear-gradient(180deg, rgba(2, 8, 18, 0), rgba(2, 8, 18, 0.96) 36%);
 }
 
 .command-form {

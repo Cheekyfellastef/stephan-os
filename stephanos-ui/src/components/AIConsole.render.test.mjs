@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { importBundledModule, srcRoot } from '../test/renderHarness.mjs';
 
 function createBaseStore(overrides = {}) {
@@ -42,4 +43,9 @@ test('AIConsole renders mission console shell with internal message region and a
   assert.match(rendered, /mission-console-shell/);
   assert.match(rendered, /output-panel ai-console-messages/);
   assert.match(rendered, /command-form mission-console-input/);
+});
+
+test('AIConsole avoids viewport-targeting scrollIntoView calls for message updates', async () => {
+  const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
+  assert.doesNotMatch(source, /scrollIntoView\s*\(/);
 });
