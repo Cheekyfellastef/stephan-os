@@ -1,5 +1,106 @@
 {
-  "schemaVersion": 1,
-  "updatedAt": "1970-01-01T00:00:00.000Z",
-  "itemsByKey": {}
+  "schemaVersion": 2,
+  "updatedAt": "2026-04-05T12:16:20.131Z",
+  "records": {
+    "continuity::ai-1775391127518-iex7u-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Sort the hosted/local routing issue",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:12:07.518Z",
+      "updatedAt": "2026-04-05T12:12:07.518Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775391127518-iex7u-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "To sort the hosted/local routing issue, follow these steps:\n\n1. **Identify the context**: Determine if the user is accessing the system locally or remotely (hosted).\n\n2. **Local-first policy**: As per workflow preference, Stephanos should favor local-first operations.\n\n3. **Backend architecture**: Check if the backend API is accessible both locally and remotely.\n\n4. **Provider readiness**: Assess which providers (lik",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:12:07.518Z",
+      "updatedAt": "2026-04-05T12:12:07.518Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775391380131-c4j1q-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Build a system to improve retrieval ranking",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:16:20.131Z",
+      "updatedAt": "2026-04-05T12:16:20.131Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775391380131-c4j1q-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "To build a system that improves retrieval ranking, you can follow these steps:\n\n1. **Define the problem**: Identify the context in which the system will operate (e.g., web search, product recommendations).\n\n2. **Collect and preprocess data**: Gather user interactions, click-through rates, or other relevant metrics. Clean and normalize the data to improve model performance.\n\n3. **Analyze user behavior patterns**: Use ",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:16:20.131Z",
+      "updatedAt": "2026-04-05T12:16:20.131Z",
+      "surface": "shared"
+    }
+  }
 }
