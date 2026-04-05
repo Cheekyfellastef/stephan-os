@@ -178,6 +178,9 @@ export default function StatusPanel() {
       lastOllamaFallbackModel: lastExecutionMetadata?.ollama_fallback_model || 'n/a',
       lastOllamaFallbackModelUsed: String(lastExecutionMetadata?.ollama_fallback_model_used ?? 'n/a'),
       lastOllamaFallbackReason: lastExecutionMetadata?.ollama_fallback_reason || 'n/a',
+      lastOllamaTimeoutMs: String(lastExecutionMetadata?.ollama_timeout_ms ?? 'n/a'),
+      lastOllamaTimeoutSource: lastExecutionMetadata?.ollama_timeout_source || 'n/a',
+      lastOllamaTimeoutModel: lastExecutionMetadata?.ollama_timeout_model || 'n/a',
       lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
       lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
       lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
@@ -398,6 +401,9 @@ export default function StatusPanel() {
         <li>Last Ollama Fallback Model: {lastExecutionMetadata?.ollama_fallback_model || 'n/a'}</li>
         <li>Last Ollama Fallback Model Used: {String(lastExecutionMetadata?.ollama_fallback_model_used ?? 'n/a')}</li>
         <li>Last Ollama Fallback Reason: {lastExecutionMetadata?.ollama_fallback_reason || 'n/a'}</li>
+        <li>Last Ollama Timeout (ms): {String(lastExecutionMetadata?.ollama_timeout_ms ?? 'n/a')}</li>
+        <li>Last Ollama Timeout Source: {lastExecutionMetadata?.ollama_timeout_source || 'n/a'}</li>
+        <li>Last Ollama Timeout Model: {lastExecutionMetadata?.ollama_timeout_model || 'n/a'}</li>
         <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
         <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
         <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>

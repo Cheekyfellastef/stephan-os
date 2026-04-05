@@ -68,6 +68,8 @@ export const PROVIDER_DEFINITIONS = {
       baseURL: 'http://localhost:11434',
       model: 'qwen:14b',
       timeoutMs: 8000,
+      defaultOllamaTimeoutMs: 8000,
+      perModelTimeoutOverrides: {},
     },
   },
   openrouter: {

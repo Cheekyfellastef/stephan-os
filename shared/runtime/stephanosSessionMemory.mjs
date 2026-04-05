@@ -24,6 +24,8 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'session.providerPreferences.providerConfigs.*.model',
   'session.providerPreferences.providerConfigs.*.enabled',
   'session.providerPreferences.providerConfigs.*.timeoutMs',
+  'session.providerPreferences.providerConfigs.*.defaultOllamaTimeoutMs',
+  'session.providerPreferences.providerConfigs.*.perModelTimeoutOverrides',
   'session.providerPreferences.ollamaConnection.lastSelectedModel',
   'session.ui.activeWorkspace',
   'session.ui.activeSubview',

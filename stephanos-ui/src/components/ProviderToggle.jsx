@@ -9,6 +9,7 @@ import { extractHostname, isMalformedStephanosHost } from '../../../shared/runti
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
+const OLLAMA_TIMEOUT_OVERRIDE_MODELS = ['qwen:32b', 'qwen:14b', 'gpt-oss:20b', 'llama3.2:3b'];
 
 const FIELD_MAP = {
   mock: [
@@ -31,7 +32,6 @@ const FIELD_MAP = {
   ],
   ollama: [
     { key: 'baseURL', label: 'Base URL', type: 'text' },
-    { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number' },
   ],
   openrouter: [
     { key: 'enabled', label: 'Enable optional paid provider', type: 'checkbox' },
@@ -652,30 +652,72 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
 
               <div className="provider-form-grid">
                 {providerKey === 'ollama' ? (
-                  <label key="ollama-model">
-                    <span>Model</span>
-                    {ollamaModelOptions.length ? (
-                      <select
-                        value={draft.model || ollamaModelOptions[0] || ''}
-                        onChange={(event) => {
-                          updateDraftProviderConfig('ollama', { model: event.target.value });
-                          setOllamaConnection({ lastSelectedModel: event.target.value });
-                        }}
-                      >
-                        {ollamaModelOptions.map((modelName) => <option key={modelName} value={modelName}>{modelName}</option>)}
-                      </select>
-                    ) : (
+                  <>
+                    <label key="ollama-model">
+                      <span>Model</span>
+                      {ollamaModelOptions.length ? (
+                        <select
+                          value={draft.model || ollamaModelOptions[0] || ''}
+                          onChange={(event) => {
+                            updateDraftProviderConfig('ollama', { model: event.target.value });
+                            setOllamaConnection({ lastSelectedModel: event.target.value });
+                          }}
+                        >
+                          {ollamaModelOptions.map((modelName) => <option key={modelName} value={modelName}>{modelName}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={draft.model ?? ''}
+                          onChange={(event) => {
+                            updateDraftProviderConfig('ollama', { model: event.target.value });
+                            setOllamaConnection({ lastSelectedModel: event.target.value });
+                          }}
+                        />
+                      )}
+                      {draftState.errors?.model ? <span className="field-error">{draftState.errors.model}</span> : null}
+                    </label>
+                    <label key="ollama-default-timeout">
+                      <span>Default Ollama Timeout (ms)</span>
                       <input
-                        type="text"
-                        value={draft.model ?? ''}
+                        type="number"
+                        min="1000"
+                        value={draft.defaultOllamaTimeoutMs ?? draft.timeoutMs ?? 8000}
                         onChange={(event) => {
-                          updateDraftProviderConfig('ollama', { model: event.target.value });
-                          setOllamaConnection({ lastSelectedModel: event.target.value });
+                          const nextTimeout = Number(event.target.value) || 0;
+                          updateDraftProviderConfig('ollama', { defaultOllamaTimeoutMs: nextTimeout, timeoutMs: nextTimeout });
                         }}
                       />
-                    )}
-                    {draftState.errors?.model ? <span className="field-error">{draftState.errors.model}</span> : null}
-                  </label>
+                      {draftState.errors?.defaultOllamaTimeoutMs ? <span className="field-error">{draftState.errors.defaultOllamaTimeoutMs}</span> : null}
+                    </label>
+                    <details>
+                      <summary>Optional Model Timeout Overrides</summary>
+                      {OLLAMA_TIMEOUT_OVERRIDE_MODELS.map((modelName) => (
+                        <label key={`override-${modelName}`}>
+                          <span>{modelName}</span>
+                          <input
+                            type="number"
+                            min="1000"
+                            placeholder="Use default"
+                            value={draft.perModelTimeoutOverrides?.[modelName] ?? ''}
+                            onChange={(event) => {
+                              const rawValue = event.target.value;
+                              const nextOverrides = { ...(draft.perModelTimeoutOverrides || {}) };
+                              if (rawValue === '') {
+                                delete nextOverrides[modelName];
+                              } else {
+                                nextOverrides[modelName] = Number(rawValue);
+                              }
+                              updateDraftProviderConfig('ollama', { perModelTimeoutOverrides: nextOverrides });
+                            }}
+                          />
+                          {draftState.errors?.[`perModelTimeoutOverrides.${modelName}`] ? (
+                            <span className="field-error">{draftState.errors[`perModelTimeoutOverrides.${modelName}`]}</span>
+                          ) : null}
+                        </label>
+                      ))}
+                    </details>
+                  </>
                 ) : null}
 
                 {FIELD_MAP[providerKey].map((field) => renderStandardField({
