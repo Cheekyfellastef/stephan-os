@@ -64,6 +64,7 @@ export default function PowerShellMergeConsolePanel() {
   const [repoPath, setRepoPath] = useState(DEFAULT_STEPHANOS_REPO_PATH);
   const [lastKnownPowerShellPid, setLastKnownPowerShellPid] = useState(null);
   const [truthSnapshot, setTruthSnapshot] = useState(createUnknownRitualTruthSnapshot);
+  const [copiedButtonId, setCopiedButtonId] = useState('');
 
   const box1Payload = useMemo(() => buildRitualBox1Payload(commitMessage), [commitMessage]);
   const box2Payload = useMemo(() => buildRitualBox2Payload(), []);
@@ -73,6 +74,16 @@ export default function PowerShellMergeConsolePanel() {
   const cdCommand = useMemo(() => buildRepoCdCommand(repoPath), [repoPath]);
   const buttonState = useMemo(() => getRitualButtonState(truthSnapshot, { manualOverride: showRawMode }), [truthSnapshot, showRawMode]);
   const truthDisplay = useMemo(() => formatRitualTruthDisplay(truthSnapshot), [truthSnapshot]);
+
+  useEffect(() => {
+    if (!copiedButtonId) {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setCopiedButtonId('');
+    }, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [copiedButtonId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,11 +135,13 @@ export default function PowerShellMergeConsolePanel() {
     };
   }, [localShellAvailable]);
 
-  function setCopyFeedback(result, successMessage) {
+  function setCopyFeedback(result, successMessage, copyTargetId) {
     if (result.ok) {
       setFeedback({ tone: 'success', message: successMessage });
+      setCopiedButtonId(copyTargetId);
       return;
     }
+    setCopiedButtonId('');
     setFeedback({ tone: 'warning', message: 'Clipboard unavailable. Copy manually from the raw mode section.' });
   }
 
@@ -142,7 +155,7 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box1Payload);
-    setCopyFeedback(result, 'Copied Box 1.');
+    setCopyFeedback(result, 'Copied Box 1.', 'box1');
     setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box1'));
   }
 
@@ -152,7 +165,7 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box2Payload);
-    setCopyFeedback(result, 'Copied Box 2.');
+    setCopyFeedback(result, 'Copied Box 2.', 'box2');
     setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box2'));
   }
 
@@ -162,7 +175,7 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box3Payload);
-    setCopyFeedback(result, 'Copied Box 3.');
+    setCopyFeedback(result, 'Copied Box 3.', 'box3');
     setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box3'));
   }
 
@@ -172,22 +185,22 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(fullPayload);
-    setCopyFeedback(result, 'Copied full ritual.');
+    setCopyFeedback(result, 'Copied full ritual.', 'fullRitual');
   }
 
   async function handleCopyPowerShellOutput() {
     const result = await writeTextToClipboard(powerShellOutput);
-    setCopyFeedback(result, 'Copied PowerShell output transcript.');
+    setCopyFeedback(result, 'Copied PowerShell output transcript.', 'output');
   }
 
   async function handleCopyRepoPath() {
     const result = await writeTextToClipboard(repoPath);
-    setCopyFeedback(result, 'Copied repo path.');
+    setCopyFeedback(result, 'Copied repo path.', 'repoPath');
   }
 
   async function handleCopyCdCommand() {
     const result = await writeTextToClipboard(cdCommand);
-    setCopyFeedback(result, 'Copied PowerShell cd command.');
+    setCopyFeedback(result, 'Copied PowerShell cd command.', 'cdCommand');
   }
 
   async function handleOpenRepoPowerShell() {
@@ -203,7 +216,7 @@ export default function PowerShellMergeConsolePanel() {
     if (!localShellAvailable) {
       setFeedback({
         tone: 'warning',
-        message: 'Local shell launch is only available from the local desktop runtime. Use Copy Repo Path or Copy cd Command.',
+        message: 'Local shell controls are only available in local desktop runtime. Use Copy Repo Path or Copy cd Command.',
       });
       return;
     }
@@ -211,6 +224,7 @@ export default function PowerShellMergeConsolePanel() {
     try {
       const runtimeConfig = getApiRuntimeConfig();
       const result = await openRepoPowerShell(runtimeConfig);
+      console.info('[POWER SHELL MERGE CONSOLE] open repo PowerShell response received', result);
       const resolvedRepoPath = resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: repoPath });
       setRepoPath(resolvedRepoPath);
       setLastKnownPowerShellPid(result.pid || null);
@@ -224,7 +238,7 @@ export default function PowerShellMergeConsolePanel() {
       setFeedback({
         tone: 'warning',
         message: result.reason === 'local-desktop-runtime-required'
-          ? 'Local shell launch unavailable in hosted mode.'
+          ? 'Local shell controls are only available in local desktop runtime.'
           : `Could not open PowerShell: ${result.reason || 'unknown reason'}.`,
       });
     } catch (error) {
@@ -244,17 +258,18 @@ export default function PowerShellMergeConsolePanel() {
     });
 
     if (!localShellAvailable) {
-      setFeedback({ tone: 'warning', message: 'Local shell launch is only available from the local desktop runtime.' });
+      setFeedback({ tone: 'warning', message: 'Local shell controls are only available in local desktop runtime.' });
       return;
     }
 
     try {
       const runtimeConfig = getApiRuntimeConfig();
       const result = await focusRepoPowerShell(runtimeConfig);
+      console.info('[POWER SHELL MERGE CONSOLE] focus repo PowerShell response received', result);
       if (result.ok && result.focused) {
         setFeedback({
           tone: 'success',
-          message: result.topmostApplied ? 'Focused PowerShell and kept it on top.' : 'Focused PowerShell window.',
+          message: result.topmostApplied ? 'Focused PowerShell and kept it on top.' : 'Focused PowerShell.',
         });
         setLastKnownPowerShellPid(result.pid || null);
         return;
@@ -348,8 +363,8 @@ export default function PowerShellMergeConsolePanel() {
         <div className="power-shell-controls">
           <button type="button" className="power-shell-ops-button" onClick={handleOpenRepoPowerShell}>Open PowerShell in Repo Folder</button>
           <button type="button" className="power-shell-ops-button" onClick={handleFocusRepoPowerShell}>Focus PowerShell</button>
-          <button type="button" className="ghost-button" onClick={handleCopyRepoPath}>Copy Repo Path</button>
-          <button type="button" className="ghost-button" onClick={handleCopyCdCommand}>Copy cd Command</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'repoPath' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyRepoPath}>{copiedButtonId === 'repoPath' ? 'Copied Repo Path' : 'Copy Repo Path'}</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'cdCommand' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyCdCommand}>{copiedButtonId === 'cdCommand' ? 'Copied cd Command' : 'Copy cd Command'}</button>
         </div>
       </section>
 
@@ -366,7 +381,7 @@ export default function PowerShellMergeConsolePanel() {
       <section className="power-shell-box" aria-label="Ritual box 1">
         <div className="power-shell-box-header">
           <h3>Box 1 · Commit + Rebase Start</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox1} disabled={!buttonState.box1.enabled} title={buttonState.box1.reason}>Copy Box 1</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'box1' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyBox1} disabled={!buttonState.box1.enabled} title={buttonState.box1.reason}>{copiedButtonId === 'box1' ? 'Copied Box 1' : 'Copy Box 1'}</button>
         </div>
         {!buttonState.box1.enabled ? <p className="power-shell-note">{buttonState.box1.reason}</p> : null}
         <pre>{box1Payload}</pre>
@@ -375,7 +390,7 @@ export default function PowerShellMergeConsolePanel() {
       <section className="power-shell-box" aria-label="Ritual box 2">
         <div className="power-shell-box-header">
           <h3>Box 2 · Dist Conflict Resolution + Rebuild</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox2} disabled={!buttonState.box2.enabled} title={buttonState.box2.reason}>Copy Box 2</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'box2' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyBox2} disabled={!buttonState.box2.enabled} title={buttonState.box2.reason}>{copiedButtonId === 'box2' ? 'Copied Box 2' : 'Copy Box 2'}</button>
         </div>
         <p className="power-shell-note">Use this block if dist conflicts appear during rebase.</p>
         {!buttonState.box2.enabled ? <p className="power-shell-note">{buttonState.box2.reason}</p> : null}
@@ -385,14 +400,14 @@ export default function PowerShellMergeConsolePanel() {
       <section className="power-shell-box" aria-label="Ritual box 3">
         <div className="power-shell-box-header">
           <h3>Box 3 · Finalize + Push</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyBox3} disabled={!buttonState.box3.enabled} title={buttonState.box3.reason}>Copy Box 3</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'box3' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyBox3} disabled={!buttonState.box3.enabled} title={buttonState.box3.reason}>{copiedButtonId === 'box3' ? 'Copied Box 3' : 'Copy Box 3'}</button>
         </div>
         {!buttonState.box3.enabled ? <p className="power-shell-note">{buttonState.box3.reason}</p> : null}
         <pre>{box3Payload}</pre>
       </section>
 
       <section className="power-shell-controls">
-        <button type="button" onClick={handleCopyFullRitual} disabled={!buttonState.copyFullRitual.enabled} title={buttonState.copyFullRitual.reason}>Copy Full Ritual</button>
+        <button type="button" className={copiedButtonId === 'fullRitual' ? 'power-shell-copy-success' : ''} onClick={handleCopyFullRitual} disabled={!buttonState.copyFullRitual.enabled} title={buttonState.copyFullRitual.reason}>{copiedButtonId === 'fullRitual' ? 'Copied Full Ritual' : 'Copy Full Ritual'}</button>
         <button type="button" className="ghost-button" onClick={handleResetRitualState}>Reset Ritual State</button>
         <button type="button" className="ghost-button" onClick={() => setShowRawMode((prev) => !prev)}>
           {showRawMode ? 'Hide Raw Mode' : 'Manual Override / Raw Mode'}
@@ -402,7 +417,7 @@ export default function PowerShellMergeConsolePanel() {
       <section className="power-shell-output" aria-label="PowerShell output uplink">
         <div className="power-shell-box-header">
           <h3>PowerShell Output Uplink</h3>
-          <button type="button" className="ghost-button" onClick={handleCopyPowerShellOutput}>Copy PowerShell Output</button>
+          <button type="button" className={`ghost-button ${copiedButtonId === 'output' ? 'power-shell-copy-success' : ''}`} onClick={handleCopyPowerShellOutput}>{copiedButtonId === 'output' ? 'Copied PowerShell Output' : 'Copy PowerShell Output'}</button>
         </div>
         <p className="power-shell-note">Paste terminal output here, then copy it cleanly for diagnostic handoff into ChatGPT.</p>
         <textarea
@@ -418,9 +433,9 @@ export default function PowerShellMergeConsolePanel() {
           <h3>Captain Manual Override</h3>
           <p className="power-shell-note">Raw ritual blocks stay available even when truth-aware controls are guarded.</p>
           <div className="power-shell-controls">
-            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box1Payload), 'Copied raw Box 1.')}>Copy Raw Box 1</button>
-            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box2Payload), 'Copied raw Box 2.')}>Copy Raw Box 2</button>
-            <button type="button" className="ghost-button" onClick={async () => setCopyFeedback(await writeTextToClipboard(box3Payload), 'Copied raw Box 3.')}>Copy Raw Box 3</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox1' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box1Payload), 'Copied raw Box 1.', 'rawBox1')}>{copiedButtonId === 'rawBox1' ? 'Copied Raw Box 1' : 'Copy Raw Box 1'}</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox2' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box2Payload), 'Copied raw Box 2.', 'rawBox2')}>{copiedButtonId === 'rawBox2' ? 'Copied Raw Box 2' : 'Copy Raw Box 2'}</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox3' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box3Payload), 'Copied raw Box 3.', 'rawBox3')}>{copiedButtonId === 'rawBox3' ? 'Copied Raw Box 3' : 'Copy Raw Box 3'}</button>
           </div>
           <pre>{fullPayload}</pre>
         </section>

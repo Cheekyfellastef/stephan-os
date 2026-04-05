@@ -229,8 +229,11 @@ export async function openRepoPowerShell(runtimeConfig = getApiRuntimeConfig()) 
     ok: result.ok,
     status: result.status,
     launched: result.data?.launched === true,
+    pid: Number.isFinite(Number(result.data?.pid)) ? Number(result.data?.pid) : null,
     repoPath: String(result.data?.repoPath || ''),
     reason: String(result.data?.reason || result.data?.error || ''),
+    focusApplied: result.data?.focusApplied === true,
+    topmostApplied: result.data?.topmostApplied === true,
   };
 }
 

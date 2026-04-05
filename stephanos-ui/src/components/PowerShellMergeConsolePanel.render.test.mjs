@@ -18,7 +18,7 @@ test('panel exposes hosted limitation without faking local git truth', () => {
 });
 
 test('ritual copy buttons are truth-aware and disabled when not applicable', () => {
-  assert.match(panelSource, /Copy Box 1<\/button>/);
+  assert.match(panelSource, /Copy Box 1/);
   assert.match(panelSource, /disabled=\{!buttonState\.box1\.enabled\}/);
   assert.match(panelSource, /disabled=\{!buttonState\.box2\.enabled\}/);
   assert.match(panelSource, /disabled=\{!buttonState\.box3\.enabled\}/);
@@ -29,4 +29,15 @@ test('manual override keeps raw copy helpers available', () => {
   assert.match(panelSource, /Copy Raw Box 1/);
   assert.match(panelSource, /Copy Raw Box 2/);
   assert.match(panelSource, /Copy Raw Box 3/);
+});
+
+test('copy buttons only show green success styling after successful clipboard copies', () => {
+  assert.match(panelSource, /const \[copiedButtonId, setCopiedButtonId\] = useState\(''\)/);
+  assert.match(panelSource, /setCopiedButtonId\(copyTargetId\)/);
+  assert.match(panelSource, /setCopiedButtonId\(''\)/);
+  assert.match(panelSource, /power-shell-copy-success/);
+});
+
+test('local shell buttons return truthful unsupported message outside local desktop runtime', () => {
+  assert.match(panelSource, /Local shell controls are only available in local desktop runtime\./);
 });
