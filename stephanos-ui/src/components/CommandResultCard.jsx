@@ -3,6 +3,7 @@ import GraphNodeCard from './GraphNodeCard';
 import GraphEdgeCard from './GraphEdgeCard';
 import GraphStatsCard from './GraphStatsCard';
 import SimulationResultCard from './SimulationResultCard';
+import AnswerPaneCopyButton from './AnswerPaneCopyButton';
 
 function GraphPayload({ payload }) {
   const stats = payload.stats;
@@ -91,6 +92,7 @@ export default function CommandResultCard({ entry }) {
           <pre>{JSON.stringify(entry.data_payload, null, 2)}</pre>
         </details>
       )}
+      {entry.response?.type === 'assistant_response' ? <AnswerPaneCopyButton message={entry} /> : null}
     </article>
   );
 }
