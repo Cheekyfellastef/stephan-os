@@ -181,6 +181,14 @@ export default function StatusPanel() {
       lastOllamaTimeoutMs: String(lastExecutionMetadata?.ollama_timeout_ms ?? 'n/a'),
       lastOllamaTimeoutSource: lastExecutionMetadata?.ollama_timeout_source || 'n/a',
       lastOllamaTimeoutModel: lastExecutionMetadata?.ollama_timeout_model || 'n/a',
+      lastUiRequestTimeoutMs: String(lastExecutionMetadata?.ui_request_timeout_ms ?? 'n/a'),
+      lastBackendRouteTimeoutMs: String(lastExecutionMetadata?.backend_route_timeout_ms ?? 'n/a'),
+      lastProviderTimeoutMs: String(lastExecutionMetadata?.provider_timeout_ms ?? 'n/a'),
+      lastModelTimeoutMs: String(lastExecutionMetadata?.model_timeout_ms ?? 'n/a'),
+      lastTimeoutPolicySource: lastExecutionMetadata?.timeout_policy_source || 'n/a',
+      lastTimeoutOverrideApplied: String(lastExecutionMetadata?.timeout_override_applied ?? 'n/a'),
+      lastTimeoutFailureLayer: lastExecutionMetadata?.timeout_failure_layer || 'n/a',
+      lastTimeoutFailureLabel: lastExecutionMetadata?.timeout_failure_label || 'n/a',
       lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
       lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
       lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
@@ -441,6 +449,14 @@ export default function StatusPanel() {
         <li>Last Ollama Timeout (ms): {String(lastExecutionMetadata?.ollama_timeout_ms ?? 'n/a')}</li>
         <li>Last Ollama Timeout Source: {lastExecutionMetadata?.ollama_timeout_source || 'n/a'}</li>
         <li>Last Ollama Timeout Model: {lastExecutionMetadata?.ollama_timeout_model || 'n/a'}</li>
+        <li>Last UI Request Timeout (ms): {String(lastExecutionMetadata?.ui_request_timeout_ms ?? 'n/a')}</li>
+        <li>Last Backend Route Timeout (ms): {String(lastExecutionMetadata?.backend_route_timeout_ms ?? 'n/a')}</li>
+        <li>Last Provider Timeout (ms): {String(lastExecutionMetadata?.provider_timeout_ms ?? 'n/a')}</li>
+        <li>Last Model Timeout (ms): {String(lastExecutionMetadata?.model_timeout_ms ?? 'n/a')}</li>
+        <li>Last Timeout Policy Source: {lastExecutionMetadata?.timeout_policy_source || 'n/a'}</li>
+        <li>Last Timeout Override Applied: {String(lastExecutionMetadata?.timeout_override_applied ?? 'n/a')}</li>
+        <li>Last Timeout Failure Layer: {lastExecutionMetadata?.timeout_failure_layer || 'n/a'}</li>
+        <li>Last Timeout Failure Label: {lastExecutionMetadata?.timeout_failure_label || 'n/a'}</li>
         <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
         <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
         <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>

@@ -20,3 +20,14 @@ test('sendPrompt strips provider secrets from chat payloads', () => {
   assert.match(clientSource, /stripSecretsFromProviderConfigs\(providerConfigs\)/);
   assert.match(clientSource, /providerConfigs:\s*safeProviderConfigs/);
 });
+
+test('sendPrompt derives timeout from shared timeout policy before request dispatch', () => {
+  assert.match(clientSource, /resolveUiRequestTimeoutPolicy\(/);
+  assert.match(clientSource, /timeoutPolicy:\s*\{/);
+  assert.match(clientSource, /requestJson\('\/api\/ai\/chat'[\s\S]*timeoutPolicy\)/m);
+});
+
+test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () => {
+  assert.match(clientSource, /timeoutLabel:\s*'ui_request_timeout_ms'/);
+  assert.doesNotMatch(clientSource, /vite_api_timeout_ms/);
+});
