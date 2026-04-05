@@ -40,6 +40,8 @@ test('getLocalGitRitualState queries /api/local/git-ritual-state', () => {
 
 test('openRepoPowerShell uses POST /api/local/open-repo-powershell', () => {
   assert.match(clientSource, /requestJson\('\/api\/local\/open-repo-powershell',[\s\S]*method:\s*'POST'/m);
+  assert.match(clientSource, /pid:\s*Number\.isFinite\(Number\(result\.data\?\.pid\)\)/);
+  assert.match(clientSource, /focusApplied:\s*result\.data\?\.focusApplied === true/);
 });
 
 test('focusRepoPowerShell uses POST /api/local/focus-repo-powershell', () => {

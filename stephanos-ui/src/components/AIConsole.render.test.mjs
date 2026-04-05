@@ -50,6 +50,13 @@ test('AIConsole avoids viewport-targeting scrollIntoView calls for message updat
   assert.doesNotMatch(source, /scrollIntoView\s*\(/);
 });
 
+test('Mission console collapsed panel body does not keep reserved height when hidden', async () => {
+  const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
+  assert.match(stylesSource, /\.mission-console \.panel-body\[hidden\]\s*\{/);
+  assert.match(stylesSource, /\.mission-console \.panel-body\[hidden\][\s\S]*display:\s*none;/m);
+  assert.match(stylesSource, /\.mission-console \.panel-body\[hidden\][\s\S]*height:\s*0;/m);
+});
+
 
 test('AIConsole renders copy buttons for historical and new assistant answer panes', async () => {
   const { renderAIConsole } = await importBundledModule(

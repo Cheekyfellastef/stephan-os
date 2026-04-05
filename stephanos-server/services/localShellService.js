@@ -3,6 +3,7 @@ import { getLocalShellConfig } from '../config/localShellConfig.js';
 
 const LOCAL_SHELL_SESSION = {
   lastPid: null,
+  lastLaunchIso: '',
 };
 
 function escapePowerShellSingleQuotedLiteral(value = '') {
@@ -17,76 +18,76 @@ function buildStdErrReason(prefix, details = '') {
   return `${prefix}: ${normalizedDetails}`;
 }
 
+function buildWindowFocusTypeDefinition() {
+  return [
+    'Add-Type -TypeDefinition @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public static class StephanosWindowOps {',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);',
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);',
+    '}',
+    '"@',
+  ].join('\n');
+}
+
 function buildOpenRepoPowerShellScript(repoPath) {
   const escapedPath = escapePowerShellSingleQuotedLiteral(repoPath);
   const setLocationCommand = `Set-Location -LiteralPath '${escapedPath}'`;
   const escapedSetLocation = escapePowerShellSingleQuotedLiteral(setLocationCommand);
 
   return [
-    "$ErrorActionPreference = 'Stop'",
-    "$repoPath = '" + escapedPath + "'",
-    "$launchCommand = '" + escapedSetLocation + "'",
+    '$ErrorActionPreference = "Stop"',
+    `$repoPath = '${escapedPath}'`,
+    `$launchCommand = '${escapedSetLocation}'`,
     "$proc = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoPath -ArgumentList @('-NoExit', '-Command', $launchCommand) -PassThru",
-    'Start-Sleep -Milliseconds 300',
-    '$wshell = New-Object -ComObject WScript.Shell',
-    '$focusApplied = [bool]$wshell.AppActivate($proc.Id)',
+    '$mainWindowHandle = [IntPtr]::Zero',
+    'for ($i = 0; $i -lt 20; $i++) {',
+    '  Start-Sleep -Milliseconds 150',
+    '  $targetProcess = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue',
+    '  if ($targetProcess -and $targetProcess.MainWindowHandle -ne 0) {',
+    '    $mainWindowHandle = [IntPtr]$targetProcess.MainWindowHandle',
+    '    break',
+    '  }',
+    '}',
+    buildWindowFocusTypeDefinition(),
+    '$focusApplied = $false',
     '$topmostApplied = $false',
-    '$mainWindowHandle = (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue).MainWindowHandle',
-    'if ($mainWindowHandle -ne 0) {',
-    "  Add-Type @'",
-    'using System;',
-    'using System.Runtime.InteropServices;',
-    'public static class StephanosWindowOps {',
-    '  [DllImport("user32.dll")]',
-    '  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);',
+    'if ($mainWindowHandle -ne [IntPtr]::Zero) {',
+    '  if ([StephanosWindowOps]::IsIconic($mainWindowHandle)) {',
+    '    [void][StephanosWindowOps]::ShowWindowAsync($mainWindowHandle, 9)',
+    '  }',
+    '  $focusApplied = [bool][StephanosWindowOps]::SetForegroundWindow($mainWindowHandle)',
+    '  $topmostApplied = $focusApplied',
     '}',
-    "'@",
-    '  [void][StephanosWindowOps]::SetWindowPos([IntPtr]$mainWindowHandle, [IntPtr](-1), 0, 0, 0, 0, 0x0003)',
-    '  $topmostApplied = $true',
-    '}',
-    '$result = @{',
-    '  ok = $true',
-    '  launched = $true',
-    '  pid = [int]$proc.Id',
-    '  focusApplied = $focusApplied',
-    '  topmostApplied = $topmostApplied',
-    '  reason = ""',
-    '}',
+    '$result = @{ ok = $true; launched = $true; pid = [int]$proc.Id; focusApplied = $focusApplied; topmostApplied = $topmostApplied; reason = "" }',
     '$result | ConvertTo-Json -Compress',
-  ].join('; ');
+  ].join('\n');
 }
 
 function buildFocusRepoPowerShellScript(pid) {
   return [
-    "$ErrorActionPreference = 'Stop'",
+    '$ErrorActionPreference = "Stop"',
     `$targetPid = ${Number(pid)}`,
     '$targetProcess = Get-Process -Id $targetPid -ErrorAction Stop',
-    '$wshell = New-Object -ComObject WScript.Shell',
-    '$focusApplied = [bool]$wshell.AppActivate($targetPid)',
+    '$mainWindowHandle = [IntPtr]$targetProcess.MainWindowHandle',
+    buildWindowFocusTypeDefinition(),
+    '$focusApplied = $false',
     '$topmostApplied = $false',
-    '$mainWindowHandle = $targetProcess.MainWindowHandle',
-    'if ($mainWindowHandle -ne 0) {',
-    "  Add-Type @'",
-    'using System;',
-    'using System.Runtime.InteropServices;',
-    'public static class StephanosWindowOps {',
-    '  [DllImport("user32.dll")]',
-    '  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);',
+    'if ($mainWindowHandle -ne [IntPtr]::Zero) {',
+    '  if ([StephanosWindowOps]::IsIconic($mainWindowHandle)) {',
+    '    [void][StephanosWindowOps]::ShowWindowAsync($mainWindowHandle, 9)',
+    '  }',
+    '  $focusApplied = [bool][StephanosWindowOps]::SetForegroundWindow($mainWindowHandle)',
+    '  $topmostApplied = $focusApplied',
+    '} else {',
+    '  $focusApplied = $false',
     '}',
-    "'@",
-    '  [void][StephanosWindowOps]::SetWindowPos([IntPtr]$mainWindowHandle, [IntPtr](-1), 0, 0, 0, 0, 0x0003)',
-    '  $topmostApplied = $true',
-    '}',
-    '$result = @{',
-    '  ok = $true',
-    '  focused = $focusApplied',
-    '  focusApplied = $focusApplied',
-    '  topmostApplied = $topmostApplied',
-    '  pid = [int]$targetPid',
-    '  reason = ""',
-    '}',
+    '$reason = if ($focusApplied) { "" } else { "window-handle-unavailable-or-foreground-denied" }',
+    '$result = @{ ok = ($focusApplied -eq $true); focused = $focusApplied; focusApplied = $focusApplied; topmostApplied = $topmostApplied; pid = [int]$targetPid; reason = $reason }',
     '$result | ConvertTo-Json -Compress',
-  ].join('; ');
+  ].join('\n');
 }
 
 function runPowerShellJsonScript(script, { spawnSyncImpl = spawnSync } = {}) {
@@ -163,6 +164,7 @@ export function launchRepoPowerShell({ env = process.env, platform = process.pla
 
   if (launchResult.ok && Number.isFinite(launchResult.pid)) {
     LOCAL_SHELL_SESSION.lastPid = launchResult.pid;
+    LOCAL_SHELL_SESSION.lastLaunchIso = new Date().toISOString();
   }
 
   return {
@@ -196,7 +198,7 @@ export function focusRepoPowerShell({ env = process.env, platform = process.plat
       focused: false,
       repoPath: config.repoPath,
       reason: 'no-known-powershell-session',
-      diagnostics: {},
+      diagnostics: { lastLaunchIso: LOCAL_SHELL_SESSION.lastLaunchIso || '' },
     };
   }
 
@@ -216,4 +218,5 @@ export function focusRepoPowerShell({ env = process.env, platform = process.plat
 
 export function resetLocalShellSession() {
   LOCAL_SHELL_SESSION.lastPid = null;
+  LOCAL_SHELL_SESSION.lastLaunchIso = '';
 }

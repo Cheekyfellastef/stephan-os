@@ -40,6 +40,7 @@ test('launchRepoPowerShell runs helper and captures pid/focus/topmost state on w
   assert.equal(calls[0].options.windowsHide, true);
   assert.match(calls[0].args[4], /Start-Process -FilePath 'powershell\.exe'/);
   assert.match(calls[0].args[4], /Set-Location -LiteralPath/);
+  assert.match(calls[0].args[4], /SetForegroundWindow/);
 });
 
 test('launchRepoPowerShell reports helper failure payload details', () => {
@@ -94,6 +95,7 @@ test('focusRepoPowerShell re-focuses last launched powershell process', () => {
     spawnSyncImpl(command, args) {
       assert.equal(command, 'powershell.exe');
       assert.match(args[4], /\$targetPid = 4242/);
+      assert.match(args[4], /SetForegroundWindow/);
       return {
         status: 0,
         stdout: JSON.stringify({ ok: true, focused: true, pid: 4242, focusApplied: true, topmostApplied: true }),

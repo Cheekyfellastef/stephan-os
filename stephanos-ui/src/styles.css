@@ -346,6 +346,15 @@ body {
   touch-action: manipulation;
 }
 
+.mission-console .panel-body[hidden] {
+  display: none;
+  height: 0;
+  max-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .mission-console-shell {
   display: flex;
   flex-direction: column;
@@ -2069,6 +2078,18 @@ pre {
 .power-shell-ops-button:hover {
   background: linear-gradient(180deg, #209086, #12635d);
   border-color: rgba(160, 245, 228, 0.65);
+}
+
+.power-shell-copy-success {
+  background: linear-gradient(180deg, #227854, #174e38);
+  border-color: rgba(133, 232, 177, 0.62);
+  color: #e9fff4;
+  box-shadow: 0 0 0 1px rgba(64, 140, 104, 0.35), 0 6px 20px rgba(15, 50, 35, 0.35);
+}
+
+.power-shell-copy-success:hover {
+  background: linear-gradient(180deg, #2b8f64, #1b6245);
+  border-color: rgba(169, 247, 202, 0.74);
 }
 
 .power-shell-output textarea {
