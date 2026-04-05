@@ -623,7 +623,19 @@
         "tileLinked": true
       },
       "timestamp": "2026-04-05T12:50:30.833Z"
+    },
+    {
+      "id": "evt_1775422104495_iornmq",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "groq",
+        "fallbackUsed": false,
+        "tileLinked": true
+      },
+      "timestamp": "2026-04-05T20:48:24.495Z"
     }
   ],
-  "updated_at": "2026-04-05T12:50:30.833Z"
+  "updated_at": "2026-04-05T20:48:24.495Z"
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-05T12:50:30.831Z",
+  "updatedAt": "2026-04-05T20:48:24.494Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -250,6 +250,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-05T12:50:30.831Z",
       "updatedAt": "2026-04-05T12:50:30.831Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775422104493-onspq-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who am i talking to",
+        "route": "assistant",
+        "requestedProvider": "groq",
+        "selectedProvider": "groq"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T20:48:24.493Z",
+      "updatedAt": "2026-04-05T20:48:24.493Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775422104493-onspq-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "You’re chatting with **Stephanos OS**, the command‑deck style mission console assistant.",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T20:48:24.493Z",
+      "updatedAt": "2026-04-05T20:48:24.493Z",
       "surface": "shared"
     }
   }
