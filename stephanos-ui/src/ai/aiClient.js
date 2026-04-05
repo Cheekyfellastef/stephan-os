@@ -194,6 +194,35 @@ export async function clearLocalProviderSecret(provider, runtimeConfig = getApiR
   return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
 }
 
+
+export async function getLocalRepoShellConfig(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/local/repo-shell-config', {}, runtimeConfig);
+  return {
+    ok: result.ok,
+    status: result.status,
+    repoPath: String(result.data?.repoPath || ''),
+    source: String(result.data?.source || ''),
+    windowsOnly: result.data?.windowsOnly !== false,
+    reason: String(result.data?.reason || result.data?.error || ''),
+  };
+}
+
+export async function openRepoPowerShell(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/local/open-repo-powershell', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  }, runtimeConfig);
+
+  return {
+    ok: result.ok,
+    status: result.status,
+    launched: result.data?.launched === true,
+    repoPath: String(result.data?.repoPath || ''),
+    reason: String(result.data?.reason || result.data?.error || ''),
+  };
+}
+
 export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestMemory('/api/memory', {}, runtimeConfig);
   return result.data?.items || [];

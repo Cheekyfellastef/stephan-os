@@ -2049,6 +2049,24 @@ pre {
   gap: 0.55rem;
 }
 
+
+.power-shell-local-shell {
+  border: 1px solid rgba(84, 132, 218, 0.45);
+  border-radius: 10px;
+  background: rgba(4, 11, 24, 0.9);
+  padding: 0.7rem;
+}
+
+.power-shell-ops-button {
+  background: linear-gradient(180deg, #1a6f6a, #0f4744);
+  border-color: rgba(119, 236, 214, 0.45);
+}
+
+.power-shell-ops-button:hover {
+  background: linear-gradient(180deg, #209086, #12635d);
+  border-color: rgba(160, 245, 228, 0.65);
+}
+
 .power-shell-output textarea {
   width: 100%;
   resize: vertical;
@@ -2067,7 +2085,8 @@ pre {
   }
 
   .power-shell-box-header .ghost-button,
-  .power-shell-controls button {
+  .power-shell-controls button,
+  .power-shell-local-shell .power-shell-ops-button {
     width: 100%;
     min-height: 44px;
   }

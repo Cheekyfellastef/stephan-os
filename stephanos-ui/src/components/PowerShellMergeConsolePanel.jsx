@@ -1,16 +1,21 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { getApiRuntimeConfig, getLocalRepoShellConfig, openRepoPowerShell } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
 import {
   applyCommitMessageProgress,
   applyPhaseCopyTransition,
   buildFullRitualPayload,
+  buildRepoCdCommand,
   buildRitualBox1Payload,
   buildRitualBox2Payload,
   buildRitualBox3Payload,
   createDefaultRitualPhaseState,
   createUnknownRitualTruthSnapshot,
+  isLocalShellLaunchAvailable,
+  resolveRitualRepoPath,
 } from '../state/powerShellMergeConsoleModel';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { DEFAULT_STEPHANOS_REPO_PATH } from '../../../shared/runtime/stephanosRepoShellConfig.mjs';
 import CollapsiblePanel from './CollapsiblePanel';
 
 function formatLabel(value) {
@@ -39,7 +44,7 @@ function phaseTone(value) {
 }
 
 export default function PowerShellMergeConsolePanel() {
-  const { uiLayout, togglePanel } = useAIStore();
+  const { uiLayout, togglePanel, runtimeStatusModel } = useAIStore();
   const safeUiLayout = uiLayout || {};
 
   const [commitMessage, setCommitMessage] = useState('');
@@ -47,12 +52,38 @@ export default function PowerShellMergeConsolePanel() {
   const [powerShellOutput, setPowerShellOutput] = useState('');
   const [showRawMode, setShowRawMode] = useState(false);
   const [feedback, setFeedback] = useState({ tone: 'neutral', message: '' });
+  const [repoPath, setRepoPath] = useState(DEFAULT_STEPHANOS_REPO_PATH);
 
   const truthSnapshot = useMemo(() => createUnknownRitualTruthSnapshot(), []);
   const box1Payload = useMemo(() => buildRitualBox1Payload(commitMessage), [commitMessage]);
   const box2Payload = useMemo(() => buildRitualBox2Payload(), []);
   const box3Payload = useMemo(() => buildRitualBox3Payload(), []);
   const fullPayload = useMemo(() => buildFullRitualPayload(commitMessage), [commitMessage]);
+  const localShellAvailable = useMemo(() => isLocalShellLaunchAvailable(runtimeStatusModel), [runtimeStatusModel]);
+  const cdCommand = useMemo(() => buildRepoCdCommand(repoPath), [repoPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateLocalRepoPath() {
+      const runtimeConfig = getApiRuntimeConfig();
+      try {
+        const result = await getLocalRepoShellConfig(runtimeConfig);
+        if (cancelled || !result.ok) {
+          return;
+        }
+        setRepoPath((current) => resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: current }));
+      } catch {
+        // Hosted/unavailable mode keeps default fallback path.
+      }
+    }
+
+    hydrateLocalRepoPath();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function setCopyFeedback(result, successMessage) {
     if (result.ok) {
@@ -92,6 +123,64 @@ export default function PowerShellMergeConsolePanel() {
   async function handleCopyPowerShellOutput() {
     const result = await writeTextToClipboard(powerShellOutput);
     setCopyFeedback(result, 'Copied PowerShell output transcript.');
+  }
+
+  async function handleCopyRepoPath() {
+    const result = await writeTextToClipboard(repoPath);
+    setCopyFeedback(result, 'Copied repo path.');
+  }
+
+  async function handleCopyCdCommand() {
+    const result = await writeTextToClipboard(cdCommand);
+    setCopyFeedback(result, 'Copied PowerShell cd command.');
+  }
+
+  async function handleOpenRepoPowerShell() {
+    const runtimeTruth = runtimeStatusModel?.finalRouteTruth || {};
+    console.info('[POWER SHELL MERGE CONSOLE] open repo PowerShell requested', {
+      sessionKind: runtimeTruth.sessionKind || 'unknown',
+      routeKind: runtimeTruth.routeKind || 'unknown',
+      backendReachable: runtimeTruth.backendReachable === true,
+      localShellAvailable,
+    });
+
+    if (!localShellAvailable) {
+      setFeedback({
+        tone: 'warning',
+        message: 'Local shell launch is only available from the local desktop runtime. Use Copy Repo Path or Copy cd Command.',
+      });
+      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch unavailable in current runtime mode');
+      return;
+    }
+
+    try {
+      const runtimeConfig = getApiRuntimeConfig();
+      const result = await openRepoPowerShell(runtimeConfig);
+      const resolvedRepoPath = resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: repoPath });
+      setRepoPath(resolvedRepoPath);
+
+      if (result.ok && result.launched) {
+        setFeedback({ tone: 'success', message: 'Opened PowerShell in repo folder.' });
+        console.info('[POWER SHELL MERGE CONSOLE] local shell launched', { repoPath: resolvedRepoPath });
+        return;
+      }
+
+      setFeedback({
+        tone: 'warning',
+        message: result.reason === 'local-desktop-runtime-required'
+          ? 'Local shell launch unavailable in hosted mode.'
+          : `Failed to open local shell: ${result.reason || 'unknown reason'}.`,
+      });
+      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch failed', {
+        reason: result.reason || 'unknown',
+        repoPath: resolvedRepoPath,
+      });
+    } catch (error) {
+      setFeedback({ tone: 'warning', message: 'Local shell launch unavailable in hosted mode.' });
+      console.warn('[POWER SHELL MERGE CONSOLE] local shell launch request error', {
+        reason: error?.message || 'request-failed',
+      });
+    }
   }
 
   function handleCommitMessageChange(nextValue) {
@@ -146,6 +235,22 @@ export default function PowerShellMergeConsolePanel() {
           <li><span>Box 2 · Dist Conflict Resolution + Rebuild</span><span className={`health-badge ${phaseTone(phaseState.box2)}`}>{phaseState.box2}</span></li>
           <li><span>Box 3 · Finalize + Push</span><span className={`health-badge ${phaseTone(phaseState.box3)}`}>{phaseState.box3}</span></li>
         </ul>
+      </section>
+
+      <section className="power-shell-local-shell" aria-label="Local shell actions">
+        <div className="power-shell-box-header">
+          <h3>Local Shell</h3>
+          <span className={`health-badge ${localShellAvailable ? 'ready' : 'warning'}`}>
+            {localShellAvailable ? 'local desktop' : 'hosted / fallback'}
+          </span>
+        </div>
+        <p className="power-shell-note">Repo path source of truth: <code>{repoPath}</code></p>
+        <div className="power-shell-controls">
+          <button type="button" className="power-shell-ops-button" onClick={handleOpenRepoPowerShell}>Open PowerShell in Repo Folder</button>
+          <button type="button" className="ghost-button" onClick={handleCopyRepoPath}>Copy Repo Path</button>
+          <button type="button" className="ghost-button" onClick={handleCopyCdCommand}>Copy cd Command</button>
+        </div>
+        {!localShellAvailable ? <p className="power-shell-note">Local shell launch is only available from the local desktop runtime.</p> : null}
       </section>
 
       <label className="power-shell-commit-field">

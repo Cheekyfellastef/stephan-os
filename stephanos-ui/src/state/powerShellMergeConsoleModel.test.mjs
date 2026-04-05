@@ -6,9 +6,12 @@ import {
   buildFullRitualPayload,
   buildRitualBox1Payload,
   buildRitualBox2Payload,
+  buildRepoCdCommand,
   buildRitualBox3Payload,
   createDefaultRitualPhaseState,
   createUnknownRitualTruthSnapshot,
+  isLocalShellLaunchAvailable,
+  resolveRitualRepoPath,
 } from './powerShellMergeConsoleModel.js';
 
 test('buildRitualBox1Payload injects operator commit message', () => {
@@ -67,4 +70,19 @@ test('unknown truth snapshot defaults to unknown labels', () => {
   assert.equal(snapshot.conflictRisk, 'unknown');
   assert.equal(snapshot.lastBuildStatus, 'unknown');
   assert.equal(snapshot.lastVerifyStatus, 'unknown');
+});
+
+
+test('resolveRitualRepoPath prefers configured value and falls back truthfully', () => {
+  assert.equal(resolveRitualRepoPath({ configuredRepoPath: 'D:\Repos\stephan-os', fallbackRepoPath: 'C:\Default' }), 'D:\Repos\stephan-os');
+  assert.equal(resolveRitualRepoPath({ configuredRepoPath: '  ', fallbackRepoPath: 'C:\Default' }), 'C:\Default');
+});
+
+test('buildRepoCdCommand quotes repo path for PowerShell copy helper', () => {
+  assert.equal(buildRepoCdCommand('C:\Users\Stephan Callear\Documents\GitHub\stephan-os'), 'cd "C:\Users\Stephan Callear\Documents\GitHub\stephan-os"');
+});
+
+test('isLocalShellLaunchAvailable only allows local-desktop canonical runtime', () => {
+  assert.equal(isLocalShellLaunchAvailable({ finalRouteTruth: { sessionKind: 'local-desktop', routeKind: 'local-desktop' } }), true);
+  assert.equal(isLocalShellLaunchAvailable({ finalRouteTruth: { sessionKind: 'hosted-web', routeKind: 'cloud' } }), false);
 });
