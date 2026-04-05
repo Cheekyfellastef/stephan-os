@@ -256,6 +256,13 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       : (Array.isArray(requestTrace.retrieved_sources) ? requestTrace.retrieved_sources : []),
     retrieval_query: executionMetadata.retrieval_query || requestTrace.retrieval_query || '',
     retrieval_index_status: executionMetadata.retrieval_index_status || requestTrace.retrieval_index_status || 'missing',
+    memory_eligible: Boolean(executionMetadata.memory_eligible ?? requestTrace.memory_eligible ?? false),
+    memory_promoted: Boolean(executionMetadata.memory_promoted ?? requestTrace.memory_promoted ?? false),
+    memory_reason: executionMetadata.memory_reason || requestTrace.memory_reason || 'No memory candidate submitted for adjudication.',
+    memory_source_type: executionMetadata.memory_source_type || requestTrace.memory_source_type || 'operator',
+    memory_source_ref: executionMetadata.memory_source_ref || requestTrace.memory_source_ref || '',
+    memory_confidence: executionMetadata.memory_confidence || requestTrace.memory_confidence || 'low',
+    memory_class: executionMetadata.memory_class || requestTrace.memory_class || 'durable',
   };
 }
 
@@ -276,16 +283,17 @@ function buildExecutionSummary(executionMetadata) {
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
   const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}. Policy ${executionMetadata.ai_policy_mode}: ${executionMetadata.ai_policy_reason}`;
   const retrievalSuffix = ` Retrieval ${executionMetadata.retrieval_mode}/${executionMetadata.retrieval_index_status}; eligible=${executionMetadata.retrieval_eligible}; used=${executionMetadata.retrieval_used}; chunks=${executionMetadata.retrieved_chunk_count}.`;
+  const memorySuffix = ` Memory class=${executionMetadata.memory_class}; eligible=${executionMetadata.memory_eligible}; promoted=${executionMetadata.memory_promoted}; reason=${executionMetadata.memory_reason}.`;
 
   if (executionMetadata.fallback_used) {
-    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}${retrievalSuffix}`;
+    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}${retrievalSuffix}${memorySuffix}`;
   }
 
   if (executionMetadata.actual_provider_used === 'mock') {
-    return `${summaryPrefix}${modelSuffix}. Mock answered directly.${freshnessSuffix}${retrievalSuffix}`;
+    return `${summaryPrefix}${modelSuffix}. Mock answered directly.${freshnessSuffix}${retrievalSuffix}${memorySuffix}`;
   }
 
-  return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}${retrievalSuffix}`;
+  return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}${retrievalSuffix}${memorySuffix}`;
 }
 
 
@@ -1203,6 +1211,13 @@ export function useAIConsole() {
         retrieved_sources: executionMetadata.retrieved_sources,
         retrieval_query: executionMetadata.retrieval_query,
         retrieval_index_status: executionMetadata.retrieval_index_status,
+        memory_eligible: executionMetadata.memory_eligible,
+        memory_promoted: executionMetadata.memory_promoted,
+        memory_reason: executionMetadata.memory_reason,
+        memory_source_type: executionMetadata.memory_source_type,
+        memory_source_ref: executionMetadata.memory_source_ref,
+        memory_confidence: executionMetadata.memory_confidence,
+        memory_class: executionMetadata.memory_class,
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),

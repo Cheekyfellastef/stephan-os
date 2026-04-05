@@ -213,6 +213,13 @@ export default function StatusPanel() {
       lastRetrievedSources: Array.isArray(lastExecutionMetadata?.retrieved_sources)
         ? lastExecutionMetadata.retrieved_sources.map((source) => `${source.sourceType || source.sourceId || 'source'}:${source.path || 'n/a'}#${source.chunkIndex ?? 'n/a'}`)
         : [],
+      lastMemoryEligible: String(lastExecutionMetadata?.memory_eligible ?? 'n/a'),
+      lastMemoryPromoted: String(lastExecutionMetadata?.memory_promoted ?? 'n/a'),
+      lastMemoryReason: lastExecutionMetadata?.memory_reason || 'n/a',
+      lastMemorySourceType: lastExecutionMetadata?.memory_source_type || 'n/a',
+      lastMemorySourceRef: lastExecutionMetadata?.memory_source_ref || 'n/a',
+      lastMemoryConfidence: lastExecutionMetadata?.memory_confidence || 'n/a',
+      lastMemoryClass: lastExecutionMetadata?.memory_class || 'durable',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
@@ -325,6 +332,10 @@ export default function StatusPanel() {
         <li>[AI CONTINUITY] State: {continuitySnapshot.aiContinuityState}</li>
         <li>[AI CONTINUITY] Mode: {continuitySnapshot.aiContinuityMode}</li>
         <li>[AI CONTINUITY] Request Mode: {continuityMode}</li>
+        <li>[MEMORY ADJUDICATION] Eligible: {String(lastExecutionMetadata?.memory_eligible ?? 'n/a')}</li>
+        <li>[MEMORY ADJUDICATION] Promoted: {String(lastExecutionMetadata?.memory_promoted ?? 'n/a')}</li>
+        <li>[MEMORY ADJUDICATION] Reason: {lastExecutionMetadata?.memory_reason || 'n/a'}</li>
+        <li>[MEMORY ADJUDICATION] Source: {lastExecutionMetadata?.memory_source_type || 'n/a'} · {lastExecutionMetadata?.memory_source_ref || 'n/a'}</li>
         <li>[EXECUTION LOOP] Last Event: {continuitySnapshot.lastContinuityEventType} @ {continuitySnapshot.lastContinuityEventAt || 'n/a'}</li>
         <li>Guardrails Errors: {guardrails.summary?.errors ?? 0}</li>
         <li>Guardrails Warnings: {guardrails.summary?.warnings ?? 0}</li>

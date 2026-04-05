@@ -13,6 +13,7 @@ import { resolveProviderExecutionTruth } from '../services/providerExecutionTrut
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
 import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
+import { adjudicateMemoryCandidate } from '../services/memory/memoryAdjudicator.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -181,6 +182,23 @@ function persistAiContinuityArtifacts({
   }
 }
 
+function resolveMemoryCandidate({ requestBody = {}, runtimeContext = {}, route = '', requestId = '' } = {}) {
+  const bodyCandidate = requestBody.memoryCandidate;
+  const contextCandidate = runtimeContext.memoryCandidate;
+  const sourceCandidate = bodyCandidate && typeof bodyCandidate === 'object'
+    ? bodyCandidate
+    : (contextCandidate && typeof contextCandidate === 'object' ? contextCandidate : null);
+
+  if (!sourceCandidate) {
+    return null;
+  }
+
+  return {
+    ...sourceCandidate,
+    sourceRef: sourceCandidate.sourceRef || `ai-chat:${requestId || 'no-request-id'}:${route || 'assistant'}`,
+  };
+}
+
 
 router.post('/providers/health', async (req, res) => {
   const { provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
@@ -281,6 +299,13 @@ router.post('/chat', async (req, res) => {
       prompt,
       freshnessContext,
     });
+    const memoryCandidate = resolveMemoryCandidate({
+      requestBody: req.body || {},
+      runtimeContext: normalizedRuntimeContext,
+      route: decision.route,
+      requestId,
+    });
+    const memoryTruth = adjudicateMemoryCandidate(memoryCandidate);
     const memoryAwareSystemPrompt = [
       'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
@@ -375,6 +400,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       retrieved_sources: retrieval.truth.retrievedSources,
       retrieval_query: retrieval.truth.retrievalQuery,
       retrieval_index_status: retrieval.truth.retrievalIndexStatus,
+      memory_eligible: memoryTruth.memoryEligible,
+      memory_promoted: memoryTruth.memoryPromoted,
+      memory_reason: memoryTruth.memoryReason,
+      memory_source_type: memoryTruth.memorySourceType,
+      memory_source_ref: memoryTruth.memorySourceRef,
+      memory_confidence: memoryTruth.memoryConfidence,
+      memory_class: memoryTruth.memoryClass,
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -429,6 +461,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       retrieved_sources: executionMetadata.retrieved_sources,
       retrieval_query: executionMetadata.retrieval_query,
       retrieval_index_status: executionMetadata.retrieval_index_status,
+      memory_eligible: executionMetadata.memory_eligible,
+      memory_promoted: executionMetadata.memory_promoted,
+      memory_reason: executionMetadata.memory_reason,
+      memory_source_type: executionMetadata.memory_source_type,
+      memory_source_ref: executionMetadata.memory_source_ref,
+      memory_confidence: executionMetadata.memory_confidence,
+      memory_class: executionMetadata.memory_class,
       provider_resolution: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
