@@ -16,6 +16,7 @@ const OLLAMA_MODEL_POLICY = Object.freeze({
   deepReasoning: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
+const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -489,6 +490,40 @@ export function resolveOllamaConfig(config = {}) {
   };
 }
 
+function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
+  const normalizedModel = String(model || '').trim();
+  const overrides = resolvedConfig?.perModelTimeoutOverrides && typeof resolvedConfig.perModelTimeoutOverrides === 'object'
+    ? resolvedConfig.perModelTimeoutOverrides
+    : {};
+  const overrideTimeout = Number(normalizedModel ? overrides[normalizedModel] : NaN);
+  if (Number.isFinite(overrideTimeout) && overrideTimeout >= 1000) {
+    return {
+      timeoutMs: Math.max(1000, overrideTimeout),
+      timeoutSource: 'model-override',
+      timeoutModel: normalizedModel,
+    };
+  }
+
+  const defaultTimeout = Number(
+    resolvedConfig?.defaultOllamaTimeoutMs
+    ?? resolvedConfig?.timeoutMs
+    ?? SAFE_OLLAMA_TIMEOUT_MS,
+  );
+  if (Number.isFinite(defaultTimeout) && defaultTimeout >= 1000) {
+    return {
+      timeoutMs: Math.max(1000, defaultTimeout),
+      timeoutSource: 'default',
+      timeoutModel: normalizedModel,
+    };
+  }
+
+  return {
+    timeoutMs: SAFE_OLLAMA_TIMEOUT_MS,
+    timeoutSource: 'safe-fallback',
+    timeoutModel: normalizedModel,
+  };
+}
+
 async function fetchOllamaTags(resolved) {
   const response = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
   const raw = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
@@ -613,6 +648,7 @@ export async function runOllamaProvider(request, config = {}) {
     const availableModels = modelSelection.availableModels;
     const requestedModel = modelSelection.requestedModel;
     const modelToUse = modelSelection.selectedModel;
+    const timeoutPolicy = resolveTimeoutForModel(resolved, modelToUse);
 
     console.log('[BACKEND LIVE] Ollama provider request starting', {
       baseURL: resolved.baseURL,
@@ -624,6 +660,8 @@ export async function runOllamaProvider(request, config = {}) {
       escalationActive: modelSelection.escalatedToDeepModel,
       fallbackModelUsed: modelSelection.fallbackModelUsed,
       availableModels,
+      timeoutMs: timeoutPolicy.timeoutMs,
+      timeoutSource: timeoutPolicy.timeoutSource,
     });
 
     const response = await fetchWithTimeout(resolved.endpoint, {
@@ -637,7 +675,7 @@ export async function runOllamaProvider(request, config = {}) {
           ...request.messages,
         ],
       }),
-    }, resolved.timeoutMs);
+    }, timeoutPolicy.timeoutMs);
 
     const raw = await response.json().catch(() => ({}));
 
@@ -698,6 +736,11 @@ export async function runOllamaProvider(request, config = {}) {
           fallbackModel: modelSelection.fallbackModel,
           fallbackModelUsed: modelSelection.fallbackModelUsed,
           fallbackReason: modelSelection.fallbackReason,
+          timeoutMs: timeoutPolicy.timeoutMs,
+          timeoutSource: timeoutPolicy.timeoutSource,
+          timeoutModel: timeoutPolicy.timeoutModel,
+          defaultTimeoutMs: Number(resolved.defaultOllamaTimeoutMs || resolved.timeoutMs || SAFE_OLLAMA_TIMEOUT_MS),
+          perModelTimeoutOverrides: resolved.perModelTimeoutOverrides || {},
         },
       },
     };

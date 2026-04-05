@@ -203,6 +203,9 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
       lastOllamaFallbackModel: 'gpt-oss:20b',
       lastOllamaFallbackModelUsed: 'false',
       lastOllamaFallbackReason: 'n/a',
+      lastOllamaTimeoutMs: '22000',
+      lastOllamaTimeoutSource: 'model-override',
+      lastOllamaTimeoutModel: 'qwen:32b',
     },
     routeTruthView: {},
     runtimeSessionTruth: {},
@@ -220,6 +223,8 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
   assert.match(snapshot, /Last Ollama Selected Model: qwen:32b/);
   assert.match(snapshot, /Last Ollama Escalation Active: true/);
   assert.match(snapshot, /Last Ollama Fallback Model: gpt-oss:20b/);
+  assert.match(snapshot, /Last Ollama Timeout \(ms\): 22000/);
+  assert.match(snapshot, /Last Ollama Timeout Source: model-override/);
 });
 
 

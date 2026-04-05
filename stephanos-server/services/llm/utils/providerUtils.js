@@ -77,9 +77,29 @@ function sanitizeInboundProviderConfig(provider, config = {}) {
   return draft;
 }
 
+function normalizePerModelTimeoutOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([model, timeoutValue]) => {
+        const normalizedModel = String(model || '').trim();
+        const normalizedTimeout = Number(timeoutValue);
+        if (!normalizedModel || !Number.isFinite(normalizedTimeout) || normalizedTimeout < 1000) {
+          return null;
+        }
+        return [normalizedModel, Math.max(1000, normalizedTimeout)];
+      })
+      .filter(Boolean),
+  );
+}
+
 export function sanitizeProviderConfig(provider, config = {}) {
   const defaults = getEnvBackedDefaults(provider);
-  const merged = { ...defaults, ...sanitizeInboundProviderConfig(provider, config) };
+  const inbound = sanitizeInboundProviderConfig(provider, config);
+  const merged = { ...defaults, ...inbound };
 
   if ('apiKey' in merged) merged.apiKey = String(merged.apiKey || '');
   if ('baseURL' in merged) merged.baseURL = String(merged.baseURL || '').trim();
@@ -97,6 +117,20 @@ export function sanitizeProviderConfig(provider, config = {}) {
   if ('latencyMs' in merged) merged.latencyMs = Math.max(0, Number(merged.latencyMs) || defaults.latencyMs || 0);
   if ('failRate' in merged) merged.failRate = Math.max(0, Math.min(1, Number(merged.failRate) || 0));
   if ('timeoutMs' in merged) merged.timeoutMs = Math.max(1000, Number(merged.timeoutMs) || defaults.timeoutMs || 8000);
+  if (provider === 'ollama') {
+    const hasExplicitDefaultTimeout = Object.prototype.hasOwnProperty.call(inbound, 'defaultOllamaTimeoutMs');
+    const migratedDefaultTimeout = Math.max(
+      1000,
+      Number(
+        hasExplicitDefaultTimeout
+          ? inbound.defaultOllamaTimeoutMs
+          : (inbound.timeoutMs ?? merged.timeoutMs ?? defaults.defaultOllamaTimeoutMs ?? defaults.timeoutMs ?? 8000),
+      ) || 8000,
+    );
+    merged.defaultOllamaTimeoutMs = migratedDefaultTimeout;
+    merged.timeoutMs = migratedDefaultTimeout;
+    merged.perModelTimeoutOverrides = normalizePerModelTimeoutOverrides(merged.perModelTimeoutOverrides);
+  }
   if ('enabled' in merged) merged.enabled = Boolean(merged.enabled);
   if ('mode' in merged && !['echo', 'canned', 'scenario'].includes(merged.mode)) merged.mode = defaults.mode;
 

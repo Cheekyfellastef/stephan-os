@@ -35,7 +35,13 @@ function createStore(overrides = {}) {
       mock: { model: 'stephanos-mock-v1', mode: 'echo', latencyMs: 0, failRate: 0 },
       groq: { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1', apiKey: '' },
       gemini: { model: 'gemini-2.5-flash', baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', apiKey: '' },
-      ollama: { baseURL: 'http://localhost:11434', timeoutMs: 8000, model: 'gpt-oss:20b' },
+      ollama: {
+        baseURL: 'http://localhost:11434',
+        timeoutMs: 8000,
+        defaultOllamaTimeoutMs: 8000,
+        perModelTimeoutOverrides: { 'qwen:32b': 20000 },
+        model: 'gpt-oss:20b',
+      },
       openrouter: { enabled: false, model: 'openai/gpt-oss-20b', baseURL: 'https://openrouter.ai/api/v1', apiKey: '' },
     }[providerKey]),
     updateDraftProviderConfig: () => {},
@@ -89,6 +95,22 @@ test('ProviderToggle keeps Home PC Host or IP input editable', async () => {
   assert.match(hostInputMarkup, /type=\"text\"/i);
   assert.doesNotMatch(hostInputMarkup, /readonly/i);
   assert.doesNotMatch(hostInputMarkup, /disabled/i);
+});
+
+test('ProviderToggle shows default Ollama timeout and optional per-model override controls', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore({
+    provider: 'ollama',
+  });
+  const rendered = renderProviderToggle();
+
+  assert.match(rendered, /Default Ollama Timeout \(ms\)/);
+  assert.match(rendered, /Optional Model Timeout Overrides/);
+  assert.match(rendered, /qwen:32b/);
 });
 
 test('ProviderToggle surfaces manual home-node guidance for hosted-web manual-needed state', async () => {

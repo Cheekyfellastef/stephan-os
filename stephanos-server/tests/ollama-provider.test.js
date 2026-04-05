@@ -19,6 +19,14 @@ test('resolveOllamaConfig ignores blank URL values and keeps localhost default',
   assert.equal(missing.model, 'qwen:14b');
 });
 
+test('resolveOllamaConfig migrates legacy timeoutMs into default Ollama timeout policy', () => {
+  const resolved = resolveOllamaConfig({ timeoutMs: 15500 });
+
+  assert.equal(resolved.defaultOllamaTimeoutMs, 15500);
+  assert.equal(resolved.timeoutMs, 15500);
+  assert.deepEqual(resolved.perModelTimeoutOverrides, {});
+});
+
 test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available', async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
@@ -102,6 +110,78 @@ test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable',
     assert.equal(result.diagnostics.ollama.selectedModel, 'gpt-oss:20b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, true);
     assert.match(result.diagnostics.ollama.fallbackReason, /unavailable/i);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider uses per-model timeout override for qwen:32b', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:32b', message: { content: 'deep timeout policy ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Do deep root cause reasoning and multi-step architecture analysis.' }],
+    }, {
+      baseURL: 'http://localhost:11434',
+      model: 'qwen:14b',
+      defaultOllamaTimeoutMs: 8000,
+      perModelTimeoutOverrides: { 'qwen:32b': 22000 },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
+    assert.equal(result.diagnostics.ollama.timeoutMs, 22000);
+    assert.equal(result.diagnostics.ollama.timeoutSource, 'model-override');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider uses default timeout when selected model has no override', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:14b', message: { content: 'default timeout policy ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Summarize this local module quickly.' }],
+    }, {
+      baseURL: 'http://localhost:11434',
+      model: 'qwen:14b',
+      defaultOllamaTimeoutMs: 9000,
+      perModelTimeoutOverrides: { 'qwen:32b': 22000 },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.timeoutMs, 9000);
+    assert.equal(result.diagnostics.ollama.timeoutSource, 'default');
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }

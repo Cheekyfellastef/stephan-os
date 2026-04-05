@@ -36,7 +36,7 @@ export const NON_SECRET_PROVIDER_FIELDS = {
   mock: ['enabled', 'latencyMs', 'failRate', 'mode', 'model'],
   groq: ['baseURL', 'model', 'freshWebModel', 'freshWebModelCandidates'],
   gemini: ['baseURL', 'model'],
-  ollama: ['baseURL', 'model', 'timeoutMs'],
+  ollama: ['baseURL', 'model', 'timeoutMs', 'defaultOllamaTimeoutMs', 'perModelTimeoutOverrides'],
   openrouter: ['baseURL', 'model', 'enabled'],
 };
 
@@ -53,10 +53,30 @@ export function sanitizeConfigForStorage(providerConfigs = {}) {
 
 export function normalizeProviderDraft(providerKey, draftConfig = {}) {
   const defaults = PROVIDER_DEFINITIONS[providerKey]?.defaults || {};
-  return {
+  const sourceDraft = draftConfig && typeof draftConfig === 'object' ? draftConfig : {};
+  const normalizedDraft = {
     ...defaults,
-    ...draftConfig,
-    apiKey: draftConfig.apiKey || '',
+    ...sourceDraft,
+  };
+  if (providerKey === 'ollama') {
+    const hasExplicitDefaultTimeout = Object.prototype.hasOwnProperty.call(sourceDraft, 'defaultOllamaTimeoutMs');
+    const migratedDefaultTimeout = Number(
+      hasExplicitDefaultTimeout
+        ? sourceDraft.defaultOllamaTimeoutMs
+        : (sourceDraft.timeoutMs ?? normalizedDraft.timeoutMs),
+    );
+    normalizedDraft.defaultOllamaTimeoutMs = Number.isFinite(migratedDefaultTimeout) && migratedDefaultTimeout > 0
+      ? migratedDefaultTimeout
+      : Number(defaults.defaultOllamaTimeoutMs ?? defaults.timeoutMs ?? 8000);
+    normalizedDraft.timeoutMs = normalizedDraft.defaultOllamaTimeoutMs;
+    normalizedDraft.perModelTimeoutOverrides = normalizedDraft.perModelTimeoutOverrides
+      && typeof normalizedDraft.perModelTimeoutOverrides === 'object'
+      ? { ...normalizedDraft.perModelTimeoutOverrides }
+      : {};
+  }
+  return {
+    ...normalizedDraft,
+    apiKey: sourceDraft.apiKey || '',
   };
 }
 
@@ -79,6 +99,24 @@ export function validateProviderDraft(providerKey, draftConfig = {}) {
 
   if (['groq', 'gemini', 'ollama', 'openrouter'].includes(providerKey) && !String(draft.model || '').trim()) {
     errors.model = 'Model is required.';
+  }
+
+  if (providerKey === 'ollama') {
+    const defaultTimeout = Number(draft.defaultOllamaTimeoutMs ?? draft.timeoutMs);
+    if (!Number.isFinite(defaultTimeout) || defaultTimeout < 1000) {
+      errors.defaultOllamaTimeoutMs = 'Default timeout must be at least 1000ms.';
+    }
+
+    const overrides = draft.perModelTimeoutOverrides && typeof draft.perModelTimeoutOverrides === 'object'
+      ? draft.perModelTimeoutOverrides
+      : {};
+    for (const [model, timeoutValue] of Object.entries(overrides)) {
+      if (timeoutValue == null || timeoutValue === '') continue;
+      const timeoutMs = Number(timeoutValue);
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) {
+        errors[`perModelTimeoutOverrides.${model}`] = `${model} override must be at least 1000ms.`;
+      }
+    }
   }
 
   return { isValid: Object.keys(errors).length === 0, errors };
