@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getApiRuntimeConfig, getLocalRepoShellConfig, openRepoPowerShell } from '../ai/aiClient';
+import { focusRepoPowerShell, getApiRuntimeConfig, getLocalRepoShellConfig, openRepoPowerShell } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
 import {
   applyCommitMessageProgress,
@@ -53,6 +53,7 @@ export default function PowerShellMergeConsolePanel() {
   const [showRawMode, setShowRawMode] = useState(false);
   const [feedback, setFeedback] = useState({ tone: 'neutral', message: '' });
   const [repoPath, setRepoPath] = useState(DEFAULT_STEPHANOS_REPO_PATH);
+  const [lastKnownPowerShellPid, setLastKnownPowerShellPid] = useState(null);
 
   const truthSnapshot = useMemo(() => createUnknownRitualTruthSnapshot(), []);
   const box1Payload = useMemo(() => buildRitualBox1Payload(commitMessage), [commitMessage]);
@@ -137,9 +138,10 @@ export default function PowerShellMergeConsolePanel() {
 
   async function handleOpenRepoPowerShell() {
     const runtimeTruth = runtimeStatusModel?.finalRouteTruth || {};
+    const routeKind = runtimeTruth.routeKind || 'unknown';
     console.info('[POWER SHELL MERGE CONSOLE] open repo PowerShell requested', {
       sessionKind: runtimeTruth.sessionKind || 'unknown',
-      routeKind: runtimeTruth.routeKind || 'unknown',
+      routeKind,
       backendReachable: runtimeTruth.backendReachable === true,
       localShellAvailable,
     });
@@ -155,13 +157,24 @@ export default function PowerShellMergeConsolePanel() {
 
     try {
       const runtimeConfig = getApiRuntimeConfig();
+      console.info('[POWER SHELL MERGE CONSOLE] open repo PowerShell api request start', {
+        routeKind,
+        runtimeTarget: runtimeConfig.baseUrl || 'window-origin',
+      });
       const result = await openRepoPowerShell(runtimeConfig);
       const resolvedRepoPath = resolveRitualRepoPath({ configuredRepoPath: result.repoPath, fallbackRepoPath: repoPath });
       setRepoPath(resolvedRepoPath);
+      setLastKnownPowerShellPid(result.pid || null);
 
       if (result.ok && result.launched) {
-        setFeedback({ tone: 'success', message: 'Opened PowerShell in repo folder.' });
-        console.info('[POWER SHELL MERGE CONSOLE] local shell launched', { repoPath: resolvedRepoPath });
+        const focusSummary = result.topmostApplied ? ' Brought to front and pinned on top.' : (result.focusApplied ? ' Brought to front.' : '');
+        setFeedback({ tone: 'success', message: `Opened PowerShell in repo folder.${focusSummary}` });
+        console.info('[POWER SHELL MERGE CONSOLE] local shell launched', {
+          repoPath: resolvedRepoPath,
+          pid: result.pid || null,
+          focusApplied: result.focusApplied,
+          topmostApplied: result.topmostApplied,
+        });
         return;
       }
 
@@ -169,15 +182,73 @@ export default function PowerShellMergeConsolePanel() {
         tone: 'warning',
         message: result.reason === 'local-desktop-runtime-required'
           ? 'Local shell launch unavailable in hosted mode.'
-          : `Failed to open local shell: ${result.reason || 'unknown reason'}.`,
+          : `Could not open PowerShell: ${result.reason || 'unknown reason'}.`,
       });
       console.warn('[POWER SHELL MERGE CONSOLE] local shell launch failed', {
         reason: result.reason || 'unknown',
         repoPath: resolvedRepoPath,
+        routeKind,
+        status: result.status,
       });
     } catch (error) {
-      setFeedback({ tone: 'warning', message: 'Local shell launch unavailable in hosted mode.' });
+      setFeedback({ tone: 'warning', message: `Could not open PowerShell: ${error?.message || 'backend request failed'}.` });
       console.warn('[POWER SHELL MERGE CONSOLE] local shell launch request error', {
+        reason: error?.message || 'request-failed',
+        routeKind,
+      });
+    }
+  }
+
+  async function handleFocusRepoPowerShell() {
+    const runtimeTruth = runtimeStatusModel?.finalRouteTruth || {};
+    const routeKind = runtimeTruth.routeKind || 'unknown';
+    console.info('[POWER SHELL MERGE CONSOLE] focus repo PowerShell requested', {
+      sessionKind: runtimeTruth.sessionKind || 'unknown',
+      routeKind,
+      backendReachable: runtimeTruth.backendReachable === true,
+      localShellAvailable,
+      lastKnownPowerShellPid,
+    });
+
+    if (!localShellAvailable) {
+      setFeedback({
+        tone: 'warning',
+        message: 'Local shell launch is only available from the local desktop runtime.',
+      });
+      return;
+    }
+
+    try {
+      const runtimeConfig = getApiRuntimeConfig();
+      console.info('[POWER SHELL MERGE CONSOLE] focus repo PowerShell api request start', {
+        runtimeTarget: runtimeConfig.baseUrl || 'window-origin',
+      });
+      const result = await focusRepoPowerShell(runtimeConfig);
+      if (result.ok && result.focused) {
+        setFeedback({
+          tone: 'success',
+          message: result.topmostApplied
+            ? 'Focused PowerShell and kept it on top.'
+            : 'Focused PowerShell window.',
+        });
+        setLastKnownPowerShellPid(result.pid || null);
+        return;
+      }
+
+      setFeedback({
+        tone: 'warning',
+        message: result.reason === 'no-known-powershell-session'
+          ? 'Could not focus PowerShell: no launched shell is known yet. Open PowerShell first.'
+          : `Could not focus PowerShell: ${result.reason || 'unknown reason'}.`,
+      });
+      console.warn('[POWER SHELL MERGE CONSOLE] focus repo PowerShell failed', {
+        reason: result.reason || 'unknown',
+        status: result.status,
+        pid: result.pid,
+      });
+    } catch (error) {
+      setFeedback({ tone: 'warning', message: `Could not focus PowerShell: ${error?.message || 'backend request failed'}.` });
+      console.warn('[POWER SHELL MERGE CONSOLE] focus repo PowerShell request error', {
         reason: error?.message || 'request-failed',
       });
     }
@@ -247,6 +318,7 @@ export default function PowerShellMergeConsolePanel() {
         <p className="power-shell-note">Repo path source of truth: <code>{repoPath}</code></p>
         <div className="power-shell-controls">
           <button type="button" className="power-shell-ops-button" onClick={handleOpenRepoPowerShell}>Open PowerShell in Repo Folder</button>
+          <button type="button" className="power-shell-ops-button" onClick={handleFocusRepoPowerShell}>Focus PowerShell</button>
           <button type="button" className="ghost-button" onClick={handleCopyRepoPath}>Copy Repo Path</button>
           <button type="button" className="ghost-button" onClick={handleCopyCdCommand}>Copy cd Command</button>
         </div>

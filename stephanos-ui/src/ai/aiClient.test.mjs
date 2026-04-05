@@ -37,6 +37,10 @@ test('openRepoPowerShell uses POST /api/local/open-repo-powershell', () => {
   assert.match(clientSource, /requestJson\('\/api\/local\/open-repo-powershell',[\s\S]*method:\s*'POST'/m);
 });
 
+test('focusRepoPowerShell uses POST /api/local/focus-repo-powershell', () => {
+  assert.match(clientSource, /requestJson\('\/api\/local\/focus-repo-powershell',[\s\S]*method:\s*'POST'/m);
+});
+
 test('getLocalRepoShellConfig queries /api/local/repo-shell-config', () => {
   assert.match(clientSource, /requestJson\('\/api\/local\/repo-shell-config'/m);
 });
