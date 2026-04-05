@@ -14,6 +14,7 @@ import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
 import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
 import { adjudicateMemoryCandidate } from '../services/memory/memoryAdjudicator.js';
+import { buildIntentProposalEnvelope } from '../services/intent-proposal/proposalEngine.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -295,6 +296,7 @@ router.post('/chat', async (req, res) => {
     }
 
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
+    const intentProposalEnvelope = buildIntentProposalEnvelope({ requestText: prompt, context: { route: decision.route } });
     const retrieval = localRetrievalService.query({
       prompt,
       freshnessContext,
@@ -407,6 +409,19 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       memory_source_ref: memoryTruth.memorySourceRef,
       memory_confidence: memoryTruth.memoryConfidence,
       memory_class: memoryTruth.memoryClass,
+      intent_detected: intentProposalEnvelope.intent.intentDetected,
+      intent_type: intentProposalEnvelope.intent.intentType,
+      intent_confidence: intentProposalEnvelope.intent.intentConfidence,
+      proposal_created: intentProposalEnvelope.proposal.proposalCreated,
+      proposal_status: intentProposalEnvelope.proposal.proposalStatus,
+      proposal_reason: intentProposalEnvelope.proposal.proposalReason,
+      proposal_step_count: intentProposalEnvelope.proposal.proposalStepCount,
+      proposal_steps: intentProposalEnvelope.proposal.steps,
+      execution_eligible: intentProposalEnvelope.execution.executionEligible,
+      execution_started: intentProposalEnvelope.execution.executionStarted,
+      execution_completed: intentProposalEnvelope.execution.executionCompleted,
+      execution_blocked_reason: intentProposalEnvelope.execution.executionBlockedReason,
+      execution_result_summary: intentProposalEnvelope.execution.executionResultSummary,
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -468,6 +483,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       memory_source_ref: executionMetadata.memory_source_ref,
       memory_confidence: executionMetadata.memory_confidence,
       memory_class: executionMetadata.memory_class,
+      intent_detected: executionMetadata.intent_detected,
+      intent_type: executionMetadata.intent_type,
+      intent_confidence: executionMetadata.intent_confidence,
+      proposal_created: executionMetadata.proposal_created,
+      proposal_status: executionMetadata.proposal_status,
+      proposal_reason: executionMetadata.proposal_reason,
+      proposal_step_count: executionMetadata.proposal_step_count,
+      execution_eligible: executionMetadata.execution_eligible,
+      execution_started: executionMetadata.execution_started,
+      execution_completed: executionMetadata.execution_completed,
+      execution_blocked_reason: executionMetadata.execution_blocked_reason,
+      execution_result_summary: executionMetadata.execution_result_summary,
       provider_resolution: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
@@ -516,6 +543,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           tile_context_diagnostics: assembledTileContext?.diagnostics || null,
           retrieval_truth: retrieval.truth,
           retrieval_status: localRetrievalService.getStatus(),
+          intent_proposal_truth: intentProposalEnvelope,
         },
         memory_hits: memoryHits,
         timing_ms: Date.now() - startedAt,
@@ -567,6 +595,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         tile_context_diagnostics: assembledTileContext?.diagnostics || null,
         retrieval_truth: retrieval.truth,
         retrieval_status: localRetrievalService.getStatus(),
+        intent_proposal_truth: intentProposalEnvelope,
       },
       memory_hits: memoryHits,
       timing_ms: Date.now() - startedAt,
