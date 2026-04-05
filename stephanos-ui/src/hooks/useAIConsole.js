@@ -246,6 +246,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? requestPayload.routeDecision?.staleFallbackAttempted
       ?? false,
     ),
+    retrieval_mode: executionMetadata.retrieval_mode || requestTrace.retrieval_mode || 'none',
+    retrieval_eligible: Boolean(executionMetadata.retrieval_eligible ?? requestTrace.retrieval_eligible ?? false),
+    retrieval_used: Boolean(executionMetadata.retrieval_used ?? requestTrace.retrieval_used ?? false),
+    retrieval_reason: executionMetadata.retrieval_reason || requestTrace.retrieval_reason || 'Retrieval not evaluated.',
+    retrieved_chunk_count: Number(executionMetadata.retrieved_chunk_count ?? requestTrace.retrieved_chunk_count ?? 0),
+    retrieved_sources: Array.isArray(executionMetadata.retrieved_sources)
+      ? executionMetadata.retrieved_sources
+      : (Array.isArray(requestTrace.retrieved_sources) ? requestTrace.retrieved_sources : []),
+    retrieval_query: executionMetadata.retrieval_query || requestTrace.retrieval_query || '',
+    retrieval_index_status: executionMetadata.retrieval_index_status || requestTrace.retrieval_index_status || 'missing',
   };
 }
 
@@ -265,16 +275,17 @@ function buildExecutionSummary(executionMetadata) {
   const summaryPrefix = `UI route mode ${executionMetadata.route_mode}. Effective route ${executionMetadata.effective_route_mode}. UI default ${executionMetadata.ui_default_provider}. Request provider ${executionMetadata.requested_provider_for_request}. Backend default ${executionMetadata.backend_default_provider}. Requested ${executionMetadata.requested_provider}. Selected ${executionMetadata.selected_provider}. Executed ${executionMetadata.actual_provider_used}`;
   const modelSuffix = executionMetadata.model_used ? ` (${executionMetadata.model_used})` : '';
   const freshnessSuffix = ` Freshness ${executionMetadata.freshness_need} via ${executionMetadata.selected_answer_mode}. Policy ${executionMetadata.ai_policy_mode}: ${executionMetadata.ai_policy_reason}`;
+  const retrievalSuffix = ` Retrieval ${executionMetadata.retrieval_mode}/${executionMetadata.retrieval_index_status}; eligible=${executionMetadata.retrieval_eligible}; used=${executionMetadata.retrieval_used}; chunks=${executionMetadata.retrieved_chunk_count}.`;
 
   if (executionMetadata.fallback_used) {
-    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}`;
+    return `${summaryPrefix}${modelSuffix}. Fallback used${executionMetadata.fallback_reason ? `: ${executionMetadata.fallback_reason}` : '.'}${freshnessSuffix}${retrievalSuffix}`;
   }
 
   if (executionMetadata.actual_provider_used === 'mock') {
-    return `${summaryPrefix}${modelSuffix}. Mock answered directly.${freshnessSuffix}`;
+    return `${summaryPrefix}${modelSuffix}. Mock answered directly.${freshnessSuffix}${retrievalSuffix}`;
   }
 
-  return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}`;
+  return `${summaryPrefix}${modelSuffix}.${freshnessSuffix}${retrievalSuffix}`;
 }
 
 
@@ -1184,6 +1195,14 @@ export function useAIConsole() {
         selected_answer_mode: executionMetadata.selected_answer_mode,
         freshness_warning: executionMetadata.freshness_warning,
         freshness_routed: executionMetadata.freshness_routed,
+        retrieval_mode: executionMetadata.retrieval_mode,
+        retrieval_eligible: executionMetadata.retrieval_eligible,
+        retrieval_used: executionMetadata.retrieval_used,
+        retrieval_reason: executionMetadata.retrieval_reason,
+        retrieved_chunk_count: executionMetadata.retrieved_chunk_count,
+        retrieved_sources: executionMetadata.retrieved_sources,
+        retrieval_query: executionMetadata.retrieval_query,
+        retrieval_index_status: executionMetadata.retrieval_index_status,
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),

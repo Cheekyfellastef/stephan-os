@@ -127,6 +127,40 @@ test('buildSupportSnapshot prints explicit unavailable markers for empty diagnos
   assert.match(snapshot, /routeDiagnosticsSummary:\n- n\/a/);
 });
 
+test('buildSupportSnapshot includes local retrieval truth fields when available', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRetrievalMode: 'local-rag',
+      lastRetrievalEligible: 'true',
+      lastRetrievalUsed: 'true',
+      lastRetrievalReason: 'Retrieved 3 local chunk(s).',
+      lastRetrievedChunkCount: '3',
+      lastRetrievedSources: [
+        'structured-handoff:docs/reports/integration-hardening-sprint-report.md#0',
+        'project-summary:stephanos-ui/src/ai/freshnessRouting.test.mjs#1',
+      ],
+      lastRetrievalQuery: 'what did we decide about hosted low-freshness routing',
+      lastRetrievalIndexStatus: 'ready',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-03-25T00:00:03.000Z' },
+  });
+
+  assert.match(snapshot, /Retrieval Mode: local-rag/);
+  assert.match(snapshot, /Retrieval Eligible: true/);
+  assert.match(snapshot, /Retrieval Used: true/);
+  assert.match(snapshot, /Retrieved Chunk Count: 3/);
+  assert.match(snapshot, /Retrieval Index Status: ready/);
+});
+
 test('buildSupportSnapshot does not promote selected provider to executable when health is unknown', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

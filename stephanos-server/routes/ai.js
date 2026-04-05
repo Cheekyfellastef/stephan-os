@@ -12,6 +12,7 @@ import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
+import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -276,6 +277,10 @@ router.post('/chat', async (req, res) => {
     }
 
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
+    const retrieval = localRetrievalService.query({
+      prompt,
+      freshnessContext,
+    });
     const memoryAwareSystemPrompt = [
       'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
@@ -283,6 +288,11 @@ router.post('/chat', async (req, res) => {
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
       formatTileContextForPrompt(assembledTileContext),
+      retrieval.contextBlock
+        ? `Local retrieval context (bounded, local-first, non-fresh-web):
+${retrieval.contextBlock}
+Use it only as cited local project evidence. If freshness-sensitive truth is requested, acknowledge local limits.`
+        : '',
     ].filter(Boolean).join('\n\n');
 
     const llmResult = await routeLLMRequest({
@@ -357,6 +367,14 @@ Use these memories when they help, but do not repeat them unless they are releva
       paid_fresh_routes_enabled: providerHealthSnapshot?.groq?.providerCapability?.paidFreshRoutesEnabled ?? false,
       fresh_capability_mode: providerHealthSnapshot?.groq?.providerCapability?.freshCapabilityMode || 'zero-cost-only',
       stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
+      retrieval_mode: retrieval.truth.retrievalMode,
+      retrieval_eligible: retrieval.truth.retrievalEligible,
+      retrieval_used: retrieval.truth.retrievalUsed,
+      retrieval_reason: retrieval.truth.retrievalReason,
+      retrieved_chunk_count: retrieval.truth.retrievedChunkCount,
+      retrieved_sources: retrieval.truth.retrievedSources,
+      retrieval_query: retrieval.truth.retrievalQuery,
+      retrieval_index_status: retrieval.truth.retrievalIndexStatus,
     };
     const requestTrace = {
       ui_requested_provider: provider,
@@ -403,6 +421,14 @@ Use these memories when they help, but do not repeat them unless they are releva
       paid_fresh_routes_enabled: executionMetadata.paid_fresh_routes_enabled,
       fresh_capability_mode: executionMetadata.fresh_capability_mode,
       stale_fallback_attempted: executionMetadata.stale_fallback_attempted,
+      retrieval_mode: executionMetadata.retrieval_mode,
+      retrieval_eligible: executionMetadata.retrieval_eligible,
+      retrieval_used: executionMetadata.retrieval_used,
+      retrieval_reason: executionMetadata.retrieval_reason,
+      retrieved_chunk_count: executionMetadata.retrieved_chunk_count,
+      retrieved_sources: executionMetadata.retrieved_sources,
+      retrieval_query: executionMetadata.retrieval_query,
+      retrieval_index_status: executionMetadata.retrieval_index_status,
       provider_resolution: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
@@ -449,6 +475,8 @@ Use these memories when they help, but do not repeat them unless they are releva
           assistant_context: contextBundle,
           relevant_memory: memoryHits,
           tile_context_diagnostics: assembledTileContext?.diagnostics || null,
+          retrieval_truth: retrieval.truth,
+          retrieval_status: localRetrievalService.getStatus(),
         },
         memory_hits: memoryHits,
         timing_ms: Date.now() - startedAt,
@@ -498,6 +526,8 @@ Use these memories when they help, but do not repeat them unless they are releva
         relevant_memory: memoryHits,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],
         tile_context_diagnostics: assembledTileContext?.diagnostics || null,
+        retrieval_truth: retrieval.truth,
+        retrieval_status: localRetrievalService.getStatus(),
       },
       memory_hits: memoryHits,
       timing_ms: Date.now() - startedAt,
