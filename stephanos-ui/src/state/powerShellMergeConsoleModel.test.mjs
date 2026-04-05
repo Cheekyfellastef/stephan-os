@@ -10,7 +10,10 @@ import {
   buildRitualBox3Payload,
   createDefaultRitualPhaseState,
   createUnknownRitualTruthSnapshot,
+  formatRitualTruthDisplay,
+  getRitualButtonState,
   isLocalShellLaunchAvailable,
+  normalizeGitRitualTruthSnapshot,
   resolveRitualRepoPath,
 } from './powerShellMergeConsoleModel.js';
 
@@ -66,23 +69,86 @@ test('commit message progress sets box1 in-progress without fake completion', ()
 
 test('unknown truth snapshot defaults to unknown labels', () => {
   const snapshot = createUnknownRitualTruthSnapshot();
-  assert.equal(snapshot.branchLabel, 'unknown');
-  assert.equal(snapshot.conflictRisk, 'unknown');
-  assert.equal(snapshot.lastBuildStatus, 'unknown');
-  assert.equal(snapshot.lastVerifyStatus, 'unknown');
+  assert.equal(snapshot.currentBranch, 'unknown');
+  assert.equal(snapshot.riskLevel, 'unknown');
+  assert.equal(snapshot.buildLastResult, 'unknown');
+  assert.equal(snapshot.verifyLastResult, 'unknown');
 });
 
-
 test('resolveRitualRepoPath prefers configured value and falls back truthfully', () => {
-  assert.equal(resolveRitualRepoPath({ configuredRepoPath: 'D:\Repos\stephan-os', fallbackRepoPath: 'C:\Default' }), 'D:\Repos\stephan-os');
-  assert.equal(resolveRitualRepoPath({ configuredRepoPath: '  ', fallbackRepoPath: 'C:\Default' }), 'C:\Default');
+  assert.equal(resolveRitualRepoPath({ configuredRepoPath: 'D:\\Repos\\stephan-os', fallbackRepoPath: 'C:\\Default' }), 'D:\\Repos\\stephan-os');
+  assert.equal(resolveRitualRepoPath({ configuredRepoPath: '  ', fallbackRepoPath: 'C:\\Default' }), 'C:\\Default');
 });
 
 test('buildRepoCdCommand quotes repo path for PowerShell copy helper', () => {
-  assert.equal(buildRepoCdCommand('C:\Users\Stephan Callear\Documents\GitHub\stephan-os'), 'cd "C:\Users\Stephan Callear\Documents\GitHub\stephan-os"');
+  assert.equal(buildRepoCdCommand('C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os'), 'cd "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os"');
 });
 
 test('isLocalShellLaunchAvailable only allows local-desktop canonical runtime', () => {
   assert.equal(isLocalShellLaunchAvailable({ finalRouteTruth: { sessionKind: 'local-desktop', routeKind: 'local-desktop' } }), true);
   assert.equal(isLocalShellLaunchAvailable({ finalRouteTruth: { sessionKind: 'hosted-web', routeKind: 'cloud' } }), false);
+});
+
+test('normalizeGitRitualTruthSnapshot preserves applicability truth and hosted limitation messaging', () => {
+  const snapshot = normalizeGitRitualTruthSnapshot({
+    ok: true,
+    currentBranch: 'main',
+    aheadCount: 1,
+    behindCount: 0,
+    box1Applicable: true,
+    box2Applicable: false,
+    box3Applicable: true,
+    nextRecommendedAction: 'Finalize with Box 3',
+    riskLevel: 'low',
+  }, { hosted: false });
+
+  assert.equal(snapshot.truthLoaded, true);
+  assert.equal(snapshot.currentBranch, 'main');
+  assert.equal(snapshot.nextRecommendedAction, 'Finalize with Box 3');
+  assert.equal(snapshot.hostedLimitation, '');
+});
+
+test('getRitualButtonState blocks non-applicable boxes and preserves manual override in unknown mode', () => {
+  const snapshot = normalizeGitRitualTruthSnapshot({
+    ok: true,
+    box1Applicable: true,
+    box2Applicable: false,
+    box3Applicable: false,
+    boxBlockedReasons: {
+      box2: 'No rebase in progress.',
+      box3: 'Push is blocked while conflicts remain unresolved.',
+    },
+  });
+
+  const truthAware = getRitualButtonState(snapshot, { manualOverride: false });
+  assert.equal(truthAware.box1.enabled, true);
+  assert.equal(truthAware.box2.enabled, false);
+  assert.equal(truthAware.box2.reason, 'No rebase in progress.');
+
+  const unknownManual = getRitualButtonState(createUnknownRitualTruthSnapshot(), { manualOverride: true });
+  assert.equal(unknownManual.box1.enabled, true);
+  assert.match(unknownManual.box1.reason, /Manual override enabled/);
+});
+
+test('formatRitualTruthDisplay renders yes/no/unknown labels for operator cards', () => {
+  const display = formatRitualTruthDisplay(normalizeGitRitualTruthSnapshot({
+    ok: true,
+    aheadCount: 0,
+    behindCount: 2,
+    workingTreeDirty: true,
+    stagedChangesPresent: false,
+    unstagedChangesPresent: true,
+    untrackedChangesPresent: false,
+    distChanged: true,
+    rebaseInProgress: true,
+    mergeInProgress: false,
+    cherryPickInProgress: false,
+    conflictsPresent: true,
+    distConflictsPresent: true,
+  }));
+
+  assert.equal(display.syncState, 'ahead 0 / behind 2');
+  assert.equal(display.workingTree, 'dirty');
+  assert.equal(display.rebase, 'active');
+  assert.equal(display.conflicts, 'yes');
 });
