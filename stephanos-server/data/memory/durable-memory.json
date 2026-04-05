@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-05T12:16:20.131Z",
+  "updatedAt": "2026-04-05T12:50:30.831Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -100,6 +100,156 @@
       "retentionHint": "default",
       "createdAt": "2026-04-05T12:16:20.131Z",
       "updatedAt": "2026-04-05T12:16:20.131Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393246399-573ih-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Give me the build prompt for the next system",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:47:26.399Z",
+      "updatedAt": "2026-04-05T12:47:26.399Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393246399-573ih-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "To generate a build prompt for the next system in your Stephanos OS environment, you would typically follow these steps:\n\n1. **Identify the system**: Determine which system needs to be built next. This could be a core component like `system/apps/entry_rules.js`, or a utility service.\n\n2. **Check dependencies**: Ensure that any necessary prerequisites for building the system have been met.\n\n3. **Craft the build prompt",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:47:26.399Z",
+      "updatedAt": "2026-04-05T12:47:26.399Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393320660-mvumu-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Build a detailed codex prompt to diagnose hosted/local routing drift and propose a fix",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:48:40.660Z",
+      "updatedAt": "2026-04-05T12:48:40.660Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393320660-mvumu-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Codex Prompt: Diagnose Hosted/Local Routing Drift & Propose Fix\n\n## Step 1: Gather Contextual Information\n- Inspect `launcher.json` or equivalent config file for routing rules.\n- Check `shared/runtime/routes.js` for any route definitions that interact with hosted/local contexts.\n\n## Step 2: Analyze Routing Truth\n- Examine UI diagnostics and telemetry logs to identify inconsistencies in route execution.\n- Verify that ",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:48:40.660Z",
+      "updatedAt": "2026-04-05T12:48:40.660Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393430831-d5r0j-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Summarize the timeout policy layers now in use",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:50:30.831Z",
+      "updatedAt": "2026-04-05T12:50:30.831Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775393430831-d5r0j-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "The current timeout policy layers involve a combination of local and cloud-based processes. In situations where requests are routed through Ollama to GPT-OS:20b, a longer timeout of 60000ms might be required.\n\nStephanos, being privacy-focused, aims to stay local-first whenever possible. This approach may affect the specific timeout settings that are in use at any given time.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-05T12:50:30.831Z",
+      "updatedAt": "2026-04-05T12:50:30.831Z",
       "surface": "shared"
     }
   }
