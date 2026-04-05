@@ -644,7 +644,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                         onChange={(event) => setOllamaConnection({ pcAddressHint: event.target.value })}
                       />
                     </label>
-                    <button type="button" className="ghost-button" onClick={handleTryManualOllamaAddress} disabled={isAutoFindingOllama}>Try This Address</button>
+                    <div className="provider-manual-address-action">
+                      <button type="button" className="ghost-button" onClick={handleTryManualOllamaAddress} disabled={isAutoFindingOllama}>Try This Address</button>
+                    </div>
                   </div>
                 </div>
               ) : null}

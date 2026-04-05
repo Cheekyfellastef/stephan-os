@@ -1194,15 +1194,23 @@ pre {
 
 .provider-manual-address {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.65rem;
   margin-top: 0.85rem;
-  align-items: end;
 }
 
 .provider-manual-address label {
   display: grid;
   gap: 0.35rem;
+}
+
+.provider-manual-address-action {
+  display: flex;
+  align-items: center;
+}
+
+.provider-manual-address-action .ghost-button {
+  max-width: 100%;
 }
 
 .provider-hint-box.searching {
@@ -1219,7 +1227,7 @@ pre {
 
 @media (max-width: 720px) {
   .provider-manual-address {
-    grid-template-columns: 1fr;
+    gap: 0.55rem;
   }
 }
 

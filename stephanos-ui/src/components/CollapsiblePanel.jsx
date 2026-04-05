@@ -27,6 +27,7 @@ export default function CollapsiblePanel({
             type="button"
             className="panel-collapse-toggle"
             onClick={onToggle}
+            data-no-drag="true"
             aria-expanded={isOpen}
             aria-controls={bodyId}
             aria-label={toggleLabel}

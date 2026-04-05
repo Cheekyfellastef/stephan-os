@@ -43,6 +43,25 @@ import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs'
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
+const PANE_DRAG_BLOCK_SELECTOR = [
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'a',
+  '[role="button"]',
+  '[data-no-drag]',
+  '[data-stephanos-no-drag]',
+].join(', ');
+
+export function shouldStartPaneDrag(target) {
+  if (!target || typeof target.closest !== 'function') {
+    return true;
+  }
+  return !target.closest(PANE_DRAG_BLOCK_SELECTOR);
+}
+
 export default function App() {
   const {
     input,
@@ -400,7 +419,13 @@ export default function App() {
             key={pane.id}
             className={`operator-pane-slot ${pane.className || ''} ${dragPaneId === pane.id ? 'dragging' : ''}`}
             draggable
-            onDragStart={() => setDragPaneId(pane.id)}
+            onDragStart={(event) => {
+              if (!shouldStartPaneDrag(event.target)) {
+                event.preventDefault();
+                return;
+              }
+              setDragPaneId(pane.id);
+            }}
             onDragEnd={() => setDragPaneId('')}
             onDrop={() => {
               reorderPanes(dragPaneId, pane.id);
