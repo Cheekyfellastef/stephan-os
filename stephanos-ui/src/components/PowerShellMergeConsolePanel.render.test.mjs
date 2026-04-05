@@ -41,3 +41,16 @@ test('copy buttons only show green success styling after successful clipboard co
 test('local shell buttons return truthful unsupported message outside local desktop runtime', () => {
   assert.match(panelSource, /Local shell controls are only available in local desktop runtime\./);
 });
+
+
+test('ritual phase transitions only advance after successful clipboard copy', () => {
+  assert.match(panelSource, /const copied = setCopyFeedback\(result, 'Copied Box 1\.', 'box1'\)/);
+  assert.match(panelSource, /if \(copied\) \{\s*setPhaseState\(\(prev\) => applyPhaseCopyTransition\(prev, 'box1'\)\);\s*\}/);
+});
+
+test('clipboard failures surface explicit reasoned operator feedback', () => {
+  assert.match(panelSource, /resolveClipboardFailureMessage/);
+  assert.match(panelSource, /Clipboard permission denied in this runtime\./);
+  assert.match(panelSource, /Clipboard unavailable in this runtime\./);
+  assert.match(panelSource, /\[POWER SHELL MERGE CONSOLE\] Clipboard copy failed/);
+});

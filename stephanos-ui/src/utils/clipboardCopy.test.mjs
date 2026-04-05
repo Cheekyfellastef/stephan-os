@@ -33,6 +33,7 @@ test('writeTextToClipboard falls back to execCommand when clipboard api fails', 
     style: {},
     focus: () => {},
     select: () => {},
+    setSelectionRange: () => {},
     remove: () => {},
   };
 
@@ -76,6 +77,7 @@ test('writeTextToClipboard reports write failures when clipboard and fallback pa
         style: {},
         focus: () => {},
         select: () => {},
+        setSelectionRange: () => {},
         remove: () => {},
       }),
       body: {
@@ -87,4 +89,37 @@ test('writeTextToClipboard reports write failures when clipboard and fallback pa
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'clipboard-write-failed');
+});
+
+
+test('writeTextToClipboard surfaces permission denied reason when modern and fallback copy fail', async () => {
+  const result = await writeTextToClipboard('hello', {
+    navigatorObject: {
+      clipboard: {
+        writeText: async () => {
+          const denied = new Error('blocked');
+          denied.name = 'NotAllowedError';
+          throw denied;
+        },
+      },
+    },
+    documentObject: {
+      createElement: () => ({
+        setAttribute: () => {},
+        style: {},
+        focus: () => {},
+        select: () => {},
+        setSelectionRange: () => {},
+        remove: () => {},
+        value: '',
+      }),
+      body: {
+        appendChild: () => {},
+      },
+      execCommand: () => false,
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'clipboard-permission-denied');
 });

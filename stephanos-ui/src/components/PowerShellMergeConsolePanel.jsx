@@ -52,6 +52,21 @@ function phaseTone(value) {
   return 'unknown';
 }
 
+
+function resolveClipboardFailureMessage(result = {}) {
+  const reason = String(result?.reason || '').trim().toLowerCase();
+  if (reason === 'clipboard-permission-denied') {
+    return 'Clipboard permission denied in this runtime. Use manual copy from raw mode.';
+  }
+  if (reason === 'clipboard-unavailable') {
+    return 'Clipboard unavailable in this runtime. Use manual copy from raw mode.';
+  }
+  if (reason === 'clipboard-aborted') {
+    return 'Clipboard copy was interrupted. Try the copy action again.';
+  }
+  return `Clipboard copy failed${reason ? ` (${reason})` : ''}. Use manual copy from raw mode.`;
+}
+
 export default function PowerShellMergeConsolePanel() {
   const { uiLayout, togglePanel, runtimeStatusModel } = useAIStore();
   const safeUiLayout = uiLayout || {};
@@ -139,10 +154,16 @@ export default function PowerShellMergeConsolePanel() {
     if (result.ok) {
       setFeedback({ tone: 'success', message: successMessage });
       setCopiedButtonId(copyTargetId);
-      return;
+      return true;
     }
+    console.warn('[POWER SHELL MERGE CONSOLE] Clipboard copy failed', {
+      copyTargetId,
+      reason: result?.reason || 'unknown',
+      error: result?.error?.message || null,
+    });
     setCopiedButtonId('');
-    setFeedback({ tone: 'warning', message: 'Clipboard unavailable. Copy manually from the raw mode section.' });
+    setFeedback({ tone: 'warning', message: resolveClipboardFailureMessage(result) });
+    return false;
   }
 
   async function handleCopyBox1() {
@@ -155,8 +176,10 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box1Payload);
-    setCopyFeedback(result, 'Copied Box 1.', 'box1');
-    setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box1'));
+    const copied = setCopyFeedback(result, 'Copied Box 1.', 'box1');
+    if (copied) {
+      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box1'));
+    }
   }
 
   async function handleCopyBox2() {
@@ -165,8 +188,10 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box2Payload);
-    setCopyFeedback(result, 'Copied Box 2.', 'box2');
-    setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box2'));
+    const copied = setCopyFeedback(result, 'Copied Box 2.', 'box2');
+    if (copied) {
+      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box2'));
+    }
   }
 
   async function handleCopyBox3() {
@@ -175,8 +200,10 @@ export default function PowerShellMergeConsolePanel() {
       return;
     }
     const result = await writeTextToClipboard(box3Payload);
-    setCopyFeedback(result, 'Copied Box 3.', 'box3');
-    setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box3'));
+    const copied = setCopyFeedback(result, 'Copied Box 3.', 'box3');
+    if (copied) {
+      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box3'));
+    }
   }
 
   async function handleCopyFullRitual() {
