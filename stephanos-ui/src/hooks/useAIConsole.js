@@ -209,6 +209,36 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ollama_timeout_ms: executionMetadata.ollama_timeout_ms || requestTrace.ollama_timeout_ms || null,
     ollama_timeout_source: executionMetadata.ollama_timeout_source || requestTrace.ollama_timeout_source || null,
     ollama_timeout_model: executionMetadata.ollama_timeout_model || requestTrace.ollama_timeout_model || null,
+    ui_request_timeout_ms: executionMetadata.ui_request_timeout_ms
+      || requestTrace.ui_request_timeout_ms
+      || requestPayload.runtimeContext?.timeoutPolicy?.uiRequestTimeoutMs
+      || requestPayload.runtimeContext?.timeoutMs
+      || null,
+    backend_route_timeout_ms: executionMetadata.backend_route_timeout_ms
+      || requestTrace.backend_route_timeout_ms
+      || requestPayload.runtimeContext?.timeoutPolicy?.backendRouteTimeoutMs
+      || null,
+    provider_timeout_ms: executionMetadata.provider_timeout_ms
+      || requestTrace.provider_timeout_ms
+      || requestPayload.runtimeContext?.timeoutPolicy?.providerTimeoutMs
+      || null,
+    model_timeout_ms: executionMetadata.model_timeout_ms
+      || requestTrace.model_timeout_ms
+      || requestPayload.runtimeContext?.timeoutPolicy?.modelTimeoutMs
+      || null,
+    timeout_policy_source: executionMetadata.timeout_policy_source
+      || requestTrace.timeout_policy_source
+      || requestPayload.runtimeContext?.timeoutPolicy?.timeoutPolicySource
+      || requestPayload.runtimeContext?.timeoutSource
+      || null,
+    timeout_override_applied: Boolean(
+      executionMetadata.timeout_override_applied
+      ?? requestTrace.timeout_override_applied
+      ?? requestPayload.runtimeContext?.timeoutPolicy?.timeoutOverrideApplied
+      ?? false,
+    ),
+    timeout_failure_layer: executionMetadata.timeout_failure_layer || requestTrace.timeout_failure_layer || null,
+    timeout_failure_label: executionMetadata.timeout_failure_label || requestTrace.timeout_failure_label || null,
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
     freshness_need: freshnessNeed,
@@ -413,7 +443,22 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
     return { error: error.message, errorCode: error.code, output: `${BACKEND_UNREACHABLE_MESSAGE} Start stephanos-server or update VITE_API_BASE_URL to a reachable API.` };
   }
   if (error.code === 'TIMEOUT') {
-    return { error: error.message, errorCode: error.code, output: 'Request timed out. Try again or increase VITE_API_TIMEOUT_MS.' };
+    const timeoutLayer = error?.details?.timeoutFailureLayer || 'ui';
+    const timeoutMs = Number(error?.details?.timeoutMs) || null;
+    const timeoutLabel = error?.details?.timeoutLabel || 'ui_request_timeout_ms';
+    const timeoutLayerMessage = timeoutLayer === 'ui'
+      ? 'UI request timeout elapsed before backend response.'
+      : 'Request timeout elapsed before completion.';
+    return {
+      error: error.message,
+      errorCode: error.code,
+      output: `${timeoutLayerMessage}${timeoutMs ? ` (${timeoutMs}ms)` : ''} Layer: ${timeoutLayer}. Label: ${timeoutLabel}.`,
+      timeoutFailureLayer: timeoutLayer,
+      timeoutFailureLabel: timeoutLabel,
+      timeoutMs,
+      timeoutPolicySource: error?.details?.timeoutPolicySource || null,
+      timeoutOverrideApplied: Boolean(error?.details?.timeoutOverrideApplied),
+    };
   }
   if (error.code === 'NETWORK_TRANSPORT_UNREACHABLE') {
     return { error: error.message, errorCode: error.code, output: 'Network transport failed before backend response. Check browser-to-backend reachability and CORS/published client route truth.' };
@@ -1258,6 +1303,18 @@ export function useAIConsole() {
         error_code: uiError.errorCode,
         response: { type: 'assistant_response', route: 'assistant', success: false, output_text: uiError.output, error: uiError.error, error_code: uiError.errorCode },
       }));
+      setDebugData({
+        parsed_command: parsed,
+        request_payload: null,
+        response_payload: null,
+        error: uiError.error,
+        error_code: uiError.errorCode,
+        timeout_failure_layer: uiError.timeoutFailureLayer || error?.details?.timeoutFailureLayer || null,
+        timeout_failure_label: uiError.timeoutFailureLabel || error?.details?.timeoutLabel || null,
+        ui_request_timeout_ms: uiError.timeoutMs || error?.details?.timeoutMs || null,
+        timeout_policy_source: uiError.timeoutPolicySource || error?.details?.timeoutPolicySource || null,
+        timeout_override_applied: Boolean(uiError.timeoutOverrideApplied ?? error?.details?.timeoutOverrideApplied ?? false),
+      });
     } finally {
       setIsBusy(false);
     }

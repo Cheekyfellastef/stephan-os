@@ -1,6 +1,7 @@
 import { EMPTY_RESPONSE } from './aiTypes';
 import { buildApiUrl, getApiConfig, getApiRuntimeConfig, getApiTargetLabel } from './apiConfig';
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
+import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -20,9 +21,10 @@ function stripSecretsFromProviderConfigs(providerConfigs = {}) {
   );
 }
 
-async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig()) {
+async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null) {
   const apiConfig = getApiConfig();
-  const timeoutMs = Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
+  const resolvedTimeoutMs = Number(timeoutPolicy?.uiRequestTimeoutMs) || Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
+  const timeoutMs = Number.isFinite(resolvedTimeoutMs) && resolvedTimeoutMs > 0 ? resolvedTimeoutMs : apiConfig.timeoutMs;
   const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -41,7 +43,19 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
     return { ok: response.ok, status: response.status, data: json };
   } catch (error) {
     if (error?.isTransportError) throw error;
-    if (error?.name === 'AbortError') throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
+    if (error?.name === 'AbortError') {
+      throw createTransportError({
+        code: 'TIMEOUT',
+        message: `Request timed out after ${timeoutMs}ms.`,
+        details: {
+          timeoutFailureLayer: 'ui',
+          timeoutLabel: 'ui_request_timeout_ms',
+          timeoutMs,
+          timeoutPolicySource: timeoutPolicy?.timeoutPolicySource || runtimeConfig?.timeoutSource || apiConfig.timeoutSource || 'frontend:api-runtime',
+          timeoutOverrideApplied: Boolean(timeoutPolicy?.timeoutOverrideApplied),
+        },
+      });
+    }
     const networkLikeFailure = error instanceof TypeError || /network|failed to fetch|load failed|cors/i.test(String(error?.message || ''));
     throw createTransportError({
       code: networkLikeFailure ? 'NETWORK_TRANSPORT_UNREACHABLE' : 'BACKEND_OFFLINE',
@@ -81,8 +95,24 @@ export async function sendPrompt({
   routeDecision = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
+  const requestedModel = safeProviderConfigs?.[provider]?.model || '';
+  const timeoutPolicy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig,
+    provider,
+    providerConfigs: safeProviderConfigs,
+    requestedModel,
+  });
   const runtimeContext = {
     ...runtimeConfig,
+    timeoutMs: timeoutPolicy.uiRequestTimeoutMs,
+    timeoutPolicy: {
+      uiRequestTimeoutMs: timeoutPolicy.uiRequestTimeoutMs,
+      backendRouteTimeoutMs: timeoutPolicy.backendRouteTimeoutMs,
+      providerTimeoutMs: timeoutPolicy.providerTimeoutMs,
+      modelTimeoutMs: timeoutPolicy.modelTimeoutMs,
+      timeoutPolicySource: timeoutPolicy.timeoutPolicySource,
+      timeoutOverrideApplied: timeoutPolicy.timeoutOverrideApplied,
+    },
     ...(tileContext && typeof tileContext === 'object' ? { tileContext } : {}),
   };
   const payload = {
@@ -111,7 +141,7 @@ export async function sendPrompt({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }, runtimeContext);
+  }, runtimeContext, timeoutPolicy);
 
   return {
     ok: result.ok,

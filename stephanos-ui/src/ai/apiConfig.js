@@ -71,6 +71,14 @@ function resolveTimeoutMs(rawTimeoutMs) {
   return timeoutMs;
 }
 
+function getTimeoutSource(rawTimeoutMs) {
+  const timeoutMs = Number(rawTimeoutMs);
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    return 'env:VITE_API_TIMEOUT_MS';
+  }
+  return 'default:30000ms';
+}
+
 function detectTarget(baseUrl) {
   try {
     const { hostname } = new URL(baseUrl);
@@ -103,6 +111,7 @@ export function getApiConfig() {
   return {
     baseUrl,
     timeoutMs: resolveTimeoutMs(runtimeEnv.VITE_API_TIMEOUT_MS),
+    timeoutSource: getTimeoutSource(runtimeEnv.VITE_API_TIMEOUT_MS),
   };
 }
 
@@ -123,6 +132,7 @@ export function getApiRuntimeConfig() {
     frontendOrigin: getFrontendOrigin(),
     baseUrl: config.baseUrl,
     timeoutMs: config.timeoutMs,
+    timeoutSource: config.timeoutSource,
     target: getApiTargetLabel(config.baseUrl),
     strategy: getApiBaseUrlStrategy(config.baseUrl),
     backendTargetEndpoint: buildApiUrl('/api/ai/chat', config.baseUrl),

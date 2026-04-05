@@ -240,6 +240,14 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
       lastOllamaTimeoutMs: '22000',
       lastOllamaTimeoutSource: 'model-override',
       lastOllamaTimeoutModel: 'qwen:32b',
+      lastUiRequestTimeoutMs: '121500',
+      lastBackendRouteTimeoutMs: '120000',
+      lastProviderTimeoutMs: '120000',
+      lastModelTimeoutMs: '120000',
+      lastTimeoutPolicySource: 'provider:ollama:model-override:qwen:32b:ui-grace',
+      lastTimeoutOverrideApplied: 'true',
+      lastTimeoutFailureLayer: 'ui',
+      lastTimeoutFailureLabel: 'ui_request_timeout_ms',
     },
     routeTruthView: {},
     runtimeSessionTruth: {},
@@ -258,6 +266,10 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
   assert.match(snapshot, /Last Ollama Escalation Active: true/);
   assert.match(snapshot, /Last Ollama Fallback Model: gpt-oss:20b/);
   assert.match(snapshot, /Last Ollama Timeout \(ms\): 22000/);
+  assert.match(snapshot, /Last UI Request Timeout \(ms\): 121500/);
+  assert.match(snapshot, /Last Backend Route Timeout \(ms\): 120000/);
+  assert.match(snapshot, /Last Provider Timeout \(ms\): 120000/);
+  assert.match(snapshot, /Last Timeout Failure Label: ui_request_timeout_ms/);
   assert.match(snapshot, /Last Ollama Timeout Source: model-override/);
 });
 

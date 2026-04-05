@@ -2,22 +2,12 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
-<<<<<<< HEAD
-  "sourceFingerprint": "6566fcbbb249c652eb59c72453f34290eeb81f3629841e7e54ec1c39791907fa",
+  "sourceFingerprint": "416b80824f73de982046bf2ceae84eae186108f8ca29ab9c234cd89f2226915c",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::f2951c4::6566fcbbb249",
-  "gitCommit": "f2951c4",
-  "buildTimestamp": "2026-04-05T12:00:24.423Z",
-=======
-  "sourceFingerprint": "60bea1a8105fb4c865b6bde68b36d819ed80ccdfc732ff90c7fac3bc51a4dfd4",
-  "buildTarget": "apps/stephanos/dist",
-  "buildTargetIdentifier": "apps/stephanos/dist",
-  "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::3d5e5a0::60bea1a8105f",
-  "gitCommit": "3d5e5a0",
-  "buildTimestamp": "2026-04-05T11:17:49.540Z",
->>>>>>> c650dd2 (feat: intent/proposal engine v1 — intent detection, proposal builder, execution gating, operator truth)
+  "runtimeMarker": "antifriction-live-v3::5ab06e3::416b80824f73",
+  "gitCommit": "5ab06e3",
+  "buildTimestamp": "2026-04-05T12:26:05.495Z",
   "sourceTruth": "sourceFingerprint"
 }
