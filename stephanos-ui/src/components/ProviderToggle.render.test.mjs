@@ -113,6 +113,24 @@ test('ProviderToggle shows default Ollama timeout and optional per-model overrid
   assert.match(rendered, /qwen:32b/);
 });
 
+test('ProviderToggle renders the manual Ollama address action below the address input', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore({
+    provider: 'ollama',
+    ollamaConnection: { pcAddressHint: '192.168.1.42', lastSelectedModel: '', recentHosts: [] },
+  });
+  const rendered = renderProviderToggle();
+
+  assert.match(
+    rendered,
+    /provider-manual-address[\s\S]*<label>[\s\S]*PC Address \(optional\)[\s\S]*<\/label>[\s\S]*provider-manual-address-action[\s\S]*Try This Address/,
+  );
+});
+
 test('ProviderToggle surfaces manual home-node guidance for hosted-web manual-needed state', async () => {
   const { renderProviderToggle } = await importBundledModule(
     path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),

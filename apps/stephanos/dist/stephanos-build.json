@@ -2,22 +2,12 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
-<<<<<<< HEAD
-  "sourceFingerprint": "416b80824f73de982046bf2ceae84eae186108f8ca29ab9c234cd89f2226915c",
+  "sourceFingerprint": "6a46f1b5bfd7965bf063b11b8386ef0e25f06a3af959c8ead387c7f227b962b5",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::5ab06e3::416b80824f73",
-  "gitCommit": "5ab06e3",
-  "buildTimestamp": "2026-04-05T12:26:05.495Z",
-=======
-  "sourceFingerprint": "162391f61b3056fa93b9b343f17a5edf77152363fab91848688d6e963d4e9edb",
-  "buildTarget": "apps/stephanos/dist",
-  "buildTargetIdentifier": "apps/stephanos/dist",
-  "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::5ab06e3::162391f61b30",
-  "gitCommit": "5ab06e3",
-  "buildTimestamp": "2026-04-05T12:11:16.145Z",
->>>>>>> f8a98df (fix: align Mission Console UI timeout policy with model overrides and explicit timeout truth)
+  "runtimeMarker": "antifriction-live-v3::93640d2::6a46f1b5bfd7",
+  "gitCommit": "93640d2",
+  "buildTimestamp": "2026-04-05T18:27:26.538Z",
   "sourceTruth": "sourceFingerprint"
 }

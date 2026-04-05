@@ -24,3 +24,16 @@ test('CollapsiblePanel can keep children mounted while closed when explicitly re
   const rendered = renderCollapsiblePanel({ isOpen: false, keepMountedWhenClosed: true });
   assert.match(rendered, /expensive child content/);
 });
+
+test('CollapsiblePanel collapse toggle is marked as non-draggable and controls its panel body', async () => {
+  const { renderCollapsiblePanel } = await importBundledModule(
+    path.join(srcRoot, 'test/renderCollapsiblePanelEntry.jsx'),
+    {},
+    'collapsible-panel-toggle-a11y',
+  );
+
+  const rendered = renderCollapsiblePanel({ isOpen: true });
+  assert.match(rendered, /class="panel-collapse-toggle"/);
+  assert.match(rendered, /data-no-drag="true"/);
+  assert.match(rendered, /aria-controls="testPanel-body"/);
+});
