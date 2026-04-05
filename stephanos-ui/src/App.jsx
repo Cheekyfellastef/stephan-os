@@ -63,6 +63,15 @@ export function shouldStartPaneDrag(target) {
   return !target.closest(PANE_DRAG_BLOCK_SELECTOR);
 }
 
+export function resolvePaneCollapsedState(pane, uiLayout) {
+  const layout = uiLayout && typeof uiLayout === 'object' ? uiLayout : {};
+  const layoutKey = String(pane?.layoutKey || pane?.id || '').trim();
+  if (!layoutKey) {
+    return false;
+  }
+  return layout[layoutKey] === false;
+}
+
 export default function App() {
   const {
     input,
@@ -220,7 +229,7 @@ export default function App() {
   }, [runtimeFingerprint]);
 
   const paneDefinitions = useMemo(() => ([
-    { id: 'aiConsole', className: 'pane-span-2', render: () => (
+    { id: 'aiConsole', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
       <div className="primary-stack">
         {startupDiagnosticsVisible ? (
           <div className="api-banner degraded" role="status" aria-live="polite">
@@ -416,31 +425,36 @@ export default function App() {
       </CollapsiblePanel>
 
       <section className="operator-pane-wall" onDragOver={(event) => event.preventDefault()}>
-        {orderedPanes.map((pane) => (
-          <div
-            key={pane.id}
-            className={`operator-pane-slot ${pane.className || ''} ${dragPaneId === pane.id ? 'dragging' : ''}`}
-            draggable
-            onDragStart={(event) => {
-              if (!shouldStartPaneDrag(event.target)) {
-                event.preventDefault();
-                return;
-              }
-              setDragPaneId(pane.id);
-            }}
-            onDragEnd={() => setDragPaneId('')}
-            onDrop={() => {
-              reorderPanes(dragPaneId, pane.id);
-              setDragPaneId('');
-            }}
-          >
-            <div className="pane-order-controls" aria-label="Pane arrangement controls">
-              <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, -1)}>Move up</button>
-              <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, 1)}>Move down</button>
+        {orderedPanes.map((pane) => {
+          const paneCollapsed = resolvePaneCollapsedState(pane, safeUiLayout);
+          return (
+            <div
+              key={pane.id}
+              className={`operator-pane-slot ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
+              draggable
+              data-pane-id={pane.id}
+              data-pane-collapsed={paneCollapsed ? 'true' : 'false'}
+              onDragStart={(event) => {
+                if (!shouldStartPaneDrag(event.target)) {
+                  event.preventDefault();
+                  return;
+                }
+                setDragPaneId(pane.id);
+              }}
+              onDragEnd={() => setDragPaneId('')}
+              onDrop={() => {
+                reorderPanes(dragPaneId, pane.id);
+                setDragPaneId('');
+              }}
+            >
+              <div className="pane-order-controls" aria-label="Pane arrangement controls">
+                <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, -1)}>Move up</button>
+                <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, 1)}>Move down</button>
+              </div>
+              {pane.render()}
             </div>
-            {pane.render()}
-          </div>
-        ))}
+          );
+        })}
       </section>
 
       <footer className="runtime-diagnostic" aria-label="runtime diagnostic">
