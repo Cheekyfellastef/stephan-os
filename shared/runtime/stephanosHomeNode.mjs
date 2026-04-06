@@ -255,6 +255,19 @@ export function normalizeStephanosHomeNode(value = {}, defaults = {}) {
     backendPort: input.backendPort ?? fallback.backendPort,
     distPort: input.distPort ?? fallback.distPort,
   });
+  const inputBackendUrlValidation = validateStephanosBackendTargetUrl(input.backendUrl || '', { allowLoopback: true });
+  const inputBackendHostname = extractHostname(inputBackendUrlValidation.normalizedUrl || input.backendUrl || '').toLowerCase();
+  const canonicalHost = String(urls.host || '').toLowerCase();
+  const sameHostBackendUrl = Boolean(
+    inputBackendUrlValidation.ok
+    && inputBackendHostname
+    && canonicalHost
+    && inputBackendHostname === canonicalHost
+  );
+  const resolvedBackendUrl = sameHostBackendUrl
+    ? inputBackendUrlValidation.normalizedUrl
+    : urls.backendUrl;
+  const resolvedBackendHealthUrl = resolvedBackendUrl ? `${resolvedBackendUrl}/api/health` : '';
 
   return {
     host: urls.host,
@@ -263,8 +276,8 @@ export function normalizeStephanosHomeNode(value = {}, defaults = {}) {
     backendPort: urls.backendPort,
     distPort: urls.distPort,
     uiUrl: input.uiUrl || urls.uiUrl,
-    backendUrl: input.backendUrl || urls.backendUrl,
-    backendHealthUrl: input.backendHealthUrl || urls.backendHealthUrl,
+    backendUrl: resolvedBackendUrl,
+    backendHealthUrl: resolvedBackendHealthUrl,
     distUrl: input.distUrl || urls.distUrl,
     lastSeenAt: typeof input.lastSeenAt === 'string' ? input.lastSeenAt : '',
     source: String(input.source || fallback.source || 'manual'),
@@ -690,16 +703,13 @@ export async function probeStephanosHomeNode(node, options = {}) {
     || health.json?.backend_base_url
     || ''
   ).trim();
-  const publishedBackendHost = extractHostname(publishedBackendUrl);
-  const shouldIgnorePublishedLoopback = Boolean(
-    candidate.backendUrl
-    && publishedBackendUrl
-    && !isLoopbackHost(candidate.host)
-    && isLoopbackHost(publishedBackendHost)
+  const publishedBackendValidation = validateStephanosBackendTargetUrl(
+    publishedBackendUrl,
+    { allowLoopback: isLoopbackHost(candidate.host) },
   );
-  const resolvedBackendUrl = shouldIgnorePublishedLoopback
-    ? candidate.backendUrl
-    : (publishedBackendUrl || candidate.backendUrl);
+  const resolvedBackendUrl = publishedBackendValidation.ok
+    ? publishedBackendValidation.normalizedUrl
+    : candidate.backendUrl;
   const resolved = normalizeStephanosHomeNode({
     ...candidate,
     backendUrl: resolvedBackendUrl,
@@ -712,7 +722,14 @@ export async function probeStephanosHomeNode(node, options = {}) {
   return {
     ok: true,
     node: resolved,
-    health: health.json,
+    health: {
+      ...health.json,
+      backend_publication: {
+        backendUrl: publishedBackendUrl,
+        accepted: publishedBackendValidation.ok,
+        reason: publishedBackendValidation.ok ? '' : (publishedBackendValidation.reason || 'published backend URL was rejected'),
+      },
+    },
   };
 }
 

@@ -715,6 +715,25 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       && isLoopbackHost(publishedRouteHost)
     )
   );
+  const publishedHomeNode = preferredHomeNode && typeof preferredHomeNode === 'object'
+    ? { ...preferredHomeNode }
+    : null;
+  const publishedHomeNodeBackendValidation = validateStephanosBackendTargetUrl(
+    publishedHomeNode?.backendUrl || '',
+    { allowLoopback: localDesktopSession },
+  );
+  const publishedHomeNodeBackendRejected = Boolean(
+    publishedHomeNode
+    && publishedHomeNode.backendUrl
+    && !publishedHomeNodeBackendValidation.ok
+  );
+  const publishedHomeNodeBackendReason = publishedHomeNodeBackendRejected
+    ? `homeNode.backendUrl publication rejected: ${publishedHomeNodeBackendValidation.reason}`
+    : '';
+  if (publishedHomeNodeBackendRejected && publishedHomeNode) {
+    publishedHomeNode.backendUrl = '';
+    publishedHomeNode.backendHealthUrl = '';
+  }
   const launchInProgress = isLaunchInProgress(launcherStatus) || isLaunchInProgress(runtimeProbe.ok ? runtimeProbe.json : null);
   const homeNodeTarget = homeNodeDiscovery.reachable && preferredHomeNode?.host
     ? createStephanosHomeNodeTarget({
@@ -785,7 +804,9 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     runtimeContext: {
       frontendOrigin: currentOrigin,
       apiBaseUrl: effectiveBackendBaseUrl,
-      homeNode: preferredHomeNode ? (homeNodeRouteAvailable ? preferredHomeNode : { ...preferredHomeNode, reachable: false }) : null,
+      homeNode: publishedHomeNode
+        ? (homeNodeRouteAvailable ? publishedHomeNode : { ...publishedHomeNode, reachable: false })
+        : null,
       preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || '',
       actualTargetUsed: backendTargetResolvedUrl || '',
       nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
@@ -854,6 +875,11 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
               homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
             ].filter(Boolean).join(' ')
             : (!preferredHomeNode?.host ? 'home node is not configured' : '')),
+          publication: {
+            backendUrlAccepted: !publishedHomeNodeBackendRejected,
+            backendUrlCandidate: publishedHomeNode?.backendUrl || preferredHomeNode?.backendUrl || '',
+            backendUrlReason: publishedHomeNodeBackendReason,
+          },
         },
         dist: {
           configured: Boolean(entryExists || distPreferredTarget?.url),
