@@ -21,12 +21,15 @@ import {
 import {
   discoverStephanosHomeNode,
   extractHostname,
+  isLikelyLanHost,
   isLoopbackHost,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
+  STEPHANOS_HOME_BRIDGE_URL_GLOBAL,
   isValidStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
   validateStephanosBackendTargetUrl,
+  validateStephanosHomeBridgeUrl,
 } from "../../shared/runtime/stephanosHomeNode.mjs";
 import { requestStephanosBackend } from "../../shared/runtime/backendClient.mjs";
 import { STEPHANOS_LAW_IDS } from "../../shared/runtime/stephanosLaws.mjs";
@@ -631,6 +634,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     manualNode,
     lastKnownNode: homeNodeDiscovery.preferredNode || lastKnownNode,
     explicitBaseUrl: globalThis?.__STEPHANOS_BACKEND_BASE_URL || '',
+    bridgeUrl: globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || '',
   });
   const localDesktopSession = isLoopbackHost(extractHostname(currentOrigin)) || !extractHostname(currentOrigin);
   const hostedWebSession = !localDesktopSession;
@@ -718,6 +722,28 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   const publishedHomeNode = preferredHomeNode && typeof preferredHomeNode === 'object'
     ? { ...preferredHomeNode }
     : null;
+  const configuredBridgeUrl = String(
+    globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL]
+    || effectiveBackendProbe?.json?.published_home_bridge_url
+    || effectiveBackendProbe?.json?.home_bridge_url
+    || '',
+  ).trim();
+  const bridgeValidation = validateStephanosHomeBridgeUrl(configuredBridgeUrl, {
+    frontendOrigin: currentOrigin,
+    requireHttps: hostedWebSession,
+  });
+  const bridgeConfigured = Boolean(configuredBridgeUrl);
+  const bridgeProbe = bridgeValidation.ok
+    ? await requestStephanosBackendSafely({
+      path: '/api/health',
+      runtimeContext: { baseUrl: bridgeValidation.normalizedUrl, frontendOrigin: currentOrigin },
+      timeoutMs: 2500,
+    })
+    : { ok: false, reason: bridgeValidation.reason || (bridgeConfigured ? 'invalid-home-node-bridge-url' : 'missing-home-node-bridge-url') };
+  const bridgeReachable = bridgeValidation.ok
+    && bridgeProbe.ok
+    && bridgeProbe.json?.service === 'stephanos-server';
+  const onLanSession = hostedWebSession && isLikelyLanHost(frontendHost);
   const publishedHomeNodeBackendValidation = validateStephanosBackendTargetUrl(
     publishedHomeNode?.backendUrl || '',
     { allowLoopback: localDesktopSession },
@@ -749,7 +775,17 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
     ? await probeStephanosRuntimeTarget(homeNodeTarget, { requireStephanosMarker: false })
     : null;
   const homeNodeUiReachable = Boolean(homeNodeLaunchProbe?.reachable);
-  const homeNodeRouteAvailable = Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host && homeNodeUiReachable);
+  const lanHomeNodeRouteAvailable = Boolean(homeNodeDiscovery.reachable && preferredHomeNode?.host && homeNodeUiReachable);
+  const preferredHomeNodeRouteMode = bridgeReachable && hostedWebSession && !onLanSession ? 'home-node-bridge' : 'home-node-lan';
+  const selectedHomeNodeBackendTarget = preferredHomeNodeRouteMode === 'home-node-bridge'
+    ? bridgeValidation.normalizedUrl
+    : (homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '');
+  const selectedHomeNodeSource = preferredHomeNodeRouteMode === 'home-node-bridge'
+    ? 'home-node-bridge'
+    : (preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'));
+  const homeNodeRouteAvailable = preferredHomeNodeRouteMode === 'home-node-bridge'
+    ? bridgeReachable
+    : lanHomeNodeRouteAvailable;
   const localPreferredTarget = getStephanosPreferredRuntimeTarget(devLiveTargets, ['dev']);
   const distPreferredTarget = distLive && distTarget ? { ...distTarget, validStephanosTarget: true } : null;
 
@@ -807,9 +843,18 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
       homeNode: publishedHomeNode
         ? (homeNodeRouteAvailable ? publishedHomeNode : { ...publishedHomeNode, reachable: false })
         : null,
+      homeNodeBridge: {
+        configured: bridgeConfigured,
+        accepted: bridgeValidation.ok,
+        backendUrl: bridgeValidation.ok ? bridgeValidation.normalizedUrl : '',
+        reachability: bridgeValidation.ok ? (bridgeReachable ? 'reachable' : 'unreachable') : (bridgeConfigured ? 'invalid' : 'unknown'),
+        reason: bridgeValidation.ok
+          ? (bridgeReachable ? 'Home-node bridge configured and reachable.' : (bridgeProbe.reason || 'Home-node bridge configured but health probe failed.'))
+          : (bridgeValidation.reason || (bridgeConfigured ? 'Home-node bridge URL is invalid.' : 'No home-node bridge configured.')),
+      },
       preferredTarget: effectiveBackendBaseUrl || candidateLaunchUrl || hostedDistUrl || '',
       actualTargetUsed: backendTargetResolvedUrl || '',
-      nodeAddressSource: preferredHomeNode?.source || homeNodeDiscovery.source || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
+      nodeAddressSource: selectedHomeNodeSource || (isLoopbackHost(extractHostname(currentOrigin)) ? 'local-browser-session' : 'route-diagnostics'),
       backendTargetResolutionSource,
       backendTargetResolvedUrl,
       backendTargetFallbackUsed: false,
@@ -842,18 +887,27 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
         'home-node': {
           configured: Boolean(preferredHomeNode?.host),
           available: homeNodeRouteAvailable,
-          misconfigured: Boolean((homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured) || (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)),
-          target: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
-          actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
-          backendReachable: Boolean(homeNodeDiscovery.reachable),
-          uiReachable: homeNodeUiReachable,
+          misconfigured: preferredHomeNodeRouteMode === 'home-node-bridge'
+            ? false
+            : Boolean((homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured) || (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)),
+          target: selectedHomeNodeBackendTarget,
+          actualTarget: selectedHomeNodeBackendTarget,
+          backendReachable: preferredHomeNodeRouteMode === 'home-node-bridge' ? bridgeReachable : Boolean(homeNodeDiscovery.reachable),
+          uiReachable: preferredHomeNodeRouteMode === 'home-node-bridge' ? true : homeNodeUiReachable,
           usable: homeNodeRouteAvailable,
-          source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
+          source: selectedHomeNodeSource,
+          routeVariant: preferredHomeNodeRouteMode,
           reason: homeNodeRouteAvailable
-            ? (backendPublishedRouteMisconfigured
+            ? (preferredHomeNodeRouteMode === 'home-node-bridge'
+              ? 'Home-node bridge configured and reachable for hosted/off-network session'
+              : (backendPublishedRouteMisconfigured
               ? 'Home PC node is reachable, but the published client route is misconfigured'
-              : 'Home PC node is reachable on the LAN')
-            : (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable
+              : 'Home PC node is reachable on the LAN'))
+            : (preferredHomeNodeRouteMode === 'home-node-bridge'
+              ? (bridgeValidation.ok
+                ? 'Home-node bridge configured but health probe failed'
+                : (bridgeValidation.reason || 'Home-node bridge is not configured'))
+              : (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable
               ? 'Home PC backend is reachable, but the published home-node UI target is unreachable from this launcher session'
               : (homeNodeDiscovery.reachable
                 ? (backendPublishedRouteMisconfigured
@@ -865,8 +919,10 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
                     homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
                     homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
                   ].filter(Boolean).join(' ')
-                  : 'Home PC node is not configured'))),
-          blockedReason: (!homeNodeRouteAvailable && homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)
+                  : 'Home PC node is not configured')))),
+          blockedReason: preferredHomeNodeRouteMode === 'home-node-bridge'
+            ? (homeNodeRouteAvailable ? '' : (bridgeValidation.ok ? (bridgeProbe.reason || 'bridge health probe failed') : (bridgeValidation.reason || 'bridge unavailable')))
+            : ((!homeNodeRouteAvailable && homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)
             ? `home-node UI target is unreachable (${homeNodeTarget?.url || preferredHomeNode?.uiUrl || 'unknown target'})`
             : (!homeNodeDiscovery.reachable && preferredHomeNode?.host
             ? [
@@ -874,11 +930,33 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
               homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
               homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
             ].filter(Boolean).join(' ')
-            : (!preferredHomeNode?.host ? 'home node is not configured' : '')),
+            : (!preferredHomeNode?.host ? 'home node is not configured' : ''))),
           publication: {
             backendUrlAccepted: !publishedHomeNodeBackendRejected,
             backendUrlCandidate: publishedHomeNode?.backendUrl || preferredHomeNode?.backendUrl || '',
             backendUrlReason: publishedHomeNodeBackendReason,
+          },
+        },
+        'home-node-bridge': {
+          configured: bridgeConfigured,
+          available: bridgeReachable,
+          misconfigured: bridgeConfigured && !bridgeValidation.ok,
+          target: bridgeValidation.ok ? bridgeValidation.normalizedUrl : '',
+          actualTarget: bridgeValidation.ok ? bridgeValidation.normalizedUrl : '',
+          backendReachable: bridgeReachable,
+          uiReachable: bridgeReachable,
+          usable: bridgeReachable,
+          source: 'home-node-bridge',
+          reason: bridgeValidation.ok
+            ? (bridgeReachable ? 'Home-node bridge configured and reachable' : 'Home-node bridge configured but health probe failed')
+            : (bridgeValidation.reason || (bridgeConfigured ? 'Home-node bridge URL is invalid' : 'No home-node bridge configured')),
+          blockedReason: bridgeReachable
+            ? ''
+            : (bridgeValidation.ok ? (bridgeProbe.reason || 'bridge health probe failed') : (bridgeValidation.reason || 'bridge unavailable')),
+          publication: {
+            configuredBridgeUrl,
+            bridgeUrlAccepted: bridgeValidation.ok,
+            bridgeUrlReason: bridgeValidation.ok ? '' : (bridgeValidation.reason || 'bridge url rejected'),
           },
         },
         dist: {

@@ -62,6 +62,8 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
     createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
+    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', diagnostics['home-node-bridge']?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', diagnostics['home-node-bridge']?.target),
     createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
     createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
@@ -111,6 +113,19 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const homeNode = normalizeStephanosHomeNode(runtimeContext.homeNode || {}, {
     source: runtimeContext.homeNode?.source || 'manual',
   });
+  const homeNodeBridgeRaw = runtimeContext.homeNodeBridge && typeof runtimeContext.homeNodeBridge === 'object'
+    ? runtimeContext.homeNodeBridge
+    : {};
+  const bridgeValidation = validateStephanosBackendTargetUrl(homeNodeBridgeRaw.backendUrl || '', {
+    allowLoopback: false,
+  });
+  const homeNodeBridge = {
+    configured: homeNodeBridgeRaw.configured === true,
+    accepted: homeNodeBridgeRaw.accepted === true && bridgeValidation.ok,
+    backendUrl: bridgeValidation.ok ? bridgeValidation.normalizedUrl : '',
+    reachability: String(homeNodeBridgeRaw.reachability || (bridgeValidation.ok ? 'unknown' : 'invalid')),
+    reason: String(homeNodeBridgeRaw.reason || ''),
+  };
   const loopbackBackendMismatch = !launcherLocal && backendLocal;
   const localDesktopBackendSession = !launcherLocal
     && backendLocal
@@ -221,6 +236,7 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     sessionKind,
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
+    homeNodeBridge,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
     preferredTarget: compatiblePreferredTarget,
     actualTargetUsed: compatibleActualTarget,
@@ -477,6 +493,7 @@ function createRouteEvaluation(routeKey, defaults = {}, override = {}) {
     optional: Boolean(merged.optional),
     target: typeof merged.target === 'string' ? merged.target : '',
     actualTarget: typeof merged.actualTarget === 'string' ? merged.actualTarget : '',
+    routeVariant: String(merged.routeVariant || ''),
     source: String(merged.source || 'route-diagnostics'),
     reason: String(merged.reason || ''),
     blockedReason: String(merged.blockedReason || ''),
@@ -529,10 +546,14 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const effectiveHomeNodeConfigured = homeNodeOverrideActive
     ? false
     : (homeNodeConfiguredOverride ?? homeNodeConfigured);
-  const effectiveHomeNodeReachable = effectiveHomeNodeConfigured && homeNodeReachable;
-  const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const localDesktopProbe = diagnostics['local-desktop'] || {};
   const homeNodeProbe = diagnostics['home-node'] || {};
+  const homeNodeBridgeProbe = diagnostics['home-node-bridge'] || {};
+  const bridgeReachable = homeNodeBridgeProbe.available === true
+    || runtimeContext.homeNodeBridge?.reachability === 'reachable';
+  const effectiveHomeNodeReachable = effectiveHomeNodeConfigured
+    && (homeNodeReachable || homeNodeProbe.available === true || bridgeReachable);
+  const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const distProbe = diagnostics.dist || {};
   const localDesktopAvailable = localDesktopSession && backendAvailable;
   const localDesktopProbeAvailable = localDesktopProbe.available === true;
@@ -639,6 +660,20 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         ? (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route')
         : 'home node is not configured'),
     }),
+    'home-node-bridge': createRouteEvaluation('home-node-bridge', {
+      configured: homeNodeBridgeProbe.configured === true || runtimeContext.homeNodeBridge?.configured === true,
+      available: bridgeReachable,
+      misconfigured: homeNodeBridgeProbe.misconfigured === true || (homeNodeBridgeProbe.configured === true && homeNodeBridgeProbe.available !== true),
+      optional: runtimeContext.sessionKind !== 'hosted-web',
+      target: homeNodeBridgeProbe.target || runtimeContext.homeNodeBridge?.backendUrl || '',
+      actualTarget: homeNodeBridgeProbe.actualTarget || runtimeContext.homeNodeBridge?.backendUrl || '',
+      source: homeNodeBridgeProbe.source || 'home-node-bridge',
+      reason: homeNodeBridgeProbe.reason || (bridgeReachable ? 'Home-node bridge configured and reachable' : 'Home-node bridge unavailable'),
+      blockedReason: homeNodeBridgeProbe.blockedReason || (bridgeReachable ? '' : 'home-node bridge unavailable'),
+      backendReachable: bridgeReachable,
+      uiReachable: bridgeReachable,
+      usable: bridgeReachable,
+    }, homeNodeBridgeProbe),
     dist: createRouteEvaluation('dist', {
       configured: Boolean(distProbe.configured),
       available: Boolean(distProbe.available),
@@ -793,8 +828,14 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
         : (selectedRoute?.source || runtimeContext.nodeAddressSource || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics')))
       : (selectedRoute?.source || (runtimeContext.frontendLocal ? 'local-browser-session' : 'route-diagnostics'));
 
+  const routeVariant = selectedRoute?.routeVariant
+    || (selectedRouteKey === 'home-node'
+      ? (String(selectedRoute?.source || '').includes('bridge') ? 'home-node-bridge' : 'home-node-lan')
+      : (selectedRouteKey || 'unavailable'));
+
   return {
     routeKind: selectedRouteKey || 'unavailable',
+    routeVariant,
     preferredTarget,
     actualTargetUsed,
     localNodeReachable: Boolean(localDesktop.available || homeNode.available || runtimeContext.localNodeReachableFromSession === true),
@@ -844,6 +885,7 @@ export function finalizeRuntimeRouteResolution({
   const actualTarget = nodeRoute?.actualTargetUsed || '';
   const finalRoute = {
     routeKind: nodeRoute?.routeKind || 'unavailable',
+    routeVariant: nodeRoute?.routeVariant || nodeRoute?.routeKind || 'unavailable',
     preferredTarget: nodeRoute?.preferredTarget || '',
     actualTarget,
     source: nodeRoute?.nodeAddressSource || runtimeContext?.nodeAddressSource || (runtimeContext?.frontendLocal ? 'local-browser-session' : 'route-diagnostics'),
@@ -890,13 +932,16 @@ export function buildFinalRouteTruth({
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
     deviceContext: runtimeContext.deviceContext || 'unknown',
-    runtimeModeLabel: nodeRoute?.routeKind === 'home-node'
+    runtimeModeLabel: nodeRoute?.routeVariant === 'home-node-bridge'
+      ? 'home node/bridge'
+      : nodeRoute?.routeKind === 'home-node'
       ? 'home node/lan'
       : (runtimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
     requestedRouteMode: routePlan.requestedRouteMode || DEFAULT_ROUTE_MODE,
     effectiveRouteMode: routePlan.effectiveRouteMode || DEFAULT_ROUTE_MODE,
     preferredRoute: nodeRoute?.preferredRoute || 'unavailable',
     routeKind: nodeRoute?.routeKind || 'unavailable',
+    routeVariant: nodeRoute?.routeVariant || nodeRoute?.routeKind || 'unavailable',
     winnerReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
     preferredTarget: finalRoute?.preferredTarget || '',
     actualTarget: finalRoute?.actualTarget || '',
@@ -956,6 +1001,10 @@ function buildDependencySummary({
   }
 
   if (selectedRoute.kind === 'home-node') {
+    if (String(selectedRoute.routeVariant || selectedRoute.source || '').includes('bridge')) {
+      return selectedRoute.reason || 'Home-node bridge route ready';
+    }
+
     if (selectedRoute.misconfigured) {
       return 'Home PC node reachable · published client route misconfigured';
     }
@@ -1191,7 +1240,9 @@ export function createRuntimeStatusModel({
       ...normalizedRuntimeContext,
       finalRoute,
     },
-    runtimeModeLabel: nodeRoute.routeKind === 'home-node'
+    runtimeModeLabel: nodeRoute.routeVariant === 'home-node-bridge'
+      ? 'home node/bridge'
+      : nodeRoute.routeKind === 'home-node'
       ? 'home node/lan'
       : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
     routeAdoptionMarker: STEPHANOS_ROUTE_ADOPTION_MARKER,

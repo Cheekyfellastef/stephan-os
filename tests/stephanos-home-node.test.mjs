@@ -8,6 +8,7 @@ import {
   normalizeStephanosHomeNode,
   probeStephanosHomeNode,
   resolveStephanosBackendBaseUrl,
+  validateStephanosHomeBridgeUrl,
 } from '../shared/runtime/stephanosHomeNode.mjs';
 import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 import { validateStephanosRuntime } from '../system/apps/app_validator.js';
@@ -146,6 +147,35 @@ test('resolveStephanosBackendBaseUrl avoids static GitHub Pages origin fallback 
     resolveStephanosBackendBaseUrl({ currentOrigin: 'https://cheekyfellastef.github.io' }),
     'https://cheekyfellastef.github.io',
   );
+});
+
+test('validateStephanosHomeBridgeUrl accepts a secure remote bridge URL and rejects malformed/loopback/frontend targets', () => {
+  const valid = validateStephanosHomeBridgeUrl('https://bridge.example.com', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+  });
+  const loopback = validateStephanosHomeBridgeUrl('https://localhost:8787', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+  });
+  const sameOrigin = validateStephanosHomeBridgeUrl('https://cheekyfellastef.github.io', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+  });
+
+  assert.equal(valid.ok, true);
+  assert.equal(valid.normalizedUrl, 'https://bridge.example.com');
+  assert.equal(loopback.ok, false);
+  assert.match(loopback.reason, /loopback/i);
+  assert.equal(sameOrigin.ok, false);
+  assert.match(sameOrigin.reason, /frontend shell origin/i);
+});
+
+test('resolveStephanosBackendBaseUrl prioritizes valid home-node bridge URL for hosted sessions', () => {
+  const resolved = resolveStephanosBackendBaseUrl({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    manualNode: normalizeStephanosHomeNode({ host: '192.168.1.42' }),
+    bridgeUrl: 'https://bridge.example.com',
+  });
+
+  assert.equal(resolved, 'https://bridge.example.com');
 });
 
 test('resolveStephanosBackendBaseUrl ignores malformed manual backend URL and falls back safely', () => {
