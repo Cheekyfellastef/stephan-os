@@ -116,6 +116,19 @@ test('resolveStephanosBackendBaseUrl ignores malformed explicit backend target a
   assert.equal(resolved, 'http://192.168.0.198:8787');
 });
 
+test('normalizeStephanosHomeNode rejects malformed backendUrl publication candidates and keeps canonical host backend URL', () => {
+  const normalized = normalizeStephanosHomeNode({
+    host: '192.168.0.198',
+    backendPort: 8787,
+    backendUrl: 'http://1:8787',
+    source: 'manual',
+  }, { source: 'manual' });
+
+  assert.equal(normalized.host, '192.168.0.198');
+  assert.equal(normalized.backendUrl, 'http://192.168.0.198:8787');
+  assert.equal(normalized.backendHealthUrl, 'http://192.168.0.198:8787/api/health');
+});
+
 test('readPersistedStephanosHomeNode clears malformed stored manual host values', () => {
   const storage = {
     values: new Map([[STEPHANOS_HOME_NODE_STORAGE_KEY, JSON.stringify({ host: 1, backendPort: 8787, source: 'manual' })]]),

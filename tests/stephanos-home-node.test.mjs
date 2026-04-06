@@ -233,6 +233,88 @@ test('validateStephanosRuntime boot path does not throw when no home node is con
   }
 });
 
+test('validateStephanosRuntime rejects malformed published home-node backendUrl before runtimeContext publication', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalLocalStorage = globalThis.localStorage;
+  const manualNode = {
+    host: '192.168.0.198',
+    uiPort: 5173,
+    backendPort: 8787,
+    backendUrl: 'http://1:8787',
+    source: 'manual',
+  };
+
+  globalThis.window = { location: { origin: 'https://cheekyfellastef.github.io' } };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'stephanos_home_node_manual') {
+        return JSON.stringify(manualNode);
+      }
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      if (url === 'http://192.168.0.198:5173/') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      return { ok: false, status: 404, text: async () => '' };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://1:8787',
+        }),
+        json: async () => ({
+          ok: true,
+          service: 'stephanos-server',
+          backend_base_url: 'http://localhost:8787',
+          published_backend_base_url: 'http://1:8787',
+        }),
+      };
+    }
+
+    if (url === 'http://192.168.0.198:8787/api/ai/providers/health') {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: {} }),
+        json: async () => ({ success: true, data: {} }),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  };
+
+  try {
+    const status = await validateStephanosRuntime('apps/stephanos/dist/index.html', {}, { previousValidationState: 'unknown' });
+
+    assert.equal(status.runtimeStatusModel.runtimeContext.homeNode.backendUrl, 'http://192.168.0.198:8787');
+    assert.equal(
+      status.runtimeStatusModel.runtimeContext.routeDiagnostics['home-node'].publication.backendUrlAccepted,
+      true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+  }
+});
+
 test('validateStephanosRuntime treats a reachable home node as reachable even when published client routes are misconfigured', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
