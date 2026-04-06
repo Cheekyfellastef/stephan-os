@@ -30,3 +30,21 @@ test('execution truth uses executable/selected provider when actual provider is 
   assert.equal(truth.providerUsed, 'gemini');
   assert.equal(truth.status, 'ok:gemini');
 });
+
+test('execution truth narrates fallback provider and reason without conflating selected provider', () => {
+  const truth = resolveProviderExecutionTruth({
+    requestedProviderForRequest: 'gemini',
+    actualProviderUsed: 'groq',
+    executionStatus: 'ok:groq',
+    executableProvider: 'gemini',
+    selectedProvider: 'gemini',
+    backendDefaultProvider: 'ollama',
+    fallbackUsed: true,
+    fallbackProviderUsed: 'groq',
+    fallbackReason: 'gemini: Invalid JSON payload received. Unknown name "config": Cannot find field.',
+  });
+
+  assert.equal(truth.providerUsed, 'groq');
+  assert.match(truth.narration, /Fallback via groq after gemini failure/i);
+  assert.match(truth.narration, /Unknown name "config"/i);
+});

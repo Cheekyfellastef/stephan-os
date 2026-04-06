@@ -110,7 +110,7 @@ export default function StatusPanel() {
       : lastExecutionMetadata.provider_answered === false
         ? `failed via ${lastExecutionMetadata.actual_provider_used}`
       : lastExecutionMetadata.fallback_used
-        ? `fallback via ${lastExecutionMetadata.actual_provider_used}`
+        ? `fallback via ${lastExecutionMetadata.actual_provider_used} after ${lastExecutionMetadata.requested_provider_for_request || lastExecutionMetadata.selected_provider || 'selected-provider'} failure`
         : lastExecutionMetadata.actual_provider_used === 'mock'
           ? 'mock response'
           : `${lastExecutionMetadata.actual_provider_used} answered`;
@@ -163,6 +163,7 @@ export default function StatusPanel() {
       lastUiDefaultProvider: lastExecutionMetadata?.ui_default_provider || provider,
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
       lastRequestedProviderForRequest: lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider,
+      lastFallbackProviderUsed: lastExecutionMetadata?.fallback_provider_used || 'n/a',
       lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
       lastRequestedProvider: lastExecutionMetadata?.requested_provider
         || lastExecutionMetadata?.requested_provider_for_request
@@ -204,6 +205,11 @@ export default function StatusPanel() {
       lastResponseTruth: responseTruth,
       lastFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a',
       lastFallbackReason: lastExecutionMetadata?.fallback_reason,
+      lastEffectiveAnswerMode: lastExecutionMetadata?.effective_answer_mode || 'n/a',
+      lastFreshProviderAttempted: lastExecutionMetadata?.fresh_provider_attempted || 'n/a',
+      lastFreshProviderFailureReason: lastExecutionMetadata?.fresh_provider_failure_reason || 'n/a',
+      lastGroundingEnabled: String(lastExecutionMetadata?.grounding_enabled ?? 'n/a'),
+      lastGroundingActiveForRequest: lastExecutionMetadata?.grounding_active_for_request || 'n/a',
       lastStaleFallbackAttempted: lastExecutionMetadata ? (lastExecutionMetadata.stale_fallback_attempted ? 'yes' : 'no') : 'n/a',
       lastFreshnessNeed: lastExecutionMetadata?.freshness_need || 'n/a',
       lastFreshnessReason: lastExecutionMetadata?.freshness_reason || 'n/a',
@@ -437,6 +443,7 @@ export default function StatusPanel() {
         <li>Last Requested Provider: {lastExecutionMetadata?.requested_provider || 'n/a'}</li>
         <li>Last Selected Provider: {lastExecutionMetadata?.selected_provider || 'n/a'}</li>
         <li>Last Actual Provider Used: {lastExecutionMetadata?.actual_provider_used || 'n/a'}</li>
+        <li>Last Fallback Provider Used: {lastExecutionMetadata?.fallback_provider_used || 'n/a'}</li>
         <li>Last Model Used: {lastExecutionMetadata?.model_used || 'n/a'}</li>
         <li>Last Ollama Default Model: {lastExecutionMetadata?.ollama_model_default || 'n/a'}</li>
         <li>Last Ollama Preferred Model: {lastExecutionMetadata?.ollama_model_preferred || 'n/a'}</li>
@@ -471,6 +478,11 @@ export default function StatusPanel() {
         <li>Last Response Truth: {responseTruth}</li>
         <li>Last Fallback Used: {lastExecutionMetadata ? (lastExecutionMetadata.fallback_used ? 'yes' : 'no') : 'n/a'}</li>
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
+        <li>Last Effective Answer Mode: {lastExecutionMetadata?.effective_answer_mode || 'n/a'}</li>
+        <li>Last Fresh Provider Attempted: {lastExecutionMetadata?.fresh_provider_attempted || 'n/a'}</li>
+        <li>Last Fresh Provider Failure Reason: {lastExecutionMetadata?.fresh_provider_failure_reason || 'n/a'}</li>
+        <li>Grounding Enabled: {String(lastExecutionMetadata?.grounding_enabled ?? 'n/a')}</li>
+        <li>Grounding Active For Request: {lastExecutionMetadata?.grounding_active_for_request || 'n/a'}</li>
         <li>Last Freshness Need: {lastExecutionMetadata?.freshness_need || 'n/a'}</li>
         <li>Last Answer Mode: {lastExecutionMetadata?.selected_answer_mode || 'n/a'}</li>
         <li>Last Stale Risk: {lastExecutionMetadata?.stale_risk || 'n/a'}</li>

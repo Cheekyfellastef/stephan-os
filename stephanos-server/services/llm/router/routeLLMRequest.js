@@ -198,12 +198,14 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const routing = providerHealthSnapshot.routing;
   const attempts = [];
   const attemptOrder = routing.attemptOrder;
-  const requestedProvider = configInput.provider || DEFAULT_PROVIDER_KEY;
+  const savedPreferredProvider = configInput.provider || DEFAULT_PROVIDER_KEY;
+  const requestedProvider = routing.requestedProviderForRequest || routing.selectedProvider || savedPreferredProvider;
   const requestedRouteMode = routing.requestedRouteMode;
   const selectedProvider = routing.selectedProvider;
 
   logger.info('Routing LLM request', {
     requestedProvider,
+    savedPreferredProvider,
     requestedRouteMode,
     effectiveRouteMode: routing.effectiveRouteMode,
     selectedProvider,
@@ -224,6 +226,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   for (const provider of attemptOrder) {
     logger.info('Executing provider attempt', {
       requestedProvider,
+      savedPreferredProvider,
       requestedRouteMode,
       selectedProvider,
       providerSelectionSource: routing.providerSelectionSource,
@@ -250,6 +253,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
 
     logger.info('Provider attempt completed', {
       requestedProvider,
+      savedPreferredProvider,
       requestedRouteMode,
       selectedProvider,
       provider,
@@ -286,6 +290,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         diagnostics: {
           ...(attempt.result.diagnostics || {}),
           requestedProvider,
+          savedPreferredProvider,
           requestedRouteMode,
           effectiveRouteMode: routing.effectiveRouteMode,
           selectedProvider,
@@ -341,6 +346,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     diagnostics: {
       ...(lastAttempt?.result?.diagnostics || {}),
       requestedProvider,
+      savedPreferredProvider,
       requestedRouteMode,
       effectiveRouteMode: routing.effectiveRouteMode,
       selectedProvider,

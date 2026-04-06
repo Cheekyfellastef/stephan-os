@@ -9,6 +9,10 @@ export function resolveProviderExecutionTruth({
   executableProvider = '',
   selectedProvider = '',
   backendDefaultProvider = '',
+  requestedProviderForRequest = '',
+  fallbackUsed = false,
+  fallbackProviderUsed = '',
+  fallbackReason = '',
 } = {}) {
   const providerUsed = asText(actualProviderUsed)
     || asText(executableProvider)
@@ -18,11 +22,19 @@ export function resolveProviderExecutionTruth({
   const answered = providerUsed === 'unknown'
     ? 'Provider execution unconfirmed'
     : `${providerUsed} answered`;
+  const requested = asText(requestedProviderForRequest);
+  const fallbackProvider = asText(fallbackProviderUsed);
+  const fallbackNarration = fallbackUsed && fallbackProvider
+    ? `Fallback via ${fallbackProvider}${requested ? ` after ${requested} failure` : ''}.`
+    : '';
+  const fallbackReasonNarration = fallbackUsed && fallbackReason
+    ? ` Reason: ${fallbackReason}`
+    : '';
 
   return {
     providerUsed,
     status,
     answered,
-    narration: `Execution truth: ${answered}.`,
+    narration: `Execution truth: ${answered}.${fallbackNarration}${fallbackReasonNarration}`.trim(),
   };
 }

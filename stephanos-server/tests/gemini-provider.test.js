@@ -61,7 +61,41 @@ test('Gemini runner executes when api key is configured', async () => {
     assert.equal(result.diagnostics.gemini.supportsFreshWeb, true);
     assert.deepEqual(result.diagnostics.gemini.groundingMetadata.searchQueries, ['current UK prime minister']);
     assert.equal(result.diagnostics.gemini.groundingMetadata.sources[0].uri, 'https://example.com');
+    const requestBody = JSON.parse(String(calls[0].options.body || '{}'));
     assert.match(String(calls[0].options.body || ''), /google_search/);
+    assert.equal(Array.isArray(requestBody.tools), true);
+    assert.equal('config' in requestBody, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('Gemini runner gracefully reports unavailable grounding metadata when endpoint omits it', async () => {
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      candidates: [{
+        content: { parts: [{ text: 'Gemini response without grounding metadata' }] },
+      }],
+      usageMetadata: { promptTokenCount: 2 },
+    }),
+  });
+
+  try {
+    const result = await runGeminiProvider({
+      messages: [{ role: 'user', content: 'Hello Gemini' }],
+      model: 'gemini-2.5-flash',
+    }, {
+      apiKey: 'AIza-sample-key',
+      model: 'gemini-2.5-flash',
+      groundingEnabled: true,
+      groundingMode: 'google_search',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.gemini.groundingMetadata.available, false);
+    assert.deepEqual(result.diagnostics.gemini.groundingMetadata.searchQueries, []);
+    assert.deepEqual(result.diagnostics.gemini.groundingMetadata.sources, []);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }

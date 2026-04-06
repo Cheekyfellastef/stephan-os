@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
-export const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../..');
+const thisFilePath = fileURLToPath(import.meta.url);
+export const repoRoot = path.resolve(path.dirname(thisFilePath), '../../..');
 export const uiRoot = path.join(repoRoot, 'stephanos-ui');
 export const srcRoot = path.join(uiRoot, 'src');
 
