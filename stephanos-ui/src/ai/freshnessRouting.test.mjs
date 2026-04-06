@@ -33,6 +33,39 @@ test('latest phrasing prefers fresh-cloud routing when available', () => {
   assert.equal(decision.aiPolicy.aiPolicyMode, 'local-first-cloud-when-needed');
 });
 
+test('high-freshness prefers Gemini when Gemini is the first fresh-capable provider', () => {
+  const classification = classifyPromptFreshness('Who is the current UK prime minister?');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'ollama',
+    providerHealth: {
+      gemini: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+        },
+      },
+      groq: {
+        ok: true,
+        providerCapability: {
+          supportsCurrentAnswers: true,
+          supportsFreshWeb: true,
+          transportReachable: true,
+        },
+      },
+      ollama: { ok: true },
+    },
+    runtimeStatus: { cloudAvailable: true, localAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.selectedProvider, 'gemini');
+  assert.equal(decision.requestedProviderForRequest, 'gemini');
+  assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
+});
+
 test('high-freshness request can use cloud route even when canonical selected route is currently unusable', () => {
   const classification = classifyPromptFreshness('Who is the current UK prime minister?');
   const decision = resolveFreshnessRoutingDecision({

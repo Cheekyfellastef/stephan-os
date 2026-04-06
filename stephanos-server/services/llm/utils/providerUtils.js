@@ -57,7 +57,13 @@ function getEnvBackedDefaults(provider) {
       freshWebModel: process.env.GROQ_FRESH_WEB_MODEL,
       freshWebModelCandidates: process.env.GROQ_FRESH_WEB_MODEL_CANDIDATES,
     },
-    gemini: { apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL, baseURL: process.env.GEMINI_BASE_URL },
+    gemini: {
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL,
+      baseURL: process.env.GEMINI_BASE_URL,
+      groundingEnabled: process.env.GEMINI_GROUNDING_ENABLED,
+      groundingMode: process.env.GEMINI_GROUNDING_MODE,
+    },
     ollama: {
       baseURL: process.env.OLLAMA_BASE_URL || normalizedOllamaHost,
       model: process.env.OLLAMA_MODEL,
@@ -132,6 +138,13 @@ export function sanitizeProviderConfig(provider, config = {}) {
     merged.perModelTimeoutOverrides = normalizePerModelTimeoutOverrides(merged.perModelTimeoutOverrides);
   }
   if ('enabled' in merged) merged.enabled = Boolean(merged.enabled);
+  if ('groundingEnabled' in merged) merged.groundingEnabled = String(merged.groundingEnabled).toLowerCase() !== 'false';
+  if ('groundingMode' in merged) {
+    const normalizedGroundingMode = String(merged.groundingMode || '').trim().toLowerCase();
+    merged.groundingMode = ['none', 'google_search', 'custom_search'].includes(normalizedGroundingMode)
+      ? normalizedGroundingMode
+      : 'none';
+  }
   if ('mode' in merged && !['echo', 'canned', 'scenario'].includes(merged.mode)) merged.mode = defaults.mode;
 
   return merged;
@@ -176,17 +189,32 @@ export function resolveRoutingPlan(routerConfig = {}, providerHealthSnapshot = {
   const readyCloudProviders = getReadyProviders(providerHealthSnapshot, CLOUD_FIRST_PROVIDER_KEYS.filter((providerKey) => CLOUD_PROVIDER_KEYS.includes(providerKey)));
   const localAvailable = readyLocalProviders.length > 0;
   const cloudAvailable = readyCloudProviders.length > 0;
+  const freshnessNeed = String(routerConfig?.freshnessContext?.freshnessNeed || '').trim().toLowerCase();
+  const highFreshness = freshnessNeed === 'high';
 
-  const effectiveRouteMode = requestedRouteMode === 'auto'
+  const defaultEffectiveRouteMode = requestedRouteMode === 'auto'
     ? runtimeContext.deviceContext === 'lan-companion'
       ? (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
       : runtimeContext.sessionKind === 'hosted-web'
         ? (cloudAvailable ? 'cloud-first' : 'local-first')
         : (localAvailable ? 'local-first' : (cloudAvailable ? 'cloud-first' : 'local-first'))
     : requestedRouteMode;
+  const freshCapableReadyProviders = CLOUD_FIRST_PROVIDER_KEYS.filter((providerKey) => {
+    const health = providerHealthSnapshot?.[providerKey] || {};
+    const capability = health?.providerCapability || {};
+    return health.ok === true && capability.supportsFreshWeb === true;
+  });
+  const preferredFreshProvider = ['gemini', 'groq', 'openrouter'].find((providerKey) => freshCapableReadyProviders.includes(providerKey)) || '';
+  const effectiveRouteMode = requestedRouteMode === 'auto' && highFreshness
+    ? (preferredFreshProvider ? 'cloud-fresh' : 'local-first-fallback')
+    : defaultEffectiveRouteMode;
 
   const preferredOrder = effectiveRouteMode === 'explicit'
     ? [requestedProvider]
+    : effectiveRouteMode === 'cloud-fresh'
+      ? [preferredFreshProvider || 'gemini', ...CLOUD_FIRST_PROVIDER_KEYS]
+    : effectiveRouteMode === 'local-first-fallback'
+      ? LOCAL_FIRST_PROVIDER_KEYS
     : effectiveRouteMode === 'cloud-first'
       ? CLOUD_FIRST_PROVIDER_KEYS
       : LOCAL_FIRST_PROVIDER_KEYS;
@@ -201,7 +229,23 @@ export function resolveRoutingPlan(routerConfig = {}, providerHealthSnapshot = {
 
   const selectedProvider = effectiveRouteMode === 'explicit'
     ? requestedProvider
+    : effectiveRouteMode === 'cloud-fresh'
+      ? (preferredFreshProvider || attemptOrder.find((providerKey) => providerHealthSnapshot[providerKey]?.ok) || attemptOrder[0] || requestedProvider)
+    : effectiveRouteMode === 'local-first-fallback'
+      ? (attemptOrder.find((providerKey) => LOCAL_PROVIDER_KEYS.includes(providerKey) && providerHealthSnapshot[providerKey]?.ok)
+        || attemptOrder.find((providerKey) => providerHealthSnapshot[providerKey]?.ok)
+        || attemptOrder[0]
+        || requestedProvider)
     : attemptOrder.find((providerKey) => providerHealthSnapshot[providerKey]?.ok) || attemptOrder[0] || requestedProvider;
+  const providerSelectionSource = requestedRouteMode === 'explicit'
+    ? 'explicit:user-selection'
+    : requestedRouteMode === 'auto' && highFreshness
+      ? (preferredFreshProvider ? 'auto:fresh-capable' : 'auto:freshness-fallback')
+      : 'auto:policy';
+  const freshnessWarning = requestedRouteMode === 'auto' && highFreshness && !preferredFreshProvider
+    ? 'Fresh route unavailable; answer may be stale.'
+    : null;
+  const requestedProviderForRequest = selectedProvider;
 
   return {
     requestedProvider,
@@ -213,6 +257,11 @@ export function resolveRoutingPlan(routerConfig = {}, providerHealthSnapshot = {
     readyCloudProviders,
     localAvailable,
     cloudAvailable,
+    freshnessNeed,
+    freshCapableReadyProviders,
+    freshnessWarning,
+    providerSelectionSource,
+    requestedProviderForRequest,
     runtimeContext,
   };
 }
@@ -225,6 +274,9 @@ export function buildRouterConfig(config = {}) {
     fallbackEnabled: config.fallbackEnabled !== false,
     fallbackOrder: normalizeFallbackOrder(config.fallbackOrder || FALLBACK_PROVIDER_KEYS),
     providerConfigs: config.providerConfigs || {},
+    freshnessContext: config.freshnessContext && typeof config.freshnessContext === 'object'
+      ? { ...config.freshnessContext }
+      : null,
     runtimeContext: normalizeRuntimeContext(config.runtimeContext),
   };
 }

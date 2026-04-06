@@ -28,6 +28,8 @@ const FIELD_MAP = {
   ],
   gemini: [
     { key: 'model', label: 'Model', type: 'text' },
+    { key: 'groundingEnabled', label: 'Enable Google Search grounding', type: 'checkbox' },
+    { key: 'groundingMode', label: 'Grounding mode', type: 'select', options: ['google_search', 'none'] },
     { key: 'baseURL', label: 'Base URL', type: 'text' },
     { key: 'apiKey', label: 'API key', type: 'password' },
   ],
@@ -585,6 +587,22 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     <p><strong>Fresh candidate model:</strong> {health.providerCapability?.candidateFreshWebModel || 'n/a'}</p>
                     <p><strong>Fresh web path:</strong> {health.providerCapability?.freshWebPath || 'n/a'}</p>
                     <p><strong>Capability reason:</strong> {health.providerCapability?.capabilityReason || 'n/a'}</p>
+                  </div>
+                </div>
+              ) : null}
+              {providerKey === 'gemini' ? (
+                <div className="provider-hint-box found">
+                  <div className="provider-help-panel">
+                    <strong>Gemini grounding</strong>
+                    <p>Fresh/current answers require Google Search grounding in backend execution.</p>
+                  </div>
+                  <div className="provider-status-box">
+                    <strong>{health.ok ? 'Gemini is ready' : 'Gemini needs a key'}</strong>
+                    <p>{health.detail || 'Gemini health has not been checked yet.'}</p>
+                    <p><strong>Fresh capable:</strong> {String(health.providerCapability?.supportsFreshWeb ?? 'unknown')}</p>
+                    <p><strong>Grounding enabled:</strong> {String(health.providerCapability?.groundingEnabled ?? draft.groundingEnabled ?? false)}</p>
+                    <p><strong>Grounding mode:</strong> {health.providerCapability?.groundingMode || draft.groundingMode || 'none'}</p>
+                    <p><strong>Admin authority:</strong> {adminAuthority.ok ? 'available' : 'denied'}</p>
                   </div>
                 </div>
               ) : null}
