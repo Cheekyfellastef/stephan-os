@@ -95,6 +95,26 @@ function parseJson(raw) {
   }
 }
 
+function persistLegacyLocalState(globalObj, sanitizedState) {
+  const storage = globalObj.localStorage;
+  if (!storage || typeof storage.setItem !== 'function') {
+    return {
+      ok: false,
+      source: 'no-local-storage',
+    };
+  }
+
+  storage.setItem(LEGACY_STORAGE_KEY, JSON.stringify({
+    schemaVersion: STORAGE_VERSION,
+    category: APP_ID,
+    records: sanitizedState.records,
+  }));
+  return {
+    ok: true,
+    source: 'legacy-local-fallback',
+  };
+}
+
 function createIdeasPersistence(globalObj = globalThis) {
   const logger = globalObj.console || console;
 
@@ -219,6 +239,25 @@ function createIdeasPersistence(globalObj = globalThis) {
         payloadSummary: summarizeRecords(sanitizedState),
       });
 
+      if (!response?.ok) {
+        const fallbackResult = persistLegacyLocalState(globalObj, sanitizedState);
+        log('save-fallback', {
+          appId: APP_ID,
+          backendUrlResolved: tileDataClient.apiBaseUrl || '',
+          sourceUsedOnSave: fallbackResult.source,
+          backendSaveSucceeded: false,
+          hydrationCompleted,
+          payloadSummary: summarizeRecords(sanitizedState),
+          fallbackReason: response?.diagnostics?.error || `http-${response?.status || 0}`,
+        });
+        return {
+          ok: fallbackResult.ok,
+          skipped: false,
+          source: fallbackResult.ok ? 'legacy-local-fallback' : 'save-failed',
+          reason: fallbackResult.ok ? 'backend-save-failed-local-fallback' : 'save-failed',
+        };
+      }
+
       return {
         ok: Boolean(response?.ok),
         skipped: false,
@@ -226,13 +265,8 @@ function createIdeasPersistence(globalObj = globalThis) {
       };
     }
 
-    const storage = globalObj.localStorage;
-    if (storage && typeof storage.setItem === 'function') {
-      storage.setItem(LEGACY_STORAGE_KEY, JSON.stringify({
-        schemaVersion: STORAGE_VERSION,
-        category: APP_ID,
-        records: sanitizedState.records,
-      }));
+    const fallbackResult = persistLegacyLocalState(globalObj, sanitizedState);
+    if (fallbackResult.ok) {
       log('save', {
         appId: APP_ID,
         backendUrlResolved: '',

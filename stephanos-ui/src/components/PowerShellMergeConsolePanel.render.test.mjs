@@ -44,8 +44,8 @@ test('local shell buttons return truthful unsupported message outside local desk
 
 
 test('ritual phase transitions only advance after successful clipboard copy', () => {
-  assert.match(panelSource, /const copied = setCopyFeedback\(result, 'Copied Box 1\.', 'box1'\)/);
-  assert.match(panelSource, /if \(copied\) \{\s*setPhaseState\(\(prev\) => applyPhaseCopyTransition\(prev, 'box1'\)\);\s*\}/);
+  assert.match(panelSource, /transitionKey: 'box1'/);
+  assert.match(panelSource, /if \(copied && transitionKey\) \{\s*setPhaseState\(\(prev\) => applyPhaseCopyTransition\(prev, transitionKey\)\);\s*\}/);
 });
 
 test('clipboard failures surface explicit reasoned operator feedback', () => {
@@ -53,4 +53,6 @@ test('clipboard failures surface explicit reasoned operator feedback', () => {
   assert.match(panelSource, /Clipboard permission denied in this runtime\./);
   assert.match(panelSource, /Clipboard unavailable in this runtime\./);
   assert.match(panelSource, /\[POWER SHELL MERGE CONSOLE\] Clipboard copy failed/);
+  assert.match(panelSource, /\[POWER SHELL MERGE CONSOLE\] clipboard copy requested/);
+  assert.match(panelSource, /payloadLength/);
 });

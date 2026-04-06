@@ -67,6 +67,10 @@ function resolveClipboardFailureMessage(result = {}) {
   return `Clipboard copy failed${reason ? ` (${reason})` : ''}. Use manual copy from raw mode.`;
 }
 
+function summarizeCopyPayload(payload) {
+  return String(payload ?? '');
+}
+
 export default function PowerShellMergeConsolePanel() {
   const { uiLayout, togglePanel, runtimeStatusModel } = useAIStore();
   const safeUiLayout = uiLayout || {};
@@ -150,7 +154,14 @@ export default function PowerShellMergeConsolePanel() {
     };
   }, [localShellAvailable]);
 
-  function setCopyFeedback(result, successMessage, copyTargetId) {
+  function setCopyFeedback(result, successMessage, copyTargetId, payloadLength) {
+    console.info('[POWER SHELL MERGE CONSOLE] clipboard copy result', {
+      copyTargetId,
+      payloadLength,
+      method: result?.method || 'unknown',
+      success: Boolean(result?.ok),
+      reason: result?.reason || 'unknown',
+    });
     if (result.ok) {
       setFeedback({ tone: 'success', message: successMessage });
       setCopiedButtonId(copyTargetId);
@@ -166,6 +177,25 @@ export default function PowerShellMergeConsolePanel() {
     return false;
   }
 
+  async function handleCopyAction({
+    copyTargetId,
+    payload,
+    successMessage,
+    transitionKey = '',
+  }) {
+    const resolvedPayload = summarizeCopyPayload(payload);
+    console.info('[POWER SHELL MERGE CONSOLE] clipboard copy requested', {
+      copyTargetId,
+      payloadLength: resolvedPayload.length,
+    });
+    const result = await writeTextToClipboard(resolvedPayload);
+    const copied = setCopyFeedback(result, successMessage, copyTargetId, resolvedPayload.length);
+    if (copied && transitionKey) {
+      setPhaseState((prev) => applyPhaseCopyTransition(prev, transitionKey));
+    }
+    return copied;
+  }
+
   async function handleCopyBox1() {
     if (!buttonState.box1.enabled) {
       setFeedback({ tone: 'warning', message: buttonState.box1.reason || 'Box 1 is currently blocked.' });
@@ -175,11 +205,12 @@ export default function PowerShellMergeConsolePanel() {
       setFeedback({ tone: 'warning', message: 'Enter a commit message before copying Box 1.' });
       return;
     }
-    const result = await writeTextToClipboard(box1Payload);
-    const copied = setCopyFeedback(result, 'Copied Box 1.', 'box1');
-    if (copied) {
-      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box1'));
-    }
+    await handleCopyAction({
+      copyTargetId: 'box1',
+      payload: box1Payload,
+      successMessage: 'Copied Box 1.',
+      transitionKey: 'box1',
+    });
   }
 
   async function handleCopyBox2() {
@@ -187,11 +218,12 @@ export default function PowerShellMergeConsolePanel() {
       setFeedback({ tone: 'warning', message: buttonState.box2.reason || 'Box 2 is currently blocked.' });
       return;
     }
-    const result = await writeTextToClipboard(box2Payload);
-    const copied = setCopyFeedback(result, 'Copied Box 2.', 'box2');
-    if (copied) {
-      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box2'));
-    }
+    await handleCopyAction({
+      copyTargetId: 'box2',
+      payload: box2Payload,
+      successMessage: 'Copied Box 2.',
+      transitionKey: 'box2',
+    });
   }
 
   async function handleCopyBox3() {
@@ -199,11 +231,12 @@ export default function PowerShellMergeConsolePanel() {
       setFeedback({ tone: 'warning', message: buttonState.box3.reason || 'Box 3 is currently blocked.' });
       return;
     }
-    const result = await writeTextToClipboard(box3Payload);
-    const copied = setCopyFeedback(result, 'Copied Box 3.', 'box3');
-    if (copied) {
-      setPhaseState((prev) => applyPhaseCopyTransition(prev, 'box3'));
-    }
+    await handleCopyAction({
+      copyTargetId: 'box3',
+      payload: box3Payload,
+      successMessage: 'Copied Box 3.',
+      transitionKey: 'box3',
+    });
   }
 
   async function handleCopyFullRitual() {
@@ -211,23 +244,35 @@ export default function PowerShellMergeConsolePanel() {
       setFeedback({ tone: 'warning', message: buttonState.copyFullRitual.reason || 'Full ritual copy is currently guarded.' });
       return;
     }
-    const result = await writeTextToClipboard(fullPayload);
-    setCopyFeedback(result, 'Copied full ritual.', 'fullRitual');
+    await handleCopyAction({
+      copyTargetId: 'fullRitual',
+      payload: fullPayload,
+      successMessage: 'Copied full ritual.',
+    });
   }
 
   async function handleCopyPowerShellOutput() {
-    const result = await writeTextToClipboard(powerShellOutput);
-    setCopyFeedback(result, 'Copied PowerShell output transcript.', 'output');
+    await handleCopyAction({
+      copyTargetId: 'output',
+      payload: powerShellOutput,
+      successMessage: 'Copied PowerShell output transcript.',
+    });
   }
 
   async function handleCopyRepoPath() {
-    const result = await writeTextToClipboard(repoPath);
-    setCopyFeedback(result, 'Copied repo path.', 'repoPath');
+    await handleCopyAction({
+      copyTargetId: 'repoPath',
+      payload: repoPath,
+      successMessage: 'Copied repo path.',
+    });
   }
 
   async function handleCopyCdCommand() {
-    const result = await writeTextToClipboard(cdCommand);
-    setCopyFeedback(result, 'Copied PowerShell cd command.', 'cdCommand');
+    await handleCopyAction({
+      copyTargetId: 'cdCommand',
+      payload: cdCommand,
+      successMessage: 'Copied PowerShell cd command.',
+    });
   }
 
   async function handleOpenRepoPowerShell() {
@@ -460,9 +505,9 @@ export default function PowerShellMergeConsolePanel() {
           <h3>Captain Manual Override</h3>
           <p className="power-shell-note">Raw ritual blocks stay available even when truth-aware controls are guarded.</p>
           <div className="power-shell-controls">
-            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox1' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box1Payload), 'Copied raw Box 1.', 'rawBox1')}>{copiedButtonId === 'rawBox1' ? 'Copied Raw Box 1' : 'Copy Raw Box 1'}</button>
-            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox2' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box2Payload), 'Copied raw Box 2.', 'rawBox2')}>{copiedButtonId === 'rawBox2' ? 'Copied Raw Box 2' : 'Copy Raw Box 2'}</button>
-            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox3' ? 'power-shell-copy-success' : ''}`} onClick={async () => setCopyFeedback(await writeTextToClipboard(box3Payload), 'Copied raw Box 3.', 'rawBox3')}>{copiedButtonId === 'rawBox3' ? 'Copied Raw Box 3' : 'Copy Raw Box 3'}</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox1' ? 'power-shell-copy-success' : ''}`} onClick={() => handleCopyAction({ copyTargetId: 'rawBox1', payload: box1Payload, successMessage: 'Copied raw Box 1.' })}>{copiedButtonId === 'rawBox1' ? 'Copied Raw Box 1' : 'Copy Raw Box 1'}</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox2' ? 'power-shell-copy-success' : ''}`} onClick={() => handleCopyAction({ copyTargetId: 'rawBox2', payload: box2Payload, successMessage: 'Copied raw Box 2.' })}>{copiedButtonId === 'rawBox2' ? 'Copied Raw Box 2' : 'Copy Raw Box 2'}</button>
+            <button type="button" className={`ghost-button ${copiedButtonId === 'rawBox3' ? 'power-shell-copy-success' : ''}`} onClick={() => handleCopyAction({ copyTargetId: 'rawBox3', payload: box3Payload, successMessage: 'Copied raw Box 3.' })}>{copiedButtonId === 'rawBox3' ? 'Copied Raw Box 3' : 'Copy Raw Box 3'}</button>
           </div>
           <pre>{fullPayload}</pre>
         </section>

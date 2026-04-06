@@ -259,6 +259,11 @@ async function writeAll(records) {
   }
 
   const sanitized = sanitizeIdeasState({ records });
+  logIdeas('write-all-requested', {
+    hydrationCompleted,
+    targetRecordCount: sanitized.records.length,
+    idsPreview: sanitized.records.slice(0, 5).map((record) => record.id),
+  });
   const saveResult = await persistence.saveState({
     state: sanitized,
     ui: {},
@@ -305,8 +310,17 @@ async function writeAll(records) {
 }
 
 async function upsert(record) {
+  logIdeas('upsert-requested', {
+    incomingId: record?.id || '',
+    title: record?.title || '',
+    recordCountBefore: readAll().length,
+  });
   const next = upsertIdeaRecord(readAll(), record);
   await writeAll(next);
+  logIdeas('upsert-complete', {
+    savedId: next[0]?.id || '',
+    recordCountAfter: next.length,
+  });
   return next[0];
 }
 
@@ -545,6 +559,14 @@ elements.saveButton?.addEventListener('click', async () => {
 
     const payload = getFormPayload();
     const wasEditing = Boolean(editingIdeaId);
+    logIdeas('save-payload-ready', {
+      mode: wasEditing ? 'update' : 'create',
+      payloadTitleLength: payload.title.length,
+      payloadSummaryLength: payload.summary.length,
+      payloadTagCount: payload.tags.length,
+      payloadMediaCount: payload.media.length,
+      persistenceTarget: hydrationSource,
+    });
     const savedRecord = await upsert({
       ...payload,
       id: editingIdeaId || undefined,
@@ -581,6 +603,11 @@ elements.saveButton?.addEventListener('click', async () => {
     setEditMode(null);
     elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${lastSaveSource}).`;
     renderIdeas();
+    logIdeas('save-render-complete', {
+      savedIdeaId: savedRecord.id,
+      renderedRecordCount: readAll().length,
+      source: lastSaveSource,
+    });
   } catch (error) {
     logIdeas('edit-save-failed', {
       message: error?.message || 'Failed to save record.',
