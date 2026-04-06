@@ -51,6 +51,7 @@ function extractGroundingMetadata(raw = {}) {
     }))
     .filter((source) => source.uri);
   return {
+    available: Boolean(metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0),
     searchQueries: webSearchQueries,
     sources,
     citations: Array.isArray(metadata?.groundingSupports) ? metadata.groundingSupports : [],
@@ -136,7 +137,6 @@ export async function runGeminiProvider(request, config = {}) {
       body: JSON.stringify({
         systemInstruction: request.systemPrompt ? { parts: [{ text: request.systemPrompt }] } : undefined,
         contents: toGeminiContents(request),
-        config: grounding.groundingTool ? { tools: [grounding.groundingTool] } : undefined,
         tools: grounding.groundingTool ? [grounding.groundingTool] : undefined,
         generationConfig: {
           temperature: request.temperature ?? 0.3,

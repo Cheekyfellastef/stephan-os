@@ -200,6 +200,15 @@ function resolveMemoryCandidate({ requestBody = {}, runtimeContext = {}, route =
   };
 }
 
+function findAttemptFailureReason(attempts = [], providerKey = '') {
+  const normalizedProvider = String(providerKey || '').trim().toLowerCase();
+  if (!normalizedProvider || !Array.isArray(attempts)) {
+    return '';
+  }
+  const failedAttempt = attempts.find((attempt) => String(attempt?.provider || '').trim().toLowerCase() === normalizedProvider && attempt?.result?.ok !== true);
+  return String(failedAttempt?.failureReason || failedAttempt?.result?.error?.message || '').trim();
+}
+
 
 router.post('/providers/health', async (req, res) => {
   const { provider = DEFAULT_PROVIDER_KEY, routeMode = 'auto', providerConfigs = {}, fallbackEnabled = true, fallbackOrder = undefined, devMode = true, runtimeContext = {} } = req.body || {};
@@ -356,21 +365,45 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     });
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
+    const routingDiagnostics = llmResult.diagnostics?.routing || providerHealthSnapshot?.routing || {};
+    const attemptDiagnostics = Array.isArray(llmResult.diagnostics?.attempts) ? llmResult.diagnostics.attempts : [];
+    const requestedProviderForRequest = routingDiagnostics.requestedProviderForRequest
+      || routeDecision?.requestedProviderForRequest
+      || llmResult.requestedProvider
+      || providerResolution.requestedProvider;
+    const selectedProviderForRequest = llmResult.diagnostics?.selectedProvider
+      || routingDiagnostics.selectedProvider
+      || providerHealthSnapshot?.routing?.selectedProvider
+      || providerResolution.resolvedProvider;
+    const actualProviderUsed = llmResult.actualProviderUsed || llmResult.provider;
+    const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
+    const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
+      || routeDecision?.freshnessNeed === 'high'
+      || routingDiagnostics.freshnessNeed === 'high'
+      ? requestedProviderForRequest
+      : null;
+    const freshProviderFailureReason = findAttemptFailureReason(attemptDiagnostics, freshProviderAttempted);
+    const effectiveAnswerMode = llmResult.fallbackUsed
+      ? (actualProviderUsed === 'ollama' ? 'stale-risk-local-fallback' : 'cloud-fallback')
+      : ((freshnessContext?.freshnessNeed === 'high' || routeDecision?.freshnessNeed === 'high') && actualProviderUsed !== 'ollama'
+        ? 'fresh-cloud'
+        : (actualProviderUsed === 'ollama' ? 'local-private' : 'cloud'));
     const executionMetadata = {
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
-      requested_provider_for_request: routeDecision?.requestedProviderForRequest || provider,
+      requested_provider_for_request: requestedProviderForRequest,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
       route_mode: routeMode,
       requested_route_mode: llmResult.diagnostics?.requestedRouteMode || providerHealthSnapshot?.routing?.requestedRouteMode || routeMode,
       effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
-      requested_provider: routeDecision?.requestedProviderForRequest
+      requested_provider: requestedProviderForRequest
         || llmResult.requestedProvider
         || providerResolution.requestedProvider,
       routing_requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
-      selected_provider: llmResult.diagnostics?.selectedProvider || providerHealthSnapshot?.routing?.selectedProvider || providerResolution.resolvedProvider,
-      actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
+      selected_provider: selectedProviderForRequest,
+      actual_provider_used: actualProviderUsed,
+      fallback_provider_used: fallbackProviderUsed,
       provider_selection_source: llmResult.diagnostics?.providerSelectionSource || providerHealthSnapshot?.routing?.providerSelectionSource || 'auto:policy',
       model_used: llmResult.modelUsed || llmResult.model || '',
       configured_model: mergedProviderConfigs?.[llmResult.actualProviderUsed || llmResult.provider]?.model || null,
@@ -382,6 +415,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         || (llmResult.diagnostics?.groq?.freshWebActive ? 'fresh-web-route' : 'provider-default'),
       fallback_used: Boolean(llmResult.fallbackUsed),
       fallback_reason: llmResult.fallbackReason || null,
+      effective_answer_mode: effectiveAnswerMode,
+      fresh_provider_attempted: freshProviderAttempted,
+      fresh_provider_failure_reason: freshProviderFailureReason || null,
+      grounding_enabled: mergedProviderConfigs?.gemini?.groundingEnabled !== false,
+      grounding_active_for_request: actualProviderUsed === 'gemini'
+        ? (llmResult.diagnostics?.gemini?.groundingEnabled ? 'yes' : 'no')
+        : (freshProviderAttempted === 'gemini' && (freshProviderFailureReason || llmResult.fallbackUsed) ? 'attempted' : 'no'),
       provider_capability: providerHealthSnapshot?.[llmResult.actualProviderUsed || llmResult.provider]?.providerCapability || null,
       ollama_base_url: llmResult.diagnostics?.ollama?.baseURL || providerHealthSnapshot?.ollama?.baseURL || null,
       ollama_model_requested: llmResult.diagnostics?.ollama?.requestedModel || mergedProviderConfigs?.ollama?.model || null,
@@ -476,6 +516,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ollama_timeout_model: executionMetadata.ollama_timeout_model,
       fallback_used: executionMetadata.fallback_used,
       fallback_reason: executionMetadata.fallback_reason,
+      fallback_provider_used: executionMetadata.fallback_provider_used,
+      effective_answer_mode: executionMetadata.effective_answer_mode,
+      fresh_provider_attempted: executionMetadata.fresh_provider_attempted,
+      fresh_provider_failure_reason: executionMetadata.fresh_provider_failure_reason,
+      grounding_enabled: executionMetadata.grounding_enabled,
+      grounding_active_for_request: executionMetadata.grounding_active_for_request,
       freshness_need: freshnessContext?.freshnessNeed || 'low',
       freshness_reason: freshnessContext?.freshnessReason || 'n/a',
       stale_risk: freshnessContext?.staleRisk || 'low',
@@ -540,6 +586,10 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       executableProvider: executionMetadata.executable_provider,
       selectedProvider: executionMetadata.selected_provider,
       backendDefaultProvider: executionMetadata.backend_default_provider,
+      requestedProviderForRequest: executionMetadata.requested_provider_for_request,
+      fallbackUsed: executionMetadata.fallback_used,
+      fallbackProviderUsed: executionMetadata.fallback_provider_used,
+      fallbackReason: executionMetadata.fallback_reason,
     });
     console.info('[PROVIDER EXECUTION]', {
       requested: executionMetadata.requested_provider,
