@@ -7,6 +7,30 @@ import {
   createStephanosDistServer,
   resolveContentType,
 } from './serve-stephanos-dist.mjs';
+import { repoRoot } from './stephanos-build-utils.mjs';
+import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
+
+
+const { distMountPath } = createStephanosLocalUrls({
+  port: Number(process.env.STEPHANOS_SERVE_PORT || 4173),
+});
+
+function createHealthyReuseProbe(overrides = {}) {
+  return {
+    payload: {
+      service: 'stephanos-dist-server',
+      distMountPath,
+      staticRootPath: repoRoot,
+    },
+    runtimeReady: true,
+    runtimeStatusReady: true,
+    moduleMimeReady: true,
+    sourceTruthReady: true,
+    scriptEntryMatchesExpected: true,
+    markerMatchesExpected: true,
+    ...overrides,
+  };
+}
 
 test('resolveContentType serves JavaScript MIME for .mjs and .js files', () => {
   assert.equal(resolveContentType('/launcher/index.mjs'), 'text/javascript; charset=utf-8');
@@ -78,32 +102,13 @@ test('dist server routes runtime-status before static 404 handling (query-string
 });
 
 test('existing server reuse requires runtime marker parity and not just health', () => {
-  const healthyStephanosServer = {
-    payload: {
-      service: 'stephanos-dist-server',
-      distMountPath: '/apps/stephanos/dist/',
-      staticRootPath: '/workspace/stephan-os',
-    },
-    runtimeReady: true,
-    runtimeStatusReady: true,
-    moduleMimeReady: true,
-    sourceTruthReady: true,
-    scriptEntryMatchesExpected: true,
-  };
-
   assert.equal(
-    canReuseStephanosServer({
-      ...healthyStephanosServer,
-      markerMatchesExpected: true,
-    }),
+    canReuseStephanosServer(createHealthyReuseProbe({ markerMatchesExpected: true })),
     true,
   );
 
   assert.equal(
-    canReuseStephanosServer({
-      ...healthyStephanosServer,
-      markerMatchesExpected: false,
-    }),
+    canReuseStephanosServer(createHealthyReuseProbe({ markerMatchesExpected: false })),
     false,
   );
 });
@@ -111,17 +116,9 @@ test('existing server reuse requires runtime marker parity and not just health',
 test('existing server reuse rejects stale responses when served index marker diverges from local dist marker', () => {
   assert.equal(
     canReuseStephanosServer({
-      payload: {
-        service: 'stephanos-dist-server',
-        distMountPath: '/apps/stephanos/dist/',
-        staticRootPath: '/workspace/stephan-os',
-      },
-      runtimeReady: true,
-      runtimeStatusReady: true,
-      moduleMimeReady: true,
-      sourceTruthReady: true,
-      scriptEntryMatchesExpected: true,
-      markerMatchesExpected: false,
+      ...createHealthyReuseProbe({
+        markerMatchesExpected: false,
+      }),
     }),
     false,
   );
@@ -130,17 +127,9 @@ test('existing server reuse rejects stale responses when served index marker div
 test('existing server reuse rejects module MIME mismatches even when marker parity would otherwise pass', () => {
   assert.equal(
     canReuseStephanosServer({
-      payload: {
-        service: 'stephanos-dist-server',
-        distMountPath: '/apps/stephanos/dist/',
-        staticRootPath: '/workspace/stephan-os',
-      },
-      runtimeReady: true,
-      runtimeStatusReady: true,
-      moduleMimeReady: false,
-      sourceTruthReady: true,
-      scriptEntryMatchesExpected: true,
-      markerMatchesExpected: true,
+      ...createHealthyReuseProbe({
+        moduleMimeReady: false,
+      }),
     }),
     false,
   );
@@ -149,17 +138,9 @@ test('existing server reuse rejects module MIME mismatches even when marker pari
 test('existing server reuse rejects missing runtime-status route even when health/runtime probes pass', () => {
   assert.equal(
     canReuseStephanosServer({
-      payload: {
-        service: 'stephanos-dist-server',
-        distMountPath: '/apps/stephanos/dist/',
-        staticRootPath: '/workspace/stephan-os',
-      },
-      runtimeReady: true,
-      runtimeStatusReady: false,
-      moduleMimeReady: true,
-      sourceTruthReady: true,
-      scriptEntryMatchesExpected: true,
-      markerMatchesExpected: true,
+      ...createHealthyReuseProbe({
+        runtimeStatusReady: false,
+      }),
     }),
     false,
   );
@@ -168,17 +149,9 @@ test('existing server reuse rejects missing runtime-status route even when healt
 test('existing server reuse rejects stale served script entry references even when marker parity passes', () => {
   assert.equal(
     canReuseStephanosServer({
-      payload: {
-        service: 'stephanos-dist-server',
-        distMountPath: '/apps/stephanos/dist/',
-        staticRootPath: '/workspace/stephan-os',
-      },
-      runtimeReady: true,
-      runtimeStatusReady: true,
-      moduleMimeReady: true,
-      sourceTruthReady: true,
-      markerMatchesExpected: true,
-      scriptEntryMatchesExpected: false,
+      ...createHealthyReuseProbe({
+        scriptEntryMatchesExpected: false,
+      }),
     }),
     false,
   );
