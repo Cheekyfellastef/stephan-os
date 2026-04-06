@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-06T20:31:34.548Z",
+  "updatedAt": "2026-04-06T20:59:37.203Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -800,6 +800,256 @@
       "retentionHint": "default",
       "createdAt": "2026-04-06T20:31:34.548Z",
       "updatedAt": "2026-04-06T20:31:34.548Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775508706592-g4sgm-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who is the current uk prime minister",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:51:46.592Z",
+      "updatedAt": "2026-04-06T20:51:46.592Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775508706592-g4sgm-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "The current Prime Minister of the UK is Sir Keir Starmer. He assumed office on July 5, 2024, following the Labour Party's victory in the general election.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:51:46.592Z",
+      "updatedAt": "2026-04-06T20:51:46.592Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775508790268-t16p5-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "how do transformers work",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:53:10.269Z",
+      "updatedAt": "2026-04-06T20:53:10.269Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775508790268-t16p5-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Transformers are a type of deep learning architecture that was introduced by Vaswani et al. in their 2017 paper \"Attention is All You Need.\"\n\nThe main idea behind Transformers is to use self-attention mechanisms, which enable the model to weigh different input elements based on their relevance to each other.\n\nHere's a high-level overview of how Transformers work:\n\n1. **Input Embedding:** The input sequence (e.g., wor",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:53:10.269Z",
+      "updatedAt": "2026-04-06T20:53:10.269Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509092881-zgd2c-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is the square route of 69",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:58:12.881Z",
+      "updatedAt": "2026-04-06T20:58:12.881Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509092881-zgd2c-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "The square root of 69 is approximately 8.3066218480695. Keep in mind that this value is an approximation and may not be exact due to rounding errors.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:58:12.881Z",
+      "updatedAt": "2026-04-06T20:58:12.881Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509134706-t3qjk-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is the weather like in Telford today",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:58:54.707Z",
+      "updatedAt": "2026-04-06T20:58:54.707Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509134706-t3qjk-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "In Telford, UK, it is currently partly cloudy with a temperature of 47°F (8°C), feeling like 45°F (7°C). The chance of rain is around 0%, and humidity is about 77%.\n\nFor the rest of Monday, April 6, 2026, the forecast for Telford, UK, indicates cloudy conditions during the day and clear skies at night, with a 10% chance of rain. Temperatures are expected to range between 36°F (2°C) and 57°F (14°C), with humidity arou",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:58:54.707Z",
+      "updatedAt": "2026-04-06T20:58:54.707Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509177202-uij6r-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what caused the recent timeout",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:59:37.202Z",
+      "updatedAt": "2026-04-06T20:59:37.202Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775509177202-uij6r-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "A recent timeout when routing requests to `gpt-oss:20b` through Ollama may be due to an insufficient timeout setting. Stephanos may require a longer timeout, such as 60000ms, for these operations.\n\nIf this is not the timeout you are referring to, please provide more details.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T20:59:37.202Z",
+      "updatedAt": "2026-04-06T20:59:37.202Z",
       "surface": "shared"
     }
   }
