@@ -3,6 +3,7 @@ import { parseCommand } from '../ai/commandParser';
 import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
+import { resolveUiRequestTimeoutPolicy } from '../ai/timeoutPolicy';
 import {
   DEFAULT_HOME_NODE_BACKEND_PORT,
   createStephanosHomeNodeUrls,
@@ -467,6 +468,69 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
     return { error: error.message, errorCode: error.code, output: 'Backend responded with invalid JSON. Check server logs for serialization issues.' };
   }
   return { error: error.message, errorCode: error.code, output: error.message };
+}
+
+function buildTimeoutFailureExecutionMetadata({
+  requestPayload = null,
+  runtimeContext = null,
+  providerConfigs = {},
+  fallbackProvider = '',
+  timeoutDetails = {},
+} = {}) {
+  const selectedProvider = String(
+    requestPayload?.provider
+    || requestPayload?.routeDecision?.selectedProvider
+    || requestPayload?.routeDecision?.requestedProviderForRequest
+    || fallbackProvider
+    || '',
+  ).trim();
+  const safeProviderConfigs = providerConfigs && typeof providerConfigs === 'object' ? providerConfigs : {};
+  const requestedModel = safeProviderConfigs?.[selectedProvider]?.model || '';
+  const canonicalTimeoutPolicy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: runtimeContext || {},
+    provider: selectedProvider,
+    providerConfigs: safeProviderConfigs,
+    requestedModel,
+  });
+
+  return {
+    ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
+    ui_requested_provider: selectedProvider || fallbackProvider || 'unknown',
+    requested_provider_for_request: selectedProvider || fallbackProvider || 'unknown',
+    backend_default_provider: 'unknown',
+    route_mode: requestPayload?.routeMode || 'auto',
+    effective_route_mode: requestPayload?.routeMode || 'auto',
+    requested_provider: selectedProvider || fallbackProvider || 'unknown',
+    selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
+    actual_provider_used: '',
+    model_used: requestedModel || null,
+    ollama_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,
+    ollama_timeout_source: timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null,
+    ollama_timeout_model: timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null,
+    ui_request_timeout_ms: timeoutDetails.timeoutMs ?? timeoutDetails.uiRequestTimeoutMs ?? canonicalTimeoutPolicy.uiRequestTimeoutMs ?? null,
+    backend_route_timeout_ms: timeoutDetails.backendRouteTimeoutMs ?? canonicalTimeoutPolicy.backendRouteTimeoutMs ?? null,
+    provider_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,
+    model_timeout_ms: timeoutDetails.modelTimeoutMs ?? canonicalTimeoutPolicy.modelTimeoutMs ?? null,
+    timeout_policy_source: timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null,
+    timeout_override_applied: Boolean(
+      timeoutDetails.timeoutOverrideApplied
+      ?? canonicalTimeoutPolicy.timeoutOverrideApplied
+      ?? false,
+    ),
+    timeout_failure_layer: timeoutDetails.timeoutFailureLayer || null,
+    timeout_failure_label: timeoutDetails.timeoutLabel || null,
+    fallback_used: false,
+    fallback_reason: null,
+    freshness_need: requestPayload?.freshnessContext?.freshnessNeed || 'low',
+    freshness_reason: requestPayload?.freshnessContext?.freshnessReason || 'n/a',
+    stale_risk: requestPayload?.freshnessContext?.staleRisk || 'low',
+    selected_answer_mode: requestPayload?.routeDecision?.selectedAnswerMode || 'local-private',
+    override_denial_reason: requestPayload?.routeDecision?.overrideDeniedReason || null,
+    freshness_warning: requestPayload?.routeDecision?.freshnessWarning || null,
+    freshness_routed: Boolean(requestPayload?.routeDecision?.freshnessRouted ?? false),
+    ai_policy_mode: requestPayload?.routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
+    ai_policy_reason: requestPayload?.routeDecision?.policyReason || 'Local-first policy applied.',
+  };
 }
 
 export function useAIConsole() {
@@ -1033,10 +1097,13 @@ export function useAIConsole() {
     });
 
     let activeRouteDecision = null;
+    let inFlightRequestPayload = null;
+    let inFlightRuntimeContext = null;
 
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
       const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
+      inFlightRuntimeContext = finalizedRequestContext;
       const requestBaselineRuntimeStatus = finalizeRuntimeContext(finalizedRequestContext).runtimeStatus;
       const routeTruthView = buildFinalRouteTruthView(requestBaselineRuntimeStatus);
       const continuityAllowed = routeTruthView.routeUsableState === 'yes' && routeTruthView.truthInconsistent !== true;
@@ -1128,6 +1195,7 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
       };
+      inFlightRequestPayload = requestPayload;
       const requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
         routeTruthView: requestRouteTruthView,
@@ -1297,7 +1365,15 @@ export function useAIConsole() {
         routeDecision: activeRouteDecision,
       });
       setStatus('error');
-      setLastExecutionMetadata(null);
+      const timeoutDetails = error?.details && typeof error.details === 'object' ? error.details : {};
+      const timeoutFailureMetadata = buildTimeoutFailureExecutionMetadata({
+        requestPayload: inFlightRequestPayload,
+        runtimeContext: inFlightRuntimeContext,
+        providerConfigs: effectiveProviderConfigs,
+        fallbackProvider: provider,
+        timeoutDetails,
+      });
+      setLastExecutionMetadata(timeoutFailureMetadata);
       setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));
 
       setCommandHistory((prev) => appendCommandHistory(prev, {
@@ -1317,15 +1393,19 @@ export function useAIConsole() {
       }));
       setDebugData({
         parsed_command: parsed,
-        request_payload: null,
+        request_payload: inFlightRequestPayload,
         response_payload: null,
         error: uiError.error,
         error_code: uiError.errorCode,
-        timeout_failure_layer: uiError.timeoutFailureLayer || error?.details?.timeoutFailureLayer || null,
-        timeout_failure_label: uiError.timeoutFailureLabel || error?.details?.timeoutLabel || null,
-        ui_request_timeout_ms: uiError.timeoutMs || error?.details?.timeoutMs || null,
-        timeout_policy_source: uiError.timeoutPolicySource || error?.details?.timeoutPolicySource || null,
-        timeout_override_applied: Boolean(uiError.timeoutOverrideApplied ?? error?.details?.timeoutOverrideApplied ?? false),
+        timeout_failure_layer: uiError.timeoutFailureLayer || timeoutFailureMetadata.timeout_failure_layer || null,
+        timeout_failure_label: uiError.timeoutFailureLabel || timeoutFailureMetadata.timeout_failure_label || null,
+        ui_request_timeout_ms: uiError.timeoutMs || timeoutFailureMetadata.ui_request_timeout_ms || null,
+        backend_route_timeout_ms: timeoutFailureMetadata.backend_route_timeout_ms || null,
+        provider_timeout_ms: timeoutFailureMetadata.provider_timeout_ms || null,
+        model_timeout_ms: timeoutFailureMetadata.model_timeout_ms || null,
+        timeout_policy_source: uiError.timeoutPolicySource || timeoutFailureMetadata.timeout_policy_source || null,
+        timeout_override_applied: Boolean(uiError.timeoutOverrideApplied ?? timeoutFailureMetadata.timeout_override_applied ?? false),
+        execution_metadata: timeoutFailureMetadata,
       });
     } finally {
       setIsBusy(false);

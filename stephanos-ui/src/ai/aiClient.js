@@ -58,6 +58,11 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
           timeoutLabel: 'ui_request_timeout_ms',
           timeoutMs,
           timeoutPolicySource: timeoutPolicy?.timeoutPolicySource || runtimeConfig?.timeoutSource || apiConfig.timeoutSource || 'frontend:api-runtime',
+          uiRequestTimeoutMs: timeoutPolicy?.uiRequestTimeoutMs || timeoutMs,
+          backendRouteTimeoutMs: timeoutPolicy?.backendRouteTimeoutMs || null,
+          providerTimeoutMs: timeoutPolicy?.providerTimeoutMs || null,
+          modelTimeoutMs: timeoutPolicy?.modelTimeoutMs || null,
+          timeoutModel: timeoutPolicy?.timeoutModel || null,
           timeoutOverrideApplied: Boolean(timeoutPolicy?.timeoutOverrideApplied),
         },
       });
@@ -163,11 +168,19 @@ export async function getProviderHealth(payload, runtimeConfig = getApiRuntimeCo
     ...(payload || {}),
     providerConfigs: stripSecretsFromProviderConfigs(payload?.providerConfigs || {}),
   };
+  const requestedProvider = String(safePayload?.provider || DEFAULT_PROVIDER_KEY);
+  const requestedModel = safePayload?.providerConfigs?.[requestedProvider]?.model || '';
+  const timeoutPolicy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig,
+    provider: requestedProvider,
+    providerConfigs: safePayload.providerConfigs,
+    requestedModel,
+  });
   const result = await requestJson('/api/ai/providers/health', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(safePayload),
-  }, runtimeConfig);
+  }, runtimeConfig, timeoutPolicy);
 
   return { ok: result.ok, status: result.status, data: result.data?.data || {} };
 }
