@@ -3,6 +3,7 @@ import { requestStephanosBackend } from './backendClient.mjs';
 const DEFAULT_HOME_NODE_UI_PORT = 5173;
 const DEFAULT_HOME_NODE_BACKEND_PORT = 8787;
 const DEFAULT_HOME_NODE_DIST_PORT = 4173;
+export const STEPHANOS_HOME_BRIDGE_URL_GLOBAL = '__STEPHANOS_HOME_BRIDGE_URL';
 
 export const STEPHANOS_HOME_NODE_STORAGE_KEY = 'stephanos_home_node_manual';
 export const STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY = 'stephanos_home_node_last_known';
@@ -170,6 +171,58 @@ export function validateStephanosBackendTargetUrl(target = '', {
     normalizedUrl: parsed.origin,
     hostname,
     sourceUrl: rawTarget,
+  };
+}
+
+export function validateStephanosHomeBridgeUrl(target = '', {
+  frontendOrigin = '',
+  requireHttps = true,
+} = {}) {
+  const validation = validateStephanosBackendTargetUrl(target, { allowLoopback: false });
+  if (!validation.ok) {
+    return { ...validation, bridgeType: 'invalid' };
+  }
+
+  const parsed = safeUrlParse(validation.normalizedUrl);
+  const frontend = safeUrlParse(String(frontendOrigin || '').trim());
+  const protocol = String(parsed?.protocol || '').toLowerCase();
+  if (requireHttps && protocol !== 'https:') {
+    return {
+      ok: false,
+      reason: 'Home-node bridge must use HTTPS for hosted/off-network sessions.',
+      normalizedUrl: '',
+      hostname: validation.hostname,
+      sourceUrl: validation.sourceUrl,
+      bridgeType: 'invalid',
+    };
+  }
+
+  if (frontend?.origin && parsed?.origin && frontend.origin === parsed.origin) {
+    return {
+      ok: false,
+      reason: 'Home-node bridge URL must not equal the frontend shell origin.',
+      normalizedUrl: '',
+      hostname: validation.hostname,
+      sourceUrl: validation.sourceUrl,
+      bridgeType: 'invalid',
+    };
+  }
+
+  if (parsed?.pathname && parsed.pathname !== '/' && !parsed.pathname.startsWith('/api')) {
+    return {
+      ok: false,
+      reason: 'Home-node bridge URL must target a backend/API origin, not a shell/runtime path.',
+      normalizedUrl: '',
+      hostname: validation.hostname,
+      sourceUrl: validation.sourceUrl,
+      bridgeType: 'invalid',
+    };
+  }
+
+  return {
+    ...validation,
+    normalizedUrl: parsed?.origin || validation.normalizedUrl,
+    bridgeType: 'home-node-bridge',
   };
 }
 
@@ -879,10 +932,19 @@ export function resolveStephanosBackendBaseUrl({
   manualNode = null,
   lastKnownNode = null,
   explicitBaseUrl = '',
+  bridgeUrl = '',
 } = {}) {
   const explicit = validateStephanosBackendTargetUrl(explicitBaseUrl, { allowLoopback: true });
   if (explicit.ok && explicit.normalizedUrl) {
     return explicit.normalizedUrl;
+  }
+
+  const bridge = validateStephanosHomeBridgeUrl(bridgeUrl, {
+    frontendOrigin: currentOrigin,
+    requireHttps: true,
+  });
+  if (bridge.ok && bridge.normalizedUrl) {
+    return bridge.normalizedUrl;
   }
 
   const current = safeUrlParse(currentOrigin);

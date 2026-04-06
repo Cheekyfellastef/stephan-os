@@ -32,6 +32,7 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
     manualNode,
     lastKnownNode,
     explicitBaseUrl: runtimeContext.baseUrl,
+    bridgeUrl: runtimeContext.homeNodeBridge?.backendUrl || runtimeContext.bridgeUrl || '',
   });
 }
 
