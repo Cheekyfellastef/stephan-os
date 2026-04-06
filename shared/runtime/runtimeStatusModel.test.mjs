@@ -867,3 +867,103 @@ test('createRuntimeStatusModel rejects malformed hosted backend target URL and k
   assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
   assert.match(status.runtimeContext.backendTargetInvalidReason, /malformed|unresolved/i);
 });
+
+test('createRuntimeStatusModel resolves hosted backend target from published home-node route diagnostics', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: '',
+      preferredTarget: '',
+      actualTargetUsed: '',
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          source: 'manual',
+          target: 'http://192.168.0.44:8787',
+          actualTarget: 'http://192.168.0.44:8787',
+          reason: 'Home node published backend target is reachable.',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, 'http://192.168.0.44:8787');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'routeDiagnostics.home-node.actualTarget');
+  assert.equal(status.runtimeContext.backendTargetInvalidReason, '');
+  assert.equal(status.runtimeContext.routeDiagnostics['backend-target'].available, true);
+});
+
+test('createRuntimeStatusModel keeps hosted route truthful when published candidates are loopback-only', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          source: 'manual',
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+          blockedReason: 'Loopback target rejected for hosted route.',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.match(status.runtimeContext.backendTargetInvalidReason, /loopback/i);
+  assert.equal(status.runtimeContext.routeDiagnostics['backend-target'].available, false);
+});
+
+test('createRuntimeStatusModel reconciles hosted selected provider away from ollama when local route is not eligible', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: true },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://api.example.com',
+      actualTargetUsed: 'https://api.example.com',
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          usable: true,
+          source: 'backend-cloud-session',
+          target: 'https://api.example.com',
+          actualTarget: 'https://api.example.com',
+          reason: 'A cloud-backed Stephanos route is ready',
+        },
+      },
+    },
+    activeProviderHint: 'groq',
+  });
+
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.routeSelectedProvider, 'groq');
+  assert.equal(status.finalRouteTruth.selectedProvider, 'groq');
+  assert.equal(status.finalRouteTruth.executedProvider, 'groq');
+});

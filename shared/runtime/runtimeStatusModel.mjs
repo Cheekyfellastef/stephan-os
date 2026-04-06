@@ -44,6 +44,46 @@ function isStaticGithubPagesOrigin(value = '') {
   return parseHostname(value).endsWith('.github.io');
 }
 
+function createBackendTargetCandidate(source = '', url = '') {
+  return {
+    source: String(source || '').trim() || 'unknown',
+    url: String(url || '').trim(),
+  };
+}
+
+function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
+  const diagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
+    ? runtimeContext.routeDiagnostics
+    : {};
+  const candidates = [
+    createBackendTargetCandidate('runtimeContext.backendTargetResolvedUrl', runtimeContext.backendTargetResolvedUrl),
+    createBackendTargetCandidate('runtimeContext.actualTargetUsed', runtimeContext.actualTargetUsed),
+    createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
+    createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
+    createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
+    createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
+    createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
+    createBackendTargetCandidate('fallback.actualTarget', fallbackUrl),
+  ];
+
+  const deduped = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate.url) {
+      continue;
+    }
+    const key = candidate.url;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(candidate);
+  }
+  return deduped;
+}
+
 function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
   const candidateValidation = validateStephanosBackendTargetUrl(candidate, { allowLoopback });
   if (candidateValidation.ok) {
@@ -95,7 +135,21 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   );
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
-  const backendTargetResolvedUrlRaw = String(runtimeResolvedBackendTarget || compatibleActualTarget || '').trim();
+  const backendTargetCandidates = collectBackendTargetCandidates(runtimeContext, compatibleActualTarget);
+  const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
+    const validation = validateStephanosBackendTargetUrl(
+      candidate.url,
+      { allowLoopback: sessionKind === 'local-desktop' },
+    );
+    return {
+      source: candidate.source,
+      url: candidate.url,
+      accepted: validation.ok,
+      reason: validation.ok ? '' : validation.reason,
+    };
+  });
+  const acceptedBackendCandidate = backendTargetCandidateDecisions.find((candidate) => candidate.accepted);
+  const backendTargetResolvedUrlRaw = String(acceptedBackendCandidate?.url || '').trim();
   const backendTargetValidation = validateStephanosBackendTargetUrl(
     backendTargetResolvedUrlRaw,
     { allowLoopback: sessionKind === 'local-desktop' },
@@ -107,11 +161,15 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const backendTargetResolvedUrl = (sameOriginStaticHostedFallbackInvalid || !backendTargetValidation.ok)
     ? ''
     : backendTargetResolvedUrlRaw;
+  const hasRejectedBackendCandidates = backendTargetCandidateDecisions.some((candidate) => !candidate.accepted);
   const backendTargetResolutionSource = sameOriginStaticHostedFallbackInvalid
     ? 'unresolved'
     : (!backendTargetValidation.ok && backendTargetResolvedUrlRaw)
       ? 'invalid'
+    : (!backendTargetResolvedUrl && hasRejectedBackendCandidates)
+      ? 'invalid'
     : (backendTargetResolutionSourceRaw
+      || (acceptedBackendCandidate?.source || '')
       || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
       || 'unresolved');
   const backendTargetFallbackUsed = sameOriginStaticHostedFallbackInvalid
@@ -124,10 +182,30 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
       : ((!backendTargetValidation.ok && backendTargetResolvedUrlRaw)
         ? backendTargetValidation.reason
+      : (!backendTargetResolvedUrl && backendTargetCandidateDecisions.some((candidate) => !candidate.accepted))
+        ? backendTargetCandidateDecisions.find((candidate) => !candidate.accepted)?.reason || 'No valid backend target candidates were accepted.'
       : ((sessionKind === 'hosted-web' && !backendTargetResolvedUrl)
         ? 'No non-loopback backend target resolved for hosted session.'
         : ''))),
   ).trim();
+  const backendTargetRejectedSummary = backendTargetCandidateDecisions
+    .filter((candidate) => !candidate.accepted)
+    .slice(0, 4)
+    .map((candidate) => `${candidate.source}: ${candidate.reason || 'rejected'}`);
+  const backendTargetRouteDiagnostic = {
+    configured: backendTargetCandidates.length > 0,
+    available: Boolean(backendTargetResolvedUrl),
+    usable: Boolean(backendTargetResolvedUrl),
+    source: backendTargetResolutionSource,
+    target: backendTargetResolvedUrl,
+    actualTarget: backendTargetResolvedUrl,
+    reason: backendTargetResolvedUrl
+      ? `Resolved backend target from ${backendTargetResolutionSource}.`
+      : (backendTargetInvalidReason || 'Backend target unresolved.'),
+    blockedReason: backendTargetResolvedUrl ? '' : (backendTargetInvalidReason || 'Backend target unresolved.'),
+    candidates: backendTargetCandidateDecisions,
+    rejectedSummary: backendTargetRejectedSummary.join(' | '),
+  };
 
   return {
     frontendOrigin,
@@ -148,13 +226,17 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     actualTargetUsed: compatibleActualTarget,
     nodeAddressSource: runtimeContext.nodeAddressSource || (homeNode?.configured ? homeNode.source : '') || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
     restoreDecision: String(runtimeContext.restoreDecision || ''),
-    routeDiagnostics: runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
-      ? runtimeContext.routeDiagnostics
-      : {},
+    routeDiagnostics: {
+      ...((runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object')
+        ? runtimeContext.routeDiagnostics
+        : {}),
+      'backend-target': backendTargetRouteDiagnostic,
+    },
     backendTargetResolutionSource,
     backendTargetResolvedUrl,
     backendTargetFallbackUsed,
     backendTargetInvalidReason,
+    backendTargetCandidates: backendTargetCandidateDecisions,
     memoryTruth: runtimeContext.memoryTruth && typeof runtimeContext.memoryTruth === 'object'
       ? runtimeContext.memoryTruth
       : {},
@@ -224,21 +306,67 @@ function getReadyLocalProviders(providerHealth = {}) {
 }
 
 function chooseAutoRouteMode({ runtimeContext, localAvailable, cloudAvailable }) {
+  if (runtimeContext.sessionKind === 'hosted-web') {
+    if (
+      runtimeContext.deviceContext === 'lan-companion'
+      && runtimeContext.homeNode?.reachable === true
+      && localAvailable
+    ) {
+      return 'local-first';
+    }
+    if (cloudAvailable) return 'cloud-first';
+    if (localAvailable) return 'local-first';
+    return 'cloud-first';
+  }
+
   if (runtimeContext.deviceContext === 'lan-companion') {
     if (localAvailable) return 'local-first';
     if (cloudAvailable) return 'cloud-first';
     return 'local-first';
   }
 
-  if (runtimeContext.sessionKind === 'hosted-web') {
-    if (cloudAvailable) return 'cloud-first';
-    if (localAvailable) return 'local-first';
-    return 'cloud-first';
-  }
-
   if (localAvailable) return 'local-first';
   if (cloudAvailable) return 'cloud-first';
   return 'local-first';
+}
+
+function reconcileHostedSelectedProvider({
+  runtimeContext = {},
+  selectedProvider = DEFAULT_PROVIDER_KEY,
+  requestedProvider = DEFAULT_PROVIDER_KEY,
+  finalRoute = {},
+  routePlan = {},
+} = {}) {
+  if (runtimeContext.sessionKind !== 'hosted-web') {
+    return selectedProvider;
+  }
+
+  const selectedIsLocal = LOCAL_PROVIDER_KEYS.includes(selectedProvider);
+  const localEligible = finalRoute?.providerEligibility?.localProviders === true;
+  const cloudEligible = finalRoute?.providerEligibility?.cloudProviders === true;
+  const preferredCloud = routePlan?.readyCloudProviders?.[0]
+    || (CLOUD_PROVIDER_KEYS.includes(requestedProvider) ? requestedProvider : '');
+
+  if (!selectedIsLocal) {
+    if (finalRoute?.routeKind === 'cloud' && preferredCloud && !CLOUD_PROVIDER_KEYS.includes(selectedProvider)) {
+      return preferredCloud;
+    }
+    return selectedProvider;
+  }
+
+  if (localEligible) {
+    return selectedProvider;
+  }
+
+  if (cloudEligible && preferredCloud) {
+    return preferredCloud;
+  }
+
+  if (CLOUD_PROVIDER_KEYS.includes(requestedProvider)) {
+    return requestedProvider;
+  }
+
+  return selectedProvider === 'ollama' ? 'groq' : selectedProvider;
 }
 
 function getPreferredLocalFailure(providerHealth = {}) {
@@ -949,15 +1077,6 @@ export function createRuntimeStatusModel({
   const routeSelectedProvider = routePlan.selectedProvider === 'mock' && normalizedProvider !== 'mock' && liveRouteAvailable
     ? preferredLiveProvider
     : routePlan.selectedProvider;
-  const hintedProvider = normalizeProviderSelection(activeProviderHint || routeSelectedProvider);
-  const executableProviderHealthy = Boolean(hintedProvider && health[hintedProvider]?.ok === true);
-  const activeProvider = executableProviderHealthy ? hintedProvider : '';
-
-  const activeRouteKind = LOCAL_PROVIDER_KEYS.includes(activeProvider)
-    ? 'local'
-    : CLOUD_PROVIDER_KEYS.includes(activeProvider)
-      ? 'cloud'
-      : 'dev';
 
   const finalRoute = finalizeRuntimeRouteResolution({
     runtimeContext: normalizedRuntimeContext,
@@ -966,6 +1085,22 @@ export function createRuntimeStatusModel({
     localAvailable: routePlan.localAvailable,
     cloudAvailable: routePlan.cloudAvailable,
   });
+  const reconciledRouteSelectedProvider = reconcileHostedSelectedProvider({
+    runtimeContext: normalizedRuntimeContext,
+    selectedProvider: routeSelectedProvider,
+    requestedProvider: routePlan.requestedProvider,
+    finalRoute,
+    routePlan,
+  });
+  const hintedProvider = normalizeProviderSelection(activeProviderHint || reconciledRouteSelectedProvider);
+  const executableProviderHealthy = Boolean(hintedProvider && health[hintedProvider]?.ok === true);
+  const activeProvider = executableProviderHealthy ? hintedProvider : '';
+
+  const activeRouteKind = LOCAL_PROVIDER_KEYS.includes(activeProvider)
+    ? 'local'
+    : CLOUD_PROVIDER_KEYS.includes(activeProvider)
+      ? 'cloud'
+      : 'dev';
   const selectedRouteKey = nodeRoute?.preferredRoute || '';
   const selectedEvaluationRaw = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
   const hostedCloudExecutionConfirmed = normalizedRuntimeContext.sessionKind === 'hosted-web'
@@ -977,11 +1112,11 @@ export function createRuntimeStatusModel({
     && CLOUD_PROVIDER_KEYS.includes(activeProvider)
     && health[activeProvider]?.ok === true;
   const hostedCloudOperationalSelection = hostedCloudExecutionConfirmed
-    && activeProvider === routeSelectedProvider;
+    && activeProvider === reconciledRouteSelectedProvider;
   const fallbackActive = Boolean(
     activeProvider
-    && routeSelectedProvider
-    && activeProvider !== routeSelectedProvider
+    && reconciledRouteSelectedProvider
+    && activeProvider !== reconciledRouteSelectedProvider
     && providerMode !== 'explicit'
     && !hostedCloudOperationalSelection
   );
@@ -1039,7 +1174,7 @@ export function createRuntimeStatusModel({
     effectiveRouteMode: routePlan.effectiveRouteMode,
     providerMode: routePlan.effectiveRouteMode,
     selectedProvider: normalizedProvider,
-    routeSelectedProvider,
+    routeSelectedProvider: reconciledRouteSelectedProvider,
     activeProvider,
     activeRouteKind,
     localAvailable: routePlan.localAvailable,
@@ -1085,7 +1220,7 @@ export function createRuntimeStatusModel({
     routePlan,
     backendAvailable,
     activeProvider,
-    routeSelectedProvider,
+    routeSelectedProvider: reconciledRouteSelectedProvider,
     fallbackActive,
     validationState,
     appLaunchState,
@@ -1112,7 +1247,7 @@ export function createRuntimeStatusModel({
     routeEvaluations: nodeRoute.routeEvaluations,
     routePreferenceOrder: nodeRoute.routePreferenceOrder,
     selectedProvider: normalizedProvider,
-    routeSelectedProvider,
+    routeSelectedProvider: reconciledRouteSelectedProvider,
     activeProvider,
     providerHealth: health,
     fallbackActive,

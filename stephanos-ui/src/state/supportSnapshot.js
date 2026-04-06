@@ -95,6 +95,25 @@ function formatParityState(value) {
   return 'unknown';
 }
 
+function summarizeBackendTargetCandidates(candidates = []) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return ['- n/a'];
+  }
+
+  return candidates.slice(0, 5).map((candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      return '- unknown candidate';
+    }
+
+    const source = asText(candidate.source, 'unknown-source');
+    const url = asText(candidate.url, 'n/a');
+    const verdict = candidate.accepted === true
+      ? 'accepted'
+      : `rejected (${asText(candidate.reason, 'unknown reason')})`;
+    return `- ${source}: ${url} -> ${verdict}`;
+  });
+}
+
 function buildHostedBackendTargetGuidance({
   sessionKind,
   selectedRouteKind,
@@ -176,6 +195,7 @@ export function buildSupportSnapshot({
   const backendTargetResolvedUrl = asText(runtimeContext?.backendTargetResolvedUrl, 'n/a');
   const backendTargetFallbackUsed = runtimeContext?.backendTargetFallbackUsed === true;
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
+  const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
   const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
   const executableProvider = canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider;
@@ -380,6 +400,8 @@ export function buildSupportSnapshot({
     `Backend Target Resolved URL: ${backendTargetResolvedUrl}`,
     `Backend Target Fallback Used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
     `Backend Target Invalid Reason: ${backendTargetInvalidReason}`,
+    'Backend Target Candidates:',
+    ...backendTargetCandidatesSummary,
     `Selected Route Kind: ${selectedRouteKind}`,
     `Preferred Target: ${asText(routeTruthView?.preferredTarget, 'n/a')}`,
     `Actual Target Used: ${asText(routeTruthView?.actualTarget, 'n/a')}`,
