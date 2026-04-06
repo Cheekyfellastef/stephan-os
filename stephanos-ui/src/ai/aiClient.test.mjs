@@ -30,9 +30,17 @@ test('sendPrompt derives timeout from shared timeout policy before request dispa
   assert.match(clientSource, /requestJson\('\/api\/ai\/chat'[\s\S]*timeoutPolicy\)/m);
 });
 
+test('getProviderHealth uses canonical timeout policy instead of hidden defaults', () => {
+  assert.match(clientSource, /const timeoutPolicy = resolveUiRequestTimeoutPolicy\([\s\S]*provider:\s*requestedProvider[\s\S]*requestedModel/m);
+  assert.match(clientSource, /requestJson\('\/api\/ai\/providers\/health'[\s\S]*runtimeConfig,\s*timeoutPolicy\)/m);
+});
+
 test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () => {
   assert.match(clientSource, /timeoutLabel:\s*'ui_request_timeout_ms'/);
   assert.doesNotMatch(clientSource, /vite_api_timeout_ms/);
+  assert.match(clientSource, /backendRouteTimeoutMs:\s*timeoutPolicy\?\.backendRouteTimeoutMs\s*\|\|\s*null/);
+  assert.match(clientSource, /providerTimeoutMs:\s*timeoutPolicy\?\.providerTimeoutMs\s*\|\|\s*null/);
+  assert.match(clientSource, /modelTimeoutMs:\s*timeoutPolicy\?\.modelTimeoutMs\s*\|\|\s*null/);
 });
 
 
