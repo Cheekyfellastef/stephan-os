@@ -180,19 +180,43 @@ export function resolveFreshnessRoutingDecision({
   const backendReachable = String(routeTruthView?.backendReachableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.backendReachable === true;
   const cloudRouteUsable = runtimeStatus?.cloudAvailable === true && backendReachable;
-  const groqHealthy = providerHealthy(providerHealth, 'groq');
-  const groqTransportReachable = providerTransportReachable(providerHealth, 'groq');
-  const groqCapability = providerHealth?.groq?.providerCapability || {};
-  const candidateFreshModel = String(groqCapability?.candidateFreshWebModel || '').trim();
-  const candidateFreshPath = String(groqCapability?.freshWebPath || '').trim();
-  const webCapabilityState = resolveWebCapabilityState(providerHealth, 'groq');
-  const groqSupportsCurrentAnswers = resolveCurrentAnswerCapability(providerHealth, 'groq');
+  const freshProviderPreference = ['gemini', 'groq', 'openrouter'];
+  const primaryFreshProvider = freshProviderPreference.find((providerKey) => providerHealth?.[providerKey]) || 'groq';
+  const primaryFreshProviderHealthy = providerHealthy(providerHealth, primaryFreshProvider);
+  const primaryFreshProviderTransportReachable = providerTransportReachable(providerHealth, primaryFreshProvider);
+  const primaryFreshProviderSupportsCurrentAnswers = resolveCurrentAnswerCapability(providerHealth, primaryFreshProvider);
+  const primaryFreshProviderWebCapabilityState = resolveWebCapabilityState(providerHealth, primaryFreshProvider);
+  const freshCandidates = freshProviderPreference
+    .map((providerKey) => {
+      const capability = providerHealth?.[providerKey]?.providerCapability || {};
+      const transportReachable = providerTransportReachable(providerHealth, providerKey);
+      const healthy = providerHealthy(providerHealth, providerKey);
+      const webCapabilityState = resolveWebCapabilityState(providerHealth, providerKey);
+      const supportsCurrentAnswers = resolveCurrentAnswerCapability(providerHealth, providerKey);
+      return {
+        providerKey,
+        capability,
+        transportReachable,
+        healthy,
+        webCapabilityState,
+        supportsCurrentAnswers,
+        freshCapable: cloudRouteUsable
+          && healthy
+          && transportReachable
+          && supportsCurrentAnswers !== false
+          && webCapabilityState !== 'unsupported',
+      };
+    });
+  const selectedFreshCandidate = freshCandidates.find((candidate) => candidate.freshCapable) || null;
+  const selectedFreshProvider = selectedFreshCandidate?.providerKey || '';
+  const selectedFreshCapability = selectedFreshCandidate?.capability || {};
+  const candidateFreshModel = String(selectedFreshCapability?.candidateFreshWebModel || '').trim();
+  const candidateFreshPath = String(selectedFreshCapability?.freshWebPath || '').trim();
+  const webCapabilityState = selectedFreshCandidate?.webCapabilityState || 'unknown';
+  const selectedFreshProviderSupportsCurrentAnswers = selectedFreshCandidate?.supportsCurrentAnswers ?? null;
   const freshRouteAvailable = cloudRouteUsable
-    && groqHealthy
-    && groqTransportReachable
-    && groqSupportsCurrentAnswers !== false
-    && webCapabilityState !== 'unsupported';
-  const cloudRouteAvailable = cloudRouteUsable && groqHealthy && groqTransportReachable;
+    && Boolean(selectedFreshProvider);
+  const cloudRouteAvailable = cloudRouteUsable && freshCandidates.some((candidate) => candidate.healthy && candidate.transportReachable);
   const homeNodeUsable = String(routeTruthView?.homeNodeUsableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.homeNodeAvailable === true;
   const localRouteCandidateAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
@@ -210,23 +234,24 @@ export function resolveFreshnessRoutingDecision({
   let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
-  if (!cloudRouteUsable) freshRouteFailureReasons.push('groq-cloud-route-unusable');
-  if (!groqHealthy) freshRouteFailureReasons.push('groq-provider-unhealthy');
-  if (!groqTransportReachable) freshRouteFailureReasons.push('groq-transport-unreachable');
-  if (groqSupportsCurrentAnswers === false) freshRouteFailureReasons.push('groq-current-answers-unsupported');
-  if (webCapabilityState === 'unsupported') freshRouteFailureReasons.push('groq-web-capability-unsupported');
+  if (!cloudRouteUsable) freshRouteFailureReasons.push(`${primaryFreshProvider}-cloud-route-unusable`);
+  if (!primaryFreshProviderHealthy) freshRouteFailureReasons.push(`${primaryFreshProvider}-provider-unhealthy`);
+  if (!primaryFreshProviderTransportReachable) freshRouteFailureReasons.push(`${primaryFreshProvider}-transport-unreachable`);
+  if (primaryFreshProviderSupportsCurrentAnswers === false) freshRouteFailureReasons.push(`${primaryFreshProvider}-current-answers-unsupported`);
+  if (primaryFreshProviderWebCapabilityState === 'unsupported') freshRouteFailureReasons.push(`${primaryFreshProvider}-web-capability-unsupported`);
+  if (!selectedFreshProvider) freshRouteFailureReasons.push('no-fresh-capable-provider');
 
   if (classification?.freshnessNeed === 'high') {
     if (freshRouteAvailable) {
-      selectedProvider = 'groq';
+      selectedProvider = selectedFreshProvider;
       selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
       policyReason = hostedSession
-        ? 'Hosted high-freshness request pinned to Groq fresh-cloud path.'
+        ? `Hosted high-freshness request pinned to ${selectedFreshProvider} fresh-cloud path.`
         : 'Cloud routing allowed and selected because current real-world truth is required.';
     } else {
       selectedProvider = hostedSession
-        ? 'groq'
+        ? (primaryFreshProvider || 'gemini')
         : (localRouteAvailable ? 'ollama' : requested);
       selectedAnswerMode = hostedSession ? 'route-unavailable' : 'fallback-stale-risk';
       staleFallbackAttempted = hostedSession ? false : localRouteAvailable;
@@ -240,7 +265,7 @@ export function resolveFreshnessRoutingDecision({
     }
   } else if (classification?.freshnessNeed === 'medium') {
     if (explicitFreshness && freshRouteAvailable) {
-      selectedProvider = 'groq';
+      selectedProvider = selectedFreshProvider;
       selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
       policyReason = 'Prompt requested recency; cloud route selected for fresher truth.';
@@ -260,24 +285,27 @@ export function resolveFreshnessRoutingDecision({
       policyReason = 'Medium freshness risk without fresh cloud path; local stale-risk fallback used.';
     }
   } else if (classification?.freshnessNeed !== 'low' && !localRouteAvailable && freshRouteAvailable) {
-    selectedProvider = 'groq';
+    selectedProvider = selectedFreshProvider;
     selectedAnswerMode = 'fresh-cloud';
     freshnessRouted = true;
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   } else if (classification?.freshnessNeed === 'low' && hostedSession) {
     if (!localRouteAvailable && cloudRouteAvailable) {
-      selectedProvider = 'groq';
+      selectedProvider = selectedFreshProvider || 'gemini';
       selectedAnswerMode = 'cloud-basic';
       freshnessRouted = true;
       policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
     } else if (localRouteAvailable) {
       selectedProvider = requested === 'groq' && cloudRouteAvailable ? 'groq' : 'ollama';
+      if (requested === 'gemini' && cloudRouteAvailable) {
+        selectedProvider = 'gemini';
+      }
       selectedAnswerMode = selectedProvider === 'ollama' ? 'local-private' : 'cloud-basic';
       policyReason = selectedProvider === 'ollama'
         ? 'Hosted session has a reachable home-node bridge; local-private remains policy-valid.'
         : 'Hosted session selected cloud-basic because requested provider is cloud-capable and reachable.';
     } else if (!cloudRouteAvailable) {
-      selectedProvider = requested === 'groq' ? 'groq' : requested;
+      selectedProvider = requested;
       selectedAnswerMode = 'route-unavailable';
       fallbackReasonCode = 'no-viable-execution-path';
       policyReason = 'Hosted low-freshness request has no reachable cloud or local execution path.';
@@ -288,7 +316,7 @@ export function resolveFreshnessRoutingDecision({
     && hostedSession
     && !localRouteAvailable
     && cloudRouteAvailable
-    && selectedProvider === 'groq'
+    && selectedProvider !== 'ollama'
     && selectedAnswerMode !== 'cloud-basic';
 
   if (shouldForceHostedCloudBasic) {
@@ -302,7 +330,8 @@ export function resolveFreshnessRoutingDecision({
   const overrideRequested = requestedProviderForRequest !== requested;
   const overrideDeniedReason = (
     classification?.freshnessNeed === 'high'
-    && requestedProviderForRequest !== 'groq'
+    && !hostedSession
+    && !freshRouteAvailable
   )
     ? (fallbackReasonCode || 'fresh-route-unavailable')
     : null;
@@ -326,10 +355,11 @@ export function resolveFreshnessRoutingDecision({
     candidateFreshPath: candidateFreshPath || null,
     freshRouteValidation: {
       cloudRouteUsable,
-      providerHealthy: groqHealthy,
-      providerTransportReachable: groqTransportReachable,
-      providerCapability: groqCapability,
-      providerSupportsCurrentAnswers: groqSupportsCurrentAnswers,
+      providerHealthy: Boolean(selectedFreshCandidate?.healthy),
+      providerTransportReachable: Boolean(selectedFreshCandidate?.transportReachable),
+      providerCapability: selectedFreshCapability,
+      providerSupportsCurrentAnswers: selectedFreshProviderSupportsCurrentAnswers ?? primaryFreshProviderSupportsCurrentAnswers,
+      selectedFreshProvider,
       webCapabilityState,
       failureReasons: freshRouteFailureReasons,
     },

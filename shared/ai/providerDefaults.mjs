@@ -22,6 +22,8 @@ export const PROVIDER_DEFINITIONS = {
     capabilityProfile: {
       supportsFreshWeb: false,
       supportsCurrentAnswers: false,
+      requiresGrounding: false,
+      groundingMode: 'none',
       zeroCostPolicy: true,
       paidFreshRoutesEnabled: false,
     },
@@ -48,8 +50,10 @@ export const PROVIDER_DEFINITIONS = {
     secretFieldName: 'apiKey',
     canAutoFallback: true,
     capabilityProfile: {
-      supportsFreshWeb: true,
-      supportsCurrentAnswers: true,
+      supportsFreshWeb: false,
+      supportsCurrentAnswers: false,
+      requiresGrounding: false,
+      groundingMode: 'none',
       zeroCostPolicy: true,
       paidFreshRoutesEnabled: false,
     },
@@ -78,6 +82,8 @@ export const PROVIDER_DEFINITIONS = {
     capabilityProfile: {
       supportsFreshWeb: false,
       supportsCurrentAnswers: false,
+      requiresGrounding: true,
+      groundingMode: 'google_search',
       zeroCostPolicy: true,
       paidFreshRoutesEnabled: false,
     },
@@ -90,6 +96,8 @@ export const PROVIDER_DEFINITIONS = {
       model: 'gemini-2.5-flash',
       apiKey: '',
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
+      groundingEnabled: true,
+      groundingMode: 'google_search',
     },
   },
   ollama: {
@@ -104,6 +112,8 @@ export const PROVIDER_DEFINITIONS = {
     capabilityProfile: {
       supportsFreshWeb: false,
       supportsCurrentAnswers: false,
+      requiresGrounding: false,
+      groundingMode: 'none',
       zeroCostPolicy: true,
       paidFreshRoutesEnabled: false,
     },
@@ -132,6 +142,8 @@ export const PROVIDER_DEFINITIONS = {
     capabilityProfile: {
       supportsFreshWeb: true,
       supportsCurrentAnswers: true,
+      requiresGrounding: false,
+      groundingMode: 'custom_search',
       zeroCostPolicy: false,
       paidFreshRoutesEnabled: true,
     },

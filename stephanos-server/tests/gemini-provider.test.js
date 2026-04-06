@@ -25,13 +25,23 @@ test('Gemini runner fails clearly when api key is missing', async () => {
 });
 
 test('Gemini runner executes when api key is configured', async () => {
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({
-      candidates: [{ content: { parts: [{ text: 'Gemini live reply' }] } }],
-      usageMetadata: { promptTokenCount: 10 },
-    }),
-  });
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: { parts: [{ text: 'Gemini live reply' }] },
+          groundingMetadata: {
+            webSearchQueries: ['current UK prime minister'],
+            groundingChunks: [{ web: { uri: 'https://example.com', title: 'Example source' } }],
+          },
+        }],
+        usageMetadata: { promptTokenCount: 10 },
+      }),
+    };
+  };
 
   try {
     const result = await runGeminiProvider({
@@ -42,11 +52,37 @@ test('Gemini runner executes when api key is configured', async () => {
       model: 'gemini-2.5-flash',
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
       secretAuthority: 'backend-local-secret-store',
+      groundingEnabled: true,
+      groundingMode: 'google_search',
     });
 
     assert.equal(result.ok, true);
     assert.equal(result.outputText, 'Gemini live reply');
+    assert.equal(result.diagnostics.gemini.supportsFreshWeb, true);
+    assert.deepEqual(result.diagnostics.gemini.groundingMetadata.searchQueries, ['current UK prime minister']);
+    assert.equal(result.diagnostics.gemini.groundingMetadata.sources[0].uri, 'https://example.com');
+    assert.match(String(calls[0].options.body || ''), /google_search/);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }
+});
+
+test('Gemini health exposes fresh-web capability only when grounding is enabled', async () => {
+  const withoutGrounding = await checkGeminiHealth({
+    apiKey: 'AIza-sample-key',
+    model: 'gemini-2.5-flash',
+    groundingEnabled: false,
+    groundingMode: 'none',
+  });
+  const withGrounding = await checkGeminiHealth({
+    apiKey: 'AIza-sample-key',
+    model: 'gemini-2.5-flash',
+    groundingEnabled: true,
+    groundingMode: 'google_search',
+  });
+
+  assert.equal(withoutGrounding.providerCapability.supportsFreshWeb, false);
+  assert.equal(withoutGrounding.providerCapability.requiresGrounding, true);
+  assert.equal(withGrounding.providerCapability.supportsFreshWeb, true);
+  assert.equal(withGrounding.providerCapability.groundingEnabled, true);
 });

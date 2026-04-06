@@ -120,3 +120,48 @@ test('provider routing leaves home-node adoption semantics untouched while share
   assert.equal(routing.runtimeContext.actualTargetUsed, 'http://192.168.0.198:8787');
   assert.equal(routing.runtimeContext.preferredTarget, 'http://192.168.0.198:5173/');
 });
+
+test('provider routing picks Gemini for auto high-freshness requests when Gemini grounding is available', () => {
+  const routing = resolveRoutingPlan({
+    provider: 'ollama',
+    routeMode: 'auto',
+    freshnessContext: { freshnessNeed: 'high' },
+    runtimeContext: {},
+  }, {
+    ollama: { ok: true },
+    gemini: {
+      ok: true,
+      providerCapability: {
+        supportsFreshWeb: true,
+      },
+    },
+    groq: { ok: true, providerCapability: { supportsFreshWeb: false } },
+  });
+
+  assert.equal(routing.selectedProvider, 'gemini');
+  assert.equal(routing.effectiveRouteMode, 'cloud-fresh');
+  assert.equal(routing.providerSelectionSource, 'auto:fresh-capable');
+});
+
+test('provider routing falls back to ollama for auto high-freshness requests when no fresh-capable provider is executable', () => {
+  const routing = resolveRoutingPlan({
+    provider: 'ollama',
+    routeMode: 'auto',
+    freshnessContext: { freshnessNeed: 'high' },
+    runtimeContext: {},
+  }, {
+    ollama: { ok: true },
+    gemini: {
+      ok: true,
+      providerCapability: {
+        supportsFreshWeb: false,
+      },
+    },
+    groq: { ok: true, providerCapability: { supportsFreshWeb: false } },
+  });
+
+  assert.equal(routing.selectedProvider, 'ollama');
+  assert.equal(routing.effectiveRouteMode, 'local-first-fallback');
+  assert.equal(routing.providerSelectionSource, 'auto:freshness-fallback');
+  assert.match(routing.freshnessWarning || '', /stale/i);
+});

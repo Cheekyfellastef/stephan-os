@@ -24,6 +24,9 @@ function normalizeProviderCapabilityTruth(provider, health = {}) {
       supportsFreshWeb: explicit.supportsFreshWeb === true,
       supportsBrowserSearch: explicit.supportsBrowserSearch === true,
       supportsCurrentAnswers: explicit.supportsCurrentAnswers === true,
+      requiresGrounding: explicit.requiresGrounding === true,
+      groundingMode: String(explicit.groundingMode || 'none'),
+      groundingEnabled: explicit.groundingEnabled === true,
       configuredModel: String(explicit.configuredModel || ''),
       configuredModelSupportsFreshWeb: explicit.configuredModelSupportsFreshWeb === true,
       configuredModelSupportsCurrentAnswers: explicit.configuredModelSupportsCurrentAnswers === true,
@@ -41,6 +44,9 @@ function normalizeProviderCapabilityTruth(provider, health = {}) {
     supportsFreshWeb: false,
     supportsBrowserSearch: false,
     supportsCurrentAnswers: false,
+    requiresGrounding: false,
+    groundingMode: 'none',
+    groundingEnabled: false,
     configuredModel: '',
     configuredModelSupportsFreshWeb: false,
     configuredModelSupportsCurrentAnswers: false,
@@ -145,6 +151,10 @@ export async function getProviderHealthSnapshot(routerConfigInput = {}) {
       requestedRouteMode: routing.requestedRouteMode,
       effectiveRouteMode: routing.effectiveRouteMode,
       selectedProvider: routing.selectedProvider,
+      requestedProviderForRequest: routing.requestedProviderForRequest,
+      providerSelectionSource: routing.providerSelectionSource,
+      freshnessNeed: routing.freshnessNeed,
+      freshnessWarning: routing.freshnessWarning,
       attemptOrder: routing.attemptOrder,
       readyLocalProviders: routing.readyLocalProviders,
       readyCloudProviders: routing.readyCloudProviders,
@@ -180,7 +190,10 @@ export function resolveProviderRequest(provider, providerConfig = {}, options = 
 
 export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const request = buildAIRequest(requestInput);
-  const routerConfig = buildRouterConfig(configInput);
+  const routerConfig = buildRouterConfig({
+    ...configInput,
+    freshnessContext: configInput?.freshnessContext || request?.freshnessContext || null,
+  });
   const providerHealthSnapshot = await getProviderHealthSnapshot(routerConfig);
   const routing = providerHealthSnapshot.routing;
   const attempts = [];
@@ -194,6 +207,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     requestedRouteMode,
     effectiveRouteMode: routing.effectiveRouteMode,
     selectedProvider,
+    providerSelectionSource: routing.providerSelectionSource,
     fallbackEnabled: routerConfig.fallbackEnabled,
     attemptOrder,
   });
@@ -212,6 +226,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       requestedProvider,
       requestedRouteMode,
       selectedProvider,
+      providerSelectionSource: routing.providerSelectionSource,
       provider,
     });
     console.log('[BACKEND LIVE] Provider attempt starting', {
@@ -219,6 +234,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       requested_route_mode: requestedRouteMode,
       effective_route_mode: routing.effectiveRouteMode,
       selected_provider: selectedProvider,
+      provider_selection_source: routing.providerSelectionSource,
       actual_provider_attempt: provider,
     });
 
@@ -273,6 +289,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           requestedRouteMode,
           effectiveRouteMode: routing.effectiveRouteMode,
           selectedProvider,
+          providerSelectionSource: routing.providerSelectionSource,
           resolvedProvider: provider,
           actualProviderUsed: provider,
           modelUsed: attempt.result.model || '',
@@ -290,8 +307,9 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         requested_provider: requestedProvider,
         requested_route_mode: requestedRouteMode,
         effective_route_mode: routing.effectiveRouteMode,
-        selected_provider: selectedProvider,
-        actual_provider_used: finalResult.actualProviderUsed,
+      selected_provider: selectedProvider,
+      provider_selection_source: routing.providerSelectionSource,
+      actual_provider_used: finalResult.actualProviderUsed,
         model_used: finalResult.modelUsed,
         fallback_used: finalResult.fallbackUsed,
         fallback_reason: finalResult.fallbackReason,
@@ -326,6 +344,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       requestedRouteMode,
       effectiveRouteMode: routing.effectiveRouteMode,
       selectedProvider,
+      providerSelectionSource: routing.providerSelectionSource,
       resolvedProvider: lastAttempt?.provider || selectedProvider,
       actualProviderUsed: lastAttempt?.provider || selectedProvider,
       modelUsed: lastAttempt?.result?.model || '',

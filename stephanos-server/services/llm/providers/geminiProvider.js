@@ -21,8 +21,45 @@ function extractGeminiText(raw) {
   return parts.map((part) => part?.text || '').join('\n').trim();
 }
 
+function resolveGeminiGrounding(resolved = {}) {
+  const groundingMode = String(resolved?.groundingMode || '').trim().toLowerCase();
+  const groundingEnabled = resolved?.groundingEnabled !== false && groundingMode !== 'none';
+  const requiresGrounding = true;
+  const supportsFreshWeb = groundingEnabled && groundingMode === 'google_search';
+  const groundingTool = groundingMode === 'google_search'
+    ? { google_search: {} }
+    : null;
+  return {
+    groundingEnabled,
+    groundingMode: groundingMode || 'none',
+    requiresGrounding,
+    supportsFreshWeb,
+    supportsCurrentAnswers: supportsFreshWeb,
+    groundingTool,
+  };
+}
+
+function extractGroundingMetadata(raw = {}) {
+  const metadata = raw?.candidates?.[0]?.groundingMetadata || raw?.groundingMetadata || {};
+  const webSearchQueries = Array.isArray(metadata?.webSearchQueries) ? metadata.webSearchQueries : [];
+  const groundingChunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : [];
+  const sources = groundingChunks
+    .map((chunk) => chunk?.web || {})
+    .map((web) => ({
+      uri: web?.uri || '',
+      title: web?.title || '',
+    }))
+    .filter((source) => source.uri);
+  return {
+    searchQueries: webSearchQueries,
+    sources,
+    citations: Array.isArray(metadata?.groundingSupports) ? metadata.groundingSupports : [],
+  };
+}
+
 export async function checkGeminiHealth(config = {}) {
   const resolved = sanitizeProviderConfig('gemini', config);
+  const grounding = resolveGeminiGrounding(resolved);
   const configuredVia = String(config?.apiKey || '').trim()
     ? (config?.secretAuthority === 'backend-local-secret-store'
       ? 'backend local secret store'
@@ -32,17 +69,22 @@ export async function checkGeminiHealth(config = {}) {
     provider: 'gemini',
     available: Boolean(resolved.apiKey),
     transportReachable: Boolean(resolved.apiKey),
-    supportsFreshWeb: false,
-    supportsBrowserSearch: false,
-    supportsCurrentAnswers: false,
+    supportsFreshWeb: grounding.supportsFreshWeb,
+    supportsBrowserSearch: grounding.supportsFreshWeb,
+    supportsCurrentAnswers: grounding.supportsCurrentAnswers,
+    requiresGrounding: grounding.requiresGrounding,
+    groundingMode: grounding.groundingMode,
+    groundingEnabled: grounding.groundingEnabled,
     configuredModel: resolved.model || '',
-    configuredModelSupportsFreshWeb: false,
-    configuredModelSupportsCurrentAnswers: true,
-    candidateFreshRouteAvailable: false,
-    candidateFreshWebModel: '',
-    freshWebPath: '',
+    configuredModelSupportsFreshWeb: grounding.supportsFreshWeb,
+    configuredModelSupportsCurrentAnswers: grounding.supportsCurrentAnswers,
+    candidateFreshRouteAvailable: grounding.supportsFreshWeb,
+    candidateFreshWebModel: grounding.supportsFreshWeb ? (resolved.model || '') : '',
+    freshWebPath: grounding.supportsFreshWeb ? '/models:generateContent+google_search' : '',
     capabilityReason: resolved.apiKey
-      ? 'Gemini configured for direct completion route without fresh-web adapter.'
+      ? (grounding.supportsFreshWeb
+        ? 'Gemini fresh-web route is available because Google Search grounding is enabled.'
+        : 'Gemini is configured but fresh-web capability requires Google Search grounding.')
       : 'Gemini API key is missing.',
   };
   return resolved.apiKey
@@ -80,6 +122,7 @@ export async function checkGeminiHealth(config = {}) {
 
 export async function runGeminiProvider(request, config = {}) {
   const resolved = sanitizeProviderConfig('gemini', config);
+  const grounding = resolveGeminiGrounding(resolved);
 
   if (!resolved.apiKey) {
     return { ok: false, provider: 'gemini', model: resolved.model, outputText: '', error: { code: ERROR_CODES.LLM_GEMINI_MISSING_API_KEY, message: 'Gemini API key is missing.', retryable: false } };
@@ -93,6 +136,8 @@ export async function runGeminiProvider(request, config = {}) {
       body: JSON.stringify({
         systemInstruction: request.systemPrompt ? { parts: [{ text: request.systemPrompt }] } : undefined,
         contents: toGeminiContents(request),
+        config: grounding.groundingTool ? { tools: [grounding.groundingTool] } : undefined,
+        tools: grounding.groundingTool ? [grounding.groundingTool] : undefined,
         generationConfig: {
           temperature: request.temperature ?? 0.3,
           maxOutputTokens: request.maxTokens,
@@ -111,7 +156,22 @@ export async function runGeminiProvider(request, config = {}) {
       return { ok: false, provider: 'gemini', model: resolved.model, outputText: '', raw, error: { code: ERROR_CODES.LLM_GEMINI_BAD_RESPONSE, message: 'Gemini returned no usable text parts.', retryable: true } };
     }
 
-    return { ok: true, provider: 'gemini', model: request.model || resolved.model, outputText, raw, usage: raw?.usageMetadata };
+    return {
+      ok: true,
+      provider: 'gemini',
+      model: request.model || resolved.model,
+      outputText,
+      raw,
+      usage: raw?.usageMetadata,
+      diagnostics: {
+        gemini: {
+          groundingEnabled: grounding.groundingEnabled,
+          groundingMode: grounding.groundingMode,
+          supportsFreshWeb: grounding.supportsFreshWeb,
+          groundingMetadata: extractGroundingMetadata(raw),
+        },
+      },
+    };
   } catch (error) {
     return { ok: false, provider: 'gemini', model: resolved.model, outputText: '', error: { code: ERROR_CODES.LLM_GEMINI_REQUEST_FAILED, message: `Gemini request failed: ${error.message}`, retryable: true } };
   }

@@ -341,6 +341,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       provider,
       providerConfigs: mergedProviderConfigs,
       routeMode,
+      freshnessContext,
       runtimeContext: normalizedRuntimeContext,
       fallbackEnabled,
       fallbackOrder,
@@ -356,11 +357,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
     const executionMetadata = {
+      saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
       requested_provider_for_request: routeDecision?.requestedProviderForRequest || provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
       route_mode: routeMode,
+      requested_route_mode: llmResult.diagnostics?.requestedRouteMode || providerHealthSnapshot?.routing?.requestedRouteMode || routeMode,
       effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
       requested_provider: routeDecision?.requestedProviderForRequest
         || llmResult.requestedProvider
@@ -368,7 +371,15 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       routing_requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
       selected_provider: llmResult.diagnostics?.selectedProvider || providerHealthSnapshot?.routing?.selectedProvider || providerResolution.resolvedProvider,
       actual_provider_used: llmResult.actualProviderUsed || llmResult.provider,
+      provider_selection_source: llmResult.diagnostics?.providerSelectionSource || providerHealthSnapshot?.routing?.providerSelectionSource || 'auto:policy',
       model_used: llmResult.modelUsed || llmResult.model || '',
+      configured_model: mergedProviderConfigs?.[llmResult.actualProviderUsed || llmResult.provider]?.model || null,
+      requested_model: mergedProviderConfigs?.[llmResult.diagnostics?.selectedProvider || llmResult.actualProviderUsed || llmResult.provider]?.model || null,
+      selected_model: llmResult.model || llmResult.modelUsed || null,
+      executed_model: llmResult.modelUsed || llmResult.model || null,
+      model_selection_reason: llmResult.diagnostics?.ollama?.fallbackReason
+        || llmResult.diagnostics?.ollama?.escalationReason
+        || (llmResult.diagnostics?.groq?.freshWebActive ? 'fresh-web-route' : 'provider-default'),
       fallback_used: Boolean(llmResult.fallbackUsed),
       fallback_reason: llmResult.fallbackReason || null,
       provider_capability: providerHealthSnapshot?.[llmResult.actualProviderUsed || llmResult.provider]?.providerCapability || null,
@@ -470,12 +481,19 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       stale_risk: freshnessContext?.staleRisk || 'low',
       selected_answer_mode: routeDecision?.selectedAnswerMode || 'local-private',
       override_denial_reason: routeDecision?.overrideDeniedReason || null,
-      freshness_warning: routeDecision?.freshnessWarning || null,
+      freshness_warning: routeDecision?.freshnessWarning || llmResult.diagnostics?.routing?.freshnessWarning || null,
       freshness_routed: Boolean(routeDecision?.freshnessRouted),
       ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
       ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
       route_mode: routeMode,
+      requested_route_mode: executionMetadata.requested_route_mode,
       effective_route_mode: executionMetadata.effective_route_mode,
+      provider_selection_source: executionMetadata.provider_selection_source,
+      configured_model: executionMetadata.configured_model,
+      requested_model: executionMetadata.requested_model,
+      selected_model: executionMetadata.selected_model,
+      executed_model: executionMetadata.executed_model,
+      model_selection_reason: executionMetadata.model_selection_reason,
       groq_endpoint_used: executionMetadata.groq_endpoint_used,
       groq_model_used: executionMetadata.groq_model_used,
       groq_fresh_web_active: executionMetadata.groq_fresh_web_active,
@@ -527,6 +545,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       requested: executionMetadata.requested_provider,
       selected: executionMetadata.selected_provider,
       executable: executionMetadata.executable_provider || 'none',
+      actual: executionMetadata.actual_provider_used || 'none',
+      mode: executionMetadata.selected_answer_mode || 'unknown',
       route: normalizedRuntimeContext.sessionKind || 'unknown',
     });
 
