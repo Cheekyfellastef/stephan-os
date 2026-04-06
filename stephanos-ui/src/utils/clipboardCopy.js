@@ -19,7 +19,10 @@ function resolveClipboardFailureReason(error) {
 
 function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } = {}) {
   if (!documentObject?.createElement || !documentObject?.body?.appendChild || !documentObject?.execCommand) {
-    return false;
+    return {
+      ok: false,
+      reason: 'clipboard-unavailable',
+    };
   }
 
   const textarea = documentObject.createElement('textarea');
@@ -32,22 +35,50 @@ function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } =
   textarea.style.left = '-9999px';
   textarea.style.top = '0';
 
-  documentObject.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  if (typeof textarea.setSelectionRange === 'function') {
-    textarea.setSelectionRange(0, textarea.value.length);
+  try {
+    documentObject.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    if (typeof textarea.setSelectionRange === 'function') {
+      textarea.setSelectionRange(0, textarea.value.length);
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'clipboard-write-failed',
+      error,
+    };
   }
 
   let copied = false;
+  let copyError = null;
   try {
     copied = Boolean(documentObject.execCommand('copy'));
-  } catch {
+  } catch (error) {
     copied = false;
+    copyError = error;
   }
 
-  textarea.remove();
-  return copied;
+  try {
+    if (typeof textarea.remove === 'function') {
+      textarea.remove();
+    } else if (textarea.parentNode && typeof textarea.parentNode.removeChild === 'function') {
+      textarea.parentNode.removeChild(textarea);
+    }
+  } catch {
+    // Ignore cleanup failures.
+  }
+  if (copied) {
+    return {
+      ok: true,
+      reason: 'copied-legacy-fallback',
+    };
+  }
+  return {
+    ok: false,
+    reason: 'clipboard-write-failed',
+    error: copyError,
+  };
 }
 
 export async function writeTextToClipboard(
@@ -62,38 +93,44 @@ export async function writeTextToClipboard(
       return {
         ok: true,
         reason: 'copied',
+        method: 'navigator-clipboard',
         text: normalizedText,
       };
     } catch (error) {
-      const legacyCopied = tryLegacyClipboardCopy(normalizedText, { documentObject });
-      if (legacyCopied) {
+      const legacyResult = tryLegacyClipboardCopy(normalizedText, { documentObject });
+      if (legacyResult.ok) {
         return {
           ok: true,
-          reason: 'copied-legacy-fallback',
+          reason: legacyResult.reason,
+          method: 'legacy-exec-command',
           text: normalizedText,
         };
       }
       return {
         ok: false,
         reason: resolveClipboardFailureReason(error),
+        method: 'navigator-clipboard',
         text: normalizedText,
-        error,
+        error: legacyResult.error || error,
       };
     }
   }
 
-  const legacyCopied = tryLegacyClipboardCopy(normalizedText, { documentObject });
-  if (legacyCopied) {
+  const legacyResult = tryLegacyClipboardCopy(normalizedText, { documentObject });
+  if (legacyResult.ok) {
     return {
       ok: true,
-      reason: 'copied-legacy-fallback',
+      reason: legacyResult.reason,
+      method: 'legacy-exec-command',
       text: normalizedText,
     };
   }
 
   return {
     ok: false,
-    reason: 'clipboard-unavailable',
+    reason: legacyResult.reason || 'clipboard-unavailable',
+    method: 'legacy-exec-command',
     text: normalizedText,
+    error: legacyResult.error,
   };
 }

@@ -22,6 +22,7 @@ test('writeTextToClipboard writes text when clipboard api exists', async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.reason, 'copied');
+  assert.equal(result.method, 'navigator-clipboard');
   assert.equal(copied, 'hello');
 });
 
@@ -59,6 +60,7 @@ test('writeTextToClipboard falls back to execCommand when clipboard api fails', 
 
   assert.equal(result.ok, true);
   assert.equal(result.reason, 'copied-legacy-fallback');
+  assert.equal(result.method, 'legacy-exec-command');
   assert.equal(execCount, 1);
 });
 
@@ -89,6 +91,7 @@ test('writeTextToClipboard reports write failures when clipboard and fallback pa
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'clipboard-write-failed');
+  assert.equal(result.method, 'navigator-clipboard');
 });
 
 
@@ -122,4 +125,30 @@ test('writeTextToClipboard surfaces permission denied reason when modern and fal
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'clipboard-permission-denied');
+  assert.equal(result.method, 'navigator-clipboard');
+});
+
+test('writeTextToClipboard does not throw when legacy textarea remove API is missing', async () => {
+  const result = await writeTextToClipboard('hello', {
+    navigatorObject: {},
+    documentObject: {
+      createElement: () => ({
+        setAttribute: () => {},
+        style: {},
+        focus: () => {},
+        select: () => {},
+        setSelectionRange: () => {},
+        parentNode: { removeChild: () => {} },
+        value: '',
+      }),
+      body: {
+        appendChild: () => {},
+      },
+      execCommand: () => true,
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, 'copied-legacy-fallback');
+  assert.equal(result.method, 'legacy-exec-command');
 });
