@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-06T19:15:45.881Z",
+  "updatedAt": "2026-04-06T19:56:22.588Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -350,6 +350,406 @@
       "retentionHint": "default",
       "createdAt": "2026-04-06T19:15:45.881Z",
       "updatedAt": "2026-04-06T19:15:45.881Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504743491-llp06-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who am i speaking to",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:45:43.491Z",
+      "updatedAt": "2026-04-06T19:45:43.491Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504743491-llp06-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "You are speaking to Stephanos OS, your command-deck mission console assistant.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:45:43.491Z",
+      "updatedAt": "2026-04-06T19:45:43.491Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504782574-sazps-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who am i speaking to",
+        "route": "assistant",
+        "requestedProvider": "groq",
+        "selectedProvider": "groq"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:46:22.574Z",
+      "updatedAt": "2026-04-06T19:46:22.574Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504782574-sazps-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "You’re speaking to **Stephanos OS** – a local‑first, command‑deck style mission console assistant.",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:46:22.574Z",
+      "updatedAt": "2026-04-06T19:46:22.574Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504839769-xnhzc-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who am i speaking to",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:47:19.769Z",
+      "updatedAt": "2026-04-06T19:47:19.769Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504839769-xnhzc-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "You are speaking to an AI assistant designed to help you with various tasks and information needs. In this context, I am here to assist you with Stephanos-related queries or tasks.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:47:19.769Z",
+      "updatedAt": "2026-04-06T19:47:19.769Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504936187-o2uw0-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what ais are connected to the system",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:48:56.187Z",
+      "updatedAt": "2026-04-06T19:48:56.187Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504936187-o2uw0-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As an AI assistant, I am directly connected to the Stephanos system. This allows me to provide information, assistance, and interact with other components within the platform.\n\nThere may be other AI integrations or services that Stephanos leverages for specific tasks or features, but my direct connection is to the core AI component of the system.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:48:56.187Z",
+      "updatedAt": "2026-04-06T19:48:56.187Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504990767-060fs-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "which api keys have been stored in the backend",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:49:50.767Z",
+      "updatedAt": "2026-04-06T19:49:50.767Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775504990767-060fs-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As a Stephanos console assistant, I do not have direct access to real-time backend data or API keys. The information about stored API keys would typically be managed by system administrators or within secure storage configurations.\n\nIf you need to check for API keys in the backend, you can follow these general steps:\n\n1. Access the backend management interface.\n2. Look for sections related to authentication or API ke",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:49:50.767Z",
+      "updatedAt": "2026-04-06T19:49:50.767Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505062865-afep9-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what would cause you to switch to another ai provider",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:51:02.865Z",
+      "updatedAt": "2026-04-06T19:51:02.865Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505062865-afep9-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As a mission console AI like Stephanos, I am designed to support multiple AI providers seamlessly. However, there could be a few reasons for switching to another AI provider:\n\n1. **Improved performance**: If the new provider offers better response times or accuracy in handling tasks.\n\n2. **New features or capabilities**: The new provider might introduce innovative features that enhance mission console functionality.\n",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:51:02.865Z",
+      "updatedAt": "2026-04-06T19:51:02.865Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505119672-9a9z1-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "will your answer speed get faster",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:51:59.672Z",
+      "updatedAt": "2026-04-06T19:51:59.672Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505119672-9a9z1-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As an AI assistant, my response speed can be influenced by various factors, including:\n\n1. **System load:** The performance of the system running the AI may affect response times.\n2. **Database queries:** If my responses involve data retrieval, the time taken for these operations can impact speed.\n3. **Processing complexity:** The complexity of the tasks or questions being asked can also influence response times.\n4. ",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:51:59.672Z",
+      "updatedAt": "2026-04-06T19:51:59.672Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505382588-vlp2o-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who is the current uk prime minister",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:56:22.588Z",
+      "updatedAt": "2026-04-06T19:56:22.588Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775505382588-vlp2o-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As of my last update, which may not reflect real-time events, the UK Prime Minister was Boris Johnson. For the most up-to-date information, please consult a reliable news source or check an official government website.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:56:22.588Z",
+      "updatedAt": "2026-04-06T19:56:22.588Z",
       "surface": "shared"
     }
   }
