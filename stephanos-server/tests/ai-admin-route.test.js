@@ -25,3 +25,7 @@ test('local admin request denies non-loopback ip', () => {
 test('local admin request allows localhost host header without explicit port', () => {
   assert.equal(isLocalAdminRequest(buildRequest({ host: 'localhost' })), true);
 });
+
+test('local admin request denies LAN host header even from loopback ip', () => {
+  assert.equal(isLocalAdminRequest(buildRequest({ host: '192.168.0.198:8787' })), false);
+});

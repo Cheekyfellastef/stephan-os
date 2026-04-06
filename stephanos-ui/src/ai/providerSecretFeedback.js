@@ -9,6 +9,9 @@ export function resolveProviderSecretSaveFeedback(secretSave, providerKey, provi
 
   return {
     type: 'error',
-    message: secretSave?.error || `Failed to store ${providerKey} API key in backend local secret store.`,
+    message: secretSave?.error
+      || (secretSave?.authority?.reason === 'non-local-admin-route'
+        ? 'Denied: this session is not allowed to use localhost-only admin secret routes.'
+        : `Failed to store ${providerKey} API key in backend local secret store.`),
   };
 }

@@ -10,10 +10,13 @@ const clientSource = fs.readFileSync(path.join(__dirname, 'aiClient.js'), 'utf8'
 
 test('setLocalProviderSecret uses PUT /api/ai-admin/provider-secrets/:provider', () => {
   assert.match(clientSource, /requestJson\(`\/api\/ai-admin\/provider-secrets\/\$\{encodeURIComponent\(provider\)\}`,[\s\S]*method:\s*'PUT'/m);
+  assert.match(clientSource, /resolveAdminAuthorityUrl\(runtimeConfig\)/);
+  assert.match(clientSource, /baseUrl:\s*authority\.target/);
 });
 
 test('clearLocalProviderSecret uses DELETE /api/ai-admin/provider-secrets/:provider', () => {
   assert.match(clientSource, /requestJson\(`\/api\/ai-admin\/provider-secrets\/\$\{encodeURIComponent\(provider\)\}`,[\s\S]*method:\s*'DELETE'/m);
+  assert.match(clientSource, /Local admin access required\./);
 });
 
 test('sendPrompt strips provider secrets from chat payloads', () => {

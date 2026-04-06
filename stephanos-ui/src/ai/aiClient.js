@@ -1,5 +1,11 @@
 import { EMPTY_RESPONSE } from './aiTypes';
-import { buildApiUrl, getApiConfig, getApiRuntimeConfig, getApiTargetLabel } from './apiConfig';
+import {
+  buildApiUrl,
+  getApiConfig,
+  getApiRuntimeConfig,
+  getApiTargetLabel,
+  resolveAdminAuthorityUrl,
+} from './apiConfig';
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 
@@ -174,24 +180,89 @@ export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
 export { getApiRuntimeConfig };
 
 export async function getLocalProviderSecretStatus(runtimeConfig = getApiRuntimeConfig()) {
-  const result = await requestJson('/api/ai-admin/provider-secrets', {}, runtimeConfig);
+  const authority = resolveAdminAuthorityUrl(runtimeConfig);
+  if (!authority.ok) {
+    console.warn('[SECRET AUTHORITY] denied', {
+      sessionKind: authority.sessionKind,
+      target: authority.target,
+      reason: authority.reason,
+      source: authority.source,
+    });
+    return {
+      ok: false,
+      status: 403,
+      data: {},
+      error: 'Local admin secret authority is unavailable for this session.',
+      authority,
+    };
+  }
+  console.info('[SECRET AUTHORITY]', {
+    sessionKind: authority.sessionKind,
+    target: authority.target,
+    source: authority.source,
+  });
+  const result = await requestJson('/api/ai-admin/provider-secrets', {}, { ...runtimeConfig, baseUrl: authority.target });
   return { ok: result.ok, status: result.status, data: result.data?.data || {} };
 }
 
 export async function setLocalProviderSecret(provider, apiKey, runtimeConfig = getApiRuntimeConfig()) {
+  const authority = resolveAdminAuthorityUrl(runtimeConfig);
+  if (!authority.ok) {
+    console.warn('[SECRET AUTHORITY] denied', {
+      sessionKind: authority.sessionKind,
+      target: authority.target,
+      reason: authority.reason,
+      source: authority.source,
+    });
+    return {
+      ok: false,
+      status: 403,
+      data: null,
+      error: 'Local admin access required. This session cannot write backend local secrets.',
+      authority,
+    };
+  }
+  console.info('[SECRET AUTHORITY]', {
+    sessionKind: authority.sessionKind,
+    target: authority.target,
+    source: authority.source,
+  });
   const result = await requestJson(`/api/ai-admin/provider-secrets/${encodeURIComponent(provider)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ apiKey: String(apiKey || '') }),
-  }, runtimeConfig);
-  return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
+  }, { ...runtimeConfig, baseUrl: authority.target });
+  const response = { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '', authority };
+  console.info('[PROVIDER SAVE]', { provider, outcome: response.ok ? 'accepted' : 'rejected' });
+  return response;
 }
 
 export async function clearLocalProviderSecret(provider, runtimeConfig = getApiRuntimeConfig()) {
+  const authority = resolveAdminAuthorityUrl(runtimeConfig);
+  if (!authority.ok) {
+    console.warn('[SECRET AUTHORITY] denied', {
+      sessionKind: authority.sessionKind,
+      target: authority.target,
+      reason: authority.reason,
+      source: authority.source,
+    });
+    return {
+      ok: false,
+      status: 403,
+      data: null,
+      error: 'Local admin access required. This session cannot clear backend local secrets.',
+      authority,
+    };
+  }
+  console.info('[SECRET AUTHORITY]', {
+    sessionKind: authority.sessionKind,
+    target: authority.target,
+    source: authority.source,
+  });
   const result = await requestJson(`/api/ai-admin/provider-secrets/${encodeURIComponent(provider)}`, {
     method: 'DELETE',
-  }, runtimeConfig);
-  return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '' };
+  }, { ...runtimeConfig, baseUrl: authority.target });
+  return { ok: result.ok, status: result.status, data: result.data?.data || null, error: result.data?.error || '', authority };
 }
 
 

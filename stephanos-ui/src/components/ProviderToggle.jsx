@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { clearLocalProviderSecret, getApiRuntimeConfig, setLocalProviderSecret } from '../ai/aiClient';
+import { resolveAdminAuthorityUrl } from '../ai/apiConfig';
 import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
@@ -175,6 +176,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
+  const adminAuthority = resolveAdminAuthorityUrl(runtimeConfig);
   const [isAutoFindingOllama, setIsAutoFindingOllama] = useState(false);
   const [ollamaDiscovery, setOllamaDiscovery] = useState(null);
   const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
@@ -447,6 +449,9 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
 
       <p className="provider-dock-status">
         Requested Route Mode: <strong>{routeMode}</strong> · Explicit Provider Target: <strong>{provider}</strong> · Backend Target: <strong>{runtimeConfig.baseUrl}</strong>
+      </p>
+      <p className="provider-dock-status">
+        Secret Authority: <strong>{adminAuthority.ok ? 'available' : 'denied'}</strong> · Target: <strong>{adminAuthority.target || 'n/a'}</strong> · Reason: <strong>{adminAuthority.reason || 'pc-local-admin'}</strong>
       </p>
 
 

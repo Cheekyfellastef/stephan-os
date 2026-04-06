@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getApiRuntimeConfig, getApiRuntimeConfigSnapshotKey } from './apiConfig.js';
+import { getApiRuntimeConfig, getApiRuntimeConfigSnapshotKey, resolveAdminAuthorityUrl } from './apiConfig.js';
 
 function installBrowserGlobals({ origin = 'https://cheekyfellastef.github.io', storage = {} } = {}) {
   const localStorage = {
@@ -83,7 +83,7 @@ test('getApiRuntimeConfigSnapshotKey changes when the preferred home node change
   }
 });
 
-test('getApiRuntimeConfig keeps hosted-web sessions on current origin when no home node exists', () => {
+test('getApiRuntimeConfig keeps hosted-web static shell sessions on localhost backend fallback when no home node exists', () => {
   const globals = installBrowserGlobals({
     origin: 'https://cheekyfellastef.github.io',
     storage: {},
@@ -91,8 +91,7 @@ test('getApiRuntimeConfig keeps hosted-web sessions on current origin when no ho
 
   try {
     const config = getApiRuntimeConfig();
-    assert.equal(config.baseUrl, 'https://cheekyfellastef.github.io');
-    assert.notEqual(config.baseUrl, 'http://localhost:8787');
+    assert.equal(config.baseUrl, 'http://localhost:8787');
   } finally {
     globals.restore();
   }
@@ -107,6 +106,53 @@ test('getApiRuntimeConfig keeps local-desktop localhost fallback for loopback or
   try {
     const config = getApiRuntimeConfig();
     assert.equal(config.baseUrl, 'http://localhost:8787');
+  } finally {
+    globals.restore();
+  }
+});
+
+test('resolveAdminAuthorityUrl forces loopback admin authority for local-desktop sessions', () => {
+  const globals = installBrowserGlobals({
+    origin: 'http://127.0.0.1:4173',
+    storage: {
+      stephanos_home_node_manual: JSON.stringify({
+        host: '192.168.0.198',
+        uiPort: 4173,
+        backendPort: 8787,
+        source: 'manual',
+      }),
+    },
+  });
+
+  try {
+    const runtimeConfig = getApiRuntimeConfig();
+    const authority = resolveAdminAuthorityUrl(runtimeConfig);
+    assert.equal(authority.ok, true);
+    assert.equal(authority.target, 'http://127.0.0.1:8787');
+    assert.equal(authority.source, 'pc-local-admin');
+  } finally {
+    globals.restore();
+  }
+});
+
+test('resolveAdminAuthorityUrl denies hosted sessions without local admin surface', () => {
+  const globals = installBrowserGlobals({
+    origin: 'https://cheekyfellastef.github.io',
+    storage: {
+      stephanos_home_node_manual: JSON.stringify({
+        host: '192.168.0.198',
+        uiPort: 4173,
+        backendPort: 8787,
+        source: 'manual',
+      }),
+    },
+  });
+
+  try {
+    const runtimeConfig = getApiRuntimeConfig();
+    const authority = resolveAdminAuthorityUrl(runtimeConfig);
+    assert.equal(authority.ok, false);
+    assert.equal(authority.reason, 'non-local-admin-route');
   } finally {
     globals.restore();
   }
