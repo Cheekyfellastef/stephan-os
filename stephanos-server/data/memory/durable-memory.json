@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-05T20:48:24.494Z",
+  "updatedAt": "2026-04-06T19:15:45.881Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -300,6 +300,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-05T20:48:24.493Z",
       "updatedAt": "2026-04-05T20:48:24.493Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775502945881-kpoav-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who am i speaking to",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:15:45.881Z",
+      "updatedAt": "2026-04-06T19:15:45.881Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775502945881-kpoav-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "Gemini API key is missing.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "Gemini API key is missing.",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-06T19:15:45.881Z",
+      "updatedAt": "2026-04-06T19:15:45.881Z",
       "surface": "shared"
     }
   }
