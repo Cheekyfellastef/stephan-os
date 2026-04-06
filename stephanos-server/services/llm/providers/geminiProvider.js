@@ -23,9 +23,59 @@ function extractGeminiText(raw) {
 
 export async function checkGeminiHealth(config = {}) {
   const resolved = sanitizeProviderConfig('gemini', config);
+  const configuredVia = String(config?.apiKey || '').trim()
+    ? (config?.secretAuthority === 'backend-local-secret-store'
+      ? 'backend local secret store'
+      : 'runtime provider config')
+    : 'GEMINI_API_KEY';
+  const providerCapability = {
+    provider: 'gemini',
+    available: Boolean(resolved.apiKey),
+    transportReachable: Boolean(resolved.apiKey),
+    supportsFreshWeb: false,
+    supportsBrowserSearch: false,
+    supportsCurrentAnswers: false,
+    configuredModel: resolved.model || '',
+    configuredModelSupportsFreshWeb: false,
+    configuredModelSupportsCurrentAnswers: true,
+    candidateFreshRouteAvailable: false,
+    candidateFreshWebModel: '',
+    freshWebPath: '',
+    capabilityReason: resolved.apiKey
+      ? 'Gemini configured for direct completion route without fresh-web adapter.'
+      : 'Gemini API key is missing.',
+  };
   return resolved.apiKey
-    ? { ok: true, provider: 'gemini', badge: 'Ready', detail: 'Gemini API key configured.' }
-    : { ok: false, provider: 'gemini', badge: 'Missing key', detail: 'Add a Gemini API key to enable Gemini.' };
+    ? {
+      ok: true,
+      provider: 'gemini',
+      badge: 'Ready',
+      detail: configuredVia === 'backend local secret store'
+        ? 'Gemini is ready from backend local secret store authority.'
+        : configuredVia === 'runtime provider config'
+          ? 'Gemini is ready from backend-routed provider configuration.'
+          : 'Gemini backend environment is configured.',
+      state: 'READY',
+      configuredVia,
+      model: resolved.model,
+      baseURL: resolved.baseURL,
+      reason: '',
+      transportReachable: true,
+      providerCapability,
+    }
+    : {
+      ok: false,
+      provider: 'gemini',
+      badge: 'Missing key',
+      detail: 'Add a Gemini API key to enable Gemini.',
+      state: 'MISSING_KEY',
+      configuredVia: 'missing',
+      model: resolved.model,
+      baseURL: resolved.baseURL,
+      reason: 'Missing key',
+      transportReachable: false,
+      providerCapability,
+    };
 }
 
 export async function runGeminiProvider(request, config = {}) {

@@ -4,6 +4,7 @@ import {
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
+import { normalizeRuntimeContext } from '../../../shared/runtime/runtimeStatusModel.mjs';
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -138,6 +139,32 @@ export function getApiRuntimeConfig() {
     backendTargetEndpoint: buildApiUrl('/api/ai/chat', config.baseUrl),
     healthEndpoint: buildApiUrl('/api/health', config.baseUrl),
     homeNode: manualNode || lastKnownNode || null,
+  };
+}
+
+export function resolveAdminAuthorityUrl(runtimeContext = getApiRuntimeConfig()) {
+  const normalizedRuntime = normalizeRuntimeContext(runtimeContext || {});
+  const sessionKind = String(normalizedRuntime.sessionKind || '');
+  if (sessionKind !== 'local-desktop') {
+    return {
+      ok: false,
+      denied: true,
+      target: String(runtimeContext?.baseUrl || ''),
+      source: 'non-local-session',
+      reason: 'non-local-admin-route',
+      sessionKind: sessionKind || 'unknown',
+      deviceContext: String(normalizedRuntime.deviceContext || 'unknown'),
+    };
+  }
+
+  return {
+    ok: true,
+    denied: false,
+    target: 'http://127.0.0.1:8787',
+    source: 'pc-local-admin',
+    reason: '',
+    sessionKind: sessionKind || 'local-desktop',
+    deviceContext: String(normalizedRuntime.deviceContext || 'pc-local-browser'),
   };
 }
 

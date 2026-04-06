@@ -46,13 +46,26 @@ export function isLocalAdminRequest(req) {
 
 function requireLocalAdmin(req, res, next) {
   if (!isLocalAdminRequest(req)) {
+    console.warn('[SECRET AUTHORITY] denied', {
+      target: `http://${String(req.headers.host || '')}`,
+      reason: 'non-local-admin-route',
+      requestIp: getRequestIp(req),
+      origin: String(req.headers.origin || ''),
+    });
     res.status(403).json({
       success: false,
       error: 'Local admin access required.',
       authority: 'localhost-only-admin-surface',
+      reason: 'non-local-admin-route',
     });
     return;
   }
+
+  console.info('[SECRET AUTHORITY]', {
+    sessionKind: 'local-desktop',
+    target: `http://${String(req.headers.host || 'localhost:8787')}`,
+    source: 'pc-local-admin',
+  });
 
   next();
 }
@@ -72,8 +85,14 @@ router.get('/provider-secrets', (_req, res) => {
 router.put('/provider-secrets/:provider', (req, res) => {
   try {
     const status = providerSecretStore.setSecret(req.params.provider, req.body?.apiKey || '');
+    console.info('[PROVIDER SAVE]', { provider: String(req.params.provider || ''), outcome: 'accepted' });
     res.json({ success: true, data: status });
   } catch (error) {
+    console.warn('[PROVIDER SAVE]', {
+      provider: String(req.params.provider || ''),
+      outcome: 'rejected',
+      reason: error?.message || 'unknown-error',
+    });
     res.status(400).json({
       success: false,
       error: error?.message || 'Failed to store provider secret.',

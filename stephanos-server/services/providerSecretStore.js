@@ -1,14 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PROVIDER_KEYS } from '../../shared/ai/providerDefaults.mjs';
+import { PROVIDER_DEFINITIONS } from '../../shared/ai/providerDefaults.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const SECRET_STORE_FILE = path.join(DATA_DIR, 'provider-secrets.json');
 
-const SECRET_PROVIDERS = new Set(PROVIDER_KEYS.filter((provider) => provider !== 'mock' && provider !== 'ollama'));
+const SECRET_PROVIDERS = new Set(
+  Object.entries(PROVIDER_DEFINITIONS)
+    .filter(([, definition]) => definition?.requiresSecret === true && definition?.secretFieldName === 'apiKey')
+    .map(([provider]) => provider),
+);
 
 function normalizeProviderKey(provider) {
   const normalized = String(provider || '').trim().toLowerCase();

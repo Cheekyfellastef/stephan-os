@@ -16,7 +16,19 @@ export const PROVIDER_DEFINITIONS = {
     kind: 'mock',
     editable: true,
     paid: false,
+    requiresSecret: false,
+    secretFieldName: '',
     canAutoFallback: true,
+    capabilityProfile: {
+      supportsFreshWeb: false,
+      supportsCurrentAnswers: false,
+      zeroCostPolicy: true,
+      paidFreshRoutesEnabled: false,
+    },
+    policyFlags: {
+      localOnly: true,
+      backendRouted: true,
+    },
     targetSummary: 'zero-cost local mock responses',
     defaults: {
       enabled: true,
@@ -32,7 +44,19 @@ export const PROVIDER_DEFINITIONS = {
     kind: 'cloud',
     editable: true,
     paid: false,
+    requiresSecret: true,
+    secretFieldName: 'apiKey',
     canAutoFallback: true,
+    capabilityProfile: {
+      supportsFreshWeb: true,
+      supportsCurrentAnswers: true,
+      zeroCostPolicy: true,
+      paidFreshRoutesEnabled: false,
+    },
+    policyFlags: {
+      localOnly: false,
+      backendRouted: true,
+    },
     targetSummary: 'cloud-backed Groq routed through the Stephanos backend',
     defaults: {
       baseURL: 'https://api.groq.com/openai/v1',
@@ -48,7 +72,19 @@ export const PROVIDER_DEFINITIONS = {
     kind: 'cloud',
     editable: true,
     paid: false,
+    requiresSecret: true,
+    secretFieldName: 'apiKey',
     canAutoFallback: true,
+    capabilityProfile: {
+      supportsFreshWeb: false,
+      supportsCurrentAnswers: false,
+      zeroCostPolicy: true,
+      paidFreshRoutesEnabled: false,
+    },
+    policyFlags: {
+      localOnly: false,
+      backendRouted: true,
+    },
     targetSummary: 'free-tier cloud via Gemini API',
     defaults: {
       model: 'gemini-2.5-flash',
@@ -62,7 +98,19 @@ export const PROVIDER_DEFINITIONS = {
     kind: 'local',
     editable: true,
     paid: false,
+    requiresSecret: false,
+    secretFieldName: '',
     canAutoFallback: true,
+    capabilityProfile: {
+      supportsFreshWeb: false,
+      supportsCurrentAnswers: false,
+      zeroCostPolicy: true,
+      paidFreshRoutesEnabled: false,
+    },
+    policyFlags: {
+      localOnly: true,
+      backendRouted: true,
+    },
     targetSummary: 'local/offline model engine',
     defaults: {
       baseURL: 'http://localhost:11434',
@@ -78,7 +126,19 @@ export const PROVIDER_DEFINITIONS = {
     kind: 'cloud',
     editable: true,
     paid: true,
+    requiresSecret: true,
+    secretFieldName: 'apiKey',
     canAutoFallback: false,
+    capabilityProfile: {
+      supportsFreshWeb: true,
+      supportsCurrentAnswers: true,
+      zeroCostPolicy: false,
+      paidFreshRoutesEnabled: true,
+    },
+    policyFlags: {
+      localOnly: false,
+      backendRouted: true,
+    },
     targetSummary: 'optional paid/fallback cloud routing',
     defaults: {
       baseURL: 'https://openrouter.ai/api/v1',

@@ -114,6 +114,7 @@ export async function checkGroqHealth(config = {}) {
         ? 'Groq is ready from backend-routed provider configuration.'
         : 'Groq backend environment is configured.',
       state: 'READY',
+      reason: '',
       configuredVia,
       model: resolved.model,
       baseURL: resolved.baseURL,
@@ -131,6 +132,7 @@ export async function checkGroqHealth(config = {}) {
       badge: 'Missing key',
       detail: 'Provide a Groq API key in the UI for this session or set GROQ_API_KEY on the backend.',
       state: 'MISSING_KEY',
+      reason: 'Missing key',
       configuredVia: 'missing',
       model: resolved.model,
       baseURL: resolved.baseURL,

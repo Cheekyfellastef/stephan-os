@@ -107,6 +107,8 @@ export default function StatusPanel() {
     ? 'busy'
     : !lastExecutionMetadata?.actual_provider_used
       ? status
+      : lastExecutionMetadata.provider_answered === false
+        ? `failed via ${lastExecutionMetadata.actual_provider_used}`
       : lastExecutionMetadata.fallback_used
         ? `fallback via ${lastExecutionMetadata.actual_provider_used}`
         : lastExecutionMetadata.actual_provider_used === 'mock'

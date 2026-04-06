@@ -207,6 +207,16 @@ router.post('/providers/health', async (req, res) => {
   const snapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: serverOwnedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' } });
   snapshot.secretAuthority = 'backend-local-secret-store';
   snapshot.secretStatus = providerSecretStore.getMaskedStatusSnapshot();
+  Object.entries(snapshot)
+    .filter(([providerKey, health]) => providerKey !== 'routing' && health && typeof health === 'object' && 'ok' in health)
+    .forEach(([providerKey, health]) => {
+      console.info('[PROVIDER HEALTH]', {
+        provider: providerKey,
+        keyPresent: health.state !== 'MISSING_KEY',
+        executable: health.ok === true,
+        reason: health.reason || health.detail || '',
+      });
+    });
   res.json({ success: true, data: snapshot });
 });
 
@@ -422,7 +432,16 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       execution_completed: intentProposalEnvelope.execution.executionCompleted,
       execution_blocked_reason: intentProposalEnvelope.execution.executionBlockedReason,
       execution_result_summary: intentProposalEnvelope.execution.executionResultSummary,
+      provider_answered: Boolean(llmResult.ok && llmResult.outputText),
     };
+    executionMetadata.executable_provider = providerHealthSnapshot?.[executionMetadata.selected_provider]?.ok
+      ? executionMetadata.selected_provider
+      : '';
+    executionMetadata.executable_provider_reason = executionMetadata.executable_provider
+      ? 'Selected provider is healthy and executable.'
+      : (providerHealthSnapshot?.[executionMetadata.selected_provider]?.detail
+        || providerHealthSnapshot?.[executionMetadata.selected_provider]?.reason
+        || 'Selected provider is not executable.');
     const requestTrace = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
@@ -499,10 +518,16 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
       actualProviderUsed: executionMetadata.actual_provider_used,
-      executionStatus: executionMetadata.actual_provider_used ? `ok:${executionMetadata.actual_provider_used}` : '',
-      executableProvider: executionMetadata.selected_provider,
+      executionStatus: executionMetadata.provider_answered ? `ok:${executionMetadata.actual_provider_used}` : 'failed',
+      executableProvider: executionMetadata.executable_provider,
       selectedProvider: executionMetadata.selected_provider,
       backendDefaultProvider: executionMetadata.backend_default_provider,
+    });
+    console.info('[PROVIDER EXECUTION]', {
+      requested: executionMetadata.requested_provider,
+      selected: executionMetadata.selected_provider,
+      executable: executionMetadata.executable_provider || 'none',
+      route: normalizedRuntimeContext.sessionKind || 'unknown',
     });
 
     console.log('[BACKEND LIVE] Execution metadata', executionMetadata);

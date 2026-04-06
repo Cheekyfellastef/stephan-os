@@ -213,3 +213,13 @@ test('Groq health remains explicit when only non-fresh model is configured', asy
   assert.equal(health.providerCapability.freshCapabilityMode, 'zero-cost-only');
   assert.match(health.providerCapability.capabilityReason, /no zero-cost fresh route configured/i);
 });
+
+test('Groq health reports Missing key state when api key is absent', async () => {
+  const health = await checkGroqHealth({
+    model: 'openai/gpt-oss-20b',
+  });
+
+  assert.equal(health.ok, false);
+  assert.equal(health.state, 'MISSING_KEY');
+  assert.equal(health.reason, 'Missing key');
+});
