@@ -576,6 +576,15 @@ elements.saveButton?.addEventListener('click', async () => {
       savedIdeaId: savedRecord.id,
     });
 
+    setEditMode(null);
+    elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${lastSaveSource}).`;
+    renderIdeas();
+    logIdeas('save-render-complete', {
+      savedIdeaId: savedRecord.id,
+      renderedRecordCount: readAll().length,
+      source: lastSaveSource,
+    });
+
     publishIdeasExecutionEvent({
       action: wasEditing ? 'ideas.update' : 'ideas.create',
       summary: wasEditing
@@ -588,26 +597,25 @@ elements.saveButton?.addEventListener('click', async () => {
       },
       tags: [wasEditing ? 'update' : 'create', lastSaveSource],
     });
-    emitTileContractEvent({
-      type: wasEditing ? 'idea.updated' : 'idea.created',
-      payload: {
-        ideaId: savedRecord.id,
-        title: savedRecord.title,
-        tags: savedRecord.tags || [],
-      },
-      sourceRef: `idea:${savedRecord.id}`,
-      tags: ['ideas', wasEditing ? 'update' : 'create'],
-    });
-    setContractStatus(`${wasEditing ? 'Updated' : 'Created'} idea artifact ${savedRecord.id}.`);
-
-    setEditMode(null);
-    elements.status.textContent = `Idea record ${wasEditing ? 'updated' : 'saved'} (${lastSaveSource}).`;
-    renderIdeas();
-    logIdeas('save-render-complete', {
-      savedIdeaId: savedRecord.id,
-      renderedRecordCount: readAll().length,
-      source: lastSaveSource,
-    });
+    try {
+      emitTileContractEvent({
+        type: wasEditing ? 'idea.updated' : 'idea.created',
+        payload: {
+          ideaId: savedRecord.id,
+          title: savedRecord.title,
+          tags: savedRecord.tags || [],
+        },
+        sourceRef: `idea:${savedRecord.id}`,
+        tags: ['ideas', wasEditing ? 'update' : 'create'],
+      });
+      setContractStatus(`${wasEditing ? 'Updated' : 'Created'} idea artifact ${savedRecord.id}.`);
+    } catch (sideEffectError) {
+      logIdeas('tile-contract-side-effect-failed', {
+        message: sideEffectError?.message || 'unknown side-effect failure',
+        savedIdeaId: savedRecord.id,
+      });
+      setContractStatus(`Tile contract bridge unavailable after save (${sideEffectError?.message || 'unknown'}).`);
+    }
   } catch (error) {
     logIdeas('edit-save-failed', {
       message: error?.message || 'Failed to save record.',

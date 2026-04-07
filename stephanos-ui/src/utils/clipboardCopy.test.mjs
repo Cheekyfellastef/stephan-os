@@ -94,6 +94,42 @@ test('writeTextToClipboard reports write failures when clipboard and fallback pa
   assert.equal(result.method, 'navigator-clipboard');
 });
 
+test('writeTextToClipboard preserves denied reason when legacy fallback throws not allowed', async () => {
+  const result = await writeTextToClipboard('hello', {
+    navigatorObject: {
+      clipboard: {
+        writeText: async () => {
+          const denied = new Error('blocked');
+          denied.name = 'NotAllowedError';
+          throw denied;
+        },
+      },
+    },
+    documentObject: {
+      createElement: () => ({
+        setAttribute: () => {},
+        style: {},
+        focus: () => {},
+        select: () => {},
+        setSelectionRange: () => {},
+        remove: () => {},
+        value: '',
+      }),
+      body: {
+        appendChild: () => {},
+      },
+      execCommand: () => {
+        const denied = new Error('copy blocked');
+        denied.name = 'NotAllowedError';
+        throw denied;
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'clipboard-permission-denied');
+});
+
 
 test('writeTextToClipboard surfaces permission denied reason when modern and fallback copy fail', async () => {
   const result = await writeTextToClipboard('hello', {
