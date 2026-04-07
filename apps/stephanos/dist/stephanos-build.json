@@ -2,12 +2,12 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
-  "sourceFingerprint": "8abbff956b4c3e811f57d86615d48e777d642cafa273aa572eda22cf2dbc166b",
+  "sourceFingerprint": "86e44d1075f37eed12778852bddbe4d01a37ea3986160aaa57be79f94baee7f9",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::fc99a48::8abbff956b4c",
-  "gitCommit": "fc99a48",
-  "buildTimestamp": "2026-04-07T03:37:27.258Z",
+  "runtimeMarker": "antifriction-live-v3::a030239::86e44d1075f3",
+  "gitCommit": "a030239",
+  "buildTimestamp": "2026-04-07T03:50:42.525Z",
   "sourceTruth": "sourceFingerprint"
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-06T20:59:37.203Z",
+  "updatedAt": "2026-04-07T03:33:24.122Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1050,6 +1050,106 @@
       "retentionHint": "default",
       "createdAt": "2026-04-06T20:59:37.202Z",
       "updatedAt": "2026-04-06T20:59:37.202Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775532747484-ht02p-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who is the president of the usa",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T03:32:27.484Z",
+      "updatedAt": "2026-04-07T03:32:27.484Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775532747484-ht02p-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "The current president of the USA is Donald John Trump. He was sworn into office as the 47th president on January 20, 2025.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T03:32:27.484Z",
+      "updatedAt": "2026-04-07T03:32:27.484Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775532804121-bwhjn-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "how does a transformer work",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T03:33:24.121Z",
+      "updatedAt": "2026-04-07T03:33:24.121Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775532804121-bwhjn-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "A Transformer is a deep learning architecture introduced by Vaswani et al. in 2017 for natural language processing tasks like machine translation.\n\nThe key components that make a Transformer work are:\n\n1. **Self-Attention Mechanism**: This is the core component of the Transformer. It allows the model to weigh and combine different parts of the input sequence based on their relevance.\n\n2. **Multi-Head Attention**: The",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T03:33:24.122Z",
+      "updatedAt": "2026-04-07T03:33:24.122Z",
       "surface": "shared"
     }
   }
