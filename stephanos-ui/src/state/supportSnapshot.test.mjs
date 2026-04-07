@@ -497,6 +497,66 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target blocking when 
   assert.match(snapshot, /operatorGuidance:\n- Resolve a reachable non-loopback backend target for hosted-web/);
 });
 
+test('buildSupportSnapshot keeps canonical hosted route truth internally consistent for accepted LAN target', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'local-first',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'hosted-web',
+        hostedRouteTruth: {
+          backendTargetResolvedUrl: 'http://192.168.0.198:8787',
+          backendTargetValidity: 'valid',
+          backendTargetReachable: true,
+          selectedRouteKind: 'home-node',
+          selectedRouteReachable: true,
+          selectedRouteUsable: false,
+          blockingIssues: [{ code: 'hosted-home-node-publication-failed', message: 'home-node UI target is unreachable (http://192.168.0.198:5173/)' }],
+          winningReason: 'Home PC backend is reachable, but the published home-node UI target is unreachable from this launcher session',
+          reconciliationReason: 'home-node UI target is unreachable (http://192.168.0.198:5173/)',
+        },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'no',
+      backendReachableState: 'yes',
+      operatorReason: 'home-node UI target is unreachable (http://192.168.0.198:5173/)',
+    },
+    runtimeSessionTruth: { sessionKind: 'hosted-web', deviceContext: 'lan-companion' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      backendTargetResolutionSource: 'runtimeContext.backendTargetResolvedUrl',
+      backendTargetResolvedUrl: 'http://192.168.0.198:8787',
+      canonicalHostedRouteTruth: {
+        backendTargetResolvedUrl: 'http://192.168.0.198:8787',
+        backendTargetValidity: 'valid',
+        backendTargetReachable: true,
+        selectedRouteKind: 'home-node',
+        selectedRouteReachable: true,
+        selectedRouteUsable: false,
+        blockingIssues: [{ code: 'hosted-home-node-publication-failed', message: 'home-node UI target is unreachable (http://192.168.0.198:5173/)' }],
+      },
+      routeDiagnostics: {
+        'backend-target': { usable: true, reason: 'Resolved backend target from runtimeContext.backendTargetResolvedUrl.' },
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-07T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /Selected Route Kind: home-node/);
+  assert.match(snapshot, /Selected Route Reachable: yes/);
+  assert.match(snapshot, /blockingIssues:\n- home-node UI target is unreachable \(http:\/\/192.168.0.198:5173\/\)/);
+  assert.doesNotMatch(snapshot, /Hosted backend target is unresolved/);
+});
+
 test('buildSupportSnapshot prefers last request provider metadata over stale adjudicated provider truth', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

@@ -901,6 +901,10 @@ test('createRuntimeStatusModel resolves hosted backend target from published hom
   assert.equal(status.runtimeContext.backendTargetResolutionSource, 'routeDiagnostics.home-node.actualTarget');
   assert.equal(status.runtimeContext.backendTargetInvalidReason, '');
   assert.equal(status.runtimeContext.routeDiagnostics['backend-target'].available, true);
+  assert.equal(status.routeKind, 'home-node');
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.selectedRouteKind, 'home-node');
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.backendTargetValidity, 'valid');
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues.length, 0);
 });
 
 test('createRuntimeStatusModel keeps hosted route truthful when published candidates are loopback-only', () => {
@@ -931,6 +935,45 @@ test('createRuntimeStatusModel keeps hosted route truthful when published candid
   assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
   assert.match(status.runtimeContext.backendTargetInvalidReason, /loopback/i);
   assert.equal(status.runtimeContext.routeDiagnostics['backend-target'].available, false);
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.backendTargetValidity, 'invalid');
+  assert.match(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].message, /invalid|unresolved/i);
+});
+
+test('createRuntimeStatusModel keeps publication failure explicit for hosted LAN backend target', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          misconfigured: true,
+          backendReachable: true,
+          uiReachable: false,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          blockedReason: 'home-node UI target is unreachable (http://192.168.0.198:5173/)',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, 'http://192.168.0.198:8787');
+  assert.equal(status.routeKind, 'home-node');
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.selectedRouteKind, 'home-node');
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.selectedRouteReachable, true);
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.selectedRouteUsable, false);
+  assert.equal(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].code, 'hosted-home-node-publication-failed');
+  assert.doesNotMatch(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].message, /unresolved/i);
 });
 
 test('createRuntimeStatusModel reconciles hosted selected provider away from ollama when local route is not eligible', () => {

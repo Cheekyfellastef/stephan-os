@@ -127,6 +127,10 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     .map((issue) => issue.code);
   const fallbackReason = provider.fallbackReason
     || (route.fallbackActive ? 'Fallback route active.' : '');
+  const hostedRouteTruth = asObject(runtimeTruth.hostedRouteTruth);
+  const hostedBlockingCodes = Array.isArray(hostedRouteTruth.blockingIssues)
+    ? hostedRouteTruth.blockingIssues.map((issue) => issue?.code).filter(Boolean)
+    : [];
 
   return {
     sessionKind: session.sessionKind || 'unknown',
@@ -156,8 +160,9 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     fallbackReason,
     validationState: diagnostics.validationState || 'unknown',
     appLaunchState: diagnostics.appLaunchState || 'unknown',
-    blockingIssueCodes: blockingCodes,
+    blockingIssueCodes: [...new Set([...blockingCodes, ...hostedBlockingCodes])],
     operatorSummary: diagnostics.operatorGuidance?.[0] || route.winningReason || 'No operator action required.',
+    hostedRouteTruth,
   };
 }
 
@@ -261,6 +266,7 @@ export function adjudicateRuntimeTruth({
     routeEvaluations: evaluations,
     routePreferenceOrder: Array.isArray(routePreferenceOrder) ? routePreferenceOrder : [],
     computedFromPersistence: false,
+    hostedRouteTruth: asObject(context.canonicalHostedRouteTruth),
   };
 
   const issues = [];
@@ -352,6 +358,18 @@ export function adjudicateRuntimeTruth({
         suggestedAction: 'Block durable writes until hydrationCompleted is true.',
         hydrationCompleted: memoryTruth.hydrationCompleted,
         writeTarget: memoryTruth.writeTarget,
+      },
+    ));
+  }
+
+  for (const hostedIssue of runtimeTruth.hostedRouteTruth.blockingIssues || []) {
+    issues.push(createIssue(
+      hostedIssue.code || 'hosted-route-blocked',
+      'error',
+      'session-route',
+      hostedIssue.message || 'Hosted route is blocked.',
+      {
+        suggestedAction: 'Resolve hosted backend/home-node route truth before relaunch.',
       },
     ));
   }
