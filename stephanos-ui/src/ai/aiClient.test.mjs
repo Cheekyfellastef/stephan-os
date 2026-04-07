@@ -35,6 +35,18 @@ test('getProviderHealth uses canonical timeout policy instead of hidden defaults
   assert.match(clientSource, /requestJson\('\/api\/ai\/providers\/health'[\s\S]*runtimeConfig,\s*timeoutPolicy\)/m);
 });
 
+test('sendPrompt resolves timeout policy from effective execution provider truth', () => {
+  assert.match(clientSource, /const timeoutExecutionTruth = resolveTimeoutExecutionTruth\(/);
+  assert.match(clientSource, /provider:\s*timeoutExecutionTruth\.effectiveProvider/);
+  assert.match(clientSource, /requestedModel:\s*timeoutExecutionTruth\.effectiveModel/);
+  assert.match(clientSource, /timeoutProvider:\s*timeoutExecutionTruth\.effectiveProvider/);
+});
+
+test('resolveTimeoutExecutionTruth prioritizes selected/executed provider truth over requested provider', () => {
+  assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*routeDecision\?\.selectedProvider[\s\S]*requestedProvider[\s\S]*\)\.toLowerCase\(\)/m);
+  assert.match(clientSource, /const effectiveModel = String\(providerConfigs\?\.\[effectiveProvider\]\?\.model \|\| ''\)\.trim\(\)/);
+});
+
 test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () => {
   assert.match(clientSource, /timeoutLabel:\s*'ui_request_timeout_ms'/);
   assert.doesNotMatch(clientSource, /vite_api_timeout_ms/);
