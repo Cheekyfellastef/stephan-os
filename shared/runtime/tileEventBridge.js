@@ -41,7 +41,11 @@ export function createTileEventBridge({
 
   function writeArtifacts(artifacts = []) {
     if (!storage?.setItem) return;
-    storage.setItem(defaultArtifactStorageKey(normalizedTileId), JSON.stringify(artifacts));
+    try {
+      storage.setItem(defaultArtifactStorageKey(normalizedTileId), JSON.stringify(artifacts));
+    } catch {
+      // Best-effort artifact journaling; do not block tile runtime flows.
+    }
   }
 
   function emitEvent({ type = 'tile.event', payload = {}, sourceRef = '', tags = [], retrievalEligible = false } = {}) {

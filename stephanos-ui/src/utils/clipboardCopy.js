@@ -27,13 +27,15 @@ function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } =
 
   const textarea = documentObject.createElement('textarea');
   textarea.value = text;
-  textarea.setAttribute('readonly', 'true');
+  textarea.readOnly = false;
   textarea.setAttribute('aria-hidden', 'true');
   textarea.style.position = 'fixed';
   textarea.style.opacity = '0';
   textarea.style.pointerEvents = 'none';
   textarea.style.left = '-9999px';
   textarea.style.top = '0';
+  textarea.style.whiteSpace = 'pre';
+  textarea.style.userSelect = 'text';
 
   try {
     documentObject.body.appendChild(textarea);
@@ -76,7 +78,7 @@ function tryLegacyClipboardCopy(text, { documentObject = globalThis.document } =
   }
   return {
     ok: false,
-    reason: 'clipboard-write-failed',
+    reason: resolveClipboardFailureReason(copyError),
     error: copyError,
   };
 }
