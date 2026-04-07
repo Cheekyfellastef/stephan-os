@@ -1,13 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  STEPHANOS_HOME_BRIDGE_STORAGE_KEY,
   STEPHANOS_HOME_NODE_STORAGE_KEY,
+  clearPersistedStephanosHomeBridgeUrl,
   isMalformedStephanosHost,
   normalizeStephanosHomeNode,
+  persistStephanosHomeBridgeUrl,
+  readPersistedStephanosHomeBridgeUrl,
   resolveStephanosBackendBaseUrl,
   discoverStephanosHomeNode,
   probeStephanosHomeNode,
   readPersistedStephanosHomeNode,
+  setStephanosHomeBridgeGlobal,
   validateStephanosBackendTargetUrl,
   validateStephanosHomeBridgeUrl,
 } from './stephanosHomeNode.mjs';
@@ -171,4 +176,33 @@ test('readPersistedStephanosHomeNode clears malformed stored manual host values'
 
   assert.equal(restored, null);
   assert.equal(storage.getItem(STEPHANOS_HOME_NODE_STORAGE_KEY), null);
+});
+
+test('persist/read/clear Home Bridge URL stores canonical URL and syncs global bridge truth', () => {
+  const storage = {
+    values: new Map(),
+    getItem(key) {
+      return this.values.get(key) ?? null;
+    },
+    setItem(key, value) {
+      this.values.set(key, value);
+    },
+    removeItem(key) {
+      this.values.delete(key);
+    },
+  };
+
+  const persistResult = persistStephanosHomeBridgeUrl('https://bridge.example.com/path', storage);
+  assert.equal(persistResult.ok, true);
+  assert.equal(storage.getItem(STEPHANOS_HOME_BRIDGE_STORAGE_KEY), JSON.stringify('https://bridge.example.com'));
+  assert.equal(readPersistedStephanosHomeBridgeUrl(storage), 'https://bridge.example.com');
+
+  const globalValue = setStephanosHomeBridgeGlobal('https://bridge.example.com');
+  assert.equal(globalValue, 'https://bridge.example.com');
+  assert.equal(globalThis.__STEPHANOS_HOME_BRIDGE_URL, 'https://bridge.example.com');
+
+  clearPersistedStephanosHomeBridgeUrl(storage);
+  setStephanosHomeBridgeGlobal('');
+  assert.equal(storage.getItem(STEPHANOS_HOME_BRIDGE_STORAGE_KEY), null);
+  assert.equal(globalThis.__STEPHANOS_HOME_BRIDGE_URL, undefined);
 });

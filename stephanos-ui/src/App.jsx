@@ -16,6 +16,7 @@ import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import CockpitPanel from './components/CockpitPanel';
 import ProviderToggle from './components/ProviderToggle';
+import HomeBridgePanel from './components/HomeBridgePanel';
 import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
 import TelemetryFeed from './components/system/TelemetryFeed';
@@ -423,6 +424,7 @@ export default function App() {
           onSendTestPrompt={() => submitPrompt('Run a quick Stephanos provider self-test and explain what route is active right now.')}
         />
       </CollapsiblePanel>
+      <HomeBridgePanel />
 
       <section className="operator-pane-wall" onDragOver={(event) => event.preventDefault()}>
         {orderedPanes.map((pane) => {

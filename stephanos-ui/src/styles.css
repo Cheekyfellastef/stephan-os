@@ -246,6 +246,64 @@ body {
   margin: 0 0 0.5rem;
 }
 
+.home-bridge-panel {
+  margin-bottom: 1rem;
+  border-color: rgba(82, 178, 255, 0.4);
+}
+
+.home-bridge-guidance,
+.home-bridge-detail,
+.home-bridge-feedback {
+  margin: 0;
+  color: #b7dcff;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.home-bridge-field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.88rem;
+  color: #9fd3ff;
+}
+
+.home-bridge-field input {
+  width: 100%;
+}
+
+.home-bridge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.home-bridge-status-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.home-bridge-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.22rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid rgba(120, 180, 255, 0.34);
+  background: rgba(18, 42, 72, 0.62);
+  color: #b7dcff;
+}
+
+.home-bridge-chip.ready {
+  border-color: rgba(124, 224, 163, 0.45);
+  color: #a9f2c8;
+}
+
+.home-bridge-chip.degraded {
+  border-color: rgba(237, 131, 131, 0.44);
+  color: #ffb9b9;
+}
+
 .local-ai-banner-wrap {
   margin-bottom: 1rem;
 }
