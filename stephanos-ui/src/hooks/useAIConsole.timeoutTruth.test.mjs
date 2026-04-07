@@ -21,3 +21,10 @@ test('timeout failure metadata derives from canonical timeout resolver', () => {
   assert.match(source, /ui_request_timeout_ms:\s*timeoutDetails\.timeoutMs\s*\?\?\s*timeoutDetails\.uiRequestTimeoutMs\s*\?\?\s*canonicalTimeoutPolicy\.uiRequestTimeoutMs/);
   assert.match(source, /model_timeout_ms:\s*timeoutDetails\.modelTimeoutMs\s*\?\?\s*canonicalTimeoutPolicy\.modelTimeoutMs\s*\?\?\s*null/);
 });
+
+test('timeout failure metadata keeps requested provider separate from effective provider and prevents ollama contamination', () => {
+  assert.match(source, /const requestedProvider = String\(/);
+  assert.match(source, /const selectedProvider = String\(/);
+  assert.match(source, /requested_provider:\s*requestedProvider\s*\|\|\s*fallbackProvider\s*\|\|\s*'unknown'/);
+  assert.match(source, /ollama_timeout_model:\s*selectedProvider === 'ollama'/);
+});

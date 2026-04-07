@@ -477,13 +477,23 @@ function buildTimeoutFailureExecutionMetadata({
   fallbackProvider = '',
   timeoutDetails = {},
 } = {}) {
-  const selectedProvider = String(
+  const requestedProvider = String(
     requestPayload?.provider
-    || requestPayload?.routeDecision?.selectedProvider
     || requestPayload?.routeDecision?.requestedProviderForRequest
     || fallbackProvider
     || '',
   ).trim();
+  const selectedProvider = String(
+    requestPayload?.routeDecision?.selectedProvider
+    || requestPayload?.routeDecision?.requestedProviderForRequest
+    || runtimeContext?.finalRouteTruth?.executedProvider
+    || runtimeContext?.finalRouteTruth?.selectedProvider
+    || runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
+    || runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
+    || requestedProvider
+    || fallbackProvider
+    || '',
+  ).trim().toLowerCase();
   const safeProviderConfigs = providerConfigs && typeof providerConfigs === 'object' ? providerConfigs : {};
   const requestedModel = safeProviderConfigs?.[selectedProvider]?.model || '';
   const canonicalTimeoutPolicy = resolveUiRequestTimeoutPolicy({
@@ -495,18 +505,24 @@ function buildTimeoutFailureExecutionMetadata({
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
-    ui_requested_provider: selectedProvider || fallbackProvider || 'unknown',
-    requested_provider_for_request: selectedProvider || fallbackProvider || 'unknown',
+    ui_requested_provider: requestedProvider || fallbackProvider || 'unknown',
+    requested_provider_for_request: requestedProvider || fallbackProvider || 'unknown',
     backend_default_provider: 'unknown',
     route_mode: requestPayload?.routeMode || 'auto',
     effective_route_mode: requestPayload?.routeMode || 'auto',
-    requested_provider: selectedProvider || fallbackProvider || 'unknown',
+    requested_provider: requestedProvider || fallbackProvider || 'unknown',
     selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
     actual_provider_used: '',
     model_used: requestedModel || null,
-    ollama_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,
-    ollama_timeout_source: timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null,
-    ollama_timeout_model: timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null,
+    ollama_timeout_ms: selectedProvider === 'ollama'
+      ? (timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null)
+      : null,
+    ollama_timeout_source: selectedProvider === 'ollama'
+      ? (timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null)
+      : null,
+    ollama_timeout_model: selectedProvider === 'ollama'
+      ? (timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null)
+      : null,
     ui_request_timeout_ms: timeoutDetails.timeoutMs ?? timeoutDetails.uiRequestTimeoutMs ?? canonicalTimeoutPolicy.uiRequestTimeoutMs ?? null,
     backend_route_timeout_ms: timeoutDetails.backendRouteTimeoutMs ?? canonicalTimeoutPolicy.backendRouteTimeoutMs ?? null,
     provider_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,

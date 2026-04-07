@@ -27,6 +27,40 @@ function stripSecretsFromProviderConfigs(providerConfigs = {}) {
   );
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value || '').trim();
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+export function resolveTimeoutExecutionTruth({
+  requestedProvider = '',
+  routeDecision = null,
+  runtimeConfig = {},
+  providerConfigs = {},
+} = {}) {
+  const runtimeFinalRouteTruth = runtimeConfig?.finalRouteTruth || runtimeConfig?.runtimeTruth?.finalRouteTruth || {};
+  const canonicalRouteTruth = runtimeConfig?.canonicalRouteRuntimeTruth || runtimeConfig?.runtimeTruth?.canonicalRouteRuntimeTruth || {};
+  const effectiveProvider = firstNonEmpty(
+    routeDecision?.selectedProvider,
+    routeDecision?.requestedProviderForRequest,
+    runtimeFinalRouteTruth?.executedProvider,
+    runtimeFinalRouteTruth?.selectedProvider,
+    canonicalRouteTruth?.executedProvider,
+    canonicalRouteTruth?.selectedProvider,
+    requestedProvider,
+  ).toLowerCase();
+  const requestedProviderNormalized = String(requestedProvider || '').trim().toLowerCase();
+  const effectiveModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
+  return {
+    requestedProvider: requestedProviderNormalized || '',
+    effectiveProvider: effectiveProvider || requestedProviderNormalized || '',
+    effectiveModel,
+  };
+}
+
 async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null) {
   const apiConfig = getApiConfig();
   const resolvedTimeoutMs = Number(timeoutPolicy?.uiRequestTimeoutMs) || Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
@@ -106,12 +140,17 @@ export async function sendPrompt({
   routeDecision = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
-  const requestedModel = safeProviderConfigs?.[provider]?.model || '';
+  const timeoutExecutionTruth = resolveTimeoutExecutionTruth({
+    requestedProvider: provider,
+    routeDecision,
+    runtimeConfig,
+    providerConfigs: safeProviderConfigs,
+  });
   const timeoutPolicy = resolveUiRequestTimeoutPolicy({
     runtimeConfig,
-    provider,
+    provider: timeoutExecutionTruth.effectiveProvider,
     providerConfigs: safeProviderConfigs,
-    requestedModel,
+    requestedModel: timeoutExecutionTruth.effectiveModel,
   });
   const runtimeContext = {
     ...runtimeConfig,
@@ -123,6 +162,9 @@ export async function sendPrompt({
       modelTimeoutMs: timeoutPolicy.modelTimeoutMs,
       timeoutPolicySource: timeoutPolicy.timeoutPolicySource,
       timeoutOverrideApplied: timeoutPolicy.timeoutOverrideApplied,
+      timeoutProvider: timeoutExecutionTruth.effectiveProvider,
+      timeoutModel: timeoutExecutionTruth.effectiveModel || null,
+      timeoutRequestedProvider: timeoutExecutionTruth.requestedProvider || null,
     },
     ...(tileContext && typeof tileContext === 'object' ? { tileContext } : {}),
   };
