@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-07T03:33:24.122Z",
+  "updatedAt": "2026-04-07T22:05:20.791Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1150,6 +1150,106 @@
       "retentionHint": "default",
       "createdAt": "2026-04-07T03:33:24.122Z",
       "updatedAt": "2026-04-07T03:33:24.122Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775599121748-9qybw-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "how does a transformer work",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T21:58:41.748Z",
+      "updatedAt": "2026-04-07T21:58:41.748Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775599121748-9qybw-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "A transformer is an electrical device that relies on the principles of electromagnetic induction to step up or down the voltage in an alternating current (AC) circuit.\n\nHere's a simplified explanation of how a transformer works:\n\n1. **Coils**: A transformer consists of two coils, also known as windings, typically wound around a magnetic core.\n\n2. **Magnetic Field**: When an alternating current flows through one coil,",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T21:58:41.748Z",
+      "updatedAt": "2026-04-07T21:58:41.748Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775599520791-5yo2r-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who is the president of the us",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T22:05:20.791Z",
+      "updatedAt": "2026-04-07T22:05:20.791Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775599520791-5yo2r-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "Donald John Trump is the 47th and current president of the United States. He was sworn into office on January 20, 2025.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-07T22:05:20.791Z",
+      "updatedAt": "2026-04-07T22:05:20.791Z",
       "surface": "shared"
     }
   }
