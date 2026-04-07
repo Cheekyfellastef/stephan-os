@@ -115,6 +115,7 @@ function summarizeBackendTargetCandidates(candidates = []) {
 }
 
 function buildHostedBackendTargetGuidance({
+  canonicalHostedRouteTruth,
   sessionKind,
   selectedRouteKind,
   selectedRouteReachableState,
@@ -127,9 +128,14 @@ function buildHostedBackendTargetGuidance({
   backendTargetResolutionSource,
   backendTargetFallbackUsed,
 } = {}) {
+  const hostedTruth = canonicalHostedRouteTruth && typeof canonicalHostedRouteTruth === 'object'
+    ? canonicalHostedRouteTruth
+    : null;
   const hostedSession = sessionKind === 'hosted-web';
   const routeUnavailable = selectedRouteKind === 'unavailable';
-  const unresolved = !backendTargetResolvedUrl || backendTargetResolvedUrl === 'n/a';
+  const unresolved = hostedTruth
+    ? hostedTruth.backendTargetValidity === 'unresolved'
+    : (!backendTargetResolvedUrl || backendTargetResolvedUrl === 'n/a');
   const routeReachable = String(selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
   const routeUsable = String(routeUsableState || '').trim().toLowerCase() === 'yes';
   const backendReachable = String(backendReachableState || '').trim().toLowerCase() === 'yes';
@@ -141,7 +147,7 @@ function buildHostedBackendTargetGuidance({
     && backendReachable
     && cloudRouteAvailable
     && cloudProviderOperational;
-  if (!hostedSession || (!routeUnavailable && !backendTargetInvalidReason && !unresolved)) {
+  if (!hostedSession || (!routeUnavailable && !backendTargetInvalidReason && !unresolved && !hostedTruth?.blockingIssues?.length)) {
     return null;
   }
 
@@ -151,7 +157,11 @@ function buildHostedBackendTargetGuidance({
       ? 'Hosted runtime could not resolve a non-loopback backend target.'
       : 'Hosted backend target is unresolved.',
   );
-  const blocked = routeUnavailable || !routeUsable || !routeReachable;
+  const blocked = hostedTruth
+    ? hostedTruth.selectedRouteKind === 'unavailable'
+      || hostedTruth.selectedRouteUsable === false
+      || (Array.isArray(hostedTruth.blockingIssues) && hostedTruth.blockingIssues.length > 0)
+    : (routeUnavailable || !routeUsable || !routeReachable);
   const statusLabel = blocked ? 'blocked' : 'informational';
   const executionLabel = cloudExecutionOperational
     ? asText(executableProvider, 'cloud provider')
@@ -165,7 +175,10 @@ function buildHostedBackendTargetGuidance({
       `- fallback-used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
       `- cloud-execution: ${cloudExecutionOperational ? `operational (${executionLabel})` : 'not confirmed'}`,
     ],
-    blockingIssue: blocked ? `Backend target unresolved: ${reason}` : '',
+    blockingIssue: blocked
+      ? (hostedTruth?.blockingIssues?.[0]?.message
+        || `Backend target unresolved: ${reason}`)
+      : '',
     operatorGuidance: blocked
       ? 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.'
       : '',
@@ -189,6 +202,7 @@ export function buildSupportSnapshot({
   href,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
+  const canonicalHostedRouteTruth = runtimeContext?.canonicalHostedRouteTruth || canonicalTruth?.hostedRouteTruth || null;
   const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
   const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'n/a');
   const backendTargetResolutionSource = asText(runtimeContext?.backendTargetResolutionSource, 'n/a');
@@ -211,6 +225,7 @@ export function buildSupportSnapshot({
     launchState: runtimeStatus?.appLaunchState,
   });
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
+    canonicalHostedRouteTruth,
     sessionKind,
     selectedRouteKind,
     selectedRouteReachableState: routeTruthView?.selectedRouteReachableState,
@@ -232,7 +247,14 @@ export function buildSupportSnapshot({
 
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   if (hostedBackendTargetGuidance?.blockingIssue) {
-    blockingIssues.push(hostedBackendTargetGuidance.blockingIssue);
+    const canonicalHostedMessages = Array.isArray(canonicalHostedRouteTruth?.blockingIssues)
+      ? canonicalHostedRouteTruth.blockingIssues.map((issue) => issue?.message).filter(Boolean)
+      : [];
+    if (canonicalHostedMessages.length > 0) {
+      blockingIssues.push(...canonicalHostedMessages);
+    } else {
+      blockingIssues.push(hostedBackendTargetGuidance.blockingIssue);
+    }
   }
   const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || [])
     .map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown')
