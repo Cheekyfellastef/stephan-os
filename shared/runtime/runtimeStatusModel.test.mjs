@@ -976,6 +976,64 @@ test('createRuntimeStatusModel keeps publication failure explicit for hosted LAN
   assert.doesNotMatch(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].message, /unresolved/i);
 });
 
+test('createRuntimeStatusModel does not resolve hosted backend target from unreachable bridge candidate', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          target: 'https://bridge.example.com',
+          actualTarget: 'https://bridge.example.com',
+          blockedReason: 'bridge health probe failed',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
+  assert.equal(status.runtimeContext.routeDiagnostics['backend-target'].available, false);
+  assert.match(status.runtimeContext.routeDiagnostics['backend-target'].blockedReason, /unresolved|invalid|reachability probe/i);
+});
+
+test('createRuntimeStatusModel marks route unavailable when no valid reachable route candidates exist', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, target: 'http://0.0.0.1:8787', actualTarget: 'http://0.0.0.1:8787' },
+        'home-node-bridge': { configured: true, available: false, target: 'https://bridge.example.com', actualTarget: 'https://bridge.example.com' },
+        cloud: { configured: true, available: false, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+        dist: { configured: false, available: false },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'unavailable');
+  assert.equal(status.finalRouteTruth.selectedRouteKind, 'unavailable');
+  assert.equal(status.finalRouteTruth.selectedRouteReachable, false);
+  assert.equal(status.finalRouteTruth.selectedRouteUsable, false);
+  assert.equal(status.finalRouteTruth.actualTargetUsed, '');
+  assert.equal(status.finalRouteTruth.preferredTargetUsed, 'https://cheekyfellastef.github.io');
+});
+
 test('createRuntimeStatusModel reconciles hosted selected provider away from ollama when local route is not eligible', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'ollama',

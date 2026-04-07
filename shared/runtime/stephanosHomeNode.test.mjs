@@ -9,6 +9,7 @@ import {
   probeStephanosHomeNode,
   readPersistedStephanosHomeNode,
   validateStephanosBackendTargetUrl,
+  validateStephanosHomeBridgeUrl,
 } from './stephanosHomeNode.mjs';
 
 test('probeStephanosHomeNode keeps reachable manual LAN backend even when health payload publishes localhost backend values', async () => {
@@ -104,6 +105,29 @@ test('validateStephanosBackendTargetUrl rejects http://1:8787 for hosted session
 
   assert.equal(validation.ok, false);
   assert.match(validation.reason, /malformed|unresolved/i);
+});
+
+test('validateStephanosHomeBridgeUrl enforces https and non-frontend-origin bridge URLs', () => {
+  const valid = validateStephanosHomeBridgeUrl('https://bridge.example.com', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: true,
+  });
+  assert.equal(valid.ok, true);
+  assert.equal(valid.normalizedUrl, 'https://bridge.example.com');
+
+  const invalidProtocol = validateStephanosHomeBridgeUrl('http://bridge.example.com', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: true,
+  });
+  assert.equal(invalidProtocol.ok, false);
+  assert.match(invalidProtocol.reason, /https/i);
+
+  const invalidSameOrigin = validateStephanosHomeBridgeUrl('https://cheekyfellastef.github.io', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: true,
+  });
+  assert.equal(invalidSameOrigin.ok, false);
+  assert.match(invalidSameOrigin.reason, /must not equal the frontend shell origin/i);
 });
 
 test('resolveStephanosBackendBaseUrl ignores malformed explicit backend target and falls back to valid manual home-node', () => {

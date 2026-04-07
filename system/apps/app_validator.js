@@ -937,6 +937,42 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
             backendUrlReason: publishedHomeNodeBackendReason,
           },
         },
+        'home-node-lan': {
+          configured: Boolean(preferredHomeNode?.host),
+          available: lanHomeNodeRouteAvailable,
+          misconfigured: Boolean((homeNodeDiscovery.reachable && backendPublishedRouteMisconfigured) || (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable)),
+          target: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
+          actualTarget: homeNodeTarget?.backendUrl || preferredHomeNode?.backendUrl || '',
+          backendReachable: Boolean(homeNodeDiscovery.reachable),
+          uiReachable: homeNodeUiReachable,
+          usable: lanHomeNodeRouteAvailable,
+          source: preferredHomeNode?.source || homeNodeDiscovery.source || (preferredHomeNode?.host ? 'configured-home-node' : 'not-configured'),
+          routeVariant: 'home-node-lan',
+          reason: lanHomeNodeRouteAvailable
+            ? (backendPublishedRouteMisconfigured
+              ? 'Home PC node is reachable, but the published client route is misconfigured'
+              : 'Home PC node is reachable on the LAN')
+            : (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable
+              ? 'Home PC backend is reachable, but the published home-node UI target is unreachable from this launcher session'
+              : (preferredHomeNode?.host
+                ? [
+                  homeNodeDiscovery.message || 'Home PC node is configured but currently unreachable',
+                  homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
+                  homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
+                ].filter(Boolean).join(' ')
+                : 'Home PC node is not configured')),
+          blockedReason: lanHomeNodeRouteAvailable
+            ? ''
+            : (homeNodeDiscovery.reachable && preferredHomeNode?.host && !homeNodeUiReachable
+              ? `home-node UI target is unreachable (${homeNodeTarget?.url || preferredHomeNode?.uiUrl || 'unknown target'})`
+              : (!preferredHomeNode?.host
+                ? 'home node is not configured'
+                : [
+                  homeNodeDiscovery.message || 'health probe could not confirm the home-node route',
+                  homeNodeDiscovery.attemptSummary ? `Candidates: ${homeNodeDiscovery.attemptSummary}` : '',
+                  homeNodeDiscovery.operatorAction ? `Action: ${homeNodeDiscovery.operatorAction}` : '',
+                ].filter(Boolean).join(' '))),
+        },
         'home-node-bridge': {
           configured: bridgeConfigured,
           available: bridgeReachable,

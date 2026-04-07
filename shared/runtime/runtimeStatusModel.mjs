@@ -55,20 +55,50 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
   const diagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
     ? runtimeContext.routeDiagnostics
     : {};
-  const candidates = [
+  const hostedSession = runtimeContext.sessionKind === 'hosted-web';
+  const onLanSession = runtimeContext.deviceContext === 'lan-companion';
+  const homeNodeLan = diagnostics['home-node-lan'] || {};
+  const homeNode = diagnostics['home-node'] || {};
+  const homeNodeBridge = diagnostics['home-node-bridge'] || {};
+  const preferLanHomeNode = hostedSession && onLanSession;
+  const preferBridgeHomeNode = hostedSession && !onLanSession;
+  const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
+
+  const prioritizedCandidates = [
+    ...(preferLanHomeNode ? [
+      createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', homeNodeLan.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node-lan.target', homeNodeLan.target),
+    ] : []),
+    ...(preferLanHomeNode && homeNodeLooksLan ? [
+      createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+    ] : []),
+    ...(preferBridgeHomeNode ? [
+      createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', homeNodeBridge.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', homeNodeBridge.target),
+    ] : []),
+    ...(preferBridgeHomeNode ? [
+      createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+    ] : []),
+    createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
+  ];
+  const compatibilityCandidates = [
+    createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
+    createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', diagnostics['home-node-lan']?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.home-node-lan.target', diagnostics['home-node-lan']?.target),
+    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', diagnostics['home-node-bridge']?.actualTarget),
+    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', diagnostics['home-node-bridge']?.target),
     createBackendTargetCandidate('runtimeContext.backendTargetResolvedUrl', runtimeContext.backendTargetResolvedUrl),
     createBackendTargetCandidate('runtimeContext.actualTargetUsed', runtimeContext.actualTargetUsed),
     createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
     createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
-    createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
-    createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
-    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', diagnostics['home-node-bridge']?.actualTarget),
-    createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', diagnostics['home-node-bridge']?.target),
-    createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
-    createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
     createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
     createBackendTargetCandidate('fallback.actualTarget', fallbackUrl),
   ];
+  const candidates = [...prioritizedCandidates, ...compatibilityCandidates];
 
   const deduped = [];
   const seen = new Set();
@@ -84,6 +114,31 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     deduped.push(candidate);
   }
   return deduped;
+}
+
+function resolveBackendReachabilityByTarget(diagnostics = {}) {
+  const reachabilityByTarget = new Map();
+  for (const [routeKey, routeValue] of Object.entries(diagnostics || {})) {
+    if (!routeValue || typeof routeValue !== 'object') {
+      continue;
+    }
+    const route = routeValue;
+    const reachable = route.available === true
+      || route.backendReachable === true
+      || route.usable === true;
+    const routeTarget = typeof route.target === 'string' ? route.target.trim() : '';
+    const routeActualTarget = typeof route.actualTarget === 'string' ? route.actualTarget.trim() : '';
+    if (routeTarget) {
+      reachabilityByTarget.set(routeTarget, reachable);
+    }
+    if (routeActualTarget) {
+      reachabilityByTarget.set(routeActualTarget, reachable);
+    }
+    if (routeKey === 'home-node' && String(route.routeVariant || '').includes('bridge') && routeActualTarget) {
+      reachabilityByTarget.set(routeActualTarget, reachable);
+    }
+  }
+  return reachabilityByTarget;
 }
 
 function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = false } = {}) {
@@ -213,28 +268,42 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
   const backendTargetCandidates = collectBackendTargetCandidates(runtimeContext, compatibleActualTarget);
+  const backendReachabilityByTarget = resolveBackendReachabilityByTarget(runtimeContext.routeDiagnostics || {});
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
     const validation = validateStephanosBackendTargetUrl(
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
     );
+    const reachable = backendReachabilityByTarget.has(candidate.url)
+      ? backendReachabilityByTarget.get(candidate.url) === true
+      : (sessionKind === 'local-desktop' ? validation.ok : false);
+    const accepted = validation.ok && reachable;
     return {
       source: candidate.source,
       url: candidate.url,
-      accepted: validation.ok,
-      reason: validation.ok ? '' : validation.reason,
+      accepted,
+      reachable,
+      reason: accepted
+        ? ''
+        : (validation.ok
+          ? 'Backend target candidate failed reachability probe or has no route probe evidence.'
+          : validation.reason),
     };
   });
   const acceptedBackendCandidate = backendTargetCandidateDecisions.find((candidate) => candidate.accepted);
+  const hasValidationRejectedCandidates = backendTargetCandidateDecisions.some((candidate) => candidate.reason && !candidate.reason.includes('reachability probe'));
+  const hasReachabilityRejectedCandidates = backendTargetCandidateDecisions.some((candidate) => candidate.reason.includes('reachability probe'));
   const backendTargetResolvedUrlRaw = String(acceptedBackendCandidate?.url || '').trim();
   const backendTargetValidation = validateStephanosBackendTargetUrl(
     backendTargetResolvedUrlRaw,
     { allowLoopback: sessionKind === 'local-desktop' },
   );
-  const sameOriginStaticHostedFallbackInvalid = sessionKind === 'hosted-web'
+  const sameOriginStaticHostedFallbackCandidate = sessionKind === 'hosted-web'
     && isStaticGithubPagesOrigin(frontendOrigin)
     && Boolean(frontendOrigin)
-    && backendTargetResolvedUrlRaw === frontendOrigin;
+    && backendTargetCandidateDecisions.some((candidate) => candidate.url === frontendOrigin);
+  const sameOriginStaticHostedFallbackInvalid = sameOriginStaticHostedFallbackCandidate
+    && (!backendTargetResolvedUrlRaw || backendTargetResolvedUrlRaw === frontendOrigin);
   const backendTargetResolvedUrl = (sameOriginStaticHostedFallbackInvalid || !backendTargetValidation.ok)
     ? ''
     : backendTargetResolvedUrlRaw;
@@ -244,13 +313,14 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     : (sessionKind === 'hosted-web' && isLikelyLanHost(resolvedBackendHost))
       ? 'lan-companion'
       : preliminaryDeviceContext;
-  const hasRejectedBackendCandidates = backendTargetCandidateDecisions.some((candidate) => !candidate.accepted);
   const backendTargetResolutionSource = sameOriginStaticHostedFallbackInvalid
     ? 'unresolved'
     : (!backendTargetValidation.ok && backendTargetResolvedUrlRaw)
       ? 'invalid'
-    : (!backendTargetResolvedUrl && hasRejectedBackendCandidates)
+    : (!backendTargetResolvedUrl && hasValidationRejectedCandidates)
       ? 'invalid'
+    : (!backendTargetResolvedUrl && hasReachabilityRejectedCandidates)
+      ? 'unresolved'
     : (backendTargetResolutionSourceRaw
       || (acceptedBackendCandidate?.source || '')
       || (backendTargetResolvedUrl ? (runtimeContext.nodeAddressSource || 'route-diagnostics') : 'unresolved')
@@ -536,6 +606,15 @@ function asTriState(value) {
 
 
 function buildRoutePreference(runtimeContext = {}) {
+  const homeNodeDiagnostic = runtimeContext.routeDiagnostics?.['home-node'] || {};
+  const bridgeDiagnostic = runtimeContext.routeDiagnostics?.['home-node-bridge'] || {};
+  const hostedBridgeReady = runtimeContext.sessionKind === 'hosted-web'
+    && runtimeContext.deviceContext !== 'lan-companion'
+    && (
+      String(homeNodeDiagnostic.routeVariant || '').includes('bridge')
+      || bridgeDiagnostic.available === true
+      || runtimeContext.homeNodeBridge?.reachability === 'reachable'
+    );
   if (runtimeContext.deviceContext === 'pc-local-browser') {
     return ['local-desktop', 'home-node', 'cloud', 'dist'];
   }
@@ -545,6 +624,10 @@ function buildRoutePreference(runtimeContext = {}) {
   }
 
   if (runtimeContext.deviceContext === 'lan-companion') {
+    return ['home-node', 'cloud', 'dist', 'local-desktop'];
+  }
+
+  if (hostedBridgeReady) {
     return ['home-node', 'cloud', 'dist', 'local-desktop'];
   }
 
@@ -1027,15 +1110,21 @@ export function buildFinalRouteTruth({
     effectiveRouteMode: routePlan.effectiveRouteMode || DEFAULT_ROUTE_MODE,
     preferredRoute: nodeRoute?.preferredRoute || 'unavailable',
     routeKind: nodeRoute?.routeKind || 'unavailable',
+    selectedRouteKind: nodeRoute?.routeKind || 'unavailable',
     routeVariant: nodeRoute?.routeVariant || nodeRoute?.routeKind || 'unavailable',
     winnerReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
+    winningReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
     preferredTarget: finalRoute?.preferredTarget || '',
+    preferredTargetUsed: finalRoute?.preferredTarget || '',
     actualTarget: finalRoute?.actualTarget || '',
+    actualTargetUsed: finalRoute?.actualTarget || '',
     source: finalRoute?.source || runtimeContext.nodeAddressSource || 'route-diagnostics',
     backendReachable: Boolean(backendAvailable),
     uiReachabilityState,
     uiReachable: uiReachabilityState === 'reachable',
+    selectedRouteReachable: selectedEvaluation?.available === true,
     routeUsable: selectedEvaluation?.usable === true,
+    selectedRouteUsable: selectedEvaluation?.usable === true,
     homeNodeUsable: homeNodeEvaluation?.usable === true,
     localRouteUsable: localEvaluation?.usable === true,
     cloudRouteReachable: finalRoute?.reachability?.cloudRouteReachable === true,
