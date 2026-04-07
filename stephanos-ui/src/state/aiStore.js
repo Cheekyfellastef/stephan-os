@@ -14,13 +14,18 @@ import {
   validateProviderDraft,
 } from '../ai/providerConfig';
 import {
+  clearPersistedStephanosHomeBridgeUrl,
   clearPersistedStephanosHomeNode,
   isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
+  persistStephanosHomeBridgeUrl,
   persistStephanosHomeNodePreference,
   persistStephanosLastKnownNode,
+  readPersistedStephanosHomeBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
+  setStephanosHomeBridgeGlobal,
+  validateStephanosHomeBridgeUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import {
   STEPHANOS_ACTIVE_SUBVIEW,
@@ -39,6 +44,7 @@ import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
   providerControlsPanel: true,
+  homeBridgePanel: true,
   commandDeck: true,
   powerShellMergeConsolePanel: true,
   statusPanel: true,
@@ -254,6 +260,8 @@ function createInitialMemorySnapshot() {
   const portableHomeNodePreference = readPortableStephanosHomeNodePreference() || null;
   const homeNodePreference = readPersistedStephanosHomeNode() || portableHomeNodePreference || null;
   const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
+  const homeBridgeUrl = readPersistedStephanosHomeBridgeUrl() || '';
+  setStephanosHomeBridgeGlobal(homeBridgeUrl);
   const restoredSession = restoreStephanosSessionMemoryForDevice({
     currentOrigin,
     manualNode: homeNodePreference,
@@ -298,6 +306,7 @@ function createInitialMemorySnapshot() {
     },
     homeNodePreference,
     homeNodeLastKnown,
+    homeBridgeUrl,
   };
 }
 
@@ -328,6 +337,7 @@ export function AIStoreProvider({ children }) {
   const [projectMemory] = useState(initialSnapshot.projectMemory);
   const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
   const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(initialSnapshot.homeNodeLastKnown);
+  const [homeBridgeUrl, setHomeBridgeUrlState] = useState(initialSnapshot.homeBridgeUrl || '');
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -586,13 +596,16 @@ export function AIStoreProvider({ children }) {
     setLastRoute(STEPHANOS_ACTIVE_SUBVIEW);
     setHomeNodePreferenceState(null);
     setHomeNodeLastKnownState(null);
+    setHomeBridgeUrlState('');
     setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
     setPaneLayout({ order: [...DEFAULT_OPERATOR_PANE_ORDER] });
     clearPersistedStephanosSessionMemory();
     clearPersistedStephanosHomeNode();
+    clearPersistedStephanosHomeBridgeUrl();
     persistStephanosLastKnownNode(null);
+    setStephanosHomeBridgeGlobal('');
   };
 
   const getDraftProviderConfig = useCallback((providerKey) => draftProviderConfigs[providerKey], [draftProviderConfigs]);
@@ -703,6 +716,28 @@ export function AIStoreProvider({ children }) {
     });
   }, []);
 
+  const saveHomeBridgeUrl = useCallback((candidateUrl = '') => {
+    const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const validation = validateStephanosHomeBridgeUrl(candidateUrl, { frontendOrigin, requireHttps: true });
+    if (!validation.ok) {
+      return { ok: false, reason: validation.reason, normalizedUrl: '' };
+    }
+    const persisted = persistStephanosHomeBridgeUrl(validation.normalizedUrl);
+    if (!persisted.ok) {
+      return { ok: false, reason: persisted.reason || 'Failed to persist bridge URL.', normalizedUrl: '' };
+    }
+    setStephanosHomeBridgeGlobal(validation.normalizedUrl);
+    setHomeBridgeUrlState(validation.normalizedUrl);
+    return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
+  }, []);
+
+  const clearHomeBridgeUrl = useCallback(() => {
+    clearPersistedStephanosHomeBridgeUrl();
+    setStephanosHomeBridgeGlobal('');
+    setHomeBridgeUrlState('');
+    return { ok: true };
+  }, []);
+
   const value = useMemo(() => ({
     commandHistory,
     setCommandHistory,
@@ -750,6 +785,9 @@ export function AIStoreProvider({ children }) {
     setHomeNodePreference,
     homeNodeLastKnown,
     setHomeNodeLastKnown,
+    homeBridgeUrl,
+    saveHomeBridgeUrl,
+    clearHomeBridgeUrl,
     homeNodeStatus,
     setHomeNodeStatus,
     sessionRestoreDiagnostics,
@@ -799,6 +837,7 @@ export function AIStoreProvider({ children }) {
     projectMemory,
     homeNodePreference,
     homeNodeLastKnown,
+    homeBridgeUrl,
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
@@ -818,6 +857,8 @@ export function AIStoreProvider({ children }) {
     setOllamaConnection,
     setHomeNodePreference,
     setHomeNodeLastKnown,
+    saveHomeBridgeUrl,
+    clearHomeBridgeUrl,
     setHomeNodeStatus,
     rememberSuccessfulOllamaConnection,
     getDraftProviderConfig,

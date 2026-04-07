@@ -97,6 +97,23 @@ test('getApiRuntimeConfig keeps hosted-web static shell sessions on localhost ba
   }
 });
 
+test('getApiRuntimeConfig prefers persisted home bridge URL for hosted sessions', () => {
+  const globals = installBrowserGlobals({
+    origin: 'https://cheekyfellastef.github.io',
+    storage: {
+      stephanos_home_bridge_url: JSON.stringify('https://bridge.example.com'),
+    },
+  });
+
+  try {
+    const config = getApiRuntimeConfig();
+    assert.equal(config.bridgeUrl, 'https://bridge.example.com');
+    assert.equal(config.baseUrl, 'https://bridge.example.com');
+  } finally {
+    globals.restore();
+  }
+});
+
 test('getApiRuntimeConfig keeps local-desktop localhost fallback for loopback origins', () => {
   const globals = installBrowserGlobals({
     origin: 'http://localhost:5173',

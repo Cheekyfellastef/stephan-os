@@ -1,5 +1,7 @@
 import {
+  STEPHANOS_HOME_BRIDGE_URL_GLOBAL,
   isMalformedStephanosHost,
+  readPersistedStephanosHomeBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
@@ -24,6 +26,7 @@ function isLoopbackHost(hostname = '') {
 
 function getStoredHomeNodeContext() {
   return {
+    bridgeUrl: globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '',
     manualNode: readPersistedStephanosHomeNode(),
     lastKnownNode: readPersistedStephanosLastKnownNode(),
   };
@@ -31,9 +34,10 @@ function getStoredHomeNodeContext() {
 
 function getDefaultApiBaseUrl() {
   const currentOrigin = getFrontendOrigin();
-  const { manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
   return resolveStephanosBackendBaseUrl({
     currentOrigin,
+    bridgeUrl,
     manualNode,
     lastKnownNode,
   }) || DEFAULT_API_BASE_URL;
@@ -127,7 +131,7 @@ export function getApiTargetLabel(baseUrl = getResolvedApiBaseUrl()) {
 
 export function getApiRuntimeConfig() {
   const config = getApiConfig();
-  const { manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
 
   return {
     frontendOrigin: getFrontendOrigin(),
@@ -138,6 +142,7 @@ export function getApiRuntimeConfig() {
     strategy: getApiBaseUrlStrategy(config.baseUrl),
     backendTargetEndpoint: buildApiUrl('/api/ai/chat', config.baseUrl),
     healthEndpoint: buildApiUrl('/api/health', config.baseUrl),
+    bridgeUrl,
     homeNode: manualNode || lastKnownNode || null,
   };
 }
@@ -179,6 +184,7 @@ export function getApiRuntimeConfigSnapshotKey(runtimeConfig = getApiRuntimeConf
     strategy: runtimeConfig?.strategy || '',
     backendTargetEndpoint: runtimeConfig?.backendTargetEndpoint || '',
     healthEndpoint: runtimeConfig?.healthEndpoint || '',
+    bridgeUrl: runtimeConfig?.bridgeUrl || '',
     homeNode: homeNode ? {
       host: homeNode.host || '',
       uiPort: Number(homeNode.uiPort) || 0,
