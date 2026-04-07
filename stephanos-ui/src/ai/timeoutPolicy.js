@@ -13,6 +13,30 @@ function normalizeOverrides(overrides = {}) {
   return overrides;
 }
 
+function readCanonicalTimeoutPolicy(runtimeConfig = {}) {
+  const timeoutPolicy = runtimeConfig?.timeoutPolicy && typeof runtimeConfig.timeoutPolicy === 'object'
+    ? runtimeConfig.timeoutPolicy
+    : {};
+  const providerTimeoutMs = asPositiveNumber(timeoutPolicy.providerTimeoutMs ?? timeoutPolicy.backendRouteTimeoutMs);
+  const modelTimeoutMs = asPositiveNumber(timeoutPolicy.modelTimeoutMs);
+  const backendRouteTimeoutMs = asPositiveNumber(timeoutPolicy.backendRouteTimeoutMs ?? providerTimeoutMs);
+  const timeoutPolicySource = String(timeoutPolicy.timeoutPolicySource || '').trim();
+  const timeoutOverrideApplied = Boolean(timeoutPolicy.timeoutOverrideApplied);
+
+  if (!providerTimeoutMs && !modelTimeoutMs && !backendRouteTimeoutMs) {
+    return null;
+  }
+
+  return {
+    providerTimeoutMs,
+    modelTimeoutMs,
+    backendRouteTimeoutMs,
+    timeoutPolicySource: timeoutPolicySource || 'runtime:timeout-policy',
+    timeoutOverrideApplied,
+    timeoutModel: String(timeoutPolicy.timeoutModel || '').trim() || null,
+  };
+}
+
 export function resolveOllamaTimeoutPolicy({ providerConfig = {}, requestedModel = '' } = {}) {
   const normalizedModel = String(requestedModel || providerConfig?.model || '').trim();
   const overrides = normalizeOverrides(providerConfig?.perModelTimeoutOverrides);
@@ -55,6 +79,7 @@ export function resolveUiRequestTimeoutPolicy({
 } = {}) {
   const baselineUiTimeoutMs = asPositiveNumber(runtimeConfig?.timeoutMs, DEFAULT_UI_REQUEST_TIMEOUT_MS);
   const runtimeTimeoutSource = String(runtimeConfig?.timeoutSource || '').trim() || 'frontend:api-runtime';
+  const canonicalRuntimePolicy = readCanonicalTimeoutPolicy(runtimeConfig);
   const normalizedProvider = String(provider || '').trim().toLowerCase();
 
   const providerPolicy = normalizedProvider === 'ollama'
@@ -67,7 +92,15 @@ export function resolveUiRequestTimeoutPolicy({
       timeoutModel: null,
     };
 
-  const backendRouteTimeoutMs = providerPolicy.providerTimeoutMs;
+  const backendRouteTimeoutMs = asPositiveNumber(
+    canonicalRuntimePolicy?.backendRouteTimeoutMs ?? providerPolicy.providerTimeoutMs,
+  );
+  const providerTimeoutMs = asPositiveNumber(
+    canonicalRuntimePolicy?.providerTimeoutMs ?? providerPolicy.providerTimeoutMs,
+  );
+  const modelTimeoutMs = asPositiveNumber(
+    canonicalRuntimePolicy?.modelTimeoutMs ?? providerPolicy.modelTimeoutMs,
+  );
   const providerDrivenUiFloor = backendRouteTimeoutMs
     ? backendRouteTimeoutMs + UI_TIMEOUT_GRACE_MS
     : null;
@@ -76,18 +109,22 @@ export function resolveUiRequestTimeoutPolicy({
     : baselineUiTimeoutMs;
 
   const timeoutPolicySource = providerDrivenUiFloor && uiRequestTimeoutMs === providerDrivenUiFloor
-    ? `${providerPolicy.timeoutPolicySource}:ui-grace`
-    : runtimeTimeoutSource;
+    ? `${canonicalRuntimePolicy?.timeoutPolicySource || providerPolicy.timeoutPolicySource}:ui-grace`
+    : (canonicalRuntimePolicy?.timeoutPolicySource || runtimeTimeoutSource);
 
   return {
     uiRequestTimeoutMs,
     uiTimeoutBaselineMs: baselineUiTimeoutMs,
     backendRouteTimeoutMs,
-    providerTimeoutMs: providerPolicy.providerTimeoutMs,
-    modelTimeoutMs: providerPolicy.modelTimeoutMs,
+    providerTimeoutMs,
+    modelTimeoutMs,
     timeoutPolicySource,
-    timeoutOverrideApplied: providerPolicy.timeoutOverrideApplied || uiRequestTimeoutMs !== baselineUiTimeoutMs,
-    timeoutModel: providerPolicy.timeoutModel,
+    timeoutOverrideApplied: Boolean(
+      canonicalRuntimePolicy?.timeoutOverrideApplied
+      || providerPolicy.timeoutOverrideApplied
+      || uiRequestTimeoutMs !== baselineUiTimeoutMs,
+    ),
+    timeoutModel: canonicalRuntimePolicy?.timeoutModel || providerPolicy.timeoutModel,
   };
 }
 

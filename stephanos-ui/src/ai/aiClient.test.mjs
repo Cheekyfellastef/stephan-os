@@ -42,8 +42,8 @@ test('sendPrompt resolves timeout policy from effective execution provider truth
   assert.match(clientSource, /timeoutProvider:\s*timeoutExecutionTruth\.effectiveProvider/);
 });
 
-test('resolveTimeoutExecutionTruth prioritizes selected/executed provider truth over requested provider', () => {
-  assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*routeDecision\?\.selectedProvider[\s\S]*requestedProvider[\s\S]*\)\.toLowerCase\(\)/m);
+test('resolveTimeoutExecutionTruth prioritizes explicit requested provider to avoid stale route drift', () => {
+  assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*requestedProviderNormalized[\s\S]*routeDecision\?\.requestedProviderForRequest[\s\S]*routeDecision\?\.selectedProvider[\s\S]*\)\.toLowerCase\(\)/m);
   assert.match(clientSource, /const effectiveModel = String\(providerConfigs\?\.\[effectiveProvider\]\?\.model \|\| ''\)\.trim\(\)/);
 });
 

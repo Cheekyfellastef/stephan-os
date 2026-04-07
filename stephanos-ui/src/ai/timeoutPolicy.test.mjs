@@ -58,3 +58,61 @@ test('resolveUiRequestTimeoutPolicy uses explicit fallback timeout source when r
   assert.equal(policy.uiRequestTimeoutMs, 30000);
   assert.equal(policy.timeoutPolicySource, 'frontend:api-runtime');
 });
+
+test('resolveUiRequestTimeoutPolicy prefers canonical runtime timeout truth over stale 30000 baseline', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'default:30000ms',
+      timeoutPolicy: {
+        uiRequestTimeoutMs: 91500,
+        backendRouteTimeoutMs: 90000,
+        providerTimeoutMs: 90000,
+        modelTimeoutMs: 90000,
+        timeoutPolicySource: 'backend:ollama:model-timeout',
+        timeoutOverrideApplied: true,
+        timeoutModel: 'qwen:32b',
+      },
+    },
+    provider: 'ollama',
+    requestedModel: 'qwen:32b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen:32b',
+      },
+    },
+  });
+
+  assert.equal(policy.uiRequestTimeoutMs, 91500);
+  assert.equal(policy.backendRouteTimeoutMs, 90000);
+  assert.equal(policy.providerTimeoutMs, 90000);
+  assert.equal(policy.modelTimeoutMs, 90000);
+  assert.equal(policy.timeoutPolicySource, 'backend:ollama:model-timeout:ui-grace');
+  assert.equal(policy.timeoutModel, 'qwen:32b');
+  assert.equal(policy.timeoutOverrideApplied, true);
+});
+
+test('regression: avoid ui_request_timeout_ms at 30000ms when runtime ollama timeout truth is longer', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'frontend:api-runtime',
+      timeoutPolicy: {
+        backendRouteTimeoutMs: 120000,
+        providerTimeoutMs: 120000,
+        modelTimeoutMs: 120000,
+        timeoutPolicySource: 'backend:ollama:model-override:qwen:32b',
+      },
+    },
+    provider: 'ollama',
+    requestedModel: 'qwen:32b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen:32b',
+      },
+    },
+  });
+
+  assert.notEqual(policy.uiRequestTimeoutMs, 30000);
+  assert.equal(policy.uiRequestTimeoutMs, 121500);
+});
