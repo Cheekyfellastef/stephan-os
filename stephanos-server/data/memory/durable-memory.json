@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-08T09:50:13.340Z",
+  "updatedAt": "2026-04-08T13:03:49.941Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1350,6 +1350,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-08T09:50:13.339Z",
       "updatedAt": "2026-04-08T09:50:13.339Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775653429940-7w86w-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "tell me how a transformer works",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-08T13:03:49.940Z",
+      "updatedAt": "2026-04-08T13:03:49.940Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775653429940-7w86w-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "**Transformer – Quick‑start guide**\n\n| Step | What happens | Why it matters |\n|------|--------------|----------------|\n| **1. Tokenization** | Text → word/ sub‑word tokens. | Gives a discrete vocabulary. |\n| **2. Embedding + Positional Encoding** | Each token gets a dense vector + a positional vector. | Adds meaning + order. |\n| **3. Encoder layers (or decoder)** | Repeated blocks of: <br>• *Multi‑head self‑attention",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": true,
+        "fallbackReason": "ollama: Cannot connect to Ollama: it took too long to respond.",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-08T13:03:49.940Z",
+      "updatedAt": "2026-04-08T13:03:49.940Z",
       "surface": "shared"
     }
   }
