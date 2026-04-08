@@ -105,6 +105,28 @@ test('adjudicator keeps backend and ui reachability distinct', () => {
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.uiReachabilityState, 'reachable');
 });
 
+test('adjudicator keeps selected route usable when UI reachability is unknown but not explicitly unreachable', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'home-node',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      backendReachable: true,
+      uiReachabilityState: 'unknown',
+      routeUsable: true,
+    },
+    routeEvaluations: {
+      'home-node': { available: true, usable: true, reason: 'Home PC node is reachable on the LAN' },
+      dist: { available: true, usable: true },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.reachabilityTruth.selectedRouteUsable, true);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.routeUsable, true);
+});
+
 test('adjudicator does not promote selected provider to executable when provider is unvalidated', () => {
   const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
     selectedProvider: 'groq',

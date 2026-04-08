@@ -271,6 +271,33 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
   assert.match(snapshot, /Last Provider Timeout \(ms\): 120000/);
   assert.match(snapshot, /Last Timeout Failure Label: ui_request_timeout_ms/);
   assert.match(snapshot, /Last Ollama Timeout Source: model-override/);
+  assert.match(snapshot, /Timeout Truth Degraded By Route Usability: no/);
+});
+
+test('buildSupportSnapshot flags timeout truth degradation when frontend fallback persists during route-usability veto', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastTimeoutPolicySource: 'frontend:api-runtime',
+    },
+    routeTruthView: {
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'no',
+      backendReachableState: 'yes',
+      providerState: 'READY',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:03.000Z' },
+  });
+
+  assert.match(snapshot, /Timeout Truth Degraded By Route Usability: yes/);
+  assert.match(snapshot, /Timeout Truth Degradation Reason: frontend-timeout-fallback-persisted-while-route-usability-false/);
 });
 
 
@@ -523,6 +550,7 @@ test('buildSupportSnapshot keeps canonical hosted route truth internally consist
       selectedRouteReachableState: 'yes',
       routeUsableState: 'no',
       backendReachableState: 'yes',
+      routeUsabilityVetoReason: 'ui-reachability-unreachable',
       operatorReason: 'home-node UI target is unreachable (http://192.168.0.198:5173/)',
     },
     runtimeSessionTruth: { sessionKind: 'hosted-web', deviceContext: 'lan-companion' },
@@ -553,6 +581,7 @@ test('buildSupportSnapshot keeps canonical hosted route truth internally consist
 
   assert.match(snapshot, /Selected Route Kind: home-node/);
   assert.match(snapshot, /Selected Route Reachable: yes/);
+  assert.match(snapshot, /Selected Route Usability Veto Reason: ui-reachability-unreachable/);
   assert.match(snapshot, /blockingIssues:\n- home-node UI target is unreachable \(http:\/\/192.168.0.198:5173\/\)/);
   assert.doesNotMatch(snapshot, /Hosted backend target is unresolved/);
 });

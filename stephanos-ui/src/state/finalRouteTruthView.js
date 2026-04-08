@@ -111,6 +111,21 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const providerMismatch = isKnownProvider(selectedProvider) && isKnownProvider(executedProvider) && selectedProvider !== executedProvider;
   const truthInconsistent = routeUsabilityConflict;
   const blockingIssuesPresent = hasBlockingIssues(runtimeDiagnosticsTruth, canonicalTruth);
+  const routeUsabilityVetoReason = routeUsableState === 'no'
+    ? (!selectedRouteReachable
+      ? 'selected-route-unreachable'
+      : !backendReachable
+        ? 'backend-unreachable'
+        : uiReachableState === 'no'
+          ? 'ui-reachability-unreachable'
+          : !liveProviderConnected
+            ? 'provider-not-ready'
+            : !executableProviderValid
+              ? 'executable-provider-missing'
+              : blockingIssuesPresent
+                ? 'blocking-issues-present'
+                : 'canonical-route-usability-drift')
+    : '';
   const effectiveLaunchState = runtimeStatus.appLaunchState === 'degraded'
     && routeReconciled
     && !blockingIssuesPresent
@@ -143,6 +158,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     truthInconsistent,
     routeReconciled,
     routeReconciliationReason,
+    routeUsabilityVetoReason,
     providerState,
     effectiveLaunchState,
   };

@@ -1068,3 +1068,38 @@ test('createRuntimeStatusModel reconciles hosted selected provider away from oll
   assert.equal(status.finalRouteTruth.selectedProvider, 'groq');
   assert.equal(status.finalRouteTruth.executedProvider, 'groq');
 });
+
+test('createRuntimeStatusModel keeps canonical route usable when hosted home-node route is reachable with no UI-unreachable veto', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: true },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          backendReachable: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+          blockedReason: '',
+        },
+      },
+    },
+    activeProviderHint: 'ollama',
+  });
+
+  assert.equal(status.routeKind, 'home-node');
+  assert.equal(status.finalRouteTruth.selectedRouteReachable, true);
+  assert.equal(status.finalRouteTruth.selectedRouteUsable, true);
+  assert.equal(status.canonicalRouteRuntimeTruth.routeUsable, true);
+});
