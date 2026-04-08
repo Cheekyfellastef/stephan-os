@@ -20,6 +20,7 @@ function readCanonicalTimeoutPolicy(runtimeConfig = {}) {
   const providerTimeoutMs = asPositiveNumber(timeoutPolicy.providerTimeoutMs ?? timeoutPolicy.backendRouteTimeoutMs);
   const modelTimeoutMs = asPositiveNumber(timeoutPolicy.modelTimeoutMs);
   const backendRouteTimeoutMs = asPositiveNumber(timeoutPolicy.backendRouteTimeoutMs ?? providerTimeoutMs);
+  const uiRequestTimeoutMs = asPositiveNumber(timeoutPolicy.uiRequestTimeoutMs);
   const timeoutPolicySource = String(timeoutPolicy.timeoutPolicySource || '').trim();
   const timeoutOverrideApplied = Boolean(timeoutPolicy.timeoutOverrideApplied);
 
@@ -28,6 +29,7 @@ function readCanonicalTimeoutPolicy(runtimeConfig = {}) {
   }
 
   return {
+    uiRequestTimeoutMs,
     providerTimeoutMs,
     modelTimeoutMs,
     backendRouteTimeoutMs,
@@ -104,11 +106,22 @@ export function resolveUiRequestTimeoutPolicy({
   const providerDrivenUiFloor = backendRouteTimeoutMs
     ? backendRouteTimeoutMs + UI_TIMEOUT_GRACE_MS
     : null;
-  const uiRequestTimeoutMs = providerDrivenUiFloor
-    ? Math.max(baselineUiTimeoutMs, providerDrivenUiFloor)
-    : baselineUiTimeoutMs;
+  const canonicalUiRequestTimeoutMs = asPositiveNumber(canonicalRuntimePolicy?.uiRequestTimeoutMs);
+  const baselineIsFrontendFallback = runtimeTimeoutSource === 'frontend:api-runtime'
+    || runtimeTimeoutSource === 'default:30000ms';
+  const uiRequestTimeoutMs = canonicalUiRequestTimeoutMs
+    || (
+      providerDrivenUiFloor
+        ? (baselineIsFrontendFallback
+          ? providerDrivenUiFloor
+          : Math.max(baselineUiTimeoutMs, providerDrivenUiFloor))
+        : baselineUiTimeoutMs
+    );
 
-  const timeoutPolicySource = providerDrivenUiFloor && uiRequestTimeoutMs === providerDrivenUiFloor
+  const timeoutPolicySource = providerDrivenUiFloor && (
+    uiRequestTimeoutMs === providerDrivenUiFloor
+    || uiRequestTimeoutMs === canonicalUiRequestTimeoutMs
+  )
     ? `${canonicalRuntimePolicy?.timeoutPolicySource || providerPolicy.timeoutPolicySource}:ui-grace`
     : (canonicalRuntimePolicy?.timeoutPolicySource || runtimeTimeoutSource);
 

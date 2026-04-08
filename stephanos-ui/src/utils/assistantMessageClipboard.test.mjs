@@ -65,3 +65,18 @@ test('buildAssistantMessageClipboardPayload keeps historical message metadata sc
   assert.doesNotMatch(olderPayload, /new-2/);
   assert.match(newerPayload, /new-2/);
 });
+
+test('buildAssistantMessageClipboardPayload reads camelCase response output when snake_case is absent', () => {
+  const payload = buildAssistantMessageClipboardPayload({
+    response: {
+      outputText: 'Camel case response text.',
+    },
+  });
+
+  assert.equal(payload, 'Camel case response text.');
+});
+
+test('buildAssistantMessageClipboardPayload returns empty payload when message has no answer text or structured data', () => {
+  const payload = buildAssistantMessageClipboardPayload({});
+  assert.equal(payload, '');
+});

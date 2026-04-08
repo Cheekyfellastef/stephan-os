@@ -1,6 +1,12 @@
 function normalizeAnswerText(message) {
   if (!message || typeof message !== 'object') return '';
-  const outputText = message.output_text ?? message.response?.output_text ?? message.response?.error ?? '';
+  const outputText = message.output_text
+    ?? message.outputText
+    ?? message.response?.output_text
+    ?? message.response?.outputText
+    ?? message.response?.data?.output_text
+    ?? message.response?.error
+    ?? '';
   if (outputText === null || outputText === undefined) return '';
   return String(outputText).trim();
 }
@@ -22,6 +28,10 @@ export function getAssistantMessageStructuredData(message) {
 export function buildAssistantMessageClipboardPayload(message) {
   const answerText = normalizeAnswerText(message);
   const structured = getAssistantMessageStructuredData(message);
+
+  if (!answerText && !structured) {
+    return '';
+  }
 
   if (!structured) {
     return answerText;

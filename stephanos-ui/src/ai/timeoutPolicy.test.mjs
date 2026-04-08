@@ -42,7 +42,7 @@ test('resolveUiRequestTimeoutPolicy expands UI timeout when ollama per-model ove
   assert.match(policy.timeoutPolicySource, /provider:ollama:model-override:qwen:32b:ui-grace/);
 });
 
-test('resolveUiRequestTimeoutPolicy uses explicit fallback timeout source when runtime timeout is missing', () => {
+test('resolveUiRequestTimeoutPolicy derives timeout from provider truth when runtime timeout is missing', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: {},
     provider: 'ollama',
@@ -55,8 +55,8 @@ test('resolveUiRequestTimeoutPolicy uses explicit fallback timeout source when r
 
   assert.equal(policy.uiTimeoutBaselineMs, 30000);
   assert.equal(policy.providerTimeoutMs, 8000);
-  assert.equal(policy.uiRequestTimeoutMs, 30000);
-  assert.equal(policy.timeoutPolicySource, 'frontend:api-runtime');
+  assert.equal(policy.uiRequestTimeoutMs, 9500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:safe-fallback:ui-grace');
 });
 
 test('resolveUiRequestTimeoutPolicy prefers canonical runtime timeout truth over stale 30000 baseline', () => {
@@ -115,4 +115,26 @@ test('regression: avoid ui_request_timeout_ms at 30000ms when runtime ollama tim
 
   assert.notEqual(policy.uiRequestTimeoutMs, 30000);
   assert.equal(policy.uiRequestTimeoutMs, 121500);
+});
+
+test('regression: ignore stale 30000 fallback baseline when provider timeout truth is shorter', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'frontend:api-runtime',
+    },
+    provider: 'ollama',
+    requestedModel: 'qwen:14b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen:14b',
+        defaultOllamaTimeoutMs: 12000,
+      },
+    },
+  });
+
+  assert.equal(policy.providerTimeoutMs, 12000);
+  assert.equal(policy.backendRouteTimeoutMs, 12000);
+  assert.equal(policy.uiRequestTimeoutMs, 13500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:ui-grace');
 });
