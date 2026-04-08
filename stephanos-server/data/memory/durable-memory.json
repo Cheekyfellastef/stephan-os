@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-08T09:42:07.445Z",
+  "updatedAt": "2026-04-08T09:50:13.340Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1300,6 +1300,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-08T09:42:07.444Z",
       "updatedAt": "2026-04-08T09:42:07.444Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775641813339-a83ib-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "tell me how a transformer works",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-08T09:50:13.339Z",
+      "updatedAt": "2026-04-08T09:50:13.339Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775641813339-a83ib-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "A Transformer is a key component of the modern deep learning architecture, particularly in natural language processing (NLP) tasks like machine translation.\n\nHere's a simplified explanation of how a Transformer works:\n\n1. **Self-Attention Mechanism:** The core idea of a Transformer is its multi-head self-attention mechanism. This allows the model to weigh different parts of a sentence based on their relevance.\n\n2. **",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-08T09:50:13.339Z",
+      "updatedAt": "2026-04-08T09:50:13.339Z",
       "surface": "shared"
     }
   }
