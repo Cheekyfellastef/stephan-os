@@ -120,8 +120,9 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     && reachabilityTruth.backendReachable === true
     && reachabilityTruth.cloudAvailable === true
     && isLiveCloudProvider(provider.executableProvider);
+  const uiReachabilityUnreachable = reachabilityTruth.uiReachableState === 'unreachable';
   const routeUsable = reachabilityTruth.selectedRouteUsable === true
-    && (reachabilityTruth.uiReachableState === 'reachable' || hostedCloudExecutionOperational);
+    && (!uiReachabilityUnreachable || hostedCloudExecutionOperational);
   const blockingCodes = issues
     .filter((issue) => issue.severity === 'error')
     .map((issue) => issue.code);

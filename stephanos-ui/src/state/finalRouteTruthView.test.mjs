@@ -123,6 +123,7 @@ test('buildFinalRouteTruthView reconciles stale canonical routeUsable=false when
   assert.equal(view.routeReconciliationReason, 'live-backend+provider-confirmed');
   assert.equal(view.routeUsabilityConflict, true);
   assert.equal(view.truthInconsistent, true);
+  assert.equal(view.routeUsabilityVetoReason, '');
 });
 
 test('buildFinalRouteTruthView exposes providerMismatch when selected and executed providers diverge', () => {
@@ -163,4 +164,23 @@ test('buildFinalRouteTruthView preserves degraded launch state when blocking iss
 
   assert.equal(view.routeUsableState, 'yes');
   assert.equal(view.effectiveLaunchState, 'degraded');
+});
+
+test('buildFinalRouteTruthView exposes explicit veto reason when route is reachable but UI is unreachable', () => {
+  const view = buildFinalRouteTruthView({
+    appLaunchState: 'degraded',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'home-node',
+      routeUsable: false,
+      routeReachable: true,
+      backendReachable: true,
+      uiReachabilityState: 'unreachable',
+      providerHealthState: 'READY',
+      executedProvider: 'ollama',
+    },
+  });
+
+  assert.equal(view.selectedRouteReachableState, 'yes');
+  assert.equal(view.routeUsableState, 'no');
+  assert.equal(view.routeUsabilityVetoReason, 'ui-reachability-unreachable');
 });

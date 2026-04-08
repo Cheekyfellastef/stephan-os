@@ -271,6 +271,19 @@ export function buildSupportSnapshot({
     guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
   }
   const hasBlockingIssues = blockingIssues.length > 0;
+  const selectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
+  const routeUsable = String(routeTruthView?.routeUsableState || '').trim().toLowerCase() === 'yes';
+  const backendReachable = String(routeTruthView?.backendReachableState || '').trim().toLowerCase() === 'yes';
+  const providerHealthy = ['READY', 'CONNECTED'].includes(String(routeTruthView?.providerState || '').trim().toUpperCase());
+  const timeoutSource = String(runtimeStatus?.lastTimeoutPolicySource || '').trim();
+  const timeoutTruthDegradedByRouteUsability = timeoutSource === 'frontend:api-runtime'
+    && selectedRouteReachable
+    && !routeUsable
+    && backendReachable
+    && providerHealthy;
+  const timeoutTruthDegradationReason = timeoutTruthDegradedByRouteUsability
+    ? 'frontend-timeout-fallback-persisted-while-route-usability-false'
+    : 'n/a';
   if (hasBlockingIssues) {
     for (let i = guidanceItems.length - 1; i >= 0; i -= 1) {
       if (isNoOperatorActionGuidance(guidanceItems[i])) {
@@ -354,6 +367,8 @@ export function buildSupportSnapshot({
     `Last Provider Timeout (ms): ${asText(runtimeStatus?.lastProviderTimeoutMs)}`,
     `Last Model Timeout (ms): ${asText(runtimeStatus?.lastModelTimeoutMs)}`,
     `Last Timeout Policy Source: ${asText(runtimeStatus?.lastTimeoutPolicySource)}`,
+    `Timeout Truth Degraded By Route Usability: ${timeoutTruthDegradedByRouteUsability ? 'yes' : 'no'}`,
+    `Timeout Truth Degradation Reason: ${timeoutTruthDegradationReason}`,
     `Last Timeout Override Applied: ${asText(runtimeStatus?.lastTimeoutOverrideApplied)}`,
     `Last Timeout Failure Layer: ${asText(runtimeStatus?.lastTimeoutFailureLayer)}`,
     `Last Timeout Failure Label: ${asText(runtimeStatus?.lastTimeoutFailureLabel)}`,
@@ -437,6 +452,7 @@ export function buildSupportSnapshot({
     `UI Reachable: ${asText(runtimeReachabilityTruth?.uiReachableState || routeTruthView?.uiReachableState)}`,
     `Selected Route Reachable: ${asText(routeTruthView?.selectedRouteReachableState)}`,
     `Selected Route Usable: ${asText(routeTruthView?.routeUsableState)}`,
+    `Selected Route Usability Veto Reason: ${asText(routeTruthView?.routeUsabilityVetoReason, 'n/a')}`,
     `Route Reconciled: ${routeTruthView?.routeReconciled ? 'yes' : 'no'}`,
     `Route Reconciliation Reason: ${asText(routeTruthView?.routeReconciliationReason, 'n/a')}`,
     `Truth Inconsistent: ${routeTruthView?.truthInconsistent ? 'yes' : 'no'}`,
