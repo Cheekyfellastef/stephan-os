@@ -45,13 +45,13 @@ export function resolveTimeoutExecutionTruth({
   const canonicalRouteTruth = runtimeConfig?.canonicalRouteRuntimeTruth || runtimeConfig?.runtimeTruth?.canonicalRouteRuntimeTruth || {};
   const requestedProviderNormalized = String(requestedProvider || '').trim().toLowerCase();
   const effectiveProvider = firstNonEmpty(
-    requestedProviderNormalized,
-    routeDecision?.requestedProviderForRequest,
-    routeDecision?.selectedProvider,
     runtimeFinalRouteTruth?.executedProvider,
     runtimeFinalRouteTruth?.selectedProvider,
     canonicalRouteTruth?.executedProvider,
     canonicalRouteTruth?.selectedProvider,
+    routeDecision?.selectedProvider,
+    routeDecision?.requestedProviderForRequest,
+    requestedProviderNormalized,
   ).toLowerCase();
   const effectiveModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
   return {

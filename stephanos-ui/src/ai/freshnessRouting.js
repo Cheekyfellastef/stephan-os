@@ -297,9 +297,6 @@ export function resolveFreshnessRoutingDecision({
       policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
     } else if (localRouteAvailable) {
       selectedProvider = requested === 'groq' && cloudRouteAvailable ? 'groq' : 'ollama';
-      if (requested === 'gemini' && cloudRouteAvailable) {
-        selectedProvider = 'gemini';
-      }
       selectedAnswerMode = selectedProvider === 'ollama' ? 'local-private' : 'cloud-basic';
       policyReason = selectedProvider === 'ollama'
         ? 'Hosted session has a reachable home-node bridge; local-private remains policy-valid.'
@@ -363,5 +360,6 @@ export function resolveFreshnessRoutingDecision({
       webCapabilityState,
       failureReasons: freshRouteFailureReasons,
     },
+    freshnessCandidateProvider: selectedFreshProvider || null,
   };
 }
