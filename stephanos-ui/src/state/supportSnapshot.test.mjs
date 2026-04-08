@@ -300,6 +300,49 @@ test('buildSupportSnapshot flags timeout truth degradation when frontend fallbac
   assert.match(snapshot, /Timeout Truth Degradation Reason: frontend-timeout-fallback-persisted-while-route-usability-false/);
 });
 
+test('buildSupportSnapshot regression: healthy route + ollama execution keeps intent separate and timeout source canonical', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastUiRequestedProvider: 'gemini',
+      lastUiDefaultProvider: 'gemini',
+      lastRequestedProviderIntent: 'gemini',
+      lastRequestedProviderForRequest: 'gemini',
+      lastRequestedProvider: 'gemini',
+      lastSelectedProvider: 'ollama',
+      lastActualProviderUsed: 'ollama',
+      lastTimeoutPolicySource: 'provider:ollama:default-timeout:ui-grace',
+      lastUiRequestTimeoutMs: '13500',
+      lastTimeoutEffectiveProvider: 'ollama',
+      lastTimeoutEffectiveModel: 'qwen:14b',
+    },
+    routeTruthView: {
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      providerState: 'READY',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:04.000Z' },
+  });
+
+  assert.match(snapshot, /Last Requested Provider Intent: gemini/);
+  assert.match(snapshot, /Last Selected Provider: ollama/);
+  assert.match(snapshot, /Last Actual Provider Used: ollama/);
+  assert.match(snapshot, /Last Timeout Policy Source: provider:ollama:default-timeout:ui-grace/);
+  assert.match(snapshot, /Last Timeout Effective Provider: ollama/);
+  assert.doesNotMatch(snapshot, /Last Timeout Policy Source: frontend:api-runtime/);
+  assert.match(snapshot, /Timeout Truth Degraded By Route Usability: no/);
+});
+
 
 test('buildSupportSnapshot emits hosted backend-target diagnostics and operator guidance when unresolved', () => {
   const snapshot = buildSupportSnapshot({

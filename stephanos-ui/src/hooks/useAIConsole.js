@@ -154,6 +154,23 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
   const actualProviderUsed = executionMetadata.actual_provider_used || data.data?.actual_provider_used || data.data?.provider || null;
+  const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
+    || requestTrace.ui_default_provider
+    || executionMetadata.ui_default_provider
+    || requestPayload.provider;
+  const requestedProviderForRequest = executionMetadata.requested_provider_for_request
+    || requestTrace.requested_provider_for_request
+    || requestPayload.routeDecision?.requestedProviderForRequest
+    || requestPayload.provider;
+  const selectedProvider = executionMetadata.selected_provider
+    || requestTrace.selected_provider
+    || requestPayload.routeDecision?.selectedProvider
+    || requestPayload.provider;
+  const timeoutEffectiveProvider = executionMetadata.timeout_provider
+    || requestTrace.timeout_provider
+    || requestPayload.runtimeContext?.timeoutPolicy?.timeoutProvider
+    || actualProviderUsed
+    || selectedProvider;
   const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
   const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
   const routeDecision = requestPayload.routeDecision || {};
@@ -183,18 +200,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestPayload.routeDecision?.defaultProvider
       || requestPayload.provider,
     ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
-    requested_provider_for_request: executionMetadata.requested_provider_for_request
-      || requestTrace.requested_provider_for_request
-      || requestPayload.routeDecision?.requestedProviderForRequest
-      || requestPayload.provider,
+    requested_provider_intent: requestedProviderIntent,
+    requested_provider_for_request: requestedProviderForRequest,
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
     route_mode: executionMetadata.route_mode || requestTrace.route_mode || requestPayload.routeMode || 'auto',
     effective_route_mode: executionMetadata.effective_route_mode || requestTrace.effective_route_mode || requestPayload.routeMode || 'auto',
     requested_provider: executionMetadata.requested_provider
       || requestTrace.requested_provider
       || executionMetadata.requested_provider_for_request
-      || requestPayload.provider,
-    selected_provider: executionMetadata.selected_provider || requestTrace.selected_provider || requestPayload.provider,
+      || requestedProviderForRequest,
+    selected_provider: selectedProvider,
     actual_provider_used: actualProviderUsed,
     model_used: modelUsed,
     ollama_model_default: executionMetadata.ollama_model_default || requestTrace.ollama_model_default || null,
@@ -231,6 +246,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.timeout_policy_source
       || requestPayload.runtimeContext?.timeoutPolicy?.timeoutPolicySource
       || requestPayload.runtimeContext?.timeoutSource
+      || null,
+    timeout_effective_provider: timeoutEffectiveProvider || null,
+    timeout_effective_model: executionMetadata.timeout_model
+      || requestTrace.timeout_model
+      || requestPayload.runtimeContext?.timeoutPolicy?.timeoutModel
+      || modelUsed
+      || null,
+    freshness_candidate_provider: executionMetadata.freshness_candidate_provider
+      || requestTrace.freshness_candidate_provider
+      || requestPayload.routeDecision?.freshnessCandidateProvider
       || null,
     timeout_override_applied: Boolean(
       executionMetadata.timeout_override_applied
@@ -506,6 +531,7 @@ function buildTimeoutFailureExecutionMetadata({
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
     ui_requested_provider: requestedProvider || fallbackProvider || 'unknown',
+    requested_provider_intent: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
     requested_provider_for_request: requestedProvider || fallbackProvider || 'unknown',
     backend_default_provider: 'unknown',
     route_mode: requestPayload?.routeMode || 'auto',
@@ -528,6 +554,8 @@ function buildTimeoutFailureExecutionMetadata({
     provider_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,
     model_timeout_ms: timeoutDetails.modelTimeoutMs ?? canonicalTimeoutPolicy.modelTimeoutMs ?? null,
     timeout_policy_source: timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null,
+    timeout_effective_provider: timeoutDetails.timeoutProvider || selectedProvider || null,
+    timeout_effective_model: timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null,
     timeout_override_applied: Boolean(
       timeoutDetails.timeoutOverrideApplied
       ?? canonicalTimeoutPolicy.timeoutOverrideApplied
@@ -544,6 +572,7 @@ function buildTimeoutFailureExecutionMetadata({
     override_denial_reason: requestPayload?.routeDecision?.overrideDeniedReason || null,
     freshness_warning: requestPayload?.routeDecision?.freshnessWarning || null,
     freshness_routed: Boolean(requestPayload?.routeDecision?.freshnessRouted ?? false),
+    freshness_candidate_provider: requestPayload?.routeDecision?.freshnessCandidateProvider || null,
     ai_policy_mode: requestPayload?.routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
     ai_policy_reason: requestPayload?.routeDecision?.policyReason || 'Local-first policy applied.',
   };
@@ -1332,6 +1361,7 @@ export function useAIConsole() {
         error_code: data.error_code ?? data.debug?.error_code ?? null,
         ui_requested_provider: executionMetadata.ui_requested_provider,
         backend_default_provider: executionMetadata.backend_default_provider,
+        requested_provider_intent: executionMetadata.requested_provider_intent,
         requested_provider: effectiveRequestPayload.provider,
         selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,
@@ -1420,6 +1450,8 @@ export function useAIConsole() {
         provider_timeout_ms: timeoutFailureMetadata.provider_timeout_ms || null,
         model_timeout_ms: timeoutFailureMetadata.model_timeout_ms || null,
         timeout_policy_source: uiError.timeoutPolicySource || timeoutFailureMetadata.timeout_policy_source || null,
+        timeout_effective_provider: timeoutFailureMetadata.timeout_effective_provider || null,
+        timeout_effective_model: timeoutFailureMetadata.timeout_effective_model || null,
         timeout_override_applied: Boolean(uiError.timeoutOverrideApplied ?? timeoutFailureMetadata.timeout_override_applied ?? false),
         execution_metadata: timeoutFailureMetadata,
       });

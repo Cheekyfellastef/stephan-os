@@ -439,6 +439,34 @@ test('hosted low-freshness request keeps local-private only when home-node bridg
   assert.equal(decision.selectedAnswerMode, 'local-private');
 });
 
+test('hosted low-freshness Gemini intent does not override local-private Ollama execution path', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'gemini',
+    providerHealth: {
+      gemini: { ok: true, transportReachable: true },
+      groq: { ok: true, transportReachable: true },
+      ollama: { ok: true },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: true,
+      localAvailable: true,
+      homeNodeAvailable: true,
+      backendReachable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'yes',
+      homeNodeUsableState: 'yes',
+    },
+  });
+
+  assert.equal(decision.selectedProvider, 'ollama');
+  assert.equal(decision.requestedProviderForRequest, 'ollama');
+  assert.equal(decision.selectedAnswerMode, 'local-private');
+});
+
 test('hosted session-kind alias still resolves low-freshness Groq requests to cloud-basic', () => {
   const classification = classifyPromptFreshness('Summarize this architecture section.');
   const decision = resolveFreshnessRoutingDecision({
