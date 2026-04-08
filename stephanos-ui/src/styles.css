@@ -770,6 +770,7 @@ button:active,
 
 .answer-pane-copy-button.success {
   border-color: rgba(119, 235, 191, 0.6);
+  background: rgba(20, 101, 70, 0.92);
   color: #ceffea;
 }
 

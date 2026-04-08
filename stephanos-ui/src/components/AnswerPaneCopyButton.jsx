@@ -7,6 +7,7 @@ const COPY_STATE = {
   SUCCESS: 'success',
   FAILURE: 'failure',
 };
+const SUCCESS_STATE_DURATION_MS = 3200;
 
 export default function AnswerPaneCopyButton({ message }) {
   const [copyState, setCopyState] = useState(COPY_STATE.IDLE);
@@ -16,15 +17,24 @@ export default function AnswerPaneCopyButton({ message }) {
 
     const timerId = setTimeout(() => {
       setCopyState(COPY_STATE.IDLE);
-    }, 2200);
+    }, SUCCESS_STATE_DURATION_MS);
 
     return () => clearTimeout(timerId);
   }, [copyState]);
 
   const handleCopy = async () => {
     const payload = buildAssistantMessageClipboardPayload(message);
-    const result = await writeTextToClipboard(payload);
-    setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (!String(payload || '').trim()) {
+      setCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+
+    try {
+      const result = await writeTextToClipboard(payload);
+      setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    } catch {
+      setCopyState(COPY_STATE.FAILURE);
+    }
   };
 
   const copyLabel = copyState === COPY_STATE.SUCCESS
@@ -39,6 +49,7 @@ export default function AnswerPaneCopyButton({ message }) {
         type="button"
         className={`answer-pane-copy-button ${copyState}`}
         aria-label="Copy answer"
+        title={copyLabel}
         onClick={handleCopy}
       >
         {copyLabel}
