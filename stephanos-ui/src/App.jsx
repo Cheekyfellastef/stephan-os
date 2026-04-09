@@ -14,6 +14,7 @@ import RoadmapPanel from './components/RoadmapPanel';
 import MissionDashboardPanel from './components/MissionDashboardPanel';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
+import MissionPacketQueuePanel from './components/MissionPacketQueuePanel';
 import CockpitPanel from './components/CockpitPanel';
 import ProviderToggle from './components/ProviderToggle';
 import HomeBridgePanel from './components/HomeBridgePanel';
@@ -271,6 +272,7 @@ export default function App() {
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
+    { id: 'missionPacketQueuePanel', className: 'pane-span-2', render: () => <MissionPacketQueuePanel /> },
   ]), [
     aiActionState,
     commandHistory,

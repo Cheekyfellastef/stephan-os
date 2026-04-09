@@ -91,6 +91,7 @@ const appAliases = {
   './components/RoadmapPanel': nullComponentPath,
   './components/SimulationHistoryPanel': nullComponentPath,
   './components/ProviderToggle': nullComponentPath,
+  './components/MissionPacketQueuePanel': nullComponentPath,
 };
 
 const appWithRealConsoleAliases = {
@@ -111,6 +112,7 @@ const appWithRealConsoleAliases = {
   './components/RoadmapPanel': nullComponentPath,
   './components/SimulationHistoryPanel': nullComponentPath,
   './components/ProviderToggle': nullComponentPath,
+  './components/MissionPacketQueuePanel': nullComponentPath,
 };
 
 test('StatusPanel renders when runtimeStatusModel is null or undefined', async () => {

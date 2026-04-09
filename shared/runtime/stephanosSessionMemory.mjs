@@ -78,6 +78,13 @@ const DEFAULT_WORKING_MEMORY = Object.freeze({
   currentTask: '',
   activeFocusLabel: '',
   missionNote: '',
+  missionPacketWorkflow: {
+    schemaVersion: 1,
+    decisions: [],
+    proposalQueue: [],
+    roadmapQueue: [],
+    activity: [],
+  },
 });
 
 const DEFAULT_PROJECT_MEMORY = Object.freeze({
@@ -206,12 +213,24 @@ function normalizeWorkingMemory(value = {}) {
   const recentCommands = Array.isArray(source.recentCommands)
     ? source.recentCommands.map((entry, index) => normalizeCommandEntry(entry, index)).filter(Boolean).slice(-10)
     : [];
+  const missionPacketWorkflow = source.missionPacketWorkflow && typeof source.missionPacketWorkflow === 'object'
+    ? source.missionPacketWorkflow
+    : DEFAULT_WORKING_MEMORY.missionPacketWorkflow;
 
   return {
     recentCommands,
     currentTask: normalizeString(source.currentTask),
     activeFocusLabel: normalizeString(source.activeFocusLabel),
     missionNote: normalizeString(source.missionNote),
+    missionPacketWorkflow: {
+      schemaVersion: Number.isFinite(Number(missionPacketWorkflow.schemaVersion))
+        ? Number(missionPacketWorkflow.schemaVersion)
+        : 1,
+      decisions: Array.isArray(missionPacketWorkflow.decisions) ? missionPacketWorkflow.decisions.slice(0, 24) : [],
+      proposalQueue: Array.isArray(missionPacketWorkflow.proposalQueue) ? missionPacketWorkflow.proposalQueue.slice(0, 20) : [],
+      roadmapQueue: Array.isArray(missionPacketWorkflow.roadmapQueue) ? missionPacketWorkflow.roadmapQueue.slice(0, 20) : [],
+      activity: Array.isArray(missionPacketWorkflow.activity) ? missionPacketWorkflow.activity.slice(0, 40) : [],
+    },
   };
 }
 

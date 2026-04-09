@@ -40,6 +40,11 @@ import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusM
 import { createDefaultMissionDashboardUiState, normalizeMissionDashboardUiState } from './missionDashboardUiState';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
 import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
+import {
+  applyMissionPacketAction,
+  createDefaultMissionPacketWorkflow,
+  normalizeMissionPacketWorkflow,
+} from './missionPacketWorkflow';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -62,6 +67,7 @@ const DEFAULT_UI_LAYOUT = {
   roadmapPanel: true,
   missionDashboardPanel: true,
   missionFingerprintPanel: true,
+  missionPacketQueuePanel: true,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
@@ -81,6 +87,7 @@ const DEFAULT_OPERATOR_PANE_ORDER = [
   'roadmapPanel',
   'missionDashboardPanel',
   'missionFingerprintPanel',
+  'missionPacketQueuePanel',
 ];
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
@@ -299,6 +306,9 @@ function createInitialMemorySnapshot() {
       ...defaults.working,
       ...(persistedSession?.working || {}),
       recentCommands: sanitizePersistedCommandHistory(persistedSession?.working?.recentCommands || []),
+      missionPacketWorkflow: normalizeMissionPacketWorkflow(
+        persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
+      ),
     },
     projectMemory: {
       ...defaults.project,
@@ -334,6 +344,9 @@ export function AIStoreProvider({ children }) {
   const [providerHealth, setProviderHealth] = useState({});
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
+  const [missionPacketWorkflow, setMissionPacketWorkflow] = useState(
+    normalizeMissionPacketWorkflow(initialSnapshot.workingMemory?.missionPacketWorkflow || createDefaultMissionPacketWorkflow()),
+  );
   const [projectMemory] = useState(initialSnapshot.projectMemory);
   const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
   const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(initialSnapshot.homeNodeLastKnown);
@@ -460,6 +473,7 @@ export function AIStoreProvider({ children }) {
       },
       working: {
         ...workingMemory,
+        missionPacketWorkflow,
         recentCommands: sanitizePersistedCommandHistory(commandHistory),
       },
       project: projectMemory,
@@ -479,6 +493,7 @@ export function AIStoreProvider({ children }) {
     lastRoute,
     commandHistory,
     workingMemory,
+    missionPacketWorkflow,
     projectMemory,
     debugVisible,
   ]);
@@ -592,6 +607,7 @@ export function AIStoreProvider({ children }) {
     setDraftProviderConfigs(sessionSafe);
     setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
     setWorkingMemory(nextWorkingMemory);
+    setMissionPacketWorkflow(normalizeMissionPacketWorkflow(nextWorkingMemory.missionPacketWorkflow || createDefaultMissionPacketWorkflow()));
     setCommandHistory([]);
     setLastRoute(STEPHANOS_ACTIVE_SUBVIEW);
     setHomeNodePreferenceState(null);
@@ -780,6 +796,8 @@ export function AIStoreProvider({ children }) {
     setOllamaConnection,
     workingMemory,
     setWorkingMemory,
+    missionPacketWorkflow,
+    setMissionPacketWorkflow,
     projectMemory,
     homeNodePreference,
     setHomeNodePreference,
@@ -811,6 +829,9 @@ export function AIStoreProvider({ children }) {
     runtimeStatusModel,
     uiDiagnostics,
     setUiDiagnostics,
+    applyMissionPacketWorkflowAction: (action, packetTruth, now) => {
+      setMissionPacketWorkflow((prev) => applyMissionPacketAction(prev, { action, packetTruth, now }));
+    },
   }), [
     commandHistory,
     status,
@@ -834,6 +855,7 @@ export function AIStoreProvider({ children }) {
     providerHealth,
     ollamaConnection,
     workingMemory,
+    missionPacketWorkflow,
     projectMemory,
     homeNodePreference,
     homeNodeLastKnown,
@@ -871,6 +893,7 @@ export function AIStoreProvider({ children }) {
     saveDraftProviderConfig,
     revertDraftProviderConfig,
     resetProviderConfig,
+    setMissionPacketWorkflow,
   ]);
 
   return createElement(AIStoreContext.Provider, { value }, children);
