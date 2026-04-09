@@ -21,6 +21,16 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastPaidFreshRoutesEnabled: 'false',
       lastFreshCapabilityMode: 'zero-cost-only',
       lastStaleFallbackAttempted: 'no',
+      lastContextAssemblyUsed: 'true',
+      lastContextAssemblyMode: 'self-build-elevated',
+      lastContextSourcesUsed: 'memory, runtimeTruth, operatorContext',
+      lastSelfBuildPromptDetected: 'true',
+      lastSelfBuildReason: 'matched:/roadmap/i',
+      lastSystemAwarenessLevel: 'elevated-self-build',
+      lastAugmentedPromptUsed: 'true',
+      lastAugmentedPromptLength: '1320',
+      lastContextIntegrityPreserved: 'true',
+      lastContextAssemblyWarnings: 'retrieval context is historical/internal and not fresh-world validation',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -96,6 +106,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Last Paid Fresh Routes Enabled: false/);
   assert.match(snapshot, /Last Fresh Capability Mode: zero-cost-only/);
   assert.match(snapshot, /Last Stale Fallback Attempted: no/);
+  assert.match(snapshot, /Context Assembly Used: true/);
+  assert.match(snapshot, /Context Assembly Mode: self-build-elevated/);
+  assert.match(snapshot, /Self-Build Prompt Detected: true/);
+  assert.match(snapshot, /System Awareness Level: elevated-self-build/);
+  assert.match(snapshot, /Context Integrity Preserved: true/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

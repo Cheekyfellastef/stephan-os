@@ -272,6 +272,20 @@ export default function StatusPanel() {
       lastMemorySourceRef: lastExecutionMetadata?.memory_source_ref || 'n/a',
       lastMemoryConfidence: lastExecutionMetadata?.memory_confidence || 'n/a',
       lastMemoryClass: lastExecutionMetadata?.memory_class || 'durable',
+      lastContextAssemblyUsed: String(lastExecutionMetadata?.context_assembly_used ?? 'n/a'),
+      lastContextAssemblyMode: lastExecutionMetadata?.context_assembly_mode || 'n/a',
+      lastContextSourcesUsed: Array.isArray(lastExecutionMetadata?.context_sources_used)
+        ? lastExecutionMetadata.context_sources_used.join(', ')
+        : 'n/a',
+      lastSelfBuildPromptDetected: String(lastExecutionMetadata?.self_build_prompt_detected ?? 'n/a'),
+      lastSelfBuildReason: lastExecutionMetadata?.self_build_reason || 'n/a',
+      lastSystemAwarenessLevel: lastExecutionMetadata?.system_awareness_level || 'baseline',
+      lastAugmentedPromptUsed: String(lastExecutionMetadata?.augmented_prompt_used ?? 'n/a'),
+      lastAugmentedPromptLength: String(lastExecutionMetadata?.augmented_prompt_length ?? '0'),
+      lastContextIntegrityPreserved: String(lastExecutionMetadata?.context_integrity_preserved ?? 'n/a'),
+      lastContextAssemblyWarnings: Array.isArray(lastExecutionMetadata?.context_assembly_warnings)
+        ? lastExecutionMetadata.context_assembly_warnings.join(', ')
+        : 'n/a',
       lastTileActionType: lastExecutionMetadata?.tile_action_type || 'n/a',
       lastTileSource: lastExecutionMetadata?.tile_source || 'n/a',
       lastMemoryCandidateSubmitted: String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a'),
@@ -396,6 +410,12 @@ export default function StatusPanel() {
         <li>[MEMORY ADJUDICATION] Promoted: {String(lastExecutionMetadata?.memory_promoted ?? 'n/a')}</li>
         <li>[MEMORY ADJUDICATION] Reason: {lastExecutionMetadata?.memory_reason || 'n/a'}</li>
         <li>[MEMORY ADJUDICATION] Source: {lastExecutionMetadata?.memory_source_type || 'n/a'} · {lastExecutionMetadata?.memory_source_ref || 'n/a'}</li>
+        <li>[SYSTEM AWARENESS] Context Assembly Used: {String(lastExecutionMetadata?.context_assembly_used ?? 'n/a')}</li>
+        <li>[SYSTEM AWARENESS] Assembly Mode: {lastExecutionMetadata?.context_assembly_mode || 'n/a'}</li>
+        <li>[SYSTEM AWARENESS] Sources Used: {Array.isArray(lastExecutionMetadata?.context_sources_used) ? lastExecutionMetadata.context_sources_used.join(', ') : 'n/a'}</li>
+        <li>[SYSTEM AWARENESS] Self-Build Prompt Detected: {String(lastExecutionMetadata?.self_build_prompt_detected ?? 'n/a')}</li>
+        <li>[SYSTEM AWARENESS] System Awareness Level: {lastExecutionMetadata?.system_awareness_level || 'baseline'}</li>
+        <li>[SYSTEM AWARENESS] Context Integrity Preserved: {String(lastExecutionMetadata?.context_integrity_preserved ?? 'n/a')}</li>
         <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
         <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
         <li>[TILE ACTION] Memory Candidate Submitted: {String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a')}</li>
