@@ -14,7 +14,7 @@ test('resolveUiRequestTimeoutPolicy keeps frontend baseline timeout when no prov
 
   assert.equal(policy.uiRequestTimeoutMs, 30000);
   assert.equal(policy.backendRouteTimeoutMs, null);
-  assert.equal(policy.timeoutPolicySource, 'env:VITE_API_TIMEOUT_MS');
+  assert.equal(policy.timeoutPolicySource, 'provider:groq:none');
   assert.equal(policy.timeoutOverrideApplied, false);
 });
 
@@ -171,4 +171,58 @@ test('regression live case: local-desktop ollama execution timeout truth must no
   assert.equal(policy.uiRequestTimeoutMs, 13500);
   assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:ui-grace');
   assert.notEqual(policy.timeoutPolicySource, 'frontend:api-runtime');
+});
+
+test('home-node canonical execution truth uses ollama timeout policy over gemini request intent', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'frontend:api-runtime',
+      finalRouteTruth: {
+        routeKind: 'home-node',
+        selectedProvider: 'ollama',
+        executedProvider: 'ollama',
+        routeUsable: true,
+      },
+      canonicalRouteRuntimeTruth: {
+        selectedProvider: 'ollama',
+        executedProvider: 'ollama',
+      },
+    },
+    provider: 'ollama',
+    requestedModel: 'gpt-oss:20b',
+    providerConfigs: {
+      ollama: {
+        model: 'gpt-oss:20b',
+        defaultOllamaTimeoutMs: 12000,
+      },
+      gemini: {
+        model: 'gemini-2.5-flash',
+      },
+    },
+  });
+
+  assert.equal(policy.providerTimeoutMs, 12000);
+  assert.equal(policy.uiRequestTimeoutMs, 13500);
+  assert.equal(policy.timeoutPolicySource, 'canonical-runtime-execution-truth:provider:ollama:default-timeout:ui-grace');
+  assert.doesNotMatch(policy.timeoutPolicySource, /frontend:api-runtime/);
+});
+
+test('fallback to request-side provider policy remains when canonical execution truth is unavailable', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'frontend:api-runtime',
+    },
+    provider: 'gemini',
+    requestedModel: 'gemini-2.5-flash',
+    providerConfigs: {
+      gemini: {
+        model: 'gemini-2.5-flash',
+      },
+    },
+  });
+
+  assert.equal(policy.uiRequestTimeoutMs, 30000);
+  assert.equal(policy.timeoutPolicySource, 'provider:gemini:none');
 });

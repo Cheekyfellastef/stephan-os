@@ -363,7 +363,7 @@ test('buildSupportSnapshot regression: healthy route + ollama execution keeps in
       lastRequestedProvider: 'gemini',
       lastSelectedProvider: 'ollama',
       lastActualProviderUsed: 'ollama',
-      lastTimeoutPolicySource: 'provider:ollama:default-timeout:ui-grace',
+      lastTimeoutPolicySource: 'canonical-runtime-execution-truth:provider:ollama:default-timeout:ui-grace',
       lastUiRequestTimeoutMs: '13500',
       lastTimeoutEffectiveProvider: 'ollama',
       lastTimeoutEffectiveModel: 'qwen:14b',
@@ -391,7 +391,7 @@ test('buildSupportSnapshot regression: healthy route + ollama execution keeps in
   assert.match(snapshot, /Last Request-Side Selected Provider: n\/a/);
   assert.match(snapshot, /Last Selected Provider: ollama/);
   assert.match(snapshot, /Last Actual Provider Used: ollama/);
-  assert.match(snapshot, /Last Timeout Policy Source: provider:ollama:default-timeout:ui-grace/);
+  assert.match(snapshot, /Last Timeout Policy Source: canonical-runtime-execution-truth:provider:ollama:default-timeout:ui-grace/);
   assert.match(snapshot, /Last Timeout Effective Provider: ollama/);
   assert.doesNotMatch(snapshot, /Last Timeout Policy Source: frontend:api-runtime/);
   assert.match(snapshot, /Timeout Truth Degraded By Route Usability: no/);

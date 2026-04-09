@@ -61,12 +61,12 @@ export function resolveTimeoutExecutionTruth({
     ? 'ollama'
     : '';
   const effectiveProvider = firstNonEmpty(
-    hydratedEnvelope?.effectiveProvider,
-    hydratedEnvelope?.timeoutProvider,
     runtimeFinalRouteTruth?.executedProvider,
     runtimeFinalRouteTruth?.selectedProvider,
     canonicalRouteTruth?.executedProvider,
     canonicalRouteTruth?.selectedProvider,
+    hydratedEnvelope?.effectiveProvider,
+    hydratedEnvelope?.timeoutProvider,
     providerModeReconciled,
     routeDecision?.requestedProviderForRequest,
     routeDecision?.selectedProvider,
