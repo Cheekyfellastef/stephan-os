@@ -170,7 +170,13 @@ export default function StatusPanel() {
       lastRequestedProvider: lastExecutionMetadata?.requested_provider
         || lastExecutionMetadata?.requested_provider_for_request
         || routeTruthView.requestedProvider,
-      lastSelectedProvider: lastExecutionMetadata?.selected_provider,
+      lastRequestSelectedProvider: lastExecutionMetadata?.selected_provider || 'n/a',
+      lastSelectedProvider: lastExecutionMetadata?.execution_selected_provider
+        || lastExecutionMetadata?.actual_provider_used
+        || lastExecutionMetadata?.timeout_effective_provider
+        || routeTruthView?.executedProvider
+        || routeTruthView?.selectedProvider
+        || 'n/a',
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
       lastModelUsed: lastExecutionMetadata?.model_used,
       lastOllamaModelDefault: lastExecutionMetadata?.ollama_model_default || 'n/a',

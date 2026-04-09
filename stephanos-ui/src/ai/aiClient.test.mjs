@@ -39,12 +39,19 @@ test('sendPrompt resolves timeout policy from effective execution provider truth
   assert.match(clientSource, /const timeoutExecutionTruth = resolveTimeoutExecutionTruth\(/);
   assert.match(clientSource, /provider:\s*timeoutExecutionTruth\.effectiveProvider/);
   assert.match(clientSource, /requestedModel:\s*timeoutExecutionTruth\.effectiveModel/);
+  assert.match(clientSource, /timeoutExecutionEnvelope:\s*\{/);
   assert.match(clientSource, /timeoutProvider:\s*timeoutExecutionTruth\.effectiveProvider/);
 });
 
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {
-  assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*runtimeFinalRouteTruth\?\.executedProvider[\s\S]*runtimeFinalRouteTruth\?\.selectedProvider[\s\S]*canonicalRouteTruth\?\.executedProvider[\s\S]*routeDecision\?\.selectedProvider[\s\S]*requestedProviderNormalized[\s\S]*\)\.toLowerCase\(\)/m);
-  assert.match(clientSource, /const effectiveModel = String\(providerConfigs\?\.\[effectiveProvider\]\?\.model \|\| ''\)\.trim\(\)/);
+  assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*runtimeFinalRouteTruth\?\.executedProvider[\s\S]*runtimeFinalRouteTruth\?\.selectedProvider[\s\S]*canonicalRouteTruth\?\.executedProvider[\s\S]*providerModeReconciled[\s\S]*routeDecision\?\.requestedProviderForRequest[\s\S]*requestedProviderNormalized[\s\S]*\)\.toLowerCase\(\)/m);
+  assert.match(clientSource, /const effectiveModel = firstNonEmpty\([\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model[\s\S]*\)/m);
+});
+
+test('resolveTimeoutExecutionTruth reconciles local-private request dispatch gate to ollama before arming timeout', () => {
+  assert.match(clientSource, /const localRouteViable = routeDecision\?\.requestDispatchGate\?\.localRouteViable \?\? routeDecision\?\.localRouteAvailable \?\? null/);
+  assert.match(clientSource, /const selectedAnswerMode = String\([\s\S]*requestDispatchGate\?\.selectedAnswerMode[\s\S]*routeDecision\?\.selectedAnswerMode/);
+  assert.match(clientSource, /const providerModeReconciled = \(selectedAnswerMode === 'local-private' \|\| selectedAnswerMode === 'fallback-stale-risk'\)\s*&&\s*localRouteViable === true\s*\?\s*'ollama'/m);
 });
 
 test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () => {
@@ -53,6 +60,7 @@ test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () =>
   assert.match(clientSource, /backendRouteTimeoutMs:\s*timeoutPolicy\?\.backendRouteTimeoutMs\s*\|\|\s*null/);
   assert.match(clientSource, /providerTimeoutMs:\s*timeoutPolicy\?\.providerTimeoutMs\s*\|\|\s*null/);
   assert.match(clientSource, /modelTimeoutMs:\s*timeoutPolicy\?\.modelTimeoutMs\s*\|\|\s*null/);
+  assert.match(clientSource, /timeoutProvider:\s*timeoutPolicy\?\.timeoutProvider\s*\|\|\s*null/);
 });
 
 

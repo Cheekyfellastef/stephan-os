@@ -210,6 +210,9 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || executionMetadata.requested_provider_for_request
       || requestedProviderForRequest,
     selected_provider: selectedProvider,
+    execution_selected_provider: actualProviderUsed
+      || timeoutEffectiveProvider
+      || selectedProvider,
     actual_provider_used: actualProviderUsed,
     model_used: modelUsed,
     ollama_model_default: executionMetadata.ollama_model_default || requestTrace.ollama_model_default || null,
@@ -538,6 +541,7 @@ function buildTimeoutFailureExecutionMetadata({
     effective_route_mode: requestPayload?.routeMode || 'auto',
     requested_provider: requestedProvider || fallbackProvider || 'unknown',
     selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
+    execution_selected_provider: selectedProvider || fallbackProvider || 'unknown',
     actual_provider_used: '',
     model_used: requestedModel || null,
     ollama_timeout_ms: selectedProvider === 'ollama'
@@ -575,6 +579,52 @@ function buildTimeoutFailureExecutionMetadata({
     freshness_candidate_provider: requestPayload?.routeDecision?.freshnessCandidateProvider || null,
     ai_policy_mode: requestPayload?.routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
     ai_policy_reason: requestPayload?.routeDecision?.policyReason || 'Local-first policy applied.',
+  };
+}
+
+function buildPreArmTimeoutExecutionEnvelope({
+  routeDecision = {},
+  runtimeStatus = {},
+  requestedProvider = '',
+  providerConfigs = {},
+} = {}) {
+  const canonicalRouteTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
+  const finalRouteTruth = runtimeStatus?.finalRouteTruth || {};
+  const requestDispatchGate = routeDecision?.requestDispatchGate || {};
+  const selectedAnswerMode = String(
+    requestDispatchGate.selectedAnswerMode
+    || routeDecision?.selectedAnswerMode
+    || '',
+  ).trim().toLowerCase();
+  const localRouteViable = requestDispatchGate.localRouteViable ?? routeDecision?.localRouteAvailable ?? null;
+  const cloudRouteViable = requestDispatchGate.cloudRouteViable ?? routeDecision?.cloudRouteAvailable ?? null;
+  const requestedProviderNormalized = String(requestedProvider || '').trim().toLowerCase();
+  const canonicalExecutionProvider = String(
+    finalRouteTruth?.executedProvider
+    || canonicalRouteTruth?.executedProvider
+    || finalRouteTruth?.selectedProvider
+    || canonicalRouteTruth?.selectedProvider
+    || '',
+  ).trim().toLowerCase();
+  const modeReconciledProvider = (selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk')
+    && localRouteViable === true
+    ? 'ollama'
+    : (
+      (selectedAnswerMode === 'fresh-cloud' || selectedAnswerMode === 'cloud-basic')
+      && cloudRouteViable === true
+        ? String(routeDecision?.requestedProviderForRequest || routeDecision?.selectedProvider || '').trim().toLowerCase()
+        : ''
+    );
+  const effectiveProvider = canonicalExecutionProvider
+    || modeReconciledProvider
+    || String(routeDecision?.requestedProviderForRequest || '').trim().toLowerCase()
+    || requestedProviderNormalized;
+  const effectiveModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
+
+  return {
+    requestedProvider: requestedProviderNormalized || requestedProvider || '',
+    effectiveProvider: effectiveProvider || requestedProviderNormalized || requestedProvider || '',
+    effectiveModel: effectiveModel || null,
   };
 }
 
@@ -1247,6 +1297,19 @@ export function useAIConsole() {
         runtimeStatus: requestRuntimeStatus,
       });
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
+      const timeoutExecutionEnvelope = buildPreArmTimeoutExecutionEnvelope({
+        routeDecision: freshnessRouteDecision,
+        runtimeStatus: requestRuntimeStatus,
+        requestedProvider,
+        providerConfigs: effectiveProviderConfigs,
+      });
+      const runtimeConfigWithExecutionTruth = {
+        ...finalizedRequestContext,
+        finalRouteTruth: requestRuntimeStatus?.finalRouteTruth || finalizedRequestContext?.finalRouteTruth || {},
+        canonicalRouteRuntimeTruth: requestRuntimeStatus?.canonicalRouteRuntimeTruth || finalizedRequestContext?.canonicalRouteRuntimeTruth || {},
+        timeoutExecutionEnvelope,
+      };
+      inFlightRuntimeContext = runtimeConfigWithExecutionTruth;
       const routeDispatchBlocked = requestDispatchGate.dispatchAllowed !== true;
       console.info('[Stephanos UI] Request dispatch gate evaluated', {
         dispatchAllowed: requestDispatchGate.dispatchAllowed === true,
@@ -1259,6 +1322,8 @@ export function useAIConsole() {
         backendReachabilityState: requestDispatchGate.backendReachabilityState || requestRouteTruthView.backendReachableState || 'unknown',
         targetEndpointClass: finalizedRequestContext?.target || finalizedRequestContext?.strategy || 'unknown',
         backendTargetEndpoint: finalizedRequestContext?.backendTargetEndpoint || '',
+        timeoutExecutionProvider: timeoutExecutionEnvelope.effectiveProvider || 'unknown',
+        timeoutExecutionModel: timeoutExecutionEnvelope.effectiveModel || null,
       });
       const routeUnavailableResult = routeDispatchBlocked
         ? createRouteUnavailableResult({
@@ -1280,7 +1345,7 @@ export function useAIConsole() {
         fallbackEnabled,
         fallbackOrder,
         devMode,
-        runtimeConfig: finalizedRequestContext,
+        runtimeConfig: runtimeConfigWithExecutionTruth,
         tileContext: assembledTileContext,
         continuityContext,
         continuityMode,
