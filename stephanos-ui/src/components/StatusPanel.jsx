@@ -301,6 +301,29 @@ export default function StatusPanel() {
         : 'n/a',
       lastProposalEligible: String(lastExecutionMetadata?.proposal_eligible ?? 'n/a'),
       lastCodexHandoffEligible: String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a'),
+      lastProposalPacketActive: String(lastExecutionMetadata?.proposal_packet_active ?? 'n/a'),
+      lastProposalPacketMode: lastExecutionMetadata?.proposal_packet_mode || 'inactive',
+      lastProposalPacketConfidence: lastExecutionMetadata?.proposal_packet_confidence || 'low',
+      lastProposalPacketTruthPreserved: String(lastExecutionMetadata?.proposal_packet_truth_preserved ?? 'n/a'),
+      lastCodexHandoffAvailable: String(lastExecutionMetadata?.codex_handoff_available ?? 'n/a'),
+      lastOperatorApprovalRequired: String(lastExecutionMetadata?.operator_approval_required ?? 'true'),
+      lastProposedMoveId: lastExecutionMetadata?.proposed_move_id || 'n/a',
+      lastProposedMoveTitle: lastExecutionMetadata?.proposed_move_title || 'n/a',
+      lastProposedMoveRationale: lastExecutionMetadata?.proposed_move_rationale || 'n/a',
+      lastProposalPacketWarnings: Array.isArray(lastExecutionMetadata?.proposal_packet_warnings)
+        ? lastExecutionMetadata.proposal_packet_warnings.join(', ')
+        : 'n/a',
+      lastProposalOperatorActions: Array.isArray(lastExecutionMetadata?.proposal_operator_actions)
+        ? lastExecutionMetadata.proposal_operator_actions.join(', ')
+        : 'n/a',
+      lastExecutionEligible: String(lastExecutionMetadata?.execution_eligible ?? 'false'),
+      lastCodexPromptSummary: lastExecutionMetadata?.codex_prompt_summary || 'n/a',
+      lastCodexConstraints: Array.isArray(lastExecutionMetadata?.codex_constraints)
+        ? lastExecutionMetadata.codex_constraints.join(', ')
+        : 'n/a',
+      lastCodexSuccessCriteria: Array.isArray(lastExecutionMetadata?.codex_success_criteria)
+        ? lastExecutionMetadata.codex_success_criteria.join(', ')
+        : 'n/a',
       lastTileActionType: lastExecutionMetadata?.tile_action_type || 'n/a',
       lastTileSource: lastExecutionMetadata?.tile_source || 'n/a',
       lastMemoryCandidateSubmitted: String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a'),
@@ -352,6 +375,19 @@ export default function StatusPanel() {
       notifyCopyResult('Copy failed', 'degraded');
     }
   };
+  const handleCopyCodexHandoff = async () => {
+    const payload = String(lastExecutionMetadata?.codex_handoff_payload || '').trim();
+    if (!payload || !browserNavigator?.clipboard?.writeText) {
+      notifyCopyResult('Codex handoff unavailable', 'degraded');
+      return;
+    }
+    try {
+      await browserNavigator.clipboard.writeText(payload);
+      notifyCopyResult('Codex handoff copied', 'ready');
+    } catch (_error) {
+      notifyCopyResult('Codex handoff copy failed', 'degraded');
+    }
+  };
 
   return (
     <CollapsiblePanel
@@ -363,14 +399,24 @@ export default function StatusPanel() {
       isOpen={safeUiLayout.statusPanel !== false}
       onToggle={() => togglePanel('statusPanel')}
       actions={(
-        <button
-          type="button"
-          className="status-panel-copy-button"
-          onClick={handleCopySupportSnapshot}
-          aria-label="Copy Support Snapshot [IGNITION LOCAL]"
-        >
-          Copy Support Snapshot [IGNITION LOCAL]
-        </button>
+        <>
+          <button
+            type="button"
+            className="status-panel-copy-button"
+            onClick={handleCopySupportSnapshot}
+            aria-label="Copy Support Snapshot [IGNITION LOCAL]"
+          >
+            Copy Support Snapshot [IGNITION LOCAL]
+          </button>
+          <button
+            type="button"
+            className="status-panel-copy-button"
+            onClick={handleCopyCodexHandoff}
+            aria-label="Copy Codex Handoff Packet"
+          >
+            Copy Codex Handoff Packet
+          </button>
+        </>
       )}
     >
       {copyNotice ? (
@@ -439,6 +485,16 @@ export default function StatusPanel() {
         <li>[MISSION SYNTHESIS] Evidence Sources: {Array.isArray(lastExecutionMetadata?.planning_evidence_sources) ? lastExecutionMetadata.planning_evidence_sources.join(', ') : 'n/a'}</li>
         <li>[MISSION SYNTHESIS] Proposal Eligible: {String(lastExecutionMetadata?.proposal_eligible ?? 'n/a')}</li>
         <li>[MISSION SYNTHESIS] Codex Handoff Eligible: {String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a')}</li>
+        <li>[MISSION PACKET] Active: {String(lastExecutionMetadata?.proposal_packet_active ?? 'n/a')}</li>
+        <li>[MISSION PACKET] Mode: {lastExecutionMetadata?.proposal_packet_mode || 'inactive'}</li>
+        <li>[MISSION PACKET] Confidence: {lastExecutionMetadata?.proposal_packet_confidence || 'low'}</li>
+        <li>[MISSION PACKET] Truth Preserved: {String(lastExecutionMetadata?.proposal_packet_truth_preserved ?? 'n/a')}</li>
+        <li>[MISSION PACKET] Recommended Move: {lastExecutionMetadata?.proposed_move_title || 'n/a'} ({lastExecutionMetadata?.proposed_move_id || 'n/a'})</li>
+        <li>[MISSION PACKET] Rationale: {lastExecutionMetadata?.proposed_move_rationale || 'n/a'}</li>
+        <li>[MISSION PACKET] Codex Handoff Available: {String(lastExecutionMetadata?.codex_handoff_available ?? 'n/a')}</li>
+        <li>[MISSION PACKET] Approval Required: {String(lastExecutionMetadata?.operator_approval_required ?? 'true')}</li>
+        <li>[MISSION PACKET] Execution Eligible: {String(lastExecutionMetadata?.execution_eligible ?? 'false')}</li>
+        <li>[MISSION PACKET] Warnings: {Array.isArray(lastExecutionMetadata?.proposal_packet_warnings) ? lastExecutionMetadata.proposal_packet_warnings.join(', ') : 'n/a'}</li>
         <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
         <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
         <li>[TILE ACTION] Memory Candidate Submitted: {String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a')}</li>

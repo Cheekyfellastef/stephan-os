@@ -42,6 +42,21 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastPlanningTruthWarnings: 'proposal system signal not observed; proposal bridge moves are inferred priorities',
       lastProposalEligible: 'true',
       lastCodexHandoffEligible: 'true',
+      lastProposalPacketActive: 'true',
+      lastProposalPacketMode: 'self-build-mission-synthesis',
+      lastProposalPacketConfidence: 'high',
+      lastProposalPacketTruthPreserved: 'true',
+      lastProposedMoveId: 'mission-synthesis-layer',
+      lastProposedMoveTitle: 'Mission synthesis / self-planning layer maturation',
+      lastProposedMoveRationale: 'High-value move with prerequisites currently observed.',
+      lastProposalPacketWarnings: 'proposal system signal not observed; proposal bridge moves are inferred priorities',
+      lastCodexHandoffAvailable: 'true',
+      lastCodexPromptSummary: 'Codex handoff prepared for move mission-synthesis-layer with proposal-only constraints.',
+      lastCodexConstraints: 'Do not auto-execute any command or mutate files without explicit operator request.',
+      lastCodexSuccessCriteria: 'Proposal packet truth fields appear in execution metadata and support/status projections.',
+      lastProposalOperatorActions: 'Create proposal packet for mission-synthesis-layer.',
+      lastOperatorApprovalRequired: 'true',
+      lastExecutionEligible: 'false',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -128,6 +143,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Recommended Next Move: Mission synthesis \/ self-planning layer maturation/);
   assert.match(snapshot, /Proposal Eligible: true/);
   assert.match(snapshot, /Codex Handoff Eligible: true/);
+  assert.match(snapshot, /Proposal Packet Active: true/);
+  assert.match(snapshot, /Proposal Packet Mode: self-build-mission-synthesis/);
+  assert.match(snapshot, /Proposed Move ID: mission-synthesis-layer/);
+  assert.match(snapshot, /Codex Handoff Available: true/);
+  assert.match(snapshot, /Approval Required: true/);
+  assert.match(snapshot, /Execution Eligible: false/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

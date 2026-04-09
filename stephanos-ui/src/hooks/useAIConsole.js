@@ -523,6 +523,88 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? contextAssemblyMetadata.proposal_eligible
       ?? false,
     ),
+    proposal_packet_active: Boolean(
+      executionMetadata.proposal_packet_active
+      ?? requestTrace.proposal_packet_active
+      ?? contextAssemblyMetadata.proposal_packet_active
+      ?? false,
+    ),
+    proposal_packet_mode: executionMetadata.proposal_packet_mode
+      || requestTrace.proposal_packet_mode
+      || contextAssemblyMetadata.proposal_packet_mode
+      || 'inactive',
+    proposal_packet_confidence: executionMetadata.proposal_packet_confidence
+      || requestTrace.proposal_packet_confidence
+      || contextAssemblyMetadata.proposal_packet_confidence
+      || 'low',
+    proposal_packet_truth_preserved: Boolean(
+      executionMetadata.proposal_packet_truth_preserved
+      ?? requestTrace.proposal_packet_truth_preserved
+      ?? contextAssemblyMetadata.proposal_packet_truth_preserved
+      ?? true,
+    ),
+    codex_handoff_available: Boolean(
+      executionMetadata.codex_handoff_available
+      ?? requestTrace.codex_handoff_available
+      ?? contextAssemblyMetadata.codex_handoff_available
+      ?? false,
+    ),
+    operator_approval_required: Boolean(
+      executionMetadata.operator_approval_required
+      ?? requestTrace.operator_approval_required
+      ?? contextAssemblyMetadata.operator_approval_required
+      ?? true,
+    ),
+    proposed_move_id: executionMetadata.proposed_move_id
+      || requestTrace.proposed_move_id
+      || contextAssemblyMetadata.proposed_move_id
+      || '',
+    proposed_move_title: executionMetadata.proposed_move_title
+      || requestTrace.proposed_move_title
+      || contextAssemblyMetadata.proposed_move_title
+      || '',
+    proposed_move_rationale: executionMetadata.proposed_move_rationale
+      || requestTrace.proposed_move_rationale
+      || contextAssemblyMetadata.proposed_move_rationale
+      || '',
+    proposal_packet_warnings: executionMetadata.proposal_packet_warnings
+      || requestTrace.proposal_packet_warnings
+      || contextAssemblyMetadata.proposal_packet_warnings
+      || [],
+    proposal_packet: executionMetadata.proposal_packet
+      || requestTrace.proposal_packet
+      || contextAssemblyMetadata.proposal_packet
+      || null,
+    codex_prompt: executionMetadata.codex_prompt
+      || requestTrace.codex_prompt
+      || contextAssemblyMetadata.codex_prompt
+      || '',
+    codex_prompt_summary: executionMetadata.codex_prompt_summary
+      || requestTrace.codex_prompt_summary
+      || contextAssemblyMetadata.codex_prompt_summary
+      || '',
+    codex_constraints: executionMetadata.codex_constraints
+      || requestTrace.codex_constraints
+      || contextAssemblyMetadata.codex_constraints
+      || [],
+    codex_success_criteria: executionMetadata.codex_success_criteria
+      || requestTrace.codex_success_criteria
+      || contextAssemblyMetadata.codex_success_criteria
+      || [],
+    codex_handoff_payload: executionMetadata.codex_handoff_payload
+      || requestTrace.codex_handoff_payload
+      || contextAssemblyMetadata.codex_handoff_payload
+      || '',
+    proposal_operator_actions: executionMetadata.proposal_operator_actions
+      || requestTrace.proposal_operator_actions
+      || contextAssemblyMetadata.proposal_operator_actions
+      || [],
+    execution_eligible: Boolean(
+      executionMetadata.execution_eligible
+      ?? requestTrace.execution_eligible
+      ?? contextAssemblyMetadata.execution_eligible
+      ?? false,
+    ),
   };
 }
 

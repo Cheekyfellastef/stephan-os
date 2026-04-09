@@ -1,5 +1,6 @@
 import { normalizeContextAssemblyResult } from '../../../shared/ai/contextAssemblyContract.mjs';
 import { buildMissionSynthesis } from './missionSynthesis.js';
+import { buildProposalPacket } from './proposalPacket.js';
 
 const SOURCE_KEYS = Object.freeze([
   'memory',
@@ -341,6 +342,23 @@ export function buildContextAssembly({
     };
   }
 
+  const proposalPacket = buildProposalPacket({
+    missionSynthesis,
+    contextDiagnostics: diagnostics,
+    runtimeTruth,
+  });
+  if (proposalPacket.packet_metadata.proposal_active) {
+    contextBundle.proposalPacket = {
+      mode: proposalPacket.packet_metadata.proposal_mode,
+      confidence: proposalPacket.packet_metadata.proposal_confidence,
+      moveId: proposalPacket.recommended_move_summary.move_id,
+      moveTitle: proposalPacket.recommended_move_summary.title,
+      codexEligible: proposalPacket.codex_handoff_payload.codex_eligible,
+      approvalRequired: proposalPacket.operator_workflow.approval_required,
+      warnings: proposalPacket.packet_metadata.warnings,
+    };
+  }
+
   const augmented = buildAugmentedPrompt({
     prompt: safeString(prompt),
     contextBundle,
@@ -384,8 +402,26 @@ export function buildContextAssembly({
       planning_evidence_sources: missionSynthesis.evidenceSources,
       planning_truth_warnings: missionSynthesis.truthWarnings,
       planning_operator_actions: missionSynthesis.operatorActions,
-      codex_handoff_eligible: missionSynthesis.codexHandoffEligible,
       proposal_eligible: missionSynthesis.proposalEligible,
+      proposal_packet_active: proposalPacket.truth_fields.proposal_packet_active,
+      proposal_packet_mode: proposalPacket.truth_fields.proposal_packet_mode,
+      proposal_packet_confidence: proposalPacket.truth_fields.proposal_packet_confidence,
+      proposal_packet_truth_preserved: proposalPacket.truth_fields.proposal_packet_truth_preserved,
+      codex_handoff_available: proposalPacket.truth_fields.codex_handoff_available,
+      codex_handoff_eligible: proposalPacket.truth_fields.codex_handoff_eligible || missionSynthesis.codexHandoffEligible,
+      operator_approval_required: proposalPacket.truth_fields.operator_approval_required,
+      proposed_move_id: proposalPacket.truth_fields.proposed_move_id,
+      proposed_move_title: proposalPacket.truth_fields.proposed_move_title,
+      proposed_move_rationale: proposalPacket.truth_fields.proposed_move_rationale,
+      proposal_packet_warnings: proposalPacket.truth_fields.proposal_packet_warnings,
+      proposal_packet: proposalPacket,
+      codex_prompt: proposalPacket.codex_handoff_payload.codex_prompt,
+      codex_prompt_summary: proposalPacket.codex_handoff_payload.codex_prompt_summary,
+      codex_constraints: proposalPacket.codex_handoff_payload.codex_constraints,
+      codex_success_criteria: proposalPacket.codex_handoff_payload.codex_success_criteria,
+      codex_handoff_payload: proposalPacket.codex_handoff_payload.copyable_payload,
+      proposal_operator_actions: proposalPacket.operator_workflow.operator_actions,
+      execution_eligible: proposalPacket.operator_workflow.execution_eligible,
     },
   });
 }

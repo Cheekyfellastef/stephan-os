@@ -54,6 +54,10 @@ test('buildContextAssembly returns structured bundle with relevance gating', () 
   assert.equal(result.truthMetadata.planning_intent_detected, true);
   assert.ok(Array.isArray(result.truthMetadata.ranked_moves));
   assert.ok(result.truthMetadata.ranked_moves.length > 0);
+  assert.equal(result.truthMetadata.proposal_packet_active, true);
+  assert.equal(result.truthMetadata.operator_approval_required, true);
+  assert.equal(result.truthMetadata.execution_eligible, false);
+  assert.equal(typeof result.truthMetadata.codex_handoff_payload, 'string');
 });
 
 test('buildContextAssembly keeps timeless prompts minimally overloaded', () => {
@@ -132,4 +136,6 @@ test('buildContextAssembly keeps planning truth bounded when evidence is missing
   assert.equal(result.truthMetadata.current_system_maturity_estimate, 'early-structured');
   assert.ok(result.truthMetadata.planning_truth_warnings.includes('proposal system signal not observed; proposal bridge moves are inferred priorities'));
   assert.equal(result.truthMetadata.proposal_eligible, true);
+  assert.equal(result.truthMetadata.proposal_packet_active, true);
+  assert.equal(result.truthMetadata.operator_approval_required, true);
 });

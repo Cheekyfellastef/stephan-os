@@ -120,6 +120,7 @@ test('StatusPanel renders when runtimeStatusModel is null or undefined', async (
 
   assert.match(rendered, /Status/);
   assert.match(rendered, /Copy Support Snapshot/);
+  assert.match(rendered, /Copy Codex Handoff Packet/);
   assert.match(rendered, /Launch State:/);
   assert.match(rendered, /Dependency Summary: pending/);
   assert.match(rendered, /Final Route Source: unknown/);
@@ -198,6 +199,17 @@ test('StatusPanel renders freshness routing metadata from last execution', async
       self_build_prompt_detected: false,
       system_awareness_level: 'multi-source',
       context_integrity_preserved: true,
+      proposal_packet_active: true,
+      proposal_packet_mode: 'self-build-mission-synthesis',
+      proposal_packet_confidence: 'medium',
+      proposal_packet_truth_preserved: true,
+      codex_handoff_available: true,
+      operator_approval_required: true,
+      execution_eligible: false,
+      proposed_move_id: 'codex-handoff-generator',
+      proposed_move_title: 'Codex handoff generator',
+      proposed_move_rationale: 'High-value move with prerequisites currently observed.',
+      proposal_packet_warnings: ['proposal system signal not observed; proposal bridge moves are inferred priorities'],
     },
   });
   const rendered = renderStatusPanel();
@@ -210,6 +222,9 @@ test('StatusPanel renders freshness routing metadata from last execution', async
   assert.match(rendered, /\[SYSTEM AWARENESS\] Context Assembly Used: true/);
   assert.match(rendered, /\[SYSTEM AWARENESS\] Assembly Mode: task-aware/);
   assert.match(rendered, /\[SYSTEM AWARENESS\] Context Integrity Preserved: true/);
+  assert.match(rendered, /\[MISSION PACKET\] Active: true/);
+  assert.match(rendered, /\[MISSION PACKET\] Approval Required: true/);
+  assert.match(rendered, /\[MISSION PACKET\] Execution Eligible: false/);
 });
 
 test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime truth', async () => {
