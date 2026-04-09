@@ -31,6 +31,17 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastAugmentedPromptLength: '1320',
       lastContextIntegrityPreserved: 'true',
       lastContextAssemblyWarnings: 'retrieval context is historical/internal and not fresh-world validation',
+      lastPlanningActive: 'true',
+      lastPlanningMode: 'self-build-mission-synthesis',
+      lastPlanningConfidence: 'high',
+      lastPlanningMaturityEstimate: 'emerging-orchestration',
+      lastRecommendedNextMove: 'Mission synthesis / self-planning layer maturation',
+      lastRecommendationReason: 'High-value move with prerequisites currently observed.',
+      lastPlanningCandidateMoveCount: '11',
+      lastPlanningEvidenceSources: 'memory, runtimeTruth, operatorContext',
+      lastPlanningTruthWarnings: 'proposal system signal not observed; proposal bridge moves are inferred priorities',
+      lastProposalEligible: 'true',
+      lastCodexHandoffEligible: 'true',
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -111,6 +122,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Self-Build Prompt Detected: true/);
   assert.match(snapshot, /System Awareness Level: elevated-self-build/);
   assert.match(snapshot, /Context Integrity Preserved: true/);
+  assert.match(snapshot, /Planning Active: true/);
+  assert.match(snapshot, /Planning Mode: self-build-mission-synthesis/);
+  assert.match(snapshot, /Planning Confidence: high/);
+  assert.match(snapshot, /Recommended Next Move: Mission synthesis \/ self-planning layer maturation/);
+  assert.match(snapshot, /Proposal Eligible: true/);
+  assert.match(snapshot, /Codex Handoff Eligible: true/);
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

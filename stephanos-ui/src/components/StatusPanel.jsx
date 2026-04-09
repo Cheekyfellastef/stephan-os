@@ -286,6 +286,21 @@ export default function StatusPanel() {
       lastContextAssemblyWarnings: Array.isArray(lastExecutionMetadata?.context_assembly_warnings)
         ? lastExecutionMetadata.context_assembly_warnings.join(', ')
         : 'n/a',
+      lastPlanningActive: String(lastExecutionMetadata?.planning_intent_detected ?? 'n/a'),
+      lastPlanningMode: lastExecutionMetadata?.planning_mode || 'inactive',
+      lastPlanningConfidence: lastExecutionMetadata?.planning_confidence || 'low',
+      lastPlanningMaturityEstimate: lastExecutionMetadata?.current_system_maturity_estimate || 'unknown',
+      lastRecommendedNextMove: lastExecutionMetadata?.recommended_next_move?.title || 'n/a',
+      lastRecommendationReason: lastExecutionMetadata?.recommendation_reason || 'n/a',
+      lastPlanningCandidateMoveCount: String(Array.isArray(lastExecutionMetadata?.candidate_moves) ? lastExecutionMetadata.candidate_moves.length : 0),
+      lastPlanningEvidenceSources: Array.isArray(lastExecutionMetadata?.planning_evidence_sources)
+        ? lastExecutionMetadata.planning_evidence_sources.join(', ')
+        : 'n/a',
+      lastPlanningTruthWarnings: Array.isArray(lastExecutionMetadata?.planning_truth_warnings)
+        ? lastExecutionMetadata.planning_truth_warnings.join(', ')
+        : 'n/a',
+      lastProposalEligible: String(lastExecutionMetadata?.proposal_eligible ?? 'n/a'),
+      lastCodexHandoffEligible: String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a'),
       lastTileActionType: lastExecutionMetadata?.tile_action_type || 'n/a',
       lastTileSource: lastExecutionMetadata?.tile_source || 'n/a',
       lastMemoryCandidateSubmitted: String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a'),
@@ -416,6 +431,14 @@ export default function StatusPanel() {
         <li>[SYSTEM AWARENESS] Self-Build Prompt Detected: {String(lastExecutionMetadata?.self_build_prompt_detected ?? 'n/a')}</li>
         <li>[SYSTEM AWARENESS] System Awareness Level: {lastExecutionMetadata?.system_awareness_level || 'baseline'}</li>
         <li>[SYSTEM AWARENESS] Context Integrity Preserved: {String(lastExecutionMetadata?.context_integrity_preserved ?? 'n/a')}</li>
+        <li>[MISSION SYNTHESIS] Active: {String(lastExecutionMetadata?.planning_intent_detected ?? 'n/a')}</li>
+        <li>[MISSION SYNTHESIS] Mode: {lastExecutionMetadata?.planning_mode || 'inactive'}</li>
+        <li>[MISSION SYNTHESIS] Confidence: {lastExecutionMetadata?.planning_confidence || 'low'}</li>
+        <li>[MISSION SYNTHESIS] Recommended Move: {lastExecutionMetadata?.recommended_next_move?.title || 'n/a'}</li>
+        <li>[MISSION SYNTHESIS] Recommendation Reason: {lastExecutionMetadata?.recommendation_reason || 'n/a'}</li>
+        <li>[MISSION SYNTHESIS] Evidence Sources: {Array.isArray(lastExecutionMetadata?.planning_evidence_sources) ? lastExecutionMetadata.planning_evidence_sources.join(', ') : 'n/a'}</li>
+        <li>[MISSION SYNTHESIS] Proposal Eligible: {String(lastExecutionMetadata?.proposal_eligible ?? 'n/a')}</li>
+        <li>[MISSION SYNTHESIS] Codex Handoff Eligible: {String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a')}</li>
         <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
         <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
         <li>[TILE ACTION] Memory Candidate Submitted: {String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a')}</li>
