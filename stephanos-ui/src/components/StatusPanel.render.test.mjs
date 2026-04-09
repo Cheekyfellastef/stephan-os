@@ -192,6 +192,12 @@ test('StatusPanel renders freshness routing metadata from last execution', async
       freshness_warning: 'Fresh route unavailable; answer may be stale.',
       ai_policy_mode: 'local-first-cloud-when-needed',
       ai_policy_reason: 'Fresh cloud route was required but unavailable; using truthful stale-risk fallback.',
+      context_assembly_used: true,
+      context_assembly_mode: 'task-aware',
+      context_sources_used: ['runtimeTruth', 'memory'],
+      self_build_prompt_detected: false,
+      system_awareness_level: 'multi-source',
+      context_integrity_preserved: true,
     },
   });
   const rendered = renderStatusPanel();
@@ -201,6 +207,9 @@ test('StatusPanel renders freshness routing metadata from last execution', async
   assert.match(rendered, /Last Freshness Warning: Fresh route unavailable; answer may be stale\./);
   assert.match(rendered, /AI Policy Mode: local-first-cloud-when-needed/);
   assert.match(rendered, /AI Policy Reason: Fresh cloud route was required but unavailable; using truthful stale-risk fallback\./);
+  assert.match(rendered, /\[SYSTEM AWARENESS\] Context Assembly Used: true/);
+  assert.match(rendered, /\[SYSTEM AWARENESS\] Assembly Mode: task-aware/);
+  assert.match(rendered, /\[SYSTEM AWARENESS\] Context Integrity Preserved: true/);
 });
 
 test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime truth', async () => {

@@ -163,6 +163,7 @@ export async function sendPrompt({
   continuityMode = '',
   freshnessContext = null,
   routeDecision = null,
+  contextAssembly = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const timeoutExecutionTruth = resolveTimeoutExecutionTruth({
@@ -204,6 +205,7 @@ export async function sendPrompt({
       timeoutRequestedProvider: timeoutExecutionTruth.requestedProvider || null,
     },
     ...(tileContext && typeof tileContext === 'object' ? { tileContext } : {}),
+    ...(contextAssembly && typeof contextAssembly === 'object' ? { contextAssembly } : {}),
   };
   const payload = {
     prompt,
@@ -219,6 +221,9 @@ export async function sendPrompt({
     ...(continuityContext && typeof continuityContext === 'object' ? { continuityContext } : {}),
     ...(freshnessContext && typeof freshnessContext === 'object' ? { freshnessContext } : {}),
     ...(routeDecision && typeof routeDecision === 'object' ? { routeDecision } : {}),
+    ...(contextAssembly?.truthMetadata && typeof contextAssembly.truthMetadata === 'object'
+      ? { contextAssemblyMetadata: contextAssembly.truthMetadata }
+      : {}),
   };
 
   console.debug('[Stephanos UI] Dispatching /api/ai/chat request', {

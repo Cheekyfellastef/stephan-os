@@ -23,6 +23,7 @@ import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosCo
 import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
 import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/freshnessRouting';
+import { buildContextAssembly } from '../ai/contextAssembly.js';
 import { appendCommandHistory } from './commandHistory.js';
 import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
 
@@ -153,6 +154,7 @@ function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
 function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
+  const contextAssemblyMetadata = requestPayload?.contextAssemblyMetadata || {};
   const actualProviderUsed = executionMetadata.actual_provider_used || data.data?.actual_provider_used || data.data?.provider || null;
   const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
     || requestTrace.ui_default_provider
@@ -395,6 +397,66 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     memory_source_ref: executionMetadata.memory_source_ref || requestTrace.memory_source_ref || '',
     memory_confidence: executionMetadata.memory_confidence || requestTrace.memory_confidence || 'low',
     memory_class: executionMetadata.memory_class || requestTrace.memory_class || 'durable',
+    context_assembly_used: Boolean(
+      executionMetadata.context_assembly_used
+      ?? requestTrace.context_assembly_used
+      ?? contextAssemblyMetadata.context_assembly_used
+      ?? false,
+    ),
+    context_assembly_mode: executionMetadata.context_assembly_mode
+      || requestTrace.context_assembly_mode
+      || contextAssemblyMetadata.context_assembly_mode
+      || 'minimal',
+    context_sources_considered: executionMetadata.context_sources_considered
+      || requestTrace.context_sources_considered
+      || contextAssemblyMetadata.context_sources_considered
+      || [],
+    context_sources_used: executionMetadata.context_sources_used
+      || requestTrace.context_sources_used
+      || contextAssemblyMetadata.context_sources_used
+      || [],
+    context_source_reason_map: executionMetadata.context_source_reason_map
+      || requestTrace.context_source_reason_map
+      || contextAssemblyMetadata.context_source_reason_map
+      || {},
+    context_bundle_summary: executionMetadata.context_bundle_summary
+      || requestTrace.context_bundle_summary
+      || contextAssemblyMetadata.context_bundle_summary
+      || {},
+    self_build_prompt_detected: Boolean(
+      executionMetadata.self_build_prompt_detected
+      ?? requestTrace.self_build_prompt_detected
+      ?? contextAssemblyMetadata.self_build_prompt_detected
+      ?? false,
+    ),
+    self_build_reason: executionMetadata.self_build_reason
+      || requestTrace.self_build_reason
+      || contextAssemblyMetadata.self_build_reason
+      || null,
+    system_awareness_level: executionMetadata.system_awareness_level
+      || requestTrace.system_awareness_level
+      || contextAssemblyMetadata.system_awareness_level
+      || 'baseline',
+    augmented_prompt_used: Boolean(
+      executionMetadata.augmented_prompt_used
+      ?? requestTrace.augmented_prompt_used
+      ?? contextAssemblyMetadata.augmented_prompt_used
+      ?? false,
+    ),
+    augmented_prompt_length: executionMetadata.augmented_prompt_length
+      || requestTrace.augmented_prompt_length
+      || contextAssemblyMetadata.augmented_prompt_length
+      || 0,
+    context_assembly_warnings: executionMetadata.context_assembly_warnings
+      || requestTrace.context_assembly_warnings
+      || contextAssemblyMetadata.context_assembly_warnings
+      || [],
+    context_integrity_preserved: Boolean(
+      executionMetadata.context_integrity_preserved
+      ?? requestTrace.context_integrity_preserved
+      ?? contextAssemblyMetadata.context_integrity_preserved
+      ?? true,
+    ),
   };
 }
 
@@ -1374,12 +1436,49 @@ export function useAIConsole() {
       const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
         || freshnessRouteDecision.selectedProvider
         || provider;
+      const operatorContext = {
+        northStar: 'Persistent cross-device identity and continuity layer that persists across reality.',
+        subsystemInventory: [
+          'memory',
+          'retrieval',
+          'knowledge-graph',
+          'simulation',
+          'tile-context',
+          'runtime-truth',
+        ],
+        openTensions: [
+          'preserve freshness integrity without overstating confidence',
+          'preserve routing truth while composing multi-source context',
+        ],
+        recentActivity: Array.isArray(commandHistory)
+          ? commandHistory.slice(-4).map((entry) => String(entry?.raw_input || '').slice(0, 140)).filter(Boolean)
+          : [],
+        roadmapSignals: Array.isArray(telemetryEntries)
+          ? telemetryEntries.slice(-4).map((entry) => String(entry?.label || entry?.event || '').slice(0, 120)).filter(Boolean)
+          : [],
+      };
+      const contextAssembly = buildContextAssembly({
+        prompt,
+        freshnessContext: freshnessClassification,
+        runtimeContext: finalizedRequestContext,
+        routeDecision: freshnessRouteDecision,
+        tileContext: assembledTileContext,
+        continuityContext,
+        retrievalContext: {
+          used: continuityLookup.retrievalState !== 'degraded',
+          reason: continuityLookup.reason,
+          chunkCount: Array.isArray(continuityLookup.records) ? continuityLookup.records.length : 0,
+          sources: [],
+        },
+        operatorContext,
+      });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;
       const requestPayload = {
         provider: requestedProvider,
         routeMode: routeModeForRequest,
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
+        contextAssemblyMetadata: contextAssembly.truthMetadata,
       };
       inFlightRequestPayload = requestPayload;
       const requestDispatchGate = evaluateRequestDispatchGate({
@@ -1429,7 +1528,7 @@ export function useAIConsole() {
         })
         : null;
       const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
-        prompt,
+        prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
         routeMode: routeModeForRequest,
         providerConfigs: effectiveProviderConfigs,
@@ -1442,6 +1541,7 @@ export function useAIConsole() {
         continuityMode,
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
+        contextAssembly,
       });
 
       if (
@@ -1545,6 +1645,19 @@ export function useAIConsole() {
         memory_source_ref: executionMetadata.memory_source_ref,
         memory_confidence: executionMetadata.memory_confidence,
         memory_class: executionMetadata.memory_class,
+        context_assembly_used: executionMetadata.context_assembly_used,
+        context_assembly_mode: executionMetadata.context_assembly_mode,
+        context_sources_considered: executionMetadata.context_sources_considered,
+        context_sources_used: executionMetadata.context_sources_used,
+        context_source_reason_map: executionMetadata.context_source_reason_map,
+        context_bundle_summary: executionMetadata.context_bundle_summary,
+        self_build_prompt_detected: executionMetadata.self_build_prompt_detected,
+        self_build_reason: executionMetadata.self_build_reason,
+        system_awareness_level: executionMetadata.system_awareness_level,
+        augmented_prompt_used: executionMetadata.augmented_prompt_used,
+        augmented_prompt_length: executionMetadata.augmented_prompt_length,
+        context_assembly_warnings: executionMetadata.context_assembly_warnings,
+        context_integrity_preserved: executionMetadata.context_integrity_preserved,
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
