@@ -124,3 +124,69 @@ test('auto high-freshness executes Gemini successfully when grounding is configu
     globalThis.fetch = ORIGINAL_FETCH;
   }
 });
+
+test('local-first falls back to Groq with explicit ollama timeout labels when Ollama health is ready but execution times out', async () => {
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }),
+      };
+    }
+    if (target.includes('localhost:11434/api/chat')) {
+      const abortError = new Error('aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
+    if (target.includes('api.groq.com') && target.includes('/chat/completions')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: 'Groq rescued local timeout.' } }],
+          usage: { prompt_tokens: 9, completion_tokens: 5 },
+        }),
+      };
+    }
+    throw new Error(`Unexpected URL in test fetch mock: ${target}`);
+  };
+
+  try {
+    const result = await routeLLMRequest({
+      messages: [{ role: 'user', content: 'Do deep local reasoning now.' }],
+      freshnessContext: { freshnessNeed: 'low' },
+    }, {
+      provider: 'ollama',
+      routeMode: 'local-first',
+      fallbackEnabled: true,
+      fallbackOrder: ['groq', 'mock'],
+      providerConfigs: {
+        ollama: {
+          baseURL: 'http://localhost:11434',
+          model: 'gpt-oss:20b',
+          defaultOllamaTimeoutMs: 60000,
+        },
+        groq: {
+          apiKey: 'gsk_sample-key',
+          model: 'openai/gpt-oss-20b',
+        },
+      },
+      runtimeContext: {},
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.actualProviderUsed, 'groq');
+    assert.equal(result.fallbackUsed, true);
+    assert.match(result.fallbackReason || '', /connect_timeout/i);
+    assert.match(result.fallbackReason || '', /model-warmup-likely/i);
+    const ollamaAttempt = (result.diagnostics.attempts || []).find((attempt) => attempt.provider === 'ollama');
+    assert.equal(ollamaAttempt?.result?.error?.details?.failureLabel, 'connect_timeout');
+    assert.equal(ollamaAttempt?.result?.error?.details?.warmupRetryApplied, true);
+    assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.timeoutMs, 60000);
+    assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.executionViability, 'degraded-timeout');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});

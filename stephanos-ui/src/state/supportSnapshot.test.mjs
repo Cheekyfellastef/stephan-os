@@ -344,6 +344,54 @@ test('buildSupportSnapshot regression: healthy route + ollama execution keeps in
   assert.match(snapshot, /Timeout Truth Degraded By Route Usability: no/);
 });
 
+test('buildSupportSnapshot separates provider health readiness from execution viability during fallback', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastSelectedProvider: 'ollama',
+      lastActualProviderUsed: 'groq',
+      lastFallbackUsed: 'yes',
+      lastFallbackReason: 'ollama: Cannot connect to Ollama: it took too long to respond. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=120000]',
+      lastSelectedProviderHealthOk: 'true',
+      lastSelectedProviderHealthState: 'CONNECTED',
+      lastSelectedProviderExecutionViability: 'failed',
+      lastSelectedProviderExecutionFailureLayer: 'provider',
+      lastSelectedProviderExecutionFailureLabel: 'connect_timeout',
+      lastSelectedProviderExecutionFailurePhase: 'awaiting-response-headers',
+      lastSelectedProviderTimeoutCategory: 'connect-timeout',
+      lastSelectedProviderModelWarmupLikely: 'true',
+      lastSelectedProviderWarmupRetryApplied: 'true',
+      lastSelectedProviderWarmupRetryTimeoutMs: '120000',
+      lastSelectedProviderElapsedMs: '120001',
+      lastExplicitProviderFallbackPolicyTriggered: 'true',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'groq',
+      providerState: 'CONNECTED',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {
+      healthBadge: 'Ready',
+      healthState: 'CONNECTED',
+    },
+    now: { toISOString: () => '2026-04-09T00:00:04.000Z' },
+  });
+
+  assert.match(snapshot, /Selected Provider Health: Ready/);
+  assert.match(snapshot, /Selected Provider State: CONNECTED/);
+  assert.match(snapshot, /Last Selected Provider Execution Viability: failed/);
+  assert.match(snapshot, /Last Selected Provider Failure Label: connect_timeout/);
+  assert.match(snapshot, /Last Selected Provider Model Warmup Likely: true/);
+  assert.match(snapshot, /Explicit Provider Fallback Policy Triggered: true/);
+  assert.match(snapshot, /Last Actual Provider Used: groq/);
+});
+
 
 test('buildSupportSnapshot emits hosted backend-target diagnostics and operator guidance when unresolved', () => {
   const snapshot = buildSupportSnapshot({

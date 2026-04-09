@@ -187,6 +187,46 @@ test('runOllamaProvider uses default timeout when selected model has no override
   }
 });
 
+test('runOllamaProvider reports execution timeout viability diagnostics when health is ready but generation times out', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push(String(url));
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }),
+      };
+    }
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+    throw abortError;
+  };
+
+  try {
+    const health = await checkOllamaHealth({ baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000 });
+    assert.equal(health.ok, true);
+    assert.equal(health.state, 'CONNECTED');
+
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'Analyze this in depth.' }] },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000 },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'LLM_OLLAMA_UNREACHABLE');
+    assert.equal(result.error.details.failureLabel, 'connect_timeout');
+    assert.equal(result.error.details.failureLayer, 'provider');
+    assert.equal(result.error.details.modelWarmupLikely, true);
+    assert.equal(result.error.details.warmupRetryApplied, true);
+    assert.equal(result.error.details.timeoutMs, 120000);
+    assert.equal(result.diagnostics.ollama.executionViability, 'degraded-timeout');
+    assert.equal(result.diagnostics.ollama.executionFailureLabel, 'connect_timeout');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('checkOllamaHealth returns misconfigured result for malformed URL', async () => {
   const health = await checkOllamaHealth({ baseURL: 'not-a-url' });
 

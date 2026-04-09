@@ -63,7 +63,16 @@ function summarizeAttemptFailure(provider, attempt) {
   if (!attempt) return null;
   if (attempt.result?.ok && attempt.result?.outputText) return null;
   if (attempt.result?.ok && !attempt.result?.outputText) return `Provider "${provider}" returned an empty response.`;
-  return attempt.result?.error?.message || attempt.health?.reason || attempt.health?.detail || `Provider "${provider}" failed.`;
+  const timeoutLabel = attempt.result?.error?.details?.failureLabel || attempt.result?.diagnostics?.ollama?.executionFailureLabel || '';
+  const timeoutLayer = attempt.result?.error?.details?.failureLayer || attempt.result?.diagnostics?.ollama?.executionFailureLayer || '';
+  const timeoutCategory = attempt.result?.error?.details?.timeoutCategory || attempt.result?.diagnostics?.ollama?.timeoutCategory || '';
+  const timeoutMs = attempt.result?.error?.details?.timeoutMs || attempt.result?.diagnostics?.ollama?.timeoutMs || null;
+  const warmupLikely = attempt.result?.error?.details?.modelWarmupLikely === true || attempt.result?.diagnostics?.ollama?.modelWarmupLikely === true;
+  const warmupHint = warmupLikely ? 'model-warmup-likely' : '';
+  const timeoutDetail = [timeoutLabel, timeoutLayer, timeoutCategory, warmupHint].filter(Boolean).join(',');
+  const failureMessage = attempt.result?.error?.message || attempt.health?.reason || attempt.health?.detail || `Provider "${provider}" failed.`;
+  if (!timeoutDetail && !timeoutMs) return failureMessage;
+  return `${failureMessage} [${timeoutDetail}${timeoutMs ? `; timeoutMs=${timeoutMs}` : ''}]`;
 }
 
 function buildFallbackReason(failedAttempts = []) {
