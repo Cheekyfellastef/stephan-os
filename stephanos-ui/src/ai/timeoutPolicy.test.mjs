@@ -138,3 +138,37 @@ test('regression: ignore stale 30000 fallback baseline when provider timeout tru
   assert.equal(policy.uiRequestTimeoutMs, 13500);
   assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:ui-grace');
 });
+
+test('regression live case: local-desktop ollama execution timeout truth must not stay on frontend 30000 fallback', () => {
+  const liveCase = {
+    executableProvider: 'ollama',
+    requestedProviderIntent: 'gemini',
+    freshnessCandidateProvider: 'gemini',
+    actualProviderUsed: 'ollama',
+  };
+  assert.equal(liveCase.executableProvider, 'ollama');
+  assert.equal(liveCase.requestedProviderIntent, 'gemini');
+  assert.equal(liveCase.actualProviderUsed, 'ollama');
+
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: {
+      timeoutMs: 30000,
+      timeoutSource: 'frontend:api-runtime',
+    },
+    provider: liveCase.executableProvider,
+    requestedModel: 'qwen:14b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen:14b',
+        defaultOllamaTimeoutMs: 12000,
+      },
+      gemini: {
+        model: 'gemini-2.5-flash',
+      },
+    },
+  });
+
+  assert.equal(policy.uiRequestTimeoutMs, 13500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:ui-grace');
+  assert.notEqual(policy.timeoutPolicySource, 'frontend:api-runtime');
+});

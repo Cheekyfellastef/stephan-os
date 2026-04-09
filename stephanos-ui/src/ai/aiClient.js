@@ -40,24 +40,47 @@ export function resolveTimeoutExecutionTruth({
   routeDecision = null,
   runtimeConfig = {},
   providerConfigs = {},
+  timeoutExecutionEnvelope = null,
 } = {}) {
   const runtimeFinalRouteTruth = runtimeConfig?.finalRouteTruth || runtimeConfig?.runtimeTruth?.finalRouteTruth || {};
   const canonicalRouteTruth = runtimeConfig?.canonicalRouteRuntimeTruth || runtimeConfig?.runtimeTruth?.canonicalRouteRuntimeTruth || {};
   const requestedProviderNormalized = String(requestedProvider || '').trim().toLowerCase();
+  const hydratedEnvelope = timeoutExecutionEnvelope && typeof timeoutExecutionEnvelope === 'object'
+    ? timeoutExecutionEnvelope
+    : (runtimeConfig?.timeoutExecutionEnvelope && typeof runtimeConfig.timeoutExecutionEnvelope === 'object'
+      ? runtimeConfig.timeoutExecutionEnvelope
+      : {});
+  const localRouteViable = routeDecision?.requestDispatchGate?.localRouteViable ?? routeDecision?.localRouteAvailable ?? null;
+  const selectedAnswerMode = String(
+    routeDecision?.requestDispatchGate?.selectedAnswerMode
+    || routeDecision?.selectedAnswerMode
+    || '',
+  ).trim().toLowerCase();
+  const providerModeReconciled = (selectedAnswerMode === 'local-private' || selectedAnswerMode === 'fallback-stale-risk')
+    && localRouteViable === true
+    ? 'ollama'
+    : '';
   const effectiveProvider = firstNonEmpty(
+    hydratedEnvelope?.effectiveProvider,
+    hydratedEnvelope?.timeoutProvider,
     runtimeFinalRouteTruth?.executedProvider,
     runtimeFinalRouteTruth?.selectedProvider,
     canonicalRouteTruth?.executedProvider,
     canonicalRouteTruth?.selectedProvider,
-    routeDecision?.selectedProvider,
+    providerModeReconciled,
     routeDecision?.requestedProviderForRequest,
+    routeDecision?.selectedProvider,
     requestedProviderNormalized,
   ).toLowerCase();
-  const effectiveModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
+  const effectiveModel = firstNonEmpty(
+    hydratedEnvelope?.effectiveModel,
+    hydratedEnvelope?.timeoutModel,
+    providerConfigs?.[effectiveProvider]?.model,
+  );
   return {
     requestedProvider: requestedProviderNormalized || '',
     effectiveProvider: effectiveProvider || requestedProviderNormalized || '',
-    effectiveModel,
+    effectiveModel: String(effectiveModel || '').trim(),
   };
 }
 
@@ -96,6 +119,8 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
           backendRouteTimeoutMs: timeoutPolicy?.backendRouteTimeoutMs || null,
           providerTimeoutMs: timeoutPolicy?.providerTimeoutMs || null,
           modelTimeoutMs: timeoutPolicy?.modelTimeoutMs || null,
+          timeoutProvider: timeoutPolicy?.timeoutProvider || null,
+          timeoutRequestedProvider: timeoutPolicy?.timeoutRequestedProvider || null,
           timeoutModel: timeoutPolicy?.timeoutModel || null,
           timeoutOverrideApplied: Boolean(timeoutPolicy?.timeoutOverrideApplied),
         },
@@ -145,6 +170,7 @@ export async function sendPrompt({
     routeDecision,
     runtimeConfig,
     providerConfigs: safeProviderConfigs,
+    timeoutExecutionEnvelope: runtimeConfig?.timeoutExecutionEnvelope || null,
   });
   const timeoutPolicy = resolveUiRequestTimeoutPolicy({
     runtimeConfig,
@@ -152,16 +178,27 @@ export async function sendPrompt({
     providerConfigs: safeProviderConfigs,
     requestedModel: timeoutExecutionTruth.effectiveModel,
   });
+  const timeoutPolicyWithExecution = {
+    ...timeoutPolicy,
+    timeoutProvider: timeoutExecutionTruth.effectiveProvider,
+    timeoutRequestedProvider: timeoutExecutionTruth.requestedProvider || provider,
+    timeoutModel: timeoutExecutionTruth.effectiveModel || timeoutPolicy.timeoutModel || null,
+  };
   const runtimeContext = {
     ...runtimeConfig,
-    timeoutMs: timeoutPolicy.uiRequestTimeoutMs,
+    timeoutMs: timeoutPolicyWithExecution.uiRequestTimeoutMs,
+    timeoutExecutionEnvelope: {
+      requestedProvider: timeoutExecutionTruth.requestedProvider || provider,
+      effectiveProvider: timeoutExecutionTruth.effectiveProvider || provider,
+      effectiveModel: timeoutExecutionTruth.effectiveModel || null,
+    },
     timeoutPolicy: {
-      uiRequestTimeoutMs: timeoutPolicy.uiRequestTimeoutMs,
-      backendRouteTimeoutMs: timeoutPolicy.backendRouteTimeoutMs,
-      providerTimeoutMs: timeoutPolicy.providerTimeoutMs,
-      modelTimeoutMs: timeoutPolicy.modelTimeoutMs,
-      timeoutPolicySource: timeoutPolicy.timeoutPolicySource,
-      timeoutOverrideApplied: timeoutPolicy.timeoutOverrideApplied,
+      uiRequestTimeoutMs: timeoutPolicyWithExecution.uiRequestTimeoutMs,
+      backendRouteTimeoutMs: timeoutPolicyWithExecution.backendRouteTimeoutMs,
+      providerTimeoutMs: timeoutPolicyWithExecution.providerTimeoutMs,
+      modelTimeoutMs: timeoutPolicyWithExecution.modelTimeoutMs,
+      timeoutPolicySource: timeoutPolicyWithExecution.timeoutPolicySource,
+      timeoutOverrideApplied: timeoutPolicyWithExecution.timeoutOverrideApplied,
       timeoutProvider: timeoutExecutionTruth.effectiveProvider,
       timeoutModel: timeoutExecutionTruth.effectiveModel || null,
       timeoutRequestedProvider: timeoutExecutionTruth.requestedProvider || null,
@@ -194,7 +231,7 @@ export async function sendPrompt({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }, runtimeContext, timeoutPolicy);
+  }, runtimeContext, timeoutPolicyWithExecution);
 
   return {
     ok: result.ok,

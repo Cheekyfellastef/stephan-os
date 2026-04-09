@@ -335,6 +335,7 @@ test('buildSupportSnapshot regression: healthy route + ollama execution keeps in
   });
 
   assert.match(snapshot, /Last Requested Provider Intent: gemini/);
+  assert.match(snapshot, /Last Request-Side Selected Provider: n\/a/);
   assert.match(snapshot, /Last Selected Provider: ollama/);
   assert.match(snapshot, /Last Actual Provider Used: ollama/);
   assert.match(snapshot, /Last Timeout Policy Source: provider:ollama:default-timeout:ui-grace/);
