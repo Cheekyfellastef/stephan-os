@@ -2,8 +2,9 @@ import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
 
 export default function ProposalPanel({ commandHistory }) {
-  const { uiLayout, togglePanel } = useAIStore();
+  const { uiLayout, togglePanel, missionPacketWorkflow } = useAIStore();
   const proposals = commandHistory.findLast((entry) => entry.data_payload?.proposals)?.data_payload?.proposals ?? [];
+  const missionPacketQueue = missionPacketWorkflow?.proposalQueue || [];
   const stats = commandHistory.findLast((entry) => entry.data_payload?.stats)?.data_payload?.stats;
 
   return (
@@ -18,8 +19,11 @@ export default function ProposalPanel({ commandHistory }) {
     >
       {stats && <p className="muted">Pending {stats.pending} / Total {stats.total}</p>}
       <ul className="compact-list">
+        {missionPacketQueue.slice(0, 3).map((proposal) => (
+          <li key={proposal.id}>queued · {proposal.moveTitle || proposal.moveId} (mission-packet)</li>
+        ))}
         {proposals.slice(0, 4).map((proposal) => <li key={proposal.id}>{proposal.status} · {proposal.summary}</li>)}
-        {proposals.length === 0 && <li className="muted">Run /proposals list</li>}
+        {proposals.length === 0 && missionPacketQueue.length === 0 && <li className="muted">Run /proposals list</li>}
       </ul>
     </CollapsiblePanel>
   );

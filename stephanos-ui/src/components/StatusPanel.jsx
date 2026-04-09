@@ -5,6 +5,7 @@ import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import { buildSupportSnapshot } from '../state/supportSnapshot';
 import { deriveContinuityLoopSnapshot } from '../state/continuityLoopSnapshot.js';
+import { buildMissionPacketKey, normalizeMissionPacketTruth } from '../state/missionPacketWorkflow';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -50,6 +51,7 @@ export default function StatusPanel() {
     projectMemory,
     sessionRestoreDiagnostics,
     homeNodeStatus,
+    missionPacketWorkflow,
   } = useAIStore();
 
   const safeApiStatus = apiStatus || {};
@@ -101,6 +103,10 @@ export default function StatusPanel() {
   const homeNodeActionMatch = String(homeNodeDiagnostics.blockedReason || homeNodeDiagnostics.reason || '')
     .match(/Action:\s*([^]+)$/i);
   const homeNodeAction = homeNodeActionMatch?.[1]?.trim() || 'n/a';
+  const missionPacketTruth = normalizeMissionPacketTruth(lastExecutionMetadata || {});
+  const missionPacketKey = buildMissionPacketKey(missionPacketTruth);
+  const missionPacketDecision = missionPacketWorkflow?.decisions?.find((entry) => entry.packetKey === missionPacketKey) || null;
+  const missionPacketDecisionLabel = missionPacketDecision?.decision || 'pending-review';
   const guardrails = runtimeStatus.guardrails ?? { summary: { total: 0, errors: 0, warnings: 0 }, errors: [], warnings: [] };
   const primaryGuardrailMessage = guardrails.errors?.[0]?.message || guardrails.warnings?.[0]?.message || 'none';
   const executionTruth = isBusy
@@ -317,6 +323,10 @@ export default function StatusPanel() {
         ? lastExecutionMetadata.proposal_operator_actions.join(', ')
         : 'n/a',
       lastExecutionEligible: String(lastExecutionMetadata?.execution_eligible ?? 'false'),
+      missionPacketDecision: missionPacketDecisionLabel,
+      missionPacketDecisionAt: missionPacketDecision?.decidedAt || 'n/a',
+      missionPacketProposalQueueLength: String(missionPacketWorkflow?.proposalQueue?.length || 0),
+      missionPacketRoadmapQueueLength: String(missionPacketWorkflow?.roadmapQueue?.length || 0),
       lastCodexPromptSummary: lastExecutionMetadata?.codex_prompt_summary || 'n/a',
       lastCodexConstraints: Array.isArray(lastExecutionMetadata?.codex_constraints)
         ? lastExecutionMetadata.codex_constraints.join(', ')
@@ -494,6 +504,9 @@ export default function StatusPanel() {
         <li>[MISSION PACKET] Codex Handoff Available: {String(lastExecutionMetadata?.codex_handoff_available ?? 'n/a')}</li>
         <li>[MISSION PACKET] Approval Required: {String(lastExecutionMetadata?.operator_approval_required ?? 'true')}</li>
         <li>[MISSION PACKET] Execution Eligible: {String(lastExecutionMetadata?.execution_eligible ?? 'false')}</li>
+        <li>[MISSION PACKET] Operator Decision: {missionPacketDecisionLabel}</li>
+        <li>[MISSION PACKET] Proposal Queue Depth: {missionPacketWorkflow?.proposalQueue?.length || 0}</li>
+        <li>[MISSION PACKET] Roadmap Queue Depth: {missionPacketWorkflow?.roadmapQueue?.length || 0}</li>
         <li>[MISSION PACKET] Warnings: {Array.isArray(lastExecutionMetadata?.proposal_packet_warnings) ? lastExecutionMetadata.proposal_packet_warnings.join(', ') : 'n/a'}</li>
         <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
         <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
