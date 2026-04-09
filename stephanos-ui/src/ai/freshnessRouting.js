@@ -231,6 +231,7 @@ export function resolveFreshnessRoutingDecision({
   let freshnessRouted = false;
   let fallbackReasonCode = null;
   let staleFallbackAttempted = false;
+  const staleFallbackPermitted = false;
   let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
@@ -340,6 +341,7 @@ export function resolveFreshnessRoutingDecision({
     selectedAnswerMode,
     freshnessWarning,
     staleFallbackAttempted,
+    staleFallbackPermitted,
     aiPolicy,
     policyReason,
     overrideRequested,

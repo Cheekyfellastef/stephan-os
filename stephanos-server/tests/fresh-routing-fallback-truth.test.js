@@ -5,7 +5,7 @@ import { routeLLMRequest } from '../services/llm/router/routeLLMRequest.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-test('auto high-freshness routes to Gemini first and falls back to Groq with truthful diagnostics when Gemini request fails', async () => {
+test('auto high-freshness blocks silent non-fresh fallback when Gemini request fails and stale fallback is not permitted', async () => {
   globalThis.fetch = async (url) => {
     if (String(url).includes('generativelanguage.googleapis.com')) {
       return {
@@ -55,13 +55,80 @@ test('auto high-freshness routes to Gemini first and falls back to Groq with tru
       runtimeContext: {},
     });
 
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, false);
     assert.equal(result.diagnostics.routing.requestedProviderForRequest, 'gemini');
     assert.equal(result.diagnostics.selectedProvider, 'gemini');
-    assert.equal(result.actualProviderUsed, 'groq');
+    assert.equal(result.actualProviderUsed, 'ollama');
     assert.equal(result.fallbackUsed, true);
     assert.equal(result.diagnostics.providerSelectionSource, 'auto:fresh-capable');
     assert.match(result.fallbackReason || '', /gemini:\s*Invalid JSON payload/i);
+    assert.equal(result.diagnostics.freshnessTruth.answerTruthMode, 'degraded-freshness-unavailable');
+    assert.equal(result.diagnostics.freshnessTruth.freshnessIntegrityPreserved, true);
+    assert.equal(result.diagnostics.freshnessTruth.staleFallbackAttempted, true);
+    assert.equal(result.diagnostics.freshnessTruth.staleFallbackUsed, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('auto high-freshness allows explicit degraded stale fallback when Gemini fails and stale fallback is permitted', async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('generativelanguage.googleapis.com')) {
+      return {
+        ok: false,
+        status: 429,
+        json: async () => ({
+          error: {
+            message: 'Rate limit exceeded.',
+          },
+        }),
+      };
+    }
+
+    if (String(url).includes('api.groq.com') && String(url).includes('/chat/completions')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: 'Groq degraded stale answer' } }],
+          usage: { prompt_tokens: 11, completion_tokens: 7 },
+        }),
+      };
+    }
+
+    throw new Error(`Unexpected URL in test fetch mock: ${url}`);
+  };
+
+  try {
+    const result = await routeLLMRequest({
+      messages: [{ role: 'user', content: 'Who is the current UK Prime Minister?' }],
+      freshnessContext: { freshnessNeed: 'high' },
+      staleFallbackPermitted: true,
+    }, {
+      provider: 'ollama',
+      routeMode: 'auto',
+      providerConfigs: {
+        gemini: {
+          apiKey: 'AIza-sample-key',
+          model: 'gemini-2.5-flash',
+          groundingEnabled: true,
+          groundingMode: 'google_search',
+        },
+        groq: {
+          apiKey: 'gsk_sample-key',
+          model: 'openai/gpt-oss-20b',
+        },
+      },
+      runtimeContext: {},
+      staleFallbackPermitted: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.actualProviderUsed, 'groq');
+    assert.equal(result.diagnostics.freshnessTruth.answerTruthMode, 'degraded-stale-allowed');
+    assert.equal(result.diagnostics.freshnessTruth.staleFallbackPermitted, true);
+    assert.equal(result.diagnostics.freshnessTruth.staleFallbackUsed, true);
+    assert.match(result.diagnostics.freshnessTruth.staleAnswerWarning || '', /non-fresh provider/i);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }

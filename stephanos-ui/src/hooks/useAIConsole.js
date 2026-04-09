@@ -173,6 +173,11 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || selectedProvider;
   const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
   const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
+  const freshnessRequiredForTruth = Boolean(
+    executionMetadata.freshness_required_for_truth
+    ?? requestTrace.freshness_required_for_truth
+    ?? (freshnessNeed === 'high'),
+  );
   const routeDecision = requestPayload.routeDecision || {};
   const defaultSelectedAnswerMode = executionMetadata.selected_answer_mode
     || requestTrace.selected_answer_mode
@@ -297,6 +302,22 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? false,
     ),
     freshness_need: freshnessNeed,
+    freshness_required_for_truth: freshnessRequiredForTruth,
+    fresh_answer_required: Boolean(
+      executionMetadata.fresh_answer_required
+      ?? requestTrace.fresh_answer_required
+      ?? freshnessRequiredForTruth,
+    ),
+    fresh_provider_available_for_request: Boolean(
+      executionMetadata.fresh_provider_available_for_request
+      ?? requestTrace.fresh_provider_available_for_request
+      ?? false,
+    ),
+    fresh_provider_succeeded: Boolean(
+      executionMetadata.fresh_provider_succeeded
+      ?? requestTrace.fresh_provider_succeeded
+      ?? false,
+    ),
     freshness_reason: executionMetadata.freshness_reason || requestTrace.freshness_reason || requestPayload.freshnessContext?.freshnessReason || 'n/a',
     stale_risk: executionMetadata.stale_risk || requestTrace.stale_risk || requestPayload.freshnessContext?.staleRisk || 'low',
     selected_answer_mode: selectedAnswerMode,
@@ -331,6 +352,32 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? requestPayload.routeDecision?.staleFallbackAttempted
       ?? false,
     ),
+    stale_fallback_permitted: Boolean(
+      executionMetadata.stale_fallback_permitted
+      ?? requestTrace.stale_fallback_permitted
+      ?? requestPayload.routeDecision?.staleFallbackPermitted
+      ?? requestPayload.freshnessContext?.staleFallbackPermitted
+      ?? false,
+    ),
+    stale_fallback_used: Boolean(
+      executionMetadata.stale_fallback_used
+      ?? requestTrace.stale_fallback_used
+      ?? false,
+    ),
+    stale_answer_warning: executionMetadata.stale_answer_warning || requestTrace.stale_answer_warning || null,
+    answer_truth_mode: executionMetadata.answer_truth_mode || requestTrace.answer_truth_mode || null,
+    freshness_integrity_preserved: Boolean(
+      executionMetadata.freshness_integrity_preserved
+      ?? requestTrace.freshness_integrity_preserved
+      ?? !freshnessRequiredForTruth,
+    ),
+    freshness_integrity_failure_reason: executionMetadata.freshness_integrity_failure_reason
+      || requestTrace.freshness_integrity_failure_reason
+      || null,
+    freshness_truth_reason: executionMetadata.freshness_truth_reason || requestTrace.freshness_truth_reason || null,
+    freshness_next_actions: Array.isArray(executionMetadata.freshness_next_actions)
+      ? executionMetadata.freshness_next_actions
+      : (Array.isArray(requestTrace.freshness_next_actions) ? requestTrace.freshness_next_actions : []),
     retrieval_mode: executionMetadata.retrieval_mode || requestTrace.retrieval_mode || 'none',
     retrieval_eligible: Boolean(executionMetadata.retrieval_eligible ?? requestTrace.retrieval_eligible ?? false),
     retrieval_used: Boolean(executionMetadata.retrieval_used ?? requestTrace.retrieval_used ?? false),
@@ -424,6 +471,24 @@ function createRouteUnavailableResult({
           freshness_warning: routeDecision?.freshnessWarning || null,
           freshness_routed: Boolean(routeDecision?.freshnessRouted),
           stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
+          stale_fallback_permitted: Boolean(routeDecision?.staleFallbackPermitted ?? requestPayload?.freshnessContext?.staleFallbackPermitted ?? false),
+          stale_fallback_used: routeDecision?.selectedAnswerMode === 'fallback-stale-risk',
+          answer_truth_mode: routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
+            ? 'degraded-stale-allowed'
+            : 'degraded-freshness-unavailable',
+          freshness_required_for_truth: requestPayload?.freshnessContext?.freshnessNeed === 'high',
+          fresh_answer_required: requestPayload?.freshnessContext?.freshnessNeed === 'high',
+          fresh_provider_available_for_request: Boolean(routeDecision?.freshRouteAvailable),
+          fresh_provider_succeeded: false,
+          freshness_integrity_preserved: true,
+          freshness_integrity_failure_reason: null,
+          stale_answer_warning: routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
+            ? 'Operator-approved degraded stale fallback path.'
+            : null,
+          freshness_truth_reason: routeDecision?.policyReason || null,
+          freshness_next_actions: routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
+            ? ['retry-fresh-provider', 'switch-provider']
+            : ['retry-fresh-provider', 'allow-degraded-stale-fallback', 'switch-provider'],
           ai_policy_mode: routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
           ai_policy_reason: routeDecision?.policyReason || 'Local-first policy applied.',
           groq_fresh_candidate_model: routeDecision?.candidateFreshModel || null,

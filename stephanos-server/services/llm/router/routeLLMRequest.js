@@ -83,6 +83,12 @@ function buildFallbackReason(failedAttempts = []) {
   return reasons.length > 0 ? reasons.join(' | ') : null;
 }
 
+function isFreshCapableProvider(providerHealthSnapshot = {}, provider = '') {
+  const capability = providerHealthSnapshot?.[provider]?.providerCapability || {};
+  return capability.supportsFreshWeb === true
+    || capability.supportsCurrentAnswers === true;
+}
+
 export function resolveFallbackTelemetry({
   requestedProvider = DEFAULT_PROVIDER_KEY,
   selectedProvider = DEFAULT_PROVIDER_KEY,
@@ -211,6 +217,23 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const requestedProvider = routing.requestedProviderForRequest || routing.selectedProvider || savedPreferredProvider;
   const requestedRouteMode = routing.requestedRouteMode;
   const selectedProvider = routing.selectedProvider;
+  const freshnessNeed = String(routing.freshnessNeed || request?.freshnessContext?.freshnessNeed || '').trim().toLowerCase();
+  const freshnessRequiredForTruth = freshnessNeed === 'high';
+  const staleFallbackPermitted = Boolean(
+    configInput?.staleFallbackPermitted
+    ?? requestInput?.staleFallbackPermitted
+    ?? requestInput?.routeDecision?.staleFallbackPermitted
+    ?? requestInput?.freshnessContext?.staleFallbackPermitted
+    ?? false,
+  );
+  const freshProvidersInOrder = attemptOrder.filter((provider) => isFreshCapableProvider(providerHealthSnapshot, provider));
+  const freshProviderAvailableForRequest = freshProvidersInOrder.length > 0;
+  let freshProviderAttempted = null;
+  let freshProviderSucceeded = false;
+  let staleFallbackAttempted = false;
+  let staleFallbackUsed = false;
+  let staleFallbackBlocked = false;
+  let staleAnswerWarning = null;
 
   logger.info('Routing LLM request', {
     requestedProvider,
@@ -221,6 +244,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     providerSelectionSource: routing.providerSelectionSource,
     fallbackEnabled: routerConfig.fallbackEnabled,
     attemptOrder,
+    freshnessRequiredForTruth,
+    staleFallbackPermitted,
   });
   console.log('[BACKEND LIVE] Provider router request', {
     requested_provider: requestedProvider,
@@ -233,6 +258,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   });
 
   for (const provider of attemptOrder) {
+    const providerFreshCapable = isFreshCapableProvider(providerHealthSnapshot, provider);
+    if (freshnessRequiredForTruth && providerFreshCapable && !freshProviderAttempted) {
+      freshProviderAttempted = provider;
+    }
     logger.info('Executing provider attempt', {
       requestedProvider,
       savedPreferredProvider,
@@ -282,6 +311,19 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     });
 
     if (attempt.result.ok && attempt.result.outputText) {
+      if (freshnessRequiredForTruth && !providerFreshCapable) {
+        staleFallbackAttempted = true;
+        staleFallbackUsed = true;
+        staleAnswerWarning = `Freshness-critical request answered by non-fresh provider "${provider}". Current-truth verification is unavailable.`;
+        if (!staleFallbackPermitted) {
+          staleFallbackBlocked = true;
+          staleFallbackUsed = false;
+          continue;
+        }
+      }
+      if (freshnessRequiredForTruth && providerFreshCapable) {
+        freshProviderSucceeded = true;
+      }
       const failedAttempts = attempts.slice(0, -1);
       const { fallbackUsed, fallbackReason } = resolveFallbackTelemetry({
         requestedProvider,
@@ -289,6 +331,12 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         actualProvider: provider,
         failedAttempts,
       });
+      const answerTruthMode = freshnessRequiredForTruth
+        ? (providerFreshCapable ? 'fresh-verified' : 'degraded-stale-allowed')
+        : 'standard-nonfresh';
+      const freshnessIntegrityPreserved = !freshnessRequiredForTruth
+        || providerFreshCapable
+        || (staleFallbackPermitted && staleFallbackUsed && Boolean(staleAnswerWarning));
       const finalResult = {
         ...attempt.result,
         requestedProvider,
@@ -312,6 +360,29 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           attemptOrder,
           attempts,
           runtimeContext: routing.runtimeContext,
+          freshnessTruth: {
+            freshnessRequiredForTruth,
+            freshAnswerRequired: freshnessRequiredForTruth,
+            freshProviderAvailableForRequest,
+            freshProviderAttempted,
+            freshProviderSucceeded,
+            staleFallbackPermitted,
+            staleFallbackAttempted,
+            staleFallbackUsed,
+            staleFallbackBlocked,
+            staleAnswerWarning,
+            answerTruthMode,
+            freshnessIntegrityPreserved,
+            freshnessIntegrityFailureReason: freshnessIntegrityPreserved
+              ? null
+              : 'stale-fallback-presented-without-explicit-warning',
+            truthReason: providerFreshCapable
+              ? 'Fresh-capable provider satisfied freshness-critical request.'
+              : 'Operator explicitly allowed degraded stale fallback after fresh path failure.',
+            nextActions: providerFreshCapable
+              ? []
+              : ['retry-fresh-provider', 'switch-provider'],
+          },
           routing,
           routerConfig: redactSecrets(routerConfig),
         },
@@ -337,6 +408,14 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const fallbackUsed = attempts.length > 1;
   const fallbackReason = buildFallbackReason(attempts.slice(0, -1)) || lastAttempt?.failureReason || 'No provider returned a usable response.';
 
+  const freshProviderFailureReason = freshProviderAttempted
+    ? buildFallbackReason(attempts.filter((attempt) => attempt.provider === freshProviderAttempted && attempt.result?.ok !== true))
+    : null;
+  const freshnessUnavailable = freshnessRequiredForTruth && !freshProviderSucceeded;
+  const degradedFreshnessUnavailable = freshnessUnavailable && !staleFallbackPermitted;
+  const answerTruthMode = degradedFreshnessUnavailable
+    ? 'degraded-freshness-unavailable'
+    : 'standard-nonfresh';
   const failedResult = {
     ok: false,
     provider: lastAttempt?.provider || selectedProvider,
@@ -349,8 +428,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     fallbackReason,
     error: lastAttempt?.result?.error || {
       code: ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE,
-      message: 'No AI provider is currently available.',
-      retryable: false,
+      message: degradedFreshnessUnavailable
+        ? 'Freshness-critical route unavailable. No verified fresh answer is available right now.'
+        : 'No AI provider is currently available.',
+      retryable: degradedFreshnessUnavailable,
     },
     diagnostics: {
       ...(lastAttempt?.result?.diagnostics || {}),
@@ -368,6 +449,27 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       attemptOrder,
       attempts,
       runtimeContext: routing.runtimeContext,
+      freshnessTruth: {
+        freshnessRequiredForTruth,
+        freshAnswerRequired: freshnessRequiredForTruth,
+        freshProviderAvailableForRequest,
+        freshProviderAttempted,
+        freshProviderSucceeded,
+        staleFallbackPermitted,
+        staleFallbackAttempted,
+        staleFallbackUsed,
+        staleFallbackBlocked,
+        staleAnswerWarning,
+        answerTruthMode,
+        freshnessIntegrityPreserved: freshnessRequiredForTruth,
+        freshnessIntegrityFailureReason: null,
+        truthReason: degradedFreshnessUnavailable
+          ? `Fresh-capable provider failed${freshProviderFailureReason ? `: ${freshProviderFailureReason}` : ''}.`
+          : 'No provider returned a usable response.',
+        nextActions: degradedFreshnessUnavailable
+          ? ['retry-fresh-provider', 'allow-degraded-stale-fallback', 'switch-provider']
+          : ['retry-request', 'switch-provider'],
+      },
       routing,
       routerConfig: redactSecrets(routerConfig),
     },
