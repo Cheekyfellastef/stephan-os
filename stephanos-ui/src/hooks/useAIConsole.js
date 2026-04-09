@@ -270,6 +270,32 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     timeout_failure_label: executionMetadata.timeout_failure_label || requestTrace.timeout_failure_label || null,
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
+    selected_provider_health_ok: Boolean(executionMetadata.selected_provider_health_ok ?? requestTrace.selected_provider_health_ok ?? false),
+    selected_provider_health_state: executionMetadata.selected_provider_health_state || requestTrace.selected_provider_health_state || null,
+    selected_provider_execution_viability: executionMetadata.selected_provider_execution_viability || requestTrace.selected_provider_execution_viability || null,
+    selected_provider_execution_failure_layer: executionMetadata.selected_provider_execution_failure_layer || requestTrace.selected_provider_execution_failure_layer || null,
+    selected_provider_execution_failure_label: executionMetadata.selected_provider_execution_failure_label || requestTrace.selected_provider_execution_failure_label || null,
+    selected_provider_execution_failure_phase: executionMetadata.selected_provider_execution_failure_phase || requestTrace.selected_provider_execution_failure_phase || null,
+    selected_provider_timeout_category: executionMetadata.selected_provider_timeout_category || requestTrace.selected_provider_timeout_category || null,
+    selected_provider_model_warmup_likely: Boolean(
+      executionMetadata.selected_provider_model_warmup_likely
+      ?? requestTrace.selected_provider_model_warmup_likely
+      ?? false,
+    ),
+    selected_provider_warmup_retry_applied: Boolean(
+      executionMetadata.selected_provider_warmup_retry_applied
+      ?? requestTrace.selected_provider_warmup_retry_applied
+      ?? false,
+    ),
+    selected_provider_warmup_retry_timeout_ms: executionMetadata.selected_provider_warmup_retry_timeout_ms
+      || requestTrace.selected_provider_warmup_retry_timeout_ms
+      || null,
+    selected_provider_elapsed_ms: executionMetadata.selected_provider_elapsed_ms || requestTrace.selected_provider_elapsed_ms || null,
+    explicit_provider_fallback_policy_triggered: Boolean(
+      executionMetadata.explicit_provider_fallback_policy_triggered
+      ?? requestTrace.explicit_provider_fallback_policy_triggered
+      ?? false,
+    ),
     freshness_need: freshnessNeed,
     freshness_reason: executionMetadata.freshness_reason || requestTrace.freshness_reason || requestPayload.freshnessContext?.freshnessReason || 'n/a',
     stale_risk: executionMetadata.stale_risk || requestTrace.stale_risk || requestPayload.freshnessContext?.staleRisk || 'low',

@@ -375,6 +375,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       || routingDiagnostics.selectedProvider
       || providerHealthSnapshot?.routing?.selectedProvider
       || providerResolution.resolvedProvider;
+    const selectedProviderAttempt = attemptDiagnostics.find((attempt) => String(attempt?.provider || '').trim().toLowerCase() === String(selectedProviderForRequest || '').trim().toLowerCase()) || null;
     const actualProviderUsed = llmResult.actualProviderUsed || llmResult.provider;
     const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
     const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
@@ -493,6 +494,43 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       : (providerHealthSnapshot?.[executionMetadata.selected_provider]?.detail
         || providerHealthSnapshot?.[executionMetadata.selected_provider]?.reason
         || 'Selected provider is not executable.');
+    executionMetadata.selected_provider_health_ok = providerHealthSnapshot?.[executionMetadata.selected_provider]?.ok === true;
+    executionMetadata.selected_provider_health_state = providerHealthSnapshot?.[executionMetadata.selected_provider]?.state
+      || providerHealthSnapshot?.[executionMetadata.selected_provider]?.badge
+      || 'unknown';
+    executionMetadata.selected_provider_execution_viability = selectedProviderAttempt?.result?.ok === true
+      ? 'viable'
+      : (selectedProviderAttempt ? 'failed' : 'not-attempted');
+    executionMetadata.selected_provider_execution_failure_layer = selectedProviderAttempt?.result?.error?.details?.failureLayer
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.executionFailureLayer
+      || null;
+    executionMetadata.selected_provider_execution_failure_label = selectedProviderAttempt?.result?.error?.details?.failureLabel
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.executionFailureLabel
+      || null;
+    executionMetadata.selected_provider_execution_failure_phase = selectedProviderAttempt?.result?.error?.details?.failurePhase
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.executionFailurePhase
+      || null;
+    executionMetadata.selected_provider_model_warmup_likely = Boolean(
+      selectedProviderAttempt?.result?.error?.details?.modelWarmupLikely
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.modelWarmupLikely
+      ?? false,
+    );
+    executionMetadata.selected_provider_timeout_category = selectedProviderAttempt?.result?.error?.details?.timeoutCategory
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.timeoutCategory
+      || null;
+    executionMetadata.selected_provider_warmup_retry_applied = Boolean(
+      selectedProviderAttempt?.result?.error?.details?.warmupRetryApplied
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryApplied
+      ?? false,
+    );
+    executionMetadata.selected_provider_warmup_retry_timeout_ms = selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryTimeoutMs
+      || null;
+    executionMetadata.selected_provider_elapsed_ms = selectedProviderAttempt?.result?.error?.details?.elapsedMs
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.elapsedMs
+      || null;
+    executionMetadata.explicit_provider_fallback_policy_triggered = Boolean(
+      executionMetadata.fallback_used && executionMetadata.actual_provider_used !== executionMetadata.selected_provider,
+    );
     const requestTrace = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
@@ -517,6 +555,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       fallback_used: executionMetadata.fallback_used,
       fallback_reason: executionMetadata.fallback_reason,
       fallback_provider_used: executionMetadata.fallback_provider_used,
+      selected_provider_health_ok: executionMetadata.selected_provider_health_ok,
+      selected_provider_health_state: executionMetadata.selected_provider_health_state,
+      selected_provider_execution_viability: executionMetadata.selected_provider_execution_viability,
+      selected_provider_execution_failure_layer: executionMetadata.selected_provider_execution_failure_layer,
+      selected_provider_execution_failure_label: executionMetadata.selected_provider_execution_failure_label,
+      selected_provider_execution_failure_phase: executionMetadata.selected_provider_execution_failure_phase,
+      selected_provider_timeout_category: executionMetadata.selected_provider_timeout_category,
+      selected_provider_model_warmup_likely: executionMetadata.selected_provider_model_warmup_likely,
+      selected_provider_warmup_retry_applied: executionMetadata.selected_provider_warmup_retry_applied,
+      selected_provider_warmup_retry_timeout_ms: executionMetadata.selected_provider_warmup_retry_timeout_ms,
+      selected_provider_elapsed_ms: executionMetadata.selected_provider_elapsed_ms,
+      explicit_provider_fallback_policy_triggered: executionMetadata.explicit_provider_fallback_policy_triggered,
       effective_answer_mode: executionMetadata.effective_answer_mode,
       fresh_provider_attempted: executionMetadata.fresh_provider_attempted,
       fresh_provider_failure_reason: executionMetadata.fresh_provider_failure_reason,

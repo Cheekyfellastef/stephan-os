@@ -17,6 +17,8 @@ const OLLAMA_MODEL_POLICY = Object.freeze({
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
+const OLLAMA_WARMUP_RETRY_MODELS = new Set(['gpt-oss:20b', 'qwen:32b', 'llama3.3:70b']);
+const OLLAMA_WARMUP_RETRY_MIN_TIMEOUT_MS = 120000;
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -301,6 +303,63 @@ function classifyOllamaFailure(error) {
   };
 }
 
+function classifyOllamaFailurePhase({ error, phase = '', abortedBy = '' } = {}) {
+  const normalizedPhase = String(phase || '').trim().toLowerCase();
+  const normalizedAbort = String(abortedBy || '').trim().toLowerCase();
+  const base = classifyOllamaFailure(error);
+
+  if (normalizedAbort === 'external-signal') {
+    return {
+      ...base,
+      failureLayer: 'backend',
+      failureLabel: 'backend_abort',
+      failurePhase: normalizedPhase || 'unknown',
+      timeoutCategory: 'backend-abort',
+      modelWarmupLikely: false,
+    };
+  }
+
+  if (base.failureType === 'timeout') {
+    if (normalizedPhase === 'awaiting-response-headers') {
+      return {
+        ...base,
+        failureLayer: 'provider',
+        failureLabel: 'connect_timeout',
+        failurePhase: normalizedPhase,
+        timeoutCategory: 'connect-timeout',
+        modelWarmupLikely: true,
+      };
+    }
+    if (normalizedPhase === 'reading-response-body') {
+      return {
+        ...base,
+        failureLayer: 'provider',
+        failureLabel: 'full_response_timeout',
+        failurePhase: normalizedPhase,
+        timeoutCategory: 'full-response-timeout',
+        modelWarmupLikely: false,
+      };
+    }
+    return {
+      ...base,
+      failureLayer: 'provider',
+      failureLabel: 'first_token_timeout',
+      failurePhase: normalizedPhase || 'awaiting-first-token',
+      timeoutCategory: 'first-token-timeout',
+      modelWarmupLikely: true,
+    };
+  }
+
+  return {
+    ...base,
+    failureLayer: 'provider',
+    failureLabel: base.failureType || 'provider_error',
+    failurePhase: normalizedPhase || 'unknown',
+    timeoutCategory: 'not-timeout',
+    modelWarmupLikely: false,
+  };
+}
+
 function buildOllamaHealthState({ resolved, ok, responseStatus = null, failure = null }) {
   const baseURL = String(resolved?.effectiveBaseURL ?? resolved?.baseURL ?? '').trim();
   const configuredBaseURL = String(resolved?.configuredBaseURL ?? resolved?.baseURL ?? '').trim();
@@ -525,7 +584,7 @@ function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
 }
 
 async function fetchOllamaTags(resolved) {
-  const response = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
+  const { response } = await fetchWithTimeout(resolved.healthEndpoint, { method: 'GET' }, resolved.timeoutMs);
   const raw = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
   return {
     ok: response.ok,
@@ -537,11 +596,103 @@ async function fetchOllamaTags(resolved) {
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let abortedBy = '';
+  const timeout = setTimeout(() => {
+    abortedBy = 'timeout';
+    controller.abort();
+  }, timeoutMs);
+  if (options?.signal && typeof options.signal.addEventListener === 'function') {
+    options.signal.addEventListener('abort', () => {
+      abortedBy = 'external-signal';
+      controller.abort();
+    }, { once: true });
+  }
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return { response, abortedBy };
+  } catch (error) {
+    if (error?.name === 'AbortError' && abortedBy) {
+      error.abortSource = abortedBy;
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function runOllamaChatAttempt({
+  resolved,
+  request,
+  modelToUse,
+  timeoutPolicy,
+  timeoutMs,
+  attempt = 1,
+} = {}) {
+  const startedAtMs = Date.now();
+  let phase = 'awaiting-response-headers';
+
+  try {
+    const { response, abortedBy } = await fetchWithTimeout(resolved.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: modelToUse,
+        stream: false,
+        messages: [
+          ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
+          ...request.messages,
+        ],
+      }),
+    }, timeoutMs);
+    phase = 'reading-response-body';
+    const raw = await response.json().catch(() => ({}));
+
+    return {
+      ok: response.ok,
+      response,
+      raw,
+      attempt,
+      elapsedMs: Date.now() - startedAtMs,
+      failure: null,
+      diagnostics: {
+        timeoutMs,
+        timeoutSource: timeoutPolicy.timeoutSource,
+        timeoutModel: timeoutPolicy.timeoutModel,
+        failureLayer: null,
+        failureLabel: null,
+        failurePhase: null,
+        timeoutCategory: null,
+        modelWarmupLikely: false,
+        abortedBy: abortedBy || null,
+      },
+    };
+  } catch (error) {
+    const failure = classifyOllamaFailurePhase({
+      error,
+      phase,
+      abortedBy: error?.abortSource || '',
+    });
+
+    return {
+      ok: false,
+      response: null,
+      raw: {},
+      error,
+      attempt,
+      elapsedMs: Date.now() - startedAtMs,
+      failure,
+      diagnostics: {
+        timeoutMs,
+        timeoutSource: timeoutPolicy.timeoutSource,
+        timeoutModel: timeoutPolicy.timeoutModel,
+        failureLayer: failure.failureLayer,
+        failureLabel: failure.failureLabel,
+        failurePhase: failure.failurePhase,
+        timeoutCategory: failure.timeoutCategory,
+        modelWarmupLikely: failure.modelWarmupLikely,
+        abortedBy: error?.abortSource || null,
+      },
+    };
   }
 }
 
@@ -649,6 +800,8 @@ export async function runOllamaProvider(request, config = {}) {
     const requestedModel = modelSelection.requestedModel;
     const modelToUse = modelSelection.selectedModel;
     const timeoutPolicy = resolveTimeoutForModel(resolved, modelToUse);
+    const warmupRetryEligible = OLLAMA_WARMUP_RETRY_MODELS.has(String(modelToUse || '').trim().toLowerCase());
+    const warmupRetryTimeoutMs = Math.max(timeoutPolicy.timeoutMs, OLLAMA_WARMUP_RETRY_MIN_TIMEOUT_MS);
 
     console.log('[BACKEND LIVE] Ollama provider request starting', {
       baseURL: resolved.baseURL,
@@ -664,20 +817,116 @@ export async function runOllamaProvider(request, config = {}) {
       timeoutSource: timeoutPolicy.timeoutSource,
     });
 
-    const response = await fetchWithTimeout(resolved.endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: modelToUse,
-        stream: false,
-        messages: [
-          ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
-          ...request.messages,
-        ],
-      }),
-    }, timeoutPolicy.timeoutMs);
+    const firstAttempt = await runOllamaChatAttempt({
+      resolved,
+      request,
+      modelToUse,
+      timeoutPolicy,
+      timeoutMs: timeoutPolicy.timeoutMs,
+      attempt: 1,
+    });
+    const shouldRetryWarmup = !firstAttempt.ok
+      && firstAttempt.failure?.failureType === 'timeout'
+      && firstAttempt.failure?.modelWarmupLikely === true
+      && warmupRetryEligible
+      && warmupRetryTimeoutMs > timeoutPolicy.timeoutMs;
+    const finalAttempt = shouldRetryWarmup
+      ? await runOllamaChatAttempt({
+        resolved,
+        request,
+        modelToUse,
+        timeoutPolicy,
+        timeoutMs: warmupRetryTimeoutMs,
+        attempt: 2,
+      })
+      : firstAttempt;
 
-    const raw = await response.json().catch(() => ({}));
+    if (!finalAttempt.ok) {
+      const failure = finalAttempt.failure || classifyOllamaFailure(finalAttempt.error);
+      const message = failure.failureType === 'timeout'
+        ? 'Cannot connect to Ollama: it took too long to respond.'
+        : failure.failureType === 'connection_refused'
+          ? 'Cannot connect to Ollama: nothing answered at that address.'
+          : failure.failureType === 'network_error'
+            ? 'Cannot connect to Ollama: that device could not be reached.'
+            : 'Ollama connection failed.';
+      const retriesAttempted = shouldRetryWarmup ? 1 : 0;
+      const timeoutHint = failure.failureType === 'timeout' && warmupRetryEligible
+        ? ` Model warmup for ${modelToUse} may require more than ${timeoutPolicy.timeoutMs}ms on first load.`
+        : '';
+
+      console.error('[BACKEND LIVE] Ollama provider request threw', {
+        baseURL: resolved.baseURL,
+        requestedModel,
+        selectedModel: modelToUse,
+        timeoutMs: timeoutPolicy.timeoutMs,
+        warmupRetryApplied: shouldRetryWarmup,
+        warmupRetryTimeoutMs: shouldRetryWarmup ? warmupRetryTimeoutMs : null,
+        failure,
+      });
+
+      return {
+        ok: false,
+        provider: 'ollama',
+        model: resolved.model,
+        outputText: '',
+        error: {
+          code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+          message: `${message}${timeoutHint}`.trim(),
+          retryable: true,
+          details: {
+            ...failure,
+            timeoutMs: finalAttempt.diagnostics.timeoutMs,
+            timeoutSource: timeoutPolicy.timeoutSource,
+            timeoutModel: timeoutPolicy.timeoutModel,
+            elapsedMs: finalAttempt.elapsedMs,
+            retriesAttempted,
+            warmupRetryApplied: shouldRetryWarmup,
+          },
+        },
+        diagnostics: {
+          ollama: {
+            baseURL: resolved.baseURL,
+            configuredBaseURL: resolved.configuredBaseURL,
+            routeClass: resolved.routeDecision?.routeClass,
+            routeNotes: resolved.routeDecision?.routeNotes || [],
+            requestedModel,
+            selectedModel: modelToUse,
+            availableModels,
+            autoSelectedModel: modelSelection.autoSelectedModel,
+            defaultModel: OLLAMA_MODEL_POLICY.defaultReasoning,
+            preferredModel: modelSelection.preferredModel,
+            escalationModel: OLLAMA_MODEL_POLICY.deepReasoning,
+            escalationActive: modelSelection.escalatedToDeepModel,
+            escalationReason: modelSelection.escalationReason,
+            localReasoningMode: modelSelection.profile.localReasoningMode,
+            localReasoningProfile: modelSelection.profile,
+            policyReason: modelSelection.policyReason,
+            fallbackModel: modelSelection.fallbackModel,
+            fallbackModelUsed: modelSelection.fallbackModelUsed,
+            fallbackReason: modelSelection.fallbackReason,
+            timeoutMs: timeoutPolicy.timeoutMs,
+            timeoutSource: timeoutPolicy.timeoutSource,
+            timeoutModel: timeoutPolicy.timeoutModel,
+            defaultTimeoutMs: Number(resolved.defaultOllamaTimeoutMs || resolved.timeoutMs || SAFE_OLLAMA_TIMEOUT_MS),
+            perModelTimeoutOverrides: resolved.perModelTimeoutOverrides || {},
+            executionHealthState: 'reachable-but-unfit',
+            executionViability: 'degraded-timeout',
+            executionFailureLayer: finalAttempt.diagnostics.failureLayer,
+            executionFailureLabel: finalAttempt.diagnostics.failureLabel,
+            executionFailurePhase: finalAttempt.diagnostics.failurePhase,
+            timeoutCategory: finalAttempt.diagnostics.timeoutCategory,
+            modelWarmupLikely: finalAttempt.diagnostics.modelWarmupLikely,
+            warmupRetryApplied: shouldRetryWarmup,
+            warmupRetryTimeoutMs: shouldRetryWarmup ? warmupRetryTimeoutMs : null,
+            retriesAttempted,
+            elapsedMs: finalAttempt.elapsedMs,
+          },
+        },
+      };
+    }
+
+    const { response, raw } = finalAttempt;
 
     if (!response.ok) {
       const message = raw?.error || `Ollama request failed with HTTP ${response.status}.`;
@@ -741,6 +990,17 @@ export async function runOllamaProvider(request, config = {}) {
           timeoutModel: timeoutPolicy.timeoutModel,
           defaultTimeoutMs: Number(resolved.defaultOllamaTimeoutMs || resolved.timeoutMs || SAFE_OLLAMA_TIMEOUT_MS),
           perModelTimeoutOverrides: resolved.perModelTimeoutOverrides || {},
+          executionHealthState: 'reachable-and-viable',
+          executionViability: 'ready',
+          executionFailureLayer: null,
+          executionFailureLabel: null,
+          executionFailurePhase: null,
+          timeoutCategory: null,
+          modelWarmupLikely: false,
+          warmupRetryApplied: shouldRetryWarmup,
+          warmupRetryTimeoutMs: shouldRetryWarmup ? warmupRetryTimeoutMs : null,
+          retriesAttempted: shouldRetryWarmup ? 1 : 0,
+          elapsedMs: finalAttempt.elapsedMs,
         },
       },
     };
