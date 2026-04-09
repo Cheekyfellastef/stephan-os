@@ -702,3 +702,59 @@ test('buildSupportSnapshot prefers last request provider metadata over stale adj
   assert.match(snapshot, /Last Requested Provider: groq/);
   assert.doesNotMatch(snapshot, /Last Requested Provider: ollama/);
 });
+
+test('buildSupportSnapshot projects freshness integrity truth modes explicitly', () => {
+  const shared = {
+    routeTruthView: {
+      requestedProvider: 'gemini',
+      selectedProvider: 'gemini',
+      executedProvider: 'gemini',
+      backendReachableState: 'yes',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  };
+
+  const freshVerified = buildSupportSnapshot({
+    ...shared,
+    runtimeStatus: {
+      lastAnswerTruthMode: 'fresh-verified',
+      lastFreshnessIntegrityPreserved: 'true',
+      lastStaleFallbackUsed: 'no',
+    },
+    now: { toISOString: () => '2026-04-09T00:00:00.000Z' },
+  });
+  assert.match(freshVerified, /Last Answer Truth Mode: fresh-verified/);
+
+  const freshnessUnavailable = buildSupportSnapshot({
+    ...shared,
+    runtimeStatus: {
+      lastAnswerTruthMode: 'degraded-freshness-unavailable',
+      lastFreshnessIntegrityPreserved: 'true',
+      lastStaleFallbackUsed: 'no',
+      lastFreshnessTruthReason: 'Fresh-capable provider failed.',
+    },
+    now: { toISOString: () => '2026-04-09T00:00:01.000Z' },
+  });
+  assert.match(freshnessUnavailable, /Last Answer Truth Mode: degraded-freshness-unavailable/);
+
+  const staleAllowed = buildSupportSnapshot({
+    ...shared,
+    runtimeStatus: {
+      lastAnswerTruthMode: 'degraded-stale-allowed',
+      lastFreshnessIntegrityPreserved: 'true',
+      lastStaleFallbackPermitted: 'true',
+      lastStaleFallbackUsed: 'yes',
+      lastStaleAnswerWarning: 'Freshness-critical request answered by non-fresh provider.',
+    },
+    now: { toISOString: () => '2026-04-09T00:00:02.000Z' },
+  });
+  assert.match(staleAllowed, /Last Answer Truth Mode: degraded-stale-allowed/);
+  assert.match(staleAllowed, /Last Stale Answer Warning: Freshness-critical request answered by non-fresh provider\./);
+});

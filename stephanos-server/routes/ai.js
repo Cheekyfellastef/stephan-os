@@ -243,6 +243,7 @@ router.post('/chat', async (req, res) => {
     runtimeContext = {},
     freshnessContext = null,
     routeDecision = null,
+    staleFallbackPermitted = undefined,
   } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
@@ -362,6 +363,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         subsystem_context: contextBundle,
         relevant_memory: memoryHits,
       },
+      staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
     });
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
@@ -377,6 +379,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       || providerResolution.resolvedProvider;
     const selectedProviderAttempt = attemptDiagnostics.find((attempt) => String(attempt?.provider || '').trim().toLowerCase() === String(selectedProviderForRequest || '').trim().toLowerCase()) || null;
     const actualProviderUsed = llmResult.actualProviderUsed || llmResult.provider;
+    const freshnessTruth = llmResult.diagnostics?.freshnessTruth || {};
     const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
     const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
       || routeDecision?.freshnessNeed === 'high'
@@ -384,11 +387,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ? requestedProviderForRequest
       : null;
     const freshProviderFailureReason = findAttemptFailureReason(attemptDiagnostics, freshProviderAttempted);
-    const effectiveAnswerMode = llmResult.fallbackUsed
+    const effectiveAnswerMode = freshnessTruth.answerTruthMode
+      || (llmResult.fallbackUsed
       ? (actualProviderUsed === 'ollama' ? 'stale-risk-local-fallback' : 'cloud-fallback')
       : ((freshnessContext?.freshnessNeed === 'high' || routeDecision?.freshnessNeed === 'high') && actualProviderUsed !== 'ollama'
         ? 'fresh-cloud'
-        : (actualProviderUsed === 'ollama' ? 'local-private' : 'cloud'));
+        : (actualProviderUsed === 'ollama' ? 'local-private' : 'cloud')));
     const executionMetadata = {
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
@@ -455,7 +459,20 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       zero_cost_policy: providerHealthSnapshot?.groq?.providerCapability?.zeroCostPolicy ?? true,
       paid_fresh_routes_enabled: providerHealthSnapshot?.groq?.providerCapability?.paidFreshRoutesEnabled ?? false,
       fresh_capability_mode: providerHealthSnapshot?.groq?.providerCapability?.freshCapabilityMode || 'zero-cost-only',
-      stale_fallback_attempted: Boolean(routeDecision?.staleFallbackAttempted),
+      freshness_required_for_truth: Boolean(freshnessTruth.freshnessRequiredForTruth),
+      fresh_answer_required: Boolean(freshnessTruth.freshAnswerRequired),
+      fresh_provider_available_for_request: Boolean(freshnessTruth.freshProviderAvailableForRequest),
+      fresh_provider_attempted: freshnessTruth.freshProviderAttempted || freshProviderAttempted,
+      fresh_provider_succeeded: Boolean(freshnessTruth.freshProviderSucceeded),
+      stale_fallback_permitted: Boolean(freshnessTruth.staleFallbackPermitted ?? (staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false)),
+      stale_fallback_attempted: Boolean(freshnessTruth.staleFallbackAttempted ?? routeDecision?.staleFallbackAttempted),
+      stale_fallback_used: Boolean(freshnessTruth.staleFallbackUsed),
+      stale_answer_warning: freshnessTruth.staleAnswerWarning || null,
+      answer_truth_mode: freshnessTruth.answerTruthMode || null,
+      freshness_integrity_preserved: Boolean(freshnessTruth.freshnessIntegrityPreserved),
+      freshness_integrity_failure_reason: freshnessTruth.freshnessIntegrityFailureReason || null,
+      freshness_truth_reason: freshnessTruth.truthReason || null,
+      freshness_next_actions: Array.isArray(freshnessTruth.nextActions) ? freshnessTruth.nextActions : [],
       retrieval_mode: retrieval.truth.retrievalMode,
       retrieval_eligible: retrieval.truth.retrievalEligible,
       retrieval_used: retrieval.truth.retrievalUsed,
@@ -568,8 +585,21 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       selected_provider_elapsed_ms: executionMetadata.selected_provider_elapsed_ms,
       explicit_provider_fallback_policy_triggered: executionMetadata.explicit_provider_fallback_policy_triggered,
       effective_answer_mode: executionMetadata.effective_answer_mode,
+      freshness_required_for_truth: executionMetadata.freshness_required_for_truth,
+      fresh_answer_required: executionMetadata.fresh_answer_required,
+      fresh_provider_available_for_request: executionMetadata.fresh_provider_available_for_request,
       fresh_provider_attempted: executionMetadata.fresh_provider_attempted,
+      fresh_provider_succeeded: executionMetadata.fresh_provider_succeeded,
       fresh_provider_failure_reason: executionMetadata.fresh_provider_failure_reason,
+      stale_fallback_permitted: executionMetadata.stale_fallback_permitted,
+      stale_fallback_attempted: executionMetadata.stale_fallback_attempted,
+      stale_fallback_used: executionMetadata.stale_fallback_used,
+      stale_answer_warning: executionMetadata.stale_answer_warning,
+      answer_truth_mode: executionMetadata.answer_truth_mode,
+      freshness_integrity_preserved: executionMetadata.freshness_integrity_preserved,
+      freshness_integrity_failure_reason: executionMetadata.freshness_integrity_failure_reason,
+      freshness_truth_reason: executionMetadata.freshness_truth_reason,
+      freshness_next_actions: executionMetadata.freshness_next_actions,
       grounding_enabled: executionMetadata.grounding_enabled,
       grounding_active_for_request: executionMetadata.grounding_active_for_request,
       freshness_need: freshnessContext?.freshnessNeed || 'low',
@@ -600,7 +630,6 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       zero_cost_policy: executionMetadata.zero_cost_policy,
       paid_fresh_routes_enabled: executionMetadata.paid_fresh_routes_enabled,
       fresh_capability_mode: executionMetadata.fresh_capability_mode,
-      stale_fallback_attempted: executionMetadata.stale_fallback_attempted,
       retrieval_mode: executionMetadata.retrieval_mode,
       retrieval_eligible: executionMetadata.retrieval_eligible,
       retrieval_used: executionMetadata.retrieval_used,
@@ -683,6 +712,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           fallback_used: executionMetadata.fallback_used,
           fallback_reason: executionMetadata.fallback_reason,
           provider_execution_truth: providerExecutionTruth,
+          freshness_next_actions: executionMetadata.freshness_next_actions,
           assistant_context: contextBundle,
           relevant_memory: memoryHits,
           tile_context_diagnostics: assembledTileContext?.diagnostics || null,
@@ -734,6 +764,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         fallback_used: executionMetadata.fallback_used,
         fallback_reason: executionMetadata.fallback_reason,
         provider_execution_truth: providerExecutionTruth,
+        freshness_next_actions: executionMetadata.freshness_next_actions,
         assistant_context: contextBundle,
         relevant_memory: memoryHits,
         suggested_actions: [{ label: 'List pending proposals', command: '/proposals list' }, { label: 'View recent activity', command: '/activity recent' }],

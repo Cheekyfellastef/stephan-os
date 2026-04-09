@@ -229,11 +229,25 @@ export default function StatusPanel() {
       lastExplicitProviderFallbackPolicyTriggered: String(lastExecutionMetadata?.explicit_provider_fallback_policy_triggered ?? 'n/a'),
       lastEffectiveAnswerMode: lastExecutionMetadata?.effective_answer_mode || 'n/a',
       lastFreshProviderAttempted: lastExecutionMetadata?.fresh_provider_attempted || 'n/a',
+      lastFreshProviderSucceeded: String(lastExecutionMetadata?.fresh_provider_succeeded ?? 'n/a'),
       lastFreshProviderFailureReason: lastExecutionMetadata?.fresh_provider_failure_reason || 'n/a',
       lastGroundingEnabled: String(lastExecutionMetadata?.grounding_enabled ?? 'n/a'),
       lastGroundingActiveForRequest: lastExecutionMetadata?.grounding_active_for_request || 'n/a',
+      lastFreshnessRequiredForTruth: String(lastExecutionMetadata?.freshness_required_for_truth ?? 'n/a'),
+      lastFreshAnswerRequired: String(lastExecutionMetadata?.fresh_answer_required ?? 'n/a'),
+      lastFreshProviderAvailableForRequest: String(lastExecutionMetadata?.fresh_provider_available_for_request ?? 'n/a'),
+      lastStaleFallbackPermitted: String(lastExecutionMetadata?.stale_fallback_permitted ?? 'n/a'),
       lastStaleFallbackAttempted: lastExecutionMetadata ? (lastExecutionMetadata.stale_fallback_attempted ? 'yes' : 'no') : 'n/a',
+      lastStaleFallbackUsed: lastExecutionMetadata ? (lastExecutionMetadata.stale_fallback_used ? 'yes' : 'no') : 'n/a',
+      lastStaleAnswerWarning: lastExecutionMetadata?.stale_answer_warning || 'n/a',
       lastFreshnessNeed: lastExecutionMetadata?.freshness_need || 'n/a',
+      lastAnswerTruthMode: lastExecutionMetadata?.answer_truth_mode || 'n/a',
+      lastFreshnessIntegrityPreserved: String(lastExecutionMetadata?.freshness_integrity_preserved ?? 'n/a'),
+      lastFreshnessIntegrityFailureReason: lastExecutionMetadata?.freshness_integrity_failure_reason || 'n/a',
+      lastFreshnessTruthReason: lastExecutionMetadata?.freshness_truth_reason || 'n/a',
+      lastFreshnessNextActions: Array.isArray(lastExecutionMetadata?.freshness_next_actions)
+        ? lastExecutionMetadata.freshness_next_actions.join(', ')
+        : 'n/a',
       lastFreshnessReason: lastExecutionMetadata?.freshness_reason || 'n/a',
       lastStaleRisk: lastExecutionMetadata?.stale_risk || 'n/a',
       lastAnswerMode: lastExecutionMetadata?.selected_answer_mode || 'n/a',
@@ -502,10 +516,22 @@ export default function StatusPanel() {
         <li>Last Fallback Reason: {lastExecutionMetadata?.fallback_reason || 'n/a'}</li>
         <li>Last Effective Answer Mode: {lastExecutionMetadata?.effective_answer_mode || 'n/a'}</li>
         <li>Last Fresh Provider Attempted: {lastExecutionMetadata?.fresh_provider_attempted || 'n/a'}</li>
+        <li>Last Fresh Provider Succeeded: {String(lastExecutionMetadata?.fresh_provider_succeeded ?? 'n/a')}</li>
         <li>Last Fresh Provider Failure Reason: {lastExecutionMetadata?.fresh_provider_failure_reason || 'n/a'}</li>
         <li>Grounding Enabled: {String(lastExecutionMetadata?.grounding_enabled ?? 'n/a')}</li>
         <li>Grounding Active For Request: {lastExecutionMetadata?.grounding_active_for_request || 'n/a'}</li>
+        <li>Freshness Required For Truth: {String(lastExecutionMetadata?.freshness_required_for_truth ?? 'n/a')}</li>
+        <li>Fresh Answer Required: {String(lastExecutionMetadata?.fresh_answer_required ?? 'n/a')}</li>
+        <li>Fresh Provider Available For Request: {String(lastExecutionMetadata?.fresh_provider_available_for_request ?? 'n/a')}</li>
+        <li>Last Stale Fallback Permitted: {String(lastExecutionMetadata?.stale_fallback_permitted ?? 'n/a')}</li>
         <li>Last Freshness Need: {lastExecutionMetadata?.freshness_need || 'n/a'}</li>
+        <li>Last Answer Truth Mode: {lastExecutionMetadata?.answer_truth_mode || 'n/a'}</li>
+        <li>Last Stale Fallback Used: {String(lastExecutionMetadata?.stale_fallback_used ?? 'n/a')}</li>
+        <li>Last Stale Answer Warning: {lastExecutionMetadata?.stale_answer_warning || 'n/a'}</li>
+        <li>Freshness Integrity Preserved: {String(lastExecutionMetadata?.freshness_integrity_preserved ?? 'n/a')}</li>
+        <li>Freshness Integrity Failure Reason: {lastExecutionMetadata?.freshness_integrity_failure_reason || 'n/a'}</li>
+        <li>Freshness Truth Reason: {lastExecutionMetadata?.freshness_truth_reason || 'n/a'}</li>
+        <li>Freshness Next Actions: {Array.isArray(lastExecutionMetadata?.freshness_next_actions) ? lastExecutionMetadata.freshness_next_actions.join(', ') : 'n/a'}</li>
         <li>Last Answer Mode: {lastExecutionMetadata?.selected_answer_mode || 'n/a'}</li>
         <li>Last Stale Risk: {lastExecutionMetadata?.stale_risk || 'n/a'}</li>
         <li>Last Freshness Reason: {lastExecutionMetadata?.freshness_reason || 'n/a'}</li>
