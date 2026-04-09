@@ -457,6 +457,72 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? contextAssemblyMetadata.context_integrity_preserved
       ?? true,
     ),
+    planning_mode: executionMetadata.planning_mode
+      || requestTrace.planning_mode
+      || contextAssemblyMetadata.planning_mode
+      || 'inactive',
+    planning_intent_detected: Boolean(
+      executionMetadata.planning_intent_detected
+      ?? requestTrace.planning_intent_detected
+      ?? contextAssemblyMetadata.planning_intent_detected
+      ?? false,
+    ),
+    planning_confidence: executionMetadata.planning_confidence
+      || requestTrace.planning_confidence
+      || contextAssemblyMetadata.planning_confidence
+      || 'low',
+    current_system_maturity_estimate: executionMetadata.current_system_maturity_estimate
+      || requestTrace.current_system_maturity_estimate
+      || contextAssemblyMetadata.current_system_maturity_estimate
+      || 'unknown',
+    candidate_moves: executionMetadata.candidate_moves
+      || requestTrace.candidate_moves
+      || contextAssemblyMetadata.candidate_moves
+      || [],
+    ranked_moves: executionMetadata.ranked_moves
+      || requestTrace.ranked_moves
+      || contextAssemblyMetadata.ranked_moves
+      || [],
+    planning_blockers: executionMetadata.planning_blockers
+      || requestTrace.planning_blockers
+      || contextAssemblyMetadata.planning_blockers
+      || [],
+    planning_dependencies: executionMetadata.planning_dependencies
+      || requestTrace.planning_dependencies
+      || contextAssemblyMetadata.planning_dependencies
+      || [],
+    recommended_next_move: executionMetadata.recommended_next_move
+      || requestTrace.recommended_next_move
+      || contextAssemblyMetadata.recommended_next_move
+      || null,
+    recommendation_reason: executionMetadata.recommendation_reason
+      || requestTrace.recommendation_reason
+      || contextAssemblyMetadata.recommendation_reason
+      || null,
+    planning_evidence_sources: executionMetadata.planning_evidence_sources
+      || requestTrace.planning_evidence_sources
+      || contextAssemblyMetadata.planning_evidence_sources
+      || [],
+    planning_truth_warnings: executionMetadata.planning_truth_warnings
+      || requestTrace.planning_truth_warnings
+      || contextAssemblyMetadata.planning_truth_warnings
+      || [],
+    planning_operator_actions: executionMetadata.planning_operator_actions
+      || requestTrace.planning_operator_actions
+      || contextAssemblyMetadata.planning_operator_actions
+      || [],
+    codex_handoff_eligible: Boolean(
+      executionMetadata.codex_handoff_eligible
+      ?? requestTrace.codex_handoff_eligible
+      ?? contextAssemblyMetadata.codex_handoff_eligible
+      ?? false,
+    ),
+    proposal_eligible: Boolean(
+      executionMetadata.proposal_eligible
+      ?? requestTrace.proposal_eligible
+      ?? contextAssemblyMetadata.proposal_eligible
+      ?? false,
+    ),
   };
 }
 

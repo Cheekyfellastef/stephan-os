@@ -476,3 +476,23 @@ test('StatusPanel truth rows degrade uiReachable honestly and keep provider stag
   assert.doesNotMatch(rendered, /Route Kind: cloud/);
   assert.doesNotMatch(rendered, /Requested Provider: mock/);
 });
+
+test('StatusPanel renders mission synthesis rows without crashing on partial metadata', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases, 'status-panel');
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    lastExecutionMetadata: {
+      planning_intent_detected: true,
+      planning_mode: 'self-build-mission-synthesis',
+      recommendation_reason: 'Top move strengthens bounded orchestration.',
+      planning_evidence_sources: ['runtimeTruth'],
+      proposal_eligible: true,
+      codex_handoff_eligible: false,
+    },
+  });
+
+  const rendered = renderStatusPanel();
+  assert.match(rendered, /\[MISSION SYNTHESIS\] Active: true/);
+  assert.match(rendered, /\[MISSION SYNTHESIS\] Recommended Move: n\/a/);
+  assert.match(rendered, /\[MISSION SYNTHESIS\] Recommendation Reason: Top move strengthens bounded orchestration\./);
+  assert.match(rendered, /\[MISSION SYNTHESIS\] Proposal Eligible: true/);
+});

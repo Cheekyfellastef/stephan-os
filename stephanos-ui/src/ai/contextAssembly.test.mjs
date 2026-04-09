@@ -51,6 +51,9 @@ test('buildContextAssembly returns structured bundle with relevance gating', () 
   assert.ok(result.contextBundle.knowledgeGraph);
   assert.ok(result.contextDiagnostics.sourcesUsed.includes('operatorContext'));
   assert.ok(result.augmentedPrompt.includes('System awareness context'));
+  assert.equal(result.truthMetadata.planning_intent_detected, true);
+  assert.ok(Array.isArray(result.truthMetadata.ranked_moves));
+  assert.ok(result.truthMetadata.ranked_moves.length > 0);
 });
 
 test('buildContextAssembly keeps timeless prompts minimally overloaded', () => {
@@ -108,4 +111,25 @@ test('buildContextAssembly reports unavailable sources honestly', () => {
   assert.ok(result.contextDiagnostics.unavailableSources.includes('knowledgeGraph'));
   assert.ok(result.contextDiagnostics.unavailableSources.includes('simulation'));
   assert.ok(result.contextDiagnostics.sourcesUsed.includes('runtimeTruth'));
+});
+
+
+test('buildContextAssembly keeps planning truth bounded when evidence is missing', () => {
+  const result = buildContextAssembly({
+    prompt: 'what should we build next',
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      target: 'cloud',
+    },
+    routeDecision: {
+      requestRouteTruth: { routeKind: 'cloud' },
+      selectedProvider: 'groq',
+      selectedAnswerMode: 'local-private',
+    },
+  });
+
+  assert.equal(result.truthMetadata.planning_intent_detected, true);
+  assert.equal(result.truthMetadata.current_system_maturity_estimate, 'early-structured');
+  assert.ok(result.truthMetadata.planning_truth_warnings.includes('proposal system signal not observed; proposal bridge moves are inferred priorities'));
+  assert.equal(result.truthMetadata.proposal_eligible, true);
 });

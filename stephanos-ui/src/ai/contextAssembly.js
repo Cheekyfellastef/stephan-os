@@ -1,4 +1,5 @@
 import { normalizeContextAssemblyResult } from '../../../shared/ai/contextAssemblyContract.mjs';
+import { buildMissionSynthesis } from './missionSynthesis.js';
 
 const SOURCE_KEYS = Object.freeze([
   'memory',
@@ -316,6 +317,30 @@ export function buildContextAssembly({
     ].filter(Boolean),
   };
 
+  const missionSynthesis = buildMissionSynthesis({
+    prompt,
+    promptClassification,
+    contextBundle,
+    operatorContext,
+    runtimeContext,
+    contextDiagnostics: diagnostics,
+  });
+
+  if (missionSynthesis.planningIntentDetected) {
+    contextBundle.missionSynthesis = {
+      planningMode: missionSynthesis.planningMode,
+      planningConfidence: missionSynthesis.planningConfidence,
+      currentSystemMaturityEstimate: missionSynthesis.currentSystemMaturityEstimate,
+      recommendedNextMove: missionSynthesis.recommendedNextMove,
+      recommendationReason: missionSynthesis.recommendationReason,
+      candidateMoveCount: missionSynthesis.candidateMoves.length,
+      evidenceSources: missionSynthesis.evidenceSources,
+      truthWarnings: missionSynthesis.truthWarnings,
+      codexHandoffEligible: missionSynthesis.codexHandoffEligible,
+      proposalEligible: missionSynthesis.proposalEligible,
+    };
+  }
+
   const augmented = buildAugmentedPrompt({
     prompt: safeString(prompt),
     contextBundle,
@@ -333,7 +358,10 @@ export function buildContextAssembly({
       context_sources_considered: diagnostics.sourcesConsidered,
       context_sources_used: sourcesUsed,
       context_source_reason_map: sourceReasons,
-      context_bundle_summary: Object.fromEntries(sourcesUsed.map((source) => [source, 'included'])),
+      context_bundle_summary: {
+        ...Object.fromEntries(sourcesUsed.map((source) => [source, 'included'])),
+        planningActive: missionSynthesis.planningIntentDetected,
+      },
       self_build_prompt_detected: promptClassification.selfBuild.detected,
       self_build_reason: promptClassification.selfBuild.reason,
       system_awareness_level: promptClassification.selfBuild.detected
@@ -343,6 +371,21 @@ export function buildContextAssembly({
       augmented_prompt_length: augmented.prompt.length,
       context_assembly_warnings: diagnostics.warnings,
       context_integrity_preserved: !(promptClassification.freshnessSensitive && sourcesUsed.includes('retrieval') && !sourcesUsed.includes('runtimeTruth')),
+      planning_mode: missionSynthesis.planningMode,
+      planning_intent_detected: missionSynthesis.planningIntentDetected,
+      planning_confidence: missionSynthesis.planningConfidence,
+      current_system_maturity_estimate: missionSynthesis.currentSystemMaturityEstimate,
+      candidate_moves: missionSynthesis.candidateMoves,
+      ranked_moves: missionSynthesis.rankedMoves,
+      planning_blockers: missionSynthesis.blockers,
+      planning_dependencies: missionSynthesis.dependencies,
+      recommended_next_move: missionSynthesis.recommendedNextMove,
+      recommendation_reason: missionSynthesis.recommendationReason,
+      planning_evidence_sources: missionSynthesis.evidenceSources,
+      planning_truth_warnings: missionSynthesis.truthWarnings,
+      planning_operator_actions: missionSynthesis.operatorActions,
+      codex_handoff_eligible: missionSynthesis.codexHandoffEligible,
+      proposal_eligible: missionSynthesis.proposalEligible,
     },
   });
 }
