@@ -39,6 +39,23 @@ function readCanonicalTimeoutPolicy(runtimeConfig = {}) {
   };
 }
 
+function readCanonicalExecutionProvider(runtimeConfig = {}) {
+  const finalRouteTruth = runtimeConfig?.finalRouteTruth && typeof runtimeConfig.finalRouteTruth === 'object'
+    ? runtimeConfig.finalRouteTruth
+    : {};
+  const canonicalRouteTruth = runtimeConfig?.canonicalRouteRuntimeTruth && typeof runtimeConfig.canonicalRouteRuntimeTruth === 'object'
+    ? runtimeConfig.canonicalRouteRuntimeTruth
+    : {};
+  const resolvedProvider = String(
+    finalRouteTruth.executedProvider
+    || canonicalRouteTruth.executedProvider
+    || finalRouteTruth.selectedProvider
+    || canonicalRouteTruth.selectedProvider
+    || '',
+  ).trim().toLowerCase();
+  return resolvedProvider || null;
+}
+
 export function resolveOllamaTimeoutPolicy({ providerConfig = {}, requestedModel = '' } = {}) {
   const normalizedModel = String(requestedModel || providerConfig?.model || '').trim();
   const overrides = normalizeOverrides(providerConfig?.perModelTimeoutOverrides);
@@ -83,6 +100,12 @@ export function resolveUiRequestTimeoutPolicy({
   const runtimeTimeoutSource = String(runtimeConfig?.timeoutSource || '').trim() || 'frontend:api-runtime';
   const canonicalRuntimePolicy = readCanonicalTimeoutPolicy(runtimeConfig);
   const normalizedProvider = String(provider || '').trim().toLowerCase();
+  const canonicalExecutionProvider = readCanonicalExecutionProvider(runtimeConfig);
+  const canonicalExecutionProviderMatches = Boolean(
+    canonicalExecutionProvider
+    && normalizedProvider
+    && canonicalExecutionProvider === normalizedProvider,
+  );
 
   const providerPolicy = normalizedProvider === 'ollama'
     ? resolveOllamaTimeoutPolicy({ providerConfig: providerConfigs?.ollama || {}, requestedModel })
@@ -118,12 +141,17 @@ export function resolveUiRequestTimeoutPolicy({
         : baselineUiTimeoutMs
     );
 
+  const policySourceBase = canonicalRuntimePolicy?.timeoutPolicySource || providerPolicy.timeoutPolicySource || runtimeTimeoutSource;
+  const canonicalizedPolicySourceBase = canonicalExecutionProviderMatches
+    && !canonicalRuntimePolicy
+    ? `canonical-runtime-execution-truth:${policySourceBase}`
+    : policySourceBase;
   const timeoutPolicySource = providerDrivenUiFloor && (
     uiRequestTimeoutMs === providerDrivenUiFloor
     || uiRequestTimeoutMs === canonicalUiRequestTimeoutMs
   )
-    ? `${canonicalRuntimePolicy?.timeoutPolicySource || providerPolicy.timeoutPolicySource}:ui-grace`
-    : (canonicalRuntimePolicy?.timeoutPolicySource || runtimeTimeoutSource);
+    ? `${canonicalizedPolicySourceBase}:ui-grace`
+    : canonicalizedPolicySourceBase;
 
   return {
     uiRequestTimeoutMs,

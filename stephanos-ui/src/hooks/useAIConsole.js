@@ -168,10 +168,19 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestTrace.selected_provider
     || requestPayload.routeDecision?.selectedProvider
     || requestPayload.provider;
-  const timeoutEffectiveProvider = executionMetadata.timeout_provider
+  const executionSelectedProvider = executionMetadata.execution_selected_provider
+    || requestTrace.execution_selected_provider
+    || requestPayload.runtimeContext?.finalRouteTruth?.executedProvider
+    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
+    || requestPayload.runtimeContext?.finalRouteTruth?.selectedProvider
+    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
+    || actualProviderUsed
+    || selectedProvider;
+  const timeoutEffectiveProvider = actualProviderUsed
+    || executionSelectedProvider
+    || executionMetadata.timeout_provider
     || requestTrace.timeout_provider
     || requestPayload.runtimeContext?.timeoutPolicy?.timeoutProvider
-    || actualProviderUsed
     || selectedProvider;
   const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
   const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
@@ -217,9 +226,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || executionMetadata.requested_provider_for_request
       || requestedProviderForRequest,
     selected_provider: selectedProvider,
-    execution_selected_provider: actualProviderUsed
-      || timeoutEffectiveProvider
-      || selectedProvider,
+    execution_selected_provider: executionSelectedProvider || timeoutEffectiveProvider || selectedProvider,
     actual_provider_used: actualProviderUsed,
     model_used: modelUsed,
     ollama_model_default: executionMetadata.ollama_model_default || requestTrace.ollama_model_default || null,
@@ -813,12 +820,12 @@ function buildTimeoutFailureExecutionMetadata({
     || '',
   ).trim();
   const selectedProvider = String(
-    requestPayload?.routeDecision?.selectedProvider
-    || requestPayload?.routeDecision?.requestedProviderForRequest
-    || runtimeContext?.finalRouteTruth?.executedProvider
+    runtimeContext?.finalRouteTruth?.executedProvider
     || runtimeContext?.finalRouteTruth?.selectedProvider
     || runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
     || runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
+    || requestPayload?.routeDecision?.selectedProvider
+    || requestPayload?.routeDecision?.requestedProviderForRequest
     || requestedProvider
     || fallbackProvider
     || '',

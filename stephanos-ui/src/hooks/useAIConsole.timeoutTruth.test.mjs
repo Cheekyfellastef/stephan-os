@@ -25,6 +25,7 @@ test('timeout failure metadata derives from canonical timeout resolver', () => {
 test('timeout failure metadata keeps requested provider separate from effective provider and prevents ollama contamination', () => {
   assert.match(source, /const requestedProvider = String\(/);
   assert.match(source, /const selectedProvider = String\(/);
+  assert.match(source, /runtimeContext\?\.finalRouteTruth\?\.executedProvider[\s\S]*requestPayload\?\.routeDecision\?\.selectedProvider/m);
   assert.match(source, /requested_provider:\s*requestedProvider\s*\|\|\s*fallbackProvider\s*\|\|\s*'unknown'/);
   assert.match(source, /ollama_timeout_model:\s*selectedProvider === 'ollama'/);
 });
