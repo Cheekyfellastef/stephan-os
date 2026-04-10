@@ -250,9 +250,48 @@ test('local-first falls back to Groq with explicit ollama timeout labels when Ol
     assert.match(result.fallbackReason || '', /model-warmup-likely/i);
     const ollamaAttempt = (result.diagnostics.attempts || []).find((attempt) => attempt.provider === 'ollama');
     assert.equal(ollamaAttempt?.result?.error?.details?.failureLabel, 'connect_timeout');
+    assert.equal(ollamaAttempt?.result?.error?.details?.warmupRetryEligible, true);
     assert.equal(ollamaAttempt?.result?.error?.details?.warmupRetryApplied, true);
-    assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.timeoutMs, 60000);
+    assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.timeoutMs, 75000);
+    assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.warmupRetryTimeoutMs, 105000);
     assert.equal(ollamaAttempt?.result?.diagnostics?.ollama?.executionViability, 'degraded-timeout');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('non-ollama provider path does not expose warmup retry metadata', async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('api.groq.com') && String(url).includes('/chat/completions')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: 'Groq direct answer.' } }],
+          usage: { prompt_tokens: 2, completion_tokens: 2 },
+        }),
+      };
+    }
+    throw new Error(`Unexpected URL in test fetch mock: ${url}`);
+  };
+
+  try {
+    const result = await routeLLMRequest({
+      messages: [{ role: 'user', content: 'hello' }],
+    }, {
+      provider: 'groq',
+      routeMode: 'explicit',
+      fallbackEnabled: false,
+      providerConfigs: {
+        groq: { apiKey: 'gsk_sample-key', model: 'openai/gpt-oss-20b' },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.actualProviderUsed, 'groq');
+    const groqAttempt = (result.diagnostics.attempts || []).find((attempt) => attempt.provider === 'groq');
+    assert.equal(groqAttempt?.result?.error?.details?.warmupRetryApplied, undefined);
+    assert.equal(groqAttempt?.result?.diagnostics?.ollama?.warmupRetryApplied, undefined);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }

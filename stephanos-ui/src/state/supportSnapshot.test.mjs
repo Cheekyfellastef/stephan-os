@@ -476,7 +476,7 @@ test('buildSupportSnapshot separates provider health readiness from execution vi
       lastSelectedProvider: 'ollama',
       lastActualProviderUsed: 'groq',
       lastFallbackUsed: 'yes',
-      lastFallbackReason: 'ollama: Cannot connect to Ollama: it took too long to respond. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=120000]',
+      lastFallbackReason: 'ollama: Cannot connect to Ollama: it took too long to respond. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=105000]',
       lastSelectedProviderHealthOk: 'true',
       lastSelectedProviderHealthState: 'CONNECTED',
       lastSelectedProviderExecutionViability: 'failed',
@@ -485,9 +485,20 @@ test('buildSupportSnapshot separates provider health readiness from execution vi
       lastSelectedProviderExecutionFailurePhase: 'awaiting-response-headers',
       lastSelectedProviderTimeoutCategory: 'connect-timeout',
       lastSelectedProviderModelWarmupLikely: 'true',
+      lastSelectedProviderWarmupRetryEligible: 'true',
       lastSelectedProviderWarmupRetryApplied: 'true',
-      lastSelectedProviderWarmupRetryTimeoutMs: '120000',
-      lastSelectedProviderElapsedMs: '120001',
+      lastSelectedProviderWarmupRetryReason: 'ollama-cold-start-timeout',
+      lastSelectedProviderWarmupRetryTimeoutMs: '105000',
+      lastSelectedProviderWarmupRetryAttemptCount: '1',
+      lastSelectedProviderFirstAttemptElapsedMs: '75001',
+      lastSelectedProviderFinalAttemptElapsedMs: '105001',
+      lastSelectedProviderInitialFailureLayer: 'provider',
+      lastSelectedProviderInitialFailureLabel: 'connect_timeout',
+      lastSelectedProviderInitialFailurePhase: 'awaiting-response-headers',
+      lastSelectedProviderInitialTimeoutCategory: 'connect-timeout',
+      lastSelectedProviderFinalExecutionOutcome: 'error',
+      lastSelectedProviderFallbackAfterWarmupRetry: 'true',
+      lastSelectedProviderElapsedMs: '105001',
       lastExplicitProviderFallbackPolicyTriggered: 'true',
     },
     routeTruthView: {
@@ -514,6 +525,9 @@ test('buildSupportSnapshot separates provider health readiness from execution vi
   assert.match(snapshot, /Last Selected Provider Execution Viability: failed/);
   assert.match(snapshot, /Last Selected Provider Failure Label: connect_timeout/);
   assert.match(snapshot, /Last Selected Provider Model Warmup Likely: true/);
+  assert.match(snapshot, /Last Selected Provider Warmup Retry Eligible: true/);
+  assert.match(snapshot, /Last Selected Provider Warmup Retry Reason: ollama-cold-start-timeout/);
+  assert.match(snapshot, /Last Selected Provider Fallback After Warmup Retry: true/);
   assert.match(snapshot, /Explicit Provider Fallback Policy Triggered: true/);
   assert.match(snapshot, /Last Actual Provider Used: groq/);
 });

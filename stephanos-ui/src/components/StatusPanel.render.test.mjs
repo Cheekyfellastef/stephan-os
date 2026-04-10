@@ -286,6 +286,23 @@ test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime
   assert.match(rendered, /Executable Provider \(Adjudicated\): groq/);
 });
 
+test('StatusPanel renders warmup retry truth rows without crashing on sparse metadata', async () => {
+  const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases, 'status-panel');
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    lastExecutionMetadata: {
+      selected_provider_model_warmup_likely: true,
+      selected_provider_warmup_retry_eligible: true,
+      selected_provider_warmup_retry_applied: true,
+      selected_provider_warmup_retry_reason: 'ollama-cold-start-timeout',
+      selected_provider_warmup_retry_timeout_ms: 105000,
+      selected_provider_fallback_after_warmup_retry: true,
+    },
+  });
+  const rendered = renderStatusPanel();
+  assert.match(rendered, /Copy Support Snapshot/);
+  assert.match(rendered, /Status/);
+});
+
 
 test('App render regression guard: real useAIConsole boot path still renders startup diagnostics', async () => {
   const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appWithRealConsoleAliases);

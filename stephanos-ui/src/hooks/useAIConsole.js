@@ -306,6 +306,43 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     selected_provider_warmup_retry_timeout_ms: executionMetadata.selected_provider_warmup_retry_timeout_ms
       || requestTrace.selected_provider_warmup_retry_timeout_ms
       || null,
+    selected_provider_warmup_retry_eligible: Boolean(
+      executionMetadata.selected_provider_warmup_retry_eligible
+      ?? requestTrace.selected_provider_warmup_retry_eligible
+      ?? false,
+    ),
+    selected_provider_warmup_retry_reason: executionMetadata.selected_provider_warmup_retry_reason
+      || requestTrace.selected_provider_warmup_retry_reason
+      || null,
+    selected_provider_warmup_retry_attempt_count: executionMetadata.selected_provider_warmup_retry_attempt_count
+      ?? requestTrace.selected_provider_warmup_retry_attempt_count
+      ?? null,
+    selected_provider_first_attempt_elapsed_ms: executionMetadata.selected_provider_first_attempt_elapsed_ms
+      ?? requestTrace.selected_provider_first_attempt_elapsed_ms
+      ?? null,
+    selected_provider_final_attempt_elapsed_ms: executionMetadata.selected_provider_final_attempt_elapsed_ms
+      ?? requestTrace.selected_provider_final_attempt_elapsed_ms
+      ?? null,
+    selected_provider_initial_failure_layer: executionMetadata.selected_provider_initial_failure_layer
+      || requestTrace.selected_provider_initial_failure_layer
+      || null,
+    selected_provider_initial_failure_label: executionMetadata.selected_provider_initial_failure_label
+      || requestTrace.selected_provider_initial_failure_label
+      || null,
+    selected_provider_initial_failure_phase: executionMetadata.selected_provider_initial_failure_phase
+      || requestTrace.selected_provider_initial_failure_phase
+      || null,
+    selected_provider_initial_timeout_category: executionMetadata.selected_provider_initial_timeout_category
+      || requestTrace.selected_provider_initial_timeout_category
+      || null,
+    selected_provider_final_execution_outcome: executionMetadata.selected_provider_final_execution_outcome
+      || requestTrace.selected_provider_final_execution_outcome
+      || null,
+    selected_provider_fallback_after_warmup_retry: Boolean(
+      executionMetadata.selected_provider_fallback_after_warmup_retry
+      ?? requestTrace.selected_provider_fallback_after_warmup_retry
+      ?? false,
+    ),
     selected_provider_elapsed_ms: executionMetadata.selected_provider_elapsed_ms || requestTrace.selected_provider_elapsed_ms || null,
     explicit_provider_fallback_policy_triggered: Boolean(
       executionMetadata.explicit_provider_fallback_policy_triggered

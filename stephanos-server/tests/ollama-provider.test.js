@@ -180,8 +180,9 @@ test('runOllamaProvider uses default timeout when selected model has no override
 
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
-    assert.equal(result.diagnostics.ollama.timeoutMs, 9000);
-    assert.equal(result.diagnostics.ollama.timeoutSource, 'default');
+    assert.equal(result.diagnostics.ollama.timeoutMs, 75000);
+    assert.equal(result.diagnostics.ollama.timeoutSource, 'model-baseline');
+    assert.equal(result.diagnostics.ollama.warmupRetryApplied, false);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }
@@ -210,7 +211,7 @@ test('runOllamaProvider reports execution timeout viability diagnostics when hea
 
     const result = await runOllamaProvider(
       { messages: [{ role: 'user', content: 'Analyze this in depth.' }] },
-      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000 },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000, selectedProviderHealthOkAtSelection: true },
     );
 
     assert.equal(result.ok, false);
@@ -218,10 +219,38 @@ test('runOllamaProvider reports execution timeout viability diagnostics when hea
     assert.equal(result.error.details.failureLabel, 'connect_timeout');
     assert.equal(result.error.details.failureLayer, 'provider');
     assert.equal(result.error.details.modelWarmupLikely, true);
+    assert.equal(result.error.details.warmupRetryEligible, true);
     assert.equal(result.error.details.warmupRetryApplied, true);
-    assert.equal(result.error.details.timeoutMs, 120000);
+    assert.equal(result.error.details.warmupRetryAttemptCount, 1);
+    assert.equal(result.error.details.timeoutMs, 105000);
+    assert.equal(result.error.details.initialProviderFailurePhase, 'awaiting-response-headers');
     assert.equal(result.diagnostics.ollama.executionViability, 'degraded-timeout');
     assert.equal(result.diagnostics.ollama.executionFailureLabel, 'connect_timeout');
+    assert.equal(result.diagnostics.ollama.warmupRetryTimeoutMs, 105000);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider does not apply warmup retry when disabled by policy flag', async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
+    }
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+    throw abortError;
+  };
+
+  try {
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'Analyze deeply.' }], routeDecision: { disableOllamaWarmupRetry: true } },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000, selectedProviderHealthOkAtSelection: true },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error.details.warmupRetryEligible, false);
+    assert.equal(result.error.details.warmupRetryApplied, false);
+    assert.equal(result.error.details.warmupRetryAttemptCount, 0);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }
