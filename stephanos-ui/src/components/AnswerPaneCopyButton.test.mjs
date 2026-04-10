@@ -20,6 +20,6 @@ test('AnswerPaneCopyButton only enters success state after confirmed clipboard s
 });
 
 test('AnswerPaneCopyButton keeps success state visible long enough for user feedback', () => {
-  assert.match(source, /const SUCCESS_STATE_DURATION_MS = 3200/);
-  assert.match(source, /setTimeout\(\(\) => \{\s*setCopyState\(COPY_STATE\.IDLE\);\s*\}, SUCCESS_STATE_DURATION_MS\)/);
+  assert.match(source, /useClipboardButtonState/);
+  assert.match(source, /import \{ COPY_STATE, useClipboardButtonState \} from '\.\.\/hooks\/useClipboardButtonState'/);
 });

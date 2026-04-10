@@ -681,6 +681,18 @@ button:active,
   font-weight: 600;
 }
 
+.status-panel-copy-button.success {
+  border-color: rgba(119, 235, 191, 0.6);
+  background: rgba(20, 101, 70, 0.92);
+  color: #ceffea;
+}
+
+.status-panel-copy-button.failure {
+  border-color: rgba(255, 160, 160, 0.65);
+  background: rgba(97, 24, 24, 0.92);
+  color: #ffe1e1;
+}
+
 .status-panel-copy-notice {
   font-size: 0.84rem;
   color: #97d6ff;

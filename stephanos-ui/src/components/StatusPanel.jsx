@@ -22,9 +22,13 @@ import {
   STEPHANOS_ROUTE_ADOPTION_MARKER,
 } from '../../../shared/runtime/stephanosRouteMarkers.mjs';
 import CollapsiblePanel from './CollapsiblePanel';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
 
 export default function StatusPanel() {
   const [copyNotice, setCopyNotice] = useState(null);
+  const { copyState: supportSnapshotCopyState, setCopyState: setSupportSnapshotCopyState } = useClipboardButtonState();
+  const { copyState: codexHandoffCopyState, setCopyState: setCodexHandoffCopyState } = useClipboardButtonState();
   const [frictionText, setFrictionText] = useState('');
   const {
     status,
@@ -448,28 +452,39 @@ export default function StatusPanel() {
   });
 
   const handleCopySupportSnapshot = async () => {
-    if (!browserNavigator?.clipboard?.writeText) {
-      notifyCopyResult('Copy failed', 'degraded');
-      return;
-    }
-
     try {
-      await browserNavigator.clipboard.writeText(supportSnapshot);
+      const result = await writeTextToClipboard(supportSnapshot, { navigatorObject: browserNavigator });
+      if (!result.ok) {
+        setSupportSnapshotCopyState(COPY_STATE.FAILURE);
+        notifyCopyResult('Copy failed', 'degraded');
+        return;
+      }
+      setSupportSnapshotCopyState(COPY_STATE.SUCCESS);
       notifyCopyResult('Support snapshot copied', 'ready');
     } catch (_error) {
+      setSupportSnapshotCopyState(COPY_STATE.FAILURE);
       notifyCopyResult('Copy failed', 'degraded');
     }
   };
   const handleCopyCodexHandoff = async () => {
     const payload = String(lastExecutionMetadata?.codex_handoff_payload || '').trim();
-    if (!payload || !browserNavigator?.clipboard?.writeText) {
+    if (!payload) {
+      setCodexHandoffCopyState(COPY_STATE.FAILURE);
       notifyCopyResult('Codex handoff unavailable', 'degraded');
       return;
     }
+
     try {
-      await browserNavigator.clipboard.writeText(payload);
+      const result = await writeTextToClipboard(payload, { navigatorObject: browserNavigator });
+      if (!result.ok) {
+        setCodexHandoffCopyState(COPY_STATE.FAILURE);
+        notifyCopyResult('Codex handoff copy failed', 'degraded');
+        return;
+      }
+      setCodexHandoffCopyState(COPY_STATE.SUCCESS);
       notifyCopyResult('Codex handoff copied', 'ready');
     } catch (_error) {
+      setCodexHandoffCopyState(COPY_STATE.FAILURE);
       notifyCopyResult('Codex handoff copy failed', 'degraded');
     }
   };
@@ -487,20 +502,28 @@ export default function StatusPanel() {
         <>
           <button
             type="button"
-            className="status-panel-copy-button"
+            className={`status-panel-copy-button ${supportSnapshotCopyState}`}
             onClick={handleCopySupportSnapshot}
             aria-label="Copy Support Snapshot [IGNITION LOCAL]"
+            title={supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
           >
-            Copy Support Snapshot [IGNITION LOCAL]
+            {supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied Support Snapshot [IGNITION LOCAL]' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy Support Snapshot failed' : 'Copy Support Snapshot [IGNITION LOCAL]'}
           </button>
+          <span className="sr-only" role="status" aria-live="polite">
+            {supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Support snapshot copied to clipboard.' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}
+          </span>
           <button
             type="button"
-            className="status-panel-copy-button"
+            className={`status-panel-copy-button ${codexHandoffCopyState}`}
             onClick={handleCopyCodexHandoff}
             aria-label="Copy Codex Handoff Packet"
+            title={codexHandoffCopyState === COPY_STATE.SUCCESS ? 'Copied' : codexHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
           >
-            Copy Codex Handoff Packet
+            {codexHandoffCopyState === COPY_STATE.SUCCESS ? 'Copied Codex Handoff Packet' : codexHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Codex Handoff Packet failed' : 'Copy Codex Handoff Packet'}
           </button>
+          <span className="sr-only" role="status" aria-live="polite">
+            {codexHandoffCopyState === COPY_STATE.SUCCESS ? 'Codex handoff copied to clipboard.' : codexHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}
+          </span>
         </>
       )}
     >
