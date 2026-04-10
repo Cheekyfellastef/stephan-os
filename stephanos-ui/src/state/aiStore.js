@@ -51,6 +51,11 @@ import {
   createDefaultMissionPacketWorkflow,
   normalizeMissionPacketWorkflow,
 } from './missionPacketWorkflow';
+import {
+  normalizeSurfaceOverride,
+  resolveSurfaceAwareness,
+  resolveSurfaceUiLayoutDefaults,
+} from '../system/surface/surfaceAwareness';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -107,6 +112,7 @@ const DEFAULT_HOME_NODE_STATUS = {
   detail: 'Home node not checked yet.',
   attempts: [],
 };
+const DEFAULT_SURFACE_OVERRIDE = 'auto';
 const MAX_PERSISTED_COMMANDS = 10;
 const MAX_PERSISTED_OUTPUT_LENGTH = 4000;
 
@@ -235,6 +241,7 @@ function normalizeStoredSettings(persistedSession) {
       })]),
     ),
     ollamaConnection: normalizeOllamaConnection(persistedSettings.ollamaConnection || {}),
+    surfaceOverride: normalizeSurfaceOverride(persistedSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE),
   };
 }
 
@@ -290,6 +297,16 @@ function createInitialMemorySnapshot() {
     open: restoredVisibilityEntries.filter(([, value]) => value === true).length,
     closed: restoredVisibilityEntries.filter(([, value]) => value === false).length,
   });
+  const surfaceOverride = normalizeSurfaceOverride(persistedSession?.session?.providerPreferences?.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
+  const surfaceAwareness = resolveSurfaceAwareness({
+    runtimeContext: initialApiRuntimeConfig || {},
+    operatorSurfaceOverrides: { mode: surfaceOverride },
+  });
+  const hasPersistedUiLayout = restoredVisibilityEntries.length > 0;
+  const normalizedUiLayout = normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT);
+  const effectiveUiLayout = hasPersistedUiLayout
+    ? normalizedUiLayout
+    : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
 
   return {
     persistedSession,
@@ -300,7 +317,7 @@ function createInitialMemorySnapshot() {
       homeNodeLastKnown,
     }),
     settings: normalizeStoredSettings(persistedSession),
-    uiLayout: normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT),
+    uiLayout: effectiveUiLayout,
     paneLayout: {
       order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
     },
@@ -327,6 +344,8 @@ function createInitialMemorySnapshot() {
       persistedSession?.session?.bridgeTransportPreferences,
       { homeBridgeUrl, frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '' },
     ),
+    surfaceAwareness,
+    surfaceOverride,
   };
 }
 
@@ -353,6 +372,7 @@ export function AIStoreProvider({ children }) {
   const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }] )));
   const [providerHealth, setProviderHealth] = useState({});
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
+  const [surfaceOverride, setSurfaceOverrideState] = useState(initialSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
   const [missionPacketWorkflow, setMissionPacketWorkflow] = useState(
     normalizeMissionPacketWorkflow(initialSnapshot.workingMemory?.missionPacketWorkflow || createDefaultMissionPacketWorkflow()),
@@ -401,6 +421,10 @@ export function AIStoreProvider({ children }) {
     lastCheckedAt: null,
     meta: null,
   });
+  const surfaceAwareness = useMemo(() => resolveSurfaceAwareness({
+    runtimeContext: apiStatus.runtimeContext || initialSnapshot.initialApiRuntimeContext || {},
+    operatorSurfaceOverrides: { mode: surfaceOverride },
+  }), [apiStatus.runtimeContext, initialSnapshot.initialApiRuntimeContext, surfaceOverride]);
   const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -413,10 +437,13 @@ export function AIStoreProvider({ children }) {
     fallbackOrder,
     providerHealth,
     backendAvailable: apiStatus.backendReachable,
-    runtimeContext: apiStatus.runtimeContext || {
-      frontendOrigin: apiStatus.frontendOrigin,
-      apiBaseUrl: apiStatus.baseUrl,
-      homeNode: apiStatus.runtimeContext?.homeNode || null,
+    runtimeContext: {
+      ...(apiStatus.runtimeContext || {
+        frontendOrigin: apiStatus.frontendOrigin,
+        apiBaseUrl: apiStatus.baseUrl,
+        homeNode: apiStatus.runtimeContext?.homeNode || null,
+      }),
+      surfaceAwareness,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), [
@@ -431,6 +458,7 @@ export function AIStoreProvider({ children }) {
     provider,
     providerHealth,
     routeMode,
+    surfaceAwareness,
   ]);
 
   const debugVisible = uiLayout.debugConsole === true;
@@ -470,6 +498,7 @@ export function AIStoreProvider({ children }) {
           fallbackOrder,
           providerConfigs: sanitizeConfigForStorage(savedProviderConfigs),
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
+          surfaceOverride: normalizeSurfaceOverride(surfaceOverride),
         },
         bridgeTransportPreferences: normalizeBridgeTransportPreferences(bridgeTransportPreferences, { homeBridgeUrl }),
         ui: {
@@ -501,6 +530,7 @@ export function AIStoreProvider({ children }) {
     fallbackOrder,
     savedProviderConfigs,
     ollamaConnection,
+    surfaceOverride,
     bridgeTransportPreferences,
     homeBridgeUrl,
     uiLayout,
@@ -595,6 +625,10 @@ export function AIStoreProvider({ children }) {
     return nextConnection;
   }, [ollamaConnection]);
 
+  const setSurfaceOverride = useCallback((nextMode) => {
+    setSurfaceOverrideState(normalizeSurfaceOverride(nextMode));
+  }, []);
+
   const rememberSuccessfulOllamaConnection = useCallback(({ baseURL = '', host = '', model = '' } = {}) => {
     const normalizedHost = String(host || '').trim();
     const nextConnection = normalizeOllamaConnection({
@@ -621,6 +655,7 @@ export function AIStoreProvider({ children }) {
     setFallbackOrderState(defaults.fallbackOrder);
     setSavedProviderConfigs(sessionSafe);
     setDraftProviderConfigs(sessionSafe);
+    setSurfaceOverrideState(DEFAULT_SURFACE_OVERRIDE);
     setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
     setWorkingMemory(nextWorkingMemory);
     setMissionPacketWorkflow(normalizeMissionPacketWorkflow(nextWorkingMemory.missionPacketWorkflow || createDefaultMissionPacketWorkflow()));
@@ -860,6 +895,9 @@ export function AIStoreProvider({ children }) {
     setProviderHealth,
     ollamaConnection,
     setOllamaConnection,
+    surfaceAwareness,
+    surfaceOverride,
+    setSurfaceOverride,
     workingMemory,
     setWorkingMemory,
     missionPacketWorkflow,
@@ -924,6 +962,8 @@ export function AIStoreProvider({ children }) {
     providerDraftStatus,
     providerHealth,
     ollamaConnection,
+    surfaceAwareness,
+    surfaceOverride,
     workingMemory,
     missionPacketWorkflow,
     projectMemory,
@@ -948,6 +988,7 @@ export function AIStoreProvider({ children }) {
     setFallbackEnabled,
     setDisableHomeNodeForLocalSession,
     setOllamaConnection,
+    setSurfaceOverride,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveHomeBridgeUrl,

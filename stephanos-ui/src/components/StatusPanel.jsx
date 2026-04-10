@@ -94,6 +94,10 @@ export default function StatusPanel() {
   ].join(' · ');
   const homeNodeAttempts = Array.isArray(homeNodeStatus?.attempts) ? homeNodeStatus.attempts : [];
   const runtimeDiagnostics = uiDiagnostics.runtimeDiagnostics || {};
+  const surfaceAwareness = runtimeContext.surfaceAwareness || {};
+  const surfaceIdentity = surfaceAwareness.surfaceIdentity || {};
+  const surfaceCapabilities = surfaceAwareness.surfaceCapabilities || {};
+  const effectiveSurfaceExperience = surfaceAwareness.effectiveSurfaceExperience || {};
   const homeNodeAttemptSummary = homeNodeAttempts.length
     ? homeNodeAttempts.map((attempt) => {
       const base = `${attempt.source || 'unknown'}:${attempt.host || 'unknown'}`;
@@ -478,6 +482,14 @@ export default function StatusPanel() {
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>
         <li>Runtime Mode: {runtimeStatus.runtimeModeLabel}</li>
         <li>Session Kind: {canonicalTruth.sessionKind || runtimeSessionTruth.sessionKind || runtimeTruth.sessionKind || finalRouteTruth.sessionKind || runtimeContext.sessionKind || 'unknown'}</li>
+        <li>Surface Device Class: {surfaceIdentity.deviceClass || 'unknown'}</li>
+        <li>Surface OS / Browser: {surfaceIdentity.osFamily || 'unknown'} / {surfaceIdentity.browserFamily || 'unknown'}</li>
+        <li>Surface Embodiment Profile: {effectiveSurfaceExperience.selectedProfileId || 'generic-surface'}</li>
+        <li>Surface Selection Reasons: {Array.isArray(effectiveSurfaceExperience.selectionReasons) ? effectiveSurfaceExperience.selectionReasons.join(' | ') : 'n/a'}</li>
+        <li>Surface Override Mode: {surfaceAwareness.operatorSurfaceOverrides?.mode || 'auto'}</li>
+        <li>Surface Input / Panel Strategy: {effectiveSurfaceExperience.resolvedInputMode || 'hybrid'} / {effectiveSurfaceExperience.resolvedPanelStrategy || 'stacked-docked'}</li>
+        <li>Surface Routing Bias Hint: {effectiveSurfaceExperience.resolvedRoutingBiasHint || 'auto'} (hint-only)</li>
+        <li>Surface Capability Hints: touchPrimary={String(surfaceCapabilities.touchPrimary ?? 'unknown')} · hoverReliable={String(surfaceCapabilities.hoverReliable ?? 'unknown')} · finePointer={String(surfaceCapabilities.finePointer ?? 'unknown')} · webxr={String(surfaceCapabilities.webxrAvailable ?? 'unknown')}</li>
         <li>Non-Local Session: {(runtimeSessionTruth.nonLocalSession === true) ? 'yes' : 'no'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>
