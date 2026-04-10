@@ -32,6 +32,12 @@ import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
 import { deriveContinuityLoopSnapshot } from './state/continuityLoopSnapshot';
 import {
+  buildCanonicalCurrentIntent,
+  buildCanonicalMemoryContext,
+  buildCanonicalMissionPacket,
+} from './state/runtimeOrchestrationTruth';
+import { normalizeMissionPacketTruth } from './state/missionPacketWorkflow';
+import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -97,6 +103,9 @@ export default function App() {
     togglePanel,
     setPaneOrder,
     paneLayout,
+    lastExecutionMetadata,
+    missionPacketWorkflow,
+    surfaceFrictionPatterns,
   } = useAIStore();
   useDebugConsole();
 
@@ -155,7 +164,48 @@ export default function App() {
     () => deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory, telemetryEntries, now: metricsTick }),
     [runtimeStatus, commandHistory, telemetryEntries, metricsTick],
   );
-  const actionHints = useMemo(() => collectActionHints(finalRouteTruth).map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth]);
+  const missionPacketTruth = useMemo(
+    () => normalizeMissionPacketTruth(lastExecutionMetadata || {}),
+    [lastExecutionMetadata],
+  );
+  const canonicalMemoryContext = useMemo(() => buildCanonicalMemoryContext({
+    continuitySnapshot,
+    missionPacketWorkflow,
+    memoryElevation: runtimeStatus?.runtimeTruth?.memoryElevation || {},
+    surfaceAwareness: runtimeStatus?.runtimeContext?.surfaceAwareness || {},
+    surfaceFrictionPatterns,
+  }), [continuitySnapshot, missionPacketWorkflow, runtimeStatus?.runtimeContext?.surfaceAwareness, runtimeStatus?.runtimeTruth?.memoryElevation, surfaceFrictionPatterns]);
+  const canonicalCurrentIntent = useMemo(() => buildCanonicalCurrentIntent({
+    intent: runtimeStatus?.runtimeTruth?.intent || {},
+    missionPacket: {
+      ...missionPacketTruth,
+      status: missionPacketTruth.active ? 'awaiting-approval' : 'proposed',
+      title: missionPacketTruth.moveTitle,
+    },
+    proposal: {
+      active: missionPacketTruth.active,
+      moveId: missionPacketTruth.moveId,
+      warnings: missionPacketTruth.warnings,
+      status: missionPacketTruth.active ? 'proposed' : 'proposed',
+    },
+    execution: {
+      lastExecutionMetadata,
+      status: lastExecutionMetadata?.provider_answered === false
+        ? 'failed'
+        : lastExecutionMetadata?.actual_provider_used ? 'completed' : 'not-executing',
+      actualProvider: lastExecutionMetadata?.actual_provider_used,
+    },
+  }), [lastExecutionMetadata, missionPacketTruth, runtimeStatus?.runtimeTruth?.intent]);
+  const canonicalMissionPacket = useMemo(() => buildCanonicalMissionPacket({
+    missionPacketTruth,
+    missionPacketWorkflow,
+    currentIntent: canonicalCurrentIntent,
+  }), [canonicalCurrentIntent, missionPacketTruth, missionPacketWorkflow]);
+  const actionHints = useMemo(() => collectActionHints(finalRouteTruth, {
+    memoryContext: canonicalMemoryContext,
+    currentIntent: canonicalCurrentIntent,
+    missionPacket: canonicalMissionPacket,
+  }).map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -268,7 +318,7 @@ export default function App() {
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
     { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
     { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} /> },
-    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} /> },
+    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={{ canonicalMemoryContext, canonicalCurrentIntent, canonicalMissionPacket }} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },

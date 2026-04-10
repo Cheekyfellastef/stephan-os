@@ -2,6 +2,15 @@ const MISSION_PACKET_WORKFLOW_SCHEMA_VERSION = 1;
 const MAX_DECISIONS = 24;
 const MAX_ACTIVITY = 40;
 const MAX_QUEUE_ITEMS = 20;
+const LIFECYCLE_STATES = Object.freeze([
+  'proposed',
+  'awaiting-approval',
+  'accepted',
+  'in-progress',
+  'completed',
+  'failed',
+  'rolled-back',
+]);
 
 function safeText(value, fallback = '') {
   const nextValue = String(value ?? '').trim();
@@ -17,6 +26,11 @@ function safeBoolean(value, fallback = false) {
   if (value === true) return true;
   if (value === false) return false;
   return fallback;
+}
+
+function normalizeLifecycleStatus(value, fallback = 'proposed') {
+  const normalized = safeText(value, fallback).toLowerCase();
+  return LIFECYCLE_STATES.includes(normalized) ? normalized : fallback;
 }
 
 export function normalizeMissionPacketTruth(lastExecutionMetadata = {}) {
@@ -89,6 +103,7 @@ function normalizeDecisionEntry(entry = {}) {
     decidedAt: safeText(entry.decidedAt),
     approvalRequired: entry.approvalRequired !== false,
     executionEligible: false,
+    lifecycleStatus: normalizeLifecycleStatus(entry.lifecycleStatus, 'awaiting-approval'),
   };
 }
 
@@ -155,6 +170,21 @@ function appendActivity(state, summary, now) {
 
 function upsertDecision(state, packetTruth, decision, now) {
   const packetKey = buildMissionPacketKey(packetTruth);
+  const lifecycleStatus = decision === 'accept'
+    ? 'accepted'
+    : decision === 'reject'
+      ? 'failed'
+      : decision === 'defer'
+        ? 'awaiting-approval'
+        : decision === 'start'
+          ? 'in-progress'
+          : decision === 'complete'
+            ? 'completed'
+            : decision === 'fail'
+              ? 'failed'
+            : decision === 'rollback'
+              ? 'rolled-back'
+              : 'proposed';
   const nextDecision = {
     packetKey,
     moveId: packetTruth.moveId,
@@ -163,6 +193,7 @@ function upsertDecision(state, packetTruth, decision, now) {
     decidedAt: now,
     approvalRequired: packetTruth.approvalRequired,
     executionEligible: false,
+    lifecycleStatus,
   };
   const remaining = state.decisions.filter((entry) => entry.packetKey !== packetKey);
   return [nextDecision, ...remaining].slice(0, MAX_DECISIONS);
@@ -179,6 +210,7 @@ export function deriveMissionPacketActionState(workflowInput, packetTruthInput) 
   const latestDecision = workflow.decisions.find((entry) => entry.packetKey === packetKey) || null;
   const packetReady = packetTruth.active && packetTruth.approvalRequired && packetTruth.executionEligible === false;
   const decision = latestDecision?.decision || 'pending-review';
+  const lifecycleStatus = normalizeLifecycleStatus(latestDecision?.lifecycleStatus, packetReady ? 'awaiting-approval' : 'proposed');
 
   return {
     packetKey,
@@ -189,8 +221,13 @@ export function deriveMissionPacketActionState(workflowInput, packetTruthInput) 
     canDefer: packetReady,
     canCopyCodexHandoff: packetTruth.codexHandoffAvailable && packetTruth.codexHandoffPayload.length > 0,
     canPromote: decision === 'accept' && !hasQueueEntry(workflow.proposalQueue, packetKey),
+    canStart: decision === 'accept',
+    canComplete: lifecycleStatus === 'in-progress',
+    canFail: lifecycleStatus === 'in-progress',
+    canRollback: lifecycleStatus === 'completed' || lifecycleStatus === 'failed',
     executionEligible: false,
     approvalRequired: packetTruth.approvalRequired,
+    lifecycleStatus,
   };
 }
 
@@ -199,11 +236,11 @@ export function applyMissionPacketAction(workflowInput, { action = '', packetTru
   const packet = normalizeMissionPacketTruth(packetTruth);
   const gate = deriveMissionPacketActionState(workflow, packet);
 
-  if (!gate.packetReady && action !== 'copy-codex-handoff') {
+  if (!gate.packetReady && action !== 'copy-codex-handoff' && !['start', 'complete', 'fail', 'rollback'].includes(action)) {
     return workflow;
   }
 
-  if (action === 'accept' || action === 'reject' || action === 'defer') {
+  if (action === 'accept' || action === 'reject' || action === 'defer' || action === 'start' || action === 'complete' || action === 'fail' || action === 'rollback') {
     const nextDecisions = upsertDecision(workflow, packet, action, now);
     return normalizeMissionPacketWorkflow({
       ...workflow,

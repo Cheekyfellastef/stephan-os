@@ -11,6 +11,7 @@ export default function PromptBuilder({
   runtimeStatusModel,
   telemetryEntries,
   actionHints,
+  orchestrationTruth,
 }) {
   const { uiLayout, togglePanel } = useAIStore();
   const [mission, setMission] = useState('');
@@ -31,6 +32,7 @@ export default function PromptBuilder({
     includeActionHints,
     includeConstraints,
     maxTelemetryEntries,
+    orchestrationTruth,
   }), [
     actionHints,
     includeActionHints,
@@ -41,6 +43,7 @@ export default function PromptBuilder({
     mission,
     runtimeStatusModel?.finalRouteTruth,
     telemetryEntries,
+    orchestrationTruth,
   ]);
 
   const handleCopyPrompt = async () => {

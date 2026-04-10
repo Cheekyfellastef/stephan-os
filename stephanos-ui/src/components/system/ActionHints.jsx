@@ -5,7 +5,10 @@ import { collectActionHints } from './actionHints.js';
 
 export default function ActionHints({ runtimeStatusModel }) {
   const { uiLayout, togglePanel } = useAIStore();
-  const hints = collectActionHints(runtimeStatusModel?.finalRouteTruth ?? null);
+  const hints = collectActionHints(
+    runtimeStatusModel?.finalRouteTruth ?? null,
+    runtimeStatusModel?.orchestration || {},
+  );
 
   return (
     <CollapsiblePanel

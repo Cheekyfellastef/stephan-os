@@ -70,6 +70,33 @@ test('buildStephanosPrompt action hints include severity/subsystem/text formatti
   assert.match(prompt, /high \| BACKEND \| Run health check\./);
 });
 
+test('buildStephanosPrompt includes orchestration truth when provided', () => {
+  const prompt = buildStephanosPrompt({
+    mission: 'Continue mission',
+    includeTelemetry: false,
+    includeActionHints: false,
+    includeConstraints: false,
+    orchestrationTruth: {
+      canonicalMemoryContext: {
+        activeMissionContinuity: { continuityLoopState: 'live', recentEvents: ['packet accepted'] },
+        sparseData: false,
+      },
+      canonicalCurrentIntent: {
+        operatorIntent: { label: 'build-runtime', source: 'explicit' },
+        executionState: { status: 'not-executing' },
+      },
+      canonicalMissionPacket: {
+        currentPhase: 'awaiting-approval',
+        recommendedNextAction: 'Await explicit operator approval',
+      },
+    },
+  });
+  assert.match(prompt, /## ORCHESTRATION TRUTH/);
+  assert.match(prompt, /memory\.continuityLoopState: live/);
+  assert.match(prompt, /intent\.operatorIntentSource: explicit/);
+  assert.match(prompt, /missionPacket\.currentPhase: awaiting-approval/);
+});
+
 test('buildCopyResult returns success message when clipboard write succeeds', async () => {
   const result = await buildCopyResult({
     promptText: 'hello',
