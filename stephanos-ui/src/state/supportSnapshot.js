@@ -114,6 +114,28 @@ function summarizeBackendTargetCandidates(candidates = []) {
   });
 }
 
+function summarizeRouteCandidates(candidates = []) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return ['- n/a'];
+  }
+  return candidates.slice(0, 8).map((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return '- n/a';
+    const state = candidate.active === true
+      ? 'active'
+      : candidate.usable === true
+        ? 'usable'
+        : candidate.reachable === true
+          ? 'reachable-not-usable'
+          : candidate.configured === true
+            ? 'configured-unreachable'
+            : 'not-configured';
+    const score = Number.isFinite(Number(candidate.score)) ? Number(candidate.score) : 'n/a';
+    const rank = Number.isFinite(Number(candidate.rank)) ? Number(candidate.rank) : 'n/a';
+    const blocked = asText(candidate.blockedReason || candidate.reason, 'n/a');
+    return `- ${asText(candidate.candidateKey)} [${asText(candidate.routeKind)}/${asText(candidate.transportKind)}] rank=${rank} score=${score} state=${state} (${blocked})`;
+  });
+}
+
 function buildHostedBackendTargetGuidance({
   canonicalHostedRouteTruth,
   sessionKind,
@@ -210,6 +232,7 @@ export function buildSupportSnapshot({
   const backendTargetFallbackUsed = runtimeContext?.backendTargetFallbackUsed === true;
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
+  const routeCandidateSummary = summarizeRouteCandidates(runtimeContext?.routeCandidates);
 
   const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
     ? runtimeContext.bridgeTransportTruth
@@ -536,6 +559,11 @@ export function buildSupportSnapshot({
     `Backend Target Resolved URL: ${backendTargetResolvedUrl}`,
     `Backend Target Fallback Used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
     `Backend Target Invalid Reason: ${backendTargetInvalidReason}`,
+    `Route Winner Kind: ${asText(runtimeContext?.routeCandidateWinner?.routeKind || routeTruthView?.routeKind)}`,
+    `Route Winner Transport Kind: ${asText(runtimeContext?.routeCandidateWinner?.transportKind || routeTruthView?.winningTransportKind, 'none')}`,
+    `Route Auto Selection Source: ${asText(runtimeContext?.routeSelectionSource || routeTruthView?.routeSelectionSource, 'route-preference-order')}`,
+    `Route Auto Switch Active: ${runtimeContext?.routeAutoSwitchActive === true || routeTruthView?.routeAutoSwitchActive === true ? 'yes' : 'no'}`,
+    `Route Auto Switch Reason: ${asText(runtimeContext?.routeAutoSwitchReason || routeTruthView?.routeAutoSwitchReason, 'n/a')}`,
 
     `Home Bridge Transport Selected: ${asText(bridgeTransportTruth.selectedTransport)}`,
     `Home Bridge Transport Configured: ${asText(bridgeTransportTruth.configuredTransport, 'none')}`,
@@ -553,6 +581,8 @@ export function buildSupportSnapshot({
     `Tailscale Bridge Reachable: ${asText(bridgeTransportTruth?.tailscale?.reachable)}`,
     `Tailscale Bridge Usable: ${asText(bridgeTransportTruth?.tailscale?.usable)}`,
     `Tailscale Bridge Reason: ${asText(bridgeTransportTruth?.tailscale?.reason, 'n/a')}`,
+    'Route Candidates:',
+    ...routeCandidateSummary,
     'Backend Target Candidates:',
     ...backendTargetCandidatesSummary,
     `Selected Route Kind: ${selectedRouteKind}`,

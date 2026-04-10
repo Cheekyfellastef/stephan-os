@@ -133,7 +133,7 @@ test('StatusPanel renders when runtimeStatusModel is null or undefined', async (
 test('StatusPanel renders truthful placeholders when finalRoute is missing', async () => {
   const { renderStatusPanel } = await importBundledModule(path.join(srcRoot, 'test/renderStatusPanelEntry.jsx'), statusPanelAliases, 'status-panel');
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
-    runtimeStatusModel: {
+      runtimeStatusModel: {
       appLaunchState: 'degraded',
       requestedRouteMode: 'auto',
       effectiveRouteMode: 'auto',
@@ -245,12 +245,16 @@ test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime
         preferredTarget: 'https://stephanos.example',
         actualTarget: 'https://api.stephanos.example',
       },
-      finalRouteTruth: {
-        routeKind: 'cloud',
-        requestedProvider: 'groq',
-        selectedProvider: 'groq',
-        executedProvider: 'groq',
-      },
+        finalRouteTruth: {
+          routeKind: 'cloud',
+          requestedProvider: 'groq',
+          selectedProvider: 'groq',
+          executedProvider: 'groq',
+          winningTransportKind: 'internet',
+          routeSelectionSource: 'runtime-truth-adjudication',
+          routeAutoSwitchActive: true,
+          routeAutoSwitchReason: 'Auto-switched from home-node to cloud based on deterministic route scoring.',
+        },
       runtimeTruth: {
         session: { sessionKind: 'hosted-web', nonLocalSession: true },
         route: { winningReason: 'cloud route won' },
@@ -261,7 +265,10 @@ test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime
       runtimeAdjudication: {
         issues: [{ code: 'x' }, { code: 'y' }],
       },
-      runtimeContext: {},
+      runtimeContext: {
+        routeCandidates: [{ candidateKey: 'cloud' }],
+        routeCandidateWinner: { candidateKey: 'cloud' },
+      },
       readyCloudProviders: [],
       readyLocalProviders: [],
       attemptOrder: [],
@@ -272,6 +279,9 @@ test('StatusPanel renders runtime adjudicator diagnostics from canonical runtime
   assert.match(rendered, /Adjudicator Blocking Issues: 1/);
   assert.match(rendered, /Adjudicator Warnings: 1/);
   assert.match(rendered, /Adjudicator Total Issues: 2/);
+  assert.match(rendered, /Winning Transport Kind: internet/);
+  assert.match(rendered, /Route Auto Switch Active: yes/);
+  assert.match(rendered, /Route Candidate Count: 1/);
   assert.match(rendered, /Executable Provider \(Adjudicated\): groq/);
 });
 

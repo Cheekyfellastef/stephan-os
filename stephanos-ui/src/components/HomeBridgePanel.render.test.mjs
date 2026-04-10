@@ -30,6 +30,13 @@ function createStore(overrides = {}) {
           reachability: 'unknown',
           reason: '',
         },
+        routeCandidates: [
+          { candidateKey: 'home-node-tailscale', usable: true, reachable: true, configured: true, score: 980 },
+        ],
+        routeCandidateWinner: {
+          routeKind: 'home-node',
+          transportKind: 'tailscale',
+        },
       },
     },
     ...overrides,
@@ -54,6 +61,8 @@ test('HomeBridgePanel renders bridge controls and saved URL status', async () =>
   assert.match(rendered, /Selected transport/);
   assert.match(rendered, /Test Reachability/);
   assert.match(rendered, /Tailscale Backend URL/);
+  assert.match(rendered, /Route winner: <strong>home-node\/tailscale<\/strong>/);
+  assert.match(rendered, /home-node-tailscale: usable \(score 980\)/);
   assert.match(rendered, /WireGuard status: <strong>planned \/ not yet configured<\/strong>/);
 });
 

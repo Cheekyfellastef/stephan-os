@@ -133,3 +133,90 @@ test('createRuntimeStatusModel surfaces tailscale backend target candidate truth
   assert.equal(tailscaleCandidate.accepted, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
 });
+
+test('route candidates keep configured/reachable/usable truth separated for unreachable tailscale', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://100.64.0.10',
+            accepted: true,
+            active: false,
+            reachability: 'unreachable',
+            usable: false,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': { configured: true, available: false, blockedReason: 'tailscale transport unreachable' },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  const tailscaleCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-tailscale');
+  assert.ok(tailscaleCandidate);
+  assert.equal(tailscaleCandidate.configured, true);
+  assert.equal(tailscaleCandidate.reachable, false);
+  assert.equal(tailscaleCandidate.usable, false);
+  assert.equal(model.runtimeContext.routeCandidateWinner.routeKind, 'cloud');
+});
+
+test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://100.64.0.10',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: true, usable: true, source: 'home-node-bridge', routeVariant: 'home-node-bridge', target: 'https://100.64.0.10', actualTarget: 'https://100.64.0.10' },
+        'home-node-bridge': { configured: true, available: true, usable: true, source: 'home-node-bridge', target: 'https://100.64.0.10', actualTarget: 'https://100.64.0.10' },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'home-node');
+  assert.equal(model.runtimeContext.routeCandidateWinner.transportKind, 'tailscale');
+  assert.equal(model.runtimeContext.routeSelectionSource, 'runtime-truth-adjudication');
+});
+
+test('wireguard planned candidate never becomes usable or active', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'wireguard',
+      },
+      routeDiagnostics: {
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  const wireguardCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-wireguard');
+  assert.ok(wireguardCandidate);
+  assert.equal(wireguardCandidate.usable, false);
+  assert.equal(wireguardCandidate.active, false);
+});
