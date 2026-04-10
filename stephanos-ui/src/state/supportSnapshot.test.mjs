@@ -57,6 +57,25 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastProposalOperatorActions: 'Create proposal packet for mission-synthesis-layer.',
       lastOperatorApprovalRequired: 'true',
       lastExecutionEligible: 'false',
+      lastMemoryElevationActive: 'true',
+      lastMemoryElevationMode: 'self-build-elevated',
+      lastMemoryTruthPreserved: 'true',
+      lastMemoryCandidatesConsidered: '7',
+      lastElevatedMemoryCount: '5',
+      lastGraphLinkedMemoryCount: '2',
+      lastDeferredGraphLinkCount: '3',
+      lastBuildRelevantMemoryCount: '4',
+      lastMissionCriticalMemoryCount: '2',
+      lastContinuityConfidence: 'high',
+      lastContinuityReason: 'Mission-critical continuity memories were elevated with bounded confidence.',
+      lastGraphLinkTruthPreserved: 'true',
+      lastGraphLinkReason: 'Elevated memories linked to existing graph entities where matches were observed.',
+      lastRecurrenceSignals: 'timeout truth drift (x3)',
+      lastMemoryElevationWarnings: 'none',
+      lastSourceProvenanceSummary: 'durable-memory:evt-1',
+      lastTopMemoryInfluencers: 'mission-critical-continuity-memory:operator control:operator-state',
+      lastMemoryInformedRecommendation: 'Prioritize mission-critical continuity memory first.',
+
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -149,6 +168,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Codex Handoff Available: true/);
   assert.match(snapshot, /Approval Required: true/);
   assert.match(snapshot, /Execution Eligible: false/);
+  assert.match(snapshot, /Memory Elevation Active: true/);
+  assert.match(snapshot, /Elevated Memory Count: 5/);
+  assert.match(snapshot, /Graph Linked Memory Count: 2/);
+  assert.match(snapshot, /Memory Informed Recommendation: Prioritize mission-critical continuity memory first\./);
+
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
   assert.match(snapshot, /AI Policy Mode: local-first-cloud-when-needed/);

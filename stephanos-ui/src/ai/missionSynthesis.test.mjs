@@ -17,6 +17,12 @@ test('buildMissionSynthesis activates for self-build prompts and emits ranked pl
     contextDiagnostics: {
       sourcesUsed: ['memory', 'runtimeTruth', 'operatorContext'],
     },
+    memoryElevation: {
+      continuity_confidence: 'high',
+      top_memory_influencers: [{ memoryClass: 'mission-critical-continuity-memory', summary: 'operator control no fake states' }],
+      recurrence_signals: ['timeout truth drift (x3)'],
+      memory_informed_recommendation: 'Prioritize mission-critical continuity memory first.',
+    },
   });
 
   assert.equal(synthesis.planningIntentDetected, true);
@@ -25,6 +31,7 @@ test('buildMissionSynthesis activates for self-build prompts and emits ranked pl
   assert.equal(synthesis.recommendedNextMove.moveId, synthesis.rankedMoves[0].moveId);
   assert.equal(typeof synthesis.recommendationReason, 'string');
   assert.equal(synthesis.proposalEligible, true);
+  assert.match(synthesis.recommendationReason, /Memory influencers:/);
 });
 
 test('buildMissionSynthesis remains inactive for non-planning prompts', () => {

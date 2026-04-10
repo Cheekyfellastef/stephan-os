@@ -77,6 +77,36 @@ export function normalizeContextAssemblyResult(input = {}) {
         : 0,
       context_assembly_warnings: safeArray(source.truthMetadata?.context_assembly_warnings),
       context_integrity_preserved: source.truthMetadata?.context_integrity_preserved !== false,
+      memory_elevation_active: source.truthMetadata?.memory_elevation_active === true,
+      memory_elevation_mode: safeString(source.truthMetadata?.memory_elevation_mode) || 'bounded',
+      memory_truth_preserved: source.truthMetadata?.memory_truth_preserved !== false,
+      memory_candidates_considered: Number.isFinite(Number(source.truthMetadata?.memory_candidates_considered))
+        ? Number(source.truthMetadata?.memory_candidates_considered)
+        : 0,
+      elevated_memory_count: Number.isFinite(Number(source.truthMetadata?.elevated_memory_count))
+        ? Number(source.truthMetadata?.elevated_memory_count)
+        : 0,
+      graph_linked_memory_count: Number.isFinite(Number(source.truthMetadata?.graph_linked_memory_count))
+        ? Number(source.truthMetadata?.graph_linked_memory_count)
+        : 0,
+      deferred_graph_link_count: Number.isFinite(Number(source.truthMetadata?.deferred_graph_link_count))
+        ? Number(source.truthMetadata?.deferred_graph_link_count)
+        : 0,
+      build_relevant_memory_count: Number.isFinite(Number(source.truthMetadata?.build_relevant_memory_count))
+        ? Number(source.truthMetadata?.build_relevant_memory_count)
+        : 0,
+      mission_critical_memory_count: Number.isFinite(Number(source.truthMetadata?.mission_critical_memory_count))
+        ? Number(source.truthMetadata?.mission_critical_memory_count)
+        : 0,
+      continuity_confidence: safeString(source.truthMetadata?.continuity_confidence) || 'low',
+      continuity_reason: safeString(source.truthMetadata?.continuity_reason),
+      recurrence_signals: safeArray(source.truthMetadata?.recurrence_signals),
+      top_memory_influencers: safeArray(source.truthMetadata?.top_memory_influencers),
+      memory_elevation_warnings: safeArray(source.truthMetadata?.memory_elevation_warnings),
+      graph_link_truth_preserved: source.truthMetadata?.graph_link_truth_preserved !== false,
+      graph_link_reason: safeString(source.truthMetadata?.graph_link_reason),
+      source_provenance_summary: safeArray(source.truthMetadata?.source_provenance_summary),
+      memory_informed_recommendation: safeString(source.truthMetadata?.memory_informed_recommendation),
       planning_mode: safeString(source.truthMetadata?.planning_mode) || 'inactive',
       planning_intent_detected: source.truthMetadata?.planning_intent_detected === true,
       planning_confidence: safeString(source.truthMetadata?.planning_confidence) || 'low',

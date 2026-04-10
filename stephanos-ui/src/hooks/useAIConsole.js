@@ -464,6 +464,96 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       ?? contextAssemblyMetadata.context_integrity_preserved
       ?? true,
     ),
+    memory_elevation_active: Boolean(
+      executionMetadata.memory_elevation_active
+      ?? requestTrace.memory_elevation_active
+      ?? contextAssemblyMetadata.memory_elevation_active
+      ?? false,
+    ),
+    memory_elevation_mode: executionMetadata.memory_elevation_mode
+      || requestTrace.memory_elevation_mode
+      || contextAssemblyMetadata.memory_elevation_mode
+      || 'bounded',
+    memory_truth_preserved: Boolean(
+      executionMetadata.memory_truth_preserved
+      ?? requestTrace.memory_truth_preserved
+      ?? contextAssemblyMetadata.memory_truth_preserved
+      ?? true,
+    ),
+    memory_candidates_considered: Number(
+      executionMetadata.memory_candidates_considered
+      ?? requestTrace.memory_candidates_considered
+      ?? contextAssemblyMetadata.memory_candidates_considered
+      ?? 0
+    ),
+    elevated_memory_count: Number(
+      executionMetadata.elevated_memory_count
+      ?? requestTrace.elevated_memory_count
+      ?? contextAssemblyMetadata.elevated_memory_count
+      ?? 0
+    ),
+    graph_linked_memory_count: Number(
+      executionMetadata.graph_linked_memory_count
+      ?? requestTrace.graph_linked_memory_count
+      ?? contextAssemblyMetadata.graph_linked_memory_count
+      ?? 0
+    ),
+    deferred_graph_link_count: Number(
+      executionMetadata.deferred_graph_link_count
+      ?? requestTrace.deferred_graph_link_count
+      ?? contextAssemblyMetadata.deferred_graph_link_count
+      ?? 0
+    ),
+    build_relevant_memory_count: Number(
+      executionMetadata.build_relevant_memory_count
+      ?? requestTrace.build_relevant_memory_count
+      ?? contextAssemblyMetadata.build_relevant_memory_count
+      ?? 0
+    ),
+    mission_critical_memory_count: Number(
+      executionMetadata.mission_critical_memory_count
+      ?? requestTrace.mission_critical_memory_count
+      ?? contextAssemblyMetadata.mission_critical_memory_count
+      ?? 0
+    ),
+    continuity_confidence: executionMetadata.continuity_confidence
+      || requestTrace.continuity_confidence
+      || contextAssemblyMetadata.continuity_confidence
+      || 'low',
+    continuity_reason: executionMetadata.continuity_reason
+      || requestTrace.continuity_reason
+      || contextAssemblyMetadata.continuity_reason
+      || '',
+    recurrence_signals: executionMetadata.recurrence_signals
+      || requestTrace.recurrence_signals
+      || contextAssemblyMetadata.recurrence_signals
+      || [],
+    top_memory_influencers: executionMetadata.top_memory_influencers
+      || requestTrace.top_memory_influencers
+      || contextAssemblyMetadata.top_memory_influencers
+      || [],
+    memory_elevation_warnings: executionMetadata.memory_elevation_warnings
+      || requestTrace.memory_elevation_warnings
+      || contextAssemblyMetadata.memory_elevation_warnings
+      || [],
+    graph_link_truth_preserved: Boolean(
+      executionMetadata.graph_link_truth_preserved
+      ?? requestTrace.graph_link_truth_preserved
+      ?? contextAssemblyMetadata.graph_link_truth_preserved
+      ?? true,
+    ),
+    graph_link_reason: executionMetadata.graph_link_reason
+      || requestTrace.graph_link_reason
+      || contextAssemblyMetadata.graph_link_reason
+      || '',
+    source_provenance_summary: executionMetadata.source_provenance_summary
+      || requestTrace.source_provenance_summary
+      || contextAssemblyMetadata.source_provenance_summary
+      || [],
+    memory_informed_recommendation: executionMetadata.memory_informed_recommendation
+      || requestTrace.memory_informed_recommendation
+      || contextAssemblyMetadata.memory_informed_recommendation
+      || '',
     planning_mode: executionMetadata.planning_mode
       || requestTrace.planning_mode
       || contextAssemblyMetadata.planning_mode

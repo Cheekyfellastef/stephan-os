@@ -55,6 +55,9 @@ test('buildContextAssembly returns structured bundle with relevance gating', () 
   assert.ok(Array.isArray(result.truthMetadata.ranked_moves));
   assert.ok(result.truthMetadata.ranked_moves.length > 0);
   assert.equal(result.truthMetadata.proposal_packet_active, true);
+  assert.equal(result.truthMetadata.memory_elevation_active, true);
+  assert.ok(result.truthMetadata.elevated_memory_count >= 0);
+  assert.equal(result.truthMetadata.graph_link_truth_preserved, true);
   assert.equal(result.truthMetadata.operator_approval_required, true);
   assert.equal(result.truthMetadata.execution_eligible, false);
   assert.equal(typeof result.truthMetadata.codex_handoff_payload, 'string');
@@ -137,5 +140,33 @@ test('buildContextAssembly keeps planning truth bounded when evidence is missing
   assert.ok(result.truthMetadata.planning_truth_warnings.includes('proposal system signal not observed; proposal bridge moves are inferred priorities'));
   assert.equal(result.truthMetadata.proposal_eligible, true);
   assert.equal(result.truthMetadata.proposal_packet_active, true);
+  assert.equal(result.truthMetadata.memory_elevation_active, true);
+  assert.ok(result.truthMetadata.elevated_memory_count >= 0);
+  assert.equal(result.truthMetadata.graph_link_truth_preserved, true);
   assert.equal(result.truthMetadata.operator_approval_required, true);
+});
+
+
+test('buildContextAssembly projects memory elevation truth fields for self-build prompts', () => {
+  const result = buildContextAssembly({
+    prompt: 'what should we build next to improve graph and proposal quality?',
+    continuityContext: {
+      records: [
+        { id: 'm-1', summary: 'timeout truth drift recurred', subsystem: 'routing', timestamp: '2026-04-01T00:00:00.000Z' },
+        { id: 'm-2', summary: 'timeout truth drift recurred', subsystem: 'routing', timestamp: '2026-04-02T00:00:00.000Z' },
+      ],
+    },
+    knowledgeGraphContext: {
+      entities: [{ id: 'routing', label: 'Routing Truth' }],
+    },
+    runtimeContext: { sessionKind: 'hosted-web', target: 'cloud' },
+    routeDecision: { requestRouteTruth: { routeKind: 'cloud' }, selectedProvider: 'groq' },
+    operatorContext: { openTensions: ['no fake state'], subsystemInventory: ['proposal-system'] },
+  });
+
+  assert.equal(result.truthMetadata.memory_elevation_active, true);
+  assert.ok(result.truthMetadata.memory_candidates_considered >= 2);
+  assert.ok(result.truthMetadata.elevated_memory_count >= 0);
+  assert.equal(typeof result.truthMetadata.memory_informed_recommendation, 'string');
+  assert.equal(result.truthMetadata.graph_link_truth_preserved, true);
 });
