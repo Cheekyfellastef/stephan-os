@@ -911,7 +911,43 @@
         "tileLinked": true
       },
       "timestamp": "2026-04-10T18:26:56.289Z"
+    },
+    {
+      "id": "evt_1775849427469_wzvrcm",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "groq",
+        "fallbackUsed": true,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T19:30:27.469Z"
+    },
+    {
+      "id": "evt_1775850064047_4y2r2q",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T19:41:04.047Z"
+    },
+    {
+      "id": "evt_1775850230777_5vcdwy",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T19:43:50.777Z"
     }
   ],
-  "updated_at": "2026-04-10T18:26:56.289Z"
+  "updated_at": "2026-04-10T19:43:50.777Z"
 }

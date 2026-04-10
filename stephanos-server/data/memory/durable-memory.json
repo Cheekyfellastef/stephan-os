@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-10T18:26:56.288Z",
+  "updatedAt": "2026-04-10T19:43:50.775Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1450,6 +1450,156 @@
       "retentionHint": "default",
       "createdAt": "2026-04-10T18:26:56.287Z",
       "updatedAt": "2026-04-10T18:26:56.287Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775849427467-b53bh-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "tell me how a transformer works",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:30:27.467Z",
+      "updatedAt": "2026-04-10T19:30:27.467Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775849427467-b53bh-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "**Transformer basics**\n\n| Layer | Purpose | Key idea |\n|-------|---------|----------|\n| **Input embedding + positional encoding** | Turns tokens into vectors and injects order | Adds a fixed sinusoid or learned vector to each token’s embedding |\n| **Self‑attention (multi‑head)** | Computes context‑aware representation of each token | For each head: `Q = XWq`, `K = XWk`, `V = XWv`; attention = softmax(`QKᵀ / √d_k`) · ",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": true,
+        "fallbackReason": "ollama: Cannot connect to Ollama: it took too long to respond. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=60000]",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:30:27.467Z",
+      "updatedAt": "2026-04-10T19:30:27.467Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775850064034-693y7-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is 2 plus 2",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:41:04.034Z",
+      "updatedAt": "2026-04-10T19:41:04.034Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775850064034-693y7-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "The sum of 2 and 2 is 4.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:41:04.034Z",
+      "updatedAt": "2026-04-10T19:41:04.034Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775850230774-onwm1-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "tell me how a transformer works",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:43:50.775Z",
+      "updatedAt": "2026-04-10T19:43:50.775Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775850230774-onwm1-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "A Transformer is a key component of modern neural network architectures, particularly in natural language processing (NLP). It was introduced by Vaswani et al. in their 2017 paper \"Attention Is All You Need.\"\n\nHere's a high-level overview of how a Transformer works:\n\n1. **Input Embeddings**: The input sequence (e.g., words in a sentence) is first converted into a set of dense vector representations, called embeddings",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T19:43:50.775Z",
+      "updatedAt": "2026-04-10T19:43:50.775Z",
       "surface": "shared"
     }
   }
