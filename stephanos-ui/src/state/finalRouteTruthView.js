@@ -50,54 +50,38 @@ function hasBlockingIssues(runtimeDiagnosticsTruth = {}, canonicalTruth = {}) {
 // - top-level runtimeStatus route/provider fields are compatibility diagnostics, not authoritative display truth.
 export function buildFinalRouteTruthView(runtimeStatusModel) {
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
-  const {
-    canonicalRouteRuntimeTruth: canonicalTruthInput,
-    finalRouteTruth: finalRouteTruthInput,
-    runtimeTruth: runtimeTruthInput,
-    finalRoute: finalRouteInput,
-  } = runtimeStatus;
-  const canonicalTruth = canonicalTruthInput ?? {};
-  const finalRouteTruth = finalRouteTruthInput ?? {};
-  const runtimeTruth = runtimeTruthInput ?? {};
-  const finalRoute = finalRouteInput ?? {};
-  const runtimeRouteTruth = runtimeTruth.route ?? {};
-  const runtimeReachabilityTruth = runtimeTruth.reachabilityTruth ?? {};
-  const runtimeProviderTruth = runtimeTruth.provider ?? {};
-  const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
+  const canonicalTruth = runtimeStatus.canonicalRouteRuntimeTruth ?? {};
+  const groupedRuntimeTruth = runtimeStatus['runtimeTruth'] ?? {};
+  const runtimeDiagnosticsTruth = groupedRuntimeTruth.diagnostics ?? {};
 
-  const routeKind = pickTruth(canonicalTruth.winningRoute, finalRouteTruth.routeKind, runtimeRouteTruth.selectedRouteKind, finalRoute.routeKind) || 'unavailable';
-  const preferredTarget = pickTruth(canonicalTruth.preferredTarget, finalRouteTruth.preferredTarget, runtimeRouteTruth.preferredTarget, finalRoute.preferredTarget) || 'unavailable';
-  const actualTarget = pickTruth(canonicalTruth.actualTarget, finalRouteTruth.actualTarget, runtimeRouteTruth.actualTarget, finalRoute.actualTarget) || 'unavailable';
-  const source = pickTruth(canonicalTruth.routeSource, finalRouteTruth.source, runtimeRouteTruth.source, finalRoute.source) || 'unknown';
+  const routeKind = pickTruth(canonicalTruth.winningRoute) || 'unavailable';
+  const preferredTarget = pickTruth(canonicalTruth.preferredTarget) || 'unavailable';
+  const actualTarget = pickTruth(canonicalTruth.actualTarget) || 'unavailable';
+  const source = pickTruth(canonicalTruth.routeSource) || 'unknown';
 
   const uiReachableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
     : normalizeUiReachabilityState(
-      pickTruth(canonicalTruth.uiReachabilityState, finalRouteTruth.uiReachabilityState, runtimeReachabilityTruth.uiReachableState),
-      canonicalTruth.uiReachable ?? finalRouteTruth.uiReachable ?? runtimeReachabilityTruth.uiReachable,
+      pickTruth(canonicalTruth.uiReachabilityState),
+      canonicalTruth.uiReachable,
     );
-  const canonicalRouteUsable = canonicalTruth.routeUsable;
-  const fallbackRouteUsable = finalRouteTruth.routeUsable === true || runtimeReachabilityTruth.selectedRouteUsable === true
-    ? true
-    : (finalRouteTruth.routeUsable ?? runtimeReachabilityTruth.selectedRouteUsable);
-  const reconciledRouteUsable = canonicalRouteUsable === false
-    && fallbackRouteUsable === true
+  const reconciledRouteUsable = canonicalTruth.routeUsable === false
     && canonicalTruth.routeReachable === true
-    && (canonicalTruth.backendReachable ?? finalRouteTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true
+    && canonicalTruth.backendReachable === true
     && uiReachableState === 'yes'
       ? true
-      : (canonicalRouteUsable ?? fallbackRouteUsable);
+      : canonicalTruth.routeUsable;
   const preReconciliationRouteUsableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
     ? 'unknown'
     : asBooleanState(reconciledRouteUsable);
-  const selectedProvider = pickTruth(canonicalTruth.selectedProvider, finalRouteTruth.selectedProvider, runtimeProviderTruth.selectedProvider, runtimeTruth.selectedProvider) || 'unknown';
-  const executedProvider = pickTruth(canonicalTruth.executedProvider, finalRouteTruth.executedProvider, runtimeProviderTruth.executableProvider, runtimeTruth.executedProvider) || 'unknown';
+  const selectedProvider = pickTruth(canonicalTruth.selectedProvider) || 'unknown';
+  const executedProvider = pickTruth(canonicalTruth.executedProvider) || 'unknown';
   const providerState = normalizeProviderState(
-    pickTruth(canonicalTruth.providerHealthState, finalRouteTruth.providerHealthState, runtimeProviderTruth.providerHealthState),
+    pickTruth(canonicalTruth.providerHealthState),
   );
   const executableProviderValid = isKnownProvider(executedProvider);
-  const backendReachable = (canonicalTruth.backendReachable ?? finalRouteTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable) === true;
-  const selectedRouteReachable = canonicalTruth.routeReachable === true || runtimeReachabilityTruth.selectedRouteReachable === true;
+  const backendReachable = canonicalTruth.backendReachable === true;
+  const selectedRouteReachable = canonicalTruth.routeReachable === true;
   const liveProviderConnected = ['READY', 'CONNECTED'].includes(providerState);
   const liveUsabilitySignalsMet = backendReachable
     && selectedRouteReachable
@@ -134,12 +118,12 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
 
   return {
     routeKind,
-    fallbackActive: canonicalTruth.fallbackActive === true || finalRouteTruth.fallbackActive === true || runtimeRouteTruth.fallbackActive === true,
-    backendReachableState: asBooleanState(canonicalTruth.backendReachable ?? finalRouteTruth.backendReachable ?? runtimeReachabilityTruth.backendReachable),
+    fallbackActive: canonicalTruth.fallbackActive === true,
+    backendReachableState: asBooleanState(canonicalTruth.backendReachable),
     uiReachableState,
     routeUsableState,
-    homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable ?? finalRouteTruth.homeNodeUsable ?? runtimeReachabilityTruth.homeNodeAvailable),
-    requestedProvider: pickTruth(canonicalTruth.requestedProvider, finalRouteTruth.requestedProvider, runtimeProviderTruth.requestedProvider, runtimeTruth.requestedProvider) || 'unknown',
+    homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable),
+    requestedProvider: pickTruth(canonicalTruth.requestedProvider) || 'unknown',
     selectedProvider,
     executedProvider,
     preferredTarget,

@@ -108,6 +108,64 @@ function projectLegacyRuntimeTruth(runtimeTruth) {
   };
 }
 
+function projectFinalRouteTruthFromCanonical(canonicalRouteRuntimeTruth, baseFinalRouteTruth = {}, runtimeTruth = {}) {
+  const canonical = asObject(canonicalRouteRuntimeTruth);
+  const base = asObject(baseFinalRouteTruth);
+  const route = asObject(runtimeTruth.route);
+  const reachabilityTruth = asObject(runtimeTruth.reachabilityTruth);
+  const provider = asObject(runtimeTruth.provider);
+  const diagnostics = asObject(runtimeTruth.diagnostics);
+
+  // Derived-only compatibility projection:
+  // finalRouteTruth output shape is preserved, but values are sourced from canonicalRouteRuntimeTruth.
+  return {
+    ...base,
+    sessionKind: canonical.sessionKind || base.sessionKind || 'unknown',
+    deviceContext: canonical.deviceContext || base.deviceContext || 'unknown',
+    requestedRouteMode: canonical.requestedRouteMode || base.requestedRouteMode || 'auto',
+    effectiveRouteMode: canonical.effectiveRouteMode || base.effectiveRouteMode || 'auto',
+    routeKind: canonical.winningRoute || base.routeKind || 'unavailable',
+    preferredRoute: canonical.winningRoute || base.preferredRoute || 'unavailable',
+    winningRoute: canonical.winningRoute || base.winningRoute || 'unavailable',
+    winnerReason: canonical.winningReason || base.winnerReason || '',
+    selectedRouteReason: canonical.winningReason || base.selectedRouteReason || '',
+    preferredTarget: canonical.preferredTarget || base.preferredTarget || '',
+    preferredTargetUsed: canonical.preferredTarget || base.preferredTargetUsed || '',
+    actualTarget: canonical.actualTarget || base.actualTarget || '',
+    actualTargetUsed: canonical.actualTarget || base.actualTargetUsed || '',
+    source: canonical.routeSource || base.source || 'route-diagnostics',
+    backendReachable: canonical.backendReachable === true,
+    uiReachabilityState: canonical.uiReachabilityState || base.uiReachabilityState || 'unknown',
+    uiReachable: canonical.uiReachable === true,
+    selectedRouteReachable: canonical.routeReachable === true,
+    routeUsable: canonical.routeUsable === true,
+    selectedRouteUsable: canonical.routeUsable === true,
+    homeNodeUsable: canonical.homeNodeAvailable === true,
+    localRouteUsable: canonical.localAvailable === true,
+    cloudRouteReachable: canonical.cloudAvailable === true,
+    fallbackActive: canonical.fallbackActive === true,
+    fallbackRouteActive: (canonical.winningRoute || base.routeKind) === 'dist',
+    requestedProvider: canonical.requestedProvider || base.requestedProvider || 'unknown',
+    selectedProvider: canonical.selectedProvider || base.selectedProvider || 'unknown',
+    executedProvider: canonical.executedProvider || base.executedProvider || '',
+    providerHealthState: canonical.providerHealthState || base.providerHealthState || 'unknown',
+    fallbackReason: canonical.fallbackReason || provider.fallbackReason || base.fallbackReason || '',
+    validationState: canonical.validationState || diagnostics.validationState || base.validationState || 'unknown',
+    appLaunchState: canonical.appLaunchState || diagnostics.appLaunchState || base.appLaunchState || 'unknown',
+    operatorAction: canonical.operatorSummary || base.operatorAction || route.winningReason || '',
+    operatorGuidance: diagnostics.operatorGuidance || base.operatorGuidance || [],
+    providerExecution: {
+      requestedProvider: canonical.requestedProvider || provider.requestedProvider || '',
+      selectedProvider: canonical.selectedProvider || provider.selectedProvider || '',
+      executableProvider: canonical.executedProvider || provider.executableProvider || '',
+      providerHealthState: canonical.providerHealthState || provider.providerHealthState || 'unknown',
+      fallbackProviderUsed: provider.fallbackProviderUsed === true || canonical.fallbackActive === true,
+      fallbackReason: canonical.fallbackReason || provider.fallbackReason || '',
+    },
+    blockingIssueCodes: Array.isArray(canonical.blockingIssueCodes) ? canonical.blockingIssueCodes : [],
+  };
+}
+
 function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
   const session = asObject(runtimeTruth.session);
   const route = asObject(runtimeTruth.route);
@@ -431,14 +489,24 @@ export function adjudicateRuntimeTruth({
 
   const canonicalRouteRuntimeTruth = buildCanonicalRouteRuntimeTruth(runtimeTruth, issues);
 
-  return {
-    runtimeTruth: projectLegacyRuntimeTruth(runtimeTruth),
+  const derivedFinalRouteTruth = projectFinalRouteTruthFromCanonical(
     canonicalRouteRuntimeTruth,
+    finalRouteTruth,
+    runtimeTruth,
+  );
+
+  return {
+    // Canonical source of runtime route/provider/session truth.
+    canonicalRouteRuntimeTruth,
+    // Derived-only compatibility projection (legacy grouped + flat fields).
+    runtimeTruth: projectLegacyRuntimeTruth(runtimeTruth),
+    // Derived-only compatibility projection preserving finalRouteTruth shape.
+    finalRouteTruth: derivedFinalRouteTruth,
     runtimeTruthSnapshot: canonicalRouteRuntimeTruth,
     compatibilityRuntimeTruthSnapshot: buildRuntimeTruthSnapshot({
       runtimeContext,
       finalRoute,
-      finalRouteTruth,
+      finalRouteTruth: derivedFinalRouteTruth,
       routePlan,
       routeEvaluations,
       routePreferenceOrder,
