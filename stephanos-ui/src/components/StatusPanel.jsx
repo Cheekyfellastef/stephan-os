@@ -7,6 +7,11 @@ import { buildSupportSnapshot } from '../state/supportSnapshot';
 import { deriveContinuityLoopSnapshot } from '../state/continuityLoopSnapshot.js';
 import { buildMissionPacketKey, normalizeMissionPacketTruth } from '../state/missionPacketWorkflow';
 import {
+  buildCanonicalCurrentIntent,
+  buildCanonicalMemoryContext,
+  buildCanonicalMissionPacket,
+} from '../state/runtimeOrchestrationTruth';
+import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
   STEPHANOS_UI_BUILD_TIMESTAMP,
@@ -196,6 +201,39 @@ export default function StatusPanel() {
   const activeRecommendations = Array.isArray(surfaceProtocolRecommendations)
     ? surfaceProtocolRecommendations.filter((entry) => entry.status === 'active')
     : [];
+  const orchestrationMemoryContext = buildCanonicalMemoryContext({
+    continuitySnapshot,
+    missionPacketWorkflow,
+    memoryElevation: runtimeStatus?.runtimeTruth?.memoryElevation || {},
+    surfaceAwareness,
+    surfaceFrictionPatterns,
+  });
+  const orchestrationCurrentIntent = buildCanonicalCurrentIntent({
+    intent: runtimeStatus?.runtimeTruth?.intent || {},
+    missionPacket: {
+      ...missionPacketTruth,
+      status: missionPacketDecisionLabel === 'accept' ? 'accepted' : 'awaiting-approval',
+      title: missionPacketTruth.moveTitle,
+    },
+    proposal: {
+      active: missionPacketTruth.active,
+      moveId: missionPacketTruth.moveId,
+      warnings: missionPacketTruth.warnings,
+      status: missionPacketTruth.active ? 'proposed' : 'proposed',
+    },
+    execution: {
+      lastExecutionMetadata,
+      status: lastExecutionMetadata?.provider_answered === false
+        ? 'failed'
+        : lastExecutionMetadata?.actual_provider_used ? 'completed' : 'not-executing',
+      actualProvider: lastExecutionMetadata?.actual_provider_used,
+    },
+  });
+  const orchestrationMissionPacket = buildCanonicalMissionPacket({
+    missionPacketTruth,
+    missionPacketWorkflow,
+    currentIntent: orchestrationCurrentIntent,
+  });
   const supportSnapshot = buildSupportSnapshot({
     runtimeStatus: {
       ...runtimeStatus,
@@ -458,6 +496,11 @@ export default function StatusPanel() {
     runtimeContext,
     safeApiStatus,
     statusSummary: snapshotStatusSummary,
+    orchestrationTruth: {
+      canonicalMemoryContext: orchestrationMemoryContext,
+      canonicalCurrentIntent: orchestrationCurrentIntent,
+      canonicalMissionPacket: orchestrationMissionPacket,
+    },
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,
   });

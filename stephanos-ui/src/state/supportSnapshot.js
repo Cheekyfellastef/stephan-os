@@ -222,6 +222,7 @@ export function buildSupportSnapshot({
   now = new Date(),
   origin,
   href,
+  orchestrationTruth = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const canonicalHostedRouteTruth = runtimeContext?.canonicalHostedRouteTruth || canonicalTruth?.hostedRouteTruth || null;
@@ -579,6 +580,14 @@ export function buildSupportSnapshot({
     `Mission Packet Decision Timestamp: ${asText(runtimeStatus?.missionPacketDecisionAt, 'n/a')}`,
     `Mission Packet Proposal Queue Depth: ${asText(runtimeStatus?.missionPacketProposalQueueLength, '0')}`,
     `Mission Packet Roadmap Queue Depth: ${asText(runtimeStatus?.missionPacketRoadmapQueueLength, '0')}`,
+    `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
+    `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
+    `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,
+    `Canonical Memory Continuity: ${asText(orchestrationTruth?.canonicalMemoryContext?.activeMissionContinuity?.continuityLoopState, 'unknown')}`,
+    `Canonical Memory Sparse: ${orchestrationTruth?.canonicalMemoryContext?.sparseData === true ? 'yes' : 'no'}`,
+    `Canonical Mission Title: ${asText(orchestrationTruth?.canonicalMissionPacket?.missionTitle, 'not yet established')}`,
+    `Canonical Mission Phase: ${asText(orchestrationTruth?.canonicalMissionPacket?.currentPhase, 'proposed')}`,
+    `Canonical Mission Next Action: ${asText(orchestrationTruth?.canonicalMissionPacket?.recommendedNextAction, 'Await explicit operator approval')}`,
     `Intent Type: ${asText(runtimeStatus?.lastIntentType, 'unknown')}`,
     `Intent Confidence: ${asText(runtimeStatus?.lastIntentConfidence, '0')}`,
     `Intent Reason: ${asText(runtimeStatus?.lastIntentReason, 'n/a')}`,

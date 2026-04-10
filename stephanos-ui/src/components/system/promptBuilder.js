@@ -111,6 +111,31 @@ function formatActionHints(actionHints) {
   });
 }
 
+
+function formatOrchestrationTruth(orchestrationTruth = {}) {
+  const memory = orchestrationTruth?.canonicalMemoryContext || {};
+  const intent = orchestrationTruth?.canonicalCurrentIntent || {};
+  const packet = orchestrationTruth?.canonicalMissionPacket || {};
+  const lines = [
+    `memory.continuityLoopState: ${sanitizeLine(memory?.activeMissionContinuity?.continuityLoopState) || 'unknown'}`,
+    `memory.sparseData: ${formatScalar(memory?.sparseData === true)}`,
+    `intent.operatorIntent: ${sanitizeLine(intent?.operatorIntent?.label) || 'unknown'}`,
+    `intent.operatorIntentSource: ${sanitizeLine(intent?.operatorIntent?.source) || 'unknown'}`,
+    `intent.executionState: ${sanitizeLine(intent?.executionState?.status) || 'unknown'}`,
+    `missionPacket.currentPhase: ${sanitizeLine(packet?.currentPhase) || 'unknown'}`,
+    `missionPacket.nextAction: ${sanitizeLine(packet?.recommendedNextAction) || 'not yet established'}`,
+  ];
+
+  const continuityEvents = Array.isArray(memory?.activeMissionContinuity?.recentEvents)
+    ? memory.activeMissionContinuity.recentEvents.slice(0, 3)
+    : [];
+  if (continuityEvents.length > 0) {
+    lines.push(`memory.recentEvents: ${continuityEvents.join(' | ')}`);
+  }
+
+  return lines;
+}
+
 function appendSection(lines, heading, sectionLines = []) {
   lines.push(`## ${heading}`);
   lines.push(...sectionLines);
@@ -128,6 +153,7 @@ export function buildStephanosPrompt({
   includeConstraints = true,
   maxTelemetryEntries = DEFAULT_MAX_TELEMETRY_ENTRIES,
   constraints = DEFAULT_CONSTRAINTS,
+  orchestrationTruth = null,
 } = {}) {
   const missionLine = sanitizeLine(mission) || 'Describe the mission objective.';
   const lines = [];
@@ -148,6 +174,10 @@ export function buildStephanosPrompt({
 
   if (includeActionHints) {
     appendSection(lines, 'ACTION HINTS', formatActionHints(actionHints));
+  }
+
+  if (orchestrationTruth) {
+    appendSection(lines, 'ORCHESTRATION TRUTH', formatOrchestrationTruth(orchestrationTruth));
   }
 
   if (includeConstraints) {

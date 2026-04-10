@@ -6,6 +6,7 @@ import {
   deriveMissionPacketActionState,
   normalizeMissionPacketTruth,
 } from '../state/missionPacketWorkflow';
+import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth';
 
 function formatList(values = []) {
   if (!Array.isArray(values) || values.length === 0) {
@@ -30,6 +31,10 @@ export default function MissionPacketQueuePanel() {
   );
   const actionState = useMemo(
     () => deriveMissionPacketActionState(missionPacketWorkflow, packetTruth),
+    [missionPacketWorkflow, packetTruth],
+  );
+  const canonicalMissionPacket = useMemo(
+    () => buildCanonicalMissionPacket({ missionPacketTruth: packetTruth, missionPacketWorkflow }),
     [missionPacketWorkflow, packetTruth],
   );
 
@@ -73,11 +78,17 @@ export default function MissionPacketQueuePanel() {
         <li>Approval Required: {String(packetTruth.approvalRequired)}</li>
         <li>Execution Eligible: {String(actionState.executionEligible)}</li>
         <li>Current Decision: {actionState.decision}</li>
+        <li>Lifecycle State: {actionState.lifecycleStatus}</li>
+        <li>Recommended Next Action: {canonicalMissionPacket.recommendedNextAction}</li>
       </ul>
       <div className="status-panel-copy-actions" data-no-drag>
         <button type="button" disabled={!actionState.canAccept} onClick={() => handleAction('accept')}>Accept packet</button>
         <button type="button" disabled={!actionState.canReject} onClick={() => handleAction('reject')}>Reject packet</button>
         <button type="button" disabled={!actionState.canDefer} onClick={() => handleAction('defer')}>Defer packet</button>
+        <button type="button" disabled={!actionState.canStart} onClick={() => handleAction('start')}>Mark in progress</button>
+        <button type="button" disabled={!actionState.canComplete} onClick={() => handleAction('complete')}>Mark completed</button>
+        <button type="button" disabled={!actionState.canFail} onClick={() => handleAction('fail')}>Mark failed</button>
+        <button type="button" disabled={!actionState.canRollback} onClick={() => handleAction('rollback')}>Mark rolled back</button>
         <button type="button" disabled={!actionState.canCopyCodexHandoff} onClick={handleCopyCodex}>Copy Codex handoff</button>
         <button type="button" disabled={!actionState.canPromote} onClick={() => handleAction('promote')}>Promote to roadmap/proposal queue</button>
       </div>

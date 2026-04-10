@@ -69,6 +69,7 @@ test('mission packet decisions persist through normalization and preserve no-aut
   assert.equal(restored.decisions[0].decision, 'defer');
   assert.equal(restored.decisions[0].approvalRequired, true);
   assert.equal(restored.decisions[0].executionEligible, false);
+  assert.equal(restored.decisions[0].lifecycleStatus, 'awaiting-approval');
 });
 
 test('promotion adds packet to proposal and roadmap queues only after accept decision', () => {
@@ -102,4 +103,32 @@ test('promotion adds packet to proposal and roadmap queues only after accept dec
   assert.equal(promoted.proposalQueue.length, 1);
   assert.equal(promoted.roadmapQueue.length, 1);
   assert.equal(promoted.proposalQueue[0].moveId, 'proposal-execution-bridge');
+});
+
+test('lifecycle actions track in-progress to completed without claiming auto execution', () => {
+  const packet = normalizeMissionPacketTruth({
+    proposal_packet_active: true,
+    proposed_move_id: 'mission-synthesis-layer',
+    operator_approval_required: true,
+    execution_eligible: false,
+  });
+
+  const accepted = applyMissionPacketAction(createDefaultMissionPacketWorkflow(), {
+    action: 'accept',
+    packetTruth: packet,
+    now: '2026-04-09T00:06:00.000Z',
+  });
+  const started = applyMissionPacketAction(accepted, {
+    action: 'start',
+    packetTruth: packet,
+    now: '2026-04-09T00:07:00.000Z',
+  });
+  const completed = applyMissionPacketAction(started, {
+    action: 'complete',
+    packetTruth: packet,
+    now: '2026-04-09T00:08:00.000Z',
+  });
+  const gate = deriveMissionPacketActionState(completed, packet);
+  assert.equal(gate.lifecycleStatus, 'completed');
+  assert.equal(gate.executionEligible, false);
 });
