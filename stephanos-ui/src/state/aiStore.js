@@ -56,7 +56,15 @@ import {
   resolveSurfaceAwareness,
   resolveSurfaceUiLayoutDefaults,
 } from '../system/surface/surfaceAwareness';
-import { appendFrictionEvent, createFrictionEvent } from '../system/friction/frictionPipeline.js';
+import {
+  acceptSurfaceProtocolRecommendation,
+  appendAcceptedSurfaceRule,
+  appendFrictionEvent,
+  createFrictionEvent,
+  detectSurfaceFrictionPatterns,
+  generateSurfaceProtocolRecommendations,
+  revertAcceptedSurfaceRule,
+} from '../system/friction/frictionPipeline.js';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -227,6 +235,12 @@ function sanitizeSurfaceFrictionEvents(entries = []) {
     .slice(-MAX_FRICTION_EVENTS);
 }
 
+function sanitizeObjectList(entries = [], max = 12) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .slice(-max);
+}
+
 function normalizeStoredSettings(persistedSession) {
   const defaults = createDefaultRouterSettings();
   const persistedSettings = persistedSession?.session?.providerPreferences || {};
@@ -338,6 +352,9 @@ function createInitialMemorySnapshot() {
       ...(persistedSession?.working || {}),
       recentCommands: sanitizePersistedCommandHistory(persistedSession?.working?.recentCommands || []),
       surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(persistedSession?.working?.surfaceFrictionEvents || []),
+      surfaceFrictionPatterns: sanitizeObjectList(persistedSession?.working?.surfaceFrictionPatterns || [], 12),
+      surfaceProtocolRecommendations: sanitizeObjectList(persistedSession?.working?.surfaceProtocolRecommendations || [], 12),
+      acceptedSurfaceRules: sanitizeObjectList(persistedSession?.working?.acceptedSurfaceRules || [], 24),
       missionPacketWorkflow: normalizeMissionPacketWorkflow(
         persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
       ),
@@ -385,6 +402,15 @@ export function AIStoreProvider({ children }) {
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
   const [surfaceFrictionEvents, setSurfaceFrictionEvents] = useState(
     sanitizeSurfaceFrictionEvents(initialSnapshot.workingMemory?.surfaceFrictionEvents || []),
+  );
+  const [surfaceFrictionPatterns, setSurfaceFrictionPatterns] = useState(
+    sanitizeObjectList(initialSnapshot.workingMemory?.surfaceFrictionPatterns || [], 12),
+  );
+  const [surfaceProtocolRecommendations, setSurfaceProtocolRecommendations] = useState(
+    sanitizeObjectList(initialSnapshot.workingMemory?.surfaceProtocolRecommendations || [], 12),
+  );
+  const [acceptedSurfaceRules, setAcceptedSurfaceRules] = useState(
+    sanitizeObjectList(initialSnapshot.workingMemory?.acceptedSurfaceRules || [], 24),
   );
   const [missionPacketWorkflow, setMissionPacketWorkflow] = useState(
     normalizeMissionPacketWorkflow(initialSnapshot.workingMemory?.missionPacketWorkflow || createDefaultMissionPacketWorkflow()),
@@ -458,6 +484,9 @@ export function AIStoreProvider({ children }) {
       surfaceAwareness: {
         ...surfaceAwareness,
         recentFrictionEvents: surfaceFrictionEvents,
+        frictionPatterns: surfaceFrictionPatterns,
+        surfaceProtocolRecommendations,
+        acceptedSurfaceRules,
       },
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
@@ -475,6 +504,9 @@ export function AIStoreProvider({ children }) {
     routeMode,
     surfaceAwareness,
     surfaceFrictionEvents,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    acceptedSurfaceRules,
   ]);
 
   const debugVisible = uiLayout.debugConsole === true;
@@ -534,6 +566,9 @@ export function AIStoreProvider({ children }) {
         ...workingMemory,
         missionPacketWorkflow,
         surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(surfaceFrictionEvents),
+        surfaceFrictionPatterns: sanitizeObjectList(surfaceFrictionPatterns, 12),
+        surfaceProtocolRecommendations: sanitizeObjectList(surfaceProtocolRecommendations, 12),
+        acceptedSurfaceRules: sanitizeObjectList(acceptedSurfaceRules, 24),
         recentCommands: sanitizePersistedCommandHistory(commandHistory),
       },
       project: projectMemory,
@@ -558,6 +593,9 @@ export function AIStoreProvider({ children }) {
     workingMemory,
     missionPacketWorkflow,
     surfaceFrictionEvents,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    acceptedSurfaceRules,
     projectMemory,
     debugVisible,
   ]);
@@ -652,15 +690,60 @@ export function AIStoreProvider({ children }) {
       userText,
       source,
       now,
+      sessionId: `route:${lastRoute || 'assistant'}`,
       surfaceProfileId: surfaceAwareness.effectiveSurfaceExperience?.selectedProfileId || 'generic-surface',
       activeProtocolIds: surfaceAwareness.effectiveSurfaceExperience?.activeProtocolIds || [],
     });
-    setSurfaceFrictionEvents((prev) => appendFrictionEvent(prev, frictionEvent));
+    setSurfaceFrictionEvents((prev) => {
+      const nextEvents = appendFrictionEvent(prev, frictionEvent);
+      const nextPatterns = detectSurfaceFrictionPatterns({ events: nextEvents, existingPatterns: surfaceFrictionPatterns });
+      setSurfaceFrictionPatterns(nextPatterns);
+      const nextRecommendations = generateSurfaceProtocolRecommendations({
+        patterns: nextPatterns,
+        existingRecommendations: surfaceProtocolRecommendations,
+      });
+      setSurfaceProtocolRecommendations(nextRecommendations);
+      return nextEvents;
+    });
     return frictionEvent;
-  }, [surfaceAwareness]);
+  }, [lastRoute, surfaceAwareness, surfaceFrictionPatterns, surfaceProtocolRecommendations]);
 
   const clearSurfaceFrictionEvents = useCallback(() => {
     setSurfaceFrictionEvents([]);
+    setSurfaceFrictionPatterns([]);
+    setSurfaceProtocolRecommendations([]);
+    setAcceptedSurfaceRules((prev) => prev.filter((rule) => rule.scope !== 'session'));
+  }, []);
+
+  const acceptSurfaceRecommendation = useCallback(({ recommendationId = '', scope = 'session', operatorId = 'operator' } = {}) => {
+    const recommendation = surfaceProtocolRecommendations.find((entry) => entry.id === recommendationId);
+    if (!recommendation) {
+      return null;
+    }
+    const acceptedRule = acceptSurfaceProtocolRecommendation({
+      recommendation,
+      scope,
+      operatorId,
+      now: new Date(),
+    });
+    setAcceptedSurfaceRules((prev) => appendAcceptedSurfaceRule(prev, acceptedRule));
+    setSurfaceProtocolRecommendations((prev) => prev.map((entry) => (
+      entry.id === recommendationId ? { ...entry, status: 'accepted', acceptedAt: new Date().toISOString() } : entry
+    )));
+    return acceptedRule;
+  }, [surfaceProtocolRecommendations]);
+
+  const rejectSurfaceRecommendation = useCallback(({ recommendationId = '', operatorId = 'operator' } = {}) => {
+    const timestamp = new Date().toISOString();
+    setSurfaceProtocolRecommendations((prev) => prev.map((entry) => (
+      entry.id === recommendationId
+        ? { ...entry, status: 'rejected', rejectedAt: timestamp, rejectionReason: `Rejected by ${operatorId}` }
+        : entry
+    )));
+  }, []);
+
+  const revertSurfaceRule = useCallback(({ ruleId = '', operatorId = 'operator' } = {}) => {
+    setAcceptedSurfaceRules((prev) => revertAcceptedSurfaceRule(prev, ruleId, { now: new Date(), operatorId }));
   }, []);
 
   const rememberSuccessfulOllamaConnection = useCallback(({ baseURL = '', host = '', model = '' } = {}) => {
@@ -931,10 +1014,16 @@ export function AIStoreProvider({ children }) {
     setOllamaConnection,
     surfaceAwareness,
     surfaceFrictionEvents,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    acceptedSurfaceRules,
     surfaceOverride,
     setSurfaceOverride,
     reportSurfaceFriction,
     clearSurfaceFrictionEvents,
+    acceptSurfaceRecommendation,
+    rejectSurfaceRecommendation,
+    revertSurfaceRule,
     workingMemory,
     setWorkingMemory,
     missionPacketWorkflow,
@@ -1001,6 +1090,9 @@ export function AIStoreProvider({ children }) {
     ollamaConnection,
     surfaceAwareness,
     surfaceFrictionEvents,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    acceptedSurfaceRules,
     surfaceOverride,
     workingMemory,
     missionPacketWorkflow,
@@ -1029,6 +1121,9 @@ export function AIStoreProvider({ children }) {
     setSurfaceOverride,
     reportSurfaceFriction,
     clearSurfaceFrictionEvents,
+    acceptSurfaceRecommendation,
+    rejectSurfaceRecommendation,
+    revertSurfaceRule,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveHomeBridgeUrl,

@@ -125,7 +125,16 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
           resolvedRoutingBiasHint: 'home-node-first',
         },
         recentFrictionEvents: [
-          { frictionType: 'panel-dragging', subsystem: 'mission-console', proposal: { proposalType: 'surface-override-suggestion' } },
+          { frictionType: 'panel-dragging', subsystem: 'mission-console', confidence: 0.66 },
+        ],
+        frictionPatterns: [
+          { frictionType: 'panel-dragging', patternStrength: 'emerging', recurrenceCount: 3 },
+        ],
+        surfaceProtocolRecommendations: [
+          { id: 'rec-1', status: 'active' },
+        ],
+        acceptedSurfaceRules: [
+          { id: 'rule-1' },
         ],
       },
       routeCandidates: [
@@ -167,7 +176,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Surface Device Class: tablet/);
   assert.match(snapshot, /Surface Embodiment Profile: field-tablet/);
   assert.match(snapshot, /Surface Active Protocols: touch-first-input, stacked-panels/);
-  assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) proposal=surface-override-suggestion/);
+  assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) confidence=0.66/);
+  assert.match(snapshot, /Surface Friction Pattern Count: 1/);
+  assert.match(snapshot, /Surface Friction Pattern Latest: panel-dragging strength=emerging recurrence=3/);
+  assert.match(snapshot, /Surface Active Recommendations: 1/);
+  assert.match(snapshot, /Surface Accepted Rules: 1/);
   assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);

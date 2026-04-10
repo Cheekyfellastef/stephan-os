@@ -247,7 +247,17 @@ export function buildSupportSnapshot({
   const recentFrictionEvents = Array.isArray(surfaceAwareness.recentFrictionEvents)
     ? surfaceAwareness.recentFrictionEvents
     : [];
+  const detectedFrictionPatterns = Array.isArray(surfaceAwareness.frictionPatterns)
+    ? surfaceAwareness.frictionPatterns
+    : [];
+  const surfaceProtocolRecommendations = Array.isArray(surfaceAwareness.surfaceProtocolRecommendations)
+    ? surfaceAwareness.surfaceProtocolRecommendations
+    : [];
+  const acceptedSurfaceRules = Array.isArray(surfaceAwareness.acceptedSurfaceRules)
+    ? surfaceAwareness.acceptedSurfaceRules
+    : [];
   const latestFriction = recentFrictionEvents[recentFrictionEvents.length - 1] || null;
+  const latestPattern = detectedFrictionPatterns[detectedFrictionPatterns.length - 1] || null;
 
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
   const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
@@ -364,7 +374,11 @@ export function buildSupportSnapshot({
     `Surface Routing Bias Hint: ${asText(effectiveSurfaceExperience.resolvedRoutingBiasHint, 'auto')}`,
     `Surface Capability Hints: touchPrimary=${asText(surfaceCapabilities.touchPrimary)} hoverReliable=${asText(surfaceCapabilities.hoverReliable)} finePointer=${asText(surfaceCapabilities.finePointer)} webxr=${asText(surfaceCapabilities.webxrAvailable)}`,
     `Surface Friction Recent Count: ${String(recentFrictionEvents.length)}`,
-    `Surface Friction Latest: ${latestFriction ? `${asText(latestFriction.frictionType)} (${asText(latestFriction.subsystem)}) proposal=${asText(latestFriction.proposal?.proposalType)}` : 'n/a'}`,
+    `Surface Friction Latest: ${latestFriction ? `${asText(latestFriction.frictionType)} (${asText(latestFriction.subsystem)}) confidence=${asText(latestFriction.confidence)}` : 'n/a'}`,
+    `Surface Friction Pattern Count: ${String(detectedFrictionPatterns.length)}`,
+    `Surface Friction Pattern Latest: ${latestPattern ? `${asText(latestPattern.frictionType)} strength=${asText(latestPattern.patternStrength)} recurrence=${asText(latestPattern.recurrenceCount)}` : 'n/a'}`,
+    `Surface Active Recommendations: ${String(surfaceProtocolRecommendations.filter((entry) => entry.status !== 'rejected').length)}`,
+    `Surface Accepted Rules: ${String(acceptedSurfaceRules.length)}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,

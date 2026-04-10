@@ -54,7 +54,14 @@ export default function StatusPanel() {
     homeNodeStatus,
     missionPacketWorkflow,
     surfaceFrictionEvents,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    acceptedSurfaceRules,
     reportSurfaceFriction,
+    clearSurfaceFrictionEvents,
+    acceptSurfaceRecommendation,
+    rejectSurfaceRecommendation,
+    revertSurfaceRule,
   } = useAIStore();
 
   const safeApiStatus = apiStatus || {};
@@ -103,6 +110,9 @@ export default function StatusPanel() {
   const effectiveSurfaceExperience = surfaceAwareness.effectiveSurfaceExperience || {};
   const latestSurfaceFriction = Array.isArray(surfaceFrictionEvents) && surfaceFrictionEvents.length > 0
     ? surfaceFrictionEvents[surfaceFrictionEvents.length - 1]
+    : null;
+  const latestPattern = Array.isArray(surfaceFrictionPatterns) && surfaceFrictionPatterns.length > 0
+    ? surfaceFrictionPatterns[surfaceFrictionPatterns.length - 1]
     : null;
   const homeNodeAttemptSummary = homeNodeAttempts.length
     ? homeNodeAttempts.map((attempt) => {
@@ -179,6 +189,9 @@ export default function StatusPanel() {
     setFrictionText('');
     notifyCopyResult(`Surface friction captured: ${frictionEvent.frictionType}`, 'success');
   };
+  const activeRecommendations = Array.isArray(surfaceProtocolRecommendations)
+    ? surfaceProtocolRecommendations.filter((entry) => entry.status === 'active')
+    : [];
   const supportSnapshot = buildSupportSnapshot({
     runtimeStatus: {
       ...runtimeStatus,
@@ -511,7 +524,12 @@ export default function StatusPanel() {
         <li>Surface Override Applied: {effectiveSurfaceExperience.overrideApplied ? 'yes' : 'no'} · confidence={effectiveSurfaceExperience.confidence || 'low'}</li>
         <li>Surface Capability Hints: touchPrimary={String(surfaceCapabilities.touchPrimary ?? 'unknown')} · hoverReliable={String(surfaceCapabilities.hoverReliable ?? 'unknown')} · finePointer={String(surfaceCapabilities.finePointer ?? 'unknown')} · webxr={String(surfaceCapabilities.webxrAvailable ?? 'unknown')}</li>
         <li>Surface Friction Recent Events: {Array.isArray(surfaceFrictionEvents) ? surfaceFrictionEvents.length : 0}</li>
-        <li>Surface Friction Latest: {latestSurfaceFriction ? `${latestSurfaceFriction.frictionType} (${latestSurfaceFriction.subsystem}) proposal=${latestSurfaceFriction.proposal?.proposalType || 'n/a'}` : 'n/a'}</li>
+        <li>Surface Friction Latest: {latestSurfaceFriction ? `${latestSurfaceFriction.frictionType} (${latestSurfaceFriction.subsystem}) confidence=${latestSurfaceFriction.confidence}` : 'n/a'}</li>
+        <li>Surface Friction Patterns: {Array.isArray(surfaceFrictionPatterns) ? surfaceFrictionPatterns.length : 0}</li>
+        <li>Surface Friction Pattern Latest: {latestPattern ? `${latestPattern.frictionType} strength=${latestPattern.patternStrength} recurrence=${latestPattern.recurrenceCount}` : 'n/a'}</li>
+        <li>Surface Protocol Recommendations: {Array.isArray(surfaceProtocolRecommendations) ? surfaceProtocolRecommendations.length : 0}</li>
+        <li>Surface Protocol Active Recommendations: {activeRecommendations.length}</li>
+        <li>Surface Accepted Rules: {Array.isArray(acceptedSurfaceRules) ? acceptedSurfaceRules.length : 0}</li>
         <li>Non-Local Session: {(runtimeSessionTruth.nonLocalSession === true) ? 'yes' : 'no'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>
@@ -779,6 +797,68 @@ export default function StatusPanel() {
         <button type="button" className="status-panel-copy-button" onClick={handleReportSurfaceFriction}>
           Capture Surface Friction
         </button>
+        <button type="button" className="status-panel-copy-button" onClick={() => clearSurfaceFrictionEvents()}>
+          Clear Session Friction
+        </button>
+      </div>
+      <div className="status-panel-copy-actions">
+        <strong>Recent Friction Events</strong>
+        <ul>
+          {(Array.isArray(surfaceFrictionEvents) ? surfaceFrictionEvents.slice(-5).reverse() : []).map((event) => (
+            <li key={event.id}>
+              [{event.severity}] {event.frictionType} ({event.subsystem}) conf={event.confidence} · source={event.source}
+              <br />
+              reason: {Array.isArray(event.structuredInterpretation?.reasoning) ? event.structuredInterpretation.reasoning.join(' | ') : 'n/a'}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="status-panel-copy-actions">
+        <strong>Detected Patterns</strong>
+        <ul>
+          {(Array.isArray(surfaceFrictionPatterns) ? surfaceFrictionPatterns : []).map((pattern) => (
+            <li key={pattern.id}>
+              {pattern.frictionType} · {pattern.subsystem} · strength={pattern.patternStrength} · recurrence={pattern.recurrenceCount}
+              <br />
+              reason: {Array.isArray(pattern.reasoning) ? pattern.reasoning.join(' | ') : 'n/a'}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="status-panel-copy-actions">
+        <strong>Active Recommendations</strong>
+        <ul>
+          {activeRecommendations.map((recommendation) => (
+            <li key={recommendation.id}>
+              {recommendation.proposalType} · conf={recommendation.confidence} · source={recommendation.source}
+              <br />
+              reason: {Array.isArray(recommendation.reasoning) ? recommendation.reasoning.join(' | ') : 'n/a'}
+              <br />
+              <button type="button" className="status-panel-copy-button" onClick={() => acceptSurfaceRecommendation({ recommendationId: recommendation.id, scope: 'session' })}>
+                Accept
+              </button>
+              <button type="button" className="status-panel-copy-button" onClick={() => rejectSurfaceRecommendation({ recommendationId: recommendation.id })}>
+                Reject
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="status-panel-copy-actions">
+        <strong>Accepted Surface Rules</strong>
+        <ul>
+          {(Array.isArray(acceptedSurfaceRules) ? acceptedSurfaceRules : []).map((rule) => (
+            <li key={rule.id}>
+              {rule.scope} · approved={String(rule.operatorApproved)} · status={rule.status || 'active'}
+              <br />
+              audit: {Array.isArray(rule.auditTrail) ? rule.auditTrail[rule.auditTrail.length - 1] : 'n/a'}
+              <br />
+              <button type="button" className="status-panel-copy-button" onClick={() => revertSurfaceRule({ ruleId: rule.id })}>
+                Revert Rule
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
       <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary || 'Diagnostics pending'}</p>
     </CollapsiblePanel>
