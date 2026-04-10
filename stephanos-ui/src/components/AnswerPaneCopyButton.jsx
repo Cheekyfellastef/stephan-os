@@ -1,26 +1,9 @@
-import { useEffect, useState } from 'react';
 import { buildAssistantMessageClipboardPayload } from '../utils/assistantMessageClipboard';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
-
-const COPY_STATE = {
-  IDLE: 'idle',
-  SUCCESS: 'success',
-  FAILURE: 'failure',
-};
-const SUCCESS_STATE_DURATION_MS = 3200;
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 
 export default function AnswerPaneCopyButton({ message }) {
-  const [copyState, setCopyState] = useState(COPY_STATE.IDLE);
-
-  useEffect(() => {
-    if (copyState === COPY_STATE.IDLE) return undefined;
-
-    const timerId = setTimeout(() => {
-      setCopyState(COPY_STATE.IDLE);
-    }, SUCCESS_STATE_DURATION_MS);
-
-    return () => clearTimeout(timerId);
-  }, [copyState]);
+  const { copyState, setCopyState } = useClipboardButtonState();
 
   const handleCopy = async () => {
     const payload = buildAssistantMessageClipboardPayload(message);
