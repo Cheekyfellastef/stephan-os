@@ -77,11 +77,13 @@ export default function StatusPanel() {
   const runtimeReachabilityTruth = runtimeTruth.reachabilityTruth ?? {};
   const runtimeProviderTruth = runtimeTruth.provider ?? {};
   const runtimeDiagnosticsTruth = runtimeTruth.diagnostics ?? {};
+  const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  const routeCandidates = Array.isArray(runtimeContext.routeCandidates) ? runtimeContext.routeCandidates : [];
+  const routeWinner = runtimeContext.routeCandidateWinner || {};
   const continuitySnapshot = deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory: safeCommandHistory });
   const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
   const reachability = runtimeTruth.reachabilityRaw ?? runtimeTruth.reachability ?? finalRoute.reachability ?? {};
-  const runtimeContext = runtimeStatus.runtimeContext ?? {};
   const homeNodeDiagnostics = runtimeContext.routeDiagnostics?.['home-node'] ?? {};
   const interactionAuditSummary = [
     `click:${uiDiagnostics.homeNodeInputClickReceived ? 'yes' : 'no'}`,
@@ -484,6 +486,10 @@ export default function StatusPanel() {
         <li>Preferred Target: {routeTruthView.preferredTarget}</li>
         <li>Actual Target Used: {routeTruthView.actualTarget}</li>
         <li>Final Route Source: {routeTruthView.source}</li>
+        <li>Winning Transport Kind: {finalRouteTruth.winningTransportKind || routeWinner.transportKind || 'none'}</li>
+        <li>Route Selection Source: {finalRouteTruth.routeSelectionSource || runtimeContext.routeSelectionSource || 'route-preference-order'}</li>
+        <li>Route Auto Switch Active: {(finalRouteTruth.routeAutoSwitchActive || runtimeContext.routeAutoSwitchActive) ? 'yes' : 'no'}</li>
+        <li>Route Auto Switch Reason: {finalRouteTruth.routeAutoSwitchReason || runtimeContext.routeAutoSwitchReason || 'n/a'}</li>
         <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
         <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
         <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>
@@ -567,6 +573,8 @@ export default function StatusPanel() {
         <li>Adjudicator Blocking Issues: {runtimeDiagnosticsTruth.blockingIssues?.length ?? 0}</li>
         <li>Adjudicator Warnings: {runtimeDiagnosticsTruth.invariantWarnings?.length ?? 0}</li>
         <li>Adjudicator Total Issues: {adjudication.issues?.length ?? 0}</li>
+        <li>Route Candidate Count: {routeCandidates.length}</li>
+        <li>Route Winner Candidate: {routeWinner.candidateKey || 'n/a'}</li>
         <li>Local Node Reachable (diagnostic): {runtimeStatus.localNodeReachable ? 'yes' : 'no'}</li>
         <li>Cloud Route Reachable (diagnostic): {runtimeStatus.cloudRouteReachable ? 'yes' : 'no'}</li>
         <li>Home Node Reachable (diagnostic): {runtimeStatus.homeNodeReachable ? 'yes' : 'no'}</li>

@@ -21,7 +21,7 @@ import {
 } from './stephanosHomeNode.mjs';
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
-import { normalizeBridgeTransportPreferences, projectHomeBridgeTransportTruth } from './homeBridgeTransport.mjs';
+import { normalizeBridgeTransportPreferences, normalizeBridgeTransportSelection, projectHomeBridgeTransportTruth } from './homeBridgeTransport.mjs';
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
 
@@ -617,6 +617,218 @@ function asTriState(value) {
   return 'unknown';
 }
 
+function toLatency(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function getRouteLatencyMs(route = {}) {
+  return toLatency(route.latencyMs ?? route.latency_ms ?? route.latency);
+}
+
+function createRouteCandidate({
+  candidateKey = '',
+  routeKind = 'unavailable',
+  transportKind = 'none',
+  configured = false,
+  reachable = false,
+  usable = false,
+  selected = false,
+  active = false,
+  score = -1,
+  latencyMs = null,
+  reason = '',
+  source = '',
+  blockedReason = '',
+  truthWarnings = [],
+  lastCheckedAt = '',
+  rank = 0,
+} = {}) {
+  return {
+    candidateKey: String(candidateKey || routeKind || 'unknown'),
+    routeKind: String(routeKind || 'unavailable'),
+    transportKind: String(transportKind || 'none'),
+    configured: configured === true,
+    reachable: reachable === true,
+    usable: usable === true,
+    selected: selected === true,
+    active: active === true,
+    score: Number.isFinite(Number(score)) ? Number(score) : -1,
+    rank: Number.isFinite(Number(rank)) ? Number(rank) : 0,
+    latencyMs: toLatency(latencyMs),
+    reason: String(reason || ''),
+    source: String(source || 'route-diagnostics'),
+    blockedReason: String(blockedReason || ''),
+    truthWarnings: Array.isArray(truthWarnings) ? truthWarnings.filter(Boolean).map((entry) => String(entry)) : [],
+    lastCheckedAt: String(lastCheckedAt || ''),
+  };
+}
+
+function getCandidateBasePriority(candidateKey = '', runtimeContext = {}) {
+  const sessionKind = runtimeContext.sessionKind || 'unknown';
+  const deviceContext = runtimeContext.deviceContext || 'unknown';
+  if (sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser') {
+    return {
+      'local-desktop': 1000,
+      'home-node-manual': 860,
+      'home-node-tailscale': 820,
+      cloud: 720,
+      'dist-fallback': 80,
+      'home-node-wireguard': 20,
+    }[candidateKey] ?? 0;
+  }
+  if (deviceContext === 'lan-companion') {
+    return {
+      'home-node-manual': 980,
+      'home-node-tailscale': 900,
+      cloud: 760,
+      'dist-fallback': 90,
+      'local-desktop': 40,
+      'home-node-wireguard': 20,
+    }[candidateKey] ?? 0;
+  }
+  return {
+    'home-node-tailscale': 980,
+    'home-node-manual': 930,
+    cloud: 780,
+    'dist-fallback': 95,
+    'local-desktop': 35,
+    'home-node-wireguard': 20,
+  }[candidateKey] ?? 0;
+}
+
+function scoreRouteCandidate(candidate = {}, runtimeContext = {}) {
+  const base = getCandidateBasePriority(candidate.candidateKey, runtimeContext);
+  if (!candidate.configured) return -4000 + base;
+  if (!candidate.reachable) return -3000 + base;
+  if (!candidate.usable) return -2000 + base;
+  const latencyPenalty = candidate.latencyMs === null ? 0 : Math.min(200, Math.round(candidate.latencyMs / 5));
+  return base - latencyPenalty;
+}
+
+function buildRouteCandidates({ runtimeContext = {}, evaluations = {}, preferenceOrder = [] } = {}) {
+  const selectedTransport = normalizeBridgeTransportSelection(runtimeContext.bridgeTransportPreferences?.selectedTransport);
+  const bridgeTruth = runtimeContext.bridgeTransportTruth || {};
+  const localDesktop = evaluations['local-desktop'] || {};
+  const homeNode = evaluations['home-node'] || {};
+  const homeNodeBridge = evaluations['home-node-bridge'] || {};
+  const cloud = evaluations.cloud || {};
+  const dist = evaluations.dist || {};
+  const wireguardConfigured = runtimeContext.bridgeTransportPreferences?.transports?.wireguard?.enabled === true;
+  const tailscaleReachability = bridgeTruth?.tailscale?.reachable === true;
+  const tailscaleUsable = bridgeTruth?.tailscale?.usable === true && homeNodeBridge.usable === true;
+  const manualConfigured = runtimeContext.bridgeTransportPreferences?.transports?.manual?.enabled !== false
+    && Boolean(runtimeContext.bridgeTransportPreferences?.transports?.manual?.backendUrl || runtimeContext.homeNodeBridge?.backendUrl);
+  const manualReachable = homeNode.available === true || homeNodeBridge.available === true;
+  const manualUsable = homeNode.usable === true;
+
+  const candidates = [
+    createRouteCandidate({
+      candidateKey: 'local-desktop',
+      routeKind: 'local-desktop',
+      transportKind: 'direct',
+      configured: localDesktop.configured === true,
+      reachable: localDesktop.available === true,
+      usable: localDesktop.usable === true,
+      selected: preferenceOrder[0] === 'local-desktop',
+      latencyMs: getRouteLatencyMs(localDesktop),
+      reason: localDesktop.reason || '',
+      source: localDesktop.source || '',
+      blockedReason: localDesktop.blockedReason || '',
+      lastCheckedAt: runtimeContext.lastHealthCheckAt || '',
+    }),
+    createRouteCandidate({
+      candidateKey: 'home-node-manual',
+      routeKind: 'home-node',
+      transportKind: 'manual',
+      configured: homeNode.configured === true || manualConfigured,
+      reachable: manualReachable,
+      usable: manualUsable,
+      selected: selectedTransport === 'manual',
+      latencyMs: getRouteLatencyMs(homeNode),
+      reason: homeNode.reason || runtimeContext.homeNodeBridge?.reason || '',
+      source: homeNode.source || runtimeContext.homeNode?.source || 'manual',
+      blockedReason: homeNode.blockedReason || '',
+      lastCheckedAt: runtimeContext.lastHealthCheckAt || '',
+    }),
+    createRouteCandidate({
+      candidateKey: 'home-node-tailscale',
+      routeKind: 'home-node',
+      transportKind: 'tailscale',
+      configured: runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.enabled === true
+        && Boolean(runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
+      reachable: tailscaleReachability,
+      usable: tailscaleUsable,
+      selected: selectedTransport === 'tailscale',
+      latencyMs: getRouteLatencyMs(homeNodeBridge),
+      reason: bridgeTruth?.tailscale?.reason || homeNodeBridge.reason || '',
+      source: bridgeTruth?.source || homeNodeBridge.source || 'bridgeTransport:tailscale',
+      blockedReason: homeNodeBridge.blockedReason || (!tailscaleReachability ? 'tailscale transport unreachable' : ''),
+      truthWarnings: bridgeTruth?.tailscale?.diagnostics || [],
+      lastCheckedAt: runtimeContext.lastHealthCheckAt || '',
+    }),
+    createRouteCandidate({
+      candidateKey: 'home-node-wireguard',
+      routeKind: 'home-node',
+      transportKind: 'wireguard',
+      configured: wireguardConfigured,
+      reachable: false,
+      usable: false,
+      selected: selectedTransport === 'wireguard',
+      reason: 'WireGuard transport is planned and not probe-capable.',
+      source: 'bridgeTransport:wireguard',
+      blockedReason: 'planned transport placeholder only',
+      truthWarnings: ['wireguard-planned-not-active'],
+    }),
+    createRouteCandidate({
+      candidateKey: 'cloud',
+      routeKind: 'cloud',
+      transportKind: 'internet',
+      configured: cloud.configured === true,
+      reachable: cloud.available === true,
+      usable: cloud.usable === true,
+      selected: preferenceOrder[0] === 'cloud',
+      latencyMs: getRouteLatencyMs(cloud),
+      reason: cloud.reason || '',
+      source: cloud.source || '',
+      blockedReason: cloud.blockedReason || '',
+      lastCheckedAt: runtimeContext.lastHealthCheckAt || '',
+    }),
+    createRouteCandidate({
+      candidateKey: 'dist-fallback',
+      routeKind: 'dist',
+      transportKind: 'bundled-dist',
+      configured: dist.configured === true,
+      reachable: dist.available === true,
+      usable: dist.usable === true,
+      selected: preferenceOrder[0] === 'dist',
+      latencyMs: getRouteLatencyMs(dist),
+      reason: dist.reason || '',
+      source: dist.source || '',
+      blockedReason: dist.blockedReason || '',
+      lastCheckedAt: runtimeContext.lastHealthCheckAt || '',
+    }),
+  ].map((candidate) => ({ ...candidate, score: scoreRouteCandidate(candidate, runtimeContext) }));
+
+  const ranked = [...candidates]
+    .sort((a, b) => (b.score - a.score) || a.candidateKey.localeCompare(b.candidateKey))
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  const winner = ranked.find((candidate) => candidate.usable === true) || null;
+  const withActive = ranked.map((candidate) => ({ ...candidate, active: winner?.candidateKey === candidate.candidateKey }));
+  const autoSwitch = runtimeContext.finalRoute?.routeKind
+    && winner
+    && runtimeContext.finalRoute.routeKind !== winner.routeKind;
+  return {
+    candidates: withActive,
+    winner,
+    autoSwitch: autoSwitch === true,
+    autoSwitchReason: autoSwitch
+      ? `Auto-switched from ${runtimeContext.finalRoute.routeKind} to ${winner.routeKind} based on deterministic route scoring.`
+      : '',
+    selectionSource: winner ? 'runtime-truth-adjudication' : 'no-usable-route',
+  };
+}
+
 
 function buildRoutePreference(runtimeContext = {}) {
   const homeNodeDiagnostic = runtimeContext.routeDiagnostics?.['home-node'] || {};
@@ -895,13 +1107,22 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     }
   }
 
-  const preferredRoute = preferenceOrder.find((routeKey) => evaluations[routeKey]?.available) || null;
+  const candidateTruth = buildRouteCandidates({
+    runtimeContext,
+    evaluations,
+    preferenceOrder,
+  });
+  const winnerRouteKey = candidateTruth.winner?.routeKind === 'home-node'
+    ? 'home-node'
+    : candidateTruth.winner?.routeKind;
+  const preferredRoute = winnerRouteKey || preferenceOrder.find((routeKey) => evaluations[routeKey]?.available) || null;
 
   return {
     evaluations,
     preferenceOrder,
     preferredRoute,
     localDesktopClassificationFailed,
+    candidateTruth,
   };
 }
 
@@ -1029,6 +1250,11 @@ function deriveNodeRoute({ runtimeContext, backendAvailable, cloudAvailable, val
     nodeAddressSource,
     routeEvaluations: routeSelection.evaluations,
     routePreferenceOrder: routeSelection.preferenceOrder,
+    routeCandidates: routeSelection.candidateTruth?.candidates || [],
+    routeCandidateWinner: routeSelection.candidateTruth?.winner || null,
+    routeSelectionSource: routeSelection.candidateTruth?.selectionSource || 'route-preference-order',
+    routeAutoSwitchActive: routeSelection.candidateTruth?.autoSwitch === true,
+    routeAutoSwitchReason: routeSelection.candidateTruth?.autoSwitchReason || '',
     preferredRoute: selectedRouteKey,
     winnerReason: selectedRoute?.reason || '',
     classificationFailed: Boolean(routeSelection.localDesktopClassificationFailed || (backendAvailable && !selectedRouteKey)),
@@ -1128,6 +1354,10 @@ export function buildFinalRouteTruth({
     routeVariant: nodeRoute?.routeVariant || nodeRoute?.routeKind || 'unavailable',
     winnerReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
     winningReason: finalRoute?.winnerReason || selectedEvaluation?.reason || '',
+    winningTransportKind: nodeRoute?.routeCandidateWinner?.transportKind || 'none',
+    routeSelectionSource: nodeRoute?.routeSelectionSource || 'route-preference-order',
+    routeAutoSwitchActive: nodeRoute?.routeAutoSwitchActive === true,
+    routeAutoSwitchReason: nodeRoute?.routeAutoSwitchReason || '',
     preferredTarget: finalRoute?.preferredTarget || '',
     preferredTargetUsed: finalRoute?.preferredTarget || '',
     actualTarget: finalRoute?.actualTarget || '',
@@ -1435,6 +1665,11 @@ export function createRuntimeStatusModel({
       ...normalizedRuntimeContext,
       canonicalHostedRouteTruth,
       finalRoute,
+      routeCandidates: nodeRoute.routeCandidates || [],
+      routeCandidateWinner: nodeRoute.routeCandidateWinner || null,
+      routeSelectionSource: nodeRoute.routeSelectionSource || 'route-preference-order',
+      routeAutoSwitchActive: nodeRoute.routeAutoSwitchActive === true,
+      routeAutoSwitchReason: nodeRoute.routeAutoSwitchReason || '',
     },
     runtimeModeLabel: nodeRoute.routeVariant === 'home-node-bridge'
       ? 'home node/bridge'
@@ -1456,6 +1691,11 @@ export function createRuntimeStatusModel({
     nodeAddressSource: finalRoute.source,
     routeSummary: nodeRoute.routeSummary,
     routeEvaluations: nodeRoute.routeEvaluations,
+    routeCandidates: nodeRoute.routeCandidates || [],
+    routeCandidateWinner: nodeRoute.routeCandidateWinner || null,
+    routeSelectionSource: nodeRoute.routeSelectionSource || 'route-preference-order',
+    routeAutoSwitchActive: nodeRoute.routeAutoSwitchActive === true,
+    routeAutoSwitchReason: nodeRoute.routeAutoSwitchReason || '',
     routePreferenceOrder: nodeRoute.routePreferenceOrder,
     preferredRoute: nodeRoute.preferredRoute,
     classificationFailed: nodeRoute.classificationFailed,

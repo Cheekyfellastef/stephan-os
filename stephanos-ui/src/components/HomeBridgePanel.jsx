@@ -34,6 +34,7 @@ export default function HomeBridgePanel() {
   } = useAIStore();
 
   const selectedTransport = normalizeBridgeTransportSelection(bridgeTransportPreferences?.selectedTransport);
+  const transportDefinitions = Array.isArray(bridgeTransportDefinitions) ? bridgeTransportDefinitions : [];
   const [bridgeDraft, setBridgeDraft] = useState(homeBridgeUrl || '');
   const [tailscaleBackendDraft, setTailscaleBackendDraft] = useState(bridgeTransportPreferences?.transports?.tailscale?.backendUrl || '');
   const [validationState, setValidationState] = useState('unknown');
@@ -52,6 +53,11 @@ export default function HomeBridgePanel() {
   }, [bridgeTransportPreferences?.transports?.tailscale?.backendUrl]);
 
   const savedBridge = useMemo(() => runtimeStatusModel?.runtimeContext?.homeNodeBridge || {}, [runtimeStatusModel?.runtimeContext?.homeNodeBridge]);
+  const routeCandidates = useMemo(
+    () => Array.isArray(runtimeStatusModel?.runtimeContext?.routeCandidates) ? runtimeStatusModel.runtimeContext.routeCandidates : [],
+    [runtimeStatusModel?.runtimeContext?.routeCandidates],
+  );
+  const routeWinner = runtimeStatusModel?.runtimeContext?.routeCandidateWinner || null;
   const transportTruth = useMemo(() => projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
     runtimeBridge: savedBridge,
   }), [bridgeTransportPreferences, savedBridge]);
@@ -226,7 +232,7 @@ export default function HomeBridgePanel() {
     >
       <p className="home-bridge-guidance">Select transport, then configure and validate truthful bridge readiness.</p>
       <div className="home-bridge-transport-selector" data-no-drag>
-        {bridgeTransportDefinitions.map((transport) => (
+        {transportDefinitions.map((transport) => (
           <button
             key={transport.key}
             type="button"
@@ -294,7 +300,17 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Validation reason: <strong>{validationReason}</strong></p>
       <p className="home-bridge-detail">Reachability reason: <strong>{reachabilityReason}</strong></p>
       <p className="home-bridge-detail">Last checked: <strong>{formatTime(lastCheckedAt)}</strong></p>
+      <p className="home-bridge-detail">Route winner: <strong>{routeWinner ? `${routeWinner.routeKind}/${routeWinner.transportKind}` : 'none'}</strong></p>
       <p className="home-bridge-detail">WireGuard status: <strong>planned / not yet configured</strong></p>
+      {routeCandidates.length ? (
+        <ul className="home-bridge-detail">
+          {routeCandidates.slice(0, 6).map((candidate) => (
+            <li key={candidate.candidateKey}>
+              {candidate.candidateKey}: {candidate.usable ? 'usable' : candidate.reachable ? 'reachable' : candidate.configured ? 'configured' : 'not configured'} (score {candidate.score})
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {transportTruth.tailscale?.diagnostics?.length ? (
         <ul className="home-bridge-detail">
           {transportTruth.tailscale.diagnostics.map((entry) => <li key={entry}>{entry}</li>)}

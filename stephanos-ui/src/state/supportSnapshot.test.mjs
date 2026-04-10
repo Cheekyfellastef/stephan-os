@@ -110,6 +110,14 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       invariantWarnings: [{ code: 'WARN_1', message: 'minor drift detected' }],
     },
     runtimeContext: {
+      routeCandidates: [
+        { candidateKey: 'home-node-tailscale', routeKind: 'home-node', transportKind: 'tailscale', rank: 1, score: 980, usable: true, active: true, reason: 'tailscale route healthy' },
+        { candidateKey: 'cloud', routeKind: 'cloud', transportKind: 'internet', rank: 2, score: 780, usable: true, active: false, reason: 'cloud route ready' },
+      ],
+      routeCandidateWinner: { candidateKey: 'home-node-tailscale', routeKind: 'home-node', transportKind: 'tailscale' },
+      routeSelectionSource: 'runtime-truth-adjudication',
+      routeAutoSwitchActive: true,
+      routeAutoSwitchReason: 'Auto-switched from cloud to home-node based on deterministic route scoring.',
       routeDiagnostics: {
         cloud: { usable: true, reason: 'public route reachable' },
         home: { usable: false, blockedReason: 'home node offline' },
@@ -172,6 +180,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Elevated Memory Count: 5/);
   assert.match(snapshot, /Graph Linked Memory Count: 2/);
   assert.match(snapshot, /Memory Informed Recommendation: Prioritize mission-critical continuity memory first\./);
+  assert.match(snapshot, /Route Winner Kind: home-node/);
+  assert.match(snapshot, /Route Winner Transport Kind: tailscale/);
+  assert.match(snapshot, /Route Auto Selection Source: runtime-truth-adjudication/);
+  assert.match(snapshot, /Route Auto Switch Active: yes/);
+  assert.match(snapshot, /Route Candidates:\n- home-node-tailscale \[home-node\/tailscale\]/);
 
   assert.match(snapshot, /Last Freshness Need: high/);
   assert.match(snapshot, /Last Answer Mode: fresh-web/);
