@@ -25,6 +25,17 @@ test('buildProposalPacket activates for self-build synthesis and preserves appro
   const packet = buildProposalPacket({
     missionSynthesis: buildSynthesis('What should we build next to help Stephanos build itself?'),
     runtimeTruth: { routeUsableState: 'yes' },
+    memoryElevation: {
+      memory_truth_preserved: true,
+      continuity_reason: 'Recurring blockers and durable preferences were elevated.',
+      top_memory_influencers: [{
+        summary: 'local-first privacy preference',
+        memoryClass: 'mission-critical-continuity-memory',
+        sourceType: 'operator-state',
+        graphLinks: [{ state: 'deferred' }],
+      }],
+      recurrence_signals: ['dist parity broke after merge (x3)'],
+    },
   });
 
   assert.equal(packet.packet_metadata.proposal_active, true);
@@ -35,6 +46,8 @@ test('buildProposalPacket activates for self-build synthesis and preserves appro
   assert.equal(packet.codex_handoff_payload.codex_eligible, true);
   assert.equal(typeof packet.codex_handoff_payload.copyable_payload, 'string');
   assert.ok(packet.codex_handoff_payload.copyable_payload.includes('"approval_required": true'));
+  assert.match(packet.recommended_move_summary.why_now, /Recurring blockers/);
+  assert.match(packet.codex_handoff_payload.copyable_payload, /memory_influencers/);
 });
 
 test('buildProposalPacket remains inactive for non-planning synthesis', () => {

@@ -278,6 +278,33 @@ export default function StatusPanel() {
       lastMemorySourceRef: lastExecutionMetadata?.memory_source_ref || 'n/a',
       lastMemoryConfidence: lastExecutionMetadata?.memory_confidence || 'n/a',
       lastMemoryClass: lastExecutionMetadata?.memory_class || 'durable',
+      lastMemoryElevationActive: String(lastExecutionMetadata?.memory_elevation_active ?? 'n/a'),
+      lastMemoryElevationMode: lastExecutionMetadata?.memory_elevation_mode || 'bounded',
+      lastMemoryTruthPreserved: String(lastExecutionMetadata?.memory_truth_preserved ?? 'n/a'),
+      lastMemoryCandidatesConsidered: String(lastExecutionMetadata?.memory_candidates_considered ?? 0),
+      lastElevatedMemoryCount: String(lastExecutionMetadata?.elevated_memory_count ?? 0),
+      lastGraphLinkedMemoryCount: String(lastExecutionMetadata?.graph_linked_memory_count ?? 0),
+      lastDeferredGraphLinkCount: String(lastExecutionMetadata?.deferred_graph_link_count ?? 0),
+      lastBuildRelevantMemoryCount: String(lastExecutionMetadata?.build_relevant_memory_count ?? 0),
+      lastMissionCriticalMemoryCount: String(lastExecutionMetadata?.mission_critical_memory_count ?? 0),
+      lastContinuityConfidence: lastExecutionMetadata?.continuity_confidence || 'low',
+      lastContinuityReason: lastExecutionMetadata?.continuity_reason || 'n/a',
+      lastRecurrenceSignals: Array.isArray(lastExecutionMetadata?.recurrence_signals)
+        ? lastExecutionMetadata.recurrence_signals.join(', ')
+        : 'n/a',
+      lastMemoryElevationWarnings: Array.isArray(lastExecutionMetadata?.memory_elevation_warnings)
+        ? lastExecutionMetadata.memory_elevation_warnings.join(', ')
+        : 'n/a',
+      lastGraphLinkTruthPreserved: String(lastExecutionMetadata?.graph_link_truth_preserved ?? 'n/a'),
+      lastGraphLinkReason: lastExecutionMetadata?.graph_link_reason || 'n/a',
+      lastSourceProvenanceSummary: Array.isArray(lastExecutionMetadata?.source_provenance_summary)
+        ? lastExecutionMetadata.source_provenance_summary.join(', ')
+        : 'n/a',
+      lastMemoryInformedRecommendation: lastExecutionMetadata?.memory_informed_recommendation || 'n/a',
+      lastTopMemoryInfluencers: Array.isArray(lastExecutionMetadata?.top_memory_influencers)
+        ? lastExecutionMetadata.top_memory_influencers.map((memory) => `${memory.memoryClass || 'memory'}:${memory.summary || 'n/a'}:${memory.sourceType || 'unknown'}`).join(' | ')
+        : 'n/a',
+
       lastContextAssemblyUsed: String(lastExecutionMetadata?.context_assembly_used ?? 'n/a'),
       lastContextAssemblyMode: lastExecutionMetadata?.context_assembly_mode || 'n/a',
       lastContextSourcesUsed: Array.isArray(lastExecutionMetadata?.context_sources_used)
@@ -481,6 +508,23 @@ export default function StatusPanel() {
         <li>[MEMORY ADJUDICATION] Promoted: {String(lastExecutionMetadata?.memory_promoted ?? 'n/a')}</li>
         <li>[MEMORY ADJUDICATION] Reason: {lastExecutionMetadata?.memory_reason || 'n/a'}</li>
         <li>[MEMORY ADJUDICATION] Source: {lastExecutionMetadata?.memory_source_type || 'n/a'} · {lastExecutionMetadata?.memory_source_ref || 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Active: {String(lastExecutionMetadata?.memory_elevation_active ?? 'n/a')}</li>
+        <li>[MEMORY ELEVATION] Mode: {lastExecutionMetadata?.memory_elevation_mode || 'bounded'}</li>
+        <li>[MEMORY ELEVATION] Candidates Considered: {String(lastExecutionMetadata?.memory_candidates_considered ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Elevated Count: {String(lastExecutionMetadata?.elevated_memory_count ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Graph Linked Count: {String(lastExecutionMetadata?.graph_linked_memory_count ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Deferred Graph Links: {String(lastExecutionMetadata?.deferred_graph_link_count ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Build Relevant Count: {String(lastExecutionMetadata?.build_relevant_memory_count ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Mission Critical Count: {String(lastExecutionMetadata?.mission_critical_memory_count ?? 0)}</li>
+        <li>[MEMORY ELEVATION] Continuity Confidence: {lastExecutionMetadata?.continuity_confidence || 'low'}</li>
+        <li>[MEMORY ELEVATION] Continuity Reason: {lastExecutionMetadata?.continuity_reason || 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Graph Link Truth Preserved: {String(lastExecutionMetadata?.graph_link_truth_preserved ?? 'n/a')}</li>
+        <li>[MEMORY ELEVATION] Graph Link Reason: {lastExecutionMetadata?.graph_link_reason || 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Recurrence Signals: {Array.isArray(lastExecutionMetadata?.recurrence_signals) ? lastExecutionMetadata.recurrence_signals.join(', ') : 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Warnings: {Array.isArray(lastExecutionMetadata?.memory_elevation_warnings) ? lastExecutionMetadata.memory_elevation_warnings.join(', ') : 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Top Influencers: {Array.isArray(lastExecutionMetadata?.top_memory_influencers) ? lastExecutionMetadata.top_memory_influencers.map((memory) => `${memory.memoryClass || 'memory'} · ${memory.summary || 'n/a'} · ${memory.sourceType || 'unknown'} · ${Array.isArray(memory.graphLinks) && memory.graphLinks.some((link) => link.state === 'linked') ? 'graph-linked' : 'graph-deferred'}`).join(' | ') : 'n/a'}</li>
+        <li>[MEMORY ELEVATION] Recommendation: {lastExecutionMetadata?.memory_informed_recommendation || 'n/a'}</li>
+
         <li>[SYSTEM AWARENESS] Context Assembly Used: {String(lastExecutionMetadata?.context_assembly_used ?? 'n/a')}</li>
         <li>[SYSTEM AWARENESS] Assembly Mode: {lastExecutionMetadata?.context_assembly_mode || 'n/a'}</li>
         <li>[SYSTEM AWARENESS] Sources Used: {Array.isArray(lastExecutionMetadata?.context_sources_used) ? lastExecutionMetadata.context_sources_used.join(', ') : 'n/a'}</li>

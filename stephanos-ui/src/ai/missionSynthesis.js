@@ -187,6 +187,21 @@ function scoreMove(move, observedCapabilities = new Set()) {
   };
 }
 
+
+function buildMemoryBackedReasoning(memoryElevation = {}) {
+  const influencers = Array.isArray(memoryElevation?.top_memory_influencers) ? memoryElevation.top_memory_influencers : [];
+  const recurrenceSignals = Array.isArray(memoryElevation?.recurrence_signals) ? memoryElevation.recurrence_signals : [];
+  const continuityConfidence = safeString(memoryElevation?.continuity_confidence) || 'low';
+  const memoryRecommendation = safeString(memoryElevation?.memory_informed_recommendation);
+
+  return {
+    topInfluencerSummaries: influencers.slice(0, 3).map((memory) => `${memory.memoryClass}:${memory.summary}`),
+    recurrenceSignals: recurrenceSignals.slice(0, 4),
+    continuityConfidence,
+    memoryRecommendation,
+  };
+}
+
 function estimateMaturity(observedCapabilities = new Set()) {
   const knownSignals = ['context-assembly', 'runtime-truth', 'memory', 'tile-context', 'knowledge-graph', 'simulation', 'proposal-system'];
   const hits = knownSignals.filter((signal) => observedCapabilities.has(signal)).length;
@@ -203,6 +218,7 @@ export function buildMissionSynthesis({
   operatorContext = {},
   runtimeContext = {},
   contextDiagnostics = {},
+  memoryElevation = {},
 } = {}) {
   const planningIntent = detectPlanningIntent(prompt, promptClassification);
   if (!planningIntent.detected) {
@@ -230,6 +246,7 @@ export function buildMissionSynthesis({
     .map((move) => scoreMove(move, observedCapabilities))
     .sort((left, right) => right.score - left.score || left.moveId.localeCompare(right.moveId));
 
+  const memoryBackedReasoning = buildMemoryBackedReasoning(memoryElevation);
   const recommendedNextMove = rankedMoves[0] || null;
   const evidenceSources = Array.isArray(contextDiagnostics?.sourcesUsed)
     ? contextDiagnostics.sourcesUsed
@@ -241,6 +258,17 @@ export function buildMissionSynthesis({
   if (!observedCapabilities.has('proposal-system')) {
     truthWarnings.push('proposal system signal not observed; proposal bridge moves are inferred priorities');
   }
+  if (memoryBackedReasoning.continuityConfidence === 'low') {
+    truthWarnings.push('memory elevation continuity confidence is low; recommendation remains bounded to sparse evidence');
+  }
+
+  const memorySuffix = memoryBackedReasoning.topInfluencerSummaries.length
+    ? ` Memory influencers: ${memoryBackedReasoning.topInfluencerSummaries.join(' | ')}.`
+    : '';
+  const recurrenceSuffix = memoryBackedReasoning.recurrenceSignals.length
+    ? ` Recurrence signals: ${memoryBackedReasoning.recurrenceSignals.join(' | ')}.`
+    : '';
+  const recommendationReason = `${recommendedNextMove?.rationale || 'No ranked move available.'}${memorySuffix}${recurrenceSuffix}`.trim();
 
   return normalizeMissionSynthesisResult({
     planningMode: 'self-build-mission-synthesis',
@@ -252,7 +280,7 @@ export function buildMissionSynthesis({
     blockers: recommendedNextMove?.blockers || [],
     dependencies: recommendedNextMove?.dependencies || [],
     recommendedNextMove,
-    recommendationReason: recommendedNextMove?.rationale || 'No ranked move available.',
+    recommendationReason,
     evidenceSources,
     truthWarnings,
     operatorActions: recommendedNextMove
@@ -260,6 +288,7 @@ export function buildMissionSynthesis({
         `Create proposal packet for ${recommendedNextMove.moveId}.`,
         'Validate dependency readiness against current route/provider/runtime truth.',
         'Generate Codex-safe implementation handoff with explicit acceptance tests.',
+        memoryBackedReasoning.memoryRecommendation || 'Carry forward memory-informed rationale into proposal packet.',
       ]
       : [],
     codexHandoffEligible: recommendedNextMove?.codexHandoffEligible === true,

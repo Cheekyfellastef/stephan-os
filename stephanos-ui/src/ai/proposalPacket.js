@@ -112,6 +112,7 @@ export function buildProposalPacket({
   contextDiagnostics = {},
   contextAssemblyMetadata = {},
   runtimeTruth = {},
+  memoryElevation = {},
 } = {}) {
   const recommendedMove = missionSynthesis?.recommendedNextMove || null;
   const planningDetected = missionSynthesis?.planningIntentDetected === true;
@@ -177,20 +178,30 @@ export function buildProposalPacket({
     ? missionSynthesis.blockers
     : (Array.isArray(recommendedMove?.blockers) ? recommendedMove.blockers : []);
   const planningWarnings = Array.isArray(missionSynthesis?.truthWarnings) ? missionSynthesis.truthWarnings : [];
+  const memoryInfluencers = Array.isArray(memoryElevation?.top_memory_influencers)
+    ? memoryElevation.top_memory_influencers.slice(0, 3)
+    : [];
+  const recurrenceSignals = Array.isArray(memoryElevation?.recurrence_signals)
+    ? memoryElevation.recurrence_signals.slice(0, 3)
+    : [];
   const packetWarnings = [
     ...planningWarnings,
     ...(contextAssemblyMetadata?.context_integrity_preserved === false
       ? ['context integrity was degraded in upstream assembly; keep proposal advisory-only']
       : []),
     ...(runtimeTruth?.routeUsableState === 'no' ? ['selected route was not usable; handoff should avoid runtime execution assumptions'] : []),
+    ...(memoryElevation?.graph_link_truth_preserved === false ? ['memory/graph link truth was degraded; keep graph claims deferred'] : []),
   ];
   const proposalConfidence = resolveConfidence(missionSynthesis?.planningConfidence, packetWarnings.length, evidenceSources.length);
   const recommendedMoveSummary = {
     move_id: recommendedMove.moveId,
     title: recommendedMove.title,
     concise_objective: template.conciseObjective,
-    why_now: template.whyNow,
-    expected_operator_value: template.expectedOperatorValue,
+    why_now: [template.whyNow, memoryElevation?.continuity_reason].filter(Boolean).join(' '),
+    expected_operator_value: [
+      template.expectedOperatorValue,
+      memoryInfluencers.length ? `Memory-backed rationale from ${memoryInfluencers.length} elevated influence signal(s).` : '',
+    ].filter(Boolean).join(' '),
   };
 
   const codexEligible = missionSynthesis?.codexHandoffEligible === true;
@@ -222,6 +233,13 @@ export function buildProposalPacket({
       codex_constraints: template.codexConstraints,
       codex_success_criteria: template.codexSuccessCriteria,
       warnings: packetWarnings,
+      memory_influencers: memoryInfluencers.map((memory) => ({
+        summary: memory.summary,
+        memory_class: memory.memoryClass,
+        source_type: memory.sourceType,
+        graph_link_state: Array.isArray(memory.graphLinks) && memory.graphLinks.some((link) => link.state === 'linked') ? 'linked' : 'deferred',
+      })),
+      recurrence_signals: recurrenceSignals,
       approval_required: true,
       execution_eligible: false,
     }, null, 2)
@@ -237,6 +255,9 @@ export function buildProposalPacket({
       bounded_reasoning_notes: [
         'Packet is generated from deterministic mission synthesis metadata and static templates.',
         'Packet remains proposal-only; operator approval is mandatory before any execution.',
+        memoryElevation?.memory_truth_preserved === true
+          ? 'Elevated memory rationale stayed bounded with explicit provenance.'
+          : 'Memory truth preservation was degraded; operator review required before trusting memory rationale.',
       ],
     },
     recommended_move_summary: recommendedMoveSummary,

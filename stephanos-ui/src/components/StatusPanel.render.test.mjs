@@ -504,6 +504,9 @@ test('StatusPanel renders mission synthesis rows without crashing on partial met
       planning_evidence_sources: ['runtimeTruth'],
       proposal_eligible: true,
       codex_handoff_eligible: false,
+      memory_elevation_active: true,
+      elevated_memory_count: 2,
+      top_memory_influencers: [{ memoryClass: 'build-relevant-memory', summary: 'dist parity recurrence', sourceType: 'durable-memory', graphLinks: [{ state: 'deferred' }] }],
     },
   });
 
@@ -512,4 +515,6 @@ test('StatusPanel renders mission synthesis rows without crashing on partial met
   assert.match(rendered, /\[MISSION SYNTHESIS\] Recommended Move: n\/a/);
   assert.match(rendered, /\[MISSION SYNTHESIS\] Recommendation Reason: Top move strengthens bounded orchestration\./);
   assert.match(rendered, /\[MISSION SYNTHESIS\] Proposal Eligible: true/);
+  assert.match(rendered, /\[MEMORY ELEVATION\] Active: true/);
+  assert.match(rendered, /\[MEMORY ELEVATION\] Top Influencers: build-relevant-memory · dist parity recurrence · durable-memory · graph-deferred/);
 });

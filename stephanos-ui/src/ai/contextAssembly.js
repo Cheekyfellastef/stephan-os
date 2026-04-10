@@ -1,6 +1,7 @@
 import { normalizeContextAssemblyResult } from '../../../shared/ai/contextAssemblyContract.mjs';
 import { buildMissionSynthesis } from './missionSynthesis.js';
 import { buildProposalPacket } from './proposalPacket.js';
+import { buildMemoryElevation } from './memoryElevation.js';
 
 const SOURCE_KEYS = Object.freeze([
   'memory',
@@ -318,6 +319,27 @@ export function buildContextAssembly({
     ].filter(Boolean),
   };
 
+  const memoryElevation = buildMemoryElevation({
+    promptClassification,
+    continuityContext,
+    retrievalContext,
+    operatorContext,
+    knowledgeGraphContext,
+  });
+
+  if (memoryElevation.active && memoryElevation.elevated_memory_count > 0) {
+    contextBundle.memoryElevation = {
+      mode: memoryElevation.mode,
+      continuityConfidence: memoryElevation.continuity_confidence,
+      elevatedMemoryCount: memoryElevation.elevated_memory_count,
+      graphLinkedMemoryCount: memoryElevation.graph_linked_memory_count,
+      deferredGraphLinkCount: memoryElevation.deferred_graph_link_count,
+      topMemoryInfluencers: memoryElevation.top_memory_influencers,
+      recurrenceSignals: memoryElevation.recurrence_signals,
+      memoryInformedRecommendation: memoryElevation.memory_informed_recommendation,
+    };
+  }
+
   const missionSynthesis = buildMissionSynthesis({
     prompt,
     promptClassification,
@@ -325,6 +347,7 @@ export function buildContextAssembly({
     operatorContext,
     runtimeContext,
     contextDiagnostics: diagnostics,
+    memoryElevation,
   });
 
   if (missionSynthesis.planningIntentDetected) {
@@ -346,6 +369,7 @@ export function buildContextAssembly({
     missionSynthesis,
     contextDiagnostics: diagnostics,
     runtimeTruth,
+    memoryElevation,
   });
   if (proposalPacket.packet_metadata.proposal_active) {
     contextBundle.proposalPacket = {
@@ -389,6 +413,24 @@ export function buildContextAssembly({
       augmented_prompt_length: augmented.prompt.length,
       context_assembly_warnings: diagnostics.warnings,
       context_integrity_preserved: !(promptClassification.freshnessSensitive && sourcesUsed.includes('retrieval') && !sourcesUsed.includes('runtimeTruth')),
+      memory_elevation_active: memoryElevation.active,
+      memory_elevation_mode: memoryElevation.mode,
+      memory_truth_preserved: memoryElevation.memory_truth_preserved,
+      memory_candidates_considered: memoryElevation.memory_candidates_considered,
+      elevated_memory_count: memoryElevation.elevated_memory_count,
+      graph_linked_memory_count: memoryElevation.graph_linked_memory_count,
+      deferred_graph_link_count: memoryElevation.deferred_graph_link_count,
+      build_relevant_memory_count: memoryElevation.build_relevant_memory_count,
+      mission_critical_memory_count: memoryElevation.mission_critical_memory_count,
+      continuity_confidence: memoryElevation.continuity_confidence,
+      continuity_reason: memoryElevation.continuity_reason,
+      recurrence_signals: memoryElevation.recurrence_signals,
+      top_memory_influencers: memoryElevation.top_memory_influencers,
+      memory_elevation_warnings: memoryElevation.memory_elevation_warnings,
+      graph_link_truth_preserved: memoryElevation.graph_link_truth_preserved,
+      graph_link_reason: memoryElevation.graph_link_reason,
+      source_provenance_summary: memoryElevation.source_provenance_summary,
+      memory_informed_recommendation: memoryElevation.memory_informed_recommendation,
       planning_mode: missionSynthesis.planningMode,
       planning_intent_detected: missionSynthesis.planningIntentDetected,
       planning_confidence: missionSynthesis.planningConfidence,
