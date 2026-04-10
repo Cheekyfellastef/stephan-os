@@ -24,6 +24,8 @@ import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../st
 import { buildMissionActionPrompt, validateAiActionContext } from '../ai/missionActionService';
 import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/freshnessRouting';
 import { buildContextAssembly } from '../ai/contextAssembly.js';
+import { classifyOperatorIntent } from '../ai/intentEngine.js';
+import { buildMissionExecutionPacket } from '../ai/missionExecutionEngine.js';
 import { appendCommandHistory } from './commandHistory.js';
 import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
 
@@ -1071,6 +1073,9 @@ export function useAIConsole() {
     setProviderHealth,
     lastExecutionMetadata,
     setLastExecutionMetadata,
+    missionPacketWorkflow,
+    setWorkingMemory,
+    workingMemory,
     uiLayout,
     paneLayout,
     runtimeStatusModel,
@@ -1620,9 +1625,32 @@ export function useAIConsole() {
       appendLocalOperatorEntry(`Captured friction as ${event.frictionType} (${event.subsystem}) with confidence ${event.confidence}. I will wait for recurrence before proposing behavior changes.`);
       return;
     }
-    if (normalizedPrompt === 'use tablet mode') {
-      setSurfaceOverride('force-tablet');
-      appendLocalOperatorEntry('Tablet mode is now active as an explicit operator override. This changes current session embodiment selection without mutating global defaults.');
+    if (normalizedPrompt === 'what is my current intent?') {
+      const currentIntent = workingMemory?.lastIntentType || 'unknown';
+      appendLocalOperatorEntry(`Current intent type: ${currentIntent}.`);
+      return;
+    }
+    if (normalizedPrompt === 'show mission packet') {
+      const summary = workingMemory?.lastMissionPacketSummary || 'No mission packet summary stored yet.';
+      appendLocalOperatorEntry(summary);
+      return;
+    }
+    if (normalizedPrompt === 'why is this blocked?') {
+      const summary = workingMemory?.lastMissionPacketSummary || '';
+      const blocked = summary.toLowerCase().includes('blocked') ? summary : 'Mission is not currently blocked or no blocked mission was recorded.';
+      appendLocalOperatorEntry(blocked);
+      return;
+    }
+    if (normalizedPrompt === 'what would stephanos build next?') {
+      appendLocalOperatorEntry(workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.');
+      return;
+    }
+    if (normalizedPrompt === 'promote this to roadmap') {
+      appendLocalOperatorEntry('Use Mission Packet Queue controls: accept mission packet, then promote. Promotion remains approval-gated and explicit.');
+      return;
+    }
+    if (normalizedPrompt === 'explain agent assignments' || normalizedPrompt === 'show execution plan' || normalizedPrompt === 'prepare codex handoff' || normalizedPrompt === 'what tools would be used?') {
+      appendLocalOperatorEntry(workingMemory?.lastMissionPacketSummary || 'Mission packet details unavailable; run a build/proposal intent first.');
       return;
     }
 
@@ -1768,6 +1796,17 @@ export function useAIConsole() {
         },
         operatorContext,
       });
+      const intentResult = classifyOperatorIntent({
+        prompt,
+        frictionSignals: Array.isArray(workingMemory?.surfaceFrictionEvents) ? workingMemory.surfaceFrictionEvents : [],
+        projectContext: operatorContext,
+      });
+      const missionPacket = buildMissionExecutionPacket({
+        intent: intentResult,
+        proposalPacket: contextAssembly?.proposalPacket || {},
+        missionWorkflow: missionPacketWorkflow || {},
+        graphState: contextAssembly?.contextBundle?.knowledgeGraph || {},
+      });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;
       const requestPayload = {
         provider: requestedProvider,
@@ -1775,6 +1814,8 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssemblyMetadata: contextAssembly.truthMetadata,
+        intentResult,
+        missionPacket,
       };
       inFlightRequestPayload = requestPayload;
       const requestDispatchGate = evaluateRequestDispatchGate({
@@ -1853,11 +1894,47 @@ export function useAIConsole() {
         setProviderHealth(providerHealth);
       }
 
-      const executionMetadata = normalizeExecutionMetadata({
+      const executionMetadataBase = normalizeExecutionMetadata({
         data,
         requestPayload: effectiveRequestPayload,
         backendDefaultProvider: apiStatus.backendDefaultProvider,
       });
+      const executionMetadata = {
+        ...executionMetadataBase,
+        intent_type: effectiveRequestPayload?.intentResult?.intentType || 'unknown',
+        intent_confidence: effectiveRequestPayload?.intentResult?.confidence ?? 0,
+        intent_reason: effectiveRequestPayload?.intentResult?.reason || '',
+        intent_ambiguity_flags: effectiveRequestPayload?.intentResult?.ambiguityFlags || [],
+        intent_build_relevant: effectiveRequestPayload?.intentResult?.buildRelevant === true,
+        mission_packet_state: effectiveRequestPayload?.missionPacket?.lifecycleState || 'inactive',
+        mission_packet_title: effectiveRequestPayload?.missionPacket?.missionTitle || 'n/a',
+        mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
+        mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
+        mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
+          ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
+          : [],
+        mission_planned_tools: Array.isArray(effectiveRequestPayload?.missionPacket?.toolPlan)
+          ? effectiveRequestPayload.missionPacket.toolPlan.map((tool) => tool.toolType || tool.toolId).filter(Boolean)
+          : [],
+        mission_blockers: effectiveRequestPayload?.missionPacket?.blockers || [],
+        mission_warnings: effectiveRequestPayload?.missionPacket?.warnings || [],
+        roadmap_promotion_candidate: effectiveRequestPayload?.missionPacket?.roadmapPromotionCandidate === true,
+        codex_handoff_eligible: effectiveRequestPayload?.missionPacket?.codexHandoffEligible === true,
+        graph_link_suggested: effectiveRequestPayload?.missionPacket?.graphLinkSuggested === true,
+        graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
+        graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
+      };
+
+      setWorkingMemory((prev) => ({
+        ...(prev || {}),
+        lastIntentType: executionMetadata.intent_type,
+        lastMissionPacketSummary: `${executionMetadata.mission_packet_title} | state=${executionMetadata.mission_packet_state} | mode=${executionMetadata.mission_execution_mode}`,
+        acceptedMissionCount: Number(prev?.acceptedMissionCount || 0) + (executionMetadata.mission_packet_state === 'execution-ready' ? 1 : 0),
+        blockedMissionCount: Number(prev?.blockedMissionCount || 0) + (executionMetadata.mission_packet_state === 'blocked' ? 1 : 0),
+        lastExecutionLifecycleState: executionMetadata.mission_packet_state,
+        lastMissionSubsystems: effectiveRequestPayload?.missionPacket?.targetSubsystems || [],
+        lastMissionApprovalState: executionMetadata.mission_execution_mode,
+      }));
 
       console.debug('[Stephanos UI] Received AI response', executionMetadata);
 
