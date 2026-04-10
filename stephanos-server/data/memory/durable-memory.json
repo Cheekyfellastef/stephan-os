@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-08T13:03:49.941Z",
+  "updatedAt": "2026-04-10T18:26:56.288Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1400,6 +1400,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-08T13:03:49.940Z",
       "updatedAt": "2026-04-08T13:03:49.940Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775845616287-by6gd-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what new systems have been added and what is needed or missing",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T18:26:56.287Z",
+      "updatedAt": "2026-04-10T18:26:56.287Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775845616287-by6gd-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Based on the provided information, several new subsystems have been added to the Stephanos project:\n\n1. Proposal Queue (`proposal_queue`): This system likely handles incoming suggestions, ideas, or proposals for improvements.\n\n2. Activity Log (`activity_log`): A record of actions performed within the system, which can be useful for auditing and tracking user interactions.\n\n3. Roadmap Service (`roadmap_ervice`): This ",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T18:26:56.287Z",
+      "updatedAt": "2026-04-10T18:26:56.287Z",
       "surface": "shared"
     }
   }
