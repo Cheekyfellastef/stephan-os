@@ -25,6 +25,7 @@ import CollapsiblePanel from './CollapsiblePanel';
 
 export default function StatusPanel() {
   const [copyNotice, setCopyNotice] = useState(null);
+  const [frictionText, setFrictionText] = useState('');
   const {
     status,
     isBusy,
@@ -52,6 +53,8 @@ export default function StatusPanel() {
     sessionRestoreDiagnostics,
     homeNodeStatus,
     missionPacketWorkflow,
+    surfaceFrictionEvents,
+    reportSurfaceFriction,
   } = useAIStore();
 
   const safeApiStatus = apiStatus || {};
@@ -98,6 +101,9 @@ export default function StatusPanel() {
   const surfaceIdentity = surfaceAwareness.surfaceIdentity || {};
   const surfaceCapabilities = surfaceAwareness.surfaceCapabilities || {};
   const effectiveSurfaceExperience = surfaceAwareness.effectiveSurfaceExperience || {};
+  const latestSurfaceFriction = Array.isArray(surfaceFrictionEvents) && surfaceFrictionEvents.length > 0
+    ? surfaceFrictionEvents[surfaceFrictionEvents.length - 1]
+    : null;
   const homeNodeAttemptSummary = homeNodeAttempts.length
     ? homeNodeAttempts.map((attempt) => {
       const base = `${attempt.source || 'unknown'}:${attempt.host || 'unknown'}`;
@@ -162,6 +168,16 @@ export default function StatusPanel() {
     globalThis.setTimeout(() => {
       setCopyNotice((current) => (current?.message === message ? null : current));
     }, 2800);
+  };
+  const handleReportSurfaceFriction = () => {
+    const candidate = String(frictionText || '').trim();
+    if (!candidate) {
+      notifyCopyResult('Enter friction text before submitting.', 'error');
+      return;
+    }
+    const frictionEvent = reportSurfaceFriction({ userText: candidate, source: 'operator-text' });
+    setFrictionText('');
+    notifyCopyResult(`Surface friction captured: ${frictionEvent.frictionType}`, 'success');
   };
   const supportSnapshot = buildSupportSnapshot({
     runtimeStatus: {
@@ -485,11 +501,17 @@ export default function StatusPanel() {
         <li>Surface Device Class: {surfaceIdentity.deviceClass || 'unknown'}</li>
         <li>Surface OS / Browser: {surfaceIdentity.osFamily || 'unknown'} / {surfaceIdentity.browserFamily || 'unknown'}</li>
         <li>Surface Embodiment Profile: {effectiveSurfaceExperience.selectedProfileId || 'generic-surface'}</li>
+        <li>Surface Active Protocols: {Array.isArray(effectiveSurfaceExperience.activeProtocolIds) ? effectiveSurfaceExperience.activeProtocolIds.join(', ') : 'n/a'}</li>
+        <li>Surface Protocol Reasons: {Array.isArray(effectiveSurfaceExperience.protocolSelectionReasons) ? effectiveSurfaceExperience.protocolSelectionReasons.join(' | ') : 'n/a'}</li>
         <li>Surface Selection Reasons: {Array.isArray(effectiveSurfaceExperience.selectionReasons) ? effectiveSurfaceExperience.selectionReasons.join(' | ') : 'n/a'}</li>
         <li>Surface Override Mode: {surfaceAwareness.operatorSurfaceOverrides?.mode || 'auto'}</li>
-        <li>Surface Input / Panel Strategy: {effectiveSurfaceExperience.resolvedInputMode || 'hybrid'} / {effectiveSurfaceExperience.resolvedPanelStrategy || 'stacked-docked'}</li>
+        <li>Surface Input / Panel Strategy: {effectiveSurfaceExperience.resolvedInputMode || 'hybrid'} / {(effectiveSurfaceExperience.resolvedPanelMode || effectiveSurfaceExperience.resolvedPanelStrategy || 'stacked-docked')}</li>
+        <li>Surface Experience Policy: density={effectiveSurfaceExperience.resolvedUiDensity || 'comfortable'} · animation={effectiveSurfaceExperience.resolvedAnimationBudget || 'medium'} · debug={effectiveSurfaceExperience.resolvedDebugVisibility || 'balanced'} · telemetry={effectiveSurfaceExperience.resolvedTelemetryDensity || 'medium'}</li>
         <li>Surface Routing Bias Hint: {effectiveSurfaceExperience.resolvedRoutingBiasHint || 'auto'} (hint-only)</li>
+        <li>Surface Override Applied: {effectiveSurfaceExperience.overrideApplied ? 'yes' : 'no'} · confidence={effectiveSurfaceExperience.confidence || 'low'}</li>
         <li>Surface Capability Hints: touchPrimary={String(surfaceCapabilities.touchPrimary ?? 'unknown')} · hoverReliable={String(surfaceCapabilities.hoverReliable ?? 'unknown')} · finePointer={String(surfaceCapabilities.finePointer ?? 'unknown')} · webxr={String(surfaceCapabilities.webxrAvailable ?? 'unknown')}</li>
+        <li>Surface Friction Recent Events: {Array.isArray(surfaceFrictionEvents) ? surfaceFrictionEvents.length : 0}</li>
+        <li>Surface Friction Latest: {latestSurfaceFriction ? `${latestSurfaceFriction.frictionType} (${latestSurfaceFriction.subsystem}) proposal=${latestSurfaceFriction.proposal?.proposalType || 'n/a'}` : 'n/a'}</li>
         <li>Non-Local Session: {(runtimeSessionTruth.nonLocalSession === true) ? 'yes' : 'no'}</li>
         <li>Route Kind: {routeTruthView.routeKind}</li>
         <li>Preferred Route: {routeTruthView.preferredRoute}</li>
@@ -745,6 +767,19 @@ export default function StatusPanel() {
         <li>[CONTINUITY LOOP] Recent Activity: {continuitySnapshot.recentContinuityEvents.length > 0 ? continuitySnapshot.recentContinuityEvents.map((event) => event.summary).join(' | ') : 'none observed'}</li>
         <li>Debug Console: F1</li>
       </ul>
+      <div className="status-panel-copy-actions">
+        <label htmlFor="surface-friction-input">Report friction on this surface</label>
+        <input
+          id="surface-friction-input"
+          type="text"
+          value={frictionText}
+          onChange={(event) => setFrictionText(event.target.value)}
+          placeholder="e.g. Dragging panels is awkward here"
+        />
+        <button type="button" className="status-panel-copy-button" onClick={handleReportSurfaceFriction}>
+          Capture Surface Friction
+        </button>
+      </div>
       <p className={`api-banner ${runtimeStatus.statusTone}`}>{runtimeStatus.dependencySummary || 'Diagnostics pending'}</p>
     </CollapsiblePanel>
   );
