@@ -188,6 +188,23 @@ function normalizeUiReachabilityState(value, legacyBoolean) {
   return 'unknown';
 }
 
+const PLACEHOLDER_TRUTH_VALUES = new Set(['', 'unknown', 'pending', 'unavailable', 'n/a']);
+
+function isPlaceholderTruthValue(value) {
+  if (value == null) return true;
+  if (typeof value !== 'string') return false;
+  return PLACEHOLDER_TRUTH_VALUES.has(value.trim().toLowerCase());
+}
+
+function preferNonPlaceholderTruth(...candidates) {
+  for (const candidate of candidates) {
+    if (!isPlaceholderTruthValue(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[candidates.length - 1];
+}
+
 export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const hasCandidate = runtimeStatusModel && typeof runtimeStatusModel === 'object';
   const candidate = hasCandidate ? runtimeStatusModel : {};
@@ -380,49 +397,70 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     }
     : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
 
-  const canonicalRouteRuntimeTruth = candidate.canonicalRouteRuntimeTruth && typeof candidate.canonicalRouteRuntimeTruth === 'object'
-    ? {
-      ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
-      ...candidate.canonicalRouteRuntimeTruth,
-      blockingIssueCodes: normalizeArray(candidate.canonicalRouteRuntimeTruth.blockingIssueCodes, []),
-    }
+  const derivedCanonicalRouteRuntimeTruth = {
+    ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
+    sessionKind: runtimeTruth.session?.sessionKind || finalRouteTruth.sessionKind || 'unknown',
+    sessionReality: runtimeTruth.session?.nonLocalSession ? 'non-local' : 'local-desktop',
+    deviceContext: runtimeTruth.session?.deviceContext || finalRouteTruth.deviceContext || 'unknown',
+    requestedRouteMode: runtimeTruth.route?.requestedMode || finalRouteTruth.requestedRouteMode || 'pending',
+    effectiveRouteMode: runtimeTruth.route?.effectiveMode || finalRouteTruth.effectiveRouteMode || 'pending',
+    winningRoute: runtimeTruth.route?.selectedRouteKind || finalRouteTruth.routeKind || 'unavailable',
+    winningReason: runtimeTruth.route?.winningReason || finalRouteTruth.winnerReason || '',
+    routeSource: runtimeTruth.route?.source || finalRouteTruth.source || 'unknown',
+    preferredTarget: runtimeTruth.route?.preferredTarget || finalRouteTruth.preferredTarget || 'unavailable',
+    actualTarget: runtimeTruth.route?.actualTarget || finalRouteTruth.actualTarget || 'unavailable',
+    backendReachable: runtimeTruth.reachabilityTruth?.backendReachable === true || finalRouteTruth.backendReachable === true,
+    uiReachabilityState: runtimeTruth.reachabilityTruth?.uiReachableState || finalRouteTruth.uiReachabilityState || 'unknown',
+    uiReachable: runtimeTruth.reachabilityTruth?.uiReachable === true || finalRouteTruth.uiReachable === true,
+    routeReachable: runtimeTruth.reachabilityTruth?.selectedRouteReachable === true,
+    routeUsable: runtimeTruth.reachabilityTruth?.selectedRouteUsable === true || finalRouteTruth.routeUsable === true,
+    localAvailable: runtimeTruth.reachabilityTruth?.localAvailable === true,
+    homeNodeAvailable: runtimeTruth.reachabilityTruth?.homeNodeAvailable === true,
+    cloudAvailable: runtimeTruth.reachabilityTruth?.cloudAvailable === true,
+    distAvailable: runtimeTruth.reachabilityTruth?.distAvailable === true,
+    requestedProvider: runtimeTruth.provider?.requestedProvider || finalRouteTruth.requestedProvider || 'unknown',
+    selectedProvider: runtimeTruth.provider?.selectedProvider || finalRouteTruth.selectedProvider || 'unknown',
+    executedProvider: runtimeTruth.provider?.executableProvider || finalRouteTruth.executedProvider || '',
+    providerHealthState: runtimeTruth.provider?.providerHealthState || 'unknown',
+    fallbackActive: runtimeTruth.route?.fallbackActive === true || finalRouteTruth.fallbackActive === true,
+    fallbackReason: runtimeTruth.provider?.fallbackReason || '',
+    validationState: runtimeTruth.diagnostics?.validationState || finalRouteTruth.validationState || 'launching',
+    appLaunchState: runtimeTruth.diagnostics?.appLaunchState || finalRouteTruth.appLaunchState || 'pending',
+    operatorSummary: runtimeTruth.diagnostics?.operatorGuidance?.[0] || finalRouteTruth.operatorAction || '',
+  };
+
+  const canonicalInput = candidate.canonicalRouteRuntimeTruth && typeof candidate.canonicalRouteRuntimeTruth === 'object'
+    ? candidate.canonicalRouteRuntimeTruth
     : candidate.runtimeTruthSnapshot && typeof candidate.runtimeTruthSnapshot === 'object'
-      ? {
-        ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
-        ...candidate.runtimeTruthSnapshot,
-        blockingIssueCodes: normalizeArray(candidate.runtimeTruthSnapshot.blockingIssueCodes, []),
-      }
-      : {
-        ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
-        sessionKind: runtimeTruth.session?.sessionKind || finalRouteTruth.sessionKind || 'unknown',
-        sessionReality: runtimeTruth.session?.nonLocalSession ? 'non-local' : 'local-desktop',
-        deviceContext: runtimeTruth.session?.deviceContext || finalRouteTruth.deviceContext || 'unknown',
-        requestedRouteMode: runtimeTruth.route?.requestedMode || finalRouteTruth.requestedRouteMode || 'pending',
-        effectiveRouteMode: runtimeTruth.route?.effectiveMode || finalRouteTruth.effectiveRouteMode || 'pending',
-        winningRoute: runtimeTruth.route?.selectedRouteKind || finalRouteTruth.routeKind || 'unavailable',
-        winningReason: runtimeTruth.route?.winningReason || finalRouteTruth.winnerReason || '',
-        routeSource: runtimeTruth.route?.source || finalRouteTruth.source || 'unknown',
-        preferredTarget: runtimeTruth.route?.preferredTarget || finalRouteTruth.preferredTarget || 'unavailable',
-        actualTarget: runtimeTruth.route?.actualTarget || finalRouteTruth.actualTarget || 'unavailable',
-        backendReachable: runtimeTruth.reachabilityTruth?.backendReachable === true || finalRouteTruth.backendReachable === true,
-        uiReachabilityState: runtimeTruth.reachabilityTruth?.uiReachableState || finalRouteTruth.uiReachabilityState || 'unknown',
-        uiReachable: runtimeTruth.reachabilityTruth?.uiReachable === true || finalRouteTruth.uiReachable === true,
-        routeReachable: runtimeTruth.reachabilityTruth?.selectedRouteReachable === true,
-        routeUsable: runtimeTruth.reachabilityTruth?.selectedRouteUsable === true || finalRouteTruth.routeUsable === true,
-        localAvailable: runtimeTruth.reachabilityTruth?.localAvailable === true,
-        homeNodeAvailable: runtimeTruth.reachabilityTruth?.homeNodeAvailable === true,
-        cloudAvailable: runtimeTruth.reachabilityTruth?.cloudAvailable === true,
-        distAvailable: runtimeTruth.reachabilityTruth?.distAvailable === true,
-        requestedProvider: runtimeTruth.provider?.requestedProvider || finalRouteTruth.requestedProvider || 'unknown',
-        selectedProvider: runtimeTruth.provider?.selectedProvider || finalRouteTruth.selectedProvider || 'unknown',
-        executedProvider: runtimeTruth.provider?.executableProvider || finalRouteTruth.executedProvider || '',
-        providerHealthState: runtimeTruth.provider?.providerHealthState || 'unknown',
-        fallbackActive: runtimeTruth.route?.fallbackActive === true || finalRouteTruth.fallbackActive === true,
-        fallbackReason: runtimeTruth.provider?.fallbackReason || '',
-        validationState: runtimeTruth.diagnostics?.validationState || finalRouteTruth.validationState || 'launching',
-        appLaunchState: runtimeTruth.diagnostics?.appLaunchState || finalRouteTruth.appLaunchState || 'pending',
-        operatorSummary: runtimeTruth.diagnostics?.operatorGuidance?.[0] || finalRouteTruth.operatorAction || '',
-      };
+      ? candidate.runtimeTruthSnapshot
+      : null;
+
+  const canonicalRouteRuntimeTruth = canonicalInput
+    ? {
+      ...derivedCanonicalRouteRuntimeTruth,
+      ...canonicalInput,
+      sessionKind: preferNonPlaceholderTruth(canonicalInput.sessionKind, derivedCanonicalRouteRuntimeTruth.sessionKind),
+      sessionReality: preferNonPlaceholderTruth(canonicalInput.sessionReality, derivedCanonicalRouteRuntimeTruth.sessionReality),
+      deviceContext: preferNonPlaceholderTruth(canonicalInput.deviceContext, derivedCanonicalRouteRuntimeTruth.deviceContext),
+      requestedRouteMode: preferNonPlaceholderTruth(canonicalInput.requestedRouteMode, derivedCanonicalRouteRuntimeTruth.requestedRouteMode),
+      effectiveRouteMode: preferNonPlaceholderTruth(canonicalInput.effectiveRouteMode, derivedCanonicalRouteRuntimeTruth.effectiveRouteMode),
+      winningRoute: preferNonPlaceholderTruth(canonicalInput.winningRoute, derivedCanonicalRouteRuntimeTruth.winningRoute),
+      winningReason: preferNonPlaceholderTruth(canonicalInput.winningReason, derivedCanonicalRouteRuntimeTruth.winningReason),
+      routeSource: preferNonPlaceholderTruth(canonicalInput.routeSource, derivedCanonicalRouteRuntimeTruth.routeSource),
+      preferredTarget: preferNonPlaceholderTruth(canonicalInput.preferredTarget, derivedCanonicalRouteRuntimeTruth.preferredTarget),
+      actualTarget: preferNonPlaceholderTruth(canonicalInput.actualTarget, derivedCanonicalRouteRuntimeTruth.actualTarget),
+      uiReachabilityState: preferNonPlaceholderTruth(canonicalInput.uiReachabilityState, derivedCanonicalRouteRuntimeTruth.uiReachabilityState),
+      requestedProvider: preferNonPlaceholderTruth(canonicalInput.requestedProvider, derivedCanonicalRouteRuntimeTruth.requestedProvider),
+      selectedProvider: preferNonPlaceholderTruth(canonicalInput.selectedProvider, derivedCanonicalRouteRuntimeTruth.selectedProvider),
+      executedProvider: preferNonPlaceholderTruth(canonicalInput.executedProvider, derivedCanonicalRouteRuntimeTruth.executedProvider),
+      providerHealthState: preferNonPlaceholderTruth(canonicalInput.providerHealthState, derivedCanonicalRouteRuntimeTruth.providerHealthState),
+      fallbackReason: preferNonPlaceholderTruth(canonicalInput.fallbackReason, derivedCanonicalRouteRuntimeTruth.fallbackReason),
+      validationState: preferNonPlaceholderTruth(canonicalInput.validationState, derivedCanonicalRouteRuntimeTruth.validationState),
+      appLaunchState: preferNonPlaceholderTruth(canonicalInput.appLaunchState, derivedCanonicalRouteRuntimeTruth.appLaunchState),
+      operatorSummary: preferNonPlaceholderTruth(canonicalInput.operatorSummary, derivedCanonicalRouteRuntimeTruth.operatorSummary),
+      blockingIssueCodes: normalizeArray(canonicalInput.blockingIssueCodes, []),
+    }
+    : derivedCanonicalRouteRuntimeTruth;
 
   return {
     ...baseModel,

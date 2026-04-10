@@ -84,3 +84,36 @@ test('ensureRuntimeStatusModel preserves canonicalRouteRuntimeTruth from runtime
   assert.equal(normalized.canonicalRouteRuntimeTruth.executedProvider, 'groq');
   assert.deepEqual(normalized.canonicalRouteRuntimeTruth.blockingIssueCodes, ['provider-execution-unvalidated']);
 });
+
+test('ensureRuntimeStatusModel hydrates canonical truth when compatibility payload carries placeholder defaults', () => {
+  const normalized = ensureRuntimeStatusModel({
+    finalRouteTruth: {
+      routeKind: 'home-node',
+      source: 'manual',
+      preferredTarget: 'https://ops.example/mission',
+      actualTarget: 'https://ops.example/mission',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      uiReachabilityState: 'reachable',
+      routeUsable: true,
+    },
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'unavailable',
+      routeSource: 'unknown',
+      preferredTarget: 'unavailable',
+      actualTarget: 'unavailable',
+      selectedProvider: 'unknown',
+      executedProvider: '',
+      uiReachabilityState: 'unknown',
+    },
+  });
+
+  assert.equal(normalized.canonicalRouteRuntimeTruth.winningRoute, 'home-node');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.routeSource, 'manual');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.preferredTarget, 'https://ops.example/mission');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.actualTarget, 'https://ops.example/mission');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.selectedProvider, 'groq');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.executedProvider, 'groq');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.uiReachabilityState, 'reachable');
+  assert.equal(normalized.canonicalRouteRuntimeTruth.routeUsable, true);
+});
