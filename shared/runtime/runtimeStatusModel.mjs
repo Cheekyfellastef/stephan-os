@@ -1638,8 +1638,19 @@ export function createRuntimeStatusModel({
   const selectedRouteReachable = selectedEvaluation?.available === true;
   const selectedRouteUsable = selectedEvaluation?.usable === true;
   const selectedRouteBlocked = Boolean(selectedEvaluation?.blockedReason);
+  const hasTileReadinessSignal = Boolean(
+    normalizedRuntimeContext?.tileTruth
+    && typeof normalizedRuntimeContext.tileTruth === 'object'
+    && (
+      Object.prototype.hasOwnProperty.call(normalizedRuntimeContext.tileTruth, 'ready')
+      || Object.prototype.hasOwnProperty.call(normalizedRuntimeContext.tileTruth, 'executionReady')
+      || Object.prototype.hasOwnProperty.call(normalizedRuntimeContext.tileTruth, 'reason')
+      || Object.prototype.hasOwnProperty.call(normalizedRuntimeContext.tileTruth, 'blockedReason')
+    )
+  );
   const tileExecutionReady = normalizedRuntimeContext?.tileTruth?.ready === true
     || normalizedRuntimeContext?.tileTruth?.executionReady === true;
+  const tileExecutionExplicitlyBlocked = hasTileReadinessSignal && !tileExecutionReady;
   const hostedCloudLaunchReady = normalizedRuntimeContext.sessionKind === 'hosted-web'
     && selectedRouteKey === 'cloud'
     && selectedRouteReachable
@@ -1659,8 +1670,8 @@ export function createRuntimeStatusModel({
     || (nodeRoute.routeKind !== 'cloud' && !backendAvailable)
     || !selectedRouteReachable
     || !selectedRouteUsable
-    || !tileExecutionReady
-    || (localPending && routePlan.effectiveRouteMode !== 'cloud-first')
+    || tileExecutionExplicitlyBlocked
+    || (localPending && routePlan.effectiveRouteMode !== 'cloud-first' && !executableProviderHealthy)
     || (routePlan.effectiveRouteMode === 'local-first' && !routePlan.localAvailable && nodeRoute.routeKind === 'local-desktop')
     || (routePlan.effectiveRouteMode === 'cloud-first' && !routePlan.cloudAvailable)
     || fallbackActive

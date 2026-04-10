@@ -615,6 +615,42 @@ test('createRuntimeStatusModel gates ready launch state on selected route usabil
   assert.equal(readyStatus.finalRouteTruth.routeUsable, true);
 });
 
+test('createRuntimeStatusModel keeps healthy local-desktop launch state ready while execution is idle and tile metadata is absent', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      ollama: { ok: true },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      preferredTarget: 'http://localhost:8787',
+      actualTargetUsed: 'http://localhost:8787',
+      nodeAddressSource: 'local-backend-session',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          uiReachable: true,
+          usable: true,
+        },
+      },
+      executionStatus: 'idle',
+      executionTruth: 'idle',
+    },
+    activeProviderHint: 'ollama',
+  });
+
+  assert.equal(status.finalRouteTruth.routeKind, 'local-desktop');
+  assert.equal(status.finalRouteTruth.selectedRouteReachable, true);
+  assert.equal(status.finalRouteTruth.routeUsable, true);
+  assert.equal(status.finalRouteTruth.backendReachable, true);
+  assert.equal(status.finalRouteTruth.executedProvider, 'ollama');
+  assert.equal(status.appLaunchState, 'ready');
+});
+
 
 test('createRuntimeStatusModel keeps local-desktop usable truth coherent with winning route and executable provider', () => {
   const status = createRuntimeStatusModel({

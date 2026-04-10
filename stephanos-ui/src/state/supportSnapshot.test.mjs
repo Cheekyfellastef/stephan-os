@@ -633,6 +633,59 @@ test('buildSupportSnapshot keeps unresolved hosted backend-target metadata infor
   assert.doesNotMatch(snapshot, /Ignored loopback backend target for non-local session/);
 });
 
+test('buildSupportSnapshot reports non-degraded launch state for healthy idle local-desktop runtime truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'local-first',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'local-desktop',
+      },
+      executionStatus: 'idle',
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      operatorReason: 'No operator action required.',
+    },
+    runtimeSessionTruth: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+    },
+    runtimeRouteTruth: {
+      winningReason: 'Backend online locally; local-desktop route is live through the active backend session',
+    },
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {
+      executableProvider: 'ollama',
+    },
+    runtimeDiagnosticsTruth: {
+      blockingIssues: [],
+      invariantWarnings: [],
+    },
+    runtimeContext: {
+      routeDiagnostics: {},
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-10T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /Launch State: ready/);
+  assert.doesNotMatch(snapshot, /Launch State: degraded/);
+  assert.match(snapshot, /Selected Route Kind: local-desktop/);
+  assert.match(snapshot, /Selected Route Reachable: yes/);
+  assert.match(snapshot, /Selected Route Usable: yes/);
+  assert.match(snapshot, /Backend Reachable: yes/);
+  assert.match(snapshot, /Execution Status: idle/);
+});
+
 test('buildSupportSnapshot reports parity state from runtime truth markers', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
