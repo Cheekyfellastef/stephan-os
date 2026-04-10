@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Galaxians Rendering Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="lab">
+      <h1>Galaxians Rendering Lab</h1>
+      <p class="subtitle">Experimental sprite palette and rendering validation.</p>
+
+      <section class="controls" aria-label="Palette mode controls">
+        <button type="button" data-mode="original" class="mode-btn is-active">Original</button>
+        <button type="button" data-mode="basic" class="mode-btn">Basic</button>
+        <button type="button" data-mode="deluxe" class="mode-btn">Deluxe</button>
+      </section>
+
+      <p class="mode-readout">Current mode: <strong id="mode-label">original</strong></p>
+
+      <canvas id="lab-canvas" width="640" height="360" aria-label="Galaxians rendering canvas"></canvas>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

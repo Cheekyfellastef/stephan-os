@@ -1,0 +1,67 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #10131a;
+  color: #f0f2f8;
+  display: grid;
+  place-items: center;
+}
+
+.lab {
+  width: min(96vw, 900px);
+  padding: 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.25rem, 2.2vw, 1.75rem);
+}
+
+.subtitle {
+  margin: 0.35rem 0 1rem;
+  color: #aab2c8;
+}
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  border: 1px solid #36435e;
+  border-radius: 0.5rem;
+  background: #1b2230;
+  color: #f0f2f8;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.mode-btn.is-active {
+  border-color: #74b0ff;
+  background: #263a56;
+}
+
+.mode-readout {
+  margin: 0.85rem 0;
+}
+
+#lab-canvas {
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+  border: 1px solid #2a3348;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  display: block;
+}
