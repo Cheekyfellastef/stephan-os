@@ -72,6 +72,31 @@
       .badge-warn { border-color: rgba(245, 158, 11, 0.5); color: #fcd34d; }
       .metrics-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
       .panel-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+      .experience-grid {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+      .experience-card {
+        background: #0b152b;
+        border: 1px solid #2a4477;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .experience-launch {
+        display: inline-flex;
+        margin-top: 8px;
+        color: #bfdbfe;
+        text-decoration: none;
+        border: 1px solid #385589;
+        border-radius: 8px;
+        padding: 6px 10px;
+      }
+      .experience-launch:hover {
+        border-color: #60a5fa;
+        color: #dbeafe;
+      }
       @media (min-width: 900px) {
         .app-shell { padding: 20px; }
       }
@@ -83,6 +108,13 @@
       <section class="panel">
         <h1>Experimental System Simulator</h1>
         <p class="muted">Intent → Decomposition → Generation → Simulation → Evaluation → Iteration</p>
+      </section>
+
+
+      <section class="panel control-grid">
+        <h2>Labs</h2>
+        <p class="muted">Launch experimental modules and operator sandboxes.</p>
+        <div id="experience-list" class="experience-grid"></div>
       </section>
 
       <section class="panel control-grid">
