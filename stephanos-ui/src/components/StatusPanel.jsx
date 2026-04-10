@@ -69,7 +69,7 @@ export default function StatusPanel() {
   const safeUiLayout = uiLayout || {};
   const safeCommandHistory = Array.isArray(commandHistory) ? commandHistory : [];
   const safeSessionRestoreDiagnostics = sessionRestoreDiagnostics || { message: 'Portable session state restored.', reasons: [], ignoredFields: [] };
-  const safeWorkingMemory = workingMemory || { recentCommands: [], currentTask: '', activeFocusLabel: '', missionNote: '' };
+  const safeWorkingMemory = workingMemory || { recentCommands: [], currentTask: '', activeFocusLabel: '', missionNote: '', lastIntentType: '', lastMissionPacketSummary: '' };
   const safeProjectMemory = projectMemory || { currentMilestone: '' };
   const latest = safeCommandHistory[safeCommandHistory.length - 1];
   const continuityMode = latest?.continuity_mode || 'recording-only';
@@ -389,6 +389,19 @@ export default function StatusPanel() {
       missionPacketDecisionAt: missionPacketDecision?.decidedAt || 'n/a',
       missionPacketProposalQueueLength: String(missionPacketWorkflow?.proposalQueue?.length || 0),
       missionPacketRoadmapQueueLength: String(missionPacketWorkflow?.roadmapQueue?.length || 0),
+      lastIntentType: lastExecutionMetadata?.intent_type || safeWorkingMemory.lastIntentType || 'unknown',
+      lastIntentConfidence: String(lastExecutionMetadata?.intent_confidence ?? 0),
+      lastIntentReason: lastExecutionMetadata?.intent_reason || 'n/a',
+      lastMissionPacketState: lastExecutionMetadata?.mission_packet_state || safeWorkingMemory.lastExecutionLifecycleState || 'inactive',
+      lastMissionTitle: lastExecutionMetadata?.mission_packet_title || 'n/a',
+      lastMissionClass: lastExecutionMetadata?.mission_packet_class || 'analysis',
+      lastMissionExecutionMode: lastExecutionMetadata?.mission_execution_mode || safeWorkingMemory.lastMissionApprovalState || 'analysis-only',
+      lastMissionAssignedRoles: Array.isArray(lastExecutionMetadata?.mission_assigned_roles) ? lastExecutionMetadata.mission_assigned_roles.join(', ') : 'n/a',
+      lastMissionPlannedTools: Array.isArray(lastExecutionMetadata?.mission_planned_tools) ? lastExecutionMetadata.mission_planned_tools.join(', ') : 'n/a',
+      lastMissionBlockers: Array.isArray(lastExecutionMetadata?.mission_blockers) ? lastExecutionMetadata.mission_blockers.join(', ') : 'n/a',
+      lastMissionWarnings: Array.isArray(lastExecutionMetadata?.mission_warnings) ? lastExecutionMetadata.mission_warnings.join(', ') : 'n/a',
+      lastRoadmapPromotionCandidate: String(lastExecutionMetadata?.roadmap_promotion_candidate ?? 'n/a'),
+      lastCodexHandoffEligibleMission: String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a'),
       lastCodexPromptSummary: lastExecutionMetadata?.codex_prompt_summary || 'n/a',
       lastCodexConstraints: Array.isArray(lastExecutionMetadata?.codex_constraints)
         ? lastExecutionMetadata.codex_constraints.join(', ')
@@ -610,6 +623,20 @@ export default function StatusPanel() {
         <li>[MISSION PACKET] Proposal Queue Depth: {missionPacketWorkflow?.proposalQueue?.length || 0}</li>
         <li>[MISSION PACKET] Roadmap Queue Depth: {missionPacketWorkflow?.roadmapQueue?.length || 0}</li>
         <li>[MISSION PACKET] Warnings: {Array.isArray(lastExecutionMetadata?.proposal_packet_warnings) ? lastExecutionMetadata.proposal_packet_warnings.join(', ') : 'n/a'}</li>
+        <li>[INTENT ENGINE] Type: {lastExecutionMetadata?.intent_type || safeWorkingMemory.lastIntentType || 'unknown'}</li>
+        <li>[INTENT ENGINE] Confidence: {String(lastExecutionMetadata?.intent_confidence ?? '0')}</li>
+        <li>[INTENT ENGINE] Reason: {lastExecutionMetadata?.intent_reason || 'n/a'}</li>
+        <li>[MISSION EXECUTION] State: {lastExecutionMetadata?.mission_packet_state || safeWorkingMemory.lastExecutionLifecycleState || 'inactive'}</li>
+        <li>[MISSION EXECUTION] Title: {lastExecutionMetadata?.mission_packet_title || 'n/a'}</li>
+        <li>[MISSION EXECUTION] Class: {lastExecutionMetadata?.mission_packet_class || 'analysis'}</li>
+        <li>[MISSION EXECUTION] Mode: {lastExecutionMetadata?.mission_execution_mode || safeWorkingMemory.lastMissionApprovalState || 'analysis-only'}</li>
+        <li>[MISSION EXECUTION] Assigned Roles: {Array.isArray(lastExecutionMetadata?.mission_assigned_roles) ? lastExecutionMetadata.mission_assigned_roles.join(', ') : 'n/a'}</li>
+        <li>[MISSION EXECUTION] Planned Tools: {Array.isArray(lastExecutionMetadata?.mission_planned_tools) ? lastExecutionMetadata.mission_planned_tools.join(', ') : 'n/a'}</li>
+        <li>[MISSION EXECUTION] Roadmap Candidate: {String(lastExecutionMetadata?.roadmap_promotion_candidate ?? 'n/a')}</li>
+        <li>[MISSION EXECUTION] Codex Handoff Eligible: {String(lastExecutionMetadata?.codex_handoff_eligible ?? 'n/a')}</li>
+        <li>[MISSION EXECUTION] Blockers: {Array.isArray(lastExecutionMetadata?.mission_blockers) ? lastExecutionMetadata.mission_blockers.join(', ') : 'n/a'}</li>
+        <li>[MISSION EXECUTION] Warnings: {Array.isArray(lastExecutionMetadata?.mission_warnings) ? lastExecutionMetadata.mission_warnings.join(', ') : 'n/a'}</li>
+        <li>[MISSION EXECUTION] Graph Link Suggested/Eligible: {String(lastExecutionMetadata?.graph_link_suggested ?? 'n/a')} / {String(lastExecutionMetadata?.graph_link_eligible ?? 'n/a')}</li>
         <li>[TILE ACTION] Type: {lastExecutionMetadata?.tile_action_type || 'n/a'}</li>
         <li>[TILE ACTION] Source: {lastExecutionMetadata?.tile_source || 'n/a'}</li>
         <li>[TILE ACTION] Memory Candidate Submitted: {String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a')}</li>
