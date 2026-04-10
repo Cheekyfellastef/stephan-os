@@ -1,5 +1,6 @@
 import { runExperimentalCycle } from './experimentalEngine.js';
 import { renderEvaluationPanel } from './evaluationPanel.jsx';
+import { EXPERIMENTAL_EXPERIENCES, resolveExperienceLaunchUrl } from './experienceRegistry.js';
 
 const state = {
   cycle: {
@@ -86,10 +87,22 @@ function formatStatus(cycle) {
   return 'Idle';
 }
 
+
+function renderExperienceList() {
+  return EXPERIMENTAL_EXPERIENCES.map((experience) => `
+    <article class="experience-card">
+      <h3>${experience.name}</h3>
+      <p class="muted">${experience.description}</p>
+      <a class="experience-launch" href="${resolveExperienceLaunchUrl(experience)}" data-experience-id="${experience.id}">Launch Lab</a>
+    </article>
+  `).join('');
+}
+
 function bind() {
   const app = document.getElementById('app');
   const input = document.getElementById('intent-input');
   const status = document.getElementById('run-status');
+  const experienceList = document.getElementById('experience-list');
 
   const refresh = () => {
     const cycle = state.cycle;
@@ -178,6 +191,10 @@ function bind() {
     const fallbackInput = state.cycle.intentModel?.raw || '';
     await startCycle({ inputText: input?.value || fallbackInput, preservePrevious: true });
   });
+
+  if (experienceList) {
+    experienceList.innerHTML = renderExperienceList();
+  }
 
   app?.classList.add('ready');
   refresh();
