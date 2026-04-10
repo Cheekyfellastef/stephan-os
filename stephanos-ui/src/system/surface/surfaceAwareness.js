@@ -1,3 +1,5 @@
+import { resolveSurfaceProtocols } from './protocolResolver.js';
+
 const DEVICE_CLASSES = ['desktop', 'tablet', 'phone', 'vr-capable', 'unknown'];
 const SURFACE_OVERRIDE_MODES = ['auto', 'force-desktop', 'force-tablet', 'force-phone', 'force-vr'];
 
@@ -222,7 +224,7 @@ export function resolveEffectiveSurfaceExperience({
   surfaceIdentity = {},
   surfaceCapabilities = {},
   sessionContextSurfaceHints = {},
-  operatorSurfaceOverrides = { mode: 'auto' },
+  operatorSurfaceOverrides = { mode: 'auto', protocolIds: [] },
 } = {}) {
   const overrideMode = normalizeOverride(operatorSurfaceOverrides?.mode);
   const selectedProfileId = pickProfileId({
@@ -232,10 +234,17 @@ export function resolveEffectiveSurfaceExperience({
     override: overrideMode,
   });
   const profile = EMBODIMENT_PROFILE_REGISTRY[selectedProfileId] || EMBODIMENT_PROFILE_REGISTRY['generic-surface'];
+  const protocolResolution = resolveSurfaceProtocols({
+    surfaceIdentity,
+    surfaceCapabilities,
+    sessionContextSurfaceHints,
+    embodimentProfile: profile,
+    operatorSurfaceOverrides,
+  });
 
-  const reasons = [];
-  if (overrideMode !== 'auto') reasons.push(`operator override ${overrideMode} selected profile ${selectedProfileId}`);
-  else reasons.push(`auto selection from deviceClass=${surfaceIdentity.deviceClass || 'unknown'} sessionKind=${sessionContextSurfaceHints.sessionKind || 'unknown'}`);
+  const reasons = [...protocolResolution.protocolSelectionReasons];
+  if (overrideMode !== 'auto') reasons.unshift(`operator override ${overrideMode} selected profile ${selectedProfileId}`);
+  else reasons.unshift(`auto selection from deviceClass=${surfaceIdentity.deviceClass || 'unknown'} sessionKind=${sessionContextSurfaceHints.sessionKind || 'unknown'}`);
   if (surfaceCapabilities.constrainedScreen) reasons.push('constrained screen favored compact/single-focus defaults');
   if (surfaceCapabilities.webxrAvailable) reasons.push('webxr capability detected');
 
@@ -246,14 +255,22 @@ export function resolveEffectiveSurfaceExperience({
   return {
     selectedProfileId,
     selectionReasons: reasons,
-    resolvedInputMode: profile.inputMode,
-    resolvedPanelStrategy: profile.panelStrategy,
-    resolvedUiDensity: profile.uiDensity,
-    resolvedRoutingBiasHint: profile.routingBiasHint,
-    resolvedAnimationBudget: profile.animationBudget,
-    resolvedDefaultLandingView: profile.defaultLandingView,
-    overrideApplied: overrideMode !== 'auto',
+    activeProtocolIds: protocolResolution.activeProtocolIds,
+    protocolSelectionReasons: protocolResolution.protocolSelectionReasons,
+    effectiveExperiencePolicy: protocolResolution.effectiveExperiencePolicy,
+    resolvedInputMode: protocolResolution.effectiveExperiencePolicy.resolvedInputMode || profile.inputMode,
+    resolvedPanelMode: protocolResolution.effectiveExperiencePolicy.resolvedPanelMode || profile.panelStrategy,
+    resolvedPanelStrategy: protocolResolution.effectiveExperiencePolicy.resolvedPanelMode || profile.panelStrategy,
+    resolvedUiDensity: protocolResolution.effectiveExperiencePolicy.resolvedUiDensity || profile.uiDensity,
+    resolvedRoutingBiasHint: protocolResolution.effectiveExperiencePolicy.resolvedRoutingBiasHint || profile.routingBiasHint,
+    resolvedAnimationBudget: protocolResolution.effectiveExperiencePolicy.resolvedAnimationBudget || profile.animationBudget,
+    resolvedDefaultLandingView: protocolResolution.effectiveExperiencePolicy.resolvedDefaultLandingView || profile.defaultLandingView,
+    resolvedDebugVisibility: protocolResolution.effectiveExperiencePolicy.resolvedDebugVisibility || profile.debugVisibilityBias,
+    resolvedTelemetryDensity: protocolResolution.effectiveExperiencePolicy.resolvedTelemetryDensity || profile.telemetryDensity,
+    resolvedInteractionSafetyMode: protocolResolution.effectiveExperiencePolicy.resolvedInteractionSafetyMode || 'balanced',
+    overrideApplied: overrideMode !== 'auto' || protocolResolution.overrideApplied,
     confidence,
+    warnings: protocolResolution.warnings,
     debugVisibilityBias: profile.debugVisibilityBias,
     telemetryDensity: profile.telemetryDensity,
   };
@@ -261,7 +278,7 @@ export function resolveEffectiveSurfaceExperience({
 
 export function resolveSurfaceAwareness({
   runtimeContext = {},
-  operatorSurfaceOverrides = { mode: 'auto' },
+  operatorSurfaceOverrides = { mode: 'auto', protocolIds: [] },
   windowObj = globalThis?.window,
   navigatorObj = globalThis?.navigator,
   documentObj = globalThis?.document,
@@ -280,7 +297,12 @@ export function resolveSurfaceAwareness({
     surfaceIdentity,
     surfaceCapabilities,
     sessionContextSurfaceHints,
-    operatorSurfaceOverrides: { mode: normalizeOverride(operatorSurfaceOverrides?.mode) },
+    operatorSurfaceOverrides: {
+      mode: normalizeOverride(operatorSurfaceOverrides?.mode),
+      protocolIds: Array.isArray(operatorSurfaceOverrides?.protocolIds)
+        ? operatorSurfaceOverrides.protocolIds
+        : [],
+    },
     embodimentProfile: EMBODIMENT_PROFILE_REGISTRY[effectiveSurfaceExperience.selectedProfileId] || EMBODIMENT_PROFILE_REGISTRY['generic-surface'],
     effectiveSurfaceExperience,
   };

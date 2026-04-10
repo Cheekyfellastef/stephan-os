@@ -244,6 +244,10 @@ export function buildSupportSnapshot({
   const surfaceCapabilities = surfaceAwareness.surfaceCapabilities || {};
   const sessionSurfaceHints = surfaceAwareness.sessionContextSurfaceHints || {};
   const effectiveSurfaceExperience = surfaceAwareness.effectiveSurfaceExperience || {};
+  const recentFrictionEvents = Array.isArray(surfaceAwareness.recentFrictionEvents)
+    ? surfaceAwareness.recentFrictionEvents
+    : [];
+  const latestFriction = recentFrictionEvents[recentFrictionEvents.length - 1] || null;
 
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
   const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
@@ -351,10 +355,16 @@ export function buildSupportSnapshot({
     `Surface Session Kind: ${asText(sessionSurfaceHints.sessionKind, 'unknown')}`,
     `Surface Embodiment Profile: ${asText(effectiveSurfaceExperience.selectedProfileId, 'generic-surface')}`,
     `Surface Selection Reasons: ${asText(Array.isArray(effectiveSurfaceExperience.selectionReasons) ? effectiveSurfaceExperience.selectionReasons.join(' | ') : 'n/a')}`,
+    `Surface Active Protocols: ${asText(Array.isArray(effectiveSurfaceExperience.activeProtocolIds) ? effectiveSurfaceExperience.activeProtocolIds.join(', ') : 'n/a')}`,
+    `Surface Protocol Reasons: ${asText(Array.isArray(effectiveSurfaceExperience.protocolSelectionReasons) ? effectiveSurfaceExperience.protocolSelectionReasons.join(' | ') : 'n/a')}`,
     `Surface Override Mode: ${asText(surfaceAwareness.operatorSurfaceOverrides?.mode, 'auto')}`,
-    `Surface Input/Panel Bias: ${asText(effectiveSurfaceExperience.resolvedInputMode, 'hybrid')} / ${asText(effectiveSurfaceExperience.resolvedPanelStrategy, 'stacked-docked')}`,
+    `Surface Input/Panel Bias: ${asText(effectiveSurfaceExperience.resolvedInputMode, 'hybrid')} / ${asText(effectiveSurfaceExperience.resolvedPanelMode || effectiveSurfaceExperience.resolvedPanelStrategy, 'stacked-docked')}`,
+    `Surface Policy Density/Animation: ${asText(effectiveSurfaceExperience.resolvedUiDensity, 'comfortable')} / ${asText(effectiveSurfaceExperience.resolvedAnimationBudget, 'medium')}`,
+    `Surface Policy Debug/Telemetry: ${asText(effectiveSurfaceExperience.resolvedDebugVisibility, 'balanced')} / ${asText(effectiveSurfaceExperience.resolvedTelemetryDensity, 'medium')}`,
     `Surface Routing Bias Hint: ${asText(effectiveSurfaceExperience.resolvedRoutingBiasHint, 'auto')}`,
     `Surface Capability Hints: touchPrimary=${asText(surfaceCapabilities.touchPrimary)} hoverReliable=${asText(surfaceCapabilities.hoverReliable)} finePointer=${asText(surfaceCapabilities.finePointer)} webxr=${asText(surfaceCapabilities.webxrAvailable)}`,
+    `Surface Friction Recent Count: ${String(recentFrictionEvents.length)}`,
+    `Surface Friction Latest: ${latestFriction ? `${asText(latestFriction.frictionType)} (${asText(latestFriction.subsystem)}) proposal=${asText(latestFriction.proposal?.proposalType)}` : 'n/a'}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,

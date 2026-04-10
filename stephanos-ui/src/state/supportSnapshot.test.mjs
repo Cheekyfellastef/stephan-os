@@ -118,10 +118,15 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
         effectiveSurfaceExperience: {
           selectedProfileId: 'field-tablet',
           selectionReasons: ['auto selection from deviceClass=tablet sessionKind=hosted-web'],
+          activeProtocolIds: ['touch-first-input', 'stacked-panels'],
+          protocolSelectionReasons: ['embodiment bundle selected for field-tablet'],
           resolvedInputMode: 'touch-hybrid',
           resolvedPanelStrategy: 'stacked-docked',
           resolvedRoutingBiasHint: 'home-node-first',
         },
+        recentFrictionEvents: [
+          { frictionType: 'panel-dragging', subsystem: 'mission-console', proposal: { proposalType: 'surface-override-suggestion' } },
+        ],
       },
       routeCandidates: [
         { candidateKey: 'home-node-tailscale', routeKind: 'home-node', transportKind: 'tailscale', rank: 1, score: 980, usable: true, active: true, reason: 'tailscale route healthy' },
@@ -161,6 +166,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Requested Route Mode: auto/);
   assert.match(snapshot, /Surface Device Class: tablet/);
   assert.match(snapshot, /Surface Embodiment Profile: field-tablet/);
+  assert.match(snapshot, /Surface Active Protocols: touch-first-input, stacked-panels/);
+  assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) proposal=surface-override-suggestion/);
   assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);

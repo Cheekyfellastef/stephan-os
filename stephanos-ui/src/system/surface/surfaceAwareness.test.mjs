@@ -28,8 +28,10 @@ test('resolves hosted tablet touch-first embodiment deterministically', () => {
 
   assert.equal(awareness.surfaceIdentity.deviceClass, 'tablet');
   assert.equal(awareness.effectiveSurfaceExperience.selectedProfileId, 'field-tablet');
-  assert.equal(awareness.effectiveSurfaceExperience.resolvedInputMode, 'touch-hybrid');
+  assert.equal(awareness.effectiveSurfaceExperience.resolvedInputMode, 'touch-primary');
+  assert.equal(awareness.effectiveSurfaceExperience.resolvedPanelMode, 'stacked');
   assert.equal(awareness.effectiveSurfaceExperience.resolvedRoutingBiasHint, 'home-node-first');
+  assert.ok(awareness.effectiveSurfaceExperience.activeProtocolIds.includes('touch-first-input'));
 });
 
 test('resolves local desktop battle-bridge profile', () => {
@@ -42,6 +44,7 @@ test('resolves local desktop battle-bridge profile', () => {
 
   assert.equal(awareness.surfaceIdentity.deviceClass, 'desktop');
   assert.equal(awareness.effectiveSurfaceExperience.selectedProfileId, 'battle-bridge-desktop');
+  assert.equal(awareness.effectiveSurfaceExperience.resolvedInputMode, 'keyboard-pointer');
   assert.equal(awareness.surfaceCapabilities.multiPanelComfort, 'high');
 });
 

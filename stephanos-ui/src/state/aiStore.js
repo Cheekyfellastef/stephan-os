@@ -56,6 +56,7 @@ import {
   resolveSurfaceAwareness,
   resolveSurfaceUiLayoutDefaults,
 } from '../system/surface/surfaceAwareness';
+import { appendFrictionEvent, createFrictionEvent } from '../system/friction/frictionPipeline.js';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -115,6 +116,7 @@ const DEFAULT_HOME_NODE_STATUS = {
 const DEFAULT_SURFACE_OVERRIDE = 'auto';
 const MAX_PERSISTED_COMMANDS = 10;
 const MAX_PERSISTED_OUTPUT_LENGTH = 4000;
+const MAX_FRICTION_EVENTS = 10;
 
 function normalizeUiLayout(value = {}) {
   return Object.fromEntries(
@@ -217,6 +219,12 @@ function sanitizePersistedCommandHistory(entries = []) {
         }
         : null,
     }));
+}
+
+function sanitizeSurfaceFrictionEvents(entries = []) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .slice(-MAX_FRICTION_EVENTS);
 }
 
 function normalizeStoredSettings(persistedSession) {
@@ -329,6 +337,7 @@ function createInitialMemorySnapshot() {
       ...defaults.working,
       ...(persistedSession?.working || {}),
       recentCommands: sanitizePersistedCommandHistory(persistedSession?.working?.recentCommands || []),
+      surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(persistedSession?.working?.surfaceFrictionEvents || []),
       missionPacketWorkflow: normalizeMissionPacketWorkflow(
         persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
       ),
@@ -374,6 +383,9 @@ export function AIStoreProvider({ children }) {
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
   const [surfaceOverride, setSurfaceOverrideState] = useState(initialSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
+  const [surfaceFrictionEvents, setSurfaceFrictionEvents] = useState(
+    sanitizeSurfaceFrictionEvents(initialSnapshot.workingMemory?.surfaceFrictionEvents || []),
+  );
   const [missionPacketWorkflow, setMissionPacketWorkflow] = useState(
     normalizeMissionPacketWorkflow(initialSnapshot.workingMemory?.missionPacketWorkflow || createDefaultMissionPacketWorkflow()),
   );
@@ -423,7 +435,7 @@ export function AIStoreProvider({ children }) {
   });
   const surfaceAwareness = useMemo(() => resolveSurfaceAwareness({
     runtimeContext: apiStatus.runtimeContext || initialSnapshot.initialApiRuntimeContext || {},
-    operatorSurfaceOverrides: { mode: surfaceOverride },
+    operatorSurfaceOverrides: { mode: surfaceOverride, protocolIds: [] },
   }), [apiStatus.runtimeContext, initialSnapshot.initialApiRuntimeContext, surfaceOverride]);
   const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
@@ -443,7 +455,10 @@ export function AIStoreProvider({ children }) {
         apiBaseUrl: apiStatus.baseUrl,
         homeNode: apiStatus.runtimeContext?.homeNode || null,
       }),
-      surfaceAwareness,
+      surfaceAwareness: {
+        ...surfaceAwareness,
+        recentFrictionEvents: surfaceFrictionEvents,
+      },
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), [
@@ -459,6 +474,7 @@ export function AIStoreProvider({ children }) {
     providerHealth,
     routeMode,
     surfaceAwareness,
+    surfaceFrictionEvents,
   ]);
 
   const debugVisible = uiLayout.debugConsole === true;
@@ -517,6 +533,7 @@ export function AIStoreProvider({ children }) {
       working: {
         ...workingMemory,
         missionPacketWorkflow,
+        surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(surfaceFrictionEvents),
         recentCommands: sanitizePersistedCommandHistory(commandHistory),
       },
       project: projectMemory,
@@ -540,6 +557,7 @@ export function AIStoreProvider({ children }) {
     commandHistory,
     workingMemory,
     missionPacketWorkflow,
+    surfaceFrictionEvents,
     projectMemory,
     debugVisible,
   ]);
@@ -627,6 +645,22 @@ export function AIStoreProvider({ children }) {
 
   const setSurfaceOverride = useCallback((nextMode) => {
     setSurfaceOverrideState(normalizeSurfaceOverride(nextMode));
+  }, []);
+
+  const reportSurfaceFriction = useCallback(({ userText = '', source = 'operator-text', now = new Date() } = {}) => {
+    const frictionEvent = createFrictionEvent({
+      userText,
+      source,
+      now,
+      surfaceProfileId: surfaceAwareness.effectiveSurfaceExperience?.selectedProfileId || 'generic-surface',
+      activeProtocolIds: surfaceAwareness.effectiveSurfaceExperience?.activeProtocolIds || [],
+    });
+    setSurfaceFrictionEvents((prev) => appendFrictionEvent(prev, frictionEvent));
+    return frictionEvent;
+  }, [surfaceAwareness]);
+
+  const clearSurfaceFrictionEvents = useCallback(() => {
+    setSurfaceFrictionEvents([]);
   }, []);
 
   const rememberSuccessfulOllamaConnection = useCallback(({ baseURL = '', host = '', model = '' } = {}) => {
@@ -896,8 +930,11 @@ export function AIStoreProvider({ children }) {
     ollamaConnection,
     setOllamaConnection,
     surfaceAwareness,
+    surfaceFrictionEvents,
     surfaceOverride,
     setSurfaceOverride,
+    reportSurfaceFriction,
+    clearSurfaceFrictionEvents,
     workingMemory,
     setWorkingMemory,
     missionPacketWorkflow,
@@ -963,6 +1000,7 @@ export function AIStoreProvider({ children }) {
     providerHealth,
     ollamaConnection,
     surfaceAwareness,
+    surfaceFrictionEvents,
     surfaceOverride,
     workingMemory,
     missionPacketWorkflow,
@@ -989,6 +1027,8 @@ export function AIStoreProvider({ children }) {
     setDisableHomeNodeForLocalSession,
     setOllamaConnection,
     setSurfaceOverride,
+    reportSurfaceFriction,
+    clearSurfaceFrictionEvents,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveHomeBridgeUrl,
