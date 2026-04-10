@@ -210,6 +210,11 @@ export function buildSupportSnapshot({
   const backendTargetFallbackUsed = runtimeContext?.backendTargetFallbackUsed === true;
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
+
+  const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
+    ? runtimeContext.bridgeTransportTruth
+    : {};
+
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
   const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
   const executableProvider = canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider;
@@ -512,6 +517,23 @@ export function buildSupportSnapshot({
     `Backend Target Resolved URL: ${backendTargetResolvedUrl}`,
     `Backend Target Fallback Used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
     `Backend Target Invalid Reason: ${backendTargetInvalidReason}`,
+
+    `Home Bridge Transport Selected: ${asText(bridgeTransportTruth.selectedTransport)}`,
+    `Home Bridge Transport Configured: ${asText(bridgeTransportTruth.configuredTransport, 'none')}`,
+    `Home Bridge Transport Active: ${asText(bridgeTransportTruth.activeTransport, 'none')}`,
+    `Home Bridge Transport State: ${asText(bridgeTransportTruth.state, 'unconfigured')}`,
+    `Home Bridge Transport Detail: ${asText(bridgeTransportTruth.detail, 'n/a')}`,
+    `Home Bridge Transport Reason: ${asText(bridgeTransportTruth.reason, 'n/a')}`,
+    `Home Bridge Transport Reachability: ${asText(bridgeTransportTruth.reachability, 'unknown')}`,
+    `Home Bridge Transport Usability: ${asText(bridgeTransportTruth.usability, 'no')}`,
+    `Home Bridge Transport Source: ${asText(bridgeTransportTruth.source, 'n/a')}`,
+    `Tailscale Device Name: ${asText(bridgeTransportTruth?.tailscale?.deviceName)}`,
+    `Tailscale IP: ${asText(bridgeTransportTruth?.tailscale?.tailnetIp)}`,
+    `Tailscale Backend URL: ${asText(bridgeTransportTruth?.tailscale?.backendUrl)}`,
+    `Tailscale Bridge Accepted: ${asText(bridgeTransportTruth?.tailscale?.accepted)}`,
+    `Tailscale Bridge Reachable: ${asText(bridgeTransportTruth?.tailscale?.reachable)}`,
+    `Tailscale Bridge Usable: ${asText(bridgeTransportTruth?.tailscale?.usable)}`,
+    `Tailscale Bridge Reason: ${asText(bridgeTransportTruth?.tailscale?.reason, 'n/a')}`,
     'Backend Target Candidates:',
     ...backendTargetCandidatesSummary,
     `Selected Route Kind: ${selectedRouteKind}`,
