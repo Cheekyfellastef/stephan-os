@@ -1,5 +1,5 @@
 import { runExperimentalCycle } from './experimentalEngine.js';
-import { renderEvaluationPanel } from './evaluationPanel.jsx';
+import { renderEvaluationPanel } from './evaluationPanel.js';
 import { EXPERIMENTAL_EXPERIENCES, resolveExperienceLaunchUrl } from './experienceRegistry.js';
 
 const state = {
