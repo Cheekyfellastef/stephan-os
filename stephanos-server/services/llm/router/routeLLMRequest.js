@@ -121,9 +121,11 @@ export function resolveFallbackTelemetry({
 }
 
 async function executeProvider(provider, request, routerConfig) {
+  const routeSelectionHealth = routerConfig?.providerHealthSnapshot?.[provider] || {};
   const config = sanitizeProviderConfig(provider, {
     ...(routerConfig.providerConfigs?.[provider] || {}),
     runtimeContext: routerConfig.runtimeContext,
+    selectedProviderHealthOkAtSelection: routeSelectionHealth.ok === true,
   });
   const health = await PROVIDER_HEALTH_CHECKS[provider](config);
   const result = await PROVIDER_RUNNERS[provider](request, config);
@@ -279,7 +281,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       actual_provider_attempt: provider,
     });
 
-    const attempt = await executeProvider(provider, request, routerConfig);
+    const attempt = await executeProvider(provider, request, {
+      ...routerConfig,
+      providerHealthSnapshot,
+    });
     const failureReason = summarizeAttemptFailure(provider, attempt);
 
     attempts.push({

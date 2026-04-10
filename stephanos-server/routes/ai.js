@@ -542,6 +542,43 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     );
     executionMetadata.selected_provider_warmup_retry_timeout_ms = selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryTimeoutMs
       || null;
+    executionMetadata.selected_provider_warmup_retry_eligible = Boolean(
+      selectedProviderAttempt?.result?.error?.details?.warmupRetryEligible
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryEligible
+      ?? false,
+    );
+    executionMetadata.selected_provider_warmup_retry_reason = selectedProviderAttempt?.result?.error?.details?.warmupRetryReason
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryReason
+      || null;
+    executionMetadata.selected_provider_warmup_retry_attempt_count = selectedProviderAttempt?.result?.error?.details?.warmupRetryAttemptCount
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.warmupRetryAttemptCount
+      ?? null;
+    executionMetadata.selected_provider_first_attempt_elapsed_ms = selectedProviderAttempt?.result?.error?.details?.firstAttemptElapsedMs
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.firstAttemptElapsedMs
+      ?? null;
+    executionMetadata.selected_provider_final_attempt_elapsed_ms = selectedProviderAttempt?.result?.error?.details?.finalAttemptElapsedMs
+      ?? selectedProviderAttempt?.result?.diagnostics?.ollama?.finalAttemptElapsedMs
+      ?? null;
+    executionMetadata.selected_provider_initial_failure_layer = selectedProviderAttempt?.result?.error?.details?.initialProviderFailureLayer
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.initialProviderFailureLayer
+      || null;
+    executionMetadata.selected_provider_initial_failure_label = selectedProviderAttempt?.result?.error?.details?.initialProviderFailureLabel
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.initialProviderFailureLabel
+      || null;
+    executionMetadata.selected_provider_initial_failure_phase = selectedProviderAttempt?.result?.error?.details?.initialProviderFailurePhase
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.initialProviderFailurePhase
+      || null;
+    executionMetadata.selected_provider_initial_timeout_category = selectedProviderAttempt?.result?.error?.details?.initialProviderTimeoutCategory
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.initialProviderTimeoutCategory
+      || null;
+    executionMetadata.selected_provider_final_execution_outcome = selectedProviderAttempt?.result?.error?.details?.finalExecutionOutcome
+      || selectedProviderAttempt?.result?.diagnostics?.ollama?.finalExecutionOutcome
+      || (selectedProviderAttempt?.result?.ok ? 'success' : 'error');
+    executionMetadata.selected_provider_fallback_after_warmup_retry = Boolean(
+      executionMetadata.fallback_used
+      && executionMetadata.actual_provider_used !== executionMetadata.selected_provider
+      && executionMetadata.selected_provider_warmup_retry_applied === true,
+    );
     executionMetadata.selected_provider_elapsed_ms = selectedProviderAttempt?.result?.error?.details?.elapsedMs
       || selectedProviderAttempt?.result?.diagnostics?.ollama?.elapsedMs
       || null;
@@ -582,6 +619,17 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       selected_provider_model_warmup_likely: executionMetadata.selected_provider_model_warmup_likely,
       selected_provider_warmup_retry_applied: executionMetadata.selected_provider_warmup_retry_applied,
       selected_provider_warmup_retry_timeout_ms: executionMetadata.selected_provider_warmup_retry_timeout_ms,
+      selected_provider_warmup_retry_eligible: executionMetadata.selected_provider_warmup_retry_eligible,
+      selected_provider_warmup_retry_reason: executionMetadata.selected_provider_warmup_retry_reason,
+      selected_provider_warmup_retry_attempt_count: executionMetadata.selected_provider_warmup_retry_attempt_count,
+      selected_provider_first_attempt_elapsed_ms: executionMetadata.selected_provider_first_attempt_elapsed_ms,
+      selected_provider_final_attempt_elapsed_ms: executionMetadata.selected_provider_final_attempt_elapsed_ms,
+      selected_provider_initial_failure_layer: executionMetadata.selected_provider_initial_failure_layer,
+      selected_provider_initial_failure_label: executionMetadata.selected_provider_initial_failure_label,
+      selected_provider_initial_failure_phase: executionMetadata.selected_provider_initial_failure_phase,
+      selected_provider_initial_timeout_category: executionMetadata.selected_provider_initial_timeout_category,
+      selected_provider_final_execution_outcome: executionMetadata.selected_provider_final_execution_outcome,
+      selected_provider_fallback_after_warmup_retry: executionMetadata.selected_provider_fallback_after_warmup_retry,
       selected_provider_elapsed_ms: executionMetadata.selected_provider_elapsed_ms,
       explicit_provider_fallback_policy_triggered: executionMetadata.explicit_provider_fallback_policy_triggered,
       effective_answer_mode: executionMetadata.effective_answer_mode,

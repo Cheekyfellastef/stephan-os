@@ -17,8 +17,12 @@ const OLLAMA_MODEL_POLICY = Object.freeze({
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
-const OLLAMA_WARMUP_RETRY_MODELS = new Set(['gpt-oss:20b', 'qwen:32b', 'llama3.3:70b']);
-const OLLAMA_WARMUP_RETRY_MIN_TIMEOUT_MS = 120000;
+const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
+  'qwen:14b': 75000,
+  'gpt-oss:20b': 75000,
+  'qwen:32b': 120000,
+});
+const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -569,9 +573,14 @@ function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
     ?? SAFE_OLLAMA_TIMEOUT_MS,
   );
   if (Number.isFinite(defaultTimeout) && defaultTimeout >= 1000) {
+    const heavyModelBaseline = Number(OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES[normalizedModel]);
     return {
-      timeoutMs: Math.max(1000, defaultTimeout),
-      timeoutSource: 'default',
+      timeoutMs: Number.isFinite(heavyModelBaseline)
+        ? Math.max(1000, defaultTimeout, heavyModelBaseline)
+        : Math.max(1000, defaultTimeout),
+      timeoutSource: Number.isFinite(heavyModelBaseline) && heavyModelBaseline > defaultTimeout
+        ? 'model-baseline'
+        : 'default',
       timeoutModel: normalizedModel,
     };
   }
@@ -581,6 +590,36 @@ function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
     timeoutSource: 'safe-fallback',
     timeoutModel: normalizedModel,
   };
+}
+
+function shouldApplyWarmupRetry({
+  provider = '',
+  selectedProviderHealthOkAtSelection = false,
+  initialFailure = null,
+  modelWarmupLikely = false,
+  fallbackAlreadyApplied = false,
+  retryCount = 0,
+  routeUsable = false,
+  warmupRetryDisabled = false,
+} = {}) {
+  const failureLayer = String(initialFailure?.failureLayer || '').trim().toLowerCase();
+  const failureLabel = String(initialFailure?.failureLabel || '').trim().toLowerCase();
+  const timeoutCategory = String(initialFailure?.timeoutCategory || '').trim().toLowerCase();
+  const failurePhase = String(initialFailure?.failurePhase || '').trim().toLowerCase();
+  const timeoutIndicated = failureLabel.includes('timeout') || timeoutCategory.includes('timeout');
+  const noHeadersYetPhase = failurePhase === 'awaiting-response-headers' || failurePhase === 'awaiting-first-token';
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+
+  return normalizedProvider === 'ollama'
+    && selectedProviderHealthOkAtSelection === true
+    && failureLayer === 'provider'
+    && timeoutIndicated
+    && noHeadersYetPhase
+    && modelWarmupLikely === true
+    && fallbackAlreadyApplied === false
+    && retryCount === 0
+    && routeUsable === true
+    && warmupRetryDisabled !== true;
 }
 
 async function fetchOllamaTags(resolved) {
@@ -800,8 +839,8 @@ export async function runOllamaProvider(request, config = {}) {
     const requestedModel = modelSelection.requestedModel;
     const modelToUse = modelSelection.selectedModel;
     const timeoutPolicy = resolveTimeoutForModel(resolved, modelToUse);
-    const warmupRetryEligible = OLLAMA_WARMUP_RETRY_MODELS.has(String(modelToUse || '').trim().toLowerCase());
-    const warmupRetryTimeoutMs = Math.max(timeoutPolicy.timeoutMs, OLLAMA_WARMUP_RETRY_MIN_TIMEOUT_MS);
+    const selectedProviderHealthOkAtSelection = config?.selectedProviderHealthOkAtSelection === true;
+    const warmupRetryDisabled = config?.disableOllamaWarmupRetry === true || request?.routeDecision?.disableOllamaWarmupRetry === true;
 
     console.log('[BACKEND LIVE] Ollama provider request starting', {
       baseURL: resolved.baseURL,
@@ -825,11 +864,20 @@ export async function runOllamaProvider(request, config = {}) {
       timeoutMs: timeoutPolicy.timeoutMs,
       attempt: 1,
     });
-    const shouldRetryWarmup = !firstAttempt.ok
-      && firstAttempt.failure?.failureType === 'timeout'
-      && firstAttempt.failure?.modelWarmupLikely === true
-      && warmupRetryEligible
-      && warmupRetryTimeoutMs > timeoutPolicy.timeoutMs;
+    const warmupRetryEligible = shouldApplyWarmupRetry({
+      provider: 'ollama',
+      selectedProviderHealthOkAtSelection,
+      initialFailure: firstAttempt.failure,
+      modelWarmupLikely: firstAttempt.failure?.modelWarmupLikely === true,
+      fallbackAlreadyApplied: false,
+      retryCount: 0,
+      routeUsable: resolved.routeDecision?.usable === true,
+      warmupRetryDisabled,
+    });
+    const warmupRetryTimeoutMs = warmupRetryEligible
+      ? Math.max(timeoutPolicy.timeoutMs + OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS, timeoutPolicy.timeoutMs)
+      : null;
+    const shouldRetryWarmup = warmupRetryEligible && Number.isFinite(warmupRetryTimeoutMs) && warmupRetryTimeoutMs > timeoutPolicy.timeoutMs;
     const finalAttempt = shouldRetryWarmup
       ? await runOllamaChatAttempt({
         resolved,
@@ -881,7 +929,18 @@ export async function runOllamaProvider(request, config = {}) {
             timeoutModel: timeoutPolicy.timeoutModel,
             elapsedMs: finalAttempt.elapsedMs,
             retriesAttempted,
+            warmupRetryEligible,
             warmupRetryApplied: shouldRetryWarmup,
+            warmupRetryReason: warmupRetryEligible ? 'ollama-cold-start-timeout' : null,
+            warmupRetryAttemptCount: retriesAttempted,
+            firstAttemptElapsedMs: firstAttempt.elapsedMs,
+            finalAttemptElapsedMs: finalAttempt.elapsedMs,
+            initialProviderFailureLayer: firstAttempt.failure?.failureLayer || null,
+            initialProviderFailureLabel: firstAttempt.failure?.failureLabel || null,
+            initialProviderFailurePhase: firstAttempt.failure?.failurePhase || null,
+            initialProviderTimeoutCategory: firstAttempt.failure?.timeoutCategory || null,
+            finalExecutionOutcome: 'error',
+            fallbackAfterWarmupRetry: false,
           },
         },
         diagnostics: {
@@ -917,9 +976,20 @@ export async function runOllamaProvider(request, config = {}) {
             executionFailurePhase: finalAttempt.diagnostics.failurePhase,
             timeoutCategory: finalAttempt.diagnostics.timeoutCategory,
             modelWarmupLikely: finalAttempt.diagnostics.modelWarmupLikely,
+            warmupRetryEligible,
             warmupRetryApplied: shouldRetryWarmup,
+            warmupRetryReason: warmupRetryEligible ? 'ollama-cold-start-timeout' : null,
             warmupRetryTimeoutMs: shouldRetryWarmup ? warmupRetryTimeoutMs : null,
+            warmupRetryAttemptCount: retriesAttempted,
             retriesAttempted,
+            firstAttemptElapsedMs: firstAttempt.elapsedMs,
+            finalAttemptElapsedMs: finalAttempt.elapsedMs,
+            initialProviderFailureLayer: firstAttempt.failure?.failureLayer || null,
+            initialProviderFailureLabel: firstAttempt.failure?.failureLabel || null,
+            initialProviderFailurePhase: firstAttempt.failure?.failurePhase || null,
+            initialProviderTimeoutCategory: firstAttempt.failure?.timeoutCategory || null,
+            finalExecutionOutcome: 'error',
+            fallbackAfterWarmupRetry: false,
             elapsedMs: finalAttempt.elapsedMs,
           },
         },
@@ -997,8 +1067,19 @@ export async function runOllamaProvider(request, config = {}) {
           executionFailurePhase: null,
           timeoutCategory: null,
           modelWarmupLikely: false,
+          warmupRetryEligible,
           warmupRetryApplied: shouldRetryWarmup,
+          warmupRetryReason: warmupRetryEligible ? 'ollama-cold-start-timeout' : null,
           warmupRetryTimeoutMs: shouldRetryWarmup ? warmupRetryTimeoutMs : null,
+          warmupRetryAttemptCount: shouldRetryWarmup ? 1 : 0,
+          firstAttemptElapsedMs: firstAttempt.elapsedMs,
+          finalAttemptElapsedMs: finalAttempt.elapsedMs,
+          initialProviderFailureLayer: firstAttempt.ok ? null : firstAttempt.failure?.failureLayer || null,
+          initialProviderFailureLabel: firstAttempt.ok ? null : firstAttempt.failure?.failureLabel || null,
+          initialProviderFailurePhase: firstAttempt.ok ? null : firstAttempt.failure?.failurePhase || null,
+          initialProviderTimeoutCategory: firstAttempt.ok ? null : firstAttempt.failure?.timeoutCategory || null,
+          finalExecutionOutcome: 'success',
+          fallbackAfterWarmupRetry: false,
           retriesAttempted: shouldRetryWarmup ? 1 : 0,
           elapsedMs: finalAttempt.elapsedMs,
         },
