@@ -326,6 +326,33 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       routeEvaluations: candidate.routeEvaluations && typeof candidate.routeEvaluations === 'object' ? candidate.routeEvaluations : {},
       routePreferenceOrder: normalizeArray(candidate.routePreferenceOrder, []),
       computedFromPersistence: false,
+      route: {
+        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route,
+        requestedMode: finalRouteTruth.requestedRouteMode || 'pending',
+        effectiveMode: finalRouteTruth.effectiveRouteMode || 'pending',
+        selectedRouteKind: finalRouteTruth.routeKind || routeKind || 'unavailable',
+        preferredTarget: finalRouteTruth.preferredTarget || preferredTarget || 'unavailable',
+        actualTarget: finalRouteTruth.actualTarget || actualTargetUsed || 'unavailable',
+        source: finalRouteTruth.source || nodeAddressSource || 'unknown',
+        winningReason: finalRouteTruth.winnerReason || '',
+        fallbackActive: finalRouteTruth.fallbackActive === true,
+      },
+      reachabilityTruth: {
+        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth,
+        backendReachable: finalRouteTruth.backendReachable === true,
+        uiReachableState: finalRouteTruth.uiReachabilityState || 'unknown',
+        uiReachable: typeof finalRouteTruth.uiReachable === 'boolean'
+          ? finalRouteTruth.uiReachable
+          : null,
+        selectedRouteReachable: finalRouteTruth.finalRouteReachable === true,
+        selectedRouteUsable: finalRouteTruth.routeUsable === true,
+      },
+      provider: {
+        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider,
+        requestedProvider: finalRouteTruth.requestedProvider || requestedProviderProjection,
+        selectedProvider: finalRouteTruth.selectedProvider || selectedProviderProjection,
+        executableProvider: finalRouteTruth.executedProvider || executedProviderProjection,
+      },
     };
 
   const runtimeAdjudication = candidate.runtimeAdjudication && typeof candidate.runtimeAdjudication === 'object'
