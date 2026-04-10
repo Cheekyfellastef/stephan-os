@@ -52,6 +52,20 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
   const runtimeContext = asObject(model.runtimeContext);
   const finalRoute = asObject(model.finalRoute);
   const finalRouteTruth = asObject(model.finalRouteTruth);
+  const canonicalRouteRuntimeTruth = Object.keys(asObject(model.canonicalRouteRuntimeTruth)).length > 0
+    ? asObject(model.canonicalRouteRuntimeTruth)
+    : {
+      winningRoute: finalRouteTruth.routeKind,
+      preferredTarget: finalRouteTruth.preferredTarget,
+      actualTarget: finalRouteTruth.actualTarget,
+      routeSource: finalRouteTruth.source,
+      requestedProvider: finalRouteTruth.requestedProvider,
+      selectedProvider: finalRouteTruth.selectedProvider,
+      executedProvider: finalRouteTruth.executedProvider,
+      fallbackActive: finalRouteTruth.fallbackActive === true || finalRouteTruth.fallbackRouteActive === true,
+      uiReachabilityState: finalRouteTruth.uiReachabilityState,
+      routeUsable: finalRouteTruth.routeUsable,
+    };
   const runtimeContextFinalRoute = asObject(runtimeContext.finalRoute);
   const routeEvaluations = asObject(model.routeEvaluations);
   const selectedRoute = finalRoute.routeKind ? asObject(routeEvaluations)[finalRoute.routeKind] : null;
@@ -117,15 +131,15 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
     ));
   }
 
-  if (Object.keys(finalRouteTruth).length > 0) {
+  if (Object.keys(canonicalRouteRuntimeTruth).length > 0) {
     const truthProjectionMismatches = [
-      ['routeKind', finalRouteTruth.routeKind, finalRoute.routeKind],
-      ['preferredTarget', finalRouteTruth.preferredTarget, finalRoute.preferredTarget],
-      ['actualTarget', finalRouteTruth.actualTarget, finalRoute.actualTarget],
-      ['source', finalRouteTruth.source, finalRoute.source],
-      ['requestedProvider', finalRouteTruth.requestedProvider, model.selectedProvider],
-      ['selectedProvider', finalRouteTruth.selectedProvider, model.routeSelectedProvider || model.selectedProvider],
-      ['executedProvider', finalRouteTruth.executedProvider, model.activeProvider],
+      ['winningRoute.routeKind', canonicalRouteRuntimeTruth.winningRoute, finalRoute.routeKind],
+      ['preferredTarget', canonicalRouteRuntimeTruth.preferredTarget, finalRoute.preferredTarget],
+      ['actualTarget', canonicalRouteRuntimeTruth.actualTarget, finalRoute.actualTarget],
+      ['routeSource.source', canonicalRouteRuntimeTruth.routeSource, finalRoute.source],
+      ['requestedProvider', canonicalRouteRuntimeTruth.requestedProvider, model.selectedProvider],
+      ['selectedProvider', canonicalRouteRuntimeTruth.selectedProvider, model.routeSelectedProvider || model.selectedProvider],
+      ['executedProvider', canonicalRouteRuntimeTruth.executedProvider, model.activeProvider],
     ].filter(([, truthValue, projectedValue]) => {
       if (truthValue === undefined || truthValue === null || truthValue === '') return false;
       return asString(truthValue) !== asString(projectedValue);
@@ -135,39 +149,62 @@ export function evaluateRuntimeGuardrails(runtimeStatusModel = {}) {
       invariants.push(createInvariant(
         'final-route-truth-projection',
         'error',
-        'finalRouteTruth must stay aligned with finalRoute and provider projection fields.',
+        'Canonical runtime truth must stay aligned with finalRoute and provider projection fields.',
         { mismatches: truthProjectionMismatches.map(([field, truthValue, projectedValue]) => ({ field, truthValue, projectedValue })) },
       ));
     }
 
-    if (finalRoute.routeKind === 'dist' && finalRouteTruth.fallbackRouteActive !== true) {
+    if (finalRoute.routeKind === 'dist' && canonicalRouteRuntimeTruth.fallbackActive !== true) {
       invariants.push(createInvariant(
         'dist-route-must-be-fallback-active',
         'error',
-        'dist route truth must always stay flagged as fallbackRouteActive.',
-        { routeKind: finalRoute.routeKind, fallbackRouteActive: finalRouteTruth.fallbackRouteActive },
+        'dist route truth must always stay flagged as fallbackActive.',
+        { routeKind: finalRoute.routeKind, fallbackActive: canonicalRouteRuntimeTruth.fallbackActive },
       ));
     }
 
-    if (finalRouteTruth.fallbackRouteActive === true && finalRoute.routeKind !== 'dist') {
+    if (canonicalRouteRuntimeTruth.fallbackActive === true && finalRoute.routeKind !== 'dist' && canonicalRouteRuntimeTruth.winningRoute === 'dist') {
       invariants.push(createInvariant(
         'fallback-route-active-mismatch',
         'error',
-        'fallbackRouteActive may only be true when finalRoute.routeKind is dist.',
-        { routeKind: finalRoute.routeKind, fallbackRouteActive: finalRouteTruth.fallbackRouteActive },
+        'Canonical fallbackActive cannot report dist while finalRoute.routeKind is non-dist.',
+        { routeKind: finalRoute.routeKind, fallbackActive: canonicalRouteRuntimeTruth.fallbackActive },
       ));
     }
 
-    if (finalRoute.routeKind === 'home-node' && finalRouteTruth.uiReachabilityState === 'unreachable' && finalRouteTruth.routeUsable === true) {
+    if (finalRoute.routeKind === 'home-node'
+      && canonicalRouteRuntimeTruth.uiReachabilityState === 'unreachable'
+      && canonicalRouteRuntimeTruth.routeUsable === true) {
       invariants.push(createInvariant(
         'backend-only-home-node-not-usable',
         'error',
         'A backend-reachable but UI-unreachable home-node must never be marked routeUsable.',
         {
           routeKind: finalRoute.routeKind,
-          uiReachabilityState: finalRouteTruth.uiReachabilityState,
-          routeUsable: finalRouteTruth.routeUsable,
+          uiReachabilityState: canonicalRouteRuntimeTruth.uiReachabilityState,
+          routeUsable: canonicalRouteRuntimeTruth.routeUsable,
         },
+      ));
+    }
+  }
+
+  if (Object.keys(finalRouteTruth).length > 0 && Object.keys(canonicalRouteRuntimeTruth).length > 0) {
+    const derivedTruthMismatches = [
+      ['routeKind', finalRouteTruth.routeKind, canonicalRouteRuntimeTruth.winningRoute],
+      ['preferredTarget', finalRouteTruth.preferredTarget, canonicalRouteRuntimeTruth.preferredTarget],
+      ['actualTarget', finalRouteTruth.actualTarget, canonicalRouteRuntimeTruth.actualTarget],
+      ['source', finalRouteTruth.source, canonicalRouteRuntimeTruth.routeSource],
+      ['requestedProvider', finalRouteTruth.requestedProvider, canonicalRouteRuntimeTruth.requestedProvider],
+      ['selectedProvider', finalRouteTruth.selectedProvider, canonicalRouteRuntimeTruth.selectedProvider],
+      ['executedProvider', finalRouteTruth.executedProvider, canonicalRouteRuntimeTruth.executedProvider],
+    ].filter(([, legacyValue, canonicalValue]) => asString(legacyValue) !== asString(canonicalValue));
+
+    if (derivedTruthMismatches.length > 0) {
+      invariants.push(createInvariant(
+        'final-route-truth-derived-only',
+        'error',
+        'finalRouteTruth is compatibility-only and must be derived from canonicalRouteRuntimeTruth.',
+        { mismatches: derivedTruthMismatches.map(([field, legacyValue, canonicalValue]) => ({ field, legacyValue, canonicalValue })) },
       ));
     }
   }

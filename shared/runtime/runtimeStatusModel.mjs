@@ -1777,7 +1777,8 @@ export function createRuntimeStatusModel({
   return {
     ...model,
     dependencySummary,
-    finalRouteTruth,
+    // Derived-only compatibility projection from canonicalRouteRuntimeTruth.
+    finalRouteTruth: runtimeAdjudication.finalRouteTruth,
     canonicalRouteRuntimeTruth: runtimeAdjudication.canonicalRouteRuntimeTruth,
     runtimeTruth: runtimeAdjudication.runtimeTruth,
     runtimeTruthSnapshot: runtimeAdjudication.runtimeTruthSnapshot,
