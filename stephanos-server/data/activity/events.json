@@ -947,7 +947,103 @@
         "tileLinked": false
       },
       "timestamp": "2026-04-10T19:43:50.777Z"
+    },
+    {
+      "id": "evt_1775859251991_jx0ha6",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:14:11.991Z"
+    },
+    {
+      "id": "evt_1775859296726_lopdtn",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:14:56.726Z"
+    },
+    {
+      "id": "evt_1775859327621_uun95h",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "gemini",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:15:27.621Z"
+    },
+    {
+      "id": "evt_1775859378957_k1jc1m",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:16:18.957Z"
+    },
+    {
+      "id": "evt_1775859466400_0105y9",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": true
+      },
+      "timestamp": "2026-04-10T22:17:46.400Z"
+    },
+    {
+      "id": "evt_1775859557674_r5x8gs",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:19:17.674Z"
+    },
+    {
+      "id": "evt_1775859601509_vei9a3",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:20:01.509Z"
+    },
+    {
+      "id": "evt_1775859646845_j5r960",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "ollama",
+        "fallbackUsed": false,
+        "tileLinked": false
+      },
+      "timestamp": "2026-04-10T22:20:46.845Z"
     }
   ],
-  "updated_at": "2026-04-10T19:43:50.777Z"
+  "updated_at": "2026-04-10T22:20:46.845Z"
 }

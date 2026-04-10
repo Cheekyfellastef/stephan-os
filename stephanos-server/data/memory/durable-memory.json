@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-10T19:43:50.775Z",
+  "updatedAt": "2026-04-10T22:20:46.838Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -1600,6 +1600,406 @@
       "retentionHint": "default",
       "createdAt": "2026-04-10T19:43:50.775Z",
       "updatedAt": "2026-04-10T19:43:50.775Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859251977-72klf-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is todays weather in Telford\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{\"recentRecords\":[{\"id\":\"provider-provider--ollama-2026-04-10T22:10:29.857Z\",\"subsystem\":\"PROVIDER\",\"timestamp\":\"2026-04-10T22:10:29.857Z\"",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:14:11.977Z",
+      "updatedAt": "2026-04-10T22:14:11.977Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859251977-72klf-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "I'm sorry, but with the current local-private answer truth mode and focusing on private, local information, I cannot provide real-time weather data. For up-to-date weather information, please refer to an online weather service or a trusted mobile app that has access to live data.",
+        "provider": "ollama",
+        "model": "qwen:32b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:14:11.977Z",
+      "updatedAt": "2026-04-10T22:14:11.977Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859296724-qjtf2-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "can gemini give me the weather",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:14:56.724Z",
+      "updatedAt": "2026-04-10T22:14:56.724Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859296724-qjtf2-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Gemini is a conversational AI platform, and while it may have some basic information about the weather, its primary focus is not on providing detailed or up-to-the-minute weather forecasts.\n\nIf you need accurate weather information, it's best to consult a dedicated weather service or app, which will provide the most reliable and current data.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:14:56.724Z",
+      "updatedAt": "2026-04-10T22:14:56.724Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859327618-3c48e-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "who is the current uk prime minister\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{\"recentRecords\":[{\"id\":\"cmd_1775859251998\",\"subsystem\":\"PROVIDER\",\"timestamp\":\"2026-04-10T22:14:11.998Z\",\"summary\":\"provider execution",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:15:27.618Z",
+      "updatedAt": "2026-04-10T22:15:27.618Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859327618-3c48e-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "The current Prime Minister of the UK is Sir Keir Starmer. He assumed office on July 5, 2024. He is the leader of the Labour Party, which formed the government after the 2024 general election.",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:15:27.618Z",
+      "updatedAt": "2026-04-10T22:15:27.618Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859378955-42wix-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "how fresh can the answers from gemini be",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:16:18.955Z",
+      "updatedAt": "2026-04-10T22:16:18.955Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859378955-42wix-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "As a hypothetical AI system using information about Gemini, it would not have real-time data about the platform's current state.\n\nGemini, a cryptocurrency exchange, operates on a continuous market with transactions happening in real-time. However, the freshness of the information from Gemini or any other API would depend on how frequently that service provides updates or snapshots of their data.\n\nTo get freshest poss",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:16:18.955Z",
+      "updatedAt": "2026-04-10T22:16:18.955Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859466387-g8tby-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "if i told you gemini was an ai connected to stephanos could you remember that\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{\"recentRecords\":[{\"id\":\"provider-provider-gemini-ollama-2026-04-10T22:16:18.973Z\",\"subsystem\"",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:17:46.388Z",
+      "updatedAt": "2026-04-10T22:17:46.388Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859466387-g8tby-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Acknowledged. I remember that Gemini is an AI connected to Stephanos, and it was involved in recent provider execution alongside Ollama. The selected provider for the current context is Gemini, with a freshness need set to 'low'. The answer truth mode is set to 'local-private', indicating that the information comes from a local, private source. If you have any further questions or need assistance related to Gemini or",
+        "provider": "ollama",
+        "model": "qwen:32b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:17:46.388Z",
+      "updatedAt": "2026-04-10T22:17:46.388Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859557664-ly1zw-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is gemini",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:19:17.664Z",
+      "updatedAt": "2026-04-10T22:19:17.664Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859557664-ly1zw-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Gemini is a decentralized cryptocurrency exchange and financial platform. Launched in 2014, Gemini focuses on offering secure, regulated trading for major cryptocurrencies like Bitcoin and Ethereum. The company operates under the New York State Department of Financial Services (DFS) regulation.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:19:17.664Z",
+      "updatedAt": "2026-04-10T22:19:17.664Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859601498-1gvld-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "i asked you to remember that gemini was an ai",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:20:01.498Z",
+      "updatedAt": "2026-04-10T22:20:01.498Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859601498-1gvld-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Thank you for the reminder. I note that Gemini was indeed an AI platform or system. In case any context involves this information, it can be referenced accordingly.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:20:01.498Z",
+      "updatedAt": "2026-04-10T22:20:01.498Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859646838-44bpo-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is gemini",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:20:46.838Z",
+      "updatedAt": "2026-04-10T22:20:46.838Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775859646838-44bpo-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Gemini is a decentralized exchange (DEX) that operates using blockchain technology. It was launched in June 2014 by the Gemini Trust Company, co-founded by the Winklevoss twins.\n\nGemini focuses on security and regulation, aiming to provide a safe and compliant platform for trading cryptocurrencies. The exchange supports various fiat currencies and popular cryptocurrencies like Bitcoin and Ethereum.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-10T22:20:46.838Z",
+      "updatedAt": "2026-04-10T22:20:46.838Z",
       "surface": "shared"
     }
   }
