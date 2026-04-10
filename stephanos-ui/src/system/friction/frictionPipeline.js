@@ -9,7 +9,7 @@ const DEFAULT_PROMOTION_CONFIG = Object.freeze({
 });
 
 const RULES = Object.freeze([
-  { pattern: /(clutter|too dense|dense|crowded)/i, frictionType: 'layout-clutter', subsystem: 'general-surface-experience', protocolMismatch: 'comfortable-density' },
+  { pattern: /(clutter|too dense|dense|crowded|cleaner)/i, frictionType: 'layout-density', subsystem: 'panel-layout', protocolMismatch: 'dense-mission-layout' },
   { pattern: /(drag|dragging panels|panel drag|awkward.*drag)/i, frictionType: 'panel-dragging', subsystem: 'mission-console', protocolMismatch: 'safari-safe-dragging' },
   { pattern: /(input box.*lost|input.*lost|can.?t find input)/i, frictionType: 'control-reachability', subsystem: 'navigation-shell', protocolMismatch: 'compact-single-focus' },
   { pattern: /(hover|mouse over|required hover)/i, frictionType: 'hover-dependence', subsystem: 'general-surface-experience', protocolMismatch: 'reduced-hover-dependence' },
@@ -171,7 +171,9 @@ export function detectSurfaceFrictionPatterns({
       firstSeen: first.timestamp || '',
       lastSeen: last.timestamp || '',
       aggregatedConfidence,
+      confidence: aggregatedConfidence,
       contributingEventIds: bucket.map((event) => event.id),
+      likelyProtocolMismatch: first.structuredInterpretation?.likelyProtocolMismatch || null,
       patternStrength: patternStrengthFromRecurrence(recurrenceCount, promotionConfig),
       reasoning: [
         `Pattern detected from ${recurrenceCount} recurring events.`,
@@ -204,7 +206,9 @@ export function generateSurfaceProtocolRecommendations({ patterns = [], existing
     return {
       id: existing?.id || `surface_protocol_recommendation_${pattern.id}`,
       basedOnPatternId: pattern.id,
-      affectedProtocols: pattern.frictionType === 'unknown' ? [] : [pattern.frictionType, pattern.subsystem].filter(Boolean),
+      affectedProtocols: pattern.frictionType === 'unknown'
+        ? []
+        : [pattern.likelyProtocolMismatch, pattern.frictionType, pattern.subsystem].filter(Boolean),
       proposedChanges: [
         proposalType === 'build-task'
           ? `Add explicit interpreter rule for recurring unknown friction on ${pattern.subsystem}.`

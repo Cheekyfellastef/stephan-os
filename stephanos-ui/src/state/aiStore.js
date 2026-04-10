@@ -65,6 +65,7 @@ import {
   generateSurfaceProtocolRecommendations,
   revertAcceptedSurfaceRule,
 } from '../system/friction/frictionPipeline.js';
+import { explainStephanosMemory } from '../system/friction/memoryExplanation.js';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -746,6 +747,33 @@ export function AIStoreProvider({ children }) {
     setAcceptedSurfaceRules((prev) => revertAcceptedSurfaceRule(prev, ruleId, { now: new Date(), operatorId }));
   }, []);
 
+  const explainMemoryToOperator = useCallback(({ mode = 'summary' } = {}) => explainStephanosMemory({
+    acceptedSurfaceRules,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    elevatedMemories: [
+      ...(Array.isArray(projectMemory?.lessonsLearned) ? projectMemory.lessonsLearned.map((entry, index) => ({
+        id: `lesson_${index + 1}`,
+        summary: String(entry || ''),
+        confidence: 0.74,
+        sourceType: 'project.lessonsLearned',
+        memoryClass: 'high-confidence-elevated-memory',
+      })) : []),
+      ...(Array.isArray(projectMemory?.knownConstraints) ? projectMemory.knownConstraints.map((entry, index) => ({
+        id: `constraint_${index + 1}`,
+        summary: String(entry || ''),
+        confidence: 0.71,
+        sourceType: 'project.knownConstraints',
+        memoryClass: 'high-confidence-elevated-memory',
+      })) : []),
+    ],
+  }, { mode }), [
+    acceptedSurfaceRules,
+    surfaceFrictionPatterns,
+    surfaceProtocolRecommendations,
+    projectMemory,
+  ]);
+
   const rememberSuccessfulOllamaConnection = useCallback(({ baseURL = '', host = '', model = '' } = {}) => {
     const normalizedHost = String(host || '').trim();
     const nextConnection = normalizeOllamaConnection({
@@ -1024,6 +1052,7 @@ export function AIStoreProvider({ children }) {
     acceptSurfaceRecommendation,
     rejectSurfaceRecommendation,
     revertSurfaceRule,
+    explainMemoryToOperator,
     workingMemory,
     setWorkingMemory,
     missionPacketWorkflow,
@@ -1124,6 +1153,7 @@ export function AIStoreProvider({ children }) {
     acceptSurfaceRecommendation,
     rejectSurfaceRecommendation,
     revertSurfaceRule,
+    explainMemoryToOperator,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveHomeBridgeUrl,
