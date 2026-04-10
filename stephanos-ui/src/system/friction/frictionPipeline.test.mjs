@@ -36,7 +36,7 @@ test('surface friction event is stage-1 only and structured', () => {
   assert.equal(event.lifecycleStage, 'surfaceFrictionEvent');
   assert.equal(event.surfaceProfileId, 'field-tablet');
   assert.equal(event.sessionId, 'session-a');
-  assert.equal(event.frictionType, 'layout-clutter');
+  assert.equal(event.frictionType, 'layout-density');
   assert.equal(typeof event.structuredInterpretation.reasoning?.[0], 'string');
 });
 

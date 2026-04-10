@@ -1075,6 +1075,9 @@ export function useAIConsole() {
     paneLayout,
     runtimeStatusModel,
     debugData,
+    reportSurfaceFriction,
+    setSurfaceOverride,
+    explainMemoryToOperator,
   } = useAIStore();
 
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
@@ -1572,6 +1575,54 @@ export function useAIConsole() {
     if (!prompt) return;
     if (prompt === '/clear') {
       clearConsole();
+      return;
+    }
+
+    const normalizedPrompt = prompt.toLowerCase();
+    const appendLocalOperatorEntry = (outputText) => {
+      const entry = {
+        id: `cmd_${Date.now()}`,
+        raw_input: prompt,
+        parsed_command: null,
+        route: 'assistant',
+        tool_used: 'local-operator-command',
+        success: true,
+        output_text: outputText,
+        data_payload: null,
+        timing_ms: 1,
+        timestamp: new Date().toISOString(),
+        error: null,
+        error_code: null,
+        response: { type: 'assistant_response', route: 'assistant', success: true, output_text: outputText },
+      };
+      setCommandHistory((prev) => appendCommandHistory(prev, entry));
+      setLastRoute('assistant');
+      setStatus('idle');
+    };
+
+    if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
+      const explanation = explainMemoryToOperator({ mode: 'summary' });
+      appendLocalOperatorEntry(explanation.text);
+      return;
+    }
+    if (normalizedPrompt === 'show more detail') {
+      const explanation = explainMemoryToOperator({ mode: 'expanded' });
+      appendLocalOperatorEntry(explanation.text);
+      return;
+    }
+    if (normalizedPrompt === 'show full memory detail') {
+      const explanation = explainMemoryToOperator({ mode: 'diagnostic' });
+      appendLocalOperatorEntry(explanation.text);
+      return;
+    }
+    if (normalizedPrompt === 'this is awkward' || normalizedPrompt === 'make this cleaner') {
+      const event = reportSurfaceFriction({ userText: prompt, source: 'operator-text' });
+      appendLocalOperatorEntry(`Captured friction as ${event.frictionType} (${event.subsystem}) with confidence ${event.confidence}. I will wait for recurrence before proposing behavior changes.`);
+      return;
+    }
+    if (normalizedPrompt === 'use tablet mode') {
+      setSurfaceOverride('force-tablet');
+      appendLocalOperatorEntry('Tablet mode is now active as an explicit operator override. This changes current session embodiment selection without mutating global defaults.');
       return;
     }
 
