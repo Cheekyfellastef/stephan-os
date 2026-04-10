@@ -28,6 +28,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'session.providerPreferences.providerConfigs.*.defaultOllamaTimeoutMs',
   'session.providerPreferences.providerConfigs.*.perModelTimeoutOverrides',
   'session.providerPreferences.ollamaConnection.lastSelectedModel',
+  'session.providerPreferences.surfaceOverride',
   'session.ui.activeWorkspace',
   'session.ui.activeSubview',
   'session.ui.recentRoute',
@@ -285,6 +286,7 @@ function normalizeHomeNodePreference(value = null) {
 
 function normalizeProviderPreferences(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
+  const surfaceOverride = String(source.surfaceOverride || 'auto').trim().toLowerCase();
   return {
     provider: normalizeProviderSelection(source.provider),
     routeMode: normalizeRouteMode(source.routeMode),
@@ -294,6 +296,9 @@ function normalizeProviderPreferences(value = {}) {
     fallbackOrder: normalizeFallbackOrder(source.fallbackOrder),
     providerConfigs: normalizeProviderConfigs(source.providerConfigs),
     ollamaConnection: normalizeOllamaConnection(source.ollamaConnection),
+    surfaceOverride: ['auto', 'force-desktop', 'force-tablet', 'force-phone', 'force-vr'].includes(surfaceOverride)
+      ? surfaceOverride
+      : 'auto',
   };
 }
 
@@ -520,6 +525,7 @@ function createLegacyProviderPreferencesPayload(memory) {
     fallbackOrder: providerPreferences.fallbackOrder,
     providerConfigs: providerPreferences.providerConfigs,
     ollamaConnection: providerPreferences.ollamaConnection,
+    surfaceOverride: providerPreferences.surfaceOverride,
   };
 }
 

@@ -237,6 +237,13 @@ export function buildSupportSnapshot({
   const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
     ? runtimeContext.bridgeTransportTruth
     : {};
+  const surfaceAwareness = runtimeContext?.surfaceAwareness && typeof runtimeContext.surfaceAwareness === 'object'
+    ? runtimeContext.surfaceAwareness
+    : {};
+  const surfaceIdentity = surfaceAwareness.surfaceIdentity || {};
+  const surfaceCapabilities = surfaceAwareness.surfaceCapabilities || {};
+  const sessionSurfaceHints = surfaceAwareness.sessionContextSurfaceHints || {};
+  const effectiveSurfaceExperience = surfaceAwareness.effectiveSurfaceExperience || {};
 
   const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
   const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
@@ -339,6 +346,15 @@ export function buildSupportSnapshot({
     `Requested Route Mode: ${asText(runtimeStatus?.requestedRouteMode)}`,
     `Session Kind: ${asText(canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind)}`,
     `Device Context: ${asText(canonicalTruth.deviceContext || runtimeSessionTruth?.deviceContext || runtimeStatus?.deviceContext)}`,
+    `Surface Device Class: ${asText(surfaceIdentity.deviceClass, 'unknown')}`,
+    `Surface OS/Browser: ${asText(surfaceIdentity.osFamily, 'unknown')} / ${asText(surfaceIdentity.browserFamily, 'unknown')}`,
+    `Surface Session Kind: ${asText(sessionSurfaceHints.sessionKind, 'unknown')}`,
+    `Surface Embodiment Profile: ${asText(effectiveSurfaceExperience.selectedProfileId, 'generic-surface')}`,
+    `Surface Selection Reasons: ${asText(Array.isArray(effectiveSurfaceExperience.selectionReasons) ? effectiveSurfaceExperience.selectionReasons.join(' | ') : 'n/a')}`,
+    `Surface Override Mode: ${asText(surfaceAwareness.operatorSurfaceOverrides?.mode, 'auto')}`,
+    `Surface Input/Panel Bias: ${asText(effectiveSurfaceExperience.resolvedInputMode, 'hybrid')} / ${asText(effectiveSurfaceExperience.resolvedPanelStrategy, 'stacked-docked')}`,
+    `Surface Routing Bias Hint: ${asText(effectiveSurfaceExperience.resolvedRoutingBiasHint, 'auto')}`,
+    `Surface Capability Hints: touchPrimary=${asText(surfaceCapabilities.touchPrimary)} hoverReliable=${asText(surfaceCapabilities.hoverReliable)} finePointer=${asText(surfaceCapabilities.finePointer)} webxr=${asText(surfaceCapabilities.webxrAvailable)}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,

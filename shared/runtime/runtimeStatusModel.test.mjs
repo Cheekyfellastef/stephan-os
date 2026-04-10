@@ -1103,3 +1103,38 @@ test('createRuntimeStatusModel keeps canonical route usable when hosted home-nod
   assert.equal(status.finalRouteTruth.selectedRouteUsable, true);
   assert.equal(status.canonicalRouteRuntimeTruth.routeUsable, true);
 });
+
+test('createRuntimeStatusModel consumes surface routing bias as hint without corrupting route truth', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: false },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      surfaceAwareness: {
+        effectiveSurfaceExperience: {
+          resolvedRoutingBiasHint: 'cloud-first',
+        },
+      },
+      routeDiagnostics: {
+        cloud: {
+          configured: false,
+          available: false,
+          usable: false,
+          reason: 'Cloud route unavailable',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.requestedRouteMode, 'auto');
+  assert.equal(status.effectiveRouteMode, 'cloud-first');
+  assert.equal(status.routeKind, 'unavailable');
+  assert.equal(status.finalRouteTruth.selectedRouteKind, 'unavailable');
+  assert.equal(status.runtimeContext.surfaceRoutingBiasHint, 'cloud-first');
+});

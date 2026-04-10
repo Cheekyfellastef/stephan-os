@@ -110,6 +110,19 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       invariantWarnings: [{ code: 'WARN_1', message: 'minor drift detected' }],
     },
     runtimeContext: {
+      surfaceAwareness: {
+        surfaceIdentity: { deviceClass: 'tablet', osFamily: 'ios', browserFamily: 'safari' },
+        surfaceCapabilities: { touchPrimary: true, hoverReliable: false, finePointer: false, webxrAvailable: false },
+        sessionContextSurfaceHints: { sessionKind: 'hosted-web' },
+        operatorSurfaceOverrides: { mode: 'auto' },
+        effectiveSurfaceExperience: {
+          selectedProfileId: 'field-tablet',
+          selectionReasons: ['auto selection from deviceClass=tablet sessionKind=hosted-web'],
+          resolvedInputMode: 'touch-hybrid',
+          resolvedPanelStrategy: 'stacked-docked',
+          resolvedRoutingBiasHint: 'home-node-first',
+        },
+      },
       routeCandidates: [
         { candidateKey: 'home-node-tailscale', routeKind: 'home-node', transportKind: 'tailscale', rank: 1, score: 980, usable: true, active: true, reason: 'tailscale route healthy' },
         { candidateKey: 'cloud', routeKind: 'cloud', transportKind: 'internet', rank: 2, score: 780, usable: true, active: false, reason: 'cloud route ready' },
@@ -146,6 +159,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
 
   assert.match(snapshot, /Stephanos Support Snapshot/);
   assert.match(snapshot, /Requested Route Mode: auto/);
+  assert.match(snapshot, /Surface Device Class: tablet/);
+  assert.match(snapshot, /Surface Embodiment Profile: field-tablet/);
+  assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);
   assert.match(snapshot, /Selected Provider Configured Model: openai\/gpt-oss-20b/);

@@ -161,6 +161,29 @@ function resolveCompatibleUrl(candidate = '', fallback = '', { allowLoopback = f
   return allowLoopback ? (candidate || fallback || '') : '';
 }
 
+function normalizeSurfaceAwareness(surfaceAwareness = {}) {
+  const source = surfaceAwareness && typeof surfaceAwareness === 'object' ? surfaceAwareness : {};
+  const identity = source.surfaceIdentity && typeof source.surfaceIdentity === 'object' ? source.surfaceIdentity : {};
+  const capabilities = source.surfaceCapabilities && typeof source.surfaceCapabilities === 'object' ? source.surfaceCapabilities : {};
+  const hints = source.sessionContextSurfaceHints && typeof source.sessionContextSurfaceHints === 'object'
+    ? source.sessionContextSurfaceHints
+    : {};
+  const overrides = source.operatorSurfaceOverrides && typeof source.operatorSurfaceOverrides === 'object'
+    ? source.operatorSurfaceOverrides
+    : { mode: 'auto' };
+  const effective = source.effectiveSurfaceExperience && typeof source.effectiveSurfaceExperience === 'object'
+    ? source.effectiveSurfaceExperience
+    : {};
+  return {
+    surfaceIdentity: identity,
+    surfaceCapabilities: capabilities,
+    sessionContextSurfaceHints: hints,
+    operatorSurfaceOverrides: { mode: String(overrides.mode || 'auto') },
+    embodimentProfile: source.embodimentProfile && typeof source.embodimentProfile === 'object' ? source.embodimentProfile : {},
+    effectiveSurfaceExperience: effective,
+  };
+}
+
 function buildCanonicalHostedRouteTruth({
   runtimeContext = {},
   selectedRouteKind = 'unavailable',
@@ -371,6 +394,8 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     rejectedSummary: backendTargetRejectedSummary.join(' | '),
   };
 
+  const surfaceAwareness = normalizeSurfaceAwareness(runtimeContext.surfaceAwareness);
+  const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
   return {
     frontendOrigin,
     apiBaseUrl,
@@ -413,6 +438,8 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     homeNodeOperatorOverrideActive: runtimeContext.homeNodeOperatorOverrideActive === true,
     homeNodeOperatorOverrideNodeConfigured: runtimeContext.homeNodeOperatorOverrideNodeConfigured === true,
     loopbackBackendMismatch,
+    surfaceAwareness,
+    surfaceRoutingBiasHint,
   };
 }
 
@@ -473,6 +500,10 @@ function getReadyLocalProviders(providerHealth = {}) {
 }
 
 function chooseAutoRouteMode({ runtimeContext, localAvailable, cloudAvailable }) {
+  const surfaceRoutingBiasHint = String(runtimeContext.surfaceRoutingBiasHint || '').trim().toLowerCase();
+  if (surfaceRoutingBiasHint === 'local-first' && localAvailable) return 'local-first';
+  if (surfaceRoutingBiasHint === 'cloud-first' && cloudAvailable) return 'cloud-first';
+
   if (runtimeContext.sessionKind === 'hosted-web') {
     if (
       runtimeContext.deviceContext === 'lan-companion'
