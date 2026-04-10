@@ -122,6 +122,7 @@ test('StatusPanel renders when runtimeStatusModel is null or undefined', async (
 
   assert.match(rendered, /Status/);
   assert.match(rendered, /Copy Support Snapshot/);
+  assert.doesNotMatch(rendered, /Copy Support Snapshot \[IGNITION LOCAL\]/);
   assert.match(rendered, /Copy Codex Handoff Packet/);
   assert.match(rendered, /Launch State:/);
   assert.match(rendered, /Dependency Summary: pending/);

@@ -504,10 +504,10 @@ export default function StatusPanel() {
             type="button"
             className={`status-panel-copy-button ${supportSnapshotCopyState}`}
             onClick={handleCopySupportSnapshot}
-            aria-label="Copy Support Snapshot [IGNITION LOCAL]"
+            aria-label="Copy Support Snapshot"
             title={supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
           >
-            {supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied Support Snapshot [IGNITION LOCAL]' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy Support Snapshot failed' : 'Copy Support Snapshot [IGNITION LOCAL]'}
+            {supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied Support Snapshot' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy Support Snapshot failed' : 'Copy Support Snapshot'}
           </button>
           <span className="sr-only" role="status" aria-live="polite">
             {supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Support snapshot copied to clipboard.' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}
