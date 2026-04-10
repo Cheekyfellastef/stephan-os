@@ -41,6 +41,12 @@ import { createDefaultMissionDashboardUiState, normalizeMissionDashboardUiState 
 import { getApiRuntimeConfig } from '../ai/apiConfig';
 import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 import {
+  createDefaultBridgeTransportPreferences,
+  listBridgeTransportDefinitions,
+  normalizeBridgeTransportPreferences,
+  normalizeBridgeTransportSelection,
+} from '../../../shared/runtime/homeBridgeTransport.mjs';
+import {
   applyMissionPacketAction,
   createDefaultMissionPacketWorkflow,
   normalizeMissionPacketWorkflow,
@@ -317,6 +323,10 @@ function createInitialMemorySnapshot() {
     homeNodePreference,
     homeNodeLastKnown,
     homeBridgeUrl,
+    bridgeTransportPreferences: normalizeBridgeTransportPreferences(
+      persistedSession?.session?.bridgeTransportPreferences,
+      { homeBridgeUrl, frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '' },
+    ),
   };
 }
 
@@ -351,6 +361,9 @@ export function AIStoreProvider({ children }) {
   const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
   const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(initialSnapshot.homeNodeLastKnown);
   const [homeBridgeUrl, setHomeBridgeUrlState] = useState(initialSnapshot.homeBridgeUrl || '');
+  const [bridgeTransportPreferences, setBridgeTransportPreferencesState] = useState(
+    initialSnapshot.bridgeTransportPreferences || createDefaultBridgeTransportPreferences(),
+  );
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -458,6 +471,7 @@ export function AIStoreProvider({ children }) {
           providerConfigs: sanitizeConfigForStorage(savedProviderConfigs),
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
         },
+        bridgeTransportPreferences: normalizeBridgeTransportPreferences(bridgeTransportPreferences, { homeBridgeUrl }),
         ui: {
           activeWorkspace: STEPHANOS_ACTIVE_WORKSPACE,
           activeSubview: lastRoute || STEPHANOS_ACTIVE_SUBVIEW,
@@ -487,6 +501,8 @@ export function AIStoreProvider({ children }) {
     fallbackOrder,
     savedProviderConfigs,
     ollamaConnection,
+    bridgeTransportPreferences,
+    homeBridgeUrl,
     uiLayout,
     missionDashboardUiState,
     paneLayout,
@@ -613,6 +629,7 @@ export function AIStoreProvider({ children }) {
     setHomeNodePreferenceState(null);
     setHomeNodeLastKnownState(null);
     setHomeBridgeUrlState('');
+    setBridgeTransportPreferencesState(createDefaultBridgeTransportPreferences());
     setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
@@ -744,6 +761,18 @@ export function AIStoreProvider({ children }) {
     }
     setStephanosHomeBridgeGlobal(validation.normalizedUrl);
     setHomeBridgeUrlState(validation.normalizedUrl);
+    setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
+      ...prev,
+      transports: {
+        ...(prev?.transports || {}),
+        manual: {
+          ...(prev?.transports?.manual || {}),
+          enabled: true,
+          backendUrl: validation.normalizedUrl,
+          accepted: true,
+        },
+      },
+    }, { homeBridgeUrl: validation.normalizedUrl, frontendOrigin }));
     return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
   }, []);
 
@@ -751,9 +780,46 @@ export function AIStoreProvider({ children }) {
     clearPersistedStephanosHomeBridgeUrl();
     setStephanosHomeBridgeGlobal('');
     setHomeBridgeUrlState('');
+    setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
+      ...prev,
+      transports: {
+        ...(prev?.transports || {}),
+        manual: {
+          ...(prev?.transports?.manual || {}),
+          backendUrl: '',
+          accepted: false,
+          reachability: 'unknown',
+          reason: 'Manual/LAN bridge not configured.',
+        },
+      },
+    }, { homeBridgeUrl: '' }));
     return { ok: true };
   }, []);
 
+
+
+  const setBridgeTransportSelection = useCallback((transportKey) => {
+    const selectedTransport = normalizeBridgeTransportSelection(transportKey);
+    setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
+      ...prev,
+      selectedTransport,
+    }, { homeBridgeUrl }));
+    return selectedTransport;
+  }, [homeBridgeUrl]);
+
+  const updateBridgeTransportConfig = useCallback((transportKey, patch = {}) => {
+    const normalizedTransport = normalizeBridgeTransportSelection(transportKey);
+    setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
+      ...prev,
+      transports: {
+        ...(prev?.transports || {}),
+        [normalizedTransport]: {
+          ...(prev?.transports?.[normalizedTransport] || {}),
+          ...(patch && typeof patch === 'object' ? patch : {}),
+        },
+      },
+    }, { homeBridgeUrl }));
+  }, [homeBridgeUrl]);
   const value = useMemo(() => ({
     commandHistory,
     setCommandHistory,
@@ -804,6 +870,10 @@ export function AIStoreProvider({ children }) {
     homeNodeLastKnown,
     setHomeNodeLastKnown,
     homeBridgeUrl,
+    bridgeTransportDefinitions: listBridgeTransportDefinitions(),
+    bridgeTransportPreferences,
+    setBridgeTransportSelection,
+    updateBridgeTransportConfig,
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
     homeNodeStatus,
@@ -860,6 +930,7 @@ export function AIStoreProvider({ children }) {
     homeNodePreference,
     homeNodeLastKnown,
     homeBridgeUrl,
+    bridgeTransportPreferences,
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
@@ -882,6 +953,8 @@ export function AIStoreProvider({ children }) {
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
     setHomeNodeStatus,
+    setBridgeTransportSelection,
+    updateBridgeTransportConfig,
     rememberSuccessfulOllamaConnection,
     getDraftProviderConfig,
     getEffectiveProviderConfig,

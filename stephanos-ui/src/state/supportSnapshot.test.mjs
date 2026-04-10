@@ -811,3 +811,47 @@ test('buildSupportSnapshot projects freshness integrity truth modes explicitly',
   assert.match(staleAllowed, /Last Answer Truth Mode: degraded-stale-allowed/);
   assert.match(staleAllowed, /Last Stale Answer Warning: Freshness-critical request answered by non-fresh provider\./);
 });
+
+test('buildSupportSnapshot includes home bridge transport and tailscale truth fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready', requestedRouteMode: 'auto', effectiveRouteMode: 'cloud-first' },
+    routeTruthView: { routeKind: 'home-node', backendReachableState: 'yes', selectedProvider: 'groq', executedProvider: 'groq', selectedRouteReachableState: 'yes', routeUsableState: 'yes' },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        selectedTransport: 'tailscale',
+        configuredTransport: 'tailscale',
+        activeTransport: 'tailscale',
+        state: 'active',
+        detail: 'Tailscale bridge active.',
+        reason: 'Tailscale bridge active.',
+        reachability: 'reachable',
+        usability: 'yes',
+        source: 'bridgeTransport:tailscale',
+        tailscale: {
+          deviceName: 'home-node',
+          tailnetIp: '100.64.0.10',
+          backendUrl: 'https://100.64.0.10',
+          accepted: true,
+          reachable: true,
+          usable: true,
+          reason: 'reachable',
+        },
+      },
+      backendTargetResolutionSource: 'bridgeTransport:tailscale',
+      backendTargetResolvedUrl: 'https://100.64.0.10',
+      backendTargetCandidates: [],
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-04-10T00:00:00.000Z'),
+    origin: 'https://cheekyfellastef.github.io',
+    href: 'https://cheekyfellastef.github.io/stephanos',
+  });
+
+  assert.match(snapshot, /Home Bridge Transport Selected: tailscale/);
+  assert.match(snapshot, /Tailscale Bridge Usable: true/);
+});

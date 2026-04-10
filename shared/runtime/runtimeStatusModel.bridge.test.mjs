@@ -99,3 +99,37 @@ test('createRuntimeStatusModel prefers LAN home-node variant over bridge when ho
   assert.equal(model.finalRoute.routeVariant, 'home-node-lan');
   assert.equal(model.finalRoute.actualTarget, 'http://192.168.1.42:8787');
 });
+
+test('createRuntimeStatusModel surfaces tailscale backend target candidate truthfully for hosted sessions', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://100.64.0.10',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+            deviceName: 'home-node',
+            tailnetIp: '100.64.0.10',
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': { configured: true, available: true, target: 'https://100.64.0.10', actualTarget: 'https://100.64.0.10' },
+        cloud: { configured: true, available: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  const tailscaleCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === 'https://100.64.0.10');
+  assert.ok(tailscaleCandidate);
+  assert.equal(tailscaleCandidate.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
+});

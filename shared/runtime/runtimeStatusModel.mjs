@@ -21,6 +21,7 @@ import {
 } from './stephanosHomeNode.mjs';
 import { readPersistedStephanosSessionMemory } from './stephanosSessionMemory.mjs';
 import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } from './stephanosRouteMarkers.mjs';
+import { normalizeBridgeTransportPreferences, projectHomeBridgeTransportTruth } from './homeBridgeTransport.mjs';
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
 
@@ -78,6 +79,10 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', homeNodeBridge.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
+      createBackendTargetCandidate('bridgeTransport.tailscale.backendUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
+      createBackendTargetCandidate('runtimeContext.bridgeTransportTruth.tailscale.backendUrl', runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl),
+    ] : []),
+    ...(preferBridgeHomeNode ? [
       createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
@@ -96,6 +101,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
     createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
     createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
+    createBackendTargetCandidate('bridgeTransport.tailscale.backendUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
     createBackendTargetCandidate('fallback.actualTarget', fallbackUrl),
   ];
   const candidates = [...prioritizedCandidates, ...compatibilityCandidates];
@@ -243,6 +249,11 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     reachability: String(homeNodeBridgeRaw.reachability || (bridgeValidation.ok ? 'unknown' : 'invalid')),
     reason: String(homeNodeBridgeRaw.reason || ''),
   };
+  const bridgeTransportPreferences = normalizeBridgeTransportPreferences(runtimeContext.bridgeTransportPreferences, {
+    homeBridgeUrl: homeNodeBridge.backendUrl || '',
+    frontendOrigin,
+  });
+  const bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, { runtimeBridge: homeNodeBridge });
   const loopbackBackendMismatch = !launcherLocal && backendLocal;
   const localDesktopBackendSession = !launcherLocal
     && backendLocal
@@ -375,6 +386,8 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
     homeNodeBridge,
+    bridgeTransportPreferences,
+    bridgeTransportTruth,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',
     preferredTarget: compatiblePreferredTarget,
     actualTargetUsed: compatibleActualTarget,
@@ -702,7 +715,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const backendTargetProbe = diagnostics['backend-target'] || {};
   const homeNodeBridgeProbe = diagnostics['home-node-bridge'] || {};
   const bridgeReachable = homeNodeBridgeProbe.available === true
-    || runtimeContext.homeNodeBridge?.reachability === 'reachable';
+    || runtimeContext.homeNodeBridge?.reachability === 'reachable'
+    || runtimeContext.bridgeTransportTruth?.tailscale?.reachable === true;
   const hostedResolvedBackendCandidate = runtimeContext.sessionKind === 'hosted-web'
     && runtimeContext.deviceContext === 'lan-companion'
     && backendAvailable
@@ -834,10 +848,10 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       available: bridgeReachable,
       misconfigured: homeNodeBridgeProbe.misconfigured === true || (homeNodeBridgeProbe.configured === true && homeNodeBridgeProbe.available !== true),
       optional: runtimeContext.sessionKind !== 'hosted-web',
-      target: homeNodeBridgeProbe.target || runtimeContext.homeNodeBridge?.backendUrl || '',
-      actualTarget: homeNodeBridgeProbe.actualTarget || runtimeContext.homeNodeBridge?.backendUrl || '',
-      source: homeNodeBridgeProbe.source || 'home-node-bridge',
-      reason: homeNodeBridgeProbe.reason || (bridgeReachable ? 'Home-node bridge configured and reachable' : 'Home-node bridge unavailable'),
+      target: homeNodeBridgeProbe.target || runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl || runtimeContext.homeNodeBridge?.backendUrl || '',
+      actualTarget: homeNodeBridgeProbe.actualTarget || runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl || runtimeContext.homeNodeBridge?.backendUrl || '',
+      source: homeNodeBridgeProbe.source || runtimeContext.bridgeTransportTruth?.source || 'home-node-bridge',
+      reason: homeNodeBridgeProbe.reason || runtimeContext.bridgeTransportTruth?.detail || (bridgeReachable ? 'Home-node bridge configured and reachable' : 'Home-node bridge unavailable'),
       blockedReason: homeNodeBridgeProbe.blockedReason || (bridgeReachable ? '' : 'home-node bridge unavailable'),
       backendReachable: bridgeReachable,
       uiReachable: bridgeReachable,

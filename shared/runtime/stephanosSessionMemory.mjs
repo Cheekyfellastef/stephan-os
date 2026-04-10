@@ -8,6 +8,7 @@ import {
 } from '../ai/providerDefaults.mjs';
 import { isLoopbackHost, isValidStephanosHomeNode, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
 import { sanitizeCoreTruthInput } from './truthContract.mjs';
+import { createDefaultBridgeTransportPreferences, normalizeBridgeTransportPreferences } from './homeBridgeTransport.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
@@ -45,6 +46,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'project.lessonsLearned',
   'project.repeatedProblemFamilies',
   'session.homeNodePreference',
+  'session.bridgeTransportPreferences',
 ]);
 export const DEVICE_LOCAL_SESSION_FIELDS = Object.freeze([
   'session.providerPreferences.providerConfigs.*.baseURL when loopback-only',
@@ -409,6 +411,7 @@ export function createDefaultStephanosSessionMemory() {
     updatedAt: '',
     session: {
       providerPreferences: normalizeProviderPreferences(DEFAULT_PROVIDER_PREFERENCES),
+      bridgeTransportPreferences: createDefaultBridgeTransportPreferences(),
       ui: normalizeUiState(),
       homeNodePreference: null,
     },
@@ -427,6 +430,7 @@ export function normalizeStephanosSessionMemory(value = {}) {
     updatedAt: normalizeString(source.updatedAt),
     session: {
       providerPreferences: normalizeProviderPreferences(session.providerPreferences),
+      bridgeTransportPreferences: normalizeBridgeTransportPreferences(session.bridgeTransportPreferences),
       ui: normalizeUiState(session.ui),
       homeNodePreference: normalizeHomeNodePreference(session.homeNodePreference),
     },

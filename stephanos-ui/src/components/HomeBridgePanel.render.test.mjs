@@ -8,6 +8,20 @@ function createStore(overrides = {}) {
     homeBridgeUrl: 'https://bridge.example.com',
     saveHomeBridgeUrl: () => ({ ok: true, normalizedUrl: 'https://bridge.example.com' }),
     clearHomeBridgeUrl: () => ({ ok: true }),
+    bridgeTransportDefinitions: [
+      { key: 'manual', label: 'Manual / LAN', status: 'active', description: '' },
+      { key: 'tailscale', label: 'Tailscale', status: 'active', description: '' },
+      { key: 'wireguard', label: 'WireGuard', status: 'planned', description: '' },
+    ],
+    bridgeTransportPreferences: {
+      selectedTransport: 'tailscale',
+      transports: {
+        manual: { backendUrl: 'https://bridge.example.com', enabled: true },
+        tailscale: { backendUrl: 'https://100.64.0.10', deviceName: 'home-node', tailnetIp: '100.64.0.10', diagnostics: [] },
+      },
+    },
+    setBridgeTransportSelection: () => 'tailscale',
+    updateBridgeTransportConfig: () => {},
     uiLayout: { homeBridgePanel: true },
     togglePanel: () => {},
     runtimeStatusModel: {
@@ -37,9 +51,10 @@ test('HomeBridgePanel renders bridge controls and saved URL status', async () =>
   const rendered = renderHomeBridgePanel();
 
   assert.match(rendered, /Home Bridge/);
-  assert.match(rendered, /Bridge URL/);
+  assert.match(rendered, /Selected transport/);
   assert.match(rendered, /Test Reachability/);
-  assert.match(rendered, /Saved URL: <strong>https:\/\/bridge\.example\.com<\/strong>/);
+  assert.match(rendered, /Tailscale Backend URL/);
+  assert.match(rendered, /WireGuard status: <strong>planned \/ not yet configured<\/strong>/);
 });
 
 test('App places Home Bridge panel below AI Provider Controls', async () => {

@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { checkApiHealth } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
+import {
+  normalizeBridgeTransportSelection,
+  projectHomeBridgeTransportTruth,
+} from '../../../shared/runtime/homeBridgeTransport.mjs';
 import { validateStephanosHomeBridgeUrl } from '../../../shared/runtime/stephanosHomeNode.mjs';
 
 function toStatusTone(value = '', positiveValue = '') {
@@ -20,11 +24,18 @@ export default function HomeBridgePanel() {
     homeBridgeUrl,
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
+    bridgeTransportDefinitions,
+    bridgeTransportPreferences,
+    setBridgeTransportSelection,
+    updateBridgeTransportConfig,
     uiLayout,
     togglePanel,
     runtimeStatusModel,
   } = useAIStore();
+
+  const selectedTransport = normalizeBridgeTransportSelection(bridgeTransportPreferences?.selectedTransport);
   const [bridgeDraft, setBridgeDraft] = useState(homeBridgeUrl || '');
+  const [tailscaleBackendDraft, setTailscaleBackendDraft] = useState(bridgeTransportPreferences?.transports?.tailscale?.backendUrl || '');
   const [validationState, setValidationState] = useState('unknown');
   const [validationReason, setValidationReason] = useState('Not checked yet.');
   const [reachabilityState, setReachabilityState] = useState('unknown');
@@ -36,10 +47,20 @@ export default function HomeBridgePanel() {
     setBridgeDraft(homeBridgeUrl || '');
   }, [homeBridgeUrl]);
 
+  useEffect(() => {
+    setTailscaleBackendDraft(bridgeTransportPreferences?.transports?.tailscale?.backendUrl || '');
+  }, [bridgeTransportPreferences?.transports?.tailscale?.backendUrl]);
+
   const savedBridge = useMemo(() => runtimeStatusModel?.runtimeContext?.homeNodeBridge || {}, [runtimeStatusModel?.runtimeContext?.homeNodeBridge]);
+  const transportTruth = useMemo(() => projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+    runtimeBridge: savedBridge,
+  }), [bridgeTransportPreferences, savedBridge]);
 
   useEffect(() => {
-    if (!homeBridgeUrl) {
+    const activeUrl = selectedTransport === 'tailscale'
+      ? (bridgeTransportPreferences?.transports?.tailscale?.backendUrl || tailscaleBackendDraft)
+      : homeBridgeUrl;
+    if (!activeUrl) {
       setValidationState('unknown');
       setValidationReason('No bridge URL saved.');
       setReachabilityState('unknown');
@@ -47,10 +68,11 @@ export default function HomeBridgePanel() {
       return;
     }
 
-    const validation = validateStephanosHomeBridgeUrl(homeBridgeUrl, {
+    const validation = validateStephanosHomeBridgeUrl(activeUrl, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
       requireHttps: true,
     });
+
     if (!validation.ok) {
       setValidationState('invalid');
       setValidationReason(validation.reason || 'Invalid bridge URL.');
@@ -65,9 +87,9 @@ export default function HomeBridgePanel() {
       setReachabilityState(savedBridge.reachability);
       setReachabilityReason(savedBridge.reason || 'Runtime bridge diagnostics available.');
     }
-  }, [homeBridgeUrl, savedBridge.reachability, savedBridge.reason]);
+  }, [homeBridgeUrl, savedBridge.reachability, savedBridge.reason, selectedTransport, bridgeTransportPreferences?.transports?.tailscale?.backendUrl, tailscaleBackendDraft]);
 
-  function handleSave() {
+  function handleSaveManual() {
     const result = saveHomeBridgeUrl(bridgeDraft);
     if (!result.ok) {
       setFeedback(`Save failed: ${result.reason || 'invalid-home-bridge-url'}`);
@@ -78,6 +100,11 @@ export default function HomeBridgePanel() {
       return;
     }
 
+    updateBridgeTransportConfig('manual', {
+      backendUrl: result.normalizedUrl,
+      accepted: true,
+      reason: 'Manual/LAN bridge URL saved by operator.',
+    });
     setFeedback(`Saved bridge URL: ${result.normalizedUrl}`);
     setValidationState('valid');
     setValidationReason('Bridge URL passes canonical validation rules.');
@@ -85,8 +112,21 @@ export default function HomeBridgePanel() {
     setReachabilityReason('Bridge saved. Probe to confirm live reachability.');
   }
 
+  function handleSaveTailscale() {
+    updateBridgeTransportConfig('tailscale', {
+      backendUrl: tailscaleBackendDraft,
+      accepted: false,
+      active: false,
+      usable: false,
+      reachability: 'unknown',
+      reason: 'Tailscale bridge configuration saved; acceptance pending runtime validation.',
+    });
+    setFeedback('Saved Tailscale bridge intent. Validate or probe to confirm runtime reachability.');
+  }
+
   function handleValidate() {
-    const validation = validateStephanosHomeBridgeUrl(bridgeDraft, {
+    const activeUrl = selectedTransport === 'tailscale' ? tailscaleBackendDraft : bridgeDraft;
+    const validation = validateStephanosHomeBridgeUrl(activeUrl, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
       requireHttps: true,
     });
@@ -99,7 +139,10 @@ export default function HomeBridgePanel() {
   }
 
   async function handleProbe() {
-    const validation = validateStephanosHomeBridgeUrl(homeBridgeUrl || bridgeDraft, {
+    const candidate = selectedTransport === 'tailscale'
+      ? (bridgeTransportPreferences?.transports?.tailscale?.backendUrl || tailscaleBackendDraft)
+      : (homeBridgeUrl || bridgeDraft);
+    const validation = validateStephanosHomeBridgeUrl(candidate, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
       requireHttps: true,
     });
@@ -120,15 +163,45 @@ export default function HomeBridgePanel() {
         : (probe.data?.error || `Health probe failed (status ${probe.status}).`));
       setLastCheckedAt(new Date().toISOString());
       setFeedback(serviceOk ? 'Bridge is reachable from this surface.' : 'Bridge probe failed.');
+      updateBridgeTransportConfig(selectedTransport, {
+        reachability: nextState,
+        accepted: serviceOk,
+        active: serviceOk,
+        usable: serviceOk,
+        reason: serviceOk
+          ? `${selectedTransport} bridge validated by health probe.`
+          : `${selectedTransport} bridge probe failed.`,
+      });
     } catch (error) {
       setReachabilityState('unreachable');
       setReachabilityReason(error?.message || 'Bridge probe request failed before a response was received.');
       setLastCheckedAt(new Date().toISOString());
       setFeedback('Bridge probe failed.');
+      updateBridgeTransportConfig(selectedTransport, {
+        reachability: 'unreachable',
+        accepted: false,
+        active: false,
+        usable: false,
+        reason: `${selectedTransport} bridge probe failed before a response was received.`,
+      });
     }
   }
 
   function handleClear() {
+    if (selectedTransport === 'tailscale') {
+      updateBridgeTransportConfig('tailscale', {
+        enabled: false,
+        backendUrl: '',
+        accepted: false,
+        active: false,
+        usable: false,
+        reachability: 'unknown',
+        reason: 'Tailscale transport cleared.',
+      });
+      setTailscaleBackendDraft('');
+      setFeedback('Tailscale transport settings cleared.');
+      return;
+    }
     clearHomeBridgeUrl();
     setBridgeDraft('');
     setValidationState('unknown');
@@ -139,32 +212,69 @@ export default function HomeBridgePanel() {
     setFeedback('Bridge URL cleared.');
   }
 
-  const configured = Boolean(homeBridgeUrl);
+  const configured = transportTruth.configuredTransport !== 'none';
+  const tailscale = bridgeTransportPreferences?.transports?.tailscale || {};
 
   return (
     <CollapsiblePanel
       panelId="homeBridgePanel"
       title="Home Bridge"
-      description="Remote route to the battle bridge backend. Use a secure tunnel URL so hosted surfaces can reach your home-node backend."
+      description="Remote route control plane for home-node bridge transports."
       className="home-bridge-panel"
       isOpen={uiLayout.homeBridgePanel !== false}
       onToggle={() => togglePanel('homeBridgePanel')}
     >
-      <p className="home-bridge-guidance">Bridge URL is required for off-network home-node bridge routing.</p>
-      <label className="home-bridge-field">
-        <span>Bridge URL</span>
-        <input
-          type="url"
-          value={bridgeDraft}
-          onChange={(event) => setBridgeDraft(event.target.value)}
-          placeholder="https://your-bridge.example.com"
-          autoComplete="off"
-          spellCheck="false"
-        />
-      </label>
+      <p className="home-bridge-guidance">Select transport, then configure and validate truthful bridge readiness.</p>
+      <div className="home-bridge-transport-selector" data-no-drag>
+        {bridgeTransportDefinitions.map((transport) => (
+          <button
+            key={transport.key}
+            type="button"
+            className={`provider-toggle-button ${selectedTransport === transport.key ? 'active' : ''}`}
+            onClick={() => setBridgeTransportSelection(transport.key)}
+            disabled={transport.status === 'planned'}
+            title={transport.status === 'planned' ? 'Planned transport (coming later).' : transport.description}
+          >
+            {transport.label}
+          </button>
+        ))}
+      </div>
+
+      {selectedTransport === 'tailscale' ? (
+        <div className="provider-form-grid">
+          <label>
+            <span>Tailscale Backend URL</span>
+            <input type="url" value={tailscaleBackendDraft} onChange={(event) => setTailscaleBackendDraft(event.target.value)} placeholder="https://100.64.0.10" />
+          </label>
+          <label>
+            <span>Device Name</span>
+            <input type="text" value={tailscale.deviceName || ''} onChange={(event) => updateBridgeTransportConfig('tailscale', { deviceName: event.target.value, enabled: true })} placeholder="stephanos-home-node" />
+          </label>
+          <label>
+            <span>Tailnet IP</span>
+            <input type="text" value={tailscale.tailnetIp || ''} onChange={(event) => updateBridgeTransportConfig('tailscale', { tailnetIp: event.target.value, enabled: true })} placeholder="100.x.y.z" />
+          </label>
+          <label>
+            <span>Hostname Override</span>
+            <input type="text" value={tailscale.hostOverride || ''} onChange={(event) => updateBridgeTransportConfig('tailscale', { hostOverride: event.target.value, enabled: true })} placeholder="home-node.tailnet.ts.net" />
+          </label>
+        </div>
+      ) : (
+        <label className="home-bridge-field">
+          <span>Bridge URL</span>
+          <input
+            type="url"
+            value={bridgeDraft}
+            onChange={(event) => setBridgeDraft(event.target.value)}
+            placeholder="https://your-bridge.example.com"
+            autoComplete="off"
+            spellCheck="false"
+          />
+        </label>
+      )}
 
       <div className="home-bridge-actions" data-no-drag>
-        <button type="button" className="ghost-button" onClick={handleSave}>Save</button>
+        <button type="button" className="ghost-button" onClick={selectedTransport === 'tailscale' ? handleSaveTailscale : handleSaveManual}>Save</button>
         <button type="button" className="ghost-button" onClick={handleValidate}>Validate</button>
         <button type="button" className="ghost-button" onClick={handleProbe}>Test Reachability</button>
         <button type="button" className="ghost-button" onClick={handleClear}>Clear</button>
@@ -176,10 +286,20 @@ export default function HomeBridgePanel() {
         <span className={`home-bridge-chip ${toStatusTone(reachabilityState, 'reachable')}`}>Reachability: {reachabilityState}</span>
       </div>
 
-      <p className="home-bridge-detail">Saved URL: <strong>{homeBridgeUrl || 'none'}</strong></p>
+      <p className="home-bridge-detail">Selected transport: <strong>{transportTruth.selectedTransport}</strong></p>
+      <p className="home-bridge-detail">Transport state: <strong>{transportTruth.state}</strong></p>
+      <p className="home-bridge-detail">Transport detail: <strong>{transportTruth.detail}</strong></p>
+      <p className="home-bridge-detail">Transport source: <strong>{transportTruth.source}</strong></p>
+      <p className="home-bridge-detail">Saved URL: <strong>{selectedTransport === 'tailscale' ? (tailscale.backendUrl || 'none') : (homeBridgeUrl || 'none')}</strong></p>
       <p className="home-bridge-detail">Validation reason: <strong>{validationReason}</strong></p>
       <p className="home-bridge-detail">Reachability reason: <strong>{reachabilityReason}</strong></p>
       <p className="home-bridge-detail">Last checked: <strong>{formatTime(lastCheckedAt)}</strong></p>
+      <p className="home-bridge-detail">WireGuard status: <strong>planned / not yet configured</strong></p>
+      {transportTruth.tailscale?.diagnostics?.length ? (
+        <ul className="home-bridge-detail">
+          {transportTruth.tailscale.diagnostics.map((entry) => <li key={entry}>{entry}</li>)}
+        </ul>
+      ) : null}
       {feedback ? <p className="home-bridge-feedback">{feedback}</p> : null}
     </CollapsiblePanel>
   );
