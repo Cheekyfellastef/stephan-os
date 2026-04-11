@@ -10,6 +10,7 @@ import {
   buildCanonicalCurrentIntent,
   buildCanonicalMemoryContext,
   buildCanonicalMissionPacket,
+  buildCanonicalSourceDistAlignment,
 } from '../state/runtimeOrchestrationTruth';
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import {
@@ -235,6 +236,14 @@ export default function StatusPanel() {
     missionPacketTruth,
     missionPacketWorkflow,
     currentIntent: orchestrationCurrentIntent,
+  });
+  const sourceDistAlignment = buildCanonicalSourceDistAlignment({
+    sourceFingerprint: STEPHANOS_UI_SOURCE_FINGERPRINT,
+    buildRuntimeMarker: STEPHANOS_UI_RUNTIME_MARKER,
+    buildCommit: STEPHANOS_UI_GIT_COMMIT,
+    buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+    runtimeTruth: runtimeStatus?.runtimeTruth || {},
+    runtimeContext: runtimeStatus?.runtimeContext || {},
   });
   const orchestrationSelectors = deriveRuntimeOrchestrationSelectors({
     canonicalMemoryContext: orchestrationMemoryContext,
@@ -509,6 +518,7 @@ export default function StatusPanel() {
       canonicalMemoryContext: orchestrationMemoryContext,
       canonicalCurrentIntent: orchestrationCurrentIntent,
       canonicalMissionPacket: orchestrationMissionPacket,
+      canonicalSourceDistAlignment: sourceDistAlignment,
       selectors: orchestrationSelectors,
       latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
     },
@@ -891,6 +901,12 @@ export default function StatusPanel() {
         <li>UI Build Timestamp: {STEPHANOS_UI_BUILD_TIMESTAMP}</li>
         <li>UI Runtime ID: {STEPHANOS_UI_RUNTIME_ID}</li>
         <li>UI Runtime Marker: {STEPHANOS_UI_RUNTIME_MARKER}</li>
+        <li>Build Alignment State: {sourceDistAlignment.buildAlignmentState}</li>
+        <li>Build Alignment Severity: {sourceDistAlignment.blockingSeverity}</li>
+        <li>Build Alignment Reason: {sourceDistAlignment.alignmentReason}</li>
+        <li>Build Alignment Action Required: {sourceDistAlignment.operatorActionRequired ? 'yes' : 'no'}</li>
+        <li>Build Alignment Action: {sourceDistAlignment.operatorActionText}</li>
+        <li>Dist Fingerprint (served): {sourceDistAlignment.distFingerprint || 'unknown'}</li>
         <li>UI Build Target: {STEPHANOS_UI_BUILD_TARGET}</li>
         <li>UI Build Target Identifier: {STEPHANOS_UI_BUILD_TARGET_IDENTIFIER}</li>
         <li>UI Source: {STEPHANOS_UI_SOURCE}</li>

@@ -35,13 +35,16 @@ import {
   buildCanonicalCurrentIntent,
   buildCanonicalMemoryContext,
   buildCanonicalMissionPacket,
+  buildCanonicalSourceDistAlignment,
 } from './state/runtimeOrchestrationTruth';
 import { normalizeMissionPacketTruth } from './state/missionPacketWorkflow';
 import { deriveRuntimeOrchestrationSelectors } from './state/runtimeOrchestrationSelectors.js';
 import {
   STEPHANOS_UI_BUILD_STAMP,
+  STEPHANOS_UI_BUILD_TIMESTAMP,
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
+  STEPHANOS_UI_GIT_COMMIT,
   STEPHANOS_UI_RUNTIME_ID,
   STEPHANOS_UI_RUNTIME_LABEL,
   STEPHANOS_UI_RUNTIME_MARKER,
@@ -204,6 +207,14 @@ export default function App() {
     missionPacketWorkflow,
     currentIntent: canonicalCurrentIntent,
   }), [canonicalCurrentIntent, missionPacketTruth, missionPacketWorkflow]);
+  const canonicalSourceDistAlignment = useMemo(() => buildCanonicalSourceDistAlignment({
+    sourceFingerprint: STEPHANOS_UI_SOURCE_FINGERPRINT,
+    buildRuntimeMarker: STEPHANOS_UI_RUNTIME_MARKER,
+    buildCommit: STEPHANOS_UI_GIT_COMMIT,
+    buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+    runtimeTruth: runtimeStatus?.runtimeTruth || {},
+    runtimeContext: runtimeStatus?.runtimeContext || {},
+  }), [runtimeStatus?.runtimeContext, runtimeStatus?.runtimeTruth]);
   const orchestrationSelectors = useMemo(() => deriveRuntimeOrchestrationSelectors({
     canonicalMemoryContext,
     canonicalCurrentIntent,
@@ -216,11 +227,14 @@ export default function App() {
     canonicalMemoryContext,
     canonicalCurrentIntent,
     canonicalMissionPacket,
+    canonicalSourceDistAlignment,
     selectors: orchestrationSelectors,
     latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
-    .map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth, orchestrationTruth]);
+    .map((hint) => (typeof hint === 'string'
+      ? { severity: 'info', subsystem: 'SYSTEM', text: hint }
+      : hint)), [finalRouteTruth, orchestrationTruth]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

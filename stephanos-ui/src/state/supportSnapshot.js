@@ -227,6 +227,7 @@ export function buildSupportSnapshot({
   orchestrationTruth = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
+  const sourceDistAlignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
   const canonicalHostedRouteTruth = runtimeContext?.canonicalHostedRouteTruth || canonicalTruth?.hostedRouteTruth || null;
   const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
   const resolvedUrl = asText(href || runtimeContext?.frontendUrl || '', 'n/a');
@@ -658,6 +659,12 @@ export function buildSupportSnapshot({
     `UI Build Timestamp: ${asText(runtimeStatus?.uiBuildTimestamp, 'unknown')}`,
     `UI Runtime ID: ${asText(runtimeStatus?.uiRuntimeId)}`,
     `UI Runtime Marker: ${asText(runtimeStatus?.uiRuntimeMarker)}`,
+    `Build Alignment State: ${asText(sourceDistAlignment?.buildAlignmentState, 'unknown')}`,
+    `Build Alignment Severity: ${asText(sourceDistAlignment?.blockingSeverity, 'caution')}`,
+    `Build Alignment Reason: ${asText(sourceDistAlignment?.alignmentReason, 'Build alignment cannot be verified from this surface.')}`,
+    `Build Alignment Action Required: ${sourceDistAlignment?.operatorActionRequired === true ? 'yes' : 'no'}`,
+    `Build Alignment Action: ${asText(sourceDistAlignment?.operatorActionText, 'Run stephanos:build and stephanos:verify before trusting hosted runtime behavior.')}`,
+    `Dist Fingerprint (served): ${asText(sourceDistAlignment?.distFingerprint, 'unknown')}`,
     `Source/Dist Parity: ${formatParityState(runtimeStatus?.runtimeTruth?.sourceDistParityOk ?? runtimeStatus?.sourceDistParityOk ?? null)}`,
     `UI Build Target: ${asText(runtimeStatus?.uiBuildTarget)}`,
     `UI Build Target Identifier: ${asText(runtimeStatus?.uiBuildTargetIdentifier)}`,

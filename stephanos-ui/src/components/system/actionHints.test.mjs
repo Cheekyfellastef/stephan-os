@@ -15,12 +15,20 @@ test('collectActionHints uses shared selectors for mission-aware guidance', () =
         'start-mission': { allowed: false, reason: 'mission-blocked', message: 'Start is blocked until mission blockers are resolved.' },
       },
     },
+    canonicalSourceDistAlignment: {
+      buildAlignmentState: 'stale',
+      blockingSeverity: 'warning',
+      alignmentReason: 'Hosted/runtime dist appears stale relative to expected build truth.',
+      operatorActionText: 'Run npm run stephanos:build, verify with npm run stephanos:verify, then push updated dist before trusting hosted runtime behavior.',
+    },
   });
+  const rendered = hints.map((entry) => (typeof entry === 'string' ? entry : `${entry.subsystem}: ${entry.text}`));
 
-  assert.ok(hints.some((line) => line.includes('Intent is inferred')));
-  assert.ok(hints.some((line) => line.includes('Mission:')));
-  assert.ok(hints.some((line) => line.includes('Mission blocked')));
-  assert.ok(hints.some((line) => line.includes('Build assistance: analysis-ready')));
-  assert.ok(hints.some((line) => line.includes('Next step: Review mission packet')));
-  assert.ok(hints.some((line) => line.includes('Blocked now:')));
+  assert.ok(rendered.some((line) => line.includes('Intent is inferred')));
+  assert.ok(rendered.some((line) => line.includes('Mission:')));
+  assert.ok(rendered.some((line) => line.includes('Mission blocked')));
+  assert.ok(rendered.some((line) => line.includes('Build assistance: analysis-ready')));
+  assert.ok(rendered.some((line) => line.includes('Next step: Review mission packet')));
+  assert.ok(rendered.some((line) => line.includes('Blocked now:')));
+  assert.ok(rendered.some((line) => line.includes('stale relative to expected build truth')));
 });

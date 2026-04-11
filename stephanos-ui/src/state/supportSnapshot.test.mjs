@@ -1049,3 +1049,34 @@ test('buildSupportSnapshot includes shared operator guidance summaries', () => {
   assert.match(snapshot, /Latest Envelope Action Requested: start-mission/);
   assert.match(snapshot, /Latest Envelope Allowed: no/);
 });
+
+test('buildSupportSnapshot projects canonical source/dist alignment truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    orchestrationTruth: {
+      canonicalSourceDistAlignment: {
+        buildAlignmentState: 'stale',
+        blockingSeverity: 'warning',
+        alignmentReason: 'Hosted/runtime dist appears stale relative to expected build truth.',
+        operatorActionRequired: true,
+        operatorActionText: 'Run npm run stephanos:build, verify with npm run stephanos:verify, then push updated dist before trusting hosted runtime behavior.',
+        distFingerprint: 'marker-old',
+      },
+    },
+    now: { toISOString: () => '2026-03-25T00:00:10.000Z' },
+  });
+
+  assert.match(snapshot, /Build Alignment State: stale/);
+  assert.match(snapshot, /Build Alignment Severity: warning/);
+  assert.match(snapshot, /Build Alignment Action Required: yes/);
+  assert.match(snapshot, /Dist Fingerprint \(served\): marker-old/);
+});
