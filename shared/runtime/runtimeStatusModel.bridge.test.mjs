@@ -18,6 +18,11 @@ test('createRuntimeStatusModel selects home-node route with bridge variant for h
         reachability: 'reachable',
         reason: 'Home-node bridge configured and reachable.',
       },
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -62,6 +67,11 @@ test('createRuntimeStatusModel prefers LAN home-node variant over bridge when ho
         backendUrl: 'https://bridge.example.com',
         reachability: 'reachable',
         reason: 'Home-node bridge configured and reachable.',
+      },
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
       },
       routeDiagnostics: {
         'home-node': {
@@ -334,4 +344,39 @@ test('wireguard planned candidate never becomes usable or active', () => {
   assert.ok(wireguardCandidate);
   assert.equal(wireguardCandidate.usable, false);
   assert.equal(wireguardCandidate.active, false);
+});
+
+test('hosted bridge route remains non-operational until AI execution proof exists', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeExecutionTruth: { proven: false, state: 'unproven' },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          backendReachable: true,
+          source: 'home-node-bridge',
+          target: 'https://bridge.example.com',
+          actualTarget: 'https://bridge.example.com',
+          reason: 'Bridge verified; backend reachable.',
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          source: 'home-node-bridge',
+          target: 'https://bridge.example.com',
+          actualTarget: 'https://bridge.example.com',
+        },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'cloud');
+  assert.equal(model.runtimeContext.hostedHomeNodeReadiness.aiExecutionProven, false);
+  assert.equal(model.runtimeContext.hostedHomeNodeReadiness.operationalReadiness, 'transport-only');
 });

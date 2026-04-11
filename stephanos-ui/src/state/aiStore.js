@@ -146,6 +146,24 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
   attemptedAt: '',
   attemptedConfigKey: '',
 });
+const DEFAULT_HOSTED_HOME_NODE_EXECUTION_TRUTH = Object.freeze({
+  state: 'unproven',
+  proven: false,
+  proofSource: '',
+  lastSuccessAt: '',
+  lastFailureAt: '',
+  lastAttemptAt: '',
+  lastError: '',
+});
+const DEFAULT_HOSTED_HOME_NODE_MANUAL_INTERVENTION = Object.freeze({
+  required: false,
+  saveUsed: false,
+  validateUsed: false,
+  probeUsed: false,
+  autoRehydrationFailedOrBypassed: false,
+  reason: 'No manual intervention breadcrumbs recorded.',
+  lastEventAt: '',
+});
 
 function getStephanosMemoryRuntime() {
   return globalThis.stephanosMemory || globalThis.parent?.stephanosMemory || null;
@@ -609,6 +627,8 @@ export function AIStoreProvider({ children }) {
   });
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
   const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const [hostedHomeNodeExecutionTruth, setHostedHomeNodeExecutionTruth] = useState(DEFAULT_HOSTED_HOME_NODE_EXECUTION_TRUTH);
+  const [hostedHomeNodeManualIntervention, setHostedHomeNodeManualIntervention] = useState(DEFAULT_HOSTED_HOME_NODE_MANUAL_INTERVENTION);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -686,6 +706,8 @@ export function AIStoreProvider({ children }) {
       bridgeMemoryRehydrated,
       bridgeAutoRevalidation,
       bridgeTransportTruth,
+      homeNodeExecutionTruth: hostedHomeNodeExecutionTruth,
+      homeNodeManualIntervention: hostedHomeNodeManualIntervention,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), [
@@ -702,6 +724,8 @@ export function AIStoreProvider({ children }) {
     routeMode,
     surfaceAwareness,
     bridgeAutoRevalidation,
+    hostedHomeNodeExecutionTruth,
+    hostedHomeNodeManualIntervention,
     bridgeMemory,
     bridgeMemoryRehydrated,
     surfaceFrictionEvents,
@@ -1078,6 +1102,8 @@ export function AIStoreProvider({ children }) {
     setHomeBridgeUrlState('');
     setBridgeTransportPreferencesState(createDefaultBridgeTransportPreferences());
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+    setHostedHomeNodeExecutionTruth(DEFAULT_HOSTED_HOME_NODE_EXECUTION_TRUTH);
+    setHostedHomeNodeManualIntervention(DEFAULT_HOSTED_HOME_NODE_MANUAL_INTERVENTION);
     setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
@@ -1197,6 +1223,43 @@ export function AIStoreProvider({ children }) {
     });
   }, []);
 
+  const markHostedHomeNodeExecutionTruth = useCallback((event = {}) => {
+    const now = new Date().toISOString();
+    setHostedHomeNodeExecutionTruth((prev) => {
+      const source = prev && typeof prev === 'object' ? prev : DEFAULT_HOSTED_HOME_NODE_EXECUTION_TRUTH;
+      const attempted = event.attempted === true || event.success === true;
+      const success = event.success === true;
+      return {
+        ...source,
+        state: success ? 'proven' : (attempted ? 'failed' : source.state || 'unproven'),
+        proven: success ? true : (source.proven === true && attempted !== true),
+        proofSource: success ? String(event.proofSource || 'hosted-ai-round-trip') : String(source.proofSource || ''),
+        lastSuccessAt: success ? now : String(source.lastSuccessAt || ''),
+        lastFailureAt: (!success && attempted) ? now : String(source.lastFailureAt || ''),
+        lastAttemptAt: attempted ? now : String(source.lastAttemptAt || ''),
+        lastError: (!success && attempted) ? String(event.error || 'Hosted home-node AI execution failed.') : '',
+      };
+    });
+  }, []);
+
+  const markHostedHomeNodeManualIntervention = useCallback((eventKind = '', reason = '') => {
+    const kind = String(eventKind || '').trim().toLowerCase();
+    if (!kind) return;
+    setHostedHomeNodeManualIntervention((prev) => {
+      const source = prev && typeof prev === 'object' ? prev : DEFAULT_HOSTED_HOME_NODE_MANUAL_INTERVENTION;
+      return {
+        ...source,
+        required: true,
+        saveUsed: source.saveUsed || kind === 'save',
+        validateUsed: source.validateUsed || kind === 'validate',
+        probeUsed: source.probeUsed || kind === 'probe',
+        autoRehydrationFailedOrBypassed: source.autoRehydrationFailedOrBypassed || kind === 'auto-bypassed',
+        reason: String(reason || `Operator manual intervention recorded (${kind}).`),
+        lastEventAt: new Date().toISOString(),
+      };
+    });
+  }, []);
+
   const saveHomeBridgeUrl = useCallback((candidateUrl = '') => {
     const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
     const requireHttps = resolveBridgeUrlRequireHttps({
@@ -1219,6 +1282,7 @@ export function AIStoreProvider({ children }) {
     setHomeBridgeUrlState(validation.normalizedUrl);
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setBridgeMemoryRehydrated(false);
+    markHostedHomeNodeManualIntervention('save', 'Home Bridge URL saved manually by operator.');
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
       transports: {
@@ -1240,7 +1304,7 @@ export function AIStoreProvider({ children }) {
       }),
     }));
     return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
-  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
+  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, markHostedHomeNodeManualIntervention]);
 
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
@@ -1574,6 +1638,10 @@ export function AIStoreProvider({ children }) {
     clearHomeBridgeUrl,
     homeNodeStatus,
     setHomeNodeStatus,
+    hostedHomeNodeExecutionTruth,
+    hostedHomeNodeManualIntervention,
+    markHostedHomeNodeExecutionTruth,
+    markHostedHomeNodeManualIntervention,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
     setLastExecutionMetadata,
@@ -1642,6 +1710,8 @@ export function AIStoreProvider({ children }) {
     bridgeMemoryRehydrated,
     bridgeAutoRevalidation,
     homeNodeStatus,
+    hostedHomeNodeExecutionTruth,
+    hostedHomeNodeManualIntervention,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
     apiStatus,
@@ -1670,6 +1740,8 @@ export function AIStoreProvider({ children }) {
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
     setHomeNodeStatus,
+    markHostedHomeNodeExecutionTruth,
+    markHostedHomeNodeManualIntervention,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     rememberSuccessfulOllamaConnection,

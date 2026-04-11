@@ -1128,6 +1128,7 @@ export function useAIConsole() {
     reportSurfaceFriction,
     setSurfaceOverride,
     explainMemoryToOperator,
+    markHostedHomeNodeExecutionTruth,
   } = useAIStore();
 
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
@@ -2084,6 +2085,20 @@ export function useAIConsole() {
       }));
 
       setLastExecutionMetadata(executionMetadata);
+      if (finalizedRequestContext?.sessionKind === 'hosted-web') {
+        const selectedRouteKind = requestRuntimeStatus?.finalRouteTruth?.routeKind
+          || finalizedRequestContext?.finalRouteTruth?.routeKind
+          || finalizedRequestContext?.finalRoute?.routeKind
+          || '';
+        if (selectedRouteKind === 'home-node') {
+          markHostedHomeNodeExecutionTruth({
+            attempted: true,
+            success: data.success === true && executionMetadata?.provider_answered !== false,
+            proofSource: 'api/ai/chat via hosted home-node route',
+            error: data.success ? '' : (data.error || data.output_text || 'Hosted home-node request failed.'),
+          });
+        }
+      }
 
       setDebugData({
         request_payload: effectiveRequestPayload,
@@ -2166,6 +2181,18 @@ export function useAIConsole() {
         timeoutDetails,
       });
       setLastExecutionMetadata(timeoutFailureMetadata);
+      if (inFlightRuntimeContext?.sessionKind === 'hosted-web') {
+        const selectedRouteKind = inFlightRuntimeContext?.finalRouteTruth?.routeKind
+          || inFlightRuntimeContext?.finalRoute?.routeKind
+          || '';
+        if (selectedRouteKind === 'home-node') {
+          markHostedHomeNodeExecutionTruth({
+            attempted: true,
+            success: false,
+            error: uiError.error || uiError.output || 'Hosted home-node AI execution failed.',
+          });
+        }
+      }
       setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));
 
       setCommandHistory((prev) => appendCommandHistory(prev, {

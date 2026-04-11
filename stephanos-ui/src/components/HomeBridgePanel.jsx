@@ -32,6 +32,7 @@ export default function HomeBridgePanel() {
     bridgeAutoRevalidation,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
+    markHostedHomeNodeManualIntervention,
     uiLayout,
     togglePanel,
     runtimeStatusModel,
@@ -135,6 +136,7 @@ export default function HomeBridgePanel() {
       reason: 'Manual/LAN bridge URL saved by operator.',
     });
     setFeedback(`Saved bridge URL: ${result.normalizedUrl}`);
+    markHostedHomeNodeManualIntervention('save', 'Bridge Save action used by operator.');
     setValidationState('valid');
     setValidationReason('Bridge URL passes canonical validation rules.');
     setReachabilityState('unknown');
@@ -154,6 +156,7 @@ export default function HomeBridgePanel() {
   }
 
   function handleValidate() {
+    markHostedHomeNodeManualIntervention('validate', 'Bridge Validate action used by operator.');
     const activeUrl = selectedTransport === 'tailscale' ? tailscaleBackendDraft : bridgeDraft;
     const validation = validateStephanosHomeBridgeUrl(activeUrl, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
@@ -168,6 +171,7 @@ export default function HomeBridgePanel() {
   }
 
   async function handleProbe() {
+    markHostedHomeNodeManualIntervention('probe', 'Bridge Check Reachability action used by operator.');
     const candidate = selectedTransport === 'tailscale'
       ? (bridgeTransportPreferences?.transports?.tailscale?.backendUrl || tailscaleBackendDraft)
       : (homeBridgeUrl || bridgeDraft);
