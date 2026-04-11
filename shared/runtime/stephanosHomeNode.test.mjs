@@ -133,6 +133,13 @@ test('validateStephanosHomeBridgeUrl enforces https and non-frontend-origin brid
   });
   assert.equal(invalidSameOrigin.ok, false);
   assert.match(invalidSameOrigin.reason, /must not equal the frontend shell origin/i);
+
+  const localDesktopHttp = validateStephanosHomeBridgeUrl('http://192.168.0.50:8787', {
+    frontendOrigin: 'http://localhost:5173',
+    requireHttps: false,
+  });
+  assert.equal(localDesktopHttp.ok, true);
+  assert.equal(localDesktopHttp.normalizedUrl, 'http://192.168.0.50:8787');
 });
 
 test('resolveStephanosBackendBaseUrl ignores malformed explicit backend target and falls back to valid manual home-node', () => {
@@ -205,4 +212,36 @@ test('persist/read/clear Home Bridge URL stores canonical URL and syncs global b
   setStephanosHomeBridgeGlobal('');
   assert.equal(storage.getItem(STEPHANOS_HOME_BRIDGE_STORAGE_KEY), null);
   assert.equal(globalThis.__STEPHANOS_HOME_BRIDGE_URL, undefined);
+});
+
+test('persist/read Home Bridge URL supports local-desktop http policy and rejects hosted http policy', () => {
+  const storage = {
+    values: new Map(),
+    getItem(key) {
+      return this.values.get(key) ?? null;
+    },
+    setItem(key, value) {
+      this.values.set(key, value);
+    },
+    removeItem(key) {
+      this.values.delete(key);
+    },
+  };
+
+  const localPersist = persistStephanosHomeBridgeUrl('http://192.168.0.10:8787', storage, {
+    frontendOrigin: 'http://localhost:5173',
+    requireHttps: false,
+  });
+  assert.equal(localPersist.ok, true);
+  assert.equal(readPersistedStephanosHomeBridgeUrl(storage, {
+    frontendOrigin: 'http://localhost:5173',
+    requireHttps: false,
+  }), 'http://192.168.0.10:8787');
+
+  const hostedPersist = persistStephanosHomeBridgeUrl('http://192.168.0.10:8787', storage, {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: true,
+  });
+  assert.equal(hostedPersist.ok, false);
+  assert.match(hostedPersist.reason || '', /https/i);
 });

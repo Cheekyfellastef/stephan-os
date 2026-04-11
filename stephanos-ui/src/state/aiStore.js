@@ -45,6 +45,8 @@ import {
   listBridgeTransportDefinitions,
   normalizeBridgeTransportPreferences,
   normalizeBridgeTransportSelection,
+  resolveBridgeValidationTruth,
+  resolveBridgeUrlRequireHttps,
 } from '../../../shared/runtime/homeBridgeTransport.mjs';
 import {
   applyMissionPacketAction,
@@ -308,7 +310,16 @@ function createInitialMemorySnapshot() {
   const portableHomeNodePreference = readPortableStephanosHomeNodePreference() || null;
   const homeNodePreference = readPersistedStephanosHomeNode() || portableHomeNodePreference || null;
   const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
-  const homeBridgeUrl = readPersistedStephanosHomeBridgeUrl() || '';
+  const currentHostname = typeof window !== 'undefined' && window.location?.hostname
+    ? String(window.location.hostname || '').trim().toLowerCase()
+    : '';
+  const initialSessionKind = currentHostname === 'localhost' || currentHostname === '127.0.0.1'
+    ? 'local-desktop'
+    : 'hosted-web';
+  const homeBridgeUrl = readPersistedStephanosHomeBridgeUrl(undefined, {
+    frontendOrigin: currentOrigin,
+    requireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
+  }) || '';
   setStephanosHomeBridgeGlobal(homeBridgeUrl);
   const restoredSession = restoreStephanosSessionMemoryForDevice({
     currentOrigin,
@@ -377,7 +388,12 @@ function createInitialMemorySnapshot() {
     homeBridgeUrl,
     bridgeTransportPreferences: normalizeBridgeTransportPreferences(
       persistedSession?.session?.bridgeTransportPreferences,
-      { homeBridgeUrl, frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '' },
+      {
+        homeBridgeUrl,
+        frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '',
+        manualRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
+        tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'tailscale' }),
+      },
     ),
     surfaceAwareness,
     surfaceOverride,
@@ -520,6 +536,10 @@ export function AIStoreProvider({ children }) {
     surfaceProtocolRecommendations,
     acceptedSurfaceRules,
   ]);
+  const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
+    runtimeStatusModel,
+    selectedTransport: bridgeTransportPreferences?.selectedTransport || 'manual',
+  }), [runtimeStatusModel, bridgeTransportPreferences?.selectedTransport]);
 
   const debugVisible = uiLayout.debugConsole === true;
 
@@ -560,7 +580,18 @@ export function AIStoreProvider({ children }) {
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
           surfaceOverride: normalizeSurfaceOverride(surfaceOverride),
         },
-        bridgeTransportPreferences: normalizeBridgeTransportPreferences(bridgeTransportPreferences, { homeBridgeUrl }),
+        bridgeTransportPreferences: normalizeBridgeTransportPreferences(bridgeTransportPreferences, {
+          homeBridgeUrl,
+          manualRequireHttps: resolveBridgeUrlRequireHttps({
+            sessionKind: bridgeValidationTruth.sessionKind,
+            selectedTransport: 'manual',
+            fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+          }),
+          tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
+            sessionKind: bridgeValidationTruth.sessionKind,
+            selectedTransport: 'tailscale',
+          }),
+        }),
         ui: {
           activeWorkspace: STEPHANOS_ACTIVE_WORKSPACE,
           activeSubview: lastRoute || STEPHANOS_ACTIVE_SUBVIEW,
@@ -944,11 +975,19 @@ export function AIStoreProvider({ children }) {
 
   const saveHomeBridgeUrl = useCallback((candidateUrl = '') => {
     const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
-    const validation = validateStephanosHomeBridgeUrl(candidateUrl, { frontendOrigin, requireHttps: true });
+    const requireHttps = resolveBridgeUrlRequireHttps({
+      sessionKind: bridgeValidationTruth.sessionKind,
+      selectedTransport: 'manual',
+      fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+    });
+    const validation = validateStephanosHomeBridgeUrl(candidateUrl, { frontendOrigin, requireHttps });
     if (!validation.ok) {
       return { ok: false, reason: validation.reason, normalizedUrl: '' };
     }
-    const persisted = persistStephanosHomeBridgeUrl(validation.normalizedUrl);
+    const persisted = persistStephanosHomeBridgeUrl(validation.normalizedUrl, undefined, {
+      frontendOrigin,
+      requireHttps,
+    });
     if (!persisted.ok) {
       return { ok: false, reason: persisted.reason || 'Failed to persist bridge URL.', normalizedUrl: '' };
     }
@@ -965,9 +1004,17 @@ export function AIStoreProvider({ children }) {
           accepted: true,
         },
       },
-    }, { homeBridgeUrl: validation.normalizedUrl, frontendOrigin }));
+    }, {
+      homeBridgeUrl: validation.normalizedUrl,
+      frontendOrigin,
+      manualRequireHttps: requireHttps,
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'tailscale',
+      }),
+    }));
     return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
-  }, []);
+  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
 
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
@@ -985,9 +1032,20 @@ export function AIStoreProvider({ children }) {
           reason: 'Manual/LAN bridge not configured.',
         },
       },
-    }, { homeBridgeUrl: '' }));
+    }, {
+      homeBridgeUrl: '',
+      manualRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'manual',
+        fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+      }),
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'tailscale',
+      }),
+    }));
     return { ok: true };
-  }, []);
+  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
 
 
 
@@ -996,9 +1054,20 @@ export function AIStoreProvider({ children }) {
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
       selectedTransport,
-    }, { homeBridgeUrl }));
+    }, {
+      homeBridgeUrl,
+      manualRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'manual',
+        fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+      }),
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'tailscale',
+      }),
+    }));
     return selectedTransport;
-  }, [homeBridgeUrl]);
+  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
 
   const updateBridgeTransportConfig = useCallback((transportKey, patch = {}) => {
     const normalizedTransport = normalizeBridgeTransportSelection(transportKey);
@@ -1011,8 +1080,19 @@ export function AIStoreProvider({ children }) {
           ...(patch && typeof patch === 'object' ? patch : {}),
         },
       },
-    }, { homeBridgeUrl }));
-  }, [homeBridgeUrl]);
+    }, {
+      homeBridgeUrl,
+      manualRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'manual',
+        fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+      }),
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'tailscale',
+      }),
+    }));
+  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
   const value = useMemo(() => ({
     commandHistory,
     setCommandHistory,

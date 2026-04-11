@@ -80,6 +80,55 @@ function normalizeString(value = '') {
   return String(value || '').trim();
 }
 
+function normalizeSessionKind(value = '') {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === 'local-desktop' || normalized === 'hosted-web') return normalized;
+  return 'unknown';
+}
+
+export function resolveBridgeUrlRequireHttps({
+  sessionKind = '',
+  selectedTransport = 'manual',
+  fallbackRequireHttps = true,
+} = {}) {
+  const normalizedTransport = normalizeBridgeTransportSelection(selectedTransport);
+  if (normalizedTransport === 'tailscale') return true;
+  const normalizedSessionKind = normalizeSessionKind(sessionKind);
+  if (normalizedSessionKind === 'local-desktop') return false;
+  if (normalizedSessionKind === 'hosted-web') return true;
+  return fallbackRequireHttps !== false;
+}
+
+export function resolveBridgeValidationTruth({
+  runtimeStatusModel = null,
+  selectedTransport = 'manual',
+  fallbackRequireHttps = true,
+} = {}) {
+  const model = runtimeStatusModel && typeof runtimeStatusModel === 'object' ? runtimeStatusModel : {};
+  const canonicalTruth = model.canonicalRouteRuntimeTruth && typeof model.canonicalRouteRuntimeTruth === 'object'
+    ? model.canonicalRouteRuntimeTruth
+    : {};
+  const runtimeTruth = model.runtimeTruth && typeof model.runtimeTruth === 'object' ? model.runtimeTruth : {};
+  const finalRouteTruth = model.finalRouteTruth && typeof model.finalRouteTruth === 'object' ? model.finalRouteTruth : {};
+  const runtimeContext = model.runtimeContext && typeof model.runtimeContext === 'object' ? model.runtimeContext : {};
+  const sessionKind = normalizeSessionKind(
+    canonicalTruth.sessionKind
+    || runtimeTruth?.session?.sessionKind
+    || finalRouteTruth.sessionKind
+    || runtimeContext.sessionKind
+    || '',
+  );
+  return {
+    sessionKind,
+    selectedTransport: normalizeBridgeTransportSelection(selectedTransport),
+    requireHttps: resolveBridgeUrlRequireHttps({
+      sessionKind,
+      selectedTransport,
+      fallbackRequireHttps,
+    }),
+  };
+}
+
 function normalizeReason(value = '', fallback = '') {
   return normalizeString(value) || fallback;
 }
@@ -102,9 +151,9 @@ export function normalizeBridgeTransportSelection(value = '') {
   return BRIDGE_TRANSPORT_KEYS.includes(normalized) ? normalized : 'manual';
 }
 
-function normalizeManualTransport(value = {}, { frontendOrigin = '' } = {}) {
+function normalizeManualTransport(value = {}, { frontendOrigin = '', requireHttps = true } = {}) {
   const backendUrl = normalizeString(value.backendUrl);
-  const validation = validateStephanosHomeBridgeUrl(backendUrl, { frontendOrigin, requireHttps: true });
+  const validation = validateStephanosHomeBridgeUrl(backendUrl, { frontendOrigin, requireHttps });
   const enabled = value.enabled !== false;
   return {
     enabled,
@@ -115,11 +164,11 @@ function normalizeManualTransport(value = {}, { frontendOrigin = '' } = {}) {
   };
 }
 
-function normalizeTailscaleTransport(value = {}, { frontendOrigin = '' } = {}) {
+function normalizeTailscaleTransport(value = {}, { frontendOrigin = '', requireHttps = true } = {}) {
   const enabled = value.enabled === true;
   const backendUrlCandidate = normalizeString(value.backendUrl);
   const backendValidation = backendUrlCandidate
-    ? validateStephanosHomeBridgeUrl(backendUrlCandidate, { frontendOrigin, requireHttps: true })
+    ? validateStephanosHomeBridgeUrl(backendUrlCandidate, { frontendOrigin, requireHttps })
     : { ok: false, normalizedUrl: '', reason: 'Tailscale backend URL not set.' };
   const hostOverride = normalizeString(value.hostOverride);
   const tailnetIp = normalizeString(value.tailnetIp);
@@ -166,7 +215,12 @@ export function createDefaultBridgeTransportPreferences() {
   return JSON.parse(JSON.stringify(DEFAULT_BRIDGE_TRANSPORT_PREFERENCES));
 }
 
-export function normalizeBridgeTransportPreferences(value = {}, { homeBridgeUrl = '', frontendOrigin = '' } = {}) {
+export function normalizeBridgeTransportPreferences(value = {}, {
+  homeBridgeUrl = '',
+  frontendOrigin = '',
+  manualRequireHttps = true,
+  tailscaleRequireHttps = true,
+} = {}) {
   const defaults = createDefaultBridgeTransportPreferences();
   const source = value && typeof value === 'object' ? value : {};
   const selectedTransport = normalizeBridgeTransportSelection(source.selectedTransport);
@@ -176,13 +230,13 @@ export function normalizeBridgeTransportPreferences(value = {}, { homeBridgeUrl 
     ...defaults.transports.manual,
     ...transports.manual,
     backendUrl: transports.manual?.backendUrl || homeBridgeUrl || '',
-  }, { frontendOrigin });
+  }, { frontendOrigin, requireHttps: manualRequireHttps });
 
   const tailscale = normalizeTailscaleTransport({
     ...defaults.transports.tailscale,
     ...transports.tailscale,
     backendUrl: transports.tailscale?.backendUrl || '',
-  }, { frontendOrigin });
+  }, { frontendOrigin, requireHttps: tailscaleRequireHttps });
 
   return {
     selectedTransport,
