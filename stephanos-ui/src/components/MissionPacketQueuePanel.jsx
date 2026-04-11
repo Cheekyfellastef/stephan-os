@@ -10,6 +10,7 @@ import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth'
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 import { buildOperatorGuidanceProjection } from '../state/operatorGuidanceRendering.js';
+import { buildOperatorReplyPayload } from '../state/operatorReplyAdapter.js';
 
 function formatList(values = []) {
   if (!Array.isArray(values) || values.length === 0) {
@@ -59,7 +60,12 @@ export default function MissionPacketQueuePanel() {
     if (envelope.workflowAction && envelope.actionApplied === true) {
       applyMissionPacketWorkflowAction(envelope.workflowAction, packetTruth, new Date().toISOString());
     }
-    setNotice(envelope.operatorMessage);
+    const reply = buildOperatorReplyPayload({
+      promptKey: intentKey,
+      orchestrationTruth: { selectors: orchestrationSelectors },
+      latestResponseEnvelope: envelope,
+    });
+    setNotice(reply.text || envelope.operatorMessage);
   };
 
   const handleCopyCodex = async () => {

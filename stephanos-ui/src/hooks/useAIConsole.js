@@ -32,6 +32,7 @@ import { normalizeMissionPacketTruth } from '../state/missionPacketWorkflow.js';
 import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth.js';
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
+import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -1669,19 +1670,14 @@ export function useAIConsole() {
       appendLocalOperatorEntry(`Captured friction as ${event.frictionType} (${event.subsystem}) with confidence ${event.confidence}. I will wait for recurrence before proposing behavior changes.`);
       return;
     }
-    if (normalizedPrompt === 'what is my current intent?') {
-      const currentIntent = runtimeSelectors?.currentMissionState?.intentLabel || workingMemory?.lastIntentType || 'unknown';
-      const intentSource = runtimeSelectors?.currentMissionState?.intentSource || 'unknown';
-      appendLocalOperatorEntry(`Current intent: ${currentIntent} (${intentSource}).`);
-      return;
-    }
-    if (normalizedPrompt === 'show mission packet') {
-      if (runtimeSelectors) {
-        appendLocalOperatorEntry(`Mission packet: ${runtimeSelectors.currentMissionState?.missionTitle || 'not yet established'} | phase=${runtimeSelectors.currentMissionState?.missionPhase || 'unknown'} | next=${runtimeSelectors.nextRecommendedAction || 'Await explicit operator guidance.'}`);
-      } else {
-        const summary = workingMemory?.lastMissionPacketSummary || 'No mission packet summary stored yet.';
-        appendLocalOperatorEntry(summary);
-      }
+    const replyPromptKey = resolveOperatorReplyPromptKey(normalizedPrompt);
+    if (replyPromptKey === 'current-intent' || replyPromptKey === 'show-mission-packet') {
+      const reply = buildOperatorReplyPayload({
+        promptKey: replyPromptKey,
+        orchestrationTruth,
+        fallbackMissionSummary: workingMemory?.lastMissionPacketSummary || 'No mission packet summary stored yet.',
+      });
+      appendLocalOperatorEntry(reply.text || 'No mission packet summary stored yet.');
       return;
     }
     const packetTruth = normalizeMissionPacketTruth(lastExecutionMetadata || {});
@@ -1711,7 +1707,12 @@ export function useAIConsole() {
         resultingBuildAssistanceState: nextSelectors?.buildAssistanceReadiness?.state || lifecycleEnvelope.resultingBuildAssistanceState,
         nextRecommendedAction: nextSelectors?.nextRecommendedAction || lifecycleEnvelope.nextRecommendedAction,
       };
-      appendLocalOperatorEntry(`${enrichedEnvelope.operatorMessage} [${enrichedEnvelope.status}]`);
+      const reply = buildOperatorReplyPayload({
+        promptKey: replyPromptKey,
+        orchestrationTruth: { selectors: nextSelectors || runtimeSelectors || {} },
+        latestResponseEnvelope: enrichedEnvelope,
+      });
+      appendLocalOperatorEntry(reply.text || enrichedEnvelope.operatorMessage || 'No operator feedback available.');
       setDebugData((prev) => ({
         ...(prev || {}),
         latestOperatorCommandEnvelope: enrichedEnvelope,
@@ -1719,18 +1720,32 @@ export function useAIConsole() {
       return;
     }
 
-    if (normalizedPrompt === 'what would stephanos build next?' || normalizedPrompt === 'what should stephanos build next?') {
-      appendLocalOperatorEntry(runtimeSelectors?.nextRecommendedAction || workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.');
+    if (replyPromptKey === 'what-build-next' || replyPromptKey === 'what-can-ai-do' || replyPromptKey === 'why-blocked') {
+      const reply = buildOperatorReplyPayload({
+        promptKey: replyPromptKey,
+        orchestrationTruth,
+        latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
+        fallbackMissionSummary: workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.',
+      });
+      appendLocalOperatorEntry(reply.text || 'No operator guidance is currently available.');
       return;
     }
     if (normalizedPrompt === 'promote this to roadmap') {
-      appendLocalOperatorEntry('Use Mission Packet Queue controls: accept mission packet, then promote. Promotion remains approval-gated and explicit.');
+      const reply = buildOperatorReplyPayload({
+        promptKey: 'what-build-next',
+        orchestrationTruth,
+        fallbackMissionSummary: 'Use Mission Packet Queue controls: accept mission packet, then promote. Promotion remains approval-gated and explicit.',
+      });
+      appendLocalOperatorEntry(`Promotion remains approval-gated and explicit. ${reply.text}`);
       return;
     }
     if (normalizedPrompt === 'explain agent assignments' || normalizedPrompt === 'show execution plan' || normalizedPrompt === 'what tools would be used?') {
-      const buildState = runtimeSelectors?.buildAssistanceReadiness?.state || 'unavailable';
-      const buildExplanation = runtimeSelectors?.buildAssistanceReadiness?.explanation || 'Mission packet details unavailable; run a build/proposal intent first.';
-      appendLocalOperatorEntry(`Build assist (${buildState}): ${buildExplanation}`);
+      const reply = buildOperatorReplyPayload({
+        promptKey: 'what-can-ai-do',
+        orchestrationTruth,
+        latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
+      });
+      appendLocalOperatorEntry(reply.text || 'Build assistance guidance is unavailable.');
       return;
     }
 
