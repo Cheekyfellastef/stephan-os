@@ -430,11 +430,14 @@ export function clearPersistedStephanosLastKnownNode(storage = globalThis?.local
   writeJsonStorage(storage, STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY, null);
 }
 
-export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localStorage) {
+export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localStorage, {
+  frontendOrigin = globalThis?.location?.origin || '',
+  requireHttps = true,
+} = {}) {
   const raw = readJsonStorage(storage, STEPHANOS_HOME_BRIDGE_STORAGE_KEY);
   const validation = validateStephanosHomeBridgeUrl(typeof raw === 'string' ? raw : '', {
-    frontendOrigin: globalThis?.location?.origin || '',
-    requireHttps: true,
+    frontendOrigin,
+    requireHttps,
   });
   if (typeof raw === 'string' && !validation.ok) {
     writeJsonStorage(storage, STEPHANOS_HOME_BRIDGE_STORAGE_KEY, null);
@@ -443,10 +446,13 @@ export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localS
   return validation.ok ? validation.normalizedUrl : '';
 }
 
-export function persistStephanosHomeBridgeUrl(bridgeUrl = '', storage = globalThis?.localStorage) {
+export function persistStephanosHomeBridgeUrl(bridgeUrl = '', storage = globalThis?.localStorage, {
+  frontendOrigin = globalThis?.location?.origin || '',
+  requireHttps = true,
+} = {}) {
   const validation = validateStephanosHomeBridgeUrl(bridgeUrl, {
-    frontendOrigin: globalThis?.location?.origin || '',
-    requireHttps: true,
+    frontendOrigin,
+    requireHttps,
   });
   if (!validation.ok) {
     return { ok: false, reason: validation.reason, normalizedUrl: '' };

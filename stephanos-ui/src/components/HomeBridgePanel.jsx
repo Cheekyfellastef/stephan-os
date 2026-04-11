@@ -5,6 +5,8 @@ import { useAIStore } from '../state/aiStore';
 import {
   normalizeBridgeTransportSelection,
   projectHomeBridgeTransportTruth,
+  resolveBridgeValidationTruth,
+  resolveBridgeUrlRequireHttps,
 } from '../../../shared/runtime/homeBridgeTransport.mjs';
 import { validateStephanosHomeBridgeUrl } from '../../../shared/runtime/stephanosHomeNode.mjs';
 
@@ -58,6 +60,15 @@ export default function HomeBridgePanel() {
     [runtimeStatusModel?.runtimeContext?.routeCandidates],
   );
   const routeWinner = runtimeStatusModel?.runtimeContext?.routeCandidateWinner || null;
+  const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
+    runtimeStatusModel,
+    selectedTransport,
+  }), [runtimeStatusModel, selectedTransport]);
+  const requireHttps = useMemo(() => resolveBridgeUrlRequireHttps({
+    sessionKind: bridgeValidationTruth.sessionKind,
+    selectedTransport,
+    fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+  }), [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, selectedTransport]);
   const transportTruth = useMemo(() => projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
     runtimeBridge: savedBridge,
   }), [bridgeTransportPreferences, savedBridge]);
@@ -76,7 +87,7 @@ export default function HomeBridgePanel() {
 
     const validation = validateStephanosHomeBridgeUrl(activeUrl, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
-      requireHttps: true,
+      requireHttps,
     });
 
     if (!validation.ok) {
@@ -93,7 +104,7 @@ export default function HomeBridgePanel() {
       setReachabilityState(savedBridge.reachability);
       setReachabilityReason(savedBridge.reason || 'Runtime bridge diagnostics available.');
     }
-  }, [homeBridgeUrl, savedBridge.reachability, savedBridge.reason, selectedTransport, bridgeTransportPreferences?.transports?.tailscale?.backendUrl, tailscaleBackendDraft]);
+  }, [homeBridgeUrl, requireHttps, savedBridge.reachability, savedBridge.reason, selectedTransport, bridgeTransportPreferences?.transports?.tailscale?.backendUrl, tailscaleBackendDraft]);
 
   function handleSaveManual() {
     const result = saveHomeBridgeUrl(bridgeDraft);
@@ -134,7 +145,7 @@ export default function HomeBridgePanel() {
     const activeUrl = selectedTransport === 'tailscale' ? tailscaleBackendDraft : bridgeDraft;
     const validation = validateStephanosHomeBridgeUrl(activeUrl, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
-      requireHttps: true,
+      requireHttps,
     });
     setValidationState(validation.ok ? 'valid' : 'invalid');
     setValidationReason(validation.ok ? 'Bridge URL passes canonical validation rules.' : (validation.reason || 'Invalid bridge URL.'));
@@ -150,7 +161,7 @@ export default function HomeBridgePanel() {
       : (homeBridgeUrl || bridgeDraft);
     const validation = validateStephanosHomeBridgeUrl(candidate, {
       frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
-      requireHttps: true,
+      requireHttps,
     });
     if (!validation.ok) {
       setReachabilityState('invalid');
