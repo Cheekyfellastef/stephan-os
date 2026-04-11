@@ -30,6 +30,7 @@ const PROMPT_ALIASES = Object.freeze({
   'complete mission': 'complete-mission',
   'fail mission': 'fail-mission',
   'rollback mission': 'rollback-mission',
+  'resume mission': 'resume-mission',
 });
 
 function summarizeAvailableCommands(guidance) {
@@ -108,6 +109,9 @@ export function buildOperatorReplyPayload({
     'complete-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'fail-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'rollback-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'resume-mission': guidance?.resumabilitySummary?.hasResumableMission
+      ? `You can resume this mission: ${asText(guidance?.resumabilitySummary?.missionSummary, 'unknown')} | last=${asText(guidance?.resumabilitySummary?.lastExternalAction, 'none')} | next=${asText(guidance?.resumabilitySummary?.nextRecommendedAction, guidance.nextStepSummary)}`
+      : `No resumable mission found. ${asText(guidance?.resumabilitySummary?.nextRecommendedAction, guidance.nextStepSummary)}` ,
     'mark-handoff-applied': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'mark-handoff-failed': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'mark-handoff-rolled-back': formatEnvelopeSummary(guidance, latestResponseEnvelope),

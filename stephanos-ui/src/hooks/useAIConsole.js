@@ -1116,7 +1116,9 @@ export function useAIConsole() {
     lastExecutionMetadata,
     setLastExecutionMetadata,
     missionPacketWorkflow,
+    missionLineage,
     applyMissionPacketWorkflowAction,
+    applyMissionLineageAction,
     setWorkingMemory,
     workingMemory,
     uiLayout,
@@ -1685,6 +1687,7 @@ export function useAIConsole() {
       commandText: normalizedPrompt,
       selectors: runtimeSelectors || {},
       missionPacketWorkflow,
+      missionLineage,
       packetTruth,
       now: new Date().toISOString(),
     });
@@ -1711,6 +1714,12 @@ export function useAIConsole() {
         promptKey: replyPromptKey,
         orchestrationTruth: { selectors: nextSelectors || runtimeSelectors || {} },
         latestResponseEnvelope: enrichedEnvelope,
+      });
+      applyMissionLineageAction({
+        packetTruth,
+        selectors: nextSelectors || runtimeSelectors || {},
+        envelope: enrichedEnvelope,
+        now: new Date().toISOString(),
       });
       appendLocalOperatorEntry(reply.text || enrichedEnvelope.operatorMessage || 'No operator feedback available.');
       setDebugData((prev) => ({

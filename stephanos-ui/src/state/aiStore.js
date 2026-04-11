@@ -52,6 +52,11 @@ import {
   normalizeMissionPacketWorkflow,
 } from './missionPacketWorkflow';
 import {
+  applyMissionLineageUpdate,
+  createDefaultMissionLineageStore,
+  normalizeMissionLineageStore,
+} from './missionLineage.js';
+import {
   normalizeSurfaceOverride,
   resolveSurfaceAwareness,
   resolveSurfaceUiLayoutDefaults,
@@ -359,6 +364,9 @@ function createInitialMemorySnapshot() {
       missionPacketWorkflow: normalizeMissionPacketWorkflow(
         persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
       ),
+      missionLineage: normalizeMissionLineageStore(
+        persistedSession?.working?.missionLineage || createDefaultMissionLineageStore(),
+      ),
     },
     projectMemory: {
       ...defaults.project,
@@ -415,6 +423,9 @@ export function AIStoreProvider({ children }) {
   );
   const [missionPacketWorkflow, setMissionPacketWorkflow] = useState(
     normalizeMissionPacketWorkflow(initialSnapshot.workingMemory?.missionPacketWorkflow || createDefaultMissionPacketWorkflow()),
+  );
+  const [missionLineage, setMissionLineage] = useState(
+    normalizeMissionLineageStore(initialSnapshot.workingMemory?.missionLineage || createDefaultMissionLineageStore()),
   );
   const [projectMemory] = useState(initialSnapshot.projectMemory);
   const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
@@ -566,6 +577,7 @@ export function AIStoreProvider({ children }) {
       working: {
         ...workingMemory,
         missionPacketWorkflow,
+        missionLineage,
         surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(surfaceFrictionEvents),
         surfaceFrictionPatterns: sanitizeObjectList(surfaceFrictionPatterns, 12),
         surfaceProtocolRecommendations: sanitizeObjectList(surfaceProtocolRecommendations, 12),
@@ -593,6 +605,7 @@ export function AIStoreProvider({ children }) {
     commandHistory,
     workingMemory,
     missionPacketWorkflow,
+    missionLineage,
     surfaceFrictionEvents,
     surfaceFrictionPatterns,
     surfaceProtocolRecommendations,
@@ -1057,6 +1070,8 @@ export function AIStoreProvider({ children }) {
     setWorkingMemory,
     missionPacketWorkflow,
     setMissionPacketWorkflow,
+    missionLineage,
+    setMissionLineage,
     projectMemory,
     homeNodePreference,
     setHomeNodePreference,
@@ -1095,6 +1110,9 @@ export function AIStoreProvider({ children }) {
     applyMissionPacketWorkflowAction: (action, packetTruth, now) => {
       setMissionPacketWorkflow((prev) => applyMissionPacketAction(prev, { action, packetTruth, now }));
     },
+    applyMissionLineageAction: ({ packetTruth, selectors, envelope, now }) => {
+      setMissionLineage((prev) => applyMissionLineageUpdate(prev, { packetTruth, selectors, envelope, now }));
+    },
   }), [
     commandHistory,
     status,
@@ -1125,6 +1143,7 @@ export function AIStoreProvider({ children }) {
     surfaceOverride,
     workingMemory,
     missionPacketWorkflow,
+    missionLineage,
     projectMemory,
     homeNodePreference,
     homeNodeLastKnown,

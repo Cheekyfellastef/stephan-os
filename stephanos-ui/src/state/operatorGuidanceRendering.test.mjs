@@ -84,3 +84,25 @@ test('buildOperatorGuidanceProjection includes codex pipeline summary fields', (
   assert.equal(projection.codexPipelineSummary.validationStatus, 'not-run');
   assert.equal(projection.codexPipelineSummary.lastOperatorAction, 'mark-handoff-applied');
 });
+
+
+test('buildOperatorGuidanceProjection projects mission resumability summary', () => {
+  const projection = buildOperatorGuidanceProjection({
+    orchestrationTruth: {
+      selectors: {
+        missionResumability: {
+          hasResumableMission: true,
+          resumableMissionCount: 2,
+          missionSummary: 'Mission Four (execution-ready)',
+          lastExternalAction: 'prepare-codex-handoff',
+          nextRecommendedAction: 'Start mission',
+          warnings: ['none'],
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.resumabilitySummary.hasResumableMission, true);
+  assert.equal(projection.resumabilitySummary.resumableMissionCount, 2);
+  assert.match(projection.resumabilitySummary.missionSummary, /Mission Four/);
+});

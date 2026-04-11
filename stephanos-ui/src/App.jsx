@@ -106,6 +106,7 @@ export default function App() {
     paneLayout,
     lastExecutionMetadata,
     missionPacketWorkflow,
+    missionLineage,
     surfaceFrictionPatterns,
     debugData,
   } = useAIStore();
@@ -208,8 +209,9 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     missionPacketWorkflow,
+    missionLineage,
     finalRouteTruth,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth, missionPacketWorkflow]);
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth, missionPacketWorkflow, missionLineage]);
   const orchestrationTruth = useMemo(() => ({
     canonicalMemoryContext,
     canonicalCurrentIntent,
