@@ -1128,3 +1128,26 @@ test('buildSupportSnapshot projects canonical source/dist alignment truth', () =
   assert.match(snapshot, /Build Alignment Action Required: yes/);
   assert.match(snapshot, /Dist Fingerprint \(served\): marker-old/);
 });
+
+test('buildSupportSnapshot reports remembered tailscale pending probe guidance', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-awaiting-validation',
+        bridgeMemoryTransport: 'tailscale',
+        bridgeAutoRevalidationState: 'probing',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /Remembered Tailscale bridge pending probe on this hosted surface/);
+});

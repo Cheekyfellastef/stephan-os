@@ -81,6 +81,14 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       'remembered-revalidated',
       'remembered-unreachable',
     ].includes(rememberedBridgeReconciliationState);
+  const hostedRememberedTailscaleState = hostedSession
+    && bridgeTruth.bridgeMemoryTransport === 'tailscale'
+    && Boolean(rememberedBridgeUrl)
+    && [
+      'remembered-awaiting-validation',
+      'remembered-revalidated',
+      'remembered-unreachable',
+    ].includes(rememberedBridgeReconciliationState);
   const preferLanHomeNode = hostedSession && onLanSession;
   const preferBridgeHomeNode = hostedSession && !onLanSession;
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
@@ -118,16 +126,20 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
   ];
   const compatibilityCandidates = [
-    createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
-    createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
-    createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', diagnostics['home-node-lan']?.actualTarget),
-    createBackendTargetCandidate('routeDiagnostics.home-node-lan.target', diagnostics['home-node-lan']?.target),
+    ...(!hostedRememberedTailscaleState ? [
+      createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
+      createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', diagnostics['home-node-lan']?.actualTarget),
+      createBackendTargetCandidate('routeDiagnostics.home-node-lan.target', diagnostics['home-node-lan']?.target),
+    ] : []),
     createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', diagnostics['home-node-bridge']?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', diagnostics['home-node-bridge']?.target),
     createBackendTargetCandidate('runtimeContext.backendTargetResolvedUrl', runtimeContext.backendTargetResolvedUrl),
-    createBackendTargetCandidate('runtimeContext.actualTargetUsed', runtimeContext.actualTargetUsed),
-    createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
-    createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
+    ...(!hostedRememberedTailscaleState ? [
+      createBackendTargetCandidate('runtimeContext.actualTargetUsed', runtimeContext.actualTargetUsed),
+      createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
+      createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
+    ] : []),
     createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
     createBackendTargetCandidate('bridgeTransport.tailscale.backendUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
     createBackendTargetCandidate('fallback.actualTarget', fallbackUrl),
@@ -322,6 +334,44 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       ? 'lan-companion'
       : 'off-network';
   const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
+  const hostedRememberedTailscaleCandidatePromotion = sessionKind === 'hosted-web'
+    && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
+    && Boolean(bridgeTransportTruth.bridgeMemoryUrl)
+    && [
+      'remembered-awaiting-validation',
+      'remembered-revalidated',
+      'remembered-unreachable',
+    ].includes(bridgeTransportTruth.bridgeMemoryReconciliationState);
+  if (hostedRememberedTailscaleCandidatePromotion && bridgeTransportPreferences.selectedTransport !== 'tailscale') {
+    bridgeTransportPreferences = normalizeBridgeTransportPreferences({
+      ...bridgeTransportPreferences,
+      selectedTransport: 'tailscale',
+      transports: {
+        ...(bridgeTransportPreferences?.transports || {}),
+        tailscale: {
+          ...(bridgeTransportPreferences?.transports?.tailscale || {}),
+          enabled: true,
+          backendUrl: bridgeTransportTruth.bridgeMemoryUrl,
+          accepted: bridgeTransportTruth?.tailscale?.accepted === true,
+          active: bridgeTransportTruth?.tailscale?.accepted === true
+            && bridgeTransportTruth?.tailscale?.reachable === true,
+          reachability: bridgeTransportTruth?.tailscale?.accepted === true
+            ? (bridgeTransportTruth?.tailscale?.reachable === true ? 'reachable' : 'unknown')
+            : 'pending',
+          usable: bridgeTransportTruth?.tailscale?.usable === true,
+        },
+      },
+    }, {
+      homeBridgeUrl: homeNodeBridge.backendUrl || '',
+      frontendOrigin,
+    });
+    bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+      runtimeBridge: homeNodeBridge,
+      bridgeMemory: runtimeContext.bridgeMemory,
+      bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
+      autoRevalidation: runtimeContext.bridgeAutoRevalidation,
+    });
+  }
   const hostedRememberedTailscalePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
@@ -365,16 +415,21 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       reason: bridgeTransportTruth?.tailscale?.reason || homeNodeBridge.reason,
     }
     : homeNodeBridge;
-  const compatiblePreferredTarget = resolveCompatibleUrl(
-    runtimeContext.preferredTarget,
-    homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
-    { allowLoopback: launcherLocal },
-  );
-  const compatibleActualTarget = resolveCompatibleUrl(
-    runtimeContext.actualTargetUsed,
-    homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
-    { allowLoopback: launcherLocal },
-  );
+  const hostedRememberedTailscaleCanonicalTarget = hostedRememberedTailscaleCandidatePromotion
+    ? String(bridgeTransportTruth?.tailscale?.backendUrl || bridgeTransportTruth.bridgeMemoryUrl || '').trim()
+    : '';
+  const compatiblePreferredTarget = hostedRememberedTailscaleCanonicalTarget
+    || resolveCompatibleUrl(
+      runtimeContext.preferredTarget,
+      homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
+      { allowLoopback: launcherLocal },
+    );
+  const compatibleActualTarget = hostedRememberedTailscaleCanonicalTarget
+    || resolveCompatibleUrl(
+      runtimeContext.actualTargetUsed,
+      homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
+      { allowLoopback: launcherLocal },
+    );
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
   const backendTargetCandidates = collectBackendTargetCandidates({
