@@ -15,7 +15,7 @@ export default function ActionHints({ runtimeStatusModel }) {
       as="aside"
       panelId="actionHintsPanel"
       title="Action Hints"
-      description="Operational hints derived from final route and provider truth."
+      description="Mission-aware operator guidance derived from canonical orchestration selectors and runtime truth."
       className="action-hints-panel"
       isOpen={uiLayout.actionHintsPanel !== false}
       onToggle={() => togglePanel('actionHintsPanel')}

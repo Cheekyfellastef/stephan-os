@@ -116,6 +116,9 @@ function formatOrchestrationTruth(orchestrationTruth = {}) {
   const memory = orchestrationTruth?.canonicalMemoryContext || {};
   const intent = orchestrationTruth?.canonicalCurrentIntent || {};
   const packet = orchestrationTruth?.canonicalMissionPacket || {};
+  const selectors = orchestrationTruth?.selectors || {};
+  const missionState = selectors?.currentMissionState || {};
+  const buildAssist = selectors?.buildAssistanceReadiness || {};
   const lines = [
     `memory.continuityLoopState: ${sanitizeLine(memory?.activeMissionContinuity?.continuityLoopState) || 'unknown'}`,
     `memory.sparseData: ${formatScalar(memory?.sparseData === true)}`,
@@ -124,6 +127,13 @@ function formatOrchestrationTruth(orchestrationTruth = {}) {
     `intent.executionState: ${sanitizeLine(intent?.executionState?.status) || 'unknown'}`,
     `missionPacket.currentPhase: ${sanitizeLine(packet?.currentPhase) || 'unknown'}`,
     `missionPacket.nextAction: ${sanitizeLine(packet?.recommendedNextAction) || 'not yet established'}`,
+    `mission.phase: ${sanitizeLine(missionState?.missionPhase) || 'unknown'}`,
+    `mission.intentSource: ${sanitizeLine(missionState?.intentSource) || 'unknown'}`,
+    `mission.blocked: ${formatScalar(selectors?.missionBlocked === true)}`,
+    `mission.blockage: ${sanitizeLine(selectors?.blockageExplanation) || 'none'}`,
+    `mission.nextAction: ${sanitizeLine(selectors?.nextRecommendedAction) || 'Await explicit operator guidance.'}`,
+    `buildAssistance.state: ${sanitizeLine(buildAssist?.state) || 'unavailable'}`,
+    `buildAssistance.approvalRequired: ${formatScalar(buildAssist?.approvalRequired === true)}`,
   ];
 
   const continuityEvents = Array.isArray(memory?.activeMissionContinuity?.recentEvents)

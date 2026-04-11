@@ -1612,7 +1612,7 @@ export function useAIConsole() {
     routeMode,
   ]);
 
-  async function submitPrompt(rawPrompt, { telemetryEntries = [] } = {}) {
+  async function submitPrompt(rawPrompt, { telemetryEntries = [], orchestrationTruth = null } = {}) {
     const prompt = rawPrompt.trim();
     if (!prompt) return;
     if (prompt === '/clear') {
@@ -1641,6 +1641,8 @@ export function useAIConsole() {
       setLastRoute('assistant');
       setStatus('idle');
     };
+    const runtimeSelectors = orchestrationTruth?.selectors || null;
+
 
     if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
       const explanation = explainMemoryToOperator({ mode: 'summary' });
@@ -1663,23 +1665,36 @@ export function useAIConsole() {
       return;
     }
     if (normalizedPrompt === 'what is my current intent?') {
-      const currentIntent = workingMemory?.lastIntentType || 'unknown';
-      appendLocalOperatorEntry(`Current intent type: ${currentIntent}.`);
+      const currentIntent = runtimeSelectors?.currentMissionState?.intentLabel || workingMemory?.lastIntentType || 'unknown';
+      const intentSource = runtimeSelectors?.currentMissionState?.intentSource || 'unknown';
+      appendLocalOperatorEntry(`Current intent: ${currentIntent} (${intentSource}).`);
       return;
     }
     if (normalizedPrompt === 'show mission packet') {
-      const summary = workingMemory?.lastMissionPacketSummary || 'No mission packet summary stored yet.';
-      appendLocalOperatorEntry(summary);
+      if (runtimeSelectors) {
+        appendLocalOperatorEntry(`Mission packet: ${runtimeSelectors.currentMissionState?.missionTitle || 'not yet established'} | phase=${runtimeSelectors.currentMissionState?.missionPhase || 'unknown'} | next=${runtimeSelectors.nextRecommendedAction || 'Await explicit operator guidance.'}`);
+      } else {
+        const summary = workingMemory?.lastMissionPacketSummary || 'No mission packet summary stored yet.';
+        appendLocalOperatorEntry(summary);
+      }
       return;
     }
     if (normalizedPrompt === 'why is this blocked?') {
-      const summary = workingMemory?.lastMissionPacketSummary || '';
-      const blocked = summary.toLowerCase().includes('blocked') ? summary : 'Mission is not currently blocked or no blocked mission was recorded.';
-      appendLocalOperatorEntry(blocked);
+      if (runtimeSelectors?.missionBlocked === true) {
+        appendLocalOperatorEntry(`Blocked: ${runtimeSelectors.blockageExplanation || 'blockage reason unavailable'}`);
+      } else {
+        appendLocalOperatorEntry('Mission is not currently blocked or no blocked mission was recorded.');
+      }
       return;
     }
-    if (normalizedPrompt === 'what would stephanos build next?') {
-      appendLocalOperatorEntry(workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.');
+    if (normalizedPrompt === 'what would stephanos build next?' || normalizedPrompt === 'what should stephanos build next?') {
+      appendLocalOperatorEntry(runtimeSelectors?.nextRecommendedAction || workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.');
+      return;
+    }
+    if (normalizedPrompt === 'what can the ai do right now?' || normalizedPrompt === 'can you help build this?' || normalizedPrompt === 'can you help build this') {
+      const buildState = runtimeSelectors?.buildAssistanceReadiness?.state || 'unavailable';
+      const buildExplanation = runtimeSelectors?.buildAssistanceReadiness?.explanation || 'Build assistance is unavailable until mission and intent truth are established.';
+      appendLocalOperatorEntry(`AI assistance ${buildState}: ${buildExplanation}`);
       return;
     }
     if (normalizedPrompt === 'promote this to roadmap') {
@@ -1687,7 +1702,9 @@ export function useAIConsole() {
       return;
     }
     if (normalizedPrompt === 'explain agent assignments' || normalizedPrompt === 'show execution plan' || normalizedPrompt === 'prepare codex handoff' || normalizedPrompt === 'what tools would be used?') {
-      appendLocalOperatorEntry(workingMemory?.lastMissionPacketSummary || 'Mission packet details unavailable; run a build/proposal intent first.');
+      const buildState = runtimeSelectors?.buildAssistanceReadiness?.state || 'unavailable';
+      const buildExplanation = runtimeSelectors?.buildAssistanceReadiness?.explanation || 'Mission packet details unavailable; run a build/proposal intent first.';
+      appendLocalOperatorEntry(`Build assist (${buildState}): ${buildExplanation}`);
       return;
     }
 

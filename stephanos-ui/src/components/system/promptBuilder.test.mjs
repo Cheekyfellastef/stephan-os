@@ -89,12 +89,20 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
         currentPhase: 'awaiting-approval',
         recommendedNextAction: 'Await explicit operator approval',
       },
+      selectors: {
+        currentMissionState: { missionPhase: 'awaiting-approval', intentSource: 'explicit' },
+        missionBlocked: false,
+        nextRecommendedAction: 'Review mission packet and choose accept/reject/defer explicitly.',
+        buildAssistanceReadiness: { state: 'analysis-ready', approvalRequired: true },
+      },
     },
   });
   assert.match(prompt, /## ORCHESTRATION TRUTH/);
   assert.match(prompt, /memory\.continuityLoopState: live/);
   assert.match(prompt, /intent\.operatorIntentSource: explicit/);
   assert.match(prompt, /missionPacket\.currentPhase: awaiting-approval/);
+  assert.match(prompt, /mission\.phase: awaiting-approval/);
+  assert.match(prompt, /buildAssistance\.state: analysis-ready/);
 });
 
 test('buildCopyResult returns success message when clipboard write succeeds', async () => {
