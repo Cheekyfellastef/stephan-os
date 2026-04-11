@@ -996,6 +996,18 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
       backendTargetResolutionSource: 'bridgeTransport:tailscale',
       backendTargetResolvedUrl: 'https://100.64.0.10',
       backendTargetCandidates: [],
+      hostedHomeNodeReadiness: {
+        aiExecutionProven: false,
+        executionProofSource: '',
+        executionLastSuccessAt: '',
+        executionState: 'unproven',
+        operationalReadiness: 'transport-only',
+        backendReachable: true,
+        manualIntervention: {
+          required: true,
+          reason: 'Hosted bridge became reachable only after operator/manual intervention.',
+        },
+      },
     },
     runtimeRouteTruth: {},
     runtimeReachabilityTruth: {},
@@ -1017,6 +1029,11 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Bridge Memory Persistence State: save-persisted/);
   assert.match(snapshot, /Bridge Memory Persistence Reason: Remembered tailscale Home Bridge config persisted to shared durable memory\./);
   assert.match(snapshot, /Bridge Auto Revalidation State: unreachable/);
+  assert.match(snapshot, /Home Bridge Execution Proven: no/);
+  assert.match(snapshot, /Home Bridge Execution State: unproven/);
+  assert.match(snapshot, /Home Bridge Operational Readiness: transport-only/);
+  assert.match(snapshot, /Home Bridge Manual Intervention Required: yes/);
+  assert.match(snapshot, /Home Bridge reachable but AI execution not yet proven/i);
   assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
 });
 

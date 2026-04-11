@@ -212,6 +212,34 @@ function normalizeSurfaceAwareness(surfaceAwareness = {}) {
   };
 }
 
+function normalizeHostedHomeNodeExecutionTruth(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const proven = source.proven === true;
+  const state = String(source.state || (proven ? 'proven' : 'unproven')).trim().toLowerCase();
+  return {
+    state: ['proven', 'failed', 'unproven'].includes(state) ? state : (proven ? 'proven' : 'unproven'),
+    proven,
+    proofSource: String(source.proofSource || ''),
+    lastSuccessAt: String(source.lastSuccessAt || ''),
+    lastFailureAt: String(source.lastFailureAt || ''),
+    lastAttemptAt: String(source.lastAttemptAt || ''),
+    lastError: String(source.lastError || ''),
+  };
+}
+
+function normalizeHostedHomeNodeManualIntervention(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    required: source.required === true,
+    saveUsed: source.saveUsed === true,
+    validateUsed: source.validateUsed === true,
+    probeUsed: source.probeUsed === true,
+    autoRehydrationFailedOrBypassed: source.autoRehydrationFailedOrBypassed === true,
+    reason: String(source.reason || ''),
+    lastEventAt: String(source.lastEventAt || ''),
+  };
+}
+
 function buildCanonicalHostedRouteTruth({
   runtimeContext = {},
   selectedRouteKind = 'unavailable',
@@ -227,6 +255,9 @@ function buildCanonicalHostedRouteTruth({
     : (runtimeContext.backendTargetInvalidReason ? 'invalid' : 'unresolved');
   const homeNodeDiagnostic = runtimeContext.routeDiagnostics?.['home-node'] || {};
   const backendTargetDiagnostic = runtimeContext.routeDiagnostics?.['backend-target'] || {};
+  const homeNodeExecutionTruth = runtimeContext.homeNodeExecutionTruth && typeof runtimeContext.homeNodeExecutionTruth === 'object'
+    ? runtimeContext.homeNodeExecutionTruth
+    : {};
   const selectedKind = String(selectedRouteKind || 'unavailable');
   const selectedRouteReachable = selectedRoute?.available === true;
   const selectedRouteUsable = selectedRoute?.usable === true;
@@ -256,6 +287,11 @@ function buildCanonicalHostedRouteTruth({
       message: homeNodeDiagnostic.blockedReason
         || homeNodeDiagnostic.reason
         || 'Hosted home-node publication is misconfigured or unreachable.',
+    });
+  } else if (selectedKind === 'home-node' && homeNodeExecutionTruth.proven !== true) {
+    blockingIssues.push({
+      code: 'hosted-home-node-ai-execution-unproven',
+      message: 'Hosted home-node route requires successful AI round-trip before considered operational.',
     });
   }
 
@@ -485,6 +521,45 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
 
   const surfaceAwareness = normalizeSurfaceAwareness(runtimeContext.surfaceAwareness);
   const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
+  const homeNodeExecutionTruth = normalizeHostedHomeNodeExecutionTruth(runtimeContext.homeNodeExecutionTruth);
+  const normalizedManualIntervention = normalizeHostedHomeNodeManualIntervention(runtimeContext.homeNodeManualIntervention);
+  const autoRevalidationState = String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim().toLowerCase();
+  const hostedSession = sessionKind === 'hosted-web';
+  const homeNodeProbe = runtimeContext.routeDiagnostics?.['home-node'] || {};
+  const bridgeProbe = runtimeContext.routeDiagnostics?.['home-node-bridge'] || {};
+  const bridgeTransportReachable = bridgeProbe.available === true
+    || canonicalHomeNodeBridge.reachability === 'reachable'
+    || bridgeTransportTruth.reachability === 'reachable';
+  const backendReachableFromProbe = homeNodeProbe.backendReachable === true
+    || backendTargetRouteDiagnostic.available === true
+    || bridgeTransportReachable;
+  const inferredManualIntervention = hostedSession && bridgeTransportReachable
+    && normalizedManualIntervention.required !== true
+    && ['skipped', 'validation-failed', 'unreachable'].includes(autoRevalidationState);
+  const homeNodeManualIntervention = inferredManualIntervention
+    ? {
+      ...normalizedManualIntervention,
+      required: true,
+      autoRehydrationFailedOrBypassed: true,
+      reason: normalizedManualIntervention.reason || 'Hosted bridge became reachable only after operator/manual intervention; auto rehydration did not complete.',
+    }
+    : normalizedManualIntervention;
+  const hostedHomeNodeReadiness = hostedSession
+    ? {
+      remembered: bridgeTransportTruth.bridgeMemoryPresent === true,
+      rehydrated: bridgeTransportTruth.bridgeMemoryRehydrated === true,
+      validated: bridgeTransportTruth.bridgeMemoryValidationState === 'validated'
+        || canonicalHomeNodeBridge.accepted === true,
+      transportReachable: bridgeTransportReachable,
+      backendReachable: backendReachableFromProbe,
+      aiExecutionProven: homeNodeExecutionTruth.proven === true && homeNodeExecutionTruth.state === 'proven',
+      executionState: homeNodeExecutionTruth.state || 'unproven',
+      executionProofSource: homeNodeExecutionTruth.proofSource || '',
+      executionLastSuccessAt: homeNodeExecutionTruth.lastSuccessAt || '',
+      operationalReadiness: homeNodeExecutionTruth.proven === true ? 'execution-usable' : (backendReachableFromProbe ? 'transport-only' : 'not-ready'),
+      manualIntervention: homeNodeManualIntervention,
+    }
+    : null;
   return {
     frontendOrigin,
     apiBaseUrl,
@@ -529,6 +604,9 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     loopbackBackendMismatch,
     surfaceAwareness,
     surfaceRoutingBiasHint,
+    homeNodeExecutionTruth,
+    homeNodeManualIntervention,
+    hostedHomeNodeReadiness,
   };
 }
 
@@ -955,6 +1033,7 @@ function buildRoutePreference(runtimeContext = {}) {
   const bridgeDiagnostic = runtimeContext.routeDiagnostics?.['home-node-bridge'] || {};
   const hostedBridgeReady = runtimeContext.sessionKind === 'hosted-web'
     && runtimeContext.deviceContext !== 'lan-companion'
+    && runtimeContext.homeNodeExecutionTruth?.proven === true
     && (
       String(homeNodeDiagnostic.routeVariant || '').includes('bridge')
       || bridgeDiagnostic.available === true
@@ -1061,6 +1140,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const homeNodeMisconfigured = homeNodeReachable && runtimeContext.publishedClientRouteState === 'misconfigured';
   const homeNodePublicationBlocked = homeNodeProbe.misconfigured === true
     || (homeNodeProbe.backendReachable === true && homeNodeProbe.uiReachable === false);
+  const hostedHomeNodeExecutionTruth = runtimeContext.homeNodeExecutionTruth || {};
+  const hostedExecutionProven = runtimeContext.sessionKind !== 'hosted-web'
+    || hostedHomeNodeExecutionTruth.proven === true;
+  const hostedExecutionBlockedReason = runtimeContext.sessionKind === 'hosted-web' && !hostedExecutionProven
+    ? 'Home Bridge reachable but AI execution not yet proven; successful hosted AI round-trip is required before home-node is operational.'
+    : '';
   const distProbe = diagnostics.dist || {};
   const localDesktopAvailable = localDesktopSession && backendAvailable;
   const localDesktopProbeAvailable = localDesktopProbe.available === true;
@@ -1134,6 +1219,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : (runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : (runtimeContext.sessionKind === 'hosted-web' && effectiveHomeNodeReachable && !hostedExecutionProven)
+        ? 'Bridge verified; backend reachable; AI path still unavailable until hosted execution proof succeeds.'
         : effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
@@ -1143,10 +1230,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           : 'Home PC node is not configured'),
       blockedReason: homeNodeOverrideActive
         ? 'home-node/manual route source ignored by local operator override'
+        : hostedExecutionBlockedReason
+        ? hostedExecutionBlockedReason
         : effectiveHomeNodeConfigured
         ? (homeNodeProbe.blockedReason || (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
         : 'home node is not configured',
-      usable: effectiveHomeNodeReachable && !homeNodePublicationBlocked,
+      usable: effectiveHomeNodeReachable && !homeNodePublicationBlocked && hostedExecutionProven,
     }, {
       ...homeNodeProbe,
       configured: effectiveHomeNodeConfigured || hostedResolvedBackendCandidate,
@@ -1159,6 +1248,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : (homeNodeProbe.source || runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : (runtimeContext.sessionKind === 'hosted-web' && effectiveHomeNodeReachable && !hostedExecutionProven)
+        ? 'Hosted home-node route requires successful AI round-trip before considered operational.'
         : homeNodeProbe.reason || (effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
@@ -1168,12 +1259,14 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           : 'Home PC node is not configured')),
       blockedReason: homeNodeOverrideActive
         ? 'home-node/manual route source ignored by local operator override'
+        : hostedExecutionBlockedReason
+        ? hostedExecutionBlockedReason
         : homeNodeProbe.blockedReason || (effectiveHomeNodeConfigured
         ? (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route')
         : 'home node is not configured'),
       usable: homeNodeProbe.usable === false
         ? false
-        : (effectiveHomeNodeReachable && !homeNodePublicationBlocked),
+        : (effectiveHomeNodeReachable && !homeNodePublicationBlocked && hostedExecutionProven),
     }),
     'home-node-bridge': createRouteEvaluation('home-node-bridge', {
       configured: homeNodeBridgeProbe.configured === true || runtimeContext.homeNodeBridge?.configured === true,

@@ -226,6 +226,11 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
         configured: true,
         reachable: true,
       },
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -272,6 +277,11 @@ test('createRuntimeStatusModel keeps local-first provider routing for reachable 
         source: 'manual',
         configured: true,
         reachable: true,
+      },
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
       },
       routeDiagnostics: {
         'home-node': {
@@ -919,6 +929,11 @@ test('createRuntimeStatusModel resolves hosted backend target from published hom
       apiBaseUrl: '',
       preferredTarget: '',
       actualTargetUsed: '',
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -955,6 +970,11 @@ test('createRuntimeStatusModel keeps hosted route truthful when published candid
     backendAvailable: false,
     runtimeContext: {
       frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -987,6 +1007,11 @@ test('createRuntimeStatusModel keeps publication failure explicit for hosted LAN
     backendAvailable: true,
     runtimeContext: {
       frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -1117,6 +1142,11 @@ test('createRuntimeStatusModel keeps canonical route usable when hosted home-nod
     backendAvailable: true,
     runtimeContext: {
       frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeExecutionTruth: {
+        proven: true,
+        state: 'proven',
+        proofSource: 'test:hosted-home-node',
+      },
       routeDiagnostics: {
         'home-node': {
           configured: true,
@@ -1138,6 +1168,52 @@ test('createRuntimeStatusModel keeps canonical route usable when hosted home-nod
   assert.equal(status.finalRouteTruth.selectedRouteReachable, true);
   assert.equal(status.finalRouteTruth.selectedRouteUsable, true);
   assert.equal(status.canonicalRouteRuntimeTruth.routeUsable, true);
+});
+
+test('createRuntimeStatusModel keeps hosted home-node non-usable until AI execution is proven', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeExecutionTruth: {
+        proven: false,
+        state: 'unproven',
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          backendReachable: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Bridge verified; backend reachable.',
+        },
+        cloud: {
+          configured: true,
+          available: true,
+          usable: true,
+          source: 'backend-cloud-session',
+          target: 'https://api.example.com',
+          actualTarget: 'https://api.example.com',
+          reason: 'Cloud route ready',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.runtimeContext.hostedHomeNodeReadiness.aiExecutionProven, false);
+  assert.equal(status.runtimeContext.hostedHomeNodeReadiness.operationalReadiness, 'transport-only');
+  assert.equal(status.runtimeContext.hostedHomeNodeReadiness.backendReachable, true);
 });
 
 test('createRuntimeStatusModel consumes surface routing bias as hint without corrupting route truth', () => {

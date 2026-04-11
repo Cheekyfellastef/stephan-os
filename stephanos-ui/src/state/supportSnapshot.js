@@ -237,6 +237,7 @@ export function buildSupportSnapshot({
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
   const routeCandidateSummary = summarizeRouteCandidates(runtimeContext?.routeCandidates);
+  const hostedHomeNodeReadiness = runtimeContext?.hostedHomeNodeReadiness || {};
 
   const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
     ? runtimeContext.bridgeTransportTruth
@@ -341,6 +342,9 @@ export function buildSupportSnapshot({
     guidanceItems.push('Remembered Home Bridge exists but failed validation and needs operator review.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
     guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
+  }
+  if (hostedHomeNodeReadiness.backendReachable === true && hostedHomeNodeReadiness.aiExecutionProven !== true) {
+    guidanceItems.push('Home Bridge reachable but AI execution not yet proven. Hosted home-node route requires successful AI round-trip before considered operational.');
   }
   const hasBlockingIssues = blockingIssues.length > 0;
   const selectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
@@ -703,6 +707,13 @@ export function buildSupportSnapshot({
     `Home Bridge Transport Reachability: ${asText(bridgeTransportTruth.reachability, 'unknown')}`,
     `Home Bridge Transport Usability: ${asText(bridgeTransportTruth.usability, 'no')}`,
     `Home Bridge Transport Source: ${asText(bridgeTransportTruth.source, 'n/a')}`,
+    `Home Bridge Execution Proven: ${hostedHomeNodeReadiness.aiExecutionProven === true ? 'yes' : 'no'}`,
+    `Home Bridge Execution Proof Source: ${asText(hostedHomeNodeReadiness.executionProofSource, 'n/a')}`,
+    `Home Bridge Execution Last Success At: ${asText(hostedHomeNodeReadiness.executionLastSuccessAt, 'not yet')}`,
+    `Home Bridge Execution State: ${asText(hostedHomeNodeReadiness.executionState, 'unproven')}`,
+    `Home Bridge Operational Readiness: ${asText(hostedHomeNodeReadiness.operationalReadiness, 'unknown')}`,
+    `Home Bridge Manual Intervention Required: ${hostedHomeNodeReadiness?.manualIntervention?.required === true ? 'yes' : 'no'}`,
+    `Home Bridge Manual Intervention Reason: ${asText(hostedHomeNodeReadiness?.manualIntervention?.reason, 'n/a')}`,
     `Bridge Memory Present: ${bridgeTransportTruth.bridgeMemoryPresent === true ? 'yes' : 'no'}`,
     `Bridge Memory Transport: ${asText(bridgeTransportTruth.bridgeMemoryTransport, 'none')}`,
     `Bridge Memory URL: ${asText(bridgeTransportTruth.bridgeMemoryUrl, 'none')}`,
