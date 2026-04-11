@@ -6,9 +6,11 @@ const LIFECYCLE_STATES = Object.freeze([
   'proposed',
   'awaiting-approval',
   'accepted',
+  'execution-ready',
   'in-progress',
   'completed',
   'failed',
+  'rollback-recommended',
   'rolled-back',
 ]);
 
@@ -171,7 +173,7 @@ function appendActivity(state, summary, now) {
 function upsertDecision(state, packetTruth, decision, now) {
   const packetKey = buildMissionPacketKey(packetTruth);
   const lifecycleStatus = decision === 'accept'
-    ? 'accepted'
+    ? 'execution-ready'
     : decision === 'reject'
       ? 'failed'
       : decision === 'defer'
@@ -221,10 +223,10 @@ export function deriveMissionPacketActionState(workflowInput, packetTruthInput) 
     canDefer: packetReady,
     canCopyCodexHandoff: packetTruth.codexHandoffAvailable && packetTruth.codexHandoffPayload.length > 0,
     canPromote: decision === 'accept' && !hasQueueEntry(workflow.proposalQueue, packetKey),
-    canStart: decision === 'accept',
+    canStart: lifecycleStatus === 'execution-ready' || lifecycleStatus === 'accepted',
     canComplete: lifecycleStatus === 'in-progress',
     canFail: lifecycleStatus === 'in-progress',
-    canRollback: lifecycleStatus === 'completed' || lifecycleStatus === 'failed',
+    canRollback: lifecycleStatus === 'completed' || lifecycleStatus === 'failed' || lifecycleStatus === 'rollback-recommended',
     executionEligible: false,
     approvalRequired: packetTruth.approvalRequired,
     lifecycleStatus,
@@ -236,7 +238,7 @@ export function applyMissionPacketAction(workflowInput, { action = '', packetTru
   const packet = normalizeMissionPacketTruth(packetTruth);
   const gate = deriveMissionPacketActionState(workflow, packet);
 
-  if (!gate.packetReady && action !== 'copy-codex-handoff' && !['start', 'complete', 'fail', 'rollback'].includes(action)) {
+  if (!gate.packetReady && !['copy-codex-handoff', 'prepare-codex-handoff', 'start', 'complete', 'fail', 'rollback'].includes(action)) {
     return workflow;
   }
 
@@ -249,10 +251,12 @@ export function applyMissionPacketAction(workflowInput, { action = '', packetTru
     });
   }
 
-  if (action === 'copy-codex-handoff') {
+  if (action === 'copy-codex-handoff' || action === 'prepare-codex-handoff') {
     return normalizeMissionPacketWorkflow({
       ...workflow,
-      activity: appendActivity(workflow, `Operator copied Codex handoff for ${packet.moveId || packet.mode}.`, now),
+      activity: appendActivity(workflow, action === 'prepare-codex-handoff'
+        ? `Operator prepared Codex handoff for ${packet.moveId || packet.mode}.`
+        : `Operator copied Codex handoff for ${packet.moveId || packet.mode}.`, now),
     });
   }
 

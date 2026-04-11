@@ -28,6 +28,10 @@ import { classifyOperatorIntent } from '../ai/intentEngine.js';
 import { buildMissionExecutionPacket } from '../ai/missionExecutionEngine.js';
 import { appendCommandHistory } from './commandHistory.js';
 import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
+import { normalizeMissionPacketTruth } from '../state/missionPacketWorkflow.js';
+import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth.js';
+import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
+import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 
@@ -1111,6 +1115,7 @@ export function useAIConsole() {
     lastExecutionMetadata,
     setLastExecutionMetadata,
     missionPacketWorkflow,
+    applyMissionPacketWorkflowAction,
     setWorkingMemory,
     workingMemory,
     uiLayout,
@@ -1679,29 +1684,50 @@ export function useAIConsole() {
       }
       return;
     }
-    if (normalizedPrompt === 'why is this blocked?') {
-      if (runtimeSelectors?.missionBlocked === true) {
-        appendLocalOperatorEntry(`Blocked: ${runtimeSelectors.blockageExplanation || 'blockage reason unavailable'}`);
-      } else {
-        appendLocalOperatorEntry('Mission is not currently blocked or no blocked mission was recorded.');
+    const packetTruth = normalizeMissionPacketTruth(lastExecutionMetadata || {});
+    const lifecycleEnvelope = adjudicateOperatorLifecycleIntent({
+      commandText: normalizedPrompt,
+      selectors: runtimeSelectors || {},
+      missionPacketWorkflow,
+      packetTruth,
+      now: new Date().toISOString(),
+    });
+
+    if (lifecycleEnvelope.status !== 'unsupported-command') {
+      if (lifecycleEnvelope.workflow && lifecycleEnvelope.actionApplied === true && lifecycleEnvelope.workflowAction) {
+        applyMissionPacketWorkflowAction(lifecycleEnvelope.workflowAction, packetTruth, new Date().toISOString());
       }
+      const nextCanonicalMissionPacket = buildCanonicalMissionPacket({
+        missionPacketTruth: packetTruth,
+        missionPacketWorkflow: lifecycleEnvelope.workflow || missionPacketWorkflow,
+      });
+      const nextSelectors = deriveRuntimeOrchestrationSelectors({
+        canonicalMissionPacket: nextCanonicalMissionPacket,
+        missionPacketWorkflow: lifecycleEnvelope.workflow || missionPacketWorkflow,
+      });
+      const enrichedEnvelope = {
+        ...lifecycleEnvelope,
+        resultingLifecycleState: nextSelectors?.currentMissionState?.missionPhase || lifecycleEnvelope.resultingLifecycleState,
+        resultingBuildAssistanceState: nextSelectors?.buildAssistanceReadiness?.state || lifecycleEnvelope.resultingBuildAssistanceState,
+        nextRecommendedAction: nextSelectors?.nextRecommendedAction || lifecycleEnvelope.nextRecommendedAction,
+      };
+      appendLocalOperatorEntry(`${enrichedEnvelope.operatorMessage} [${enrichedEnvelope.status}]`);
+      setDebugData((prev) => ({
+        ...(prev || {}),
+        latestOperatorCommandEnvelope: enrichedEnvelope,
+      }));
       return;
     }
+
     if (normalizedPrompt === 'what would stephanos build next?' || normalizedPrompt === 'what should stephanos build next?') {
       appendLocalOperatorEntry(runtimeSelectors?.nextRecommendedAction || workingMemory?.lastMissionPacketSummary || 'No accepted mission packet exists yet.');
-      return;
-    }
-    if (normalizedPrompt === 'what can the ai do right now?' || normalizedPrompt === 'can you help build this?' || normalizedPrompt === 'can you help build this') {
-      const buildState = runtimeSelectors?.buildAssistanceReadiness?.state || 'unavailable';
-      const buildExplanation = runtimeSelectors?.buildAssistanceReadiness?.explanation || 'Build assistance is unavailable until mission and intent truth are established.';
-      appendLocalOperatorEntry(`AI assistance ${buildState}: ${buildExplanation}`);
       return;
     }
     if (normalizedPrompt === 'promote this to roadmap') {
       appendLocalOperatorEntry('Use Mission Packet Queue controls: accept mission packet, then promote. Promotion remains approval-gated and explicit.');
       return;
     }
-    if (normalizedPrompt === 'explain agent assignments' || normalizedPrompt === 'show execution plan' || normalizedPrompt === 'prepare codex handoff' || normalizedPrompt === 'what tools would be used?') {
+    if (normalizedPrompt === 'explain agent assignments' || normalizedPrompt === 'show execution plan' || normalizedPrompt === 'what tools would be used?') {
       const buildState = runtimeSelectors?.buildAssistanceReadiness?.state || 'unavailable';
       const buildExplanation = runtimeSelectors?.buildAssistanceReadiness?.explanation || 'Mission packet details unavailable; run a build/proposal intent first.';
       appendLocalOperatorEntry(`Build assist (${buildState}): ${buildExplanation}`);

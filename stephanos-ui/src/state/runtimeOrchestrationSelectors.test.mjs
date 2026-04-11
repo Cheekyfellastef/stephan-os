@@ -35,3 +35,14 @@ test('build assistance transitions follow lifecycle without collapsing execution
   });
   assert.equal(completed.buildAssistanceReadiness.state, 'completed');
 });
+
+
+test('selector command readiness follows lifecycle gating truth', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'execution-ready', approvalExecutionStatus: { accepted: 'yes' } },
+  });
+
+  assert.equal(selectors.commandReadiness['start-mission'].allowed, true);
+  assert.equal(selectors.commandReadiness['complete-mission'].allowed, false);
+});
