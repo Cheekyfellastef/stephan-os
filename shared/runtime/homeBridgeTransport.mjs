@@ -1,6 +1,7 @@
 import { validateStephanosHomeBridgeUrl } from './stephanosHomeNode.mjs';
 
 export const BRIDGE_TRANSPORT_KEYS = Object.freeze(['manual', 'tailscale', 'wireguard']);
+export const HOME_BRIDGE_MEMORY_SCHEMA_VERSION = 1;
 
 const TRANSPORT_CAPABILITIES = Object.freeze({
   manual: Object.freeze({
@@ -146,6 +147,78 @@ function normalizeList(value = []) {
   return [...new Set(value.map((entry) => normalizeString(entry)).filter(Boolean))].slice(0, 8);
 }
 
+function normalizeTimestamp(value = '') {
+  const text = normalizeString(value);
+  if (!text) return '';
+  const parsed = Date.parse(text);
+  if (!Number.isFinite(parsed)) return '';
+  return new Date(parsed).toISOString();
+}
+
+function createEmptyBridgeMemory() {
+  return {
+    schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
+    transport: 'none',
+    backendUrl: '',
+    tailscaleDeviceName: '',
+    tailscaleHostnameOverride: '',
+    tailscaleIp: '',
+    rememberedAt: '',
+    savedBySurface: '',
+    savedBySession: '',
+    reason: 'No remembered Home Bridge transport.',
+  };
+}
+
+export function normalizeHomeBridgeMemory(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const transport = normalizeBridgeTransportSelection(source.transport);
+  const backendUrl = normalizeString(source.backendUrl);
+  const rememberedAt = normalizeTimestamp(source.rememberedAt);
+  const normalizedTransport = backendUrl ? transport : 'none';
+  return {
+    schemaVersion: Number.isFinite(Number(source.schemaVersion))
+      ? Number(source.schemaVersion)
+      : HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
+    transport: normalizedTransport,
+    backendUrl: normalizedTransport === 'none' ? '' : backendUrl,
+    tailscaleDeviceName: normalizeString(source.tailscaleDeviceName),
+    tailscaleHostnameOverride: normalizeString(source.tailscaleHostnameOverride),
+    tailscaleIp: normalizeString(source.tailscaleIp),
+    rememberedAt,
+    savedBySurface: normalizeString(source.savedBySurface),
+    savedBySession: normalizeString(source.savedBySession),
+    reason: normalizeReason(
+      source.reason,
+      normalizedTransport === 'none'
+        ? 'No remembered Home Bridge transport.'
+        : 'Remembered Home Bridge transport found in shared memory.',
+    ),
+  };
+}
+
+export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {}) {
+  const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
+  const manual = preferences?.transports?.manual || {};
+  const tailscale = preferences?.transports?.tailscale || {};
+  const backendUrl = selectedTransport === 'tailscale'
+    ? normalizeString(tailscale.backendUrl)
+    : normalizeString(manual.backendUrl);
+  if (!backendUrl) return createEmptyBridgeMemory();
+  return normalizeHomeBridgeMemory({
+    schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
+    transport: selectedTransport,
+    backendUrl,
+    tailscaleDeviceName: tailscale.deviceName,
+    tailscaleHostnameOverride: tailscale.hostOverride,
+    tailscaleIp: tailscale.tailnetIp,
+    rememberedAt: metadata.rememberedAt || new Date().toISOString(),
+    savedBySurface: metadata.savedBySurface || '',
+    savedBySession: metadata.savedBySession || '',
+    reason: metadata.reason || 'Bridge transport saved by operator.',
+  });
+}
+
 export function normalizeBridgeTransportSelection(value = '') {
   const normalized = normalizeString(value).toLowerCase();
   return BRIDGE_TRANSPORT_KEYS.includes(normalized) ? normalized : 'manual';
@@ -251,7 +324,7 @@ export function listBridgeTransportDefinitions() {
   return BRIDGE_TRANSPORT_KEYS.map((key) => BRIDGE_TRANSPORT_DEFINITIONS[key]);
 }
 
-export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridge = {} } = {}) {
+export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridge = {}, bridgeMemory = {}, bridgeMemoryRehydrated = false } = {}) {
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
   const manualConfig = preferences?.transports?.manual || {};
   const tailscaleConfig = preferences?.transports?.tailscale || {};
@@ -279,6 +352,17 @@ export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridg
     ? (tailscaleConfig.reason || 'Tailscale transport status pending.')
     : (runtimeBridge?.reason || manualConfig.reason || 'Manual/LAN bridge status pending.');
 
+  const rememberedMemory = normalizeHomeBridgeMemory(bridgeMemory);
+  const hasMemory = rememberedMemory.transport !== 'none' && Boolean(rememberedMemory.backendUrl);
+  const memoryNeedsValidation = hasMemory && !(selectedTransport === 'tailscale'
+    ? tailscaleConfig.accepted === true
+    : runtimeBridge?.accepted === true);
+  const memoryValidationState = !hasMemory
+    ? 'absent'
+    : (selectedTransport === 'tailscale'
+      ? (tailscaleConfig.accepted === true ? 'validated' : (tailscaleConfig.reachability === 'unreachable' ? 'unreachable' : 'awaiting-validation'))
+      : (runtimeBridge?.accepted === true ? 'validated' : 'awaiting-validation'));
+
   return {
     selectedTransport,
     configuredTransport,
@@ -289,6 +373,14 @@ export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridg
     reachability,
     usability: usable ? 'yes' : 'no',
     source: activeTransport === 'tailscale' ? 'bridgeTransport:tailscale' : (activeTransport === 'manual' ? 'homeBridge:manual' : 'bridgeTransport:unresolved'),
+    bridgeMemoryPresent: hasMemory,
+    bridgeMemoryTransport: hasMemory ? rememberedMemory.transport : 'none',
+    bridgeMemoryUrl: hasMemory ? rememberedMemory.backendUrl : '',
+    bridgeMemoryRememberedAt: rememberedMemory.rememberedAt || '',
+    bridgeMemoryRehydrated: bridgeMemoryRehydrated === true,
+    bridgeMemoryNeedsValidation: memoryNeedsValidation,
+    bridgeMemoryValidationState: memoryValidationState,
+    bridgeMemoryReason: rememberedMemory.reason,
     tailscale: {
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
