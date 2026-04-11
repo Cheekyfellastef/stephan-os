@@ -247,6 +247,68 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
   assert.equal(model.runtimeContext.routeCandidateWinner.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
+});
+
+test('hosted remembered tailscale pending probe becomes canonical candidate and de-prioritizes stale LAN actual target', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      preferredTarget: 'http://192.168.0.198:8787',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeMemoryRehydrated: true,
+      bridgeAutoRevalidation: {
+        state: 'probing',
+        reason: 'Remembered bridge validated; probing reachability from this surface.',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'manual',
+        transports: {
+          manual: {
+            enabled: true,
+            backendUrl: 'http://192.168.0.198:8787',
+            accepted: true,
+            reachability: 'reachable',
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          blockedReason: 'hosted surface cannot reach LAN target',
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+          blockedReason: 'probe pending',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, false);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, false);
+  assert.equal(model.runtimeContext.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.backendTargetCandidates[0].url, 'https://desktop-9flonkj.taild6f215.ts.net');
+  const staleLanCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === 'http://192.168.0.198:8787');
+  assert.ok(staleLanCandidate);
+  assert.equal(staleLanCandidate.accepted, false);
 });
 
 test('route candidates keep configured/reachable/usable truth separated for unreachable tailscale', () => {

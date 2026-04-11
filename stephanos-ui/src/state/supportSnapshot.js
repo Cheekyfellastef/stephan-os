@@ -340,7 +340,12 @@ export function buildSupportSnapshot({
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-validation-failed') {
     guidanceItems.push('Remembered Home Bridge exists but failed validation and needs operator review.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
-    guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
+    if (bridgeTransportTruth?.bridgeMemoryTransport === 'tailscale'
+      && bridgeTransportTruth?.bridgeAutoRevalidationState === 'probing') {
+      guidanceItems.push('Remembered Tailscale bridge pending probe on this hosted surface; using remembered candidate until probe evidence resolves reachability.');
+    } else {
+      guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
+    }
   }
   const hasBlockingIssues = blockingIssues.length > 0;
   const selectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
