@@ -7,6 +7,7 @@ import {
   normalizeMissionPacketTruth,
 } from '../state/missionPacketWorkflow';
 import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth';
+import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 
 function formatList(values = []) {
   if (!Array.isArray(values) || values.length === 0) {
@@ -37,6 +38,10 @@ export default function MissionPacketQueuePanel() {
     () => buildCanonicalMissionPacket({ missionPacketTruth: packetTruth, missionPacketWorkflow }),
     [missionPacketWorkflow, packetTruth],
   );
+  const orchestrationSelectors = useMemo(() => deriveRuntimeOrchestrationSelectors({
+    canonicalMissionPacket,
+    missionPacketWorkflow,
+  }), [canonicalMissionPacket, missionPacketWorkflow]);
 
   const handleAction = (action) => {
     applyMissionPacketWorkflowAction(action, packetTruth, new Date().toISOString());
@@ -79,7 +84,9 @@ export default function MissionPacketQueuePanel() {
         <li>Execution Eligible: {String(actionState.executionEligible)}</li>
         <li>Current Decision: {actionState.decision}</li>
         <li>Lifecycle State: {actionState.lifecycleStatus}</li>
-        <li>Recommended Next Action: {canonicalMissionPacket.recommendedNextAction}</li>
+        <li>Recommended Next Action: {orchestrationSelectors.nextRecommendedAction}</li>
+        <li>Blockage: {orchestrationSelectors.blockageExplanation || 'none'}</li>
+        <li>Build Assistance: {orchestrationSelectors.buildAssistanceReadiness?.state || 'unavailable'}</li>
       </ul>
       <div className="status-panel-copy-actions" data-no-drag>
         <button type="button" disabled={!actionState.canAccept} onClick={() => handleAction('accept')}>Accept packet</button>

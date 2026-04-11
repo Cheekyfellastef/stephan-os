@@ -11,6 +11,7 @@ import {
   buildCanonicalMemoryContext,
   buildCanonicalMissionPacket,
 } from '../state/runtimeOrchestrationTruth';
+import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import {
   STEPHANOS_UI_BUILD_TARGET,
   STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
@@ -233,6 +234,13 @@ export default function StatusPanel() {
     missionPacketTruth,
     missionPacketWorkflow,
     currentIntent: orchestrationCurrentIntent,
+  });
+  const orchestrationSelectors = deriveRuntimeOrchestrationSelectors({
+    canonicalMemoryContext: orchestrationMemoryContext,
+    canonicalCurrentIntent: orchestrationCurrentIntent,
+    canonicalMissionPacket: orchestrationMissionPacket,
+    missionPacketWorkflow,
+    finalRouteTruth: routeTruthView,
   });
   const supportSnapshot = buildSupportSnapshot({
     runtimeStatus: {
@@ -500,6 +508,7 @@ export default function StatusPanel() {
       canonicalMemoryContext: orchestrationMemoryContext,
       canonicalCurrentIntent: orchestrationCurrentIntent,
       canonicalMissionPacket: orchestrationMissionPacket,
+      selectors: orchestrationSelectors,
     },
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,

@@ -11,45 +11,39 @@ export function collectActionHints(finalRouteTruth, orchestration = {}) {
   const hints = [];
   const routeKind = String(finalRouteTruth.routeKind || '').toLowerCase();
   const executedProvider = String(finalRouteTruth.providerExecution?.executableProvider || '').toLowerCase();
-  const canonicalIntent = orchestration?.currentIntent || {};
-  const canonicalMemory = orchestration?.memoryContext || {};
-  const missionPacket = orchestration?.missionPacket || {};
+  const selectors = orchestration?.selectors || {};
+  const missionState = selectors?.currentMissionState || {};
+  const continuity = selectors?.continuityLoopState || {};
+  const buildAssist = selectors?.buildAssistanceReadiness || {};
 
   if (finalRouteTruth.backendReachable === false) {
-    hints.push('Backend is unreachable. Run a health check before sending commands.');
+    hints.push('Backend is unreachable. Route truth is blocking mission advancement until connectivity is restored.');
   }
 
-  if (finalRouteTruth.fallbackActive === true) {
-    hints.push('Fallback route is active. Verify preferred route diagnostics before promoting this session.');
+  if (asText(missionState.intentSource) === 'inferred') {
+    hints.push('Intent is inferred. Confirm explicit objective before accepting, promoting, or starting mission execution.');
   }
+
+  if (asText(continuity.strength) === 'sparse') {
+    hints.push('Continuity is sparse. Use bounded statements and request explicit operator confirmation before execution transitions.');
+  }
+
+  if (selectors?.missionBlocked === true) {
+    hints.push(`Mission blocked: ${asText(selectors?.blockageExplanation, 'Blocker reason unavailable')}`);
+  }
+
+  hints.push(`Build assistance: ${asText(buildAssist.state, 'unavailable')} — ${asText(buildAssist.explanation, 'No build assistance explanation available.')}`);
+  hints.push(`Next step: ${asText(selectors?.nextRecommendedAction, 'Await mission packet / intent truth.')}`);
 
   if (routeKind.includes('cloud')) {
-    hints.push('Cloud route active. Confirm provider key/config readiness for this workspace.');
+    hints.push('Cloud route active. Keep provider configuration and approval gating explicit for mission-critical changes.');
   } else if (routeKind) {
-    hints.push('Local route active. Keep local host/runtime health in sync with launcher truth.');
+    hints.push('Local route active. Validate local runtime health before marking execution transitions.');
   }
 
   if (executedProvider === 'mock') {
-    hints.push('Mock provider is executing. Results are simulation-only and not live model output.');
+    hints.push('Mock provider is executing. Outputs are simulation-only and must not be treated as real provider execution truth.');
   }
 
-  if (asText(canonicalMemory?.activeMissionContinuity?.continuityLoopState) === 'live') {
-    hints.push('Continuity loop is live. Treat this request as continuation unless operator states a mission reset.');
-  }
-
-  if (asText(canonicalIntent?.operatorIntent?.source) === 'inferred') {
-    hints.push('Current intent is inferred. Confirm operator objective before accepting or promoting mission packets.');
-  }
-
-  if (asText(missionPacket?.currentPhase) === 'awaiting-approval') {
-    hints.push(`Mission packet awaiting approval. Recommended next step: ${asText(missionPacket?.recommendedNextAction, 'Await explicit operator decision.')}`);
-  }
-
-  if (canonicalMemory?.sparseData === true) {
-    hints.push('Continuity memory is sparse. Prefer bounded/explicit wording and avoid overclaiming mission continuity.');
-  }
-
-  return hints.length > 0
-    ? hints
-    : ['Route and provider truth look healthy. Continue with normal operation.'];
+  return hints;
 }

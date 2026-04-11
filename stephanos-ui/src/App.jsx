@@ -37,6 +37,7 @@ import {
   buildCanonicalMissionPacket,
 } from './state/runtimeOrchestrationTruth';
 import { normalizeMissionPacketTruth } from './state/missionPacketWorkflow';
+import { deriveRuntimeOrchestrationSelectors } from './state/runtimeOrchestrationSelectors.js';
 import {
   STEPHANOS_UI_BUILD_STAMP,
   STEPHANOS_UI_BUILD_TARGET,
@@ -201,11 +202,21 @@ export default function App() {
     missionPacketWorkflow,
     currentIntent: canonicalCurrentIntent,
   }), [canonicalCurrentIntent, missionPacketTruth, missionPacketWorkflow]);
-  const actionHints = useMemo(() => collectActionHints(finalRouteTruth, {
-    memoryContext: canonicalMemoryContext,
-    currentIntent: canonicalCurrentIntent,
-    missionPacket: canonicalMissionPacket,
-  }).map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth]);
+  const orchestrationSelectors = useMemo(() => deriveRuntimeOrchestrationSelectors({
+    canonicalMemoryContext,
+    canonicalCurrentIntent,
+    canonicalMissionPacket,
+    missionPacketWorkflow,
+    finalRouteTruth,
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth, missionPacketWorkflow]);
+  const orchestrationTruth = useMemo(() => ({
+    canonicalMemoryContext,
+    canonicalCurrentIntent,
+    canonicalMissionPacket,
+    selectors: orchestrationSelectors,
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, orchestrationSelectors]);
+  const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
+    .map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth, orchestrationTruth]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -292,7 +303,7 @@ export default function App() {
         <AIConsole
           input={input}
           setInput={setInput}
-          submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries })}
+          submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries, orchestrationTruth })}
           commandHistory={commandHistory}
         />
         <PowerShellMergeConsolePanel />
@@ -318,7 +329,7 @@ export default function App() {
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
     { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
     { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} /> },
-    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={{ canonicalMemoryContext, canonicalCurrentIntent, canonicalMissionPacket }} /> },
+    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={orchestrationTruth} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
