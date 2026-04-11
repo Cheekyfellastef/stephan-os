@@ -20,6 +20,24 @@ function createStore(overrides = {}) {
         tailscale: { backendUrl: 'https://100.64.0.10', deviceName: 'home-node', tailnetIp: '100.64.0.10', diagnostics: [] },
       },
     },
+    bridgeTransportTruth: {
+      selectedTransport: 'tailscale',
+      configuredTransport: 'tailscale',
+      state: 'configured',
+      detail: 'Remembered from shared memory; validation pending on this surface.',
+      source: 'bridgeTransport:unresolved',
+      bridgeMemoryPresent: true,
+      bridgeMemoryTransport: 'tailscale',
+      bridgeMemoryUrl: 'https://100.64.0.10',
+      bridgeMemoryRememberedAt: '2026-04-11T10:00:00.000Z',
+      bridgeMemoryNeedsValidation: true,
+      bridgeMemoryValidationState: 'awaiting-validation',
+      bridgeMemoryReason: 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.',
+      tailscale: { diagnostics: [] },
+    },
+    bridgeMemory: {
+      rememberedAt: '2026-04-11T10:00:00.000Z',
+    },
     setBridgeTransportSelection: () => 'tailscale',
     updateBridgeTransportConfig: () => {},
     uiLayout: { homeBridgePanel: true },
@@ -61,6 +79,8 @@ test('HomeBridgePanel renders bridge controls and saved URL status', async () =>
   assert.match(rendered, /Selected transport/);
   assert.match(rendered, /Test Reachability/);
   assert.match(rendered, /Tailscale Backend URL/);
+  assert.match(rendered, /Remembered bridge: <strong>tailscale<\/strong>/);
+  assert.match(rendered, /Memory validation state: <strong>awaiting-validation<\/strong>/);
   assert.match(rendered, /Route winner: <strong>home-node\/tailscale<\/strong>/);
   assert.match(rendered, /home-node-tailscale: usable \(score 980\)/);
   assert.match(rendered, /WireGuard status: <strong>planned \/ not yet configured<\/strong>/);

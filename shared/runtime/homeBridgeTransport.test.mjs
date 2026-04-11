@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  deriveBridgeMemoryFromPreferences,
   listBridgeTransportDefinitions,
+  normalizeHomeBridgeMemory,
   normalizeBridgeTransportPreferences,
   projectHomeBridgeTransportTruth,
   resolveBridgeUrlRequireHttps,
@@ -72,4 +74,44 @@ test('bridge validation truth resolver is null-safe and defaults to strict https
   assert.equal(truth.sessionKind, 'unknown');
   assert.equal(truth.requireHttps, true);
   assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: 'local-desktop', selectedTransport: 'tailscale' }), true);
+});
+
+test('home bridge durable memory normalization is bounded and null-safe', () => {
+  const memory = normalizeHomeBridgeMemory({
+    transport: 'tailscale',
+    backendUrl: 'https://100.64.0.10',
+    tailscaleDeviceName: 'home-node',
+    rememberedAt: '2026-04-11T10:00:00.000Z',
+  });
+  assert.equal(memory.transport, 'tailscale');
+  assert.equal(memory.backendUrl, 'https://100.64.0.10');
+  assert.equal(memory.tailscaleDeviceName, 'home-node');
+  assert.equal(normalizeHomeBridgeMemory(null).transport, 'none');
+});
+
+test('bridge memory projection remains separate from current live acceptance truth', () => {
+  const preferences = normalizeBridgeTransportPreferences({
+    selectedTransport: 'tailscale',
+    transports: {
+      tailscale: {
+        enabled: true,
+        backendUrl: 'https://100.64.0.10',
+        accepted: false,
+        reachability: 'unknown',
+      },
+    },
+  });
+  const remembered = deriveBridgeMemoryFromPreferences(preferences, {
+    rememberedAt: '2026-04-11T10:01:00.000Z',
+    reason: 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.',
+  });
+  const projected = projectHomeBridgeTransportTruth(preferences, {
+    runtimeBridge: { accepted: false, reachability: 'unknown' },
+    bridgeMemory: remembered,
+    bridgeMemoryRehydrated: true,
+  });
+  assert.equal(projected.bridgeMemoryPresent, true);
+  assert.equal(projected.bridgeMemoryNeedsValidation, true);
+  assert.equal(projected.tailscale.accepted, false);
+  assert.equal(projected.bridgeMemoryValidationState, 'awaiting-validation');
 });

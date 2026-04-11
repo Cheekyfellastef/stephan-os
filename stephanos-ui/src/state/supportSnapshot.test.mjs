@@ -967,6 +967,14 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
         reachability: 'reachable',
         usability: 'yes',
         source: 'bridgeTransport:tailscale',
+        bridgeMemoryPresent: true,
+        bridgeMemoryTransport: 'tailscale',
+        bridgeMemoryUrl: 'https://100.64.0.10',
+        bridgeMemoryRememberedAt: '2026-04-11T10:00:00.000Z',
+        bridgeMemoryRehydrated: true,
+        bridgeMemoryNeedsValidation: true,
+        bridgeMemoryValidationState: 'awaiting-validation',
+        bridgeMemoryReason: 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.',
         tailscale: {
           deviceName: 'home-node',
           tailnetIp: '100.64.0.10',
@@ -994,6 +1002,8 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
 
   assert.match(snapshot, /Home Bridge Transport Selected: tailscale/);
   assert.match(snapshot, /Tailscale Bridge Usable: true/);
+  assert.match(snapshot, /Bridge Memory Present: yes/);
+  assert.match(snapshot, /Bridge Memory Validation State: awaiting-validation/);
 });
 
 test('buildSupportSnapshot includes shared operator guidance summaries', () => {

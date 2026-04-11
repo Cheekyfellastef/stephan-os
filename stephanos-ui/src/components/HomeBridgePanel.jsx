@@ -4,7 +4,6 @@ import { checkApiHealth } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
 import {
   normalizeBridgeTransportSelection,
-  projectHomeBridgeTransportTruth,
   resolveBridgeValidationTruth,
   resolveBridgeUrlRequireHttps,
 } from '../../../shared/runtime/homeBridgeTransport.mjs';
@@ -28,6 +27,8 @@ export default function HomeBridgePanel() {
     clearHomeBridgeUrl,
     bridgeTransportDefinitions,
     bridgeTransportPreferences,
+    bridgeTransportTruth,
+    bridgeMemory,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     uiLayout,
@@ -69,9 +70,10 @@ export default function HomeBridgePanel() {
     selectedTransport,
     fallbackRequireHttps: bridgeValidationTruth.requireHttps,
   }), [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, selectedTransport]);
-  const transportTruth = useMemo(() => projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
-    runtimeBridge: savedBridge,
-  }), [bridgeTransportPreferences, savedBridge]);
+  const transportTruth = useMemo(
+    () => (bridgeTransportTruth && typeof bridgeTransportTruth === 'object' ? bridgeTransportTruth : {}),
+    [bridgeTransportTruth],
+  );
 
   useEffect(() => {
     const activeUrl = selectedTransport === 'tailscale'
@@ -308,6 +310,12 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Transport detail: <strong>{transportTruth.detail}</strong></p>
       <p className="home-bridge-detail">Transport source: <strong>{transportTruth.source}</strong></p>
       <p className="home-bridge-detail">Saved URL: <strong>{selectedTransport === 'tailscale' ? (tailscale.backendUrl || 'none') : (homeBridgeUrl || 'none')}</strong></p>
+      <p className="home-bridge-detail">Remembered bridge: <strong>{transportTruth.bridgeMemoryPresent ? transportTruth.bridgeMemoryTransport : 'none'}</strong></p>
+      <p className="home-bridge-detail">Remembered URL: <strong>{transportTruth.bridgeMemoryUrl || 'none'}</strong></p>
+      <p className="home-bridge-detail">Remembered at: <strong>{formatTime(transportTruth.bridgeMemoryRememberedAt || bridgeMemory?.rememberedAt)}</strong></p>
+      <p className="home-bridge-detail">Memory validation state: <strong>{transportTruth.bridgeMemoryValidationState || 'absent'}</strong></p>
+      <p className="home-bridge-detail">Memory needs validation: <strong>{transportTruth.bridgeMemoryNeedsValidation ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Memory reason: <strong>{transportTruth.bridgeMemoryReason || 'No remembered Home Bridge transport.'}</strong></p>
       <p className="home-bridge-detail">Validation reason: <strong>{validationReason}</strong></p>
       <p className="home-bridge-detail">Reachability reason: <strong>{reachabilityReason}</strong></p>
       <p className="home-bridge-detail">Last checked: <strong>{formatTime(lastCheckedAt)}</strong></p>

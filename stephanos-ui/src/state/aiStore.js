@@ -42,9 +42,12 @@ import { getApiRuntimeConfig } from '../ai/apiConfig';
 import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 import {
   createDefaultBridgeTransportPreferences,
+  deriveBridgeMemoryFromPreferences,
   listBridgeTransportDefinitions,
+  normalizeHomeBridgeMemory,
   normalizeBridgeTransportPreferences,
   normalizeBridgeTransportSelection,
+  projectHomeBridgeTransportTruth,
   resolveBridgeValidationTruth,
   resolveBridgeUrlRequireHttps,
 } from '../../../shared/runtime/homeBridgeTransport.mjs';
@@ -133,6 +136,46 @@ const DEFAULT_SURFACE_OVERRIDE = 'auto';
 const MAX_PERSISTED_COMMANDS = 10;
 const MAX_PERSISTED_OUTPUT_LENGTH = 4000;
 const MAX_FRICTION_EVENTS = 10;
+const BRIDGE_MEMORY_RECORD_NAMESPACE = 'continuity';
+const BRIDGE_MEMORY_RECORD_ID = 'home-bridge.transport-memory';
+
+function getStephanosMemoryRuntime() {
+  return globalThis.stephanosMemory || globalThis.parent?.stephanosMemory || null;
+}
+
+function readPersistedBridgeMemory() {
+  const memory = getStephanosMemoryRuntime();
+  if (!memory?.getRecord) return normalizeHomeBridgeMemory();
+  try {
+    const record = memory.getRecord({
+      namespace: BRIDGE_MEMORY_RECORD_NAMESPACE,
+      id: BRIDGE_MEMORY_RECORD_ID,
+    });
+    return normalizeHomeBridgeMemory(record?.payload?.bridgeMemory || {});
+  } catch {
+    return normalizeHomeBridgeMemory();
+  }
+}
+
+function persistBridgeMemoryToDurableStore(bridgeMemory) {
+  const memory = getStephanosMemoryRuntime();
+  if (!memory?.saveRecord) return false;
+  try {
+    memory.saveRecord({
+      namespace: BRIDGE_MEMORY_RECORD_NAMESPACE,
+      id: BRIDGE_MEMORY_RECORD_ID,
+      type: 'workspace.state',
+      summary: 'Home Bridge transport memory',
+      scope: 'runtime',
+      tags: ['home-bridge', 'bridge-memory'],
+      importance: 'normal',
+      payload: { bridgeMemory: normalizeHomeBridgeMemory(bridgeMemory) },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeUiLayout(value = {}) {
   return Object.fromEntries(
@@ -321,6 +364,7 @@ function createInitialMemorySnapshot() {
     requireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
   }) || '';
   setStephanosHomeBridgeGlobal(homeBridgeUrl);
+  const bridgeMemory = readPersistedBridgeMemory();
   const restoredSession = restoreStephanosSessionMemoryForDevice({
     currentOrigin,
     manualNode: homeNodePreference,
@@ -346,6 +390,47 @@ function createInitialMemorySnapshot() {
   const effectiveUiLayout = hasPersistedUiLayout
     ? normalizedUiLayout
     : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
+
+  const initialBridgeTransportPreferences = normalizeBridgeTransportPreferences(
+    persistedSession?.session?.bridgeTransportPreferences,
+    {
+      homeBridgeUrl,
+      frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '',
+      manualRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'tailscale' }),
+    },
+  );
+  const rehydratedBridgeTransportPreferences = bridgeMemory.transport !== 'none' && bridgeMemory.backendUrl
+    ? normalizeBridgeTransportPreferences({
+      ...initialBridgeTransportPreferences,
+      selectedTransport: bridgeMemory.transport,
+      transports: {
+        ...initialBridgeTransportPreferences.transports,
+        [bridgeMemory.transport]: {
+          ...(initialBridgeTransportPreferences.transports?.[bridgeMemory.transport] || {}),
+          backendUrl: bridgeMemory.backendUrl,
+          accepted: false,
+          active: false,
+          usable: false,
+          reachability: 'unknown',
+          ...(bridgeMemory.transport === 'tailscale'
+            ? {
+              enabled: true,
+              deviceName: bridgeMemory.tailscaleDeviceName,
+              hostOverride: bridgeMemory.tailscaleHostnameOverride,
+              tailnetIp: bridgeMemory.tailscaleIp,
+            }
+            : {}),
+          reason: 'Remembered from shared memory; validation pending on this surface.',
+        },
+      },
+    }, {
+      homeBridgeUrl: bridgeMemory.transport === 'manual' ? bridgeMemory.backendUrl : homeBridgeUrl,
+      frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '',
+      manualRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
+      tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'tailscale' }),
+    })
+    : initialBridgeTransportPreferences;
 
   return {
     persistedSession,
@@ -386,15 +471,11 @@ function createInitialMemorySnapshot() {
     homeNodePreference,
     homeNodeLastKnown,
     homeBridgeUrl,
-    bridgeTransportPreferences: normalizeBridgeTransportPreferences(
-      persistedSession?.session?.bridgeTransportPreferences,
-      {
-        homeBridgeUrl,
-        frontendOrigin: initialApiRuntimeConfig?.frontendOrigin || '',
-        manualRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
-        tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'tailscale' }),
-      },
-    ),
+    bridgeTransportPreferences: rehydratedBridgeTransportPreferences,
+    bridgeMemory,
+    bridgeMemoryRehydrated: bridgeMemory.transport !== 'none' && bridgeMemory.backendUrl
+      ? rehydratedBridgeTransportPreferences.transports?.[bridgeMemory.transport]?.accepted !== true
+      : false,
     surfaceAwareness,
     surfaceOverride,
   };
@@ -450,6 +531,8 @@ export function AIStoreProvider({ children }) {
   const [bridgeTransportPreferences, setBridgeTransportPreferencesState] = useState(
     initialSnapshot.bridgeTransportPreferences || createDefaultBridgeTransportPreferences(),
   );
+  const [bridgeMemory, setBridgeMemoryState] = useState(initialSnapshot.bridgeMemory || normalizeHomeBridgeMemory());
+  const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -491,6 +574,11 @@ export function AIStoreProvider({ children }) {
     runtimeContext: apiStatus.runtimeContext || initialSnapshot.initialApiRuntimeContext || {},
     operatorSurfaceOverrides: { mode: surfaceOverride, protocolIds: [] },
   }), [apiStatus.runtimeContext, initialSnapshot.initialApiRuntimeContext, surfaceOverride]);
+  const bridgeTransportTruth = useMemo(() => projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+    runtimeBridge: apiStatus?.runtimeContext?.homeNodeBridge || {},
+    bridgeMemory,
+    bridgeMemoryRehydrated,
+  }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryRehydrated, bridgeTransportPreferences]);
   const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -516,6 +604,7 @@ export function AIStoreProvider({ children }) {
         surfaceProtocolRecommendations,
         acceptedSurfaceRules,
       },
+      bridgeTransportTruth,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), [
@@ -535,6 +624,7 @@ export function AIStoreProvider({ children }) {
     surfaceFrictionPatterns,
     surfaceProtocolRecommendations,
     acceptedSurfaceRules,
+    bridgeTransportTruth,
   ]);
   const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
     runtimeStatusModel,
@@ -565,6 +655,26 @@ export function AIStoreProvider({ children }) {
       });
     }
   }, [devMode, runtimeStatusModel]);
+
+  useEffect(() => {
+    const rememberedAt = bridgeMemory?.rememberedAt || new Date().toISOString();
+    const nextBridgeMemory = deriveBridgeMemoryFromPreferences(bridgeTransportPreferences, {
+      rememberedAt,
+      savedBySurface: surfaceAwareness?.surfaceIdentity?.surfaceId || 'unknown-surface',
+      savedBySession: sessionRestoreDiagnostics?.currentHost || 'unknown-session',
+      reason: bridgeMemoryRehydrated
+        ? 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.'
+        : 'Home Bridge configuration saved by operator.',
+    });
+    setBridgeMemoryState(nextBridgeMemory);
+    persistBridgeMemoryToDurableStore(nextBridgeMemory);
+  }, [
+    bridgeMemory?.rememberedAt,
+    bridgeMemoryRehydrated,
+    bridgeTransportPreferences,
+    sessionRestoreDiagnostics?.currentHost,
+    surfaceAwareness?.surfaceIdentity?.surfaceId,
+  ]);
 
   useEffect(() => {
     persistStephanosSessionMemory({
@@ -993,6 +1103,7 @@ export function AIStoreProvider({ children }) {
     }
     setStephanosHomeBridgeGlobal(validation.normalizedUrl);
     setHomeBridgeUrlState(validation.normalizedUrl);
+    setBridgeMemoryRehydrated(false);
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
       transports: {
@@ -1020,6 +1131,10 @@ export function AIStoreProvider({ children }) {
     clearPersistedStephanosHomeBridgeUrl();
     setStephanosHomeBridgeGlobal('');
     setHomeBridgeUrlState('');
+    const clearedBridgeMemory = normalizeHomeBridgeMemory();
+    setBridgeMemoryState(clearedBridgeMemory);
+    setBridgeMemoryRehydrated(false);
+    persistBridgeMemoryToDurableStore(clearedBridgeMemory);
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
       transports: {
@@ -1092,6 +1207,9 @@ export function AIStoreProvider({ children }) {
         selectedTransport: 'tailscale',
       }),
     }));
+    if (patch?.accepted === true || patch?.backendUrl === '') {
+      setBridgeMemoryRehydrated(false);
+    }
   }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
   const value = useMemo(() => ({
     commandHistory,
@@ -1160,6 +1278,9 @@ export function AIStoreProvider({ children }) {
     homeBridgeUrl,
     bridgeTransportDefinitions: listBridgeTransportDefinitions(),
     bridgeTransportPreferences,
+    bridgeTransportTruth,
+    bridgeMemory,
+    bridgeMemoryRehydrated,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     saveHomeBridgeUrl,
@@ -1229,6 +1350,9 @@ export function AIStoreProvider({ children }) {
     homeNodeLastKnown,
     homeBridgeUrl,
     bridgeTransportPreferences,
+    bridgeTransportTruth,
+    bridgeMemory,
+    bridgeMemoryRehydrated,
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
