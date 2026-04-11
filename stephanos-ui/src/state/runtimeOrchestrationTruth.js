@@ -44,6 +44,95 @@ function resolveExecutionState(lastExecutionMetadata = {}) {
   return 'not-executing';
 }
 
+function normalizeTruthText(value, fallback = '') {
+  const next = String(value ?? '').trim();
+  return next || fallback;
+}
+
+function toNullableTruthText(value) {
+  const next = normalizeTruthText(value, '');
+  return next || null;
+}
+
+function normalizeBlockingSeverity(value) {
+  const normalized = normalizeTruthText(value, '').toLowerCase();
+  if (['none', 'caution', 'warning', 'blocking'].includes(normalized)) {
+    return normalized;
+  }
+  return 'none';
+}
+
+export function buildCanonicalSourceDistAlignment({
+  sourceFingerprint = '',
+  buildRuntimeMarker = '',
+  buildCommit = '',
+  buildTimestamp = '',
+  runtimeTruth = {},
+  runtimeContext = {},
+} = {}) {
+  const source = toNullableTruthText(sourceFingerprint);
+  const buildMarker = toNullableTruthText(buildRuntimeMarker);
+  const commit = toNullableTruthText(buildCommit);
+  const timestamp = toNullableTruthText(buildTimestamp);
+  const truth = runtimeTruth && typeof runtimeTruth === 'object' ? runtimeTruth : {};
+  const context = runtimeContext && typeof runtimeContext === 'object' ? runtimeContext : {};
+  const parityKnown = typeof truth.sourceDistParityOk === 'boolean';
+  const parityState = parityKnown ? truth.sourceDistParityOk : null;
+  const servedMarker = toNullableTruthText(truth.servedMarker || context.servedMarker);
+  const servedBuildTimestamp = toNullableTruthText(truth.servedBuildTimestamp || context.servedBuildTimestamp);
+  const servedSourceFingerprint = toNullableTruthText(truth.servedSourceFingerprint || context.servedSourceFingerprint);
+  const distFingerprint = servedSourceFingerprint || servedMarker;
+  const servedTruthAvailable = truth.servedSourceTruthAvailable === true
+    || truth.servedDistTruthAvailable === true
+    || Boolean(servedMarker || servedBuildTimestamp || servedSourceFingerprint);
+  const evidenceMissing = !source || !buildMarker;
+
+  let buildAlignmentState = 'unknown';
+  let alignmentReason = 'Runtime/source alignment cannot be verified from this surface.';
+  let blockingSeverity = 'caution';
+
+  if (evidenceMissing) {
+    buildAlignmentState = 'missing-build-truth';
+    alignmentReason = 'Runtime is missing local build truth markers; rebuild is required before trusting parity claims.';
+    blockingSeverity = 'warning';
+  } else if (parityState === true) {
+    buildAlignmentState = 'aligned';
+    alignmentReason = 'Runtime artifacts are aligned with build truth.';
+    blockingSeverity = 'none';
+  } else if (parityState === false) {
+    buildAlignmentState = 'stale';
+    alignmentReason = 'Hosted/runtime dist appears stale relative to expected build truth.';
+    blockingSeverity = 'warning';
+  } else if (!servedTruthAvailable) {
+    buildAlignmentState = 'unknown';
+    alignmentReason = 'Build alignment cannot be verified from this surface because served build truth is unavailable.';
+    blockingSeverity = 'caution';
+  }
+
+  const explicitSeverity = normalizeBlockingSeverity(truth?.alignmentBlockingSeverity || context?.alignmentBlockingSeverity);
+  const effectiveSeverity = explicitSeverity === 'none' ? blockingSeverity : explicitSeverity;
+  const operatorActionRequired = buildAlignmentState === 'stale' || buildAlignmentState === 'missing-build-truth' || buildAlignmentState === 'unknown';
+  const operatorActionText = buildAlignmentState === 'aligned'
+    ? 'No operator action required for build alignment.'
+    : 'Run npm run stephanos:build, verify with npm run stephanos:verify, then push updated dist before trusting hosted runtime behavior.';
+
+  return {
+    schemaVersion: 'runtime-source-dist-alignment.v1',
+    buildAlignmentState,
+    sourceFingerprint: source,
+    distFingerprint,
+    buildRuntimeMarker: buildMarker,
+    buildCommit: commit,
+    buildTimestamp: timestamp,
+    servedBuildTimestamp,
+    alignmentReason,
+    operatorActionRequired,
+    operatorActionText,
+    blockingSeverity: effectiveSeverity,
+    rebuildActionAvailable: false,
+  };
+}
+
 export function buildCanonicalMemoryContext({
   continuitySnapshot = {},
   missionPacketWorkflow = {},

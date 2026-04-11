@@ -75,7 +75,7 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
     mission: 'Continue mission',
     includeTelemetry: false,
     includeActionHints: false,
-    includeConstraints: false,
+    includeConstraints: true,
     orchestrationTruth: {
       canonicalMemoryContext: {
         activeMissionContinuity: { continuityLoopState: 'live', recentEvents: ['packet accepted'] },
@@ -101,6 +101,12 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
         nextRecommendedAction: 'Review mission packet and choose accept/reject/defer explicitly.',
         buildAssistanceReadiness: { state: 'analysis-ready', approvalRequired: true },
       },
+      canonicalSourceDistAlignment: {
+        buildAlignmentState: 'stale',
+        blockingSeverity: 'warning',
+        alignmentReason: 'Hosted/runtime dist appears stale relative to expected build truth.',
+        operatorActionRequired: true,
+      },
     },
   });
   assert.match(prompt, /## ORCHESTRATION TRUTH/);
@@ -111,6 +117,9 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
   assert.match(prompt, /buildAssistance\.state: analysis-ready/);
   assert.match(prompt, /codexPipeline\.status: generated/);
   assert.match(prompt, /codexPipeline\.validationStatus: not-run/);
+  assert.match(prompt, /buildAlignment\.state: stale/);
+  assert.match(prompt, /buildAlignment\.operatorActionRequired: true/);
+  assert.match(prompt, /runtime build alignment is stale/);
 
   assert.match(prompt, /actions\.availableNow:/);
   assert.match(prompt, /actions\.blockedBecause:/);

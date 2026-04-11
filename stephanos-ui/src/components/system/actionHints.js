@@ -50,5 +50,26 @@ export function collectActionHints(finalRouteTruth, orchestration = {}) {
     hints.push(`Latest action: ${guidance.envelopeProjection.actionRequested} (allowed=${guidance.envelopeProjection.actionAllowed ? 'yes' : 'no'}, applied=${guidance.envelopeProjection.actionApplied ? 'yes' : 'no'}).`);
   }
 
+  const alignment = orchestration?.canonicalSourceDistAlignment || {};
+  const alignmentState = asText(alignment.buildAlignmentState, 'unknown');
+  if (alignmentState !== 'aligned') {
+    hints.push({
+      severity: alignment.blockingSeverity === 'warning' || alignment.blockingSeverity === 'blocking' ? 'high' : 'info',
+      subsystem: 'BUILD-TRUTH',
+      text: asText(alignment.alignmentReason, 'Build alignment cannot be verified from this surface.'),
+    });
+    hints.push({
+      severity: 'info',
+      subsystem: 'BUILD-TRUTH',
+      text: asText(alignment.operatorActionText, 'Run stephanos:build and stephanos:verify before trusting hosted runtime behavior.'),
+    });
+  } else {
+    hints.push({
+      severity: 'info',
+      subsystem: 'BUILD-TRUTH',
+      text: 'Runtime artifacts are aligned with build truth.',
+    });
+  }
+
   return hints;
 }

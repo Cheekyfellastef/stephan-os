@@ -123,6 +123,7 @@ function formatOrchestrationTruth(orchestrationTruth = {}, finalRouteTruth = nul
     orchestrationTruth,
     latestResponseEnvelope: orchestrationTruth?.latestResponseEnvelope || null,
   });
+  const alignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
 
   const lines = [
     `memory.continuityLoopState: ${sanitizeLine(memory?.activeMissionContinuity?.continuityLoopState) || 'unknown'}`,
@@ -145,6 +146,10 @@ function formatOrchestrationTruth(orchestrationTruth = {}, finalRouteTruth = nul
     `codexPipeline.validationStatus: ${sanitizeLine(guidance?.codexPipelineSummary?.validationStatus) || 'not-run'}`,
     `codexPipeline.lastOperatorAction: ${sanitizeLine(guidance?.codexPipelineSummary?.lastOperatorAction) || 'none'}`,
     `continuity.strength: ${sanitizeLine(guidance?.continuitySummary?.strength) || 'unknown'}`,
+    `buildAlignment.state: ${sanitizeLine(alignment?.buildAlignmentState) || 'unknown'}`,
+    `buildAlignment.severity: ${sanitizeLine(alignment?.blockingSeverity) || 'caution'}`,
+    `buildAlignment.reason: ${sanitizeLine(alignment?.alignmentReason) || 'Build alignment cannot be verified from this surface.'}`,
+    `buildAlignment.operatorActionRequired: ${formatScalar(alignment?.operatorActionRequired === true)}`,
   ];
 
   if (guidance?.operatorCautionSummary?.inferredIntentCaution) {
@@ -220,7 +225,15 @@ export function buildStephanosPrompt({
     const safeConstraints = Array.isArray(constraints)
       ? constraints.map((line) => sanitizeLine(line)).filter(Boolean)
       : [];
-    appendSection(lines, 'CONSTRAINTS', safeConstraints.length > 0 ? safeConstraints : DEFAULT_CONSTRAINTS);
+    const alignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
+    const alignmentConstraint = alignment.buildAlignmentState && alignment.buildAlignmentState !== 'aligned'
+      ? `runtime build alignment is ${alignment.buildAlignmentState}; do not claim hosted behavior reflects latest source without rebuild + push verification`
+      : '';
+    const constraintLines = safeConstraints.length > 0 ? [...safeConstraints] : [...DEFAULT_CONSTRAINTS];
+    if (alignmentConstraint) {
+      constraintLines.push(alignmentConstraint);
+    }
+    appendSection(lines, 'CONSTRAINTS', constraintLines);
   }
 
   appendSection(lines, 'REQUEST', [

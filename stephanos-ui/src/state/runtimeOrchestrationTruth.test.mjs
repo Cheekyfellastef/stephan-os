@@ -4,6 +4,7 @@ import {
   buildCanonicalCurrentIntent,
   buildCanonicalMemoryContext,
   buildCanonicalMissionPacket,
+  buildCanonicalSourceDistAlignment,
 } from './runtimeOrchestrationTruth.js';
 
 test('canonical memory context stays bounded and null-safe when sparse', () => {
@@ -61,4 +62,55 @@ test('canonical mission packet maps codex handoff validation to completed withou
   assert.equal(packet.currentPhase, 'completed');
   assert.equal(packet.codexExecution.status, 'validated');
   assert.equal(packet.approvalExecutionStatus.completed, 'operator-validated');
+});
+
+test('canonical source/dist alignment reports aligned when parity is true', () => {
+  const alignment = buildCanonicalSourceDistAlignment({
+    sourceFingerprint: 'src-fp',
+    buildRuntimeMarker: 'marker-1',
+    buildCommit: 'abc1234',
+    buildTimestamp: '2026-04-11T00:00:00.000Z',
+    runtimeTruth: {
+      sourceDistParityOk: true,
+      servedMarker: 'marker-1',
+    },
+  });
+
+  assert.equal(alignment.buildAlignmentState, 'aligned');
+  assert.equal(alignment.operatorActionRequired, false);
+  assert.equal(alignment.blockingSeverity, 'none');
+});
+
+test('canonical source/dist alignment reports stale when parity is false', () => {
+  const alignment = buildCanonicalSourceDistAlignment({
+    sourceFingerprint: 'src-fp',
+    buildRuntimeMarker: 'marker-1',
+    runtimeTruth: {
+      sourceDistParityOk: false,
+      servedMarker: 'marker-older',
+    },
+  });
+
+  assert.equal(alignment.buildAlignmentState, 'stale');
+  assert.equal(alignment.operatorActionRequired, true);
+  assert.match(alignment.operatorActionText, /stephanos:build/);
+  assert.equal(alignment.distFingerprint, 'marker-older');
+});
+
+test('canonical source/dist alignment stays null-safe when evidence is missing', () => {
+  const alignment = buildCanonicalSourceDistAlignment({});
+  assert.equal(alignment.buildAlignmentState, 'missing-build-truth');
+  assert.equal(alignment.sourceFingerprint, null);
+  assert.equal(alignment.distFingerprint, null);
+  assert.equal(alignment.operatorActionRequired, true);
+});
+
+test('canonical source/dist alignment reports unknown when served truth is unavailable', () => {
+  const alignment = buildCanonicalSourceDistAlignment({
+    sourceFingerprint: 'src-fp',
+    buildRuntimeMarker: 'marker-1',
+    runtimeTruth: {},
+  });
+  assert.equal(alignment.buildAlignmentState, 'unknown');
+  assert.equal(alignment.blockingSeverity, 'caution');
 });
