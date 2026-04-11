@@ -2,6 +2,7 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
+<<<<<<< HEAD
   "sourceFingerprint": "d5dfcbd82ad3ec3f47c1ca7533cf9d61177f788ff849769002a05302bfe39234",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
@@ -9,5 +10,14 @@
   "runtimeMarker": "antifriction-live-v3::7891e95::d5dfcbd82ad3",
   "gitCommit": "7891e95",
   "buildTimestamp": "2026-04-11T15:24:46.804Z",
+=======
+  "sourceFingerprint": "cd08810e8649f296d307f4c2d007358444e0d6ab46bdf1a09d240541cb6eee2b",
+  "buildTarget": "apps/stephanos/dist",
+  "buildTargetIdentifier": "apps/stephanos/dist",
+  "runtimeId": "live-vite-shell",
+  "runtimeMarker": "antifriction-live-v3::7891e95::cd08810e8649",
+  "gitCommit": "7891e95",
+  "buildTimestamp": "2026-04-11T15:00:52.374Z",
+>>>>>>> c4d1ec3 (Preserve revalidated tailscale as live transport and prefer canonical hosted bridge route)
   "sourceTruth": "sourceFingerprint"
 }
