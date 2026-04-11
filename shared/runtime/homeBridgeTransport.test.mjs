@@ -7,6 +7,8 @@ import {
   normalizeHomeBridgeMemory,
   normalizeBridgeTransportPreferences,
   projectHomeBridgeTransportTruth,
+  resolveAutoBridgeRevalidationPlan,
+  resolveBridgeMemoryReconciliation,
   resolveBridgeUrlRequireHttps,
   resolveBridgeValidationTruth,
 } from './homeBridgeTransport.mjs';
@@ -114,4 +116,55 @@ test('bridge memory projection remains separate from current live acceptance tru
   assert.equal(projected.bridgeMemoryNeedsValidation, true);
   assert.equal(projected.tailscale.accepted, false);
   assert.equal(projected.bridgeMemoryValidationState, 'awaiting-validation');
+  assert.equal(projected.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
+});
+
+test('auto bridge revalidation plan skips when stronger accepted live config exists', () => {
+  const plan = resolveAutoBridgeRevalidationPlan({
+    bridgeMemory: {
+      transport: 'tailscale',
+      backendUrl: 'https://100.64.0.10',
+    },
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: {
+          enabled: true,
+          backendUrl: 'https://100.64.0.20',
+          accepted: true,
+        },
+      },
+    }),
+    bridgeValidationTruth: { sessionKind: 'hosted-web', requireHttps: true },
+  });
+  assert.equal(plan.shouldAttempt, false);
+  assert.equal(plan.outcome, 'remembered-superseded-by-live-config');
+});
+
+test('bridge memory reconciliation reports revalidated and unreachable outcomes truthfully', () => {
+  const revalidated = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'manual',
+      transports: {
+        manual: { backendUrl: 'https://bridge.example.com', accepted: true, reachability: 'reachable' },
+      },
+    }),
+    runtimeBridge: { accepted: true, backendUrl: 'https://bridge.example.com', reachability: 'reachable' },
+    bridgeMemory: { transport: 'manual', backendUrl: 'https://bridge.example.com' },
+    autoRevalidation: { state: 'revalidated', reason: 'ok' },
+  });
+  assert.equal(revalidated.state, 'remembered-and-revalidated');
+
+  const unreachable = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: { enabled: true, backendUrl: 'https://100.64.0.10', accepted: false, reachability: 'unreachable' },
+      },
+    }),
+    runtimeBridge: { accepted: false, backendUrl: 'https://100.64.0.10', reachability: 'unreachable' },
+    bridgeMemory: { transport: 'tailscale', backendUrl: 'https://100.64.0.10' },
+    autoRevalidation: { state: 'unreachable', reason: 'probe failed' },
+  });
+  assert.equal(unreachable.state, 'remembered-but-unreachable');
 });

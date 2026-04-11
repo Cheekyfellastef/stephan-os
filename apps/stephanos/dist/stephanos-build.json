@@ -2,22 +2,12 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
-<<<<<<< HEAD
-  "sourceFingerprint": "4eeb5c6354d66429d920b64b90a2f1c1f0c9d83a2612deb2d44dac0c88f4be10",
+  "sourceFingerprint": "a4e1b02cdb8c3ccdbef3e7d9c6168ee3928feec02ebae1d02587aa4912d6acc2",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::b3790b0::4eeb5c6354d6",
-  "gitCommit": "b3790b0",
-  "buildTimestamp": "2026-04-11T13:16:55.905Z",
-=======
-  "sourceFingerprint": "76a6f809d026cd74e4af9807672c2a08f93249ba21f85cb9210af2c9f9b27dee",
-  "buildTarget": "apps/stephanos/dist",
-  "buildTargetIdentifier": "apps/stephanos/dist",
-  "runtimeId": "live-vite-shell",
-  "runtimeMarker": "antifriction-live-v3::b3790b0::76a6f809d026",
-  "gitCommit": "b3790b0",
-  "buildTimestamp": "2026-04-11T12:28:32.202Z",
->>>>>>> 5676224 (Persist Home Bridge transport memory across surfaces)
+  "runtimeMarker": "antifriction-live-v3::75eba2b::a4e1b02cdb8c",
+  "gitCommit": "75eba2b",
+  "buildTimestamp": "2026-04-11T13:49:14.178Z",
   "sourceTruth": "sourceFingerprint"
 }

@@ -39,6 +39,7 @@ import {
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 import { createDefaultMissionDashboardUiState, normalizeMissionDashboardUiState } from './missionDashboardUiState';
 import { getApiRuntimeConfig } from '../ai/apiConfig';
+import { checkApiHealth } from '../ai/aiClient';
 import { ensureRuntimeStatusModel } from './runtimeStatusDefaults';
 import {
   createDefaultBridgeTransportPreferences,
@@ -48,6 +49,7 @@ import {
   normalizeBridgeTransportPreferences,
   normalizeBridgeTransportSelection,
   projectHomeBridgeTransportTruth,
+  resolveAutoBridgeRevalidationPlan,
   resolveBridgeValidationTruth,
   resolveBridgeUrlRequireHttps,
 } from '../../../shared/runtime/homeBridgeTransport.mjs';
@@ -138,6 +140,12 @@ const MAX_PERSISTED_OUTPUT_LENGTH = 4000;
 const MAX_FRICTION_EVENTS = 10;
 const BRIDGE_MEMORY_RECORD_NAMESPACE = 'continuity';
 const BRIDGE_MEMORY_RECORD_ID = 'home-bridge.transport-memory';
+const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
+  state: 'idle',
+  reason: '',
+  attemptedAt: '',
+  attemptedConfigKey: '',
+});
 
 function getStephanosMemoryRuntime() {
   return globalThis.stephanosMemory || globalThis.parent?.stephanosMemory || null;
@@ -533,6 +541,7 @@ export function AIStoreProvider({ children }) {
   );
   const [bridgeMemory, setBridgeMemoryState] = useState(initialSnapshot.bridgeMemory || normalizeHomeBridgeMemory());
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
+  const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -578,7 +587,8 @@ export function AIStoreProvider({ children }) {
     runtimeBridge: apiStatus?.runtimeContext?.homeNodeBridge || {},
     bridgeMemory,
     bridgeMemoryRehydrated,
-  }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryRehydrated, bridgeTransportPreferences]);
+    autoRevalidation: bridgeAutoRevalidation,
+  }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryRehydrated, bridgeTransportPreferences, bridgeAutoRevalidation]);
   const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -964,6 +974,7 @@ export function AIStoreProvider({ children }) {
     setHomeNodeLastKnownState(null);
     setHomeBridgeUrlState('');
     setBridgeTransportPreferencesState(createDefaultBridgeTransportPreferences());
+    setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setHomeNodeStatusState(DEFAULT_HOME_NODE_STATUS);
     setProviderSelectionSource('default:free-tier');
     setUiLayout(nextUiLayout);
@@ -1103,6 +1114,7 @@ export function AIStoreProvider({ children }) {
     }
     setStephanosHomeBridgeGlobal(validation.normalizedUrl);
     setHomeBridgeUrlState(validation.normalizedUrl);
+    setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setBridgeMemoryRehydrated(false);
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
@@ -1134,6 +1146,7 @@ export function AIStoreProvider({ children }) {
     const clearedBridgeMemory = normalizeHomeBridgeMemory();
     setBridgeMemoryState(clearedBridgeMemory);
     setBridgeMemoryRehydrated(false);
+    setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     persistBridgeMemoryToDurableStore(clearedBridgeMemory);
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
@@ -1211,6 +1224,167 @@ export function AIStoreProvider({ children }) {
       setBridgeMemoryRehydrated(false);
     }
   }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sessionKind = bridgeValidationTruth?.sessionKind || 'unknown';
+    const hostedSession = sessionKind === 'hosted-web';
+    const plan = resolveAutoBridgeRevalidationPlan({
+      bridgeMemory,
+      preferences: bridgeTransportPreferences,
+      bridgeValidationTruth,
+    });
+    const attemptedConfigKey = `${plan.transport || 'none'}::${plan.candidateUrl || ''}::${bridgeMemory?.rememberedAt || ''}`;
+    const terminalStates = new Set(['skipped', 'validation-failed', 'unreachable', 'revalidated']);
+    if (bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey && terminalStates.has(bridgeAutoRevalidation.state)) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (!hostedSession || !plan.shouldAttempt || !plan.transport || !plan.candidateUrl) {
+      setBridgeAutoRevalidation((prev) => (
+        prev.state === 'revalidated'
+          ? prev
+          : {
+            state: 'skipped',
+            reason: !hostedSession
+              ? 'Auto-revalidation only runs on hosted surfaces.'
+              : (plan.reason || 'Remembered bridge not eligible for auto-revalidation.'),
+            attemptedAt: prev.attemptedAt || new Date().toISOString(),
+            attemptedConfigKey,
+          }
+      ));
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (bridgeAutoRevalidation.state === 'revalidated' && bridgeAutoRevalidation.attemptedAt) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const executeAutoRevalidation = async () => {
+      setBridgeAutoRevalidation({
+        state: 'validating',
+        reason: `Auto-validating remembered ${plan.transport} bridge for this hosted surface.`,
+        attemptedAt: new Date().toISOString(),
+        attemptedConfigKey,
+      });
+      const validation = validateStephanosHomeBridgeUrl(plan.candidateUrl, {
+        frontendOrigin,
+        requireHttps: plan.requireHttps !== false,
+      });
+      if (!validation.ok) {
+        if (cancelled) return;
+        updateBridgeTransportConfig(plan.transport, {
+          accepted: false,
+          active: false,
+          usable: false,
+          reachability: 'invalid',
+          reason: validation.reason || 'Remembered bridge failed canonical validation on this surface.',
+        });
+        setBridgeAutoRevalidation({
+          state: 'validation-failed',
+          reason: validation.reason || 'Remembered bridge failed canonical validation on this surface.',
+          attemptedAt: new Date().toISOString(),
+          attemptedConfigKey,
+        });
+        return;
+      }
+      if (plan.transport === 'manual') {
+        setHomeBridgeUrlState(validation.normalizedUrl);
+        setStephanosHomeBridgeGlobal(validation.normalizedUrl);
+      }
+      updateBridgeTransportConfig(plan.transport, {
+        backendUrl: validation.normalizedUrl,
+        accepted: false,
+        active: false,
+        usable: false,
+        reachability: 'pending',
+        reason: 'Remembered bridge passed validation; probing current-surface reachability.',
+      });
+      setBridgeAutoRevalidation({
+        state: 'probing',
+        reason: 'Remembered bridge validated; probing reachability from this surface.',
+        attemptedAt: new Date().toISOString(),
+        attemptedConfigKey,
+      });
+      try {
+        const probe = await checkApiHealth({ baseUrl: validation.normalizedUrl, timeoutMs: 12000 });
+        if (cancelled) return;
+        const serviceOk = probe.ok && probe.data?.service === 'stephanos-server';
+        const nextReachability = serviceOk ? 'reachable' : 'unreachable';
+        updateBridgeTransportConfig(plan.transport, {
+          backendUrl: validation.normalizedUrl,
+          accepted: serviceOk,
+          active: serviceOk,
+          usable: serviceOk,
+          reachability: nextReachability,
+          reason: serviceOk
+            ? 'Remembered bridge revalidated and reachable on this hosted surface.'
+            : (probe.data?.error || 'Remembered bridge probe failed from this hosted surface.'),
+        });
+        setApiStatus((prev) => ({
+          ...prev,
+          runtimeContext: {
+            ...(prev?.runtimeContext || {}),
+            homeNodeBridge: {
+              ...(prev?.runtimeContext?.homeNodeBridge || {}),
+              configured: true,
+              accepted: serviceOk,
+              backendUrl: validation.normalizedUrl,
+              reachability: nextReachability,
+              reason: serviceOk
+                ? 'Remembered bridge revalidated and promoted to live route truth.'
+                : (probe.data?.error || 'Remembered bridge unreachable from this hosted surface.'),
+              source: `bridge-memory:auto-revalidation:${plan.transport}`,
+              lastCheckedAt: new Date().toISOString(),
+            },
+          },
+        }));
+        setBridgeAutoRevalidation({
+          state: serviceOk ? 'revalidated' : 'unreachable',
+          reason: serviceOk
+            ? 'Remembered Home Bridge revalidated successfully.'
+            : (probe.data?.error || 'Remembered Home Bridge is unreachable from this surface.'),
+          attemptedAt: new Date().toISOString(),
+          attemptedConfigKey,
+        });
+        if (serviceOk) {
+          setBridgeMemoryRehydrated(false);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        updateBridgeTransportConfig(plan.transport, {
+          accepted: false,
+          active: false,
+          usable: false,
+          reachability: 'unreachable',
+          reason: error?.message || 'Remembered bridge probe failed before receiving a response.',
+        });
+        setBridgeAutoRevalidation({
+          state: 'unreachable',
+          reason: error?.message || 'Remembered Home Bridge probe failed from this surface.',
+          attemptedAt: new Date().toISOString(),
+          attemptedConfigKey,
+        });
+      }
+    };
+    void executeAutoRevalidation();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bridgeMemory,
+    bridgeTransportPreferences,
+    bridgeValidationTruth,
+    bridgeAutoRevalidation.attemptedAt,
+    bridgeAutoRevalidation.state,
+    setApiStatus,
+    updateBridgeTransportConfig,
+  ]);
   const value = useMemo(() => ({
     commandHistory,
     setCommandHistory,
@@ -1281,6 +1455,7 @@ export function AIStoreProvider({ children }) {
     bridgeTransportTruth,
     bridgeMemory,
     bridgeMemoryRehydrated,
+    bridgeAutoRevalidation,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     saveHomeBridgeUrl,
@@ -1353,6 +1528,7 @@ export function AIStoreProvider({ children }) {
     bridgeTransportTruth,
     bridgeMemory,
     bridgeMemoryRehydrated,
+    bridgeAutoRevalidation,
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
