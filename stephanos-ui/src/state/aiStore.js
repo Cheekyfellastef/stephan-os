@@ -153,6 +153,10 @@ function getStephanosMemoryRuntime() {
 
 function readPersistedBridgeMemory() {
   const memory = getStephanosMemoryRuntime();
+  const storageKey = typeof globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY === 'string'
+    ? globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY
+    : 'stephanos.durable.memory.v2';
+  const storageScope = memory ? 'shared-runtime-memory' : 'unavailable';
   if (!memory?.getRecord) {
     return {
       bridgeMemory: normalizeHomeBridgeMemory(),
@@ -160,6 +164,12 @@ function readPersistedBridgeMemory() {
         state: 'memory-read-empty',
         reason: 'Shared durable memory runtime is unavailable on this surface.',
         at: new Date().toISOString(),
+        bridgeMemoryReadAttempted: true,
+        bridgeMemoryReadSource: 'runtime-unavailable',
+        bridgeMemoryReadResult: 'empty',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: 'none',
       },
     };
   }
@@ -185,6 +195,14 @@ function readPersistedBridgeMemory() {
             ? 'Home Bridge durable memory payload exists but is invalid after canonical normalization.'
             : 'No remembered Home Bridge config found in shared durable memory.'),
         at: new Date().toISOString(),
+        bridgeMemoryReadAttempted: true,
+        bridgeMemoryReadSource: 'shared-runtime-memory',
+        bridgeMemoryReadResult: hasRememberedBridge ? 'remembered-bridge' : 'empty',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: payloadHasShape
+          ? `record-payload:${Object.keys(payloadBridgeMemory || {}).slice(0, 6).join(',')}`
+          : 'none',
       },
     };
   } catch {
@@ -194,6 +212,12 @@ function readPersistedBridgeMemory() {
         state: 'memory-read-empty',
         reason: 'Failed to read shared durable memory record for Home Bridge transport.',
         at: new Date().toISOString(),
+        bridgeMemoryReadAttempted: true,
+        bridgeMemoryReadSource: 'shared-runtime-memory',
+        bridgeMemoryReadResult: 'error',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: 'read-error',
       },
     };
   }
@@ -208,6 +232,9 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
         state: 'save-clobbered',
         reason: 'Shared durable memory runtime is unavailable; Home Bridge memory cannot be persisted.',
         at: new Date().toISOString(),
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: false,
+        bridgeMemoryClearedBy: 'runtime-unavailable',
       },
     };
   }
@@ -231,6 +258,9 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
           ? `Remembered ${normalizedBridgeMemory.transport} Home Bridge config persisted to shared durable memory.`
           : 'Remembered Home Bridge config cleared from shared durable memory.',
         at: new Date().toISOString(),
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: true,
+        bridgeMemoryClearedBy: normalizedBridgeMemory.transport === 'none' ? 'explicit-clear-or-empty-normalization' : '',
       },
     };
   } catch {
@@ -240,6 +270,9 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
         state: 'save-clobbered',
         reason: 'Shared durable memory write failed while persisting Home Bridge memory.',
         at: new Date().toISOString(),
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: false,
+        bridgeMemoryClearedBy: 'save-failed',
       },
     };
   }
@@ -607,6 +640,7 @@ export function AIStoreProvider({ children }) {
     reason: 'No bridge memory persistence event recorded.',
     at: '',
   });
+  const [bridgeMemoryHydrationPending, setBridgeMemoryHydrationPending] = useState(Boolean(getStephanosMemoryRuntime()?.hydrate));
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
   const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
@@ -741,6 +775,54 @@ export function AIStoreProvider({ children }) {
   }, [devMode, runtimeStatusModel]);
 
   useEffect(() => {
+    if (!bridgeMemoryHydrationPending) {
+      return;
+    }
+    let cancelled = false;
+    const memory = getStephanosMemoryRuntime();
+    if (!memory?.hydrate) {
+      setBridgeMemoryHydrationPending(false);
+      return;
+    }
+    void memory.hydrate()
+      .catch(() => null)
+      .then(() => {
+        if (cancelled) return;
+        const read = readPersistedBridgeMemory();
+        setBridgeMemoryPersistence(read.diagnostics);
+        setBridgeMemoryState(read.bridgeMemory);
+        if (read.bridgeMemory.transport !== 'none' && read.bridgeMemory.backendUrl) {
+          const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+          setBridgeMemoryRehydrated(true);
+          setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
+            ...prev,
+            selectedTransport: read.bridgeMemory.transport,
+            transports: {
+              ...(prev?.transports || {}),
+              [read.bridgeMemory.transport]: {
+                ...(prev?.transports?.[read.bridgeMemory.transport] || {}),
+                backendUrl: read.bridgeMemory.backendUrl,
+                enabled: true,
+              },
+            },
+          }, {
+            homeBridgeUrl: read.bridgeMemory.transport === 'manual' ? read.bridgeMemory.backendUrl : homeBridgeUrl,
+            frontendOrigin,
+            manualRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: bridgeValidationTruth.sessionKind, selectedTransport: 'manual', fallbackRequireHttps: bridgeValidationTruth.requireHttps }),
+            tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: bridgeValidationTruth.sessionKind, selectedTransport: 'tailscale' }),
+          }));
+        }
+        setBridgeMemoryHydrationPending(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridgeMemoryHydrationPending, bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
+
+  useEffect(() => {
+    if (bridgeMemoryHydrationPending) {
+      return;
+    }
     const rememberedAt = bridgeMemory?.rememberedAt || new Date().toISOString();
     const previousBridgeMemory = normalizeHomeBridgeMemory(bridgeMemory || {});
     const nextBridgeMemory = deriveBridgeMemoryFromPreferences(bridgeTransportPreferences, {
@@ -782,6 +864,7 @@ export function AIStoreProvider({ children }) {
       });
     }
   }, [
+    bridgeMemoryHydrationPending,
     bridgeMemory?.rememberedAt,
     bridgeMemoryRehydrated,
     bridgeTransportPreferences,

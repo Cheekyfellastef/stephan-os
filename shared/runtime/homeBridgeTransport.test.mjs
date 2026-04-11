@@ -119,6 +119,41 @@ test('bridge memory projection remains separate from current live acceptance tru
   assert.equal(projected.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
 });
 
+test('bridge memory projection surfaces read/write diagnostics breadcrumbs', () => {
+  const preferences = normalizeBridgeTransportPreferences({
+    selectedTransport: 'tailscale',
+    transports: {
+      tailscale: {
+        enabled: true,
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+    },
+  });
+  const projected = projectHomeBridgeTransportTruth(preferences, {
+    bridgeMemory: {
+      transport: 'tailscale',
+      backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+    },
+    bridgeMemoryPersistence: {
+      state: 'save-persisted',
+      bridgeMemoryWriteAttempted: true,
+      bridgeMemoryWriteSucceeded: true,
+      bridgeMemoryReadAttempted: true,
+      bridgeMemoryReadSource: 'shared-runtime-memory',
+      bridgeMemoryReadResult: 'remembered-bridge',
+      bridgeMemoryStorageKey: 'stephanos.durable.memory.v2',
+      bridgeMemoryStorageScope: 'shared-runtime-memory',
+      bridgeMemoryLastRawValueSummary: 'record-payload:bridgeMemory',
+    },
+  });
+  assert.equal(projected.bridgeMemoryWriteAttempted, true);
+  assert.equal(projected.bridgeMemoryWriteSucceeded, true);
+  assert.equal(projected.bridgeMemoryReadAttempted, true);
+  assert.equal(projected.bridgeMemoryReadSource, 'shared-runtime-memory');
+  assert.equal(projected.bridgeMemoryReadResult, 'remembered-bridge');
+  assert.equal(projected.bridgeMemoryStorageScope, 'shared-runtime-memory');
+});
+
 test('bridge memory derivation prefers valid configured tailscale transport even when selected transport drifts', () => {
   const derived = deriveBridgeMemoryFromPreferences(
     normalizeBridgeTransportPreferences({

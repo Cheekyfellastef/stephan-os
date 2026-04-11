@@ -981,6 +981,16 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
         bridgeMemoryPersistenceState: 'save-persisted',
         bridgeMemoryPersistenceReason: 'Remembered tailscale Home Bridge config persisted to shared durable memory.',
         bridgeMemoryPersistenceAt: '2026-04-11T10:00:03.000Z',
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: true,
+        bridgeMemoryReadAttempted: true,
+        bridgeMemoryReadSource: 'shared-runtime-memory',
+        bridgeMemoryReadResult: 'remembered-bridge',
+        bridgeMemoryClearedBy: '',
+        bridgeMemoryClobberDetected: false,
+        bridgeMemoryStorageKey: 'stephanos.durable.memory.v2',
+        bridgeMemoryStorageScope: 'shared-runtime-memory',
+        bridgeMemoryLastRawValueSummary: 'record-payload:transport,backendUrl',
         bridgeAutoRevalidationState: 'unreachable',
         bridgeAutoRevalidationReason: 'Remembered Home Bridge is unreachable from this surface.',
         tailscale: {
@@ -1016,6 +1026,13 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Bridge Memory Reconciliation Provenance: remembered-tailscale-unreachable/);
   assert.match(snapshot, /Bridge Memory Persistence State: save-persisted/);
   assert.match(snapshot, /Bridge Memory Persistence Reason: Remembered tailscale Home Bridge config persisted to shared durable memory\./);
+  assert.match(snapshot, /Bridge Memory Write Attempted: yes/);
+  assert.match(snapshot, /Bridge Memory Write Succeeded: yes/);
+  assert.match(snapshot, /Bridge Memory Read Attempted: yes/);
+  assert.match(snapshot, /Bridge Memory Read Source: shared-runtime-memory/);
+  assert.match(snapshot, /Bridge Memory Read Result: remembered-bridge/);
+  assert.match(snapshot, /Bridge Memory Clobber Detected: no/);
+  assert.match(snapshot, /Bridge Memory Storage Scope: shared-runtime-memory/);
   assert.match(snapshot, /Bridge Auto Revalidation State: unreachable/);
   assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
 });
