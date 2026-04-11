@@ -6,8 +6,14 @@
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
+<<<<<<< HEAD
   "runtimeMarker": "antifriction-live-v3::2ec2b01::89d98e1114ca",
   "gitCommit": "2ec2b01",
   "buildTimestamp": "2026-04-11T17:30:51.888Z",
+=======
+  "runtimeMarker": "antifriction-live-v3::a656ccd::154433bcd5c4",
+  "gitCommit": "a656ccd",
+  "buildTimestamp": "2026-04-11T17:13:48.118Z",
+>>>>>>> e1c2e6b (Fix Home Bridge persistence breadcrumbs and hosted tailscale promotion truth)
   "sourceTruth": "sourceFingerprint"
 }
