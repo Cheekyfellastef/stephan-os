@@ -128,6 +128,11 @@ export function buildOperatorGuidanceProjection({
       state: asText(selectors?.codexHandoffReadiness, 'unavailable'),
       readyNow: selectors?.codexHandoffReadiness === 'ready',
     },
+    codexPipelineSummary: {
+      status: asText(currentMissionState?.codexHandoffStatus, 'not-generated'),
+      validationStatus: asText(currentMissionState?.validationStatus, 'not-run'),
+      lastOperatorAction: asText(currentMissionState?.lastHandoffAction, 'none'),
+    },
     continuitySummary,
     missionLifecycleSummary: {
       missionTitle: asText(currentMissionState?.missionTitle, 'not yet established'),

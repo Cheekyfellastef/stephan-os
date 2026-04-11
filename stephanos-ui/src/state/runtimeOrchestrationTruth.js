@@ -140,8 +140,17 @@ export function buildCanonicalMissionPacket({
   currentIntent = {},
 } = {}) {
   const latestDecision = Array.isArray(missionPacketWorkflow?.decisions) ? missionPacketWorkflow.decisions[0] : null;
+  const latestHandoff = Array.isArray(missionPacketWorkflow?.codexHandoffs) ? missionPacketWorkflow.codexHandoffs[0] : null;
   const decision = asText(latestDecision?.decision, 'pending-review');
-  const status = decision === 'accept'
+  const status = asText(latestHandoff?.status) === 'validated'
+    ? 'completed'
+    : asText(latestHandoff?.status) === 'applied'
+      ? 'in-progress'
+      : asText(latestHandoff?.status) === 'failed'
+        ? 'rollback-recommended'
+        : asText(latestHandoff?.status) === 'rolled-back'
+          ? 'rolled-back'
+          : decision === 'accept'
     ? 'execution-ready'
     : decision === 'reject'
       ? 'failed'
@@ -159,12 +168,20 @@ export function buildCanonicalMissionPacket({
     blockers: asList(missionPacketTruth?.blockers, 5),
     recommendedNextAction: asText(missionPacketTruth?.executionEligible ? 'Prepare execution handoff' : 'Await explicit operator approval', 'not yet established'),
     continuityNotes: asList(missionPacketTruth?.evidence, 5),
+    codexExecution: {
+      handoffId: asText(latestHandoff?.handoffId),
+      status: asText(latestHandoff?.status, 'not-generated'),
+      validationStatus: asText(latestHandoff?.validationStatus, 'not-run'),
+      lastOperatorAction: asText(latestHandoff?.lastOperatorAction, 'none'),
+      summary: asText(latestHandoff?.summary),
+      updatedAt: asText(latestHandoff?.updatedAt),
+    },
     approvalExecutionStatus: {
       requested: 'proposed',
       proposed: missionPacketTruth?.active === true ? 'yes' : 'no',
       accepted: decision === 'accept' ? 'yes' : 'no',
       executing: missionPacketTruth?.executionEligible === true ? 'possible-after-approval' : 'no',
-      completed: 'no-automatic-completion-claim',
+      completed: asText(latestHandoff?.status) === 'validated' ? 'operator-validated' : 'no-automatic-completion-claim',
       lifecycleStatus: normalizeLifecycle(status, 'proposed'),
     },
   };

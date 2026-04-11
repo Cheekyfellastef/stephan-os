@@ -141,6 +141,9 @@ function formatOrchestrationTruth(orchestrationTruth = {}, finalRouteTruth = nul
     `buildAssistance.state: ${sanitizeLine(guidance?.buildAssistanceSummary?.state) || 'unavailable'}`,
     `buildAssistance.approvalRequired: ${formatScalar(guidance?.buildAssistanceSummary?.approvalRequired === true)}`,
     `codexHandoff.state: ${sanitizeLine(guidance?.codexReadinessSummary?.state) || 'unavailable'}`,
+    `codexPipeline.status: ${sanitizeLine(guidance?.codexPipelineSummary?.status) || 'not-generated'}`,
+    `codexPipeline.validationStatus: ${sanitizeLine(guidance?.codexPipelineSummary?.validationStatus) || 'not-run'}`,
+    `codexPipeline.lastOperatorAction: ${sanitizeLine(guidance?.codexPipelineSummary?.lastOperatorAction) || 'none'}`,
     `continuity.strength: ${sanitizeLine(guidance?.continuitySummary?.strength) || 'unknown'}`,
   ];
 

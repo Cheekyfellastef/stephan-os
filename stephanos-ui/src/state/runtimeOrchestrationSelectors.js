@@ -25,12 +25,20 @@ function explainBuildAssistState(state, context = {}) {
     failed: 'Mission is marked failed. Preserve failure truth and avoid fake recovery claims.',
     blocked: `Mission is blocked: ${blockedReason}`,
     'rollback-recommended': 'Mission outcome indicates rollback is recommended before new execution attempts.',
+    'awaiting-validation': 'Codex handoff was applied by operator confirmation; validation outcome is now required.',
   };
   return map[state] || `Build assistance state is ${state}. Next action: ${nextAction}`;
 }
 
 
-function deriveCommandReadiness({ missionPhase = 'proposed', missionBlocked = false, codexHandoffReadiness = 'unavailable', buildAssistanceReadiness = {}, approvalReadiness = 'not-required' } = {}) {
+function deriveCommandReadiness({
+  missionPhase = 'proposed',
+  missionBlocked = false,
+  codexHandoffReadiness = 'unavailable',
+  buildAssistanceReadiness = {},
+  approvalReadiness = 'not-required',
+  codexExecutionState = 'not-generated',
+} = {}) {
   const awaitingApproval = missionPhase === 'proposed' || missionPhase === 'awaiting-approval';
   const executionReady = missionPhase === 'accepted' || missionPhase === 'execution-ready';
   const inProgress = missionPhase === 'in-progress';
@@ -89,6 +97,46 @@ function deriveCommandReadiness({ missionPhase = 'proposed', missionBlocked = fa
         : 'Codex handoff is unavailable until approval and readiness truth are satisfied.',
       approvalRequired: false,
     },
+    'mark-handoff-applied': {
+      allowed: ['generated', 'handed-off'].includes(codexExecutionState),
+      reason: ['generated', 'handed-off'].includes(codexExecutionState) ? '' : 'handoff-not-generated-or-handed-off',
+      message: ['generated', 'handed-off'].includes(codexExecutionState)
+        ? 'Operator can confirm handoff applied.'
+        : 'Handoff must be generated/handed-off before apply confirmation.',
+      approvalRequired: false,
+    },
+    'mark-handoff-failed': {
+      allowed: ['generated', 'handed-off', 'applied'].includes(codexExecutionState),
+      reason: ['generated', 'handed-off', 'applied'].includes(codexExecutionState) ? '' : 'handoff-failure-not-allowed',
+      message: ['generated', 'handed-off', 'applied'].includes(codexExecutionState)
+        ? 'Operator can mark handoff failed.'
+        : 'No active handoff state supports failure marking.',
+      approvalRequired: false,
+    },
+    'mark-handoff-rolled-back': {
+      allowed: ['failed', 'rollback-recommended'].includes(missionPhase) || codexExecutionState === 'failed',
+      reason: ['failed', 'rollback-recommended'].includes(missionPhase) || codexExecutionState === 'failed' ? '' : 'rollback-not-allowed',
+      message: ['failed', 'rollback-recommended'].includes(missionPhase) || codexExecutionState === 'failed'
+        ? 'Operator can mark the handoff rolled back.'
+        : 'Rollback marking is available after failure/rollback recommendation only.',
+      approvalRequired: false,
+    },
+    'confirm-validation-passed': {
+      allowed: codexExecutionState === 'applied',
+      reason: codexExecutionState === 'applied' ? '' : 'handoff-not-applied',
+      message: codexExecutionState === 'applied'
+        ? 'Operator can confirm validation passed.'
+        : 'Validation pass can be confirmed only after apply confirmation.',
+      approvalRequired: false,
+    },
+    'confirm-validation-failed': {
+      allowed: codexExecutionState === 'applied',
+      reason: codexExecutionState === 'applied' ? '' : 'handoff-not-applied',
+      message: codexExecutionState === 'applied'
+        ? 'Operator can confirm validation failed.'
+        : 'Validation fail can be confirmed only after apply confirmation.',
+      approvalRequired: false,
+    },
   };
 }
 
@@ -117,6 +165,9 @@ export function deriveRuntimeOrchestrationSelectors({
   const workflowDecision = Array.isArray(missionPacketWorkflow?.decisions)
     ? missionPacketWorkflow.decisions[0]
     : null;
+  const codexHandoff = canonicalMissionPacket?.codexExecution && typeof canonicalMissionPacket.codexExecution === 'object'
+    ? canonicalMissionPacket.codexExecution
+    : {};
 
   const missionPhase = asText(packet?.currentPhase, 'proposed');
   const blockedItems = asList(packet?.blockers, 6);
@@ -144,7 +195,20 @@ export function deriveRuntimeOrchestrationSelectors({
       ? 'approval-satisfied'
       : 'not-required';
 
-  const codexHandoffReadiness = asText(packet?.approvalExecutionStatus?.accepted) === 'yes'
+  const codexExecutionState = asText(codexHandoff?.status, 'not-generated');
+  const codexHandoffReadiness = codexExecutionState === 'generated'
+    ? 'generated'
+    : codexExecutionState === 'handed-off'
+      ? 'waiting-for-operator-apply'
+      : codexExecutionState === 'applied'
+        ? 'awaiting-validation'
+        : codexExecutionState === 'validated'
+          ? 'validated'
+          : codexExecutionState === 'failed'
+            ? 'failed'
+            : codexExecutionState === 'rolled-back'
+              ? 'rolled-back'
+              : asText(packet?.approvalExecutionStatus?.accepted) === 'yes'
     ? 'ready'
     : blockedByApproval
       ? 'awaiting-approval'
@@ -153,7 +217,9 @@ export function deriveRuntimeOrchestrationSelectors({
         : 'unavailable';
 
   const executionState = asText(execution?.status, 'not-executing');
-  const buildAssistanceReadiness = missionPhase === 'rolled-back'
+  const buildAssistanceReadiness = codexExecutionState === 'applied'
+    ? 'awaiting-validation'
+    : missionPhase === 'rolled-back'
     ? 'rollback-recommended'
     : missionPhase === 'completed'
       ? 'completed'
@@ -169,7 +235,19 @@ export function deriveRuntimeOrchestrationSelectors({
                 ? (executionState === 'not-executing' ? 'execution-ready' : executionState)
                 : 'codex-handoff-ready';
 
-  const nextRecommendedAction = missionBlocked
+  const nextRecommendedAction = codexExecutionState === 'generated'
+    ? 'Codex handoff generated. Hand off externally, then confirm when applied.'
+    : codexExecutionState === 'handed-off'
+      ? 'Waiting for operator to apply the handoff externally.'
+      : codexExecutionState === 'applied'
+        ? 'Handoff applied, awaiting validation via stephanos:build and stephanos:verify.'
+        : codexExecutionState === 'validated'
+          ? 'Validation passed, mission complete.'
+          : codexExecutionState === 'failed'
+            ? 'Validation failed, rollback recommended.'
+            : codexExecutionState === 'rolled-back'
+              ? 'Handoff rolled back. Confirm next recovery mission.'
+              : missionBlocked
     ? `Resolve blockage: ${asText(blockageExplanation, 'confirm operator objective and route truth')}`
     : blockedByApproval
       ? 'Review mission packet and choose accept/reject/defer explicitly.'
@@ -183,6 +261,7 @@ export function deriveRuntimeOrchestrationSelectors({
     codexHandoffReadiness,
     buildAssistanceReadiness: { state: buildAssistanceReadiness, approvalRequired: blockedByApproval },
     approvalReadiness,
+    codexExecutionState,
   });
 
   return {
@@ -196,6 +275,9 @@ export function deriveRuntimeOrchestrationSelectors({
       executionState,
       inferredIntent: asText(intent?.source) === 'inferred',
       lifecycleDecision: asText(workflowDecision?.decision, 'pending-review'),
+      codexHandoffStatus: codexExecutionState,
+      validationStatus: asText(codexHandoff?.validationStatus, 'not-run'),
+      lastHandoffAction: asText(codexHandoff?.lastOperatorAction, 'none'),
     },
     continuityLoopState: {
       state: continuityLoopState,
@@ -205,6 +287,7 @@ export function deriveRuntimeOrchestrationSelectors({
     },
     approvalReadiness,
     codexHandoffReadiness,
+    codexExecutionState,
     blockageExplanation: asText(blockageExplanation, ''),
     nextRecommendedAction,
     missionBlocked,

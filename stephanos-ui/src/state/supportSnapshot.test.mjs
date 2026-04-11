@@ -1010,7 +1010,13 @@ test('buildSupportSnapshot includes shared operator guidance summaries', () => {
     statusSummary: {},
     orchestrationTruth: {
       selectors: {
-        currentMissionState: { missionPhase: 'awaiting-approval', intentSource: 'inferred' },
+        currentMissionState: {
+          missionPhase: 'awaiting-approval',
+          intentSource: 'inferred',
+          codexHandoffStatus: 'generated',
+          validationStatus: 'not-run',
+          lastHandoffAction: 'prepare-codex-handoff',
+        },
         continuityLoopState: { strength: 'sparse', sparse: true },
         missionBlocked: true,
         blockageExplanation: 'Intent inferred with sparse continuity.',
@@ -1038,6 +1044,8 @@ test('buildSupportSnapshot includes shared operator guidance summaries', () => {
   assert.match(snapshot, /Orchestration Available Now: accept-mission/);
   assert.match(snapshot, /Orchestration Blocked Because: start-mission: mission-blocked/);
   assert.match(snapshot, /Orchestration Next Action: Confirm explicit mission objective\./);
+  assert.match(snapshot, /Codex Pipeline Status: generated/);
+  assert.match(snapshot, /Codex Validation Status: not-run/);
   assert.match(snapshot, /Latest Envelope Action Requested: start-mission/);
   assert.match(snapshot, /Latest Envelope Allowed: no/);
 });

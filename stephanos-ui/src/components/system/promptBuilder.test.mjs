@@ -90,7 +90,13 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
         recommendedNextAction: 'Await explicit operator approval',
       },
       selectors: {
-        currentMissionState: { missionPhase: 'awaiting-approval', intentSource: 'explicit' },
+        currentMissionState: {
+          missionPhase: 'awaiting-approval',
+          intentSource: 'explicit',
+          codexHandoffStatus: 'generated',
+          validationStatus: 'not-run',
+          lastHandoffAction: 'prepare-codex-handoff',
+        },
         missionBlocked: false,
         nextRecommendedAction: 'Review mission packet and choose accept/reject/defer explicitly.',
         buildAssistanceReadiness: { state: 'analysis-ready', approvalRequired: true },
@@ -103,6 +109,8 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
   assert.match(prompt, /missionPacket\.currentPhase: awaiting-approval/);
   assert.match(prompt, /mission\.phase: awaiting-approval/);
   assert.match(prompt, /buildAssistance\.state: analysis-ready/);
+  assert.match(prompt, /codexPipeline\.status: generated/);
+  assert.match(prompt, /codexPipeline\.validationStatus: not-run/);
 
   assert.match(prompt, /actions\.availableNow:/);
   assert.match(prompt, /actions\.blockedBecause:/);

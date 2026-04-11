@@ -133,3 +133,47 @@ test('lifecycle actions track in-progress to completed without claiming auto exe
   assert.equal(gate.lifecycleStatus, 'completed');
   assert.equal(gate.executionEligible, false);
 });
+
+test('codex handoff pipeline tracks generated -> applied -> validated deterministically', () => {
+  const packet = normalizeMissionPacketTruth({
+    proposal_packet_active: true,
+    proposal_packet_mode: 'self-build-mission-synthesis',
+    proposed_move_id: 'codex-pipeline',
+    proposed_move_title: 'Codex pipeline',
+    proposed_move_rationale: 'Track handoff truth explicitly',
+    codex_handoff_payload: '{"patchMetadata":{"files":["a.js"],"estimatedChanges":"small"}}',
+    operator_approval_required: true,
+    execution_eligible: false,
+  });
+
+  const accepted = applyMissionPacketAction(createDefaultMissionPacketWorkflow(), {
+    action: 'accept',
+    packetTruth: packet,
+    now: '2026-04-10T00:00:00.000Z',
+  });
+  const generated = applyMissionPacketAction(accepted, {
+    action: 'prepare-codex-handoff',
+    packetTruth: packet,
+    now: '2026-04-10T00:01:00.000Z',
+  });
+  assert.equal(generated.codexHandoffs[0].status, 'generated');
+
+  const applied = applyMissionPacketAction(generated, {
+    action: 'mark-handoff-applied',
+    packetTruth: packet,
+    now: '2026-04-10T00:02:00.000Z',
+  });
+  const appliedGate = deriveMissionPacketActionState(applied, packet);
+  assert.equal(appliedGate.lifecycleStatus, 'in-progress');
+  assert.equal(appliedGate.codexHandoffStatus, 'applied');
+
+  const validated = applyMissionPacketAction(applied, {
+    action: 'confirm-validation-passed',
+    packetTruth: packet,
+    now: '2026-04-10T00:03:00.000Z',
+  });
+  const validatedGate = deriveMissionPacketActionState(validated, packet);
+  assert.equal(validatedGate.lifecycleStatus, 'completed');
+  assert.equal(validatedGate.codexHandoffStatus, 'validated');
+  assert.equal(validatedGate.validationStatus, 'passed');
+});
