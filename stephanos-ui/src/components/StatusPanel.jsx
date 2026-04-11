@@ -72,6 +72,7 @@ export default function StatusPanel() {
     acceptSurfaceRecommendation,
     rejectSurfaceRecommendation,
     revertSurfaceRule,
+    debugData,
   } = useAIStore();
 
   const safeApiStatus = apiStatus || {};
@@ -509,6 +510,7 @@ export default function StatusPanel() {
       canonicalCurrentIntent: orchestrationCurrentIntent,
       canonicalMissionPacket: orchestrationMissionPacket,
       selectors: orchestrationSelectors,
+      latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
     },
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,

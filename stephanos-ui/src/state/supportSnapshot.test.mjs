@@ -995,3 +995,49 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Home Bridge Transport Selected: tailscale/);
   assert.match(snapshot, /Tailscale Bridge Usable: true/);
 });
+
+test('buildSupportSnapshot includes shared operator guidance summaries', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: { backendReachable: false },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    orchestrationTruth: {
+      selectors: {
+        currentMissionState: { missionPhase: 'awaiting-approval', intentSource: 'inferred' },
+        continuityLoopState: { strength: 'sparse', sparse: true },
+        missionBlocked: true,
+        blockageExplanation: 'Intent inferred with sparse continuity.',
+        nextRecommendedAction: 'Confirm explicit mission objective.',
+        buildAssistanceReadiness: { state: 'blocked', explanation: 'Mission is blocked by explicit truth constraints.' },
+        approvalReadiness: 'awaiting-approval',
+        codexHandoffReadiness: 'awaiting-approval',
+        commandReadiness: {
+          'accept-mission': { allowed: true, message: 'Mission can be accepted.' },
+          'start-mission': { allowed: false, reason: 'mission-blocked', message: 'Start blocked.' },
+        },
+      },
+      latestResponseEnvelope: {
+        actionRequested: 'start-mission',
+        actionAllowed: false,
+        actionApplied: false,
+        resultingLifecycleState: 'awaiting-approval',
+        resultingBuildAssistanceState: 'blocked',
+        nextRecommendedAction: 'Accept mission packet first.',
+      },
+    },
+    now: { toISOString: () => '2026-03-25T00:00:09.000Z' },
+  });
+
+  assert.match(snapshot, /Orchestration Available Now: accept-mission/);
+  assert.match(snapshot, /Orchestration Blocked Because: start-mission: mission-blocked/);
+  assert.match(snapshot, /Orchestration Next Action: Confirm explicit mission objective\./);
+  assert.match(snapshot, /Latest Envelope Action Requested: start-mission/);
+  assert.match(snapshot, /Latest Envelope Allowed: no/);
+});

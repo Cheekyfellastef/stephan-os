@@ -27,7 +27,7 @@ test('ActionHints renders pending message when runtime truth is unavailable', as
   assert.match(rendered, /Runtime truth pending/);
 });
 
-test('ActionHints renders fallback + mock hints when fallback and mock provider are active', async () => {
+test('ActionHints renders route/provider warnings from shared guidance projection', async () => {
   const { renderActionHints } = await importBundledModule(
     path.join(srcRoot, 'test/renderActionHintsEntry.jsx'),
     { '../../state/aiStore': storeModulePath },
@@ -38,15 +38,26 @@ test('ActionHints renders fallback + mock hints when fallback and mock provider 
   const rendered = renderActionHints({
     finalRouteTruth: {
       routeKind: 'cloud',
-      backendReachable: true,
-      fallbackActive: true,
+      backendReachable: false,
       providerExecution: { executableProvider: 'mock' },
+    },
+    orchestration: {
+      selectors: {
+        currentMissionState: { missionPhase: 'awaiting-approval' },
+        buildAssistanceReadiness: { state: 'blocked', explanation: 'Mission blocked.' },
+        missionBlocked: true,
+        blockageExplanation: 'Backend blocked.',
+        nextRecommendedAction: 'Restore backend reachability.',
+        commandReadiness: {
+          'start-mission': { allowed: false, reason: 'mission-blocked', message: 'Start blocked.' },
+        },
+      },
     },
   });
 
-  assert.match(rendered, /Fallback route is active/);
-  assert.match(rendered, /Cloud route active/);
+  assert.match(rendered, /Backend route is unreachable/);
   assert.match(rendered, /Mock provider is executing/);
+  assert.match(rendered, /Blocked now: start-mission/);
 });
 
 test('ActionHints renders continuity-aware caution when intent is inferred', async () => {
@@ -61,16 +72,18 @@ test('ActionHints renders continuity-aware caution when intent is inferred', asy
     finalRouteTruth: {
       routeKind: 'local',
       backendReachable: true,
-      fallbackActive: false,
       providerExecution: { executableProvider: 'openai' },
     },
     orchestration: {
-      memoryContext: { activeMissionContinuity: { continuityLoopState: 'live' }, sparseData: true },
-      currentIntent: { operatorIntent: { source: 'inferred' } },
-      missionPacket: { currentPhase: 'awaiting-approval', recommendedNextAction: 'Await explicit operator decision.' },
+      selectors: {
+        currentMissionState: { intentSource: 'inferred', missionPhase: 'awaiting-approval' },
+        continuityLoopState: { strength: 'sparse', sparse: true },
+        buildAssistanceReadiness: { state: 'analysis-ready', explanation: 'Analysis-only until approval.' },
+        nextRecommendedAction: 'Confirm explicit objective.',
+      },
     },
   });
 
-  assert.match(rendered, /Current intent is inferred/);
-  assert.match(rendered, /Continuity memory is sparse/);
+  assert.match(rendered, /Intent is inferred/);
+  assert.match(rendered, /Sparse continuity/);
 });

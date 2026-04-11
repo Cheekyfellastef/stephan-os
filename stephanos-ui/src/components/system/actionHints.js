@@ -1,3 +1,5 @@
+import { buildOperatorGuidanceProjection } from '../../state/operatorGuidanceRendering.js';
+
 function asText(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -8,41 +10,44 @@ export function collectActionHints(finalRouteTruth, orchestration = {}) {
     return ['Runtime truth pending. Action hints will appear once route diagnostics are available.'];
   }
 
+  const guidance = buildOperatorGuidanceProjection({
+    finalRouteTruth,
+    orchestrationTruth: orchestration,
+    latestResponseEnvelope: orchestration?.latestResponseEnvelope || null,
+  });
+
   const hints = [];
-  const routeKind = String(finalRouteTruth.routeKind || '').toLowerCase();
-  const executedProvider = String(finalRouteTruth.providerExecution?.executableProvider || '').toLowerCase();
-  const selectors = orchestration?.selectors || {};
-  const missionState = selectors?.currentMissionState || {};
-  const continuity = selectors?.continuityLoopState || {};
-  const buildAssist = selectors?.buildAssistanceReadiness || {};
+  const mission = guidance.missionLifecycleSummary;
+  const caution = guidance.operatorCautionSummary;
 
-  if (finalRouteTruth.backendReachable === false) {
-    hints.push('Backend is unreachable. Route truth is blocking mission advancement until connectivity is restored.');
+  hints.push(`Mission: ${mission.missionPhase} (${mission.lifecycleState}).`);
+
+  if (mission.blocked) {
+    hints.push(`Mission blocked: ${asText(mission.blockageReason, 'Blocker reason unavailable.')}`);
   }
 
-  if (asText(missionState.intentSource) === 'inferred') {
-    hints.push('Intent is inferred. Confirm explicit objective before accepting, promoting, or starting mission execution.');
+  if (guidance.blockedBecause.length > 0) {
+    const primaryBlocker = guidance.blockedBecause[0];
+    hints.push(`Blocked now: ${primaryBlocker.command} — ${primaryBlocker.message}`);
   }
 
-  if (asText(continuity.strength) === 'sparse') {
-    hints.push('Continuity is sparse. Use bounded statements and request explicit operator confirmation before execution transitions.');
+  hints.push(`Next step: ${guidance.nextStepSummary}`);
+  hints.push(`Build assistance: ${guidance.buildAssistanceSummary.state} — ${guidance.buildAssistanceSummary.explanation}`);
+
+  if (caution.inferredIntentCaution) {
+    hints.push(caution.inferredIntentCaution);
   }
 
-  if (selectors?.missionBlocked === true) {
-    hints.push(`Mission blocked: ${asText(selectors?.blockageExplanation, 'Blocker reason unavailable')}`);
+  if (caution.sparseContinuityCaution) {
+    hints.push(caution.sparseContinuityCaution);
   }
 
-  hints.push(`Build assistance: ${asText(buildAssist.state, 'unavailable')} — ${asText(buildAssist.explanation, 'No build assistance explanation available.')}`);
-  hints.push(`Next step: ${asText(selectors?.nextRecommendedAction, 'Await mission packet / intent truth.')}`);
-
-  if (routeKind.includes('cloud')) {
-    hints.push('Cloud route active. Keep provider configuration and approval gating explicit for mission-critical changes.');
-  } else if (routeKind) {
-    hints.push('Local route active. Validate local runtime health before marking execution transitions.');
+  if (caution.routeWarnings.length > 0) {
+    hints.push(...caution.routeWarnings.slice(0, 2));
   }
 
-  if (executedProvider === 'mock') {
-    hints.push('Mock provider is executing. Outputs are simulation-only and must not be treated as real provider execution truth.');
+  if (guidance.envelopeProjection) {
+    hints.push(`Latest action: ${guidance.envelopeProjection.actionRequested} (allowed=${guidance.envelopeProjection.actionAllowed ? 'yes' : 'no'}, applied=${guidance.envelopeProjection.actionApplied ? 'yes' : 'no'}).`);
   }
 
   return hints;
