@@ -449,6 +449,7 @@ export function resolveBridgeMemoryReconciliation({
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
   const manual = preferences?.transports?.manual || {};
   const tailscale = preferences?.transports?.tailscale || {};
+  const tailscaleAcceptedReachable = tailscale.accepted === true && normalizeReachability(tailscale.reachability) === 'reachable';
   const liveUrl = selectedTransport === 'tailscale'
     ? normalizeString(tailscale.backendUrl)
     : normalizeString(runtimeBridge?.backendUrl || manual.backendUrl);
@@ -460,7 +461,12 @@ export function resolveBridgeMemoryReconciliation({
     : normalizeReachability(runtimeBridge?.reachability);
   const autoState = normalizeAutoRevalidationState(autoRevalidation?.state);
 
-  const superseded = Boolean(liveUrl && liveUrl !== rememberedMemory.backendUrl && liveAccepted);
+  const superseded = Boolean(
+    liveUrl
+    && liveUrl !== rememberedMemory.backendUrl
+    && liveAccepted
+    && !(rememberedMemory.transport === 'tailscale' && tailscaleAcceptedReachable),
+  );
   if (superseded) {
     const supersededTransport = selectedTransport === 'none' ? 'none' : selectedTransport;
     return {
@@ -471,7 +477,9 @@ export function resolveBridgeMemoryReconciliation({
     };
   }
   if (autoState === 'revalidated') {
-    const liveTransport = selectedTransport === 'none' ? rememberedMemory.transport : selectedTransport;
+    const liveTransport = rememberedMemory.transport === 'tailscale' && tailscaleAcceptedReachable
+      ? 'tailscale'
+      : (selectedTransport === 'none' ? rememberedMemory.transport : selectedTransport);
     return {
       state: 'remembered-revalidated',
       reason: autoRevalidation?.reason || 'Remembered bridge revalidated on this surface.',
