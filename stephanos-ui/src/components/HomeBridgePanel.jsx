@@ -29,6 +29,7 @@ export default function HomeBridgePanel() {
     bridgeTransportPreferences,
     bridgeTransportTruth,
     bridgeMemory,
+    bridgeAutoRevalidation,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     uiLayout,
@@ -244,6 +245,11 @@ export default function HomeBridgePanel() {
       onToggle={() => togglePanel('homeBridgePanel')}
     >
       <p className="home-bridge-guidance">Select transport, then configure and validate truthful bridge readiness.</p>
+      {bridgeAutoRevalidation?.state && bridgeAutoRevalidation.state !== 'idle' ? (
+        <p className="home-bridge-guidance">
+          Auto revalidation: <strong>{bridgeAutoRevalidation.state}</strong> — {bridgeAutoRevalidation.reason || 'No details available.'}
+        </p>
+      ) : null}
       <div className="home-bridge-transport-selector" data-no-drag>
         {transportDefinitions.map((transport) => (
           <button
@@ -316,6 +322,10 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Memory validation state: <strong>{transportTruth.bridgeMemoryValidationState || 'absent'}</strong></p>
       <p className="home-bridge-detail">Memory needs validation: <strong>{transportTruth.bridgeMemoryNeedsValidation ? 'yes' : 'no'}</strong></p>
       <p className="home-bridge-detail">Memory reason: <strong>{transportTruth.bridgeMemoryReason || 'No remembered Home Bridge transport.'}</strong></p>
+      <p className="home-bridge-detail">Memory reconciliation: <strong>{transportTruth.bridgeMemoryReconciliationState || 'no-memory'}</strong></p>
+      <p className="home-bridge-detail">Reconciliation reason: <strong>{transportTruth.bridgeMemoryReconciliationReason || 'n/a'}</strong></p>
+      <p className="home-bridge-detail">Auto revalidation state: <strong>{transportTruth.bridgeAutoRevalidationState || 'idle'}</strong></p>
+      <p className="home-bridge-detail">Auto revalidation reason: <strong>{transportTruth.bridgeAutoRevalidationReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Validation reason: <strong>{validationReason}</strong></p>
       <p className="home-bridge-detail">Reachability reason: <strong>{reachabilityReason}</strong></p>
       <p className="home-bridge-detail">Last checked: <strong>{formatTime(lastCheckedAt)}</strong></p>

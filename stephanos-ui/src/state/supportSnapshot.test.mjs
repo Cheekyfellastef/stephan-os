@@ -975,6 +975,10 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
         bridgeMemoryNeedsValidation: true,
         bridgeMemoryValidationState: 'awaiting-validation',
         bridgeMemoryReason: 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.',
+        bridgeMemoryReconciliationState: 'remembered-but-unreachable',
+        bridgeMemoryReconciliationReason: 'Remembered bridge exists but this surface cannot currently reach it.',
+        bridgeAutoRevalidationState: 'unreachable',
+        bridgeAutoRevalidationReason: 'Remembered Home Bridge is unreachable from this surface.',
         tailscale: {
           deviceName: 'home-node',
           tailnetIp: '100.64.0.10',
@@ -1004,6 +1008,9 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Tailscale Bridge Usable: true/);
   assert.match(snapshot, /Bridge Memory Present: yes/);
   assert.match(snapshot, /Bridge Memory Validation State: awaiting-validation/);
+  assert.match(snapshot, /Bridge Memory Reconciliation State: remembered-but-unreachable/);
+  assert.match(snapshot, /Bridge Auto Revalidation State: unreachable/);
+  assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
 });
 
 test('buildSupportSnapshot includes shared operator guidance summaries', () => {

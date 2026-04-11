@@ -155,6 +155,22 @@ function normalizeTimestamp(value = '') {
   return new Date(parsed).toISOString();
 }
 
+function normalizeAutoRevalidationState(value = '') {
+  const normalized = normalizeString(value).toLowerCase();
+  if ([
+    'idle',
+    'skipped',
+    'validating',
+    'validation-failed',
+    'probing',
+    'unreachable',
+    'revalidated',
+  ].includes(normalized)) {
+    return normalized;
+  }
+  return 'idle';
+}
+
 function createEmptyBridgeMemory() {
   return {
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
@@ -324,7 +340,15 @@ export function listBridgeTransportDefinitions() {
   return BRIDGE_TRANSPORT_KEYS.map((key) => BRIDGE_TRANSPORT_DEFINITIONS[key]);
 }
 
-export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridge = {}, bridgeMemory = {}, bridgeMemoryRehydrated = false } = {}) {
+export function projectHomeBridgeTransportTruth(
+  preferences = {},
+  {
+    runtimeBridge = {},
+    bridgeMemory = {},
+    bridgeMemoryRehydrated = false,
+    autoRevalidation = {},
+  } = {},
+) {
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
   const manualConfig = preferences?.transports?.manual || {};
   const tailscaleConfig = preferences?.transports?.tailscale || {};
@@ -362,6 +386,12 @@ export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridg
     : (selectedTransport === 'tailscale'
       ? (tailscaleConfig.accepted === true ? 'validated' : (tailscaleConfig.reachability === 'unreachable' ? 'unreachable' : 'awaiting-validation'))
       : (runtimeBridge?.accepted === true ? 'validated' : 'awaiting-validation'));
+  const reconciliation = resolveBridgeMemoryReconciliation({
+    preferences,
+    runtimeBridge,
+    bridgeMemory: rememberedMemory,
+    autoRevalidation,
+  });
 
   return {
     selectedTransport,
@@ -381,6 +411,11 @@ export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridg
     bridgeMemoryNeedsValidation: memoryNeedsValidation,
     bridgeMemoryValidationState: memoryValidationState,
     bridgeMemoryReason: rememberedMemory.reason,
+    bridgeMemoryReconciliationState: reconciliation.state,
+    bridgeMemoryReconciliationReason: reconciliation.reason,
+    bridgeAutoRevalidationState: normalizeAutoRevalidationState(autoRevalidation?.state),
+    bridgeAutoRevalidationReason: normalizeReason(autoRevalidation?.reason, ''),
+    bridgeAutoRevalidationAttemptedAt: normalizeTimestamp(autoRevalidation?.attemptedAt || ''),
     tailscale: {
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
@@ -391,5 +426,117 @@ export function projectHomeBridgeTransportTruth(preferences = {}, { runtimeBridg
       reason: tailscaleConfig.reason || '',
       diagnostics: Array.isArray(tailscaleConfig.diagnostics) ? tailscaleConfig.diagnostics : [],
     },
+  };
+}
+
+export function resolveBridgeMemoryReconciliation({
+  preferences = {},
+  runtimeBridge = {},
+  bridgeMemory = {},
+  autoRevalidation = {},
+} = {}) {
+  const rememberedMemory = normalizeHomeBridgeMemory(bridgeMemory);
+  const hasMemory = rememberedMemory.transport !== 'none' && Boolean(rememberedMemory.backendUrl);
+  if (!hasMemory) {
+    return {
+      state: 'no-memory',
+      reason: 'No remembered Home Bridge transport.',
+      superseded: false,
+    };
+  }
+  const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
+  const manual = preferences?.transports?.manual || {};
+  const tailscale = preferences?.transports?.tailscale || {};
+  const liveUrl = selectedTransport === 'tailscale'
+    ? normalizeString(tailscale.backendUrl)
+    : normalizeString(runtimeBridge?.backendUrl || manual.backendUrl);
+  const liveAccepted = selectedTransport === 'tailscale'
+    ? tailscale.accepted === true
+    : runtimeBridge?.accepted === true;
+  const liveReachability = selectedTransport === 'tailscale'
+    ? normalizeReachability(tailscale.reachability)
+    : normalizeReachability(runtimeBridge?.reachability);
+  const autoState = normalizeAutoRevalidationState(autoRevalidation?.state);
+
+  const superseded = Boolean(liveUrl && liveUrl !== rememberedMemory.backendUrl && liveAccepted);
+  if (superseded) {
+    return {
+      state: 'remembered-superseded-by-live-config',
+      reason: 'Remembered bridge exists, but a stronger live bridge config is currently active.',
+      superseded: true,
+    };
+  }
+  if (autoState === 'revalidated') {
+    return {
+      state: 'remembered-and-revalidated',
+      reason: autoRevalidation?.reason || 'Remembered bridge revalidated on this surface.',
+      superseded: false,
+    };
+  }
+  if (autoState === 'validation-failed') {
+    return {
+      state: 'remembered-but-validation-failed',
+      reason: autoRevalidation?.reason || 'Remembered bridge failed canonical validation on this surface.',
+      superseded: false,
+    };
+  }
+  if (autoState === 'unreachable' || liveReachability === 'unreachable') {
+    return {
+      state: 'remembered-but-unreachable',
+      reason: autoRevalidation?.reason || 'Remembered bridge validated structurally but is unreachable from this surface.',
+      superseded: false,
+    };
+  }
+  if (liveAccepted && liveReachability === 'reachable') {
+    return {
+      state: 'remembered-and-revalidated',
+      reason: 'Remembered bridge now matches reachable live bridge truth.',
+      superseded: false,
+    };
+  }
+  return {
+    state: 'remembered-awaiting-validation',
+    reason: autoRevalidation?.reason || 'Remembered bridge exists and still needs validation on this surface.',
+    superseded: false,
+  };
+}
+
+export function resolveAutoBridgeRevalidationPlan({
+  bridgeMemory = {},
+  preferences = {},
+  bridgeValidationTruth = {},
+} = {}) {
+  const remembered = normalizeHomeBridgeMemory(bridgeMemory);
+  if (remembered.transport === 'none' || !remembered.backendUrl) {
+    return {
+      shouldAttempt: false,
+      reason: 'No remembered bridge config exists.',
+      outcome: 'remembered-awaiting-validation',
+    };
+  }
+  const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport || remembered.transport);
+  const manual = preferences?.transports?.manual || {};
+  const tailscale = preferences?.transports?.tailscale || {};
+  const activeConfig = selectedTransport === 'tailscale' ? tailscale : manual;
+  const activeUrl = normalizeString(activeConfig.backendUrl);
+  if (activeConfig.accepted === true && activeUrl && activeUrl !== remembered.backendUrl) {
+    return {
+      shouldAttempt: false,
+      reason: 'Live bridge config is already accepted and supersedes remembered config.',
+      outcome: 'remembered-superseded-by-live-config',
+    };
+  }
+  const requireHttps = resolveBridgeUrlRequireHttps({
+    sessionKind: bridgeValidationTruth?.sessionKind || 'unknown',
+    selectedTransport: remembered.transport,
+    fallbackRequireHttps: bridgeValidationTruth?.requireHttps !== false,
+  });
+  return {
+    shouldAttempt: true,
+    reason: 'Remembered bridge config is eligible for canonical auto-revalidation.',
+    outcome: 'remembered-awaiting-validation',
+    transport: remembered.transport,
+    candidateUrl: remembered.backendUrl,
+    requireHttps,
   };
 }
