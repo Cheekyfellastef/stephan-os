@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-10T22:20:46.838Z",
+  "updatedAt": "2026-04-11T11:39:19.618Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -2000,6 +2000,106 @@
       "retentionHint": "default",
       "createdAt": "2026-04-10T22:20:46.838Z",
       "updatedAt": "2026-04-10T22:20:46.838Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775907152028-fa2yz-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what systems have been added",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-11T11:32:32.028Z",
+      "updatedAt": "2026-04-11T11:32:32.028Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775907152028-fa2yz-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Several systems or features have been added to the Stephanos OS:\n\n1. Packaging-aware entry rules (`entry_rules.js`): This module helps normalize packaging and validates entry compatibility.\n\n2. Updated app validator: Uses the new packaging-aware entry validation, ensuring manifest entry is the source of truth.\n\n3. Removed self-repair fallback probing and warnings: These were unnecessary noise in the system.\n\n4. Kep (",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-11T11:32:32.028Z",
+      "updatedAt": "2026-04-11T11:32:32.028Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775907559618-gocet-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what systems are missing or need updating",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-11T11:39:19.618Z",
+      "updatedAt": "2026-04-11T11:39:19.618Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1775907559618-gocet-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Based on the provided context, there are a few systems that might be missing, outdated, or in need of improvement:\n\n1. **Deep provider heartbeat endpoints**: While health checks cover backend reachability, it's essential to have deep heartbeats for each provider to monitor their operational status.\n\n2. **User-configurable provider settings**: The current implementation seems to be geared towards a few pre-defined pro",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-11T11:39:19.618Z",
+      "updatedAt": "2026-04-11T11:39:19.618Z",
       "surface": "shared"
     }
   }

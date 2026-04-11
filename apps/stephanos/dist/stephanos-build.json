@@ -2,6 +2,7 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
+<<<<<<< HEAD
   "sourceFingerprint": "37f7206a5d9e409507c509cb3feb8f302a8585c5ed667a53c54e67f927560c6a",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
@@ -9,5 +10,14 @@
   "runtimeMarker": "antifriction-live-v3::21ee63e::37f7206a5d9e",
   "gitCommit": "21ee63e",
   "buildTimestamp": "2026-04-11T12:20:01.019Z",
+=======
+  "sourceFingerprint": "edf4b21a8ffbf908a8c0cce7e837b6ec3998f5fdc0a4ca53292b90e88ec7fe20",
+  "buildTarget": "apps/stephanos/dist",
+  "buildTargetIdentifier": "apps/stephanos/dist",
+  "runtimeId": "live-vite-shell",
+  "runtimeMarker": "antifriction-live-v3::dac030b::edf4b21a8ffb",
+  "gitCommit": "dac030b",
+  "buildTimestamp": "2026-04-11T11:31:15.984Z",
+>>>>>>> 36738b3 (Fix Home Bridge validation truth drift by unifying with canonical runtime session truth)
   "sourceTruth": "sourceFingerprint"
 }
