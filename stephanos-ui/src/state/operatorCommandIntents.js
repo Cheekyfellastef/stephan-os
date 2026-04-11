@@ -13,6 +13,7 @@ const COMMAND_ALIASES = Object.freeze({
   'complete mission': 'complete-mission',
   'fail mission': 'fail-mission',
   'rollback mission': 'rollback-mission',
+  'resume mission': 'resume-mission',
   'prepare codex handoff': 'prepare-codex-handoff',
   'mark handoff as applied': 'mark-handoff-applied',
   'mark handoff as failed': 'mark-handoff-failed',
@@ -120,6 +121,25 @@ export function adjudicateOperatorLifecycleIntent({
       actionAllowed: true,
       actionApplied: false,
       operatorMessage: `AI assistance ${state}: ${asText(selectors?.buildAssistanceReadiness?.explanation, 'Build assistance is unavailable until mission truth is established.')}`,
+      status: 'action-completed',
+    });
+  }
+
+  if (resolvedIntent === 'resume-mission') {
+    const resumability = selectors?.missionResumability || {};
+    return buildEnvelope({
+      commandType: 'mission-guidance',
+      packetTruth: normalizedPacketTruth,
+      selectors,
+      actionRequested: resolvedIntent,
+      actionAllowed: true,
+      actionApplied: false,
+      blockageReason: resumability.hasResumableMission ? '' : 'no-resumable-mission',
+      nextRecommendedAction: asText(resumability.nextRecommendedAction, selectors?.nextRecommendedAction),
+      operatorMessage: resumability.hasResumableMission
+        ? `Resume mission ${asText(resumability.missionSummary, 'unknown')}. Last action: ${asText(resumability.lastExternalAction, 'none')}.`
+        : asText(resumability.missionSummary, 'No resumable mission found.'),
+      truthWarnings: Array.isArray(resumability.warnings) ? resumability.warnings : [],
       status: 'action-completed',
     });
   }

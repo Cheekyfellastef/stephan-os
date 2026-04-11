@@ -1,3 +1,4 @@
+import { deriveMissionResumability } from './missionLineage.js';
 function asText(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -137,14 +138,22 @@ function deriveCommandReadiness({
         : 'Validation fail can be confirmed only after apply confirmation.',
       approvalRequired: false,
     },
+    'resume-mission': {
+      allowed: true,
+      reason: '',
+      message: 'Resume guidance can be requested at any time from persisted mission lineage truth.',
+      approvalRequired: false,
+    },
   };
 }
+
 
 export function deriveRuntimeOrchestrationSelectors({
   canonicalMemoryContext = {},
   canonicalCurrentIntent = {},
   canonicalMissionPacket = {},
   missionPacketWorkflow = {},
+  missionLineage = {},
   finalRouteTruth = null,
 } = {}) {
   const intent = canonicalCurrentIntent?.operatorIntent || {};
@@ -255,6 +264,10 @@ export function deriveRuntimeOrchestrationSelectors({
         ? 'Prepare Codex handoff payload and request explicit start approval.'
         : asText(packet?.recommendedNextAction, 'Advance mission with explicit operator control.');
 
+
+  const missionResumability = deriveMissionResumability(missionLineage, {
+    preferredMissionId: asText(packet?.packetKey),
+  });
   const commandReadiness = deriveCommandReadiness({
     missionPhase,
     missionBlocked,
@@ -308,5 +321,13 @@ export function deriveRuntimeOrchestrationSelectors({
       nextRecommendedAction,
       continuityStrength,
     },
+    missionResumability,
+    promptBuilderSnapshot: {
+      activeMissionSummary: asText(missionResumability?.missionSummary, 'No active mission.'),
+      resumableMissionCount: Number.isFinite(Number(missionResumability?.resumableMissionCount)) ? Number(missionResumability.resumableMissionCount) : 0,
+      lastKnownMissionState: asText(missionResumability?.lastStableState?.lifecycleState, 'unknown'),
+      nextResumableAction: asText(missionResumability?.nextRecommendedAction, nextRecommendedAction),
+    },
   };
 }
+

@@ -7,6 +7,7 @@ test('resolveOperatorReplyPromptKey maps supported mission-console prompts', () 
   assert.equal(resolveOperatorReplyPromptKey('what is my current intent?'), 'current-intent');
   assert.equal(resolveOperatorReplyPromptKey('show mission packet'), 'show-mission-packet');
   assert.equal(resolveOperatorReplyPromptKey('prepare codex handoff'), 'prepare-codex-handoff');
+  assert.equal(resolveOperatorReplyPromptKey('resume mission'), 'resume-mission');
   assert.equal(resolveOperatorReplyPromptKey('unknown'), 'unsupported');
 });
 
@@ -72,4 +73,24 @@ test('buildOperatorReplyPayload renders latest envelope outcome and remains null
   assert.match(envelopeReply.text, /warnings=Sparse continuity/);
   assert.match(intentReply.text, /Source: inferred/);
   assert.equal(intentReply.guidance.operatorCautionSummary.inferredIntent, true);
+});
+
+
+test('buildOperatorReplyPayload renders resume mission guidance', () => {
+  const reply = buildOperatorReplyPayload({
+    promptKey: 'resume-mission',
+    orchestrationTruth: {
+      selectors: {
+        missionResumability: {
+          hasResumableMission: true,
+          missionSummary: 'Mission Resume (execution-ready)',
+          lastExternalAction: 'mark-handoff-applied',
+          nextRecommendedAction: 'Start mission',
+        },
+      },
+    },
+  });
+
+  assert.match(reply.text, /You can resume this mission/);
+  assert.match(reply.text, /Mission Resume/);
 });

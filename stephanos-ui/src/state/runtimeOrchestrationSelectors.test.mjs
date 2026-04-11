@@ -63,3 +63,28 @@ test('codex pipeline selectors expose applied->validation gating and summaries',
   assert.equal(selectors.currentMissionState.lastHandoffAction, 'mark-handoff-applied');
   assert.match(selectors.nextRecommendedAction, /awaiting validation/i);
 });
+
+
+test('selectors expose resumability and prompt builder snapshot from mission lineage', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'execution-ready', packetKey: 'self-build::mission-3', approvalExecutionStatus: { accepted: 'yes' } },
+    missionLineage: {
+      activeMissionId: 'mission-3',
+      missions: [{
+        missionId: 'mission-3',
+        packetKey: 'self-build::mission-3',
+        title: 'Mission Three',
+        lifecycleState: 'execution-ready',
+        resumableState: true,
+        continuityStrength: 'strong',
+        nextRecommendedAction: 'Start mission',
+        codexHandoff: { lastOperatorAction: 'prepare-codex-handoff' },
+      }],
+    },
+  });
+
+  assert.equal(selectors.missionResumability.hasResumableMission, true);
+  assert.equal(selectors.promptBuilderSnapshot.resumableMissionCount, 1);
+  assert.match(selectors.promptBuilderSnapshot.activeMissionSummary, /Mission Three/);
+});

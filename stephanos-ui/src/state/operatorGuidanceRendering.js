@@ -92,6 +92,10 @@ export function buildOperatorGuidanceProjection({
     routeWarnings.push('Mock provider is executing; outputs are simulation-only execution truth.');
   }
 
+
+  const missionResumability = selectors?.missionResumability && typeof selectors.missionResumability === 'object'
+    ? selectors.missionResumability
+    : {};
   const envelope = latestResponseEnvelope && typeof latestResponseEnvelope === 'object'
     ? {
       actionRequested: asText(latestResponseEnvelope.actionRequested, 'n/a'),
@@ -140,6 +144,15 @@ export function buildOperatorGuidanceProjection({
       lifecycleState: missionLifecycleState,
       blocked: selectors?.missionBlocked === true,
       blockageReason: asText(selectors?.blockageExplanation, 'none'),
+    },
+    resumabilitySummary: {
+      hasResumableMission: missionResumability?.hasResumableMission === true,
+      resumableMissionCount: Number.isFinite(Number(missionResumability?.resumableMissionCount)) ? Number(missionResumability.resumableMissionCount) : 0,
+      missionSummary: asText(missionResumability?.missionSummary, 'No resumable mission found.'),
+      lastStableState: missionResumability?.lastStableState || null,
+      lastExternalAction: asText(missionResumability?.lastExternalAction, 'none'),
+      nextRecommendedAction: asText(missionResumability?.nextRecommendedAction, asText(selectors?.nextRecommendedAction, 'Await explicit operator guidance.')),
+      warnings: toSummaryList(missionResumability?.warnings, { fallback: 'none', limit: 4 }),
     },
     operatorCautionSummary: {
       inferredIntent,

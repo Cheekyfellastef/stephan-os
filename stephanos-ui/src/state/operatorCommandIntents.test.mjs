@@ -17,6 +17,7 @@ function buildSelectors(workflow, packetTruth, intentSource = 'explicit') {
 test('normalize lifecycle commands and reject unsupported command', () => {
   assert.equal(normalizeOperatorLifecycleIntent('accept mission'), 'accept-mission');
   assert.equal(normalizeOperatorLifecycleIntent('mark handoff as applied'), 'mark-handoff-applied');
+  assert.equal(normalizeOperatorLifecycleIntent('resume mission'), 'resume-mission');
   assert.equal(normalizeOperatorLifecycleIntent('unknown mission'), 'unsupported');
 });
 
@@ -160,4 +161,28 @@ test('handoff apply and validation confirmations require selector-gated sequence
   });
   assert.equal(validated.status, 'action-completed');
   assert.equal(validated.resultingLifecycleState, 'completed');
+});
+
+
+test('resume mission returns resumability envelope without fabricating execution', () => {
+  const envelope = adjudicateOperatorLifecycleIntent({
+    commandText: 'resume mission',
+    selectors: {
+      nextRecommendedAction: 'Start mission',
+      missionResumability: {
+        hasResumableMission: true,
+        missionSummary: 'Mission Ops (execution-ready)',
+        lastExternalAction: 'mark-handoff-applied',
+        nextRecommendedAction: 'Start mission',
+        warnings: ['sparse-continuity'],
+      },
+    },
+    missionPacketWorkflow: createDefaultMissionPacketWorkflow(),
+    packetTruth: {},
+  });
+
+  assert.equal(envelope.commandType, 'mission-guidance');
+  assert.equal(envelope.status, 'action-completed');
+  assert.match(envelope.operatorMessage, /Resume mission Mission Ops/);
+  assert.deepEqual(envelope.truthWarnings, ['sparse-continuity']);
 });

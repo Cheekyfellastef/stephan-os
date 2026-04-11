@@ -48,6 +48,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'working.lastExecutionLifecycleState',
   'working.lastMissionSubsystems',
   'working.lastMissionApprovalState',
+  'working.missionLineage',
   'project.currentMilestone',
   'project.knownConstraints',
   'project.guardrails',
@@ -101,6 +102,11 @@ const DEFAULT_WORKING_MEMORY = Object.freeze({
     proposalQueue: [],
     roadmapQueue: [],
     activity: [],
+  },
+  missionLineage: {
+    schemaVersion: 1,
+    activeMissionId: '',
+    missions: [],
   },
 });
 
@@ -233,6 +239,9 @@ function normalizeWorkingMemory(value = {}) {
   const missionPacketWorkflow = source.missionPacketWorkflow && typeof source.missionPacketWorkflow === 'object'
     ? source.missionPacketWorkflow
     : DEFAULT_WORKING_MEMORY.missionPacketWorkflow;
+  const missionLineage = source.missionLineage && typeof source.missionLineage === 'object'
+    ? source.missionLineage
+    : DEFAULT_WORKING_MEMORY.missionLineage;
 
   return {
     recentCommands,
@@ -254,6 +263,13 @@ function normalizeWorkingMemory(value = {}) {
       proposalQueue: Array.isArray(missionPacketWorkflow.proposalQueue) ? missionPacketWorkflow.proposalQueue.slice(0, 20) : [],
       roadmapQueue: Array.isArray(missionPacketWorkflow.roadmapQueue) ? missionPacketWorkflow.roadmapQueue.slice(0, 20) : [],
       activity: Array.isArray(missionPacketWorkflow.activity) ? missionPacketWorkflow.activity.slice(0, 40) : [],
+    },
+    missionLineage: {
+      schemaVersion: Number.isFinite(Number(missionLineage.schemaVersion))
+        ? Number(missionLineage.schemaVersion)
+        : 1,
+      activeMissionId: normalizeString(missionLineage.activeMissionId),
+      missions: Array.isArray(missionLineage.missions) ? missionLineage.missions.slice(0, 24) : [],
     },
   };
 }
