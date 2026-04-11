@@ -26,7 +26,7 @@ test('deriveExpectedProviderEligibility keeps provider truth derived from finalR
   });
 });
 
-test('createRuntimeStatusModel publishes a clean guardrails report for a healthy home-node route without changing route selection', () => {
+test('createRuntimeStatusModel allows cloud to win when hosted home-node execution is unproven', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'ollama',
     routeMode: 'auto',
@@ -36,6 +36,7 @@ test('createRuntimeStatusModel publishes a clean guardrails report for a healthy
     },
     backendAvailable: true,
     runtimeContext: {
+      sessionKind: 'hosted-web',
       frontendOrigin: 'https://stephanos.example',
       apiBaseUrl: 'http://192.168.0.198:8787',
       preferredTarget: 'http://192.168.0.198:8787',
@@ -51,16 +52,18 @@ test('createRuntimeStatusModel publishes a clean guardrails report for a healthy
         'home-node': {
           configured: true,
           available: true,
+          usable: false,
           target: 'http://192.168.0.198:8787',
           actualTarget: 'http://192.168.0.198:8787',
           source: 'manual',
+          blockedReason: 'home-node execution proof unavailable in hosted session',
         },
       },
     },
   });
 
-  assert.equal(status.routeKind, 'home-node');
-  assert.equal(status.finalRoute.routeKind, 'home-node');
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.finalRoute.routeKind, 'cloud');
   assert.equal(status.guardrails.ok, true);
   assert.equal(status.guardrails.summary.errors, 0);
   assert.equal(status.guardrails.summary.warnings, 0);
