@@ -46,6 +46,7 @@ test('deterministic action gating preserves explicit approval and blocks promote
   });
   const acceptedGate = deriveMissionPacketActionState(accepted, packet);
   assert.equal(acceptedGate.decision, 'accept');
+  assert.equal(acceptedGate.lifecycleStatus, 'execution-ready');
   assert.equal(acceptedGate.canPromote, true);
   assert.equal(acceptedGate.executionEligible, false);
 });

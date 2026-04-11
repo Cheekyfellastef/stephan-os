@@ -1,3 +1,5 @@
+import { buildMissionPacketKey } from './missionPacketWorkflow.js';
+
 const MEMORY_LIMITS = Object.freeze({
   continuity: 4,
   proposals: 4,
@@ -10,9 +12,11 @@ const MISSION_LIFECYCLE = Object.freeze([
   'proposed',
   'awaiting-approval',
   'accepted',
+  'execution-ready',
   'in-progress',
   'completed',
   'failed',
+  'rollback-recommended',
   'rolled-back',
 ]);
 
@@ -138,7 +142,7 @@ export function buildCanonicalMissionPacket({
   const latestDecision = Array.isArray(missionPacketWorkflow?.decisions) ? missionPacketWorkflow.decisions[0] : null;
   const decision = asText(latestDecision?.decision, 'pending-review');
   const status = decision === 'accept'
-    ? 'accepted'
+    ? 'execution-ready'
     : decision === 'reject'
       ? 'failed'
       : decision === 'defer'
@@ -147,6 +151,7 @@ export function buildCanonicalMissionPacket({
 
   return {
     missionPacketTruthVersion: 'runtime-mission-packet.v1',
+    packetKey: buildMissionPacketKey(missionPacketTruth),
     missionTitle: asText(missionPacketTruth?.moveTitle, 'not yet established'),
     missionSummary: asText(missionPacketTruth?.rationale, 'not yet established'),
     objective: asText(currentIntent?.operatorIntent?.label, 'not yet established'),

@@ -8,6 +8,7 @@ import {
 } from '../state/missionPacketWorkflow';
 import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth';
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
+import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 
 function formatList(values = []) {
   if (!Array.isArray(values) || values.length === 0) {
@@ -43,9 +44,18 @@ export default function MissionPacketQueuePanel() {
     missionPacketWorkflow,
   }), [canonicalMissionPacket, missionPacketWorkflow]);
 
-  const handleAction = (action) => {
-    applyMissionPacketWorkflowAction(action, packetTruth, new Date().toISOString());
-    setNotice(`Mission packet ${action} applied.`);
+  const handleAction = (intentKey) => {
+    const envelope = adjudicateOperatorLifecycleIntent({
+      intentKey,
+      selectors: orchestrationSelectors,
+      missionPacketWorkflow,
+      packetTruth,
+      now: new Date().toISOString(),
+    });
+    if (envelope.workflowAction && envelope.actionApplied === true) {
+      applyMissionPacketWorkflowAction(envelope.workflowAction, packetTruth, new Date().toISOString());
+    }
+    setNotice(envelope.operatorMessage);
   };
 
   const handleCopyCodex = async () => {
@@ -89,15 +99,16 @@ export default function MissionPacketQueuePanel() {
         <li>Build Assistance: {orchestrationSelectors.buildAssistanceReadiness?.state || 'unavailable'}</li>
       </ul>
       <div className="status-panel-copy-actions" data-no-drag>
-        <button type="button" disabled={!actionState.canAccept} onClick={() => handleAction('accept')}>Accept packet</button>
-        <button type="button" disabled={!actionState.canReject} onClick={() => handleAction('reject')}>Reject packet</button>
-        <button type="button" disabled={!actionState.canDefer} onClick={() => handleAction('defer')}>Defer packet</button>
-        <button type="button" disabled={!actionState.canStart} onClick={() => handleAction('start')}>Mark in progress</button>
-        <button type="button" disabled={!actionState.canComplete} onClick={() => handleAction('complete')}>Mark completed</button>
-        <button type="button" disabled={!actionState.canFail} onClick={() => handleAction('fail')}>Mark failed</button>
-        <button type="button" disabled={!actionState.canRollback} onClick={() => handleAction('rollback')}>Mark rolled back</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['accept-mission']?.allowed !== true || !actionState.canAccept} onClick={() => handleAction('accept-mission')}>Accept packet</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['reject-mission']?.allowed !== true || !actionState.canReject} onClick={() => handleAction('reject-mission')}>Reject packet</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['defer-mission']?.allowed !== true || !actionState.canDefer} onClick={() => handleAction('defer-mission')}>Defer packet</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['start-mission']?.allowed !== true || !actionState.canStart} onClick={() => handleAction('start-mission')}>Mark in progress</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['complete-mission']?.allowed !== true || !actionState.canComplete} onClick={() => handleAction('complete-mission')}>Mark completed</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['fail-mission']?.allowed !== true || !actionState.canFail} onClick={() => handleAction('fail-mission')}>Mark failed</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['rollback-mission']?.allowed !== true || !actionState.canRollback} onClick={() => handleAction('rollback-mission')}>Mark rolled back</button>
+        <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['prepare-codex-handoff']?.allowed !== true || !actionState.canCopyCodexHandoff} onClick={() => handleAction('prepare-codex-handoff')}>Prepare Codex handoff</button>
         <button type="button" disabled={!actionState.canCopyCodexHandoff} onClick={handleCopyCodex}>Copy Codex handoff</button>
-        <button type="button" disabled={!actionState.canPromote} onClick={() => handleAction('promote')}>Promote to roadmap/proposal queue</button>
+        <button type="button" disabled={!actionState.canPromote} onClick={() => applyMissionPacketWorkflowAction('promote', packetTruth, new Date().toISOString())}>Promote to roadmap/proposal queue</button>
       </div>
       <p className="muted">
         Queue status: proposal {missionPacketWorkflow?.proposalQueue?.length || 0} · roadmap {missionPacketWorkflow?.roadmapQueue?.length || 0}

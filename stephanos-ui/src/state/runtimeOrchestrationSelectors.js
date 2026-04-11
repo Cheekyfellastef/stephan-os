@@ -29,6 +29,69 @@ function explainBuildAssistState(state, context = {}) {
   return map[state] || `Build assistance state is ${state}. Next action: ${nextAction}`;
 }
 
+
+function deriveCommandReadiness({ missionPhase = 'proposed', missionBlocked = false, codexHandoffReadiness = 'unavailable', buildAssistanceReadiness = {}, approvalReadiness = 'not-required' } = {}) {
+  const awaitingApproval = missionPhase === 'proposed' || missionPhase === 'awaiting-approval';
+  const executionReady = missionPhase === 'accepted' || missionPhase === 'execution-ready';
+  const inProgress = missionPhase === 'in-progress';
+  const rollbackEligible = missionPhase === 'failed' || missionPhase === 'completed' || missionPhase === 'rollback-recommended';
+
+  return {
+    'accept-mission': {
+      allowed: awaitingApproval,
+      reason: awaitingApproval ? '' : 'action-not-allowed-in-current-state',
+      message: awaitingApproval ? 'Mission can be accepted.' : 'Accept is only available while mission is awaiting approval.',
+      approvalRequired: approvalReadiness === 'awaiting-approval',
+    },
+    'defer-mission': {
+      allowed: awaitingApproval,
+      reason: awaitingApproval ? '' : 'action-not-allowed-in-current-state',
+      message: awaitingApproval ? 'Mission can be deferred.' : 'Defer is only available while mission is awaiting approval.',
+      approvalRequired: approvalReadiness === 'awaiting-approval',
+    },
+    'reject-mission': {
+      allowed: awaitingApproval,
+      reason: awaitingApproval ? '' : 'action-not-allowed-in-current-state',
+      message: awaitingApproval ? 'Mission can be rejected.' : 'Reject is only available while mission is awaiting approval.',
+      approvalRequired: approvalReadiness === 'awaiting-approval',
+    },
+    'start-mission': {
+      allowed: executionReady && missionBlocked !== true,
+      reason: executionReady ? (missionBlocked ? 'mission-blocked' : '') : 'action-not-allowed-in-current-state',
+      message: executionReady
+        ? (missionBlocked ? 'Start is blocked until mission blockers are resolved.' : 'Mission can be started.')
+        : 'Start is only available when lifecycle is accepted/execution-ready.',
+      approvalRequired: buildAssistanceReadiness?.approvalRequired === true,
+    },
+    'complete-mission': {
+      allowed: inProgress,
+      reason: inProgress ? '' : 'action-not-allowed-in-current-state',
+      message: inProgress ? 'Mission can be completed.' : 'Complete is only available while mission is in-progress.',
+      approvalRequired: false,
+    },
+    'fail-mission': {
+      allowed: inProgress,
+      reason: inProgress ? '' : 'action-not-allowed-in-current-state',
+      message: inProgress ? 'Mission can be failed.' : 'Fail is only available while mission is in-progress.',
+      approvalRequired: false,
+    },
+    'rollback-mission': {
+      allowed: rollbackEligible,
+      reason: rollbackEligible ? '' : 'action-not-allowed-in-current-state',
+      message: rollbackEligible ? 'Mission can be rolled back.' : 'Rollback is only available after failed/completed outcomes.',
+      approvalRequired: false,
+    },
+    'prepare-codex-handoff': {
+      allowed: codexHandoffReadiness === 'ready',
+      reason: codexHandoffReadiness === 'ready' ? '' : 'codex-handoff-not-ready',
+      message: codexHandoffReadiness === 'ready'
+        ? 'Codex handoff can be prepared.'
+        : 'Codex handoff is unavailable until approval and readiness truth are satisfied.',
+      approvalRequired: false,
+    },
+  };
+}
+
 export function deriveRuntimeOrchestrationSelectors({
   canonicalMemoryContext = {},
   canonicalCurrentIntent = {},
@@ -114,10 +177,19 @@ export function deriveRuntimeOrchestrationSelectors({
         ? 'Prepare Codex handoff payload and request explicit start approval.'
         : asText(packet?.recommendedNextAction, 'Advance mission with explicit operator control.');
 
+  const commandReadiness = deriveCommandReadiness({
+    missionPhase,
+    missionBlocked,
+    codexHandoffReadiness,
+    buildAssistanceReadiness: { state: buildAssistanceReadiness, approvalRequired: blockedByApproval },
+    approvalReadiness,
+  });
+
   return {
     selectorVersion: 'runtime-orchestration-selectors.v1',
     currentMissionState: {
       missionTitle: asText(packet?.missionTitle, 'not yet established'),
+      packetKey: asText(packet?.packetKey, ''),
       missionPhase,
       intentLabel: asText(intent?.label, 'unknown'),
       intentSource: asText(intent?.source, 'unknown'),
@@ -145,6 +217,7 @@ export function deriveRuntimeOrchestrationSelectors({
       approvalRequired: blockedByApproval,
       operatorControlRequired: true,
     },
+    commandReadiness,
     operatorFeedbackState: {
       summary: `Mission ${asText(packet?.missionTitle, 'not yet established')} is ${missionPhase}. Intent is ${asText(intent?.source, 'unknown')}.`,
       blocked: missionBlocked,
