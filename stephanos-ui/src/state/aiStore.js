@@ -1323,6 +1323,7 @@ export function AIStoreProvider({ children }) {
         const serviceOk = probe.ok && probe.data?.service === 'stephanos-server';
         const nextReachability = serviceOk ? 'reachable' : 'unreachable';
         updateBridgeTransportConfig(plan.transport, {
+          enabled: true,
           backendUrl: validation.normalizedUrl,
           accepted: serviceOk,
           active: serviceOk,
@@ -1359,6 +1360,7 @@ export function AIStoreProvider({ children }) {
           attemptedConfigKey,
         });
         if (serviceOk) {
+          setBridgeTransportSelection(plan.transport);
           setBridgeMemoryRehydrated(false);
         }
       } catch (error) {
@@ -1388,6 +1390,7 @@ export function AIStoreProvider({ children }) {
     bridgeValidationTruth,
     bridgeAutoRevalidation.attemptedAt,
     bridgeAutoRevalidation.state,
+    setBridgeTransportSelection,
     setApiStatus,
     updateBridgeTransportConfig,
   ]);

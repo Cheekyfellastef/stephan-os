@@ -413,6 +413,7 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemoryReason: rememberedMemory.reason,
     bridgeMemoryReconciliationState: reconciliation.state,
     bridgeMemoryReconciliationReason: reconciliation.reason,
+    bridgeMemoryReconciliationProvenance: reconciliation.provenance || '',
     bridgeAutoRevalidationState: normalizeAutoRevalidationState(autoRevalidation?.state),
     bridgeAutoRevalidationReason: normalizeReason(autoRevalidation?.reason, ''),
     bridgeAutoRevalidationAttemptedAt: normalizeTimestamp(autoRevalidation?.attemptedAt || ''),
@@ -442,6 +443,7 @@ export function resolveBridgeMemoryReconciliation({
       state: 'no-remembered-bridge',
       reason: 'No remembered Home Bridge transport.',
       superseded: false,
+      provenance: 'no-remembered-bridge',
     };
   }
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
@@ -460,17 +462,21 @@ export function resolveBridgeMemoryReconciliation({
 
   const superseded = Boolean(liveUrl && liveUrl !== rememberedMemory.backendUrl && liveAccepted);
   if (superseded) {
+    const supersededTransport = selectedTransport === 'none' ? 'none' : selectedTransport;
     return {
       state: 'remembered-superseded-by-live-config',
       reason: 'Remembered bridge exists, but a stronger live bridge config is currently active.',
       superseded: true,
+      provenance: `remembered-${rememberedMemory.transport}-superseded-by-${supersededTransport}`,
     };
   }
   if (autoState === 'revalidated') {
+    const liveTransport = selectedTransport === 'none' ? rememberedMemory.transport : selectedTransport;
     return {
       state: 'remembered-revalidated',
       reason: autoRevalidation?.reason || 'Remembered bridge revalidated on this surface.',
       superseded: false,
+      provenance: `remembered-${rememberedMemory.transport}-revalidated-as-${liveTransport}`,
     };
   }
   if (autoState === 'validation-failed') {
@@ -478,6 +484,7 @@ export function resolveBridgeMemoryReconciliation({
       state: 'remembered-validation-failed',
       reason: autoRevalidation?.reason || 'Remembered bridge failed canonical validation on this surface.',
       superseded: false,
+      provenance: `remembered-${rememberedMemory.transport}-validation-failed`,
     };
   }
   if (autoState === 'unreachable' || liveReachability === 'unreachable') {
@@ -485,19 +492,23 @@ export function resolveBridgeMemoryReconciliation({
       state: 'remembered-unreachable',
       reason: autoRevalidation?.reason || 'Remembered bridge validated structurally but is unreachable from this surface.',
       superseded: false,
+      provenance: `remembered-${rememberedMemory.transport}-unreachable`,
     };
   }
   if (liveAccepted && liveReachability === 'reachable') {
+    const liveTransport = selectedTransport === 'none' ? rememberedMemory.transport : selectedTransport;
     return {
       state: 'remembered-revalidated',
       reason: 'Remembered bridge now matches reachable live bridge truth.',
       superseded: false,
+      provenance: `remembered-${rememberedMemory.transport}-revalidated-as-${liveTransport}`,
     };
   }
   return {
     state: 'remembered-awaiting-validation',
     reason: autoRevalidation?.reason || 'Remembered bridge exists and still needs validation on this surface.',
     superseded: false,
+    provenance: `remembered-${rememberedMemory.transport}-awaiting-validation`,
   };
 }
 
