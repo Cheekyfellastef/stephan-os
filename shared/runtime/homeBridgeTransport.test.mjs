@@ -119,6 +119,29 @@ test('bridge memory projection remains separate from current live acceptance tru
   assert.equal(projected.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
 });
 
+test('bridge memory derivation prefers valid configured tailscale transport even when selected transport drifts', () => {
+  const derived = deriveBridgeMemoryFromPreferences(
+    normalizeBridgeTransportPreferences({
+      selectedTransport: 'manual',
+      transports: {
+        manual: { backendUrl: '' },
+        tailscale: {
+          enabled: true,
+          backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+          deviceName: 'desktop-9flonkj',
+          hostOverride: 'desktop-9flonkj.taild6f215.ts.net',
+        },
+      },
+    }),
+    { rememberedAt: '2026-04-11T11:00:00.000Z' },
+    { preferredTransport: 'tailscale' },
+  );
+
+  assert.equal(derived.transport, 'tailscale');
+  assert.equal(derived.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(derived.tailscaleDeviceName, 'desktop-9flonkj');
+});
+
 test('auto bridge revalidation plan skips when stronger accepted live config exists', () => {
   const plan = resolveAutoBridgeRevalidationPlan({
     bridgeMemory: {

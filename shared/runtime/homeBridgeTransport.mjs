@@ -213,17 +213,37 @@ export function normalizeHomeBridgeMemory(value = {}) {
   };
 }
 
-export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {}) {
+export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {}, options = {}) {
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
   const manual = preferences?.transports?.manual || {};
   const tailscale = preferences?.transports?.tailscale || {};
-  const backendUrl = selectedTransport === 'tailscale'
-    ? normalizeString(tailscale.backendUrl)
-    : normalizeString(manual.backendUrl);
-  if (!backendUrl) return createEmptyBridgeMemory();
+  const remembered = normalizeHomeBridgeMemory(options?.fallbackMemory || {});
+  const preferredTransport = normalizeBridgeTransportSelection(options?.preferredTransport || selectedTransport);
+  const backendByTransport = {
+    manual: normalizeString(manual.backendUrl),
+    tailscale: normalizeString(tailscale.backendUrl),
+  };
+  const candidateOrder = [
+    selectedTransport,
+    preferredTransport,
+    normalizeBridgeTransportSelection(remembered.transport),
+    'tailscale',
+    'manual',
+  ];
+  const resolvedTransport = candidateOrder.find((transport) => transport !== 'wireguard' && Boolean(backendByTransport[transport])) || 'none';
+  const backendUrl = resolvedTransport === 'none' ? '' : backendByTransport[resolvedTransport];
+  if (!backendUrl) {
+    if (options?.preserveExisting === true && remembered.transport !== 'none' && remembered.backendUrl) {
+      return normalizeHomeBridgeMemory({
+        ...remembered,
+        reason: metadata.reason || remembered.reason || 'Remembered Home Bridge transport preserved from durable memory.',
+      });
+    }
+    return createEmptyBridgeMemory();
+  }
   return normalizeHomeBridgeMemory({
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
-    transport: selectedTransport,
+    transport: resolvedTransport,
     backendUrl,
     tailscaleDeviceName: tailscale.deviceName,
     tailscaleHostnameOverride: tailscale.hostOverride,
@@ -347,6 +367,7 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemory = {},
     bridgeMemoryRehydrated = false,
     autoRevalidation = {},
+    bridgeMemoryPersistence = {},
   } = {},
 ) {
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport);
@@ -417,6 +438,9 @@ export function projectHomeBridgeTransportTruth(
     bridgeAutoRevalidationState: normalizeAutoRevalidationState(autoRevalidation?.state),
     bridgeAutoRevalidationReason: normalizeReason(autoRevalidation?.reason, ''),
     bridgeAutoRevalidationAttemptedAt: normalizeTimestamp(autoRevalidation?.attemptedAt || ''),
+    bridgeMemoryPersistenceState: normalizeReason(bridgeMemoryPersistence?.state, 'idle'),
+    bridgeMemoryPersistenceReason: normalizeReason(bridgeMemoryPersistence?.reason, 'No bridge memory persistence event recorded.'),
+    bridgeMemoryPersistenceAt: normalizeTimestamp(bridgeMemoryPersistence?.at || ''),
     tailscale: {
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
