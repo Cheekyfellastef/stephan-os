@@ -164,6 +164,7 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
     autoRevalidation: { state: 'revalidated', reason: 'ok' },
   });
   assert.equal(revalidated.state, 'remembered-revalidated');
+  assert.equal(revalidated.provenance, 'remembered-manual-revalidated-as-manual');
 
   const unreachable = resolveBridgeMemoryReconciliation({
     preferences: normalizeBridgeTransportPreferences({
@@ -177,4 +178,5 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
     autoRevalidation: { state: 'unreachable', reason: 'probe failed' },
   });
   assert.equal(unreachable.state, 'remembered-unreachable');
+  assert.equal(unreachable.provenance, 'remembered-tailscale-unreachable');
 });

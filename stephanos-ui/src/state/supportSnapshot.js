@@ -330,7 +330,11 @@ export function buildSupportSnapshot({
     guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
   }
   if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-revalidated') {
-    guidanceItems.push('Remembered Home Bridge revalidated successfully on this hosted surface.');
+    if (bridgeTransportTruth?.bridgeMemoryReconciliationProvenance === 'remembered-tailscale-revalidated-as-tailscale') {
+      guidanceItems.push('Remembered Tailscale bridge revalidated successfully; hosted route is using the remembered Tailscale home-node bridge.');
+    } else {
+      guidanceItems.push('Remembered Home Bridge revalidated successfully on this hosted surface.');
+    }
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-unreachable') {
     guidanceItems.push('Remembered Home Bridge exists but is unreachable from this surface.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-validation-failed') {
@@ -709,6 +713,7 @@ export function buildSupportSnapshot({
     `Bridge Memory Reason: ${asText(bridgeTransportTruth.bridgeMemoryReason, 'n/a')}`,
     `Bridge Memory Reconciliation State: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationState, 'no-remembered-bridge')}`,
     `Bridge Memory Reconciliation Reason: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationReason, 'n/a')}`,
+    `Bridge Memory Reconciliation Provenance: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'n/a')}`,
     `Bridge Auto Revalidation State: ${asText(bridgeTransportTruth.bridgeAutoRevalidationState, 'idle')}`,
     `Bridge Auto Revalidation Reason: ${asText(bridgeTransportTruth.bridgeAutoRevalidationReason, 'n/a')}`,
     `Tailscale Device Name: ${asText(bridgeTransportTruth?.tailscale?.deviceName)}`,

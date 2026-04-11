@@ -977,6 +977,7 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
         bridgeMemoryReason: 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.',
         bridgeMemoryReconciliationState: 'remembered-unreachable',
         bridgeMemoryReconciliationReason: 'Remembered bridge exists but this surface cannot currently reach it.',
+        bridgeMemoryReconciliationProvenance: 'remembered-tailscale-unreachable',
         bridgeAutoRevalidationState: 'unreachable',
         bridgeAutoRevalidationReason: 'Remembered Home Bridge is unreachable from this surface.',
         tailscale: {
@@ -1009,8 +1010,33 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Bridge Memory Present: yes/);
   assert.match(snapshot, /Bridge Memory Validation State: awaiting-validation/);
   assert.match(snapshot, /Bridge Memory Reconciliation State: remembered-unreachable/);
+  assert.match(snapshot, /Bridge Memory Reconciliation Provenance: remembered-tailscale-unreachable/);
   assert.match(snapshot, /Bridge Auto Revalidation State: unreachable/);
   assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
+});
+
+test('buildSupportSnapshot operator guidance calls out remembered tailscale revalidated promotion', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready' },
+    routeTruthView: { routeKind: 'home-node', backendReachableState: 'yes', selectedRouteReachableState: 'yes', routeUsableState: 'yes' },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-revalidated',
+        bridgeMemoryReconciliationProvenance: 'remembered-tailscale-revalidated-as-tailscale',
+      },
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-04-10T00:00:00.000Z'),
+    origin: 'https://cheekyfellastef.github.io',
+    href: 'https://cheekyfellastef.github.io/stephanos',
+  });
+
+  assert.match(snapshot, /Remembered Tailscale bridge revalidated successfully; hosted route is using the remembered Tailscale home-node bridge\./);
 });
 
 test('buildSupportSnapshot includes shared operator guidance summaries', () => {

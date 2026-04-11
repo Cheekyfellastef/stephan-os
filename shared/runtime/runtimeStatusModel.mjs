@@ -69,6 +69,11 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     : {};
   const rememberedBridgeReconciliationState = String(bridgeTruth.bridgeMemoryReconciliationState || '').trim();
   const rememberedBridgeUrl = String(bridgeTruth.bridgeMemoryUrl || '').trim();
+  const liveTailscaleUrl = String(bridgeTruth?.tailscale?.backendUrl || '').trim();
+  const rememberedRevalidatedAsTailscale = rememberedBridgeReconciliationState === 'remembered-revalidated'
+    && bridgeTruth.selectedTransport === 'tailscale'
+    && bridgeTruth?.tailscale?.accepted === true
+    && bridgeTruth?.tailscale?.reachable === true;
   const rememberedBridgeEligible = hostedSession
     && rememberedBridgeUrl
     && [
@@ -90,6 +95,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
+      ...(rememberedRevalidatedAsTailscale && liveTailscaleUrl
+        ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.backendUrl', liveTailscaleUrl)]
+        : []),
       ...(rememberedBridgeEligible
         ? [createBackendTargetCandidate('bridgeMemory.remembered.backendUrl', rememberedBridgeUrl)]
         : []),
@@ -101,8 +109,10 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('runtimeContext.bridgeTransportTruth.tailscale.backendUrl', runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl),
     ] : []),
     ...(preferBridgeHomeNode ? [
-      createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
-      createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+      ...(!rememberedRevalidatedAsTailscale ? [
+        createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
+        createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+      ] : []),
     ] : []),
     createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),

@@ -151,8 +151,14 @@ test('hosted backend target candidate order prefers remembered tailscale bridge 
         backendUrl: 'https://100.64.0.10',
       },
       bridgeTransportTruth: {
+        selectedTransport: 'tailscale',
         bridgeMemoryReconciliationState: 'remembered-revalidated',
         bridgeMemoryUrl: 'https://100.64.0.10',
+        tailscale: {
+          backendUrl: 'https://100.64.0.10',
+          accepted: true,
+          reachable: true,
+        },
       },
       routeDiagnostics: {
         'home-node': {
@@ -173,7 +179,7 @@ test('hosted backend target candidate order prefers remembered tailscale bridge 
   });
 
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://100.64.0.10');
-  assert.equal(model.runtimeContext.backendTargetCandidates[0].source, 'bridgeMemory.remembered.backendUrl');
+  assert.equal(model.runtimeContext.backendTargetCandidates[0].source, 'bridgeTransport.liveTailscale.backendUrl');
 });
 
 test('route candidates keep configured/reachable/usable truth separated for unreachable tailscale', () => {
