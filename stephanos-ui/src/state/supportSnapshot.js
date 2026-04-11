@@ -1,3 +1,5 @@
+import { buildOperatorGuidanceProjection } from './operatorGuidanceRendering.js';
+
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -295,6 +297,12 @@ export function buildSupportSnapshot({
     ? routeDiagnosticsSummary
     : (hostedBackendTargetGuidance?.summary || routeDiagnosticsSummary);
 
+  const operatorGuidance = buildOperatorGuidanceProjection({
+    finalRouteTruth: routeTruthView,
+    orchestrationTruth,
+    latestResponseEnvelope: orchestrationTruth?.latestResponseEnvelope || null,
+  });
+
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   if (hostedBackendTargetGuidance?.blockingIssue) {
     const canonicalHostedMessages = Array.isArray(canonicalHostedRouteTruth?.blockingIssues)
@@ -588,14 +596,31 @@ export function buildSupportSnapshot({
     `Canonical Mission Title: ${asText(orchestrationTruth?.canonicalMissionPacket?.missionTitle, 'not yet established')}`,
     `Canonical Mission Phase: ${asText(orchestrationTruth?.canonicalMissionPacket?.currentPhase, 'proposed')}`,
     `Canonical Mission Next Action: ${asText(orchestrationTruth?.canonicalMissionPacket?.recommendedNextAction, 'Await explicit operator approval')}`,
-    `Orchestration Mission Phase: ${asText(orchestrationTruth?.selectors?.currentMissionState?.missionPhase, 'unknown')}`,
+    `Orchestration Mission Phase: ${asText(operatorGuidance.missionLifecycleSummary?.missionPhase, 'unknown')}`,
+    `Orchestration Mission Lifecycle: ${asText(operatorGuidance.missionLifecycleSummary?.lifecycleState, 'unknown')}`,
     `Orchestration Intent Source: ${asText(orchestrationTruth?.selectors?.currentMissionState?.intentSource, 'unknown')}`,
-    `Orchestration Continuity Strength: ${asText(orchestrationTruth?.selectors?.continuityLoopState?.strength, 'unknown')}`,
-    `Orchestration Mission Blocked: ${orchestrationTruth?.selectors?.missionBlocked === true ? 'yes' : 'no'}`,
-    `Orchestration Blockage Reason: ${asText(orchestrationTruth?.selectors?.blockageExplanation, 'none')}`,
-    `Orchestration Next Action: ${asText(orchestrationTruth?.selectors?.nextRecommendedAction, 'Await explicit operator guidance')}`,
-    `Build Assistance State: ${asText(orchestrationTruth?.selectors?.buildAssistanceReadiness?.state, 'unavailable')}`,
-    `Build Assistance Approval Required: ${orchestrationTruth?.selectors?.buildAssistanceReadiness?.approvalRequired === true ? 'yes' : 'no'}`,
+    `Orchestration Continuity Strength: ${asText(operatorGuidance.continuitySummary?.strength, 'unknown')}`,
+    `Orchestration Continuity Caution: ${asText(operatorGuidance.continuitySummary?.caution, 'none')}`,
+    `Orchestration Mission Blocked: ${operatorGuidance.missionLifecycleSummary?.blocked === true ? 'yes' : 'no'}`,
+    `Orchestration Blockage Reason: ${asText(operatorGuidance.missionLifecycleSummary?.blockageReason, 'none')}`,
+    `Orchestration Available Now: ${asText(operatorGuidance.availableNow?.map((entry) => entry.command).join(', '), 'none')}`,
+    `Orchestration Blocked Because: ${asText(operatorGuidance.blockedSummary?.join(' | '), 'none')}`,
+    `Orchestration Next Action: ${asText(operatorGuidance.nextStepSummary, 'Await explicit operator guidance')}`,
+    `Build Assistance State: ${asText(operatorGuidance.buildAssistanceSummary?.state, 'unavailable')}`,
+    `Build Assistance Summary: ${asText(operatorGuidance.buildAssistanceSummary?.explanation, 'none')}`,
+    `Build Assistance Approval Required: ${operatorGuidance.buildAssistanceSummary?.approvalRequired === true ? 'yes' : 'no'}`,
+    `Codex Handoff Readiness: ${asText(operatorGuidance.codexReadinessSummary?.state, 'unavailable')}`,
+    `Approval Readiness: ${asText(operatorGuidance.approvalSummary?.readiness, 'unknown')}`,
+    `Approval Required Now: ${operatorGuidance.approvalSummary?.requiredNow === true ? 'yes' : 'no'}`,
+    `Operator Caution Inferred Intent: ${asText(operatorGuidance.operatorCautionSummary?.inferredIntentCaution, 'none')}`,
+    `Operator Caution Sparse Continuity: ${asText(operatorGuidance.operatorCautionSummary?.sparseContinuityCaution, 'none')}`,
+    `Operator Route Warnings: ${asText(operatorGuidance.operatorCautionSummary?.routeWarnings?.join(' | '), 'none')}`,
+    `Latest Envelope Action Requested: ${asText(operatorGuidance.envelopeProjection?.actionRequested, 'n/a')}`,
+    `Latest Envelope Allowed: ${operatorGuidance.envelopeProjection?.actionAllowed === true ? 'yes' : 'no'}`,
+    `Latest Envelope Applied: ${operatorGuidance.envelopeProjection?.actionApplied === true ? 'yes' : 'no'}`,
+    `Latest Envelope Lifecycle: ${asText(operatorGuidance.envelopeProjection?.lifecycleState, 'unknown')}`,
+    `Latest Envelope Build Assistance: ${asText(operatorGuidance.envelopeProjection?.buildAssistanceState, 'unavailable')}`,
+    `Latest Envelope Next Action: ${asText(operatorGuidance.envelopeProjection?.nextRecommendedAction, 'n/a')}`,
     `Intent Type: ${asText(runtimeStatus?.lastIntentType, 'unknown')}`,
     `Intent Confidence: ${asText(runtimeStatus?.lastIntentConfidence, '0')}`,
     `Intent Reason: ${asText(runtimeStatus?.lastIntentReason, 'n/a')}`,

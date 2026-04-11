@@ -103,6 +103,10 @@ test('buildStephanosPrompt includes orchestration truth when provided', () => {
   assert.match(prompt, /missionPacket\.currentPhase: awaiting-approval/);
   assert.match(prompt, /mission\.phase: awaiting-approval/);
   assert.match(prompt, /buildAssistance\.state: analysis-ready/);
+
+  assert.match(prompt, /actions\.availableNow:/);
+  assert.match(prompt, /actions\.blockedBecause:/);
+  assert.match(prompt, /mission\.lifecycleState:/);
 });
 
 test('buildCopyResult returns success message when clipboard write succeeds', async () => {

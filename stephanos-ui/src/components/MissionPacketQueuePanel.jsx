@@ -9,6 +9,7 @@ import {
 import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth';
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
+import { buildOperatorGuidanceProjection } from '../state/operatorGuidanceRendering.js';
 
 function formatList(values = []) {
   if (!Array.isArray(values) || values.length === 0) {
@@ -43,6 +44,9 @@ export default function MissionPacketQueuePanel() {
     canonicalMissionPacket,
     missionPacketWorkflow,
   }), [canonicalMissionPacket, missionPacketWorkflow]);
+  const operatorGuidance = useMemo(() => buildOperatorGuidanceProjection({
+    orchestrationTruth: { selectors: orchestrationSelectors },
+  }), [orchestrationSelectors]);
 
   const handleAction = (intentKey) => {
     const envelope = adjudicateOperatorLifecycleIntent({
@@ -94,9 +98,11 @@ export default function MissionPacketQueuePanel() {
         <li>Execution Eligible: {String(actionState.executionEligible)}</li>
         <li>Current Decision: {actionState.decision}</li>
         <li>Lifecycle State: {actionState.lifecycleStatus}</li>
-        <li>Recommended Next Action: {orchestrationSelectors.nextRecommendedAction}</li>
-        <li>Blockage: {orchestrationSelectors.blockageExplanation || 'none'}</li>
-        <li>Build Assistance: {orchestrationSelectors.buildAssistanceReadiness?.state || 'unavailable'}</li>
+        <li>Recommended Next Action: {operatorGuidance.nextStepSummary}</li>
+        <li>Blockage: {operatorGuidance.missionLifecycleSummary.blockageReason || 'none'}</li>
+        <li>Build Assistance: {operatorGuidance.buildAssistanceSummary.state || 'unavailable'}</li>
+        <li>Available Now: {operatorGuidance.availableNow.map((entry) => entry.command).join(' · ') || 'none'}</li>
+        <li>Blocked Because: {operatorGuidance.blockedSummary.join(' · ') || 'none'}</li>
       </ul>
       <div className="status-panel-copy-actions" data-no-drag>
         <button type="button" disabled={orchestrationSelectors?.commandReadiness?.['accept-mission']?.allowed !== true || !actionState.canAccept} onClick={() => handleAction('accept-mission')}>Accept packet</button>

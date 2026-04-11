@@ -107,6 +107,7 @@ export default function App() {
     lastExecutionMetadata,
     missionPacketWorkflow,
     surfaceFrictionPatterns,
+    debugData,
   } = useAIStore();
   useDebugConsole();
 
@@ -214,7 +215,8 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     selectors: orchestrationSelectors,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, orchestrationSelectors]);
+    latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
     .map((text) => ({ severity: 'info', subsystem: 'SYSTEM', text })), [finalRouteTruth, orchestrationTruth]);
 

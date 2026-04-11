@@ -1,3 +1,5 @@
+import { buildOperatorGuidanceProjection } from '../../state/operatorGuidanceRendering.js';
+
 const DEFAULT_MAX_TELEMETRY_ENTRIES = 5;
 const TELEMETRY_COUNT_OPTIONS = new Set([3, 5, 10]);
 
@@ -112,13 +114,16 @@ function formatActionHints(actionHints) {
 }
 
 
-function formatOrchestrationTruth(orchestrationTruth = {}) {
+function formatOrchestrationTruth(orchestrationTruth = {}, finalRouteTruth = null) {
   const memory = orchestrationTruth?.canonicalMemoryContext || {};
   const intent = orchestrationTruth?.canonicalCurrentIntent || {};
   const packet = orchestrationTruth?.canonicalMissionPacket || {};
-  const selectors = orchestrationTruth?.selectors || {};
-  const missionState = selectors?.currentMissionState || {};
-  const buildAssist = selectors?.buildAssistanceReadiness || {};
+  const guidance = buildOperatorGuidanceProjection({
+    finalRouteTruth,
+    orchestrationTruth,
+    latestResponseEnvelope: orchestrationTruth?.latestResponseEnvelope || null,
+  });
+
   const lines = [
     `memory.continuityLoopState: ${sanitizeLine(memory?.activeMissionContinuity?.continuityLoopState) || 'unknown'}`,
     `memory.sparseData: ${formatScalar(memory?.sparseData === true)}`,
@@ -126,15 +131,33 @@ function formatOrchestrationTruth(orchestrationTruth = {}) {
     `intent.operatorIntentSource: ${sanitizeLine(intent?.operatorIntent?.source) || 'unknown'}`,
     `intent.executionState: ${sanitizeLine(intent?.executionState?.status) || 'unknown'}`,
     `missionPacket.currentPhase: ${sanitizeLine(packet?.currentPhase) || 'unknown'}`,
-    `missionPacket.nextAction: ${sanitizeLine(packet?.recommendedNextAction) || 'not yet established'}`,
-    `mission.phase: ${sanitizeLine(missionState?.missionPhase) || 'unknown'}`,
-    `mission.intentSource: ${sanitizeLine(missionState?.intentSource) || 'unknown'}`,
-    `mission.blocked: ${formatScalar(selectors?.missionBlocked === true)}`,
-    `mission.blockage: ${sanitizeLine(selectors?.blockageExplanation) || 'none'}`,
-    `mission.nextAction: ${sanitizeLine(selectors?.nextRecommendedAction) || 'Await explicit operator guidance.'}`,
-    `buildAssistance.state: ${sanitizeLine(buildAssist?.state) || 'unavailable'}`,
-    `buildAssistance.approvalRequired: ${formatScalar(buildAssist?.approvalRequired === true)}`,
+    `mission.phase: ${sanitizeLine(guidance?.missionLifecycleSummary?.missionPhase) || 'unknown'}`,
+    `mission.lifecycleState: ${sanitizeLine(guidance?.missionLifecycleSummary?.lifecycleState) || 'unknown'}`,
+    `mission.blocked: ${formatScalar(guidance?.missionLifecycleSummary?.blocked === true)}`,
+    `mission.blockage: ${sanitizeLine(guidance?.missionLifecycleSummary?.blockageReason) || 'none'}`,
+    `mission.nextAction: ${sanitizeLine(guidance?.nextStepSummary) || 'Await explicit operator guidance.'}`,
+    `actions.availableNow: ${guidance.availableNow.map((entry) => entry.command).join(', ') || 'none'}`,
+    `actions.blockedBecause: ${guidance.blockedBecause.map((entry) => `${entry.command}(${entry.reason})`).join(', ') || 'none'}`,
+    `buildAssistance.state: ${sanitizeLine(guidance?.buildAssistanceSummary?.state) || 'unavailable'}`,
+    `buildAssistance.approvalRequired: ${formatScalar(guidance?.buildAssistanceSummary?.approvalRequired === true)}`,
+    `codexHandoff.state: ${sanitizeLine(guidance?.codexReadinessSummary?.state) || 'unavailable'}`,
+    `continuity.strength: ${sanitizeLine(guidance?.continuitySummary?.strength) || 'unknown'}`,
   ];
+
+  if (guidance?.operatorCautionSummary?.inferredIntentCaution) {
+    lines.push(`caution.inferredIntent: ${guidance.operatorCautionSummary.inferredIntentCaution}`);
+  }
+  if (guidance?.operatorCautionSummary?.sparseContinuityCaution) {
+    lines.push(`caution.sparseContinuity: ${guidance.operatorCautionSummary.sparseContinuityCaution}`);
+  }
+
+  if (guidance?.envelopeProjection) {
+    lines.push(`latestEnvelope.actionRequested: ${sanitizeLine(guidance.envelopeProjection.actionRequested) || 'n/a'}`);
+    lines.push(`latestEnvelope.allowed: ${formatScalar(guidance.envelopeProjection.actionAllowed === true)}`);
+    lines.push(`latestEnvelope.applied: ${formatScalar(guidance.envelopeProjection.actionApplied === true)}`);
+    lines.push(`latestEnvelope.lifecycleState: ${sanitizeLine(guidance.envelopeProjection.lifecycleState) || 'unknown'}`);
+    lines.push(`latestEnvelope.nextAction: ${sanitizeLine(guidance.envelopeProjection.nextRecommendedAction) || 'Await explicit operator guidance.'}`);
+  }
 
   const continuityEvents = Array.isArray(memory?.activeMissionContinuity?.recentEvents)
     ? memory.activeMissionContinuity.recentEvents.slice(0, 3)
@@ -187,7 +210,7 @@ export function buildStephanosPrompt({
   }
 
   if (orchestrationTruth) {
-    appendSection(lines, 'ORCHESTRATION TRUTH', formatOrchestrationTruth(orchestrationTruth));
+    appendSection(lines, 'ORCHESTRATION TRUTH', formatOrchestrationTruth(orchestrationTruth, finalRouteTruth));
   }
 
   if (includeConstraints) {
