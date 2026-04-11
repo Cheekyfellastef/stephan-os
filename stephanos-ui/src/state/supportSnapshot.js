@@ -329,11 +329,11 @@ export function buildSupportSnapshot({
   if (hostedBackendTargetGuidance?.operatorGuidance) {
     guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
   }
-  if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-and-revalidated') {
+  if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-revalidated') {
     guidanceItems.push('Remembered Home Bridge revalidated successfully on this hosted surface.');
-  } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-but-unreachable') {
+  } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-unreachable') {
     guidanceItems.push('Remembered Home Bridge exists but is unreachable from this surface.');
-  } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-but-validation-failed') {
+  } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-validation-failed') {
     guidanceItems.push('Remembered Home Bridge exists but failed validation and needs operator review.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
     guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
@@ -707,7 +707,7 @@ export function buildSupportSnapshot({
     `Bridge Memory Needs Validation: ${bridgeTransportTruth.bridgeMemoryNeedsValidation === true ? 'yes' : 'no'}`,
     `Bridge Memory Validation State: ${asText(bridgeTransportTruth.bridgeMemoryValidationState, 'absent')}`,
     `Bridge Memory Reason: ${asText(bridgeTransportTruth.bridgeMemoryReason, 'n/a')}`,
-    `Bridge Memory Reconciliation State: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationState, 'no-memory')}`,
+    `Bridge Memory Reconciliation State: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationState, 'no-remembered-bridge')}`,
     `Bridge Memory Reconciliation Reason: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationReason, 'n/a')}`,
     `Bridge Auto Revalidation State: ${asText(bridgeTransportTruth.bridgeAutoRevalidationState, 'idle')}`,
     `Bridge Auto Revalidation Reason: ${asText(bridgeTransportTruth.bridgeAutoRevalidationReason, 'n/a')}`,

@@ -134,6 +134,48 @@ test('createRuntimeStatusModel surfaces tailscale backend target candidate truth
   assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
 });
 
+test('hosted backend target candidate order prefers remembered tailscale bridge over stale LAN manual candidate', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeBridge: {
+        configured: true,
+        accepted: true,
+        backendUrl: 'https://100.64.0.10',
+        reachability: 'reachable',
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://100.64.0.10',
+      },
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-revalidated',
+        bridgeMemoryUrl: 'https://100.64.0.10',
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          target: 'http://192.168.1.42:8787',
+          actualTarget: 'http://192.168.1.42:8787',
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          target: 'https://100.64.0.10',
+          actualTarget: 'https://100.64.0.10',
+        },
+        cloud: { configured: true, available: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://100.64.0.10');
+  assert.equal(model.runtimeContext.backendTargetCandidates[0].source, 'bridgeMemory.remembered.backendUrl');
+});
+
 test('route candidates keep configured/reachable/usable truth separated for unreachable tailscale', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,

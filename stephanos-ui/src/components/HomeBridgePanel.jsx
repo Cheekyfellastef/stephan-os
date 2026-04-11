@@ -75,6 +75,15 @@ export default function HomeBridgePanel() {
     () => (bridgeTransportTruth && typeof bridgeTransportTruth === 'object' ? bridgeTransportTruth : {}),
     [bridgeTransportTruth],
   );
+  const reconciliationState = transportTruth.bridgeMemoryReconciliationState || 'no-remembered-bridge';
+  const reconciliationDetail = useMemo(() => {
+    if (reconciliationState === 'remembered-revalidated') return 'Remembered config has been auto-revalidated and matches live bridge truth.';
+    if (reconciliationState === 'remembered-validation-failed') return 'Remembered config exists but failed canonical validation on this surface.';
+    if (reconciliationState === 'remembered-unreachable') return 'Remembered config validates structurally but is unreachable from this surface.';
+    if (reconciliationState === 'remembered-superseded-by-live-config') return 'Remembered config exists, but current live accepted config supersedes it.';
+    if (reconciliationState === 'remembered-awaiting-validation') return 'Remembered config is present and waiting for canonical revalidation.';
+    return 'No remembered bridge config currently exists.';
+  }, [reconciliationState]);
 
   useEffect(() => {
     const activeUrl = selectedTransport === 'tailscale'
@@ -319,10 +328,12 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Remembered bridge: <strong>{transportTruth.bridgeMemoryPresent ? transportTruth.bridgeMemoryTransport : 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered URL: <strong>{transportTruth.bridgeMemoryUrl || 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered at: <strong>{formatTime(transportTruth.bridgeMemoryRememberedAt || bridgeMemory?.rememberedAt)}</strong></p>
+      <p className="home-bridge-detail">Remembered state: <strong>{reconciliationState}</strong></p>
+      <p className="home-bridge-detail">Remembered state detail: <strong>{reconciliationDetail}</strong></p>
       <p className="home-bridge-detail">Memory validation state: <strong>{transportTruth.bridgeMemoryValidationState || 'absent'}</strong></p>
       <p className="home-bridge-detail">Memory needs validation: <strong>{transportTruth.bridgeMemoryNeedsValidation ? 'yes' : 'no'}</strong></p>
       <p className="home-bridge-detail">Memory reason: <strong>{transportTruth.bridgeMemoryReason || 'No remembered Home Bridge transport.'}</strong></p>
-      <p className="home-bridge-detail">Memory reconciliation: <strong>{transportTruth.bridgeMemoryReconciliationState || 'no-memory'}</strong></p>
+      <p className="home-bridge-detail">Memory reconciliation: <strong>{transportTruth.bridgeMemoryReconciliationState || 'no-remembered-bridge'}</strong></p>
       <p className="home-bridge-detail">Reconciliation reason: <strong>{transportTruth.bridgeMemoryReconciliationReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation state: <strong>{transportTruth.bridgeAutoRevalidationState || 'idle'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation reason: <strong>{transportTruth.bridgeAutoRevalidationReason || 'n/a'}</strong></p>

@@ -141,6 +141,16 @@ test('auto bridge revalidation plan skips when stronger accepted live config exi
   assert.equal(plan.outcome, 'remembered-superseded-by-live-config');
 });
 
+test('auto bridge revalidation plan reports no-remembered-bridge when durable memory is absent', () => {
+  const plan = resolveAutoBridgeRevalidationPlan({
+    bridgeMemory: {},
+    preferences: normalizeBridgeTransportPreferences({ selectedTransport: 'manual' }),
+    bridgeValidationTruth: { sessionKind: 'hosted-web', requireHttps: true },
+  });
+  assert.equal(plan.shouldAttempt, false);
+  assert.equal(plan.outcome, 'no-remembered-bridge');
+});
+
 test('bridge memory reconciliation reports revalidated and unreachable outcomes truthfully', () => {
   const revalidated = resolveBridgeMemoryReconciliation({
     preferences: normalizeBridgeTransportPreferences({
@@ -153,7 +163,7 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
     bridgeMemory: { transport: 'manual', backendUrl: 'https://bridge.example.com' },
     autoRevalidation: { state: 'revalidated', reason: 'ok' },
   });
-  assert.equal(revalidated.state, 'remembered-and-revalidated');
+  assert.equal(revalidated.state, 'remembered-revalidated');
 
   const unreachable = resolveBridgeMemoryReconciliation({
     preferences: normalizeBridgeTransportPreferences({
@@ -166,5 +176,5 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
     bridgeMemory: { transport: 'tailscale', backendUrl: 'https://100.64.0.10' },
     autoRevalidation: { state: 'unreachable', reason: 'probe failed' },
   });
-  assert.equal(unreachable.state, 'remembered-but-unreachable');
+  assert.equal(unreachable.state, 'remembered-unreachable');
 });
