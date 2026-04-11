@@ -66,3 +66,21 @@ test('buildOperatorGuidanceProjection projects latest response envelope fields',
   assert.equal(projection.envelopeProjection.buildAssistanceState, 'in-progress');
   assert.deepEqual(projection.envelopeProjection.truthWarnings, ['bounded only']);
 });
+
+test('buildOperatorGuidanceProjection includes codex pipeline summary fields', () => {
+  const projection = buildOperatorGuidanceProjection({
+    orchestrationTruth: {
+      selectors: {
+        currentMissionState: {
+          codexHandoffStatus: 'applied',
+          validationStatus: 'not-run',
+          lastHandoffAction: 'mark-handoff-applied',
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.codexPipelineSummary.status, 'applied');
+  assert.equal(projection.codexPipelineSummary.validationStatus, 'not-run');
+  assert.equal(projection.codexPipelineSummary.lastOperatorAction, 'mark-handoff-applied');
+});

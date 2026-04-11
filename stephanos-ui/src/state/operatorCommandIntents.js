@@ -14,6 +14,11 @@ const COMMAND_ALIASES = Object.freeze({
   'fail mission': 'fail-mission',
   'rollback mission': 'rollback-mission',
   'prepare codex handoff': 'prepare-codex-handoff',
+  'mark handoff as applied': 'mark-handoff-applied',
+  'mark handoff as failed': 'mark-handoff-failed',
+  'mark handoff as rolled back': 'mark-handoff-rolled-back',
+  'validation passed': 'confirm-validation-passed',
+  'validation failed': 'confirm-validation-failed',
   'what can the ai do right now?': 'what-can-ai-do',
   'what can the ai do right now': 'what-can-ai-do',
   'why is this blocked?': 'why-blocked',
@@ -29,6 +34,11 @@ const INTENT_TO_WORKFLOW_ACTION = Object.freeze({
   'fail-mission': 'fail',
   'rollback-mission': 'rollback',
   'prepare-codex-handoff': 'prepare-codex-handoff',
+  'mark-handoff-applied': 'mark-handoff-applied',
+  'mark-handoff-failed': 'mark-handoff-failed',
+  'mark-handoff-rolled-back': 'mark-handoff-rolled-back',
+  'confirm-validation-passed': 'confirm-validation-passed',
+  'confirm-validation-failed': 'confirm-validation-failed',
 });
 
 export function normalizeOperatorLifecycleIntent(input = '') {
@@ -218,7 +228,7 @@ export function adjudicateOperatorLifecycleIntent({
     actionApplied,
     blockageReason: actionApplied ? '' : 'action-rejected-due-to-truth-constraints',
     operatorMessage: actionApplied
-      ? `Mission ${workflowAction} applied: lifecycle is now ${gateAfter.lifecycleStatus}.`
+      ? `Mission ${workflowAction} applied: lifecycle=${gateAfter.lifecycleStatus}, handoff=${gateAfter.codexHandoffStatus}, validation=${gateAfter.validationStatus}.`
       : 'Lifecycle action was not applied due to truth constraints.',
     approvalRequired: selectors?.buildAssistanceReadiness?.approvalRequired === true,
     workflowAction,

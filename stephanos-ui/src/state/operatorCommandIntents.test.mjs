@@ -16,6 +16,7 @@ function buildSelectors(workflow, packetTruth, intentSource = 'explicit') {
 
 test('normalize lifecycle commands and reject unsupported command', () => {
   assert.equal(normalizeOperatorLifecycleIntent('accept mission'), 'accept-mission');
+  assert.equal(normalizeOperatorLifecycleIntent('mark handoff as applied'), 'mark-handoff-applied');
   assert.equal(normalizeOperatorLifecycleIntent('unknown mission'), 'unsupported');
 });
 
@@ -103,4 +104,60 @@ test('why blocked and what can ai do return structured guidance envelopes', () =
   assert.equal(blocked.commandType, 'mission-guidance');
   assert.equal(capability.commandType, 'mission-guidance');
   assert.equal(capability.actionAllowed, true);
+});
+
+test('handoff apply and validation confirmations require selector-gated sequence', () => {
+  const packetTruth = normalizeMissionPacketTruth({
+    proposal_packet_active: true,
+    proposal_packet_mode: 'self-build-mission-synthesis',
+    proposed_move_id: 'codex-sequence',
+    proposed_move_title: 'Codex sequence',
+    codex_handoff_payload: '{"patchMetadata":{"files":["main.js"]}}',
+    operator_approval_required: true,
+    execution_eligible: false,
+  });
+  const workflow = createDefaultMissionPacketWorkflow();
+  const selectors = buildSelectors(workflow, packetTruth);
+  const accepted = adjudicateOperatorLifecycleIntent({
+    commandText: 'accept mission',
+    selectors,
+    missionPacketWorkflow: workflow,
+    packetTruth,
+    now: '2026-04-11T00:10:00.000Z',
+  });
+  const afterAcceptSelectors = buildSelectors(accepted.workflow, packetTruth);
+  const generated = adjudicateOperatorLifecycleIntent({
+    commandText: 'prepare codex handoff',
+    selectors: afterAcceptSelectors,
+    missionPacketWorkflow: accepted.workflow,
+    packetTruth,
+    now: '2026-04-11T00:11:00.000Z',
+  });
+  const blockedValidation = adjudicateOperatorLifecycleIntent({
+    commandText: 'validation passed',
+    selectors: buildSelectors(generated.workflow, packetTruth),
+    missionPacketWorkflow: generated.workflow,
+    packetTruth,
+    now: '2026-04-11T00:12:00.000Z',
+  });
+  assert.equal(blockedValidation.status, 'action-not-allowed-in-current-state');
+
+  const applied = adjudicateOperatorLifecycleIntent({
+    commandText: 'mark handoff as applied',
+    selectors: buildSelectors(generated.workflow, packetTruth),
+    missionPacketWorkflow: generated.workflow,
+    packetTruth,
+    now: '2026-04-11T00:13:00.000Z',
+  });
+  assert.equal(applied.status, 'action-completed');
+
+  const validated = adjudicateOperatorLifecycleIntent({
+    commandText: 'validation passed',
+    selectors: buildSelectors(applied.workflow, packetTruth),
+    missionPacketWorkflow: applied.workflow,
+    packetTruth,
+    now: '2026-04-11T00:14:00.000Z',
+  });
+  assert.equal(validated.status, 'action-completed');
+  assert.equal(validated.resultingLifecycleState, 'completed');
 });

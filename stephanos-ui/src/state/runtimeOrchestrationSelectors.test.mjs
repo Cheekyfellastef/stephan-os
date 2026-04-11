@@ -46,3 +46,20 @@ test('selector command readiness follows lifecycle gating truth', () => {
   assert.equal(selectors.commandReadiness['start-mission'].allowed, true);
   assert.equal(selectors.commandReadiness['complete-mission'].allowed, false);
 });
+
+test('codex pipeline selectors expose applied->validation gating and summaries', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: {
+      currentPhase: 'in-progress',
+      approvalExecutionStatus: { accepted: 'yes' },
+      codexExecution: { status: 'applied', validationStatus: 'not-run', lastOperatorAction: 'mark-handoff-applied' },
+    },
+  });
+
+  assert.equal(selectors.codexExecutionState, 'applied');
+  assert.equal(selectors.codexHandoffReadiness, 'awaiting-validation');
+  assert.equal(selectors.commandReadiness['confirm-validation-passed'].allowed, true);
+  assert.equal(selectors.currentMissionState.lastHandoffAction, 'mark-handoff-applied');
+  assert.match(selectors.nextRecommendedAction, /awaiting validation/i);
+});

@@ -18,6 +18,11 @@ const PROMPT_ALIASES = Object.freeze({
   'what can the ai do right now?': 'what-can-ai-do',
   'what can the ai do right now': 'what-can-ai-do',
   'prepare codex handoff': 'prepare-codex-handoff',
+  'mark handoff as applied': 'mark-handoff-applied',
+  'mark handoff as failed': 'mark-handoff-failed',
+  'mark handoff as rolled back': 'mark-handoff-rolled-back',
+  'validation passed': 'confirm-validation-passed',
+  'validation failed': 'confirm-validation-failed',
   'accept mission': 'accept-mission',
   'defer mission': 'defer-mission',
   'reject mission': 'reject-mission',
@@ -103,6 +108,11 @@ export function buildOperatorReplyPayload({
     'complete-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'fail-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
     'rollback-mission': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'mark-handoff-applied': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'mark-handoff-failed': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'mark-handoff-rolled-back': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'confirm-validation-passed': formatEnvelopeSummary(guidance, latestResponseEnvelope),
+    'confirm-validation-failed': formatEnvelopeSummary(guidance, latestResponseEnvelope),
   };
 
   return {

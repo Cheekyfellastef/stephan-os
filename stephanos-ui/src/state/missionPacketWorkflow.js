@@ -1,7 +1,8 @@
-const MISSION_PACKET_WORKFLOW_SCHEMA_VERSION = 1;
+const MISSION_PACKET_WORKFLOW_SCHEMA_VERSION = 2;
 const MAX_DECISIONS = 24;
 const MAX_ACTIVITY = 40;
 const MAX_QUEUE_ITEMS = 20;
+const MAX_CODEX_HANDOFFS = 20;
 const LIFECYCLE_STATES = Object.freeze([
   'proposed',
   'awaiting-approval',
@@ -11,6 +12,15 @@ const LIFECYCLE_STATES = Object.freeze([
   'completed',
   'failed',
   'rollback-recommended',
+  'rolled-back',
+]);
+const CODEX_HANDOFF_STATUSES = Object.freeze([
+  'not-generated',
+  'generated',
+  'handed-off',
+  'applied',
+  'validated',
+  'failed',
   'rolled-back',
 ]);
 
@@ -33,6 +43,11 @@ function safeBoolean(value, fallback = false) {
 function normalizeLifecycleStatus(value, fallback = 'proposed') {
   const normalized = safeText(value, fallback).toLowerCase();
   return LIFECYCLE_STATES.includes(normalized) ? normalized : fallback;
+}
+
+function normalizeCodexHandoffStatus(value, fallback = 'not-generated') {
+  const normalized = safeText(value, fallback).toLowerCase();
+  return CODEX_HANDOFF_STATUSES.includes(normalized) ? normalized : fallback;
 }
 
 export function normalizeMissionPacketTruth(lastExecutionMetadata = {}) {
@@ -130,6 +145,51 @@ function normalizeActivityEntry(entry = {}) {
   };
 }
 
+function parsePatchMetadata(payload) {
+  const raw = safeText(payload);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const patchMetadata = parsed.patchMetadata && typeof parsed.patchMetadata === 'object'
+        ? parsed.patchMetadata
+        : parsed.patch && typeof parsed.patch === 'object'
+          ? parsed.patch
+          : null;
+      if (!patchMetadata) return null;
+      return {
+        files: safeList(patchMetadata.files, 12),
+        estimatedChanges: safeText(patchMetadata.estimatedChanges),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function normalizeCodexHandoffEntry(entry = {}) {
+  const patchMetadata = entry.patchMetadata && typeof entry.patchMetadata === 'object'
+    ? {
+      files: safeList(entry.patchMetadata.files, 12),
+      estimatedChanges: safeText(entry.patchMetadata.estimatedChanges),
+    }
+    : null;
+  return {
+    handoffId: safeText(entry.handoffId),
+    missionPacketId: safeText(entry.missionPacketId),
+    packetKey: safeText(entry.packetKey),
+    status: normalizeCodexHandoffStatus(entry.status, 'not-generated'),
+    validationStatus: safeText(entry.validationStatus, 'not-run'),
+    lastOperatorAction: safeText(entry.lastOperatorAction),
+    summary: safeText(entry.summary),
+    payload: safeText(entry.payload),
+    patchMetadata,
+    createdAt: safeText(entry.createdAt),
+    updatedAt: safeText(entry.updatedAt),
+  };
+}
+
 export function createDefaultMissionPacketWorkflow() {
   return {
     schemaVersion: MISSION_PACKET_WORKFLOW_SCHEMA_VERSION,
@@ -137,6 +197,7 @@ export function createDefaultMissionPacketWorkflow() {
     proposalQueue: [],
     roadmapQueue: [],
     activity: [],
+    codexHandoffs: [],
   };
 }
 
@@ -155,6 +216,9 @@ export function normalizeMissionPacketWorkflow(value = {}) {
       : [],
     activity: Array.isArray(source.activity)
       ? source.activity.map(normalizeActivityEntry).filter((entry) => entry.id).slice(0, MAX_ACTIVITY)
+      : [],
+    codexHandoffs: Array.isArray(source.codexHandoffs)
+      ? source.codexHandoffs.map(normalizeCodexHandoffEntry).filter((entry) => entry.handoffId).slice(0, MAX_CODEX_HANDOFFS)
       : [],
   };
 }
@@ -205,14 +269,31 @@ function hasQueueEntry(queue = [], packetKey = '') {
   return queue.some((entry) => entry.packetKey === packetKey);
 }
 
+function getLatestHandoff(workflow, packetKey) {
+  return (Array.isArray(workflow?.codexHandoffs) ? workflow.codexHandoffs : []).find((entry) => entry.packetKey === packetKey) || null;
+}
+
 export function deriveMissionPacketActionState(workflowInput, packetTruthInput) {
   const workflow = normalizeMissionPacketWorkflow(workflowInput);
   const packetTruth = normalizeMissionPacketTruth(packetTruthInput);
   const packetKey = buildMissionPacketKey(packetTruth);
   const latestDecision = workflow.decisions.find((entry) => entry.packetKey === packetKey) || null;
+  const latestHandoff = getLatestHandoff(workflow, packetKey);
   const packetReady = packetTruth.active && packetTruth.approvalRequired && packetTruth.executionEligible === false;
   const decision = latestDecision?.decision || 'pending-review';
-  const lifecycleStatus = normalizeLifecycleStatus(latestDecision?.lifecycleStatus, packetReady ? 'awaiting-approval' : 'proposed');
+  const handoffStatus = normalizeCodexHandoffStatus(latestHandoff?.status, 'not-generated');
+  const lifecycleStatus = normalizeLifecycleStatus(
+    handoffStatus === 'validated'
+      ? 'completed'
+      : handoffStatus === 'applied'
+        ? 'in-progress'
+        : handoffStatus === 'failed'
+          ? 'rollback-recommended'
+          : handoffStatus === 'rolled-back'
+            ? 'rolled-back'
+            : latestDecision?.lifecycleStatus,
+    packetReady ? 'awaiting-approval' : 'proposed',
+  );
 
   return {
     packetKey,
@@ -227,10 +308,38 @@ export function deriveMissionPacketActionState(workflowInput, packetTruthInput) 
     canComplete: lifecycleStatus === 'in-progress',
     canFail: lifecycleStatus === 'in-progress',
     canRollback: lifecycleStatus === 'completed' || lifecycleStatus === 'failed' || lifecycleStatus === 'rollback-recommended',
+    canMarkHandoffApplied: handoffStatus === 'generated' || handoffStatus === 'handed-off',
+    canMarkHandoffFailed: handoffStatus === 'generated' || handoffStatus === 'handed-off' || handoffStatus === 'applied',
+    canMarkHandoffRolledBack: handoffStatus === 'failed' || lifecycleStatus === 'rollback-recommended' || lifecycleStatus === 'failed',
+    canConfirmValidationPassed: handoffStatus === 'applied',
+    canConfirmValidationFailed: handoffStatus === 'applied',
     executionEligible: false,
     approvalRequired: packetTruth.approvalRequired,
     lifecycleStatus,
+    codexHandoffStatus: handoffStatus,
+    validationStatus: safeText(latestHandoff?.validationStatus, 'not-run'),
+    lastHandoffAction: safeText(latestHandoff?.lastOperatorAction),
   };
+}
+
+function upsertCodexHandoff(workflow, packet, packetKey, now, updates = {}) {
+  const existing = getLatestHandoff(workflow, packetKey);
+  const handoffId = safeText(existing?.handoffId, `codex_handoff_${Date.parse(now)}_${packet.moveId || 'move'}`);
+  const next = normalizeCodexHandoffEntry({
+    handoffId,
+    missionPacketId: safeText(packet.moveId || packetKey),
+    packetKey,
+    status: updates.status ?? existing?.status ?? 'not-generated',
+    validationStatus: updates.validationStatus ?? existing?.validationStatus ?? 'not-run',
+    lastOperatorAction: updates.lastOperatorAction ?? existing?.lastOperatorAction ?? '',
+    summary: updates.summary ?? existing?.summary ?? safeText(packet.codexPromptSummary || packet.rationale || packet.moveTitle, 'Codex handoff packet generated by operator action.'),
+    payload: updates.payload ?? existing?.payload ?? safeText(packet.codexHandoffPayload),
+    patchMetadata: updates.patchMetadata ?? existing?.patchMetadata ?? parsePatchMetadata(packet.codexHandoffPayload),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  });
+  const remaining = workflow.codexHandoffs.filter((entry) => entry.handoffId !== handoffId);
+  return [next, ...remaining].slice(0, MAX_CODEX_HANDOFFS);
 }
 
 export function applyMissionPacketAction(workflowInput, { action = '', packetTruth = {}, now = new Date().toISOString() } = {}) {
@@ -238,7 +347,7 @@ export function applyMissionPacketAction(workflowInput, { action = '', packetTru
   const packet = normalizeMissionPacketTruth(packetTruth);
   const gate = deriveMissionPacketActionState(workflow, packet);
 
-  if (!gate.packetReady && !['copy-codex-handoff', 'prepare-codex-handoff', 'start', 'complete', 'fail', 'rollback'].includes(action)) {
+  if (!gate.packetReady && !['copy-codex-handoff', 'prepare-codex-handoff', 'start', 'complete', 'fail', 'rollback', 'mark-handoff-applied', 'mark-handoff-failed', 'mark-handoff-rolled-back', 'confirm-validation-passed', 'confirm-validation-failed'].includes(action)) {
     return workflow;
   }
 
@@ -252,11 +361,53 @@ export function applyMissionPacketAction(workflowInput, { action = '', packetTru
   }
 
   if (action === 'copy-codex-handoff' || action === 'prepare-codex-handoff') {
+    const packetKey = buildMissionPacketKey(packet);
+    const status = action === 'prepare-codex-handoff' ? 'generated' : 'handed-off';
     return normalizeMissionPacketWorkflow({
       ...workflow,
+      codexHandoffs: upsertCodexHandoff(workflow, packet, packetKey, now, {
+        status,
+        validationStatus: 'not-run',
+        lastOperatorAction: action,
+      }),
       activity: appendActivity(workflow, action === 'prepare-codex-handoff'
         ? `Operator prepared Codex handoff for ${packet.moveId || packet.mode}.`
         : `Operator copied Codex handoff for ${packet.moveId || packet.mode}.`, now),
+    });
+  }
+
+  if (action === 'mark-handoff-applied' || action === 'mark-handoff-failed' || action === 'mark-handoff-rolled-back' || action === 'confirm-validation-passed' || action === 'confirm-validation-failed') {
+    const packetKey = buildMissionPacketKey(packet);
+    const status = action === 'mark-handoff-applied'
+      ? 'applied'
+      : action === 'mark-handoff-failed' || action === 'confirm-validation-failed'
+        ? 'failed'
+        : action === 'mark-handoff-rolled-back'
+          ? 'rolled-back'
+          : 'validated';
+    const lifecycleAction = action === 'mark-handoff-applied'
+      ? 'start'
+      : action === 'mark-handoff-failed'
+        ? 'fail'
+        : action === 'mark-handoff-rolled-back'
+          ? 'rollback'
+          : action === 'confirm-validation-passed'
+            ? 'complete'
+            : 'fail';
+    const nextDecisions = upsertDecision(workflow, packet, lifecycleAction, now);
+    return normalizeMissionPacketWorkflow({
+      ...workflow,
+      decisions: nextDecisions,
+      codexHandoffs: upsertCodexHandoff(workflow, packet, packetKey, now, {
+        status,
+        validationStatus: action === 'confirm-validation-passed'
+          ? 'passed'
+          : action === 'confirm-validation-failed'
+            ? 'failed'
+            : 'not-run',
+        lastOperatorAction: action,
+      }),
+      activity: appendActivity(workflow, `Operator ${action.replaceAll('-', ' ')} for ${packet.moveId || packet.mode}.`, now),
     });
   }
 

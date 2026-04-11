@@ -44,7 +44,21 @@ test('canonical mission packet keeps lifecycle separate from execution truth', (
     },
   });
 
-  assert.equal(packet.currentPhase, 'accepted');
+  assert.equal(packet.currentPhase, 'execution-ready');
   assert.equal(packet.approvalExecutionStatus.executing, 'no');
   assert.equal(packet.approvalExecutionStatus.completed, 'no-automatic-completion-claim');
+});
+
+test('canonical mission packet maps codex handoff validation to completed without fake execution claims', () => {
+  const packet = buildCanonicalMissionPacket({
+    missionPacketTruth: { active: true, moveTitle: 'Codex lifecycle bridge', rationale: 'Track validation outcome' },
+    missionPacketWorkflow: {
+      decisions: [{ decision: 'accept' }],
+      codexHandoffs: [{ handoffId: 'h1', status: 'validated', validationStatus: 'passed', lastOperatorAction: 'confirm-validation-passed' }],
+    },
+  });
+
+  assert.equal(packet.currentPhase, 'completed');
+  assert.equal(packet.codexExecution.status, 'validated');
+  assert.equal(packet.approvalExecutionStatus.completed, 'operator-validated');
 });
