@@ -179,7 +179,74 @@ test('hosted backend target candidate order prefers remembered tailscale bridge 
   });
 
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://100.64.0.10');
-  assert.equal(model.runtimeContext.backendTargetCandidates[0].source, 'bridgeTransport.liveTailscale.backendUrl');
+  assert.equal(model.runtimeContext.backendTargetCandidates[0].url, 'https://100.64.0.10');
+});
+
+test('hosted remembered tailscale revalidation promotes live transport truth and preferred backend target', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeBridge: {
+        configured: true,
+        accepted: true,
+        backendUrl: 'http://192.168.0.198:8787',
+        reachability: 'reachable',
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'manual',
+        transports: {
+          manual: {
+            enabled: true,
+            backendUrl: 'http://192.168.0.198:8787',
+            accepted: true,
+            reachability: 'reachable',
+          },
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: false,
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+        },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-tailscale-revalidated-as-tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.reachable, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.routeCandidateWinner.candidateKey, 'home-node-tailscale');
 });
 
 test('route candidates keep configured/reachable/usable truth separated for unreachable tailscale', () => {

@@ -300,11 +300,11 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     reachability: String(homeNodeBridgeRaw.reachability || (bridgeValidation.ok ? 'unknown' : 'invalid')),
     reason: String(homeNodeBridgeRaw.reason || ''),
   };
-  const bridgeTransportPreferences = normalizeBridgeTransportPreferences(runtimeContext.bridgeTransportPreferences, {
+  let bridgeTransportPreferences = normalizeBridgeTransportPreferences(runtimeContext.bridgeTransportPreferences, {
     homeBridgeUrl: homeNodeBridge.backendUrl || '',
     frontendOrigin,
   });
-  const bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+  let bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
     runtimeBridge: homeNodeBridge,
     bridgeMemory: runtimeContext.bridgeMemory,
     bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
@@ -322,6 +322,49 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       ? 'lan-companion'
       : 'off-network';
   const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
+  const hostedRememberedTailscalePromotion = sessionKind === 'hosted-web'
+    && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
+    && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
+    && bridgeTransportTruth?.tailscale?.accepted === true
+    && bridgeTransportTruth?.tailscale?.reachable === true
+    && Boolean(bridgeTransportTruth?.tailscale?.backendUrl);
+  if (hostedRememberedTailscalePromotion && bridgeTransportPreferences.selectedTransport !== 'tailscale') {
+    bridgeTransportPreferences = normalizeBridgeTransportPreferences({
+      ...bridgeTransportPreferences,
+      selectedTransport: 'tailscale',
+      transports: {
+        ...(bridgeTransportPreferences?.transports || {}),
+        tailscale: {
+          ...(bridgeTransportPreferences?.transports?.tailscale || {}),
+          enabled: true,
+          backendUrl: bridgeTransportTruth.tailscale.backendUrl,
+          accepted: true,
+          active: true,
+          reachability: 'reachable',
+          usable: true,
+        },
+      },
+    }, {
+      homeBridgeUrl: homeNodeBridge.backendUrl || '',
+      frontendOrigin,
+    });
+    bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+      runtimeBridge: homeNodeBridge,
+      bridgeMemory: runtimeContext.bridgeMemory,
+      bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
+      autoRevalidation: runtimeContext.bridgeAutoRevalidation,
+    });
+  }
+  const canonicalHomeNodeBridge = hostedRememberedTailscalePromotion
+    ? {
+      ...homeNodeBridge,
+      configured: true,
+      accepted: true,
+      backendUrl: bridgeTransportTruth?.tailscale?.backendUrl || homeNodeBridge.backendUrl,
+      reachability: 'reachable',
+      reason: bridgeTransportTruth?.tailscale?.reason || homeNodeBridge.reason,
+    }
+    : homeNodeBridge;
   const compatiblePreferredTarget = resolveCompatibleUrl(
     runtimeContext.preferredTarget,
     homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
@@ -334,17 +377,24 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   );
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
-  const backendTargetCandidates = collectBackendTargetCandidates(runtimeContext, compatibleActualTarget);
+  const backendTargetCandidates = collectBackendTargetCandidates({
+    ...runtimeContext,
+    sessionKind,
+    deviceContext: preliminaryDeviceContext,
+    bridgeTransportPreferences,
+    bridgeTransportTruth,
+    homeNodeBridge: canonicalHomeNodeBridge,
+  }, compatibleActualTarget);
   const backendReachabilityByTarget = resolveBackendReachabilityByTarget(runtimeContext.routeDiagnostics || {});
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
     const validation = validateStephanosBackendTargetUrl(
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
     );
-    const bridgeTargetReachable = homeNodeBridge.accepted === true
-      && homeNodeBridge.reachability === 'reachable'
-      && Boolean(homeNodeBridge.backendUrl)
-      && candidate.url === homeNodeBridge.backendUrl;
+    const bridgeTargetReachable = canonicalHomeNodeBridge.accepted === true
+      && canonicalHomeNodeBridge.reachability === 'reachable'
+      && Boolean(canonicalHomeNodeBridge.backendUrl)
+      && candidate.url === canonicalHomeNodeBridge.backendUrl;
     const reachable = bridgeTargetReachable
       ? true
       : backendReachabilityByTarget.has(candidate.url)
@@ -449,7 +499,7 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     sessionKind,
     localNodeReachableFromSession: runtimeContext.localNodeReachableFromSession,
     homeNode,
-    homeNodeBridge,
+    homeNodeBridge: canonicalHomeNodeBridge,
     bridgeTransportPreferences,
     bridgeTransportTruth,
     publishedClientRouteState: runtimeContext.publishedClientRouteState || 'unknown',

@@ -180,3 +180,21 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
   assert.equal(unreachable.state, 'remembered-unreachable');
   assert.equal(unreachable.provenance, 'remembered-tailscale-unreachable');
 });
+
+test('bridge memory reconciliation preserves tailscale provenance after successful revalidation even if selected transport drifted', () => {
+  const revalidated = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'manual',
+      transports: {
+        manual: { enabled: true, backendUrl: 'http://192.168.0.198:8787', accepted: true, reachability: 'reachable' },
+        tailscale: { enabled: true, backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net', accepted: true, reachability: 'reachable' },
+      },
+    }),
+    runtimeBridge: { accepted: true, backendUrl: 'http://192.168.0.198:8787', reachability: 'reachable' },
+    bridgeMemory: { transport: 'tailscale', backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net' },
+    autoRevalidation: { state: 'revalidated', reason: 'ok' },
+  });
+
+  assert.equal(revalidated.state, 'remembered-revalidated');
+  assert.equal(revalidated.provenance, 'remembered-tailscale-revalidated-as-tailscale');
+});
