@@ -978,6 +978,9 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
         bridgeMemoryReconciliationState: 'remembered-unreachable',
         bridgeMemoryReconciliationReason: 'Remembered bridge exists but this surface cannot currently reach it.',
         bridgeMemoryReconciliationProvenance: 'remembered-tailscale-unreachable',
+        bridgeMemoryPersistenceState: 'save-persisted',
+        bridgeMemoryPersistenceReason: 'Remembered tailscale Home Bridge config persisted to shared durable memory.',
+        bridgeMemoryPersistenceAt: '2026-04-11T10:00:03.000Z',
         bridgeAutoRevalidationState: 'unreachable',
         bridgeAutoRevalidationReason: 'Remembered Home Bridge is unreachable from this surface.',
         tailscale: {
@@ -1011,6 +1014,8 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Bridge Memory Validation State: awaiting-validation/);
   assert.match(snapshot, /Bridge Memory Reconciliation State: remembered-unreachable/);
   assert.match(snapshot, /Bridge Memory Reconciliation Provenance: remembered-tailscale-unreachable/);
+  assert.match(snapshot, /Bridge Memory Persistence State: save-persisted/);
+  assert.match(snapshot, /Bridge Memory Persistence Reason: Remembered tailscale Home Bridge config persisted to shared durable memory\./);
   assert.match(snapshot, /Bridge Auto Revalidation State: unreachable/);
   assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
 });

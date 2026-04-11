@@ -153,21 +153,65 @@ function getStephanosMemoryRuntime() {
 
 function readPersistedBridgeMemory() {
   const memory = getStephanosMemoryRuntime();
-  if (!memory?.getRecord) return normalizeHomeBridgeMemory();
+  if (!memory?.getRecord) {
+    return {
+      bridgeMemory: normalizeHomeBridgeMemory(),
+      diagnostics: {
+        state: 'memory-read-empty',
+        reason: 'Shared durable memory runtime is unavailable on this surface.',
+        at: new Date().toISOString(),
+      },
+    };
+  }
   try {
     const record = memory.getRecord({
       namespace: BRIDGE_MEMORY_RECORD_NAMESPACE,
       id: BRIDGE_MEMORY_RECORD_ID,
     });
-    return normalizeHomeBridgeMemory(record?.payload?.bridgeMemory || {});
+    const payloadBridgeMemory = record?.payload?.bridgeMemory;
+    const normalized = normalizeHomeBridgeMemory(payloadBridgeMemory || {});
+    const payloadHasShape = payloadBridgeMemory && typeof payloadBridgeMemory === 'object'
+      && Object.keys(payloadBridgeMemory).length > 0;
+    const hasRememberedBridge = normalized.transport !== 'none' && Boolean(normalized.backendUrl);
+    return {
+      bridgeMemory: normalized,
+      diagnostics: {
+        state: hasRememberedBridge
+          ? 'memory-read-success'
+          : (payloadHasShape ? 'memory-shape-invalid' : 'memory-read-empty'),
+        reason: hasRememberedBridge
+          ? 'Read remembered Home Bridge config from shared durable memory.'
+          : (payloadHasShape
+            ? 'Home Bridge durable memory payload exists but is invalid after canonical normalization.'
+            : 'No remembered Home Bridge config found in shared durable memory.'),
+        at: new Date().toISOString(),
+      },
+    };
   } catch {
-    return normalizeHomeBridgeMemory();
+    return {
+      bridgeMemory: normalizeHomeBridgeMemory(),
+      diagnostics: {
+        state: 'memory-read-empty',
+        reason: 'Failed to read shared durable memory record for Home Bridge transport.',
+        at: new Date().toISOString(),
+      },
+    };
   }
 }
 
 function persistBridgeMemoryToDurableStore(bridgeMemory) {
   const memory = getStephanosMemoryRuntime();
-  if (!memory?.saveRecord) return false;
+  if (!memory?.saveRecord) {
+    return {
+      ok: false,
+      diagnostics: {
+        state: 'save-clobbered',
+        reason: 'Shared durable memory runtime is unavailable; Home Bridge memory cannot be persisted.',
+        at: new Date().toISOString(),
+      },
+    };
+  }
+  const normalizedBridgeMemory = normalizeHomeBridgeMemory(bridgeMemory);
   try {
     memory.saveRecord({
       namespace: BRIDGE_MEMORY_RECORD_NAMESPACE,
@@ -177,11 +221,27 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
       scope: 'runtime',
       tags: ['home-bridge', 'bridge-memory'],
       importance: 'normal',
-      payload: { bridgeMemory: normalizeHomeBridgeMemory(bridgeMemory) },
+      payload: { bridgeMemory: normalizedBridgeMemory },
     });
-    return true;
+    return {
+      ok: true,
+      diagnostics: {
+        state: 'save-persisted',
+        reason: normalizedBridgeMemory.transport !== 'none' && normalizedBridgeMemory.backendUrl
+          ? `Remembered ${normalizedBridgeMemory.transport} Home Bridge config persisted to shared durable memory.`
+          : 'Remembered Home Bridge config cleared from shared durable memory.',
+        at: new Date().toISOString(),
+      },
+    };
   } catch {
-    return false;
+    return {
+      ok: false,
+      diagnostics: {
+        state: 'save-clobbered',
+        reason: 'Shared durable memory write failed while persisting Home Bridge memory.',
+        at: new Date().toISOString(),
+      },
+    };
   }
 }
 
@@ -372,7 +432,8 @@ function createInitialMemorySnapshot() {
     requireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
   }) || '';
   setStephanosHomeBridgeGlobal(homeBridgeUrl);
-  const bridgeMemory = readPersistedBridgeMemory();
+  const bridgeMemoryRead = readPersistedBridgeMemory();
+  const bridgeMemory = bridgeMemoryRead.bridgeMemory;
   const restoredSession = restoreStephanosSessionMemoryForDevice({
     currentOrigin,
     manualNode: homeNodePreference,
@@ -481,6 +542,7 @@ function createInitialMemorySnapshot() {
     homeBridgeUrl,
     bridgeTransportPreferences: rehydratedBridgeTransportPreferences,
     bridgeMemory,
+    bridgeMemoryPersistence: bridgeMemoryRead.diagnostics,
     bridgeMemoryRehydrated: bridgeMemory.transport !== 'none' && bridgeMemory.backendUrl
       ? rehydratedBridgeTransportPreferences.transports?.[bridgeMemory.transport]?.accepted !== true
       : false,
@@ -540,6 +602,11 @@ export function AIStoreProvider({ children }) {
     initialSnapshot.bridgeTransportPreferences || createDefaultBridgeTransportPreferences(),
   );
   const [bridgeMemory, setBridgeMemoryState] = useState(initialSnapshot.bridgeMemory || normalizeHomeBridgeMemory());
+  const [bridgeMemoryPersistence, setBridgeMemoryPersistence] = useState(initialSnapshot.bridgeMemoryPersistence || {
+    state: 'idle',
+    reason: 'No bridge memory persistence event recorded.',
+    at: '',
+  });
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
   const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
@@ -588,7 +655,8 @@ export function AIStoreProvider({ children }) {
     bridgeMemory,
     bridgeMemoryRehydrated,
     autoRevalidation: bridgeAutoRevalidation,
-  }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryRehydrated, bridgeTransportPreferences, bridgeAutoRevalidation]);
+    bridgeMemoryPersistence,
+  }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryPersistence, bridgeMemoryRehydrated, bridgeTransportPreferences, bridgeAutoRevalidation]);
   const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -674,6 +742,7 @@ export function AIStoreProvider({ children }) {
 
   useEffect(() => {
     const rememberedAt = bridgeMemory?.rememberedAt || new Date().toISOString();
+    const previousBridgeMemory = normalizeHomeBridgeMemory(bridgeMemory || {});
     const nextBridgeMemory = deriveBridgeMemoryFromPreferences(bridgeTransportPreferences, {
       rememberedAt,
       savedBySurface: surfaceAwareness?.surfaceIdentity?.surfaceId || 'unknown-surface',
@@ -681,9 +750,37 @@ export function AIStoreProvider({ children }) {
       reason: bridgeMemoryRehydrated
         ? 'Remembered Home Bridge loaded from shared memory and awaiting validation on this surface.'
         : 'Home Bridge configuration saved by operator.',
+    }, {
+      preferredTransport: previousBridgeMemory.transport,
+      fallbackMemory: previousBridgeMemory,
+      preserveExisting: true,
     });
+    const hasManualCandidate = Boolean(bridgeTransportPreferences?.transports?.manual?.backendUrl);
+    const hasTailscaleCandidate = Boolean(bridgeTransportPreferences?.transports?.tailscale?.backendUrl);
+    const hasAnyCandidate = hasManualCandidate || hasTailscaleCandidate;
     setBridgeMemoryState(nextBridgeMemory);
-    persistBridgeMemoryToDurableStore(nextBridgeMemory);
+    setBridgeMemoryPersistence({
+      state: 'save-requested',
+      reason: nextBridgeMemory.transport !== 'none'
+        ? `Persisting remembered ${nextBridgeMemory.transport} Home Bridge config.`
+        : 'Persisting cleared Home Bridge memory state.',
+      at: new Date().toISOString(),
+    });
+    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory);
+    if (persisted?.diagnostics) {
+      setBridgeMemoryPersistence(persisted.diagnostics);
+    }
+    if (
+      nextBridgeMemory.transport === 'none'
+      && previousBridgeMemory.transport !== 'none'
+      && hasAnyCandidate
+    ) {
+      setBridgeMemoryPersistence({
+        state: 'save-clobbered',
+        reason: 'Bridge config candidates exist, but remembered bridge memory normalized to empty.',
+        at: new Date().toISOString(),
+      });
+    }
   }, [
     bridgeMemory?.rememberedAt,
     bridgeMemoryRehydrated,
@@ -1153,7 +1250,12 @@ export function AIStoreProvider({ children }) {
     setBridgeMemoryState(clearedBridgeMemory);
     setBridgeMemoryRehydrated(false);
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
-    persistBridgeMemoryToDurableStore(clearedBridgeMemory);
+    const clearedPersistence = persistBridgeMemoryToDurableStore(clearedBridgeMemory);
+    setBridgeMemoryPersistence(clearedPersistence?.diagnostics || {
+      state: 'save-clobbered',
+      reason: 'Failed to clear remembered Home Bridge memory in shared durable store.',
+      at: new Date().toISOString(),
+    });
     setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
       ...prev,
       transports: {
@@ -1463,6 +1565,7 @@ export function AIStoreProvider({ children }) {
     bridgeTransportPreferences,
     bridgeTransportTruth,
     bridgeMemory,
+    bridgeMemoryPersistence,
     bridgeMemoryRehydrated,
     bridgeAutoRevalidation,
     setBridgeTransportSelection,
