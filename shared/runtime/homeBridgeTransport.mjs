@@ -439,7 +439,7 @@ export function resolveBridgeMemoryReconciliation({
   const hasMemory = rememberedMemory.transport !== 'none' && Boolean(rememberedMemory.backendUrl);
   if (!hasMemory) {
     return {
-      state: 'no-memory',
+      state: 'no-remembered-bridge',
       reason: 'No remembered Home Bridge transport.',
       superseded: false,
     };
@@ -468,28 +468,28 @@ export function resolveBridgeMemoryReconciliation({
   }
   if (autoState === 'revalidated') {
     return {
-      state: 'remembered-and-revalidated',
+      state: 'remembered-revalidated',
       reason: autoRevalidation?.reason || 'Remembered bridge revalidated on this surface.',
       superseded: false,
     };
   }
   if (autoState === 'validation-failed') {
     return {
-      state: 'remembered-but-validation-failed',
+      state: 'remembered-validation-failed',
       reason: autoRevalidation?.reason || 'Remembered bridge failed canonical validation on this surface.',
       superseded: false,
     };
   }
   if (autoState === 'unreachable' || liveReachability === 'unreachable') {
     return {
-      state: 'remembered-but-unreachable',
+      state: 'remembered-unreachable',
       reason: autoRevalidation?.reason || 'Remembered bridge validated structurally but is unreachable from this surface.',
       superseded: false,
     };
   }
   if (liveAccepted && liveReachability === 'reachable') {
     return {
-      state: 'remembered-and-revalidated',
+      state: 'remembered-revalidated',
       reason: 'Remembered bridge now matches reachable live bridge truth.',
       superseded: false,
     };
@@ -511,7 +511,7 @@ export function resolveAutoBridgeRevalidationPlan({
     return {
       shouldAttempt: false,
       reason: 'No remembered bridge config exists.',
-      outcome: 'remembered-awaiting-validation',
+      outcome: 'no-remembered-bridge',
     };
   }
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport || remembered.transport);

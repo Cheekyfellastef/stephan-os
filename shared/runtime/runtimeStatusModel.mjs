@@ -56,11 +56,26 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
   const diagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
     ? runtimeContext.routeDiagnostics
     : {};
-  const hostedSession = runtimeContext.sessionKind === 'hosted-web';
-  const onLanSession = runtimeContext.deviceContext === 'lan-companion';
+  const frontendHost = parseHostname(runtimeContext.frontendOrigin || '');
+  const hostedSession = runtimeContext.sessionKind === 'hosted-web'
+    || (frontendHost ? !isLoopbackHost(frontendHost) : false);
+  const onLanSession = runtimeContext.deviceContext === 'lan-companion'
+    || (hostedSession && isLikelyLanHost(frontendHost));
   const homeNodeLan = diagnostics['home-node-lan'] || {};
   const homeNode = diagnostics['home-node'] || {};
   const homeNodeBridge = diagnostics['home-node-bridge'] || {};
+  const bridgeTruth = runtimeContext.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
+    ? runtimeContext.bridgeTransportTruth
+    : {};
+  const rememberedBridgeReconciliationState = String(bridgeTruth.bridgeMemoryReconciliationState || '').trim();
+  const rememberedBridgeUrl = String(bridgeTruth.bridgeMemoryUrl || '').trim();
+  const rememberedBridgeEligible = hostedSession
+    && rememberedBridgeUrl
+    && [
+      'remembered-awaiting-validation',
+      'remembered-revalidated',
+      'remembered-unreachable',
+    ].includes(rememberedBridgeReconciliationState);
   const preferLanHomeNode = hostedSession && onLanSession;
   const preferBridgeHomeNode = hostedSession && !onLanSession;
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
@@ -75,6 +90,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
+      ...(rememberedBridgeEligible
+        ? [createBackendTargetCandidate('bridgeMemory.remembered.backendUrl', rememberedBridgeUrl)]
+        : []),
       createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', homeNodeBridge.actualTarget),
       createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', homeNodeBridge.target),
     ] : []),
@@ -276,7 +294,12 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     homeBridgeUrl: homeNodeBridge.backendUrl || '',
     frontendOrigin,
   });
-  const bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, { runtimeBridge: homeNodeBridge });
+  const bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+    runtimeBridge: homeNodeBridge,
+    bridgeMemory: runtimeContext.bridgeMemory,
+    bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
+    autoRevalidation: runtimeContext.bridgeAutoRevalidation,
+  });
   const loopbackBackendMismatch = !launcherLocal && backendLocal;
   const localDesktopBackendSession = !launcherLocal
     && backendLocal
@@ -308,7 +331,13 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
     );
-    const reachable = backendReachabilityByTarget.has(candidate.url)
+    const bridgeTargetReachable = homeNodeBridge.accepted === true
+      && homeNodeBridge.reachability === 'reachable'
+      && Boolean(homeNodeBridge.backendUrl)
+      && candidate.url === homeNodeBridge.backendUrl;
+    const reachable = bridgeTargetReachable
+      ? true
+      : backendReachabilityByTarget.has(candidate.url)
       ? backendReachabilityByTarget.get(candidate.url) === true
       : (sessionKind === 'local-desktop' ? validation.ok : false);
     const accepted = validation.ok && reachable;
