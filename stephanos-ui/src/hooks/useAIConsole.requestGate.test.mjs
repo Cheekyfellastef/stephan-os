@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
 
-test('allows local execution when freshness is low and selected route is unusable', () => {
+test('blocks local execution when canonical selected route is unusable', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
       selectedAnswerMode: 'local-private',
@@ -17,7 +17,8 @@ test('allows local execution when freshness is low and selected route is unusabl
     },
   });
 
-  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'no-canonical-winning-route');
   assert.equal(gate.localRouteViable, true);
   assert.equal(gate.freshRouteViable, false);
 });
@@ -164,4 +165,128 @@ test('blocks dispatch when backend reachability is explicitly no', () => {
   assert.equal(gate.dispatchAllowed, false);
   assert.equal(gate.reasonCode, 'backend-unreachable');
   assert.equal(gate.backendReachabilityState, 'no');
+});
+
+test('canonical local-desktop winner cannot be overridden by stale home-node route decision at dispatch time', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'local-private',
+      localRouteAvailable: true,
+      freshRouteAvailable: false,
+      requestRouteTruth: {
+        routeKind: 'home-node',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'local-desktop',
+        routeUsable: true,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.selectedRouteKind, 'local-desktop');
+});
+
+test('hosted session with no usable home-node is reported truthfully as unavailable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'local-private',
+      selectedProvider: 'gemini',
+      localRouteAvailable: true,
+      cloudRouteAvailable: false,
+      freshRouteAvailable: false,
+      fallbackReasonCode: 'backend-unreachable',
+      requestRouteTruth: {
+        routeKind: 'home-node',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      routeUsableState: 'no',
+      routeUsabilityVetoReason: 'selected-route-unreachable',
+      backendReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'home-node',
+        routeUsable: false,
+        backendReachable: true,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.selectedRouteKind, 'home-node');
+  assert.equal(gate.reasonCode, 'selected-route-unreachable');
+  assert.equal(gate.fallbackVetoReason, 'selected-route-unreachable');
+});
+
+test('provider intent stays distinct when route is canonically unusable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      selectedProvider: 'gemini',
+      requestedProviderForRequest: 'gemini',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: true,
+      fallbackReasonCode: 'backend-unreachable',
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      routeUsableState: 'no',
+      routeUsabilityVetoReason: 'backend-unreachable',
+      backendReachableState: 'no',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'home-node',
+        routeUsable: false,
+        backendReachable: false,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'backend-unreachable');
+  assert.equal(gate.selectedRouteUsable, false);
+});
+
+test('stale remembered home-node state cannot override canonical route-unusable veto at send time', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'fallback-stale-risk',
+      selectedProvider: 'ollama',
+      localRouteAvailable: true,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: true,
+      requestRouteTruth: {
+        routeKind: 'home-node',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      routeUsableState: 'no',
+      routeUsabilityVetoReason: 'provider-not-ready',
+      backendReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'local-desktop',
+        routeUsable: false,
+        backendReachable: true,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.selectedRouteKind, 'local-desktop');
+  assert.equal(gate.reasonCode, 'provider-not-ready');
 });
