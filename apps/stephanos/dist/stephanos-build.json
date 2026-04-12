@@ -6,8 +6,14 @@
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
+<<<<<<< HEAD
   "runtimeMarker": "antifriction-live-v3::5f736cb::3d576b949880",
   "gitCommit": "5f736cb",
   "buildTimestamp": "2026-04-12T20:09:42.609Z",
+=======
+  "runtimeMarker": "antifriction-live-v3::5f736cb::59a5be6dd5c0",
+  "gitCommit": "5f736cb",
+  "buildTimestamp": "2026-04-12T20:00:17.231Z",
+>>>>>>> 2c5480d (Apply hosted remembered Tailscale truth gate)
   "sourceTruth": "sourceFingerprint"
 }
