@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-12T22:39:29.119Z",
+  "updatedAt": "2026-04-12T23:08:27.172Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -2150,6 +2150,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-12T22:39:29.119Z",
       "updatedAt": "2026-04-12T22:39:29.119Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1776035307171-qjuy7-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what is the capital of france",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-12T23:08:27.171Z",
+      "updatedAt": "2026-04-12T23:08:27.171Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1776035307171-qjuy7-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "The capital of France is Paris.",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-12T23:08:27.171Z",
+      "updatedAt": "2026-04-12T23:08:27.171Z",
       "surface": "shared"
     }
   }

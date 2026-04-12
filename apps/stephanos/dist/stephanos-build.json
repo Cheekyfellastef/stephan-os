@@ -6,8 +6,14 @@
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
+<<<<<<< HEAD
   "runtimeMarker": "antifriction-live-v3::4b03432::f5a81efaf43c",
   "gitCommit": "4b03432",
   "buildTimestamp": "2026-04-12T23:20:12.075Z",
+=======
+  "runtimeMarker": "antifriction-live-v3::4b03432::1fd5d5869297",
+  "gitCommit": "4b03432",
+  "buildTimestamp": "2026-04-12T23:07:40.140Z",
+>>>>>>> 99d0d2e (Merge assistant truth layering retrieval gating and proposal suppression)
   "sourceTruth": "sourceFingerprint"
 }
