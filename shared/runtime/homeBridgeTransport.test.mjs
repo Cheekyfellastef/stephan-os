@@ -239,7 +239,7 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
   assert.equal(unreachable.provenance, 'remembered-tailscale-unreachable');
 });
 
-test('bridge memory reconciliation preserves tailscale provenance after successful revalidation even if selected transport drifted', () => {
+test('bridge memory reconciliation requires canonical tailscale selection before projecting tailscale revalidated provenance', () => {
   const revalidated = resolveBridgeMemoryReconciliation({
     preferences: normalizeBridgeTransportPreferences({
       selectedTransport: 'manual',
@@ -253,6 +253,40 @@ test('bridge memory reconciliation preserves tailscale provenance after successf
     autoRevalidation: { state: 'revalidated', reason: 'ok' },
   });
 
-  assert.equal(revalidated.state, 'remembered-revalidated');
-  assert.equal(revalidated.provenance, 'remembered-tailscale-revalidated-as-tailscale');
+  assert.equal(revalidated.state, 'remembered-awaiting-validation');
+  assert.equal(revalidated.provenance, 'remembered-tailscale-pending-transport-config');
+});
+
+test('bridge memory reconciliation does not project tailscale revalidated when transport is not canonically configured', () => {
+  const result = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'manual',
+      transports: {
+        manual: { enabled: true, backendUrl: 'https://bridge.example.com', accepted: true, reachability: 'reachable' },
+      },
+    }),
+    runtimeBridge: { accepted: false, backendUrl: 'https://bridge.example.com', reachability: 'unknown' },
+    bridgeMemory: { transport: 'tailscale', backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net' },
+    autoRevalidation: { state: 'revalidated', reason: 'ok' },
+  });
+
+  assert.equal(result.state, 'remembered-awaiting-validation');
+  assert.equal(result.provenance, 'remembered-tailscale-pending-transport-config');
+});
+
+test('bridge memory reconciliation keeps tailscale in awaiting state when selected but not accepted/reachable', () => {
+  const result = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: { enabled: true, backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net', accepted: false, reachability: 'unknown' },
+      },
+    }),
+    runtimeBridge: { accepted: false, backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net', reachability: 'unknown' },
+    bridgeMemory: { transport: 'tailscale', backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net' },
+    autoRevalidation: { state: 'revalidated', reason: 'ok' },
+  });
+
+  assert.equal(result.state, 'remembered-awaiting-validation');
+  assert.equal(result.provenance, 'remembered-candidate-not-yet-accepted');
 });

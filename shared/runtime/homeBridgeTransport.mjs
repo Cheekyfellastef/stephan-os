@@ -583,7 +583,29 @@ export function resolveBridgeMemoryReconciliation({
       provenance: `remembered-${rememberedMemory.transport}-superseded-by-${supersededTransport}`,
     };
   }
+  const tailscaleCanonicalConfigured = selectedTransport === 'tailscale'
+    && tailscale.enabled === true
+    && Boolean(normalizeString(tailscale.backendUrl));
+  const tailscaleStrictRevalidated = rememberedMemory.transport === 'tailscale'
+    ? tailscaleCanonicalConfigured && tailscaleAcceptedReachable
+    : true;
+
   if (autoState === 'revalidated') {
+    if (!tailscaleStrictRevalidated) {
+      const tailscaleBlockingProvenance = !tailscaleCanonicalConfigured
+        ? 'remembered-tailscale-pending-transport-config'
+        : 'remembered-candidate-not-yet-accepted';
+      return {
+        state: 'remembered-awaiting-validation',
+        reason: !tailscaleCanonicalConfigured
+          ? 'Remembered Tailscale bridge loaded, but transport configuration is not yet canonical on this surface.'
+          : 'Remembered Tailscale bridge loaded, but acceptance/reachability proof is not yet complete.',
+        superseded: false,
+        provenance: rememberedMemory.transport === 'tailscale'
+          ? tailscaleBlockingProvenance
+          : `remembered-${rememberedMemory.transport}-awaiting-validation`,
+      };
+    }
     const liveTransport = rememberedMemory.transport === 'tailscale' && tailscaleAcceptedReachable
       ? 'tailscale'
       : (selectedTransport === 'none' ? rememberedMemory.transport : selectedTransport);

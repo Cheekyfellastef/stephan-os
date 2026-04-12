@@ -224,6 +224,79 @@ function normalizeSurfaceAwareness(surfaceAwareness = {}) {
   };
 }
 
+function enforceHostedRememberedTailscaleRevalidationTruthGate({
+  runtimeContext = {},
+  nodeRoute = {},
+  finalRoute = {},
+} = {}) {
+  if (runtimeContext?.sessionKind !== 'hosted-web') {
+    return runtimeContext;
+  }
+  const bridgeTruth = runtimeContext.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
+    ? runtimeContext.bridgeTransportTruth
+    : {};
+  const tailscale = bridgeTruth.tailscale && typeof bridgeTruth.tailscale === 'object' ? bridgeTruth.tailscale : {};
+  const selectedTransport = String(bridgeTruth.selectedTransport || '').trim();
+  const backendUrl = String(tailscale.backendUrl || '').trim();
+  const autoState = String(bridgeTruth.bridgeAutoRevalidationState || '').trim();
+  const provenance = String(bridgeTruth.bridgeMemoryReconciliationProvenance || '').trim();
+  const reconciliationState = String(bridgeTruth.bridgeMemoryReconciliationState || '').trim();
+  const claimsRevalidated = reconciliationState === 'remembered-revalidated'
+    || provenance === 'remembered-tailscale-revalidated-as-tailscale'
+    || autoState === 'revalidated';
+  if (!claimsRevalidated || bridgeTruth.bridgeMemoryTransport !== 'tailscale') {
+    return runtimeContext;
+  }
+
+  const backendCandidateAccepted = Array.isArray(runtimeContext.backendTargetCandidates)
+    && runtimeContext.backendTargetCandidates.some((candidate) => candidate?.url === backendUrl && candidate?.accepted === true);
+  const winnerUsesTailscale = nodeRoute?.routeCandidateWinner?.candidateKey === 'home-node-tailscale'
+    && nodeRoute?.routeCandidateWinner?.usable === true
+    && String(finalRoute?.actualTarget || '').trim() === backendUrl;
+  const strictGate = selectedTransport === 'tailscale'
+    && Boolean(backendUrl)
+    && tailscale.accepted === true
+    && tailscale.reachable === true
+    && backendCandidateAccepted
+    && winnerUsesTailscale;
+  if (strictGate) {
+    return runtimeContext;
+  }
+
+  const blocker = selectedTransport !== 'tailscale' || !backendUrl
+    ? {
+      state: 'remembered-awaiting-validation',
+      reason: 'Remembered Tailscale bridge is loaded, but transport configuration is not yet canonical for hosted routing.',
+      provenance: 'remembered-tailscale-pending-transport-config',
+      autoState: 'probing',
+    }
+    : (!backendCandidateAccepted
+      ? {
+        state: 'remembered-awaiting-validation',
+        reason: 'Remembered Tailscale bridge candidate is present, but backend target acceptance is not yet established.',
+        provenance: 'remembered-candidate-not-yet-accepted',
+        autoState: 'probing',
+      }
+      : {
+        state: 'remembered-awaiting-validation',
+        reason: 'Remembered Tailscale bridge target is accepted, but hosted route winner is not yet using that target.',
+        provenance: 'remembered-route-not-yet-usable',
+        autoState: 'probing',
+      });
+
+  return {
+    ...runtimeContext,
+    bridgeTransportTruth: {
+      ...bridgeTruth,
+      bridgeMemoryReconciliationState: blocker.state,
+      bridgeMemoryReconciliationReason: blocker.reason,
+      bridgeMemoryReconciliationProvenance: blocker.provenance,
+      bridgeAutoRevalidationState: blocker.autoState,
+      bridgeAutoRevalidationReason: blocker.reason,
+    },
+  };
+}
+
 function buildCanonicalHostedRouteTruth({
   runtimeContext = {},
   selectedRouteKind = 'unavailable',
@@ -336,12 +409,10 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
   const hostedRememberedTailscaleCandidatePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
-    && Boolean(bridgeTransportTruth.bridgeMemoryUrl)
-    && [
-      'remembered-awaiting-validation',
-      'remembered-revalidated',
-      'remembered-unreachable',
-    ].includes(bridgeTransportTruth.bridgeMemoryReconciliationState);
+    && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
+    && bridgeTransportTruth?.tailscale?.accepted === true
+    && bridgeTransportTruth?.tailscale?.reachable === true
+    && Boolean(bridgeTransportTruth?.tailscale?.backendUrl);
   if (hostedRememberedTailscaleCandidatePromotion && bridgeTransportPreferences.selectedTransport !== 'tailscale') {
     bridgeTransportPreferences = normalizeBridgeTransportPreferences({
       ...bridgeTransportPreferences,
@@ -1844,6 +1915,12 @@ export function createRuntimeStatusModel({
     ? (nodeRoute.classificationFailed ? 'Backend online but route classification failed' : 'No reachable Stephanos route')
     : nodeRoute.routeHeadline || `${appName} ready with degraded dependencies`;
 
+  const gatedRuntimeContext = enforceHostedRememberedTailscaleRevalidationTruthGate({
+    runtimeContext: normalizedRuntimeContext,
+    nodeRoute,
+    finalRoute,
+  });
+
   const model = {
     appId,
     appName,
@@ -1866,7 +1943,7 @@ export function createRuntimeStatusModel({
     readyLocalProviders: routePlan.readyLocalProviders,
     attemptOrder: routePlan.attemptOrder,
     runtimeContext: {
-      ...normalizedRuntimeContext,
+      ...gatedRuntimeContext,
       canonicalHostedRouteTruth,
       finalRoute,
       routeCandidates: nodeRoute.routeCandidates || [],
@@ -1879,7 +1956,7 @@ export function createRuntimeStatusModel({
       ? 'home node/bridge'
       : nodeRoute.routeKind === 'home-node'
       ? 'home node/lan'
-      : (normalizedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
+      : (gatedRuntimeContext.sessionKind === 'hosted-web' ? 'hosted/web' : 'local desktop/dev'),
     routeAdoptionMarker: STEPHANOS_ROUTE_ADOPTION_MARKER,
     providerRoutingMarker: STEPHANOS_PROVIDER_ROUTING_MARKER,
     dependencySummary: '',
@@ -1905,7 +1982,7 @@ export function createRuntimeStatusModel({
     classificationFailed: nodeRoute.classificationFailed,
   };
   const finalRouteTruth = buildFinalRouteTruth({
-    runtimeContext: normalizedRuntimeContext,
+    runtimeContext: gatedRuntimeContext,
     nodeRoute,
     finalRoute,
     routePlan,
@@ -1931,7 +2008,7 @@ export function createRuntimeStatusModel({
   const preliminaryModel = { ...model, finalRouteTruth, dependencySummary };
   const guardrails = evaluateRuntimeGuardrails(preliminaryModel);
   const runtimeAdjudication = adjudicateRuntimeTruth({
-    runtimeContext: normalizedRuntimeContext,
+    runtimeContext: gatedRuntimeContext,
     finalRoute,
     finalRouteTruth,
     routePlan,
