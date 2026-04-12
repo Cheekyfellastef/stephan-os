@@ -86,3 +86,27 @@ test('freshness-sensitive prompt does not claim local retrieval solved current t
   assert.equal(result.truth.retrievalUsed, false);
   assert.match(result.truth.retrievalReason, /Freshness-sensitive/);
 });
+
+test('trivial world-fact query is retrieval-ineligible and does not run local-rag', () => {
+  localRetrievalService.rebuildIndex();
+  const result = localRetrievalService.query({
+    prompt: 'what is the capital of france',
+    freshnessContext: { freshnessNeed: 'low' },
+  });
+
+  assert.equal(result.truth.retrievalMode, 'none');
+  assert.equal(result.truth.retrievalEligible, false);
+  assert.equal(result.truth.retrievalUsed, false);
+  assert.match(result.truth.retrievalReason, /Trivial non-project query/);
+});
+
+test('basic arithmetic query is retrieval-ineligible', () => {
+  localRetrievalService.rebuildIndex();
+  const result = localRetrievalService.query({
+    prompt: 'what is 2 + 2?',
+    freshnessContext: { freshnessNeed: 'low' },
+  });
+
+  assert.equal(result.truth.retrievalEligible, false);
+  assert.equal(result.truth.retrievalUsed, false);
+});
