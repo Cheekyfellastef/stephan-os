@@ -241,6 +241,10 @@ export function buildSupportSnapshot({
   const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
     ? runtimeContext.bridgeTransportTruth
     : {};
+  const persistenceTruth = routeTruthView?.persistence
+    || runtimeStatus?.finalRouteTruth?.persistence
+    || bridgeTransportTruth?.persistence
+    || {};
   const surfaceAwareness = runtimeContext?.surfaceAwareness && typeof runtimeContext.surfaceAwareness === 'object'
     ? runtimeContext.surfaceAwareness
     : {};
@@ -722,6 +726,11 @@ export function buildSupportSnapshot({
     `Bridge Memory Persistence State: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceState, 'idle')}`,
     `Bridge Memory Persistence Reason: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceReason, 'n/a')}`,
     `Bridge Memory Persistence At: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceAt, 'not yet')}`,
+    `Persistence Attempted: ${persistenceTruth?.lastWrite?.attempted === true ? 'yes' : 'no'}`,
+    `Persistence Succeeded: ${persistenceTruth?.lastWrite?.succeeded === true ? 'yes' : 'no'}`,
+    `Last Persistence Time: ${asText(persistenceTruth?.lastWrite?.timestamp, 'not yet')}`,
+    `Last Persistence Error: ${asText(persistenceTruth?.lastError || persistenceTruth?.lastWrite?.error?.message, 'null')}`,
+    `Persistence Reconciled Across Surfaces: ${persistenceTruth?.reconciledAcrossSurfaces === true ? 'yes' : 'no'}`,
     `Bridge Memory Write Attempted: ${bridgeTransportTruth.bridgeMemoryWriteAttempted === true ? 'yes' : 'no'}`,
     `Bridge Memory Write Succeeded: ${bridgeTransportTruth.bridgeMemoryWriteSucceeded === true ? 'yes' : 'no'}`,
     `Bridge Memory Read Attempted: ${bridgeTransportTruth.bridgeMemoryReadAttempted === true ? 'yes' : 'no'}`,

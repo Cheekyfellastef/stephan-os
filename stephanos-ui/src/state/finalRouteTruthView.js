@@ -53,6 +53,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const canonicalTruth = runtimeStatus.canonicalRouteRuntimeTruth ?? {};
   const groupedRuntimeTruth = runtimeStatus['runtimeTruth'] ?? {};
   const runtimeDiagnosticsTruth = groupedRuntimeTruth.diagnostics ?? {};
+  const persistence = runtimeStatus.finalRouteTruth?.persistence ?? {};
 
   const routeKind = pickTruth(canonicalTruth.winningRoute) || 'unavailable';
   const preferredTarget = pickTruth(canonicalTruth.preferredTarget) || 'unavailable';
@@ -88,7 +89,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     && uiReachableState === 'yes'
     && liveProviderConnected
     && executableProviderValid;
-  const routeUsabilityConflict = preReconciliationRouteUsableState === 'no' && liveUsabilitySignalsMet;
+  const routeUsabilityConflict = canonicalTruth.routeUsable === false && liveUsabilitySignalsMet;
   const routeReconciled = routeUsabilityConflict;
   const routeReconciliationReason = routeReconciled ? 'live-backend+provider-confirmed' : '';
   const routeUsableState = routeReconciled ? 'yes' : preReconciliationRouteUsableState;
@@ -145,5 +146,6 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeUsabilityVetoReason,
     providerState,
     effectiveLaunchState,
+    persistence,
   };
 }

@@ -1512,6 +1512,23 @@ export function buildFinalRouteTruth({
   const localEvaluation = nodeRoute?.routeEvaluations?.['local-desktop'] || {};
   const routeKnown = appLaunchState !== 'pending' && (nodeRoute?.routeKind || 'unavailable') !== 'unavailable';
   const uiReachabilityState = routeKnown ? asTriState(selectedEvaluation?.uiReachable) : 'unknown';
+  const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
+    ? runtimeContext.bridgeTransportTruth
+    : {};
+  const runtimePersistence = runtimeContext?.persistence && typeof runtimeContext.persistence === 'object'
+    ? runtimeContext.persistence
+    : {};
+  const bridgePersistence = bridgeTransportTruth.persistence && typeof bridgeTransportTruth.persistence === 'object'
+    ? bridgeTransportTruth.persistence
+    : {};
+  const persistence = {
+    lastWrite: runtimePersistence.lastWrite || bridgePersistence.lastWrite || null,
+    lastSuccessTimestamp: runtimePersistence.lastSuccessTimestamp || bridgePersistence.lastSuccessTimestamp || null,
+    lastFailureTimestamp: runtimePersistence.lastFailureTimestamp || bridgePersistence.lastFailureTimestamp || null,
+    lastError: runtimePersistence.lastError || bridgePersistence.lastError || null,
+    reconciledAcrossSurfaces: runtimePersistence.reconciledAcrossSurfaces === true
+      || bridgePersistence.reconciledAcrossSurfaces === true,
+  };
 
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
@@ -1555,6 +1572,7 @@ export function buildFinalRouteTruth({
     validationState,
     appLaunchState,
     operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
+    persistence,
   };
 }
 
