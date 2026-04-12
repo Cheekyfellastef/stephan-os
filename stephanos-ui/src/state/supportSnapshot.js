@@ -346,7 +346,15 @@ export function buildSupportSnapshot({
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
     if (bridgeTransportTruth?.bridgeMemoryTransport === 'tailscale'
       && bridgeTransportTruth?.bridgeAutoRevalidationState === 'probing') {
-      guidanceItems.push('Remembered Tailscale bridge pending probe on this hosted surface; using remembered candidate until probe evidence resolves reachability.');
+      if (bridgeTransportTruth?.bridgeMemoryReconciliationProvenance === 'remembered-tailscale-pending-transport-config') {
+        guidanceItems.push('Remembered Tailscale bridge is loaded, but hosted transport configuration is not yet canonical/accepted; route remains non-usable until transport truth converges.');
+      } else if (bridgeTransportTruth?.bridgeMemoryReconciliationProvenance === 'remembered-candidate-not-yet-accepted') {
+        guidanceItems.push('Remembered Tailscale bridge candidate exists, but backend target candidate is not yet accepted on this hosted surface.');
+      } else if (bridgeTransportTruth?.bridgeMemoryReconciliationProvenance === 'remembered-route-not-yet-usable') {
+        guidanceItems.push('Remembered Tailscale backend target is accepted, but hosted final route is not yet using that target.');
+      } else {
+        guidanceItems.push('Remembered Tailscale bridge pending probe on this hosted surface; using remembered candidate until probe evidence resolves reachability.');
+      }
     } else {
       guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
     }

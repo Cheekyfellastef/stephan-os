@@ -1253,3 +1253,51 @@ test('buildSupportSnapshot reports remembered tailscale pending probe guidance',
 
   assert.match(snapshot, /Remembered Tailscale bridge pending probe on this hosted surface/);
 });
+
+test('buildSupportSnapshot reports remembered tailscale pending transport configuration blocker', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-awaiting-validation',
+        bridgeMemoryReconciliationProvenance: 'remembered-tailscale-pending-transport-config',
+        bridgeMemoryTransport: 'tailscale',
+        bridgeAutoRevalidationState: 'probing',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /transport configuration is not yet canonical\/accepted/);
+});
+
+test('buildSupportSnapshot reports remembered tailscale backend candidate rejection blocker', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-awaiting-validation',
+        bridgeMemoryReconciliationProvenance: 'remembered-candidate-not-yet-accepted',
+        bridgeMemoryTransport: 'tailscale',
+        bridgeAutoRevalidationState: 'probing',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /backend target candidate is not yet accepted/);
+});

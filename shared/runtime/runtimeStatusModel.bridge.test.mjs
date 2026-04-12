@@ -203,7 +203,7 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
         reason: 'Remembered Home Bridge revalidated successfully.',
       },
       bridgeTransportPreferences: {
-        selectedTransport: 'manual',
+        selectedTransport: 'tailscale',
         transports: {
           manual: {
             enabled: true,
@@ -224,13 +224,17 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
       routeDiagnostics: {
         'home-node': {
           configured: true,
-          available: false,
+          available: true,
+          usable: true,
+          source: 'home-node-bridge',
+          routeVariant: 'home-node-bridge',
           target: 'http://192.168.0.198:8787',
-          actualTarget: 'http://192.168.0.198:8787',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
         },
         'home-node-bridge': {
           configured: true,
           available: true,
+          usable: true,
           target: 'https://desktop-9flonkj.taild6f215.ts.net',
           actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
         },
@@ -251,7 +255,7 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
   assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
 });
 
-test('hosted remembered tailscale pending probe becomes canonical candidate and de-prioritizes stale LAN actual target', () => {
+test('hosted remembered tailscale pending probe does not auto-promote canonical route truth before acceptance', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: false,
     providerHealth: { groq: { ok: true } },
@@ -298,14 +302,12 @@ test('hosted remembered tailscale pending probe becomes canonical candidate and 
     },
   });
 
-  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'manual');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, false);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, false);
-  assert.equal(model.runtimeContext.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
-  assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
-  assert.equal(model.runtimeContext.backendTargetCandidates[0].url, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-tailscale-awaiting-validation');
   const staleLanCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === 'http://192.168.0.198:8787');
   assert.ok(staleLanCandidate);
   assert.equal(staleLanCandidate.accepted, false);
@@ -343,6 +345,43 @@ test('route candidates keep configured/reachable/usable truth separated for unre
   assert.equal(tailscaleCandidate.reachable, false);
   assert.equal(tailscaleCandidate.usable, false);
   assert.equal(model.runtimeContext.routeCandidateWinner.routeKind, 'cloud');
+});
+
+test('hosted remembered tailscale cannot remain revalidated when backend target candidate is rejected', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: { state: 'revalidated', reason: 'Remembered Home Bridge revalidated successfully.' },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, target: 'https://desktop-9flonkj.taild6f215.ts.net', actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net' },
+        'home-node-bridge': { configured: true, available: false, target: 'https://desktop-9flonkj.taild6f215.ts.net', actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net', blockedReason: 'probe evidence missing' },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-route-not-yet-usable');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
 });
 
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
