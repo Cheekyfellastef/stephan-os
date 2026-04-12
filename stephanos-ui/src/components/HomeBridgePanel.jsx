@@ -48,6 +48,7 @@ export default function HomeBridgePanel() {
   const [reachabilityReason, setReachabilityReason] = useState('Not checked yet.');
   const [lastCheckedAt, setLastCheckedAt] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [saveInFlight, setSaveInFlight] = useState(false);
 
   useEffect(() => {
     setBridgeDraft(homeBridgeUrl || '');
@@ -119,10 +120,24 @@ export default function HomeBridgePanel() {
     }
   }, [homeBridgeUrl, requireHttps, savedBridge.reachability, savedBridge.reason, selectedTransport, bridgeTransportPreferences?.transports?.tailscale?.backendUrl, tailscaleBackendDraft]);
 
+  function resolvePersistenceFeedback(result = {}, fallbackSuccess = '') {
+    const persistenceResult = result?.persistenceResult || null;
+    if (persistenceResult?.attempted !== true) {
+      return result?.ok ? fallbackSuccess : `Failed ✗ ${result?.reason || 'save-not-attempted'}`;
+    }
+    if (persistenceResult.succeeded === true) {
+      return `Saved ✓ ${fallbackSuccess}`;
+    }
+    return `Failed ✗ ${persistenceResult?.error?.message || result?.reason || 'durable-persistence-failed'}`;
+  }
+
   function handleSaveManual() {
+    setSaveInFlight(true);
+    setFeedback('Saving…');
     const result = saveHomeBridgeUrl(bridgeDraft);
+    setSaveInFlight(false);
     if (!result.ok) {
-      setFeedback(`Save failed: ${result.reason || 'invalid-home-bridge-url'}`);
+      setFeedback(resolvePersistenceFeedback(result, ''));
       setValidationState('invalid');
       setValidationReason(result.reason || 'Invalid bridge URL.');
       setReachabilityState('invalid');
@@ -135,7 +150,7 @@ export default function HomeBridgePanel() {
       accepted: true,
       reason: 'Manual/LAN bridge URL saved by operator.',
     });
-    setFeedback(`Saved bridge URL: ${result.normalizedUrl}`);
+    setFeedback(resolvePersistenceFeedback(result, `Saved bridge URL: ${result.normalizedUrl}`));
     setValidationState('valid');
     setValidationReason('Bridge URL passes canonical validation rules.');
     setReachabilityState('unknown');
@@ -143,6 +158,8 @@ export default function HomeBridgePanel() {
   }
 
   function handleSaveTailscale() {
+    setSaveInFlight(true);
+    setFeedback('Saving…');
     const result = saveBridgeTransportConfig('tailscale', tailscaleBackendDraft, {
       accepted: false,
       active: false,
@@ -150,15 +167,16 @@ export default function HomeBridgePanel() {
       reachability: 'unknown',
       reason: 'Tailscale bridge configuration saved; acceptance pending runtime validation.',
     });
+    setSaveInFlight(false);
     if (!result.ok) {
-      setFeedback(`Save failed: ${result.reason || 'invalid-home-bridge-url'}`);
+      setFeedback(resolvePersistenceFeedback(result, ''));
       setValidationState('invalid');
       setValidationReason(result.reason || 'Invalid Tailscale bridge URL.');
       setReachabilityState('invalid');
       setReachabilityReason(result.reason || 'Probe blocked by invalid bridge URL.');
       return;
     }
-    setFeedback(`Saved Tailscale bridge intent: ${result.normalizedUrl}`);
+    setFeedback(resolvePersistenceFeedback(result, `Saved Tailscale bridge intent: ${result.normalizedUrl}`));
     setValidationState('valid');
     setValidationReason('Bridge URL passes canonical validation rules.');
     setReachabilityState('unknown');
@@ -320,7 +338,7 @@ export default function HomeBridgePanel() {
       )}
 
       <div className="home-bridge-actions" data-no-drag>
-        <button type="button" className="ghost-button" onClick={selectedTransport === 'tailscale' ? handleSaveTailscale : handleSaveManual}>Save</button>
+        <button type="button" className="ghost-button" onClick={selectedTransport === 'tailscale' ? handleSaveTailscale : handleSaveManual}>{saveInFlight ? 'Saving…' : 'Save'}</button>
         <button type="button" className="ghost-button" onClick={handleValidate}>Validate</button>
         <button type="button" className="ghost-button" onClick={handleProbe}>Test Reachability</button>
         <button type="button" className="ghost-button" onClick={handleClear}>Clear</button>

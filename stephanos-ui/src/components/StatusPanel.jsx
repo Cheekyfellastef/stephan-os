@@ -103,6 +103,9 @@ export default function StatusPanel() {
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const routeCandidates = Array.isArray(runtimeContext.routeCandidates) ? runtimeContext.routeCandidates : [];
   const routeWinner = runtimeContext.routeCandidateWinner || {};
+  const persistenceTruth = finalRouteTruth.persistence
+    || runtimeContext?.bridgeTransportTruth?.persistence
+    || {};
   const continuitySnapshot = deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory: safeCommandHistory });
   const providerEligibility = runtimeTruth.providerEligibility ?? finalRoute.providerEligibility ?? {};
   const reachability = runtimeTruth.reachabilityRaw ?? runtimeTruth.reachability ?? finalRoute.reachability ?? {};
@@ -653,6 +656,11 @@ export default function StatusPanel() {
         <li>Route Selection Source: {finalRouteTruth.routeSelectionSource || runtimeContext.routeSelectionSource || 'route-preference-order'}</li>
         <li>Route Auto Switch Active: {(finalRouteTruth.routeAutoSwitchActive || runtimeContext.routeAutoSwitchActive) ? 'yes' : 'no'}</li>
         <li>Route Auto Switch Reason: {finalRouteTruth.routeAutoSwitchReason || runtimeContext.routeAutoSwitchReason || 'n/a'}</li>
+        <li>Persistence Attempted: {persistenceTruth?.lastWrite?.attempted === true ? 'yes' : 'no'}</li>
+        <li>Persistence Succeeded: {persistenceTruth?.lastWrite?.succeeded === true ? 'yes' : 'no'}</li>
+        <li>Last Persistence Time: {persistenceTruth?.lastWrite?.timestamp || 'not yet'}</li>
+        <li>Last Persistence Error: {persistenceTruth?.lastError || persistenceTruth?.lastWrite?.error?.message || 'null'}</li>
+        <li>Persistence Reconciled Across Surfaces: {persistenceTruth?.reconciledAcrossSurfaces === true ? 'yes' : 'no'}</li>
         <li>Final Route Reachable: {routeTruthView.selectedRouteReachableState}</li>
         <li>Selected Route UI Reachable: {routeTruthView.uiReachableState}</li>
         <li>Selected Route Usable: {routeTruthView.routeUsableState}</li>

@@ -46,9 +46,12 @@ import {
   deriveBridgeMemoryFromPreferences,
   listBridgeTransportDefinitions,
   normalizeHomeBridgeMemory,
+  normalizePersistenceResult,
   normalizeBridgeTransportPreferences,
   normalizeBridgeTransportSelection,
   projectHomeBridgeTransportTruth,
+  projectPersistenceTruth,
+  resolvePersistenceWriteSource,
   resolveAutoBridgeRevalidationPlan,
   resolveBridgeValidationTruth,
   resolveBridgeUrlRequireHttps,
@@ -235,20 +238,34 @@ function readPersistedBridgeMemory() {
   }
 }
 
-function persistBridgeMemoryToDurableStore(bridgeMemory) {
+function persistBridgeMemoryToDurableStore(bridgeMemory, { sessionKind = '' } = {}) {
   const memory = getStephanosMemoryRuntime();
   const storageKey = resolveBridgeMemoryStorageKey();
   const storageScope = memory ? 'shared-runtime-memory' : 'unavailable';
   const lastRawValueSummary = summarizeBridgeMemoryPayload(bridgeMemory);
   if (!memory?.saveRecord) {
+    const persistenceResult = normalizePersistenceResult({
+      attempted: true,
+      succeeded: false,
+      source: resolvePersistenceWriteSource(sessionKind),
+      timestamp: new Date().toISOString(),
+      error: {
+        code: 'runtime-unavailable',
+        message: 'Shared durable memory runtime is unavailable; Home Bridge memory cannot be persisted.',
+      },
+    });
     return {
       ok: false,
+      persistenceResult,
       diagnostics: {
         state: 'save-clobbered',
-        reason: 'Shared durable memory runtime is unavailable; Home Bridge memory cannot be persisted.',
-        at: new Date().toISOString(),
-        bridgeMemoryWriteAttempted: true,
-        bridgeMemoryWriteSucceeded: false,
+        reason: persistenceResult.error?.message || 'Shared durable memory runtime is unavailable; Home Bridge memory cannot be persisted.',
+        at: persistenceResult.timestamp,
+        bridgeMemoryWriteAttempted: persistenceResult.attempted,
+        bridgeMemoryWriteSucceeded: persistenceResult.succeeded,
+        lastWrite: persistenceResult,
+        persistence: projectPersistenceTruth({ lastWrite: persistenceResult }),
+        reconciledAcrossSurfaces: false,
         bridgeMemoryClearedBy: 'runtime-unavailable',
         bridgeMemoryStorageKey: storageKey,
         bridgeMemoryStorageScope: storageScope,
@@ -268,16 +285,26 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
       importance: 'normal',
       payload: { bridgeMemory: normalizedBridgeMemory },
     });
+    const persistenceResult = normalizePersistenceResult({
+      attempted: true,
+      succeeded: true,
+      source: resolvePersistenceWriteSource(sessionKind),
+      timestamp: new Date().toISOString(),
+    });
     return {
       ok: true,
+      persistenceResult,
       diagnostics: {
         state: 'save-persisted',
         reason: normalizedBridgeMemory.transport !== 'none' && normalizedBridgeMemory.backendUrl
           ? `Remembered ${normalizedBridgeMemory.transport} Home Bridge config persisted to shared durable memory.`
           : 'Remembered Home Bridge config cleared from shared durable memory.',
-        at: new Date().toISOString(),
-        bridgeMemoryWriteAttempted: true,
-        bridgeMemoryWriteSucceeded: true,
+        at: persistenceResult.timestamp,
+        bridgeMemoryWriteAttempted: persistenceResult.attempted,
+        bridgeMemoryWriteSucceeded: persistenceResult.succeeded,
+        lastWrite: persistenceResult,
+        persistence: projectPersistenceTruth({ lastWrite: persistenceResult, reconciledAcrossSurfaces: true }),
+        reconciledAcrossSurfaces: true,
         bridgeMemoryClearedBy: normalizedBridgeMemory.transport === 'none' ? 'explicit-clear-or-empty-normalization' : '',
         bridgeMemoryStorageKey: storageKey,
         bridgeMemoryStorageScope: storageScope,
@@ -285,16 +312,30 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
       },
     };
   } catch (error) {
-    return {
-      ok: false,
-      diagnostics: {
-        state: 'save-clobbered',
-        reason: error?.message
+    const persistenceResult = normalizePersistenceResult({
+      attempted: true,
+      succeeded: false,
+      source: resolvePersistenceWriteSource(sessionKind),
+      timestamp: new Date().toISOString(),
+      error: {
+        code: 'save-failed',
+        message: error?.message
           ? `Shared durable memory write failed while persisting Home Bridge memory: ${error.message}`
           : 'Shared durable memory write failed while persisting Home Bridge memory.',
-        at: new Date().toISOString(),
-        bridgeMemoryWriteAttempted: true,
-        bridgeMemoryWriteSucceeded: false,
+      },
+    });
+    return {
+      ok: false,
+      persistenceResult,
+      diagnostics: {
+        state: 'save-clobbered',
+        reason: persistenceResult.error?.message || 'Shared durable memory write failed while persisting Home Bridge memory.',
+        at: persistenceResult.timestamp,
+        bridgeMemoryWriteAttempted: persistenceResult.attempted,
+        bridgeMemoryWriteSucceeded: persistenceResult.succeeded,
+        lastWrite: persistenceResult,
+        persistence: projectPersistenceTruth({ lastWrite: persistenceResult }),
+        reconciledAcrossSurfaces: false,
         bridgeMemoryClearedBy: 'save-failed',
         bridgeMemoryStorageKey: storageKey,
         bridgeMemoryStorageScope: storageScope,
@@ -665,6 +706,9 @@ export function AIStoreProvider({ children }) {
     state: 'idle',
     reason: 'No bridge memory persistence event recorded.',
     at: '',
+    lastWrite: null,
+    persistence: projectPersistenceTruth({ lastWrite: null }),
+    reconciledAcrossSurfaces: false,
   });
   const [bridgeMemoryHydrationPending, setBridgeMemoryHydrationPending] = useState(Boolean(getStephanosMemoryRuntime()?.hydrate));
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
@@ -746,6 +790,7 @@ export function AIStoreProvider({ children }) {
       bridgeMemoryRehydrated,
       bridgeAutoRevalidation,
       bridgeTransportTruth,
+      persistence: bridgeTransportTruth?.persistence || null,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), [
@@ -874,7 +919,9 @@ export function AIStoreProvider({ children }) {
         : 'Persisting cleared Home Bridge memory state.',
       at: new Date().toISOString(),
     });
-    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory);
+    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory, {
+      sessionKind: bridgeValidationTruth.sessionKind,
+    });
     if (persisted?.diagnostics) {
       setBridgeMemoryPersistence(persisted.diagnostics);
     }
@@ -1325,6 +1372,30 @@ export function AIStoreProvider({ children }) {
         bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
         bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
         bridgeMemoryLastRawValueSummary: 'validation-blocked',
+        lastWrite: normalizePersistenceResult({
+          attempted: true,
+          succeeded: false,
+          timestamp: new Date().toISOString(),
+          source: resolvePersistenceWriteSource(bridgeValidationTruth.sessionKind),
+          error: {
+            code: 'validation-blocked',
+            message: validation.reason || 'Home Bridge save blocked by canonical validation.',
+          },
+        }),
+        persistence: projectPersistenceTruth({
+          lastWrite: normalizePersistenceResult({
+            attempted: true,
+            succeeded: false,
+            timestamp: new Date().toISOString(),
+            source: resolvePersistenceWriteSource(bridgeValidationTruth.sessionKind),
+            error: {
+              code: 'validation-blocked',
+              message: validation.reason || 'Home Bridge save blocked by canonical validation.',
+            },
+          }),
+          reconciledAcrossSurfaces: false,
+        }),
+        reconciledAcrossSurfaces: false,
       });
       return { ok: false, reason: validation.reason || 'invalid-home-bridge-url', normalizedUrl: '' };
     }
@@ -1401,8 +1472,33 @@ export function AIStoreProvider({ children }) {
       bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
       bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
       bridgeMemoryLastRawValueSummary: summarizeBridgeMemoryPayload(nextBridgeMemory),
+      lastWrite: normalizePersistenceResult({
+        attempted: true,
+        succeeded: false,
+        timestamp: now,
+        source: resolvePersistenceWriteSource(bridgeValidationTruth.sessionKind),
+        error: {
+          code: 'save-pending',
+          message: 'Saving…',
+        },
+      }),
+      persistence: projectPersistenceTruth({
+        lastWrite: normalizePersistenceResult({
+          attempted: true,
+          succeeded: false,
+          timestamp: now,
+          source: resolvePersistenceWriteSource(bridgeValidationTruth.sessionKind),
+          error: {
+            code: 'save-pending',
+            message: 'Saving…',
+          },
+        }),
+      }),
+      reconciledAcrossSurfaces: false,
     });
-    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory);
+    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory, {
+      sessionKind: bridgeValidationTruth.sessionKind,
+    });
     if (persisted?.diagnostics) {
       setBridgeMemoryPersistence(persisted.diagnostics);
     }
@@ -1410,6 +1506,7 @@ export function AIStoreProvider({ children }) {
       ok: Boolean(persisted?.ok),
       reason: persisted?.ok ? '' : (persisted?.diagnostics?.reason || 'Shared durable memory write failed.'),
       normalizedUrl: validation.normalizedUrl,
+      persistenceResult: persisted?.persistenceResult || null,
     };
   }, [
     bridgeMemory,
@@ -1434,7 +1531,9 @@ export function AIStoreProvider({ children }) {
     setBridgeMemoryState(clearedBridgeMemory);
     setBridgeMemoryRehydrated(false);
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
-    const clearedPersistence = persistBridgeMemoryToDurableStore(clearedBridgeMemory);
+    const clearedPersistence = persistBridgeMemoryToDurableStore(clearedBridgeMemory, {
+      sessionKind: bridgeValidationTruth.sessionKind,
+    });
     setBridgeMemoryPersistence(clearedPersistence?.diagnostics || {
       state: 'save-clobbered',
       reason: 'Failed to clear remembered Home Bridge memory in shared durable store.',

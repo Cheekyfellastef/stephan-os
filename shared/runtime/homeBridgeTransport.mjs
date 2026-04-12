@@ -2,6 +2,7 @@ import { validateStephanosHomeBridgeUrl } from './stephanosHomeNode.mjs';
 
 export const BRIDGE_TRANSPORT_KEYS = Object.freeze(['manual', 'tailscale', 'wireguard']);
 export const HOME_BRIDGE_MEMORY_SCHEMA_VERSION = 1;
+export const DURABLE_PERSISTENCE_STORAGE_TARGET = 'durable-memory';
 
 const TRANSPORT_CAPABILITIES = Object.freeze({
   manual: Object.freeze({
@@ -153,6 +154,63 @@ function normalizeTimestamp(value = '') {
   const parsed = Date.parse(text);
   if (!Number.isFinite(parsed)) return '';
   return new Date(parsed).toISOString();
+}
+
+export function resolvePersistenceWriteSource(sessionKind = '') {
+  return normalizeSessionKind(sessionKind) === 'hosted-web' ? 'hosted' : 'local';
+}
+
+export function normalizePersistenceResult(value = {}, {
+  defaultSource = 'local',
+  defaultTimestamp = '',
+} = {}) {
+  const source = normalizeString(value?.source || defaultSource).toLowerCase() === 'hosted' ? 'hosted' : 'local';
+  const attempted = value?.attempted === true;
+  const succeeded = attempted && value?.succeeded === true;
+  const timestamp = normalizeTimestamp(value?.timestamp || defaultTimestamp || '');
+  const code = normalizeString(value?.error?.code);
+  const message = normalizeString(value?.error?.message);
+  return {
+    attempted,
+    succeeded,
+    timestamp: timestamp || (attempted ? new Date().toISOString() : ''),
+    source,
+    storageTarget: DURABLE_PERSISTENCE_STORAGE_TARGET,
+    ...(code || message ? {
+      error: {
+        code: code || (succeeded ? '' : 'unknown-persistence-error'),
+        message: message || (succeeded ? '' : 'Persistence write failed.'),
+      },
+    } : {}),
+  };
+}
+
+export function projectPersistenceTruth({
+  lastWrite = null,
+  previousPersistence = {},
+  reconciledAcrossSurfaces = false,
+} = {}) {
+  const prior = previousPersistence && typeof previousPersistence === 'object' ? previousPersistence : {};
+  const normalizedLastWrite = lastWrite ? normalizePersistenceResult(lastWrite, {
+    defaultSource: prior?.lastWrite?.source || 'local',
+    defaultTimestamp: prior?.lastWrite?.timestamp || '',
+  }) : null;
+  const lastSuccessTimestamp = normalizedLastWrite?.succeeded
+    ? normalizedLastWrite.timestamp
+    : normalizeTimestamp(prior.lastSuccessTimestamp || '');
+  const lastFailureTimestamp = normalizedLastWrite?.attempted && normalizedLastWrite.succeeded === false
+    ? normalizedLastWrite.timestamp
+    : normalizeTimestamp(prior.lastFailureTimestamp || '');
+  const lastError = normalizedLastWrite?.succeeded === false
+    ? normalizeString(normalizedLastWrite?.error?.message || '')
+    : '';
+  return {
+    lastWrite: normalizedLastWrite,
+    lastSuccessTimestamp: lastSuccessTimestamp || null,
+    lastFailureTimestamp: lastFailureTimestamp || null,
+    lastError: lastError || null,
+    reconciledAcrossSurfaces: reconciledAcrossSurfaces === true,
+  };
 }
 
 function normalizeAutoRevalidationState(value = '') {
@@ -413,6 +471,12 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemory: rememberedMemory,
     autoRevalidation,
   });
+  const persistenceTruth = projectPersistenceTruth({
+    lastWrite: bridgeMemoryPersistence?.lastWrite || null,
+    previousPersistence: bridgeMemoryPersistence?.persistence || bridgeMemoryPersistence || {},
+    reconciledAcrossSurfaces: bridgeMemoryPersistence?.reconciledAcrossSurfaces === true
+      || reconciliation.state === 'remembered-revalidated',
+  });
 
   return {
     selectedTransport,
@@ -443,6 +507,15 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemoryPersistenceAt: normalizeTimestamp(bridgeMemoryPersistence?.at || ''),
     bridgeMemoryWriteAttempted: bridgeMemoryPersistence?.bridgeMemoryWriteAttempted === true,
     bridgeMemoryWriteSucceeded: bridgeMemoryPersistence?.bridgeMemoryWriteSucceeded === true,
+    persistence: persistenceTruth,
+    persistenceLastWrite: persistenceTruth.lastWrite,
+    persistenceAttempted: persistenceTruth.lastWrite?.attempted === true,
+    persistenceSucceeded: persistenceTruth.lastWrite?.succeeded === true,
+    persistenceLastWriteTimestamp: persistenceTruth.lastWrite?.timestamp || '',
+    persistenceLastSuccessTimestamp: persistenceTruth.lastSuccessTimestamp || '',
+    persistenceLastFailureTimestamp: persistenceTruth.lastFailureTimestamp || '',
+    persistenceLastError: persistenceTruth.lastError || '',
+    persistenceReconciledAcrossSurfaces: persistenceTruth.reconciledAcrossSurfaces === true,
     bridgeMemoryReadAttempted: bridgeMemoryPersistence?.bridgeMemoryReadAttempted === true,
     bridgeMemoryReadSource: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryReadSource, 'none'),
     bridgeMemoryReadResult: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryReadResult, 'none'),
