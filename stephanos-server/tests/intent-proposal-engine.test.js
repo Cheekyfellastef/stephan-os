@@ -72,3 +72,14 @@ test('proposal build is read/analyze only for summarize intent and does not impl
   const proposal = buildProposal({ requestText: 'summarize build status', intent: { intentType: 'summarize' } });
   assert.equal(proposal.steps.some((step) => step.stepType === 'memory' || step.stepType === 'write'), false);
 });
+
+test('trivial assistant query keeps proposal pipeline inactive', () => {
+  const envelope = buildIntentProposalEnvelope({ requestText: 'what is the capital of france' });
+
+  assert.equal(envelope.intent.intentType, 'assistant-query');
+  assert.equal(envelope.proposal.proposalCreated, false);
+  assert.equal(envelope.proposal.proposalStepCount, 0);
+  assert.match(envelope.proposal.proposalReason, /inactive/i);
+  assert.equal(envelope.execution.executionStarted, false);
+  assert.match(envelope.execution.executionBlockedReason, /no proposal required/i);
+});

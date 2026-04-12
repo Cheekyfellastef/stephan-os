@@ -1,3 +1,5 @@
+import { isExplicitRetrievalQuery, isProjectRelevantQuery, isTrivialNonProjectQuery } from '../assistantQueryClassifier.js';
+
 export function createDefaultRetrievalTruth() {
   return {
     retrievalMode: 'none',
@@ -28,10 +30,17 @@ export function determineRetrievalEligibility({ prompt = '', freshnessContext = 
     return { eligible: false, reason: 'Fresh/current query pattern detected; retrieval withheld to prevent stale truth claims.' };
   }
 
-  const allowHints = ['stephanos', 'routing', 'hosted', 'mission console', 'handoff', 'snapshot', 'debug', 'policy', 'provider', 'home-node', 'scroll'];
-  if (allowHints.some((term) => normalized.includes(term))) {
+  if (isTrivialNonProjectQuery(query)) {
+    return { eligible: false, reason: 'Trivial non-project query; retrieval suppressed.' };
+  }
+
+  if (isProjectRelevantQuery(query)) {
     return { eligible: true, reason: 'Project-memory query eligible for local retrieval.' };
   }
 
-  return { eligible: true, reason: 'Default local retrieval path enabled for non-freshness-sensitive query.' };
+  if (isExplicitRetrievalQuery(query)) {
+    return { eligible: true, reason: 'Explicit retrieval intent detected for local context.' };
+  }
+
+  return { eligible: false, reason: 'Query is non-project and not explicitly retrieval-worthy.' };
 }

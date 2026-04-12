@@ -15,6 +15,7 @@ import { activityLogService } from '../services/activityLogService.js';
 import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
 import { adjudicateMemoryCandidate } from '../services/memory/memoryAdjudicator.js';
 import { buildIntentProposalEnvelope } from '../services/intent-proposal/proposalEngine.js';
+import { buildCanonicalModelTruth, buildCanonicalProviderResolution } from '../services/assistantRequestTruth.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -379,6 +380,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       || providerResolution.resolvedProvider;
     const selectedProviderAttempt = attemptDiagnostics.find((attempt) => String(attempt?.provider || '').trim().toLowerCase() === String(selectedProviderForRequest || '').trim().toLowerCase()) || null;
     const actualProviderUsed = llmResult.actualProviderUsed || llmResult.provider;
+    const canonicalProviderResolution = buildCanonicalProviderResolution({
+      uiRequestedProvider: provider,
+      initialResolution: providerResolution,
+      requestedProviderForRequest,
+      selectedProvider: selectedProviderForRequest,
+      actualProviderUsed,
+    });
     const freshnessTruth = llmResult.diagnostics?.freshnessTruth || {};
     const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
     const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
@@ -393,31 +401,53 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       : ((freshnessContext?.freshnessNeed === 'high' || routeDecision?.freshnessNeed === 'high') && actualProviderUsed !== 'ollama'
         ? 'fresh-cloud'
         : (actualProviderUsed === 'ollama' ? 'local-private' : 'cloud')));
+    const canonicalModelTruth = buildCanonicalModelTruth({
+      configuredModel: mergedProviderConfigs?.[actualProviderUsed]?.model || null,
+      requestedModel: llmResult.diagnostics?.ollama?.requestedModel
+        || mergedProviderConfigs?.[selectedProviderForRequest]?.model
+        || mergedProviderConfigs?.[actualProviderUsed]?.model
+        || null,
+      selectedModel: llmResult.model || llmResult.modelUsed || null,
+      executedModel: llmResult.modelUsed || llmResult.model || null,
+      selectionReason: llmResult.diagnostics?.ollama?.policyReason
+        || llmResult.diagnostics?.ollama?.fallbackReason
+        || llmResult.diagnostics?.ollama?.escalationReason
+        || (llmResult.diagnostics?.groq?.freshWebActive ? 'fresh-web-route' : 'provider-default'),
+      overrideReason: llmResult.diagnostics?.ollama?.policyReason
+        || llmResult.diagnostics?.ollama?.fallbackReason
+        || llmResult.diagnostics?.ollama?.escalationReason
+        || null,
+    });
     const executionMetadata = {
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
-      requested_provider_for_request: requestedProviderForRequest,
+      requested_provider_for_request: canonicalProviderResolution.requestProvider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
       route_mode: routeMode,
       requested_route_mode: llmResult.diagnostics?.requestedRouteMode || providerHealthSnapshot?.routing?.requestedRouteMode || routeMode,
       effective_route_mode: llmResult.diagnostics?.effectiveRouteMode || providerHealthSnapshot?.routing?.effectiveRouteMode || routeMode,
-      requested_provider: requestedProviderForRequest
+      requested_provider: canonicalProviderResolution.requestProvider
         || llmResult.requestedProvider
         || providerResolution.requestedProvider,
       routing_requested_provider: llmResult.requestedProvider || providerResolution.requestedProvider,
-      selected_provider: selectedProviderForRequest,
-      actual_provider_used: actualProviderUsed,
+      selected_provider: canonicalProviderResolution.selectedProvider,
+      actual_provider_used: canonicalProviderResolution.executedProvider,
       fallback_provider_used: fallbackProviderUsed,
+      provider_intent_ui: canonicalProviderResolution.intentProvider,
+      provider_request_policy: canonicalProviderResolution.requestProvider,
+      provider_selected_policy: canonicalProviderResolution.selectedProvider,
+      provider_executed_actual: canonicalProviderResolution.executedProvider,
+      provider_resolution: canonicalProviderResolution,
       provider_selection_source: llmResult.diagnostics?.providerSelectionSource || providerHealthSnapshot?.routing?.providerSelectionSource || 'auto:policy',
-      model_used: llmResult.modelUsed || llmResult.model || '',
-      configured_model: mergedProviderConfigs?.[llmResult.actualProviderUsed || llmResult.provider]?.model || null,
-      requested_model: mergedProviderConfigs?.[llmResult.diagnostics?.selectedProvider || llmResult.actualProviderUsed || llmResult.provider]?.model || null,
-      selected_model: llmResult.model || llmResult.modelUsed || null,
-      executed_model: llmResult.modelUsed || llmResult.model || null,
-      model_selection_reason: llmResult.diagnostics?.ollama?.fallbackReason
-        || llmResult.diagnostics?.ollama?.escalationReason
-        || (llmResult.diagnostics?.groq?.freshWebActive ? 'fresh-web-route' : 'provider-default'),
+      model_used: canonicalModelTruth.executedModel || '',
+      configured_model: canonicalModelTruth.configuredModel,
+      requested_model: canonicalModelTruth.requestedModel,
+      selected_model: canonicalModelTruth.selectedModel,
+      executed_model: canonicalModelTruth.executedModel,
+      model_selection_reason: canonicalModelTruth.modelSelectionReason,
+      model_policy_override_applied: canonicalModelTruth.modelPolicyOverrideApplied,
+      model_policy_override_reason: canonicalModelTruth.modelPolicyOverrideReason,
       fallback_used: Boolean(llmResult.fallbackUsed),
       fallback_reason: llmResult.fallbackReason || null,
       effective_answer_mode: effectiveAnswerMode,
@@ -663,11 +693,17 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       requested_route_mode: executionMetadata.requested_route_mode,
       effective_route_mode: executionMetadata.effective_route_mode,
       provider_selection_source: executionMetadata.provider_selection_source,
+      provider_intent_ui: executionMetadata.provider_intent_ui,
+      provider_request_policy: executionMetadata.provider_request_policy,
+      provider_selected_policy: executionMetadata.provider_selected_policy,
+      provider_executed_actual: executionMetadata.provider_executed_actual,
       configured_model: executionMetadata.configured_model,
       requested_model: executionMetadata.requested_model,
       selected_model: executionMetadata.selected_model,
       executed_model: executionMetadata.executed_model,
       model_selection_reason: executionMetadata.model_selection_reason,
+      model_policy_override_applied: executionMetadata.model_policy_override_applied,
+      model_policy_override_reason: executionMetadata.model_policy_override_reason,
       groq_endpoint_used: executionMetadata.groq_endpoint_used,
       groq_model_used: executionMetadata.groq_model_used,
       groq_fresh_web_active: executionMetadata.groq_fresh_web_active,
@@ -705,7 +741,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       execution_completed: executionMetadata.execution_completed,
       execution_blocked_reason: executionMetadata.execution_blocked_reason,
       execution_result_summary: executionMetadata.execution_result_summary,
-      provider_resolution: providerResolution,
+      provider_resolution: canonicalProviderResolution,
+      provider_resolution_initial: providerResolution,
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
       actualProviderUsed: executionMetadata.actual_provider_used,
