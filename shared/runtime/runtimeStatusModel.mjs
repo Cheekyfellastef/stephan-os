@@ -288,11 +288,24 @@ function enforceHostedRememberedTailscaleRevalidationTruthGate({
     ...runtimeContext,
     bridgeTransportTruth: {
       ...bridgeTruth,
+      activeTransport: 'none',
+      state: 'configured',
+      detail: blocker.reason,
+      reason: blocker.reason,
+      source: 'bridgeTransport:awaiting-route-adjudication',
+      reachability: 'pending',
+      usability: 'no',
       bridgeMemoryReconciliationState: blocker.state,
       bridgeMemoryReconciliationReason: blocker.reason,
       bridgeMemoryReconciliationProvenance: blocker.provenance,
       bridgeAutoRevalidationState: blocker.autoState,
       bridgeAutoRevalidationReason: blocker.reason,
+      tailscale: {
+        ...tailscale,
+        active: false,
+        usable: false,
+        reason: blocker.reason,
+      },
     },
   };
 }
@@ -608,6 +621,33 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     candidates: backendTargetCandidateDecisions,
     rejectedSummary: backendTargetRejectedSummary.join(' | '),
   };
+  const routeDiagnosticsSource = (runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object')
+    ? runtimeContext.routeDiagnostics
+    : {};
+  const hasHostedTailscaleRouteEvidence = sessionKind === 'hosted-web'
+    && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
+    && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
+    && bridgeTransportTruth.selectedTransport === 'tailscale'
+    && bridgeTransportTruth?.tailscale?.accepted === true
+    && bridgeTransportTruth?.tailscale?.reachable === true
+    && Boolean(bridgeTransportTruth?.tailscale?.backendUrl)
+    && backendTargetRouteDiagnostic.available === true
+    && backendTargetRouteDiagnostic.target === bridgeTransportTruth.tailscale.backendUrl;
+  const canonicalHostedTailscaleRouteEvidence = hasHostedTailscaleRouteEvidence
+    ? {
+      configured: true,
+      available: true,
+      usable: true,
+      routeVariant: 'home-node-bridge',
+      source: 'bridgeTransport:tailscale',
+      target: bridgeTransportTruth.tailscale.backendUrl,
+      actualTarget: bridgeTransportTruth.tailscale.backendUrl,
+      reason: 'Remembered Tailscale bridge revalidated and accepted as hosted route evidence.',
+      blockedReason: '',
+      backendReachable: true,
+      uiReachable: true,
+    }
+    : null;
 
   const surfaceAwareness = normalizeSurfaceAwareness(runtimeContext.surfaceAwareness);
   const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
@@ -634,9 +674,17 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     nodeAddressSource: runtimeContext.nodeAddressSource || (homeNode?.configured ? homeNode.source : '') || (launcherLocal ? 'local-backend-session' : 'route-diagnostics'),
     restoreDecision: String(runtimeContext.restoreDecision || ''),
     routeDiagnostics: {
-      ...((runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object')
-        ? runtimeContext.routeDiagnostics
-        : {}),
+      ...routeDiagnosticsSource,
+      ...(canonicalHostedTailscaleRouteEvidence ? {
+        'home-node': {
+          ...(routeDiagnosticsSource['home-node'] || {}),
+          ...canonicalHostedTailscaleRouteEvidence,
+        },
+        'home-node-bridge': {
+          ...(routeDiagnosticsSource['home-node-bridge'] || {}),
+          ...canonicalHostedTailscaleRouteEvidence,
+        },
+      } : {}),
       'backend-target': backendTargetRouteDiagnostic,
     },
     backendTargetResolutionSource,

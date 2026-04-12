@@ -364,9 +364,9 @@ test('hosted remembered tailscale cannot remain revalidated when backend target 
           tailscale: {
             enabled: true,
             backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
-            accepted: true,
+            accepted: false,
             active: true,
-            reachability: 'reachable',
+            reachability: 'unknown',
             usable: true,
           },
         },
@@ -380,7 +380,138 @@ test('hosted remembered tailscale cannot remain revalidated when backend target 
   });
 
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
-  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-route-not-yet-usable');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-candidate-not-yet-accepted');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
+});
+
+test('hosted bridge transport truth cannot stay active/revalidated when route winner is none', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: { groq: { ok: false } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: { state: 'revalidated', reason: 'Remembered Home Bridge revalidated successfully.' },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: false,
+            active: true,
+            reachability: 'unknown',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, target: 'https://desktop-9flonkj.taild6f215.ts.net', actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net' },
+        'home-node-bridge': { configured: true, available: false, target: 'https://desktop-9flonkj.taild6f215.ts.net', actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net' },
+        cloud: { configured: false, available: false, usable: false },
+        dist: { configured: false, available: false, usable: false },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.routeCandidateWinner, null);
+  assert.notEqual(model.runtimeContext.bridgeTransportTruth.state, 'active');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.activeTransport, 'none');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
+});
+
+test('hosted remembered-revalidated tailscale promotes route winner when backend target evidence is accepted', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeBridge: {
+        configured: true,
+        accepted: true,
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+        reachability: 'reachable',
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: { state: 'revalidated', reason: 'Remembered Home Bridge revalidated successfully.' },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, usable: false, source: 'stale-home-node-probe' },
+        'home-node-bridge': { configured: true, available: false, usable: false, source: 'stale-bridge-probe', blockedReason: 'stale route probe' },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.finalRoute.routeKind, 'home-node');
+  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-revalidated');
+});
+
+test('hosted remembered-revalidated tailscale downgrades to blocker state when backend evidence is not accepted', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: { groq: { ok: false } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      homeNodeBridge: {
+        configured: true,
+        accepted: false,
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+        reachability: 'unknown',
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: { state: 'revalidated', reason: 'Remembered Home Bridge revalidated successfully.' },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: false,
+            active: true,
+            reachability: 'unknown',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, source: 'probe-missing' },
+        'home-node-bridge': { configured: true, available: false, source: 'probe-missing' },
+        cloud: { configured: false, available: false, usable: false },
+        dist: { configured: false, available: false, usable: false },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.routeCandidateWinner, null);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-candidate-not-yet-accepted');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.state, 'configured');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.activeTransport, 'none');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
 });
 
