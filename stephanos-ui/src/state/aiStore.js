@@ -819,6 +819,7 @@ export function AIStoreProvider({ children }) {
     runtimeStatusModel,
     selectedTransport: bridgeTransportPreferences?.selectedTransport || 'manual',
   }), [runtimeStatusModel, bridgeTransportPreferences?.selectedTransport]);
+  const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
 
   const debugVisible = uiLayout.debugConsole === true;
 
@@ -1846,7 +1847,7 @@ export function AIStoreProvider({ children }) {
     homeBridgeUrl,
     bridgeTransportDefinitions: listBridgeTransportDefinitions(),
     bridgeTransportPreferences,
-    bridgeTransportTruth,
+    bridgeTransportTruth: canonicalBridgeTransportTruth,
     bridgeMemory,
     bridgeMemoryPersistence,
     bridgeMemoryRehydrated,
@@ -1921,7 +1922,7 @@ export function AIStoreProvider({ children }) {
     homeNodeLastKnown,
     homeBridgeUrl,
     bridgeTransportPreferences,
-    bridgeTransportTruth,
+    canonicalBridgeTransportTruth,
     bridgeMemory,
     bridgeMemoryRehydrated,
     bridgeAutoRevalidation,
