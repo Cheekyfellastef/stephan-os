@@ -791,8 +791,15 @@ function createRouteUnavailableResult({
   continuityLookup,
   requestPayload,
 }) {
-  const fallbackReason = routeDecision?.fallbackReasonCode || routeDecision?.requestDispatchGate?.reasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || 'selected-route-unusable';
-  const routeKind = routeDecision?.requestRouteTruth?.routeKind || 'unavailable';
+  const requestDispatchGate = routeDecision?.requestDispatchGate || {};
+  const fallbackReason = requestDispatchGate.reasonCode
+    || routeDecision?.fallbackReasonCode
+    || routeDecision?.freshRouteValidation?.failureReasons?.[0]
+    || 'selected-route-unusable';
+  const routeKind = requestDispatchGate.selectedRouteKind || routeDecision?.requestRouteTruth?.routeKind || 'unavailable';
+  const routeUsableState = requestDispatchGate.routeUsableState || routeDecision?.requestRouteTruth?.routeUsableState || 'unknown';
+  const routeProviderMismatchBlocker = routeDecision?.requestRouteTruth?.providerMismatch ? 'provider-route-mismatch' : null;
+  const fallbackVetoReason = requestDispatchGate.fallbackVetoReason || routeDecision?.requestRouteTruth?.routeUsabilityVetoReason || null;
   const output = routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
     ? `Fresh route unavailable; safe stale fallback used. (${fallbackReason})`
     : `Selected route unusable at request time (${routeKind}).`;
@@ -845,8 +852,11 @@ function createRouteUnavailableResult({
           groq_fresh_candidate_model: routeDecision?.candidateFreshModel || null,
           groq_fresh_web_path: routeDecision?.candidateFreshPath || null,
           selected_route_kind: routeKind,
-          selected_route_usable: false,
+          selected_route_usable: routeUsableState === 'yes',
+          selected_route_usable_state: routeUsableState,
           route_unavailable_reason: fallbackReason,
+          route_provider_mismatch_blocker: routeProviderMismatchBlocker,
+          fallback_veto_reason: fallbackVetoReason,
         },
       },
     },
@@ -1844,6 +1854,8 @@ export function useAIConsole() {
         routeUsableState: requestRouteTruthView.routeUsableState,
         selectedRouteReachableState: requestRouteTruthView.selectedRouteReachableState,
         backendReachableState: requestRouteTruthView.backendReachableState,
+        providerMismatch: requestRouteTruthView.providerMismatch === true,
+        routeUsabilityVetoReason: requestRouteTruthView.routeUsabilityVetoReason || null,
       };
       const freshnessRouteDecision = {
         ...resolveFreshnessRoutingDecision({
