@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-11T11:39:19.618Z",
+  "updatedAt": "2026-04-12T22:39:29.119Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -2100,6 +2100,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-11T11:39:19.618Z",
       "updatedAt": "2026-04-11T11:39:19.618Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1776033569118-mxhtd-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "why is tailscale not connecting on hosted",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-12T22:39:29.118Z",
+      "updatedAt": "2026-04-12T22:39:29.118Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1776033569118-mxhtd-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (ollama).",
+      "payload": {
+        "outputPreview": "Tailscale, a zero-trust networking solution, may face issues connecting to a hosted environment due to the following reasons:\n\n1. **Firewalls and Network Policies**: Hosted environments often have strict firewalls and network policies in place, which can block or restrict Tailscale's access.\n\n2. **DNS Resolution**: If your hosted environment uses a different DNS domain or has DNS resolution restrictions, Tailscale mi",
+        "provider": "ollama",
+        "model": "qwen:14b",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-12T22:39:29.119Z",
+      "updatedAt": "2026-04-12T22:39:29.119Z",
       "surface": "shared"
     }
   }
