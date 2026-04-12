@@ -64,3 +64,33 @@ export function buildCanonicalModelTruth({
   };
 }
 
+export function buildGroundingTruth({
+  executedProvider = '',
+  freshProviderAttempted = '',
+  freshProviderFailureReason = null,
+  fallbackUsed = false,
+  geminiGroundingEnabled = false,
+  configGroundingEnabled = true,
+} = {}) {
+  const normalizedExecutedProvider = asProvider(executedProvider, 'unknown');
+  const normalizedFreshProviderAttempted = asProvider(freshProviderAttempted, '');
+
+  return {
+    grounding_active_for_request: normalizedExecutedProvider === 'gemini'
+      ? (geminiGroundingEnabled ? 'yes' : 'no')
+      : (normalizedFreshProviderAttempted === 'gemini' && (freshProviderFailureReason || fallbackUsed) ? 'attempted' : 'no'),
+    config_grounding_enabled: configGroundingEnabled !== false,
+  };
+}
+
+export function buildRequestTraceResolutionTruth({
+  canonicalProviderResolution = null,
+  initialProviderResolution = null,
+} = {}) {
+  return {
+    provider_resolution: canonicalProviderResolution,
+    secondary_diagnostics: {
+      provider_resolution_initial: initialProviderResolution,
+    },
+  };
+}
