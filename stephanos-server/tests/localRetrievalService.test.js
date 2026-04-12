@@ -107,6 +107,7 @@ test('basic arithmetic query is retrieval-ineligible', () => {
     freshnessContext: { freshnessNeed: 'low' },
   });
 
+  assert.equal(result.truth.retrievalMode, 'none');
   assert.equal(result.truth.retrievalEligible, false);
   assert.equal(result.truth.retrievalUsed, false);
 });

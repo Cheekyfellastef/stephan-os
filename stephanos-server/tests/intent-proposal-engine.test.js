@@ -82,4 +82,5 @@ test('trivial assistant query keeps proposal pipeline inactive', () => {
   assert.match(envelope.proposal.proposalReason, /inactive/i);
   assert.equal(envelope.execution.executionStarted, false);
   assert.match(envelope.execution.executionBlockedReason, /no proposal required/i);
+  assert.match(envelope.execution.executionResultSummary, /pipeline inactive/i);
 });

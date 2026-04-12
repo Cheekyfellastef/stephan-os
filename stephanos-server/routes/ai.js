@@ -15,7 +15,12 @@ import { activityLogService } from '../services/activityLogService.js';
 import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
 import { adjudicateMemoryCandidate } from '../services/memory/memoryAdjudicator.js';
 import { buildIntentProposalEnvelope } from '../services/intent-proposal/proposalEngine.js';
-import { buildCanonicalModelTruth, buildCanonicalProviderResolution } from '../services/assistantRequestTruth.js';
+import {
+  buildCanonicalModelTruth,
+  buildCanonicalProviderResolution,
+  buildGroundingTruth,
+  buildRequestTraceResolutionTruth,
+} from '../services/assistantRequestTruth.js';
 
 const logger = createLogger('ai-route');
 const router = express.Router();
@@ -418,6 +423,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         || llmResult.diagnostics?.ollama?.escalationReason
         || null,
     });
+    const groundingTruth = buildGroundingTruth({
+      executedProvider: canonicalProviderResolution.executedProvider,
+      freshProviderAttempted,
+      freshProviderFailureReason,
+      fallbackUsed: Boolean(llmResult.fallbackUsed),
+      geminiGroundingEnabled: Boolean(llmResult.diagnostics?.gemini?.groundingEnabled),
+      configGroundingEnabled: mergedProviderConfigs?.gemini?.groundingEnabled !== false,
+    });
+    const requestTraceResolutionTruth = buildRequestTraceResolutionTruth({
+      canonicalProviderResolution,
+      initialProviderResolution: providerResolution,
+    });
     const executionMetadata = {
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
@@ -453,10 +470,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       effective_answer_mode: effectiveAnswerMode,
       fresh_provider_attempted: freshProviderAttempted,
       fresh_provider_failure_reason: freshProviderFailureReason || null,
-      grounding_enabled: mergedProviderConfigs?.gemini?.groundingEnabled !== false,
-      grounding_active_for_request: actualProviderUsed === 'gemini'
-        ? (llmResult.diagnostics?.gemini?.groundingEnabled ? 'yes' : 'no')
-        : (freshProviderAttempted === 'gemini' && (freshProviderFailureReason || llmResult.fallbackUsed) ? 'attempted' : 'no'),
+      config_grounding_enabled: groundingTruth.config_grounding_enabled,
+      grounding_active_for_request: groundingTruth.grounding_active_for_request,
       provider_capability: providerHealthSnapshot?.[llmResult.actualProviderUsed || llmResult.provider]?.providerCapability || null,
       ollama_base_url: llmResult.diagnostics?.ollama?.baseURL || providerHealthSnapshot?.ollama?.baseURL || null,
       ollama_model_requested: llmResult.diagnostics?.ollama?.requestedModel || mergedProviderConfigs?.ollama?.model || null,
@@ -678,7 +693,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       freshness_integrity_failure_reason: executionMetadata.freshness_integrity_failure_reason,
       freshness_truth_reason: executionMetadata.freshness_truth_reason,
       freshness_next_actions: executionMetadata.freshness_next_actions,
-      grounding_enabled: executionMetadata.grounding_enabled,
+      config_grounding_enabled: executionMetadata.config_grounding_enabled,
       grounding_active_for_request: executionMetadata.grounding_active_for_request,
       freshness_need: freshnessContext?.freshnessNeed || 'low',
       freshness_reason: freshnessContext?.freshnessReason || 'n/a',
@@ -741,8 +756,11 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       execution_completed: executionMetadata.execution_completed,
       execution_blocked_reason: executionMetadata.execution_blocked_reason,
       execution_result_summary: executionMetadata.execution_result_summary,
-      provider_resolution: canonicalProviderResolution,
-      provider_resolution_initial: providerResolution,
+      provider_resolution: requestTraceResolutionTruth.provider_resolution,
+      secondary_diagnostics: {
+        ...(requestTraceResolutionTruth.secondary_diagnostics || {}),
+        config_grounding_enabled: executionMetadata.config_grounding_enabled,
+      },
     };
     const providerExecutionTruth = resolveProviderExecutionTruth({
       actualProviderUsed: executionMetadata.actual_provider_used,
