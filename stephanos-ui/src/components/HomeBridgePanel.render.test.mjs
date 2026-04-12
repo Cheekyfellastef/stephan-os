@@ -7,6 +7,7 @@ function createStore(overrides = {}) {
   return {
     homeBridgeUrl: 'https://bridge.example.com',
     saveHomeBridgeUrl: () => ({ ok: true, normalizedUrl: 'https://bridge.example.com' }),
+    saveBridgeTransportConfig: () => ({ ok: true, normalizedUrl: 'https://100.64.0.10' }),
     clearHomeBridgeUrl: () => ({ ok: true }),
     bridgeTransportDefinitions: [
       { key: 'manual', label: 'Manual / LAN', status: 'active', description: '' },
@@ -93,4 +94,9 @@ test('App places Home Bridge panel below AI Provider Controls', async () => {
 
   assert.ok(providerPanelIndex >= 0);
   assert.ok(bridgePanelIndex > providerPanelIndex);
+});
+
+test('HomeBridgePanel tailscale save path uses canonical store save action with live draft URL', async () => {
+  const panelSource = await import('node:fs/promises').then((fs) => fs.readFile(path.join(srcRoot, 'components/HomeBridgePanel.jsx'), 'utf8'));
+  assert.match(panelSource, /saveBridgeTransportConfig\('tailscale', tailscaleBackendDraft/);
 });
