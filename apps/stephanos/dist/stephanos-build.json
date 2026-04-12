@@ -2,18 +2,12 @@
   "appName": "Stephanos UI",
   "version": "0.1.0",
   "sourceIdentifier": "stephanos-ui/src",
-  "sourceFingerprint": "3d576b949880c1cce0434f62545a7df1a8f2e0c4b898905853db19db328d3af0",
+  "sourceFingerprint": "64e0bda5d737de9bc9b8c2abe046d9685eaba9687ddac98f7a728363dbb99227",
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
-<<<<<<< HEAD
-  "runtimeMarker": "antifriction-live-v3::5f736cb::3d576b949880",
-  "gitCommit": "5f736cb",
-  "buildTimestamp": "2026-04-12T20:09:42.609Z",
-=======
-  "runtimeMarker": "antifriction-live-v3::5f736cb::59a5be6dd5c0",
-  "gitCommit": "5f736cb",
-  "buildTimestamp": "2026-04-12T20:00:17.231Z",
->>>>>>> 2c5480d (Apply hosted remembered Tailscale truth gate)
+  "runtimeMarker": "antifriction-live-v3::e370f9c::64e0bda5d737",
+  "gitCommit": "e370f9c",
+  "buildTimestamp": "2026-04-12T20:16:30.120Z",
   "sourceTruth": "sourceFingerprint"
 }
