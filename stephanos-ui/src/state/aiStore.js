@@ -147,15 +147,27 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
   attemptedConfigKey: '',
 });
 
+function resolveBridgeMemoryStorageKey() {
+  return typeof globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY === 'string'
+    ? globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY
+    : 'stephanos.durable.memory.v2';
+}
+
+function summarizeBridgeMemoryPayload(bridgeMemory = {}) {
+  const normalized = normalizeHomeBridgeMemory(bridgeMemory);
+  if (normalized.transport === 'none' || !normalized.backendUrl) {
+    return 'none';
+  }
+  return `normalized-memory:${normalized.transport}:${normalized.backendUrl}`;
+}
+
 function getStephanosMemoryRuntime() {
   return globalThis.stephanosMemory || globalThis.parent?.stephanosMemory || null;
 }
 
 function readPersistedBridgeMemory() {
   const memory = getStephanosMemoryRuntime();
-  const storageKey = typeof globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY === 'string'
-    ? globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY
-    : 'stephanos.durable.memory.v2';
+  const storageKey = resolveBridgeMemoryStorageKey();
   const storageScope = memory ? 'shared-runtime-memory' : 'unavailable';
   if (!memory?.getRecord) {
     return {
@@ -225,6 +237,9 @@ function readPersistedBridgeMemory() {
 
 function persistBridgeMemoryToDurableStore(bridgeMemory) {
   const memory = getStephanosMemoryRuntime();
+  const storageKey = resolveBridgeMemoryStorageKey();
+  const storageScope = memory ? 'shared-runtime-memory' : 'unavailable';
+  const lastRawValueSummary = summarizeBridgeMemoryPayload(bridgeMemory);
   if (!memory?.saveRecord) {
     return {
       ok: false,
@@ -235,6 +250,9 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
         bridgeMemoryWriteAttempted: true,
         bridgeMemoryWriteSucceeded: false,
         bridgeMemoryClearedBy: 'runtime-unavailable',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: lastRawValueSummary,
       },
     };
   }
@@ -261,18 +279,26 @@ function persistBridgeMemoryToDurableStore(bridgeMemory) {
         bridgeMemoryWriteAttempted: true,
         bridgeMemoryWriteSucceeded: true,
         bridgeMemoryClearedBy: normalizedBridgeMemory.transport === 'none' ? 'explicit-clear-or-empty-normalization' : '',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: lastRawValueSummary,
       },
     };
-  } catch {
+  } catch (error) {
     return {
       ok: false,
       diagnostics: {
         state: 'save-clobbered',
-        reason: 'Shared durable memory write failed while persisting Home Bridge memory.',
+        reason: error?.message
+          ? `Shared durable memory write failed while persisting Home Bridge memory: ${error.message}`
+          : 'Shared durable memory write failed while persisting Home Bridge memory.',
         at: new Date().toISOString(),
         bridgeMemoryWriteAttempted: true,
         bridgeMemoryWriteSucceeded: false,
         bridgeMemoryClearedBy: 'save-failed',
+        bridgeMemoryStorageKey: storageKey,
+        bridgeMemoryStorageScope: storageScope,
+        bridgeMemoryLastRawValueSummary: lastRawValueSummary,
       },
     };
   }
@@ -1280,50 +1306,125 @@ export function AIStoreProvider({ children }) {
     });
   }, []);
 
-  const saveHomeBridgeUrl = useCallback((candidateUrl = '') => {
+  const saveBridgeTransportConfig = useCallback((transportKey, candidateUrl = '', patch = {}) => {
+    const normalizedTransport = normalizeBridgeTransportSelection(transportKey);
     const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
     const requireHttps = resolveBridgeUrlRequireHttps({
       sessionKind: bridgeValidationTruth.sessionKind,
-      selectedTransport: 'manual',
+      selectedTransport: normalizedTransport,
       fallbackRequireHttps: bridgeValidationTruth.requireHttps,
     });
     const validation = validateStephanosHomeBridgeUrl(candidateUrl, { frontendOrigin, requireHttps });
     if (!validation.ok) {
-      return { ok: false, reason: validation.reason, normalizedUrl: '' };
+      setBridgeMemoryPersistence({
+        state: 'save-clobbered',
+        reason: validation.reason || 'Home Bridge save blocked by canonical validation.',
+        at: new Date().toISOString(),
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: false,
+        bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
+        bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
+        bridgeMemoryLastRawValueSummary: 'validation-blocked',
+      });
+      return { ok: false, reason: validation.reason || 'invalid-home-bridge-url', normalizedUrl: '' };
     }
-    const persisted = persistStephanosHomeBridgeUrl(validation.normalizedUrl, undefined, {
-      frontendOrigin,
-      requireHttps,
-    });
-    if (!persisted.ok) {
-      return { ok: false, reason: persisted.reason || 'Failed to persist bridge URL.', normalizedUrl: '' };
+
+    if (normalizedTransport === 'manual') {
+      const persistedManual = persistStephanosHomeBridgeUrl(validation.normalizedUrl, undefined, {
+        frontendOrigin,
+        requireHttps,
+      });
+      if (!persistedManual.ok) {
+        setBridgeMemoryPersistence({
+          state: 'save-clobbered',
+          reason: persistedManual.reason || 'Failed to persist manual bridge URL.',
+          at: new Date().toISOString(),
+          bridgeMemoryWriteAttempted: true,
+          bridgeMemoryWriteSucceeded: false,
+          bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
+          bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
+          bridgeMemoryLastRawValueSummary: 'manual-url-persist-failed',
+        });
+        return { ok: false, reason: persistedManual.reason || 'Failed to persist bridge URL.', normalizedUrl: '' };
+      }
+      setStephanosHomeBridgeGlobal(validation.normalizedUrl);
+      setHomeBridgeUrlState(validation.normalizedUrl);
     }
-    setStephanosHomeBridgeGlobal(validation.normalizedUrl);
-    setHomeBridgeUrlState(validation.normalizedUrl);
-    setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
-    setBridgeMemoryRehydrated(false);
-    setBridgeTransportPreferencesState((prev) => normalizeBridgeTransportPreferences({
-      ...prev,
+
+    const now = new Date().toISOString();
+    const nextPreferences = normalizeBridgeTransportPreferences({
+      ...bridgeTransportPreferences,
+      selectedTransport: normalizedTransport,
       transports: {
-        ...(prev?.transports || {}),
-        manual: {
-          ...(prev?.transports?.manual || {}),
+        ...(bridgeTransportPreferences?.transports || {}),
+        [normalizedTransport]: {
+          ...(bridgeTransportPreferences?.transports?.[normalizedTransport] || {}),
+          ...(patch && typeof patch === 'object' ? patch : {}),
           enabled: true,
           backendUrl: validation.normalizedUrl,
-          accepted: true,
         },
       },
     }, {
-      homeBridgeUrl: validation.normalizedUrl,
+      homeBridgeUrl: normalizedTransport === 'manual' ? validation.normalizedUrl : homeBridgeUrl,
       frontendOrigin,
-      manualRequireHttps: requireHttps,
+      manualRequireHttps: resolveBridgeUrlRequireHttps({
+        sessionKind: bridgeValidationTruth.sessionKind,
+        selectedTransport: 'manual',
+        fallbackRequireHttps: bridgeValidationTruth.requireHttps,
+      }),
       tailscaleRequireHttps: resolveBridgeUrlRequireHttps({
         sessionKind: bridgeValidationTruth.sessionKind,
         selectedTransport: 'tailscale',
       }),
-    }));
-    return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
-  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
+    });
+    setBridgeTransportPreferencesState(nextPreferences);
+    setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+    setBridgeMemoryRehydrated(false);
+
+    const nextBridgeMemory = deriveBridgeMemoryFromPreferences(nextPreferences, {
+      rememberedAt: bridgeMemory?.rememberedAt || now,
+      savedBySurface: surfaceAwareness?.surfaceIdentity?.surfaceId || 'unknown-surface',
+      savedBySession: sessionRestoreDiagnostics?.currentHost || 'unknown-session',
+      reason: 'Home Bridge configuration saved by operator.',
+    }, {
+      preferredTransport: normalizedTransport,
+      fallbackMemory: normalizeHomeBridgeMemory(bridgeMemory || {}),
+      preserveExisting: true,
+    });
+    setBridgeMemoryState(nextBridgeMemory);
+    setBridgeMemoryPersistence({
+      state: 'save-requested',
+      reason: `Persisting remembered ${nextBridgeMemory.transport || normalizedTransport} Home Bridge config.`,
+      at: now,
+      bridgeMemoryWriteAttempted: true,
+      bridgeMemoryWriteSucceeded: false,
+      bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
+      bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
+      bridgeMemoryLastRawValueSummary: summarizeBridgeMemoryPayload(nextBridgeMemory),
+    });
+    const persisted = persistBridgeMemoryToDurableStore(nextBridgeMemory);
+    if (persisted?.diagnostics) {
+      setBridgeMemoryPersistence(persisted.diagnostics);
+    }
+    return {
+      ok: Boolean(persisted?.ok),
+      reason: persisted?.ok ? '' : (persisted?.diagnostics?.reason || 'Shared durable memory write failed.'),
+      normalizedUrl: validation.normalizedUrl,
+    };
+  }, [
+    bridgeMemory,
+    bridgeTransportPreferences,
+    bridgeValidationTruth.requireHttps,
+    bridgeValidationTruth.sessionKind,
+    homeBridgeUrl,
+    sessionRestoreDiagnostics?.currentHost,
+    surfaceAwareness?.surfaceIdentity?.surfaceId,
+  ]);
+
+  const saveHomeBridgeUrl = useCallback((candidateUrl = '') => saveBridgeTransportConfig('manual', candidateUrl, {
+    accepted: true,
+    reason: 'Manual/LAN bridge URL saved by operator.',
+  }), [saveBridgeTransportConfig]);
 
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
@@ -1653,6 +1754,7 @@ export function AIStoreProvider({ children }) {
     bridgeAutoRevalidation,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
+    saveBridgeTransportConfig,
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
     homeNodeStatus,
@@ -1750,6 +1852,7 @@ export function AIStoreProvider({ children }) {
     explainMemoryToOperator,
     setHomeNodePreference,
     setHomeNodeLastKnown,
+    saveBridgeTransportConfig,
     saveHomeBridgeUrl,
     clearHomeBridgeUrl,
     setHomeNodeStatus,

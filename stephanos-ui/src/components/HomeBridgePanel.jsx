@@ -24,6 +24,7 @@ export default function HomeBridgePanel() {
   const {
     homeBridgeUrl,
     saveHomeBridgeUrl,
+    saveBridgeTransportConfig,
     clearHomeBridgeUrl,
     bridgeTransportDefinitions,
     bridgeTransportPreferences,
@@ -142,15 +143,26 @@ export default function HomeBridgePanel() {
   }
 
   function handleSaveTailscale() {
-    updateBridgeTransportConfig('tailscale', {
-      backendUrl: tailscaleBackendDraft,
+    const result = saveBridgeTransportConfig('tailscale', tailscaleBackendDraft, {
       accepted: false,
       active: false,
       usable: false,
       reachability: 'unknown',
       reason: 'Tailscale bridge configuration saved; acceptance pending runtime validation.',
     });
-    setFeedback('Saved Tailscale bridge intent. Validate or probe to confirm runtime reachability.');
+    if (!result.ok) {
+      setFeedback(`Save failed: ${result.reason || 'invalid-home-bridge-url'}`);
+      setValidationState('invalid');
+      setValidationReason(result.reason || 'Invalid Tailscale bridge URL.');
+      setReachabilityState('invalid');
+      setReachabilityReason(result.reason || 'Probe blocked by invalid bridge URL.');
+      return;
+    }
+    setFeedback(`Saved Tailscale bridge intent: ${result.normalizedUrl}`);
+    setValidationState('valid');
+    setValidationReason('Bridge URL passes canonical validation rules.');
+    setReachabilityState('unknown');
+    setReachabilityReason('Bridge saved. Probe to confirm live reachability.');
   }
 
   function handleValidate() {

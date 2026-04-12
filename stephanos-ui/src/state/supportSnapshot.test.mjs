@@ -1037,6 +1037,91 @@ test('buildSupportSnapshot includes home bridge transport and tailscale truth fi
   assert.match(snapshot, /Remembered Home Bridge exists but is unreachable from this surface\./);
 });
 
+test('buildSupportSnapshot reports immediate hosted save persistence truth without waiting for validation loops', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready' },
+    routeTruthView: { routeKind: 'home-node', backendReachableState: 'unknown', selectedRouteReachableState: 'unknown', routeUsableState: 'no' },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        selectedTransport: 'tailscale',
+        configuredTransport: 'tailscale',
+        source: 'bridgeTransport:tailscale',
+        bridgeMemoryPresent: true,
+        bridgeMemoryTransport: 'tailscale',
+        bridgeMemoryUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+        bridgeMemoryPersistenceState: 'save-persisted',
+        bridgeMemoryPersistenceReason: 'Remembered tailscale Home Bridge config persisted to shared durable memory.',
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: true,
+        bridgeMemoryReadAttempted: false,
+        bridgeMemoryReadResult: 'none',
+        bridgeMemoryStorageKey: 'stephanos.durable.memory.v2',
+        bridgeMemoryStorageScope: 'shared-runtime-memory',
+        bridgeMemoryLastRawValueSummary: 'normalized-memory:tailscale:https://desktop-9flonkj.taild6f215.ts.net',
+      },
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-04-12T00:00:00.000Z'),
+    origin: 'https://cheekyfellastef.github.io',
+    href: 'https://cheekyfellastef.github.io/stephanos',
+  });
+
+  assert.match(snapshot, /Home Bridge Transport Selected: tailscale/);
+  assert.match(snapshot, /Home Bridge Transport Configured: tailscale/);
+  assert.match(snapshot, /Bridge Memory Transport: tailscale/);
+  assert.match(snapshot, /Bridge Memory URL: https:\/\/desktop-9flonkj\.taild6f215\.ts\.net/);
+  assert.match(snapshot, /Bridge Memory Write Attempted: yes/);
+  assert.match(snapshot, /Bridge Memory Write Succeeded: yes/);
+  assert.match(snapshot, /Bridge Memory Storage Key: stephanos\.durable\.memory\.v2/);
+  assert.match(snapshot, /Bridge Memory Storage Scope: shared-runtime-memory/);
+  assert.match(snapshot, /Bridge Memory Last Raw Value Summary: normalized-memory:tailscale:https:\/\/desktop-9flonkj\.taild6f215\.ts\.net/);
+});
+
+test('buildSupportSnapshot reports hosted save failures as attempted writes with explicit failure reason', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready' },
+    routeTruthView: { routeKind: 'home-node', backendReachableState: 'unknown', selectedRouteReachableState: 'unknown', routeUsableState: 'no' },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        selectedTransport: 'tailscale',
+        configuredTransport: 'none',
+        source: 'bridgeTransport:unresolved',
+        bridgeMemoryPresent: false,
+        bridgeMemoryTransport: 'none',
+        bridgeMemoryUrl: '',
+        bridgeMemoryPersistenceState: 'save-clobbered',
+        bridgeMemoryPersistenceReason: 'Shared durable memory write failed while persisting Home Bridge memory: simulated durable-memory failure',
+        bridgeMemoryWriteAttempted: true,
+        bridgeMemoryWriteSucceeded: false,
+        bridgeMemoryReadAttempted: false,
+        bridgeMemoryReadResult: 'none',
+        bridgeMemoryStorageKey: 'stephanos.durable.memory.v2',
+        bridgeMemoryStorageScope: 'shared-runtime-memory',
+        bridgeMemoryLastRawValueSummary: 'normalized-memory:tailscale:https://desktop-9flonkj.taild6f215.ts.net',
+      },
+    },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-04-12T00:00:00.000Z'),
+    origin: 'https://cheekyfellastef.github.io',
+    href: 'https://cheekyfellastef.github.io/stephanos',
+  });
+
+  assert.match(snapshot, /Bridge Memory Persistence State: save-clobbered/);
+  assert.match(snapshot, /Bridge Memory Persistence Reason: Shared durable memory write failed while persisting Home Bridge memory: simulated durable-memory failure/);
+  assert.match(snapshot, /Bridge Memory Write Attempted: yes/);
+  assert.match(snapshot, /Bridge Memory Write Succeeded: no/);
+});
+
 test('buildSupportSnapshot operator guidance calls out remembered tailscale revalidated promotion', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: { appLaunchState: 'ready' },
