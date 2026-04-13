@@ -35,3 +35,69 @@ test('detects provider intent vs execution drift', () => {
   assert.ok(model.failureFamilies.includes('provider-intent-vs-execution-drift'));
   assert.ok(model.patternMatches.some((entry) => entry.patternId === 'provider-intent-vs-execution-drift'));
 });
+
+test('detects timeout derivation drift when provider attribution conflicts with route usability truth', () => {
+  const model = buildSystemWatcherModel({
+    runtimeTruth: {
+      session: { sessionKind: 'hosted-web', nonLocalSession: true },
+      route: { selectedRouteKind: 'home-node', actualTarget: 'https://bridge.example' },
+      reachabilityTruth: {
+        selectedRouteReachable: true,
+        selectedRouteUsable: false,
+        backendReachable: true,
+      },
+      provider: { selectedProvider: 'openai', executableProvider: 'openai' },
+    },
+    canonicalRouteRuntimeTruth: {},
+    runtimeContext: {
+      lastTimeoutPolicySource: 'provider:openai',
+      lastTimeoutFailureLayer: 'provider',
+      lastTimeoutEffectiveProvider: 'openai',
+    },
+  });
+
+  assert.ok(model.failureFamilies.includes('timeout-derivation-drift'));
+  assert.ok(model.contradictions.some((entry) => entry.id === 'timeout-attribution-provider-vs-route-drift'));
+});
+
+test('detects ui truth projection mismatch when provider-focused wording hides transport boundary contradiction', () => {
+  const model = buildSystemWatcherModel({
+    runtimeTruth: {
+      session: { sessionKind: 'hosted-web', nonLocalSession: true },
+      route: { selectedRouteKind: 'home-node', actualTarget: 'http://100.88.0.2:8787' },
+      reachabilityTruth: { selectedRouteReachable: true, selectedRouteUsable: false, backendReachable: true },
+      provider: { selectedProvider: 'groq', executableProvider: 'groq' },
+    },
+    canonicalRouteRuntimeTruth: {},
+    runtimeContext: {
+      frontendOrigin: 'https://console.example',
+      uiStatusSummary: 'Provider degraded and unavailable in status panel',
+    },
+  });
+
+  assert.ok(model.failureFamilies.includes('ui-truth-projection-mismatch'));
+  assert.ok(model.patternMatches.some((entry) => entry.patternId === 'ui-truth-projection-mismatch'));
+});
+
+test('classifies recurring contradictions as persistent with temporal reinforcement', () => {
+  const model = buildSystemWatcherModel({
+    runtimeTruth: {
+      session: { sessionKind: 'hosted-web', nonLocalSession: true },
+      route: { selectedRouteKind: 'home-node', actualTarget: 'http://100.88.0.2:8787' },
+      reachabilityTruth: { selectedRouteReachable: true, selectedRouteUsable: false, backendReachable: true },
+      provider: { selectedProvider: 'groq', executableProvider: 'groq' },
+    },
+    canonicalRouteRuntimeTruth: {},
+    runtimeContext: {
+      frontendOrigin: 'https://console.example',
+      watcherRecentHistory: [
+        { failureFamilies: ['protocol-boundary-mismatch'], routeKind: 'home-node', timeoutLayer: 'provider' },
+        { failureFamilies: ['protocol-boundary-mismatch'], routeKind: 'cloud', timeoutLayer: 'route' },
+      ],
+    },
+  });
+
+  assert.equal(model.diagnosisSummary.persistenceClassification, 'persistent-recurring');
+  assert.ok(model.temporalSignal.transitionBackedEvidence.oscillationSignals.includes('route-flip'));
+  assert.ok(model.rootCauseCandidates[0].recurrenceCount >= 2);
+});

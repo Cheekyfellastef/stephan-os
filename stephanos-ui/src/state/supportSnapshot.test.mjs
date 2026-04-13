@@ -199,6 +199,9 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Context Assembly Mode: self-build-elevated/);
   assert.match(snapshot, /Self-Build Prompt Detected: true/);
   assert.match(snapshot, /System Awareness Level: elevated-self-build/);
+  assert.match(snapshot, /System Watcher Persistence: insufficient-evidence/);
+  assert.match(snapshot, /System Watcher Temporal Confidence: limited/);
+  assert.match(snapshot, /System Watcher Projection Mismatch: none-detected/);
   assert.match(snapshot, /Context Integrity Preserved: true/);
   assert.match(snapshot, /Planning Active: true/);
   assert.match(snapshot, /Planning Mode: self-build-mission-synthesis/);
