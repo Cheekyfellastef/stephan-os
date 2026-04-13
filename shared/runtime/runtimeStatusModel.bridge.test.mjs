@@ -515,6 +515,96 @@ test('hosted remembered-revalidated tailscale downgrades to blocker state when b
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
 });
 
+test('hosted lan-companion canonicalizes validated remembered tailscale bridge and avoids rejected LAN backend drift', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      homeNode: {
+        configured: true,
+        reachable: true,
+        backendUrl: 'http://192.168.0.198:8787',
+        source: 'manual',
+      },
+      homeNodeBridge: {
+        configured: true,
+        accepted: true,
+        backendUrl: 'http://192.168.0.198:8787',
+        reachability: 'reachable',
+        reason: 'Home PC node is reachable on the LAN',
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+        reason: 'Home Bridge configuration saved by operator.',
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Home Bridge configuration saved by operator.',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'manual',
+        transports: {
+          manual: {
+            enabled: true,
+            backendUrl: 'http://192.168.0.198:8787',
+            accepted: true,
+            reachability: 'reachable',
+          },
+          tailscale: {
+            enabled: true,
+            backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: false,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+          blockedReason: 'tailscale transport unreachable',
+        },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.sessionKind, 'hosted-web');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.activeTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.state, 'active');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.reachable, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.backendUrl');
+  assert.equal(model.runtimeContext.backendTargetFallbackUsed, false);
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.routeCandidateWinner?.transportKind, 'tailscale');
+  assert.equal(model.finalRoute.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  const manualCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-manual');
+  assert.ok(manualCandidate);
+  assert.equal(manualCandidate.usable, false);
+  assert.equal(manualCandidate.active, false);
+});
+
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,
