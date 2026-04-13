@@ -102,6 +102,37 @@
       .surface { grid-template-columns: 1fr; }
       .mission-console { position: static; }
     }
+    .stephanos-surface-panel {
+      padding: 12px;
+    }
+    .stephanos-surface-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .stephanos-surface-panel-header .title {
+      margin: 0;
+    }
+    .stephanos-surface-panel-knob {
+      border-radius: 999px;
+      width: 38px;
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      line-height: 1;
+      background: rgba(34, 80, 141, 0.35);
+    }
+    .stephanos-surface-panel-knob .dial {
+      display: inline-block;
+      transition: transform 180ms ease;
+    }
+    .stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .dial {
+      transform: rotate(-90deg);
+    }
   </style>
 </head>
 <body>
@@ -115,7 +146,7 @@
 
     <section class="surface">
       <section class="grid">
-        <section class="panel grid two">
+        <section class="panel grid two" data-stephanos-collapsible-panel data-panel-id="overview-mission">
           <div>
             <h2 class="title">Overview / Mission</h2>
             <ul id="overview-list"></ul>
@@ -126,12 +157,12 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel" data-stephanos-collapsible-panel data-panel-id="knowledge-shape">
           <h2 class="title">Knowledge Shape</h2>
           <div id="bucket-grid" class="grid three"></div>
         </section>
 
-        <section class="panel grid two">
+        <section class="panel grid two" data-stephanos-collapsible-panel data-panel-id="techniques-experiments">
           <div>
             <h2 class="title">Techniques</h2>
             <div id="techniques-grid" class="grid"></div>
@@ -142,7 +173,7 @@
           </div>
         </section>
 
-        <section class="panel grid two">
+        <section class="panel grid two" data-stephanos-collapsible-panel data-panel-id="workspace-links-next-steps">
           <div>
             <h2 class="title">Folder-Backed Workspace Links</h2>
             <ul id="folder-map"></ul>
@@ -156,14 +187,14 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel" data-stephanos-collapsible-panel data-panel-id="system-insight">
           <h2 class="title">System Insight (Watcher / Observer-only)</h2>
           <div id="watcher-insight" class="grid two"></div>
           <p class="mini" id="watcher-meta">Watcher model pending…</p>
         </section>
       </section>
 
-      <aside class="panel mission-console">
+      <aside class="panel mission-console" data-stephanos-collapsible-panel data-panel-id="mission-console">
         <h2 class="title">Mission Console · VR Research</h2>
         <p class="mini">Role-shaping uses prompt context only (Research Assistant, System Analyst, Builder Assistant).</p>
         <div class="toolbar">
@@ -188,6 +219,8 @@
   </main>
 
   <script type="module">
+    import { queryStephanosAI } from '../../shared/ai/stephanosClient.mjs';
+    import { initStephanosSurfacePanels } from '../../shared/runtime/stephanosSurfacePanels.mjs';
     import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
     import { createTileRetrievalBridge } from '../../shared/runtime/tileRetrievalBridge.js';
 
@@ -289,38 +322,38 @@
       }
 
       nodes.askAi.disabled = true;
-      nodes.consoleStatus.textContent = 'Calling /api/ai/chat…';
+      nodes.consoleStatus.textContent = 'Calling Stephanos Mission Console route…';
       nodes.answerPane.textContent = 'Thinking…';
 
       const context = buildResearchContext();
-      const payload = {
-        prompt: `${rolePrefix(nodes.roleSelect.value)}\n\nContext: ${JSON.stringify(context)}\n\nOperator prompt: ${prompt}`,
-        provider: 'auto',
-        routeMode: 'auto',
-        runtimeContext: {
-          tileId: TILE_ID,
-          tileSource: TILE_SOURCE,
-          tileCategory: 'vr-research',
-          retrievalContext: state.retrievalContext,
-          vrResearchContext: context,
-        }
-      };
-
       try {
-        const response = await fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+        const data = await queryStephanosAI({
+          provider: 'auto',
+          messages: [
+            {
+              role: 'user',
+              content: `${rolePrefix(nodes.roleSelect.value)}\n\nContext: ${JSON.stringify(context)}\n\nOperator prompt: ${prompt}`,
+            },
+          ],
+          context: {
+            tileId: TILE_ID,
+            tileSource: TILE_SOURCE,
+            tileCategory: 'vr-research',
+            retrievalContext: state.retrievalContext,
+            vrResearchContext: context,
+          },
+          runtimeContext: {
+            tileId: TILE_ID,
+            tileSource: TILE_SOURCE,
+            tileCategory: 'vr-research',
+            frontendOrigin: window.location.origin,
+          },
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data?.error || `request failed (${response.status})`);
-        }
         const answerText = extractAnswer(data);
         state.lastPrompt = prompt;
         state.lastAnswer = answerText;
         nodes.answerPane.textContent = answerText;
-        nodes.consoleStatus.textContent = 'Response received through /api/ai/chat.';
+        nodes.consoleStatus.textContent = 'Response received through Stephanos Mission Console backend route.';
       } catch (error) {
         nodes.answerPane.textContent = `Mission Console request failed: ${error.message}`;
         nodes.consoleStatus.textContent = 'Request failed.';
@@ -472,6 +505,11 @@
       textList(nodes.seams, data.integrationSeams);
       renderWatcherInsight();
     }
+
+    initStephanosSurfacePanels({
+      surfaceId: TILE_ID,
+      panelSelector: '[data-stephanos-collapsible-panel]',
+    });
 
     nodes.askAi.addEventListener('click', askMissionConsole);
     nodes.submitMemory.addEventListener('click', submitMemoryCandidate);
