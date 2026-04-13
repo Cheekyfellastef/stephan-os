@@ -255,6 +255,56 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
   assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
 });
 
+test('hosted remembered tailscale http bridge remains operator-authoritative through runtimeStatusModel flow', () => {
+  const bridgeUrl = 'http://desktop-9flonkj.taild6f215.ts.net:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: bridgeUrl,
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: bridgeUrl,
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: bridgeUrl,
+          actualTarget: bridgeUrl,
+          source: 'bridgeTransport:tailscale',
+        },
+        cloud: { configured: true, available: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryUrl, bridgeUrl);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.backendUrl, bridgeUrl);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.reachable, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, bridgeUrl);
+});
+
 test('hosted remembered tailscale pending probe does not auto-promote canonical route truth before acceptance', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: false,

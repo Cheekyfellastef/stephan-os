@@ -54,7 +54,7 @@ test('manual bridge validation allows http in local-desktop canonical session tr
   assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: truth.sessionKind, selectedTransport: 'manual' }), false);
 });
 
-test('manual bridge validation requires https in hosted/off-network canonical session truth', () => {
+test('manual bridge validation keeps operator transport truth in hosted/off-network canonical session truth', () => {
   const truth = resolveBridgeValidationTruth({
     runtimeStatusModel: {
       canonicalRouteRuntimeTruth: { sessionKind: 'hosted-web', winningRoute: 'home-node' },
@@ -63,19 +63,53 @@ test('manual bridge validation requires https in hosted/off-network canonical se
   });
 
   assert.equal(truth.sessionKind, 'hosted-web');
-  assert.equal(truth.requireHttps, true);
-  assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: truth.sessionKind, selectedTransport: 'manual' }), true);
+  assert.equal(truth.requireHttps, false);
+  assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: truth.sessionKind, selectedTransport: 'manual' }), false);
 });
 
-test('bridge validation truth resolver is null-safe and defaults to strict https', () => {
+test('bridge validation truth resolver is null-safe and defaults to http-compatible validation', () => {
   const truth = resolveBridgeValidationTruth({
     runtimeStatusModel: null,
     selectedTransport: 'manual',
   });
 
   assert.equal(truth.sessionKind, 'unknown');
-  assert.equal(truth.requireHttps, true);
-  assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: 'local-desktop', selectedTransport: 'tailscale' }), true);
+  assert.equal(truth.requireHttps, false);
+  assert.equal(resolveBridgeUrlRequireHttps({ sessionKind: 'local-desktop', selectedTransport: 'tailscale' }), false);
+});
+
+test('tailscale transport preserves explicit http backend URL without protocol coercion', () => {
+  const input = 'http://desktop-9flonkj.taild6f215.ts.net:8787';
+  const prefs = normalizeBridgeTransportPreferences({
+    selectedTransport: 'tailscale',
+    transports: {
+      tailscale: {
+        enabled: true,
+        backendUrl: input,
+        accepted: true,
+        active: true,
+        reachability: 'reachable',
+        usable: true,
+      },
+    },
+  }, {
+    tailscaleRequireHttps: false,
+  });
+  const truth = projectHomeBridgeTransportTruth(prefs, {
+    bridgeMemory: { transport: 'tailscale', backendUrl: input },
+    bridgeMemoryPersistence: {
+      bridgeInputRaw: input,
+      bridgeInputNormalized: input,
+      bridgePersistedValue: input,
+      bridgeRehydratedValue: input,
+      bridgeProbeTarget: input,
+    },
+  });
+  assert.equal(prefs.transports.tailscale.backendUrl, input);
+  assert.equal(truth.tailscale.backendUrl, input);
+  assert.equal(truth.bridgeInputNormalized, input);
+  assert.equal(truth.bridgePersistedValue, input);
+  assert.equal(truth.bridgeProbeTarget, input);
 });
 
 test('home bridge durable memory normalization is bounded and null-safe', () => {
