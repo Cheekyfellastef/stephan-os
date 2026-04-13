@@ -937,6 +937,9 @@ export default function StatusPanel() {
           <li>Likely Failing Layer: {watcherSummary.likelyFailingLayer || 'none-detected'}</li>
           <li>Contradictions: {watcherSummary.contradictionCount ?? watcherContradictions.length}</li>
           <li>Matched Patterns: {watcherSummary.matchedPatternCount ?? watcherPatterns.length}</li>
+          <li>Persistence: {watcherSummary.persistenceClassification || cognitiveAdjudication.temporalSignal?.persistenceClassification || 'insufficient-evidence'}</li>
+          <li>Temporal Confidence: {watcherSummary.temporalConfidence || cognitiveAdjudication.temporalSignal?.temporalConfidence || 'limited'}</li>
+          <li>Recent Recurring Families: {Array.isArray(cognitiveAdjudication.temporalSignal?.transitionBackedEvidence?.recurringFamilies) ? cognitiveAdjudication.temporalSignal.transitionBackedEvidence.recurringFamilies.map((entry) => `${entry.family}×${entry.recurrences}`).join(', ') || 'none' : 'none'}</li>
           <li>Next Inspection Boundary: {cognitiveAdjudication.recommendations?.nextInspectionBoundary || 'n/a'}</li>
         </ul>
         <strong>Why this diagnosis?</strong>
@@ -956,6 +959,10 @@ export default function StatusPanel() {
               #{candidate.rank} {candidate.failingLayer} · conf={candidate.confidence}
               <br />
               cause: {candidate.suspectedRootCause}
+              <br />
+              repair boundary: {candidate.likelyRepairBoundary?.subsystem || 'n/a'}
+              <br />
+              verify: {candidate.likelyVerificationStep || 'n/a'}
             </li>
           ))}
         </ul>
