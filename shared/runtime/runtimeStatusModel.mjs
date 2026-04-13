@@ -73,6 +73,11 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     && ['mixed-scheme-blocked', 'cors-blocked'].includes(String(bridgeTruth.bridgeHostedExecutionCompatibility || '').trim());
   const rememberedBridgeUrl = String(bridgeTruth.bridgeMemoryUrl || '').trim();
   const liveTailscaleUrl = String(bridgeTruth?.tailscale?.backendUrl || '').trim();
+  const liveTailscaleExecutionUrl = String(
+    bridgeTruth?.tailscale?.executionUrl
+    || bridgeTruth?.bridgeHostedExecutionBridgeUrl
+    || '',
+  ).trim();
   const rememberedRevalidatedAsTailscale = rememberedBridgeReconciliationState === 'remembered-revalidated'
     && bridgeTruth.selectedTransport === 'tailscale'
     && bridgeTruth?.tailscale?.accepted === true
@@ -118,6 +123,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       ...(rememberedRevalidatedAsTailscale && liveTailscaleUrl
         ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.backendUrl', liveTailscaleUrl)]
         : []),
+      ...(liveTailscaleExecutionUrl
+        ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.executionUrl', liveTailscaleExecutionUrl)]
+        : []),
       ...(rememberedBridgeEligible
         ? [createBackendTargetCandidate('bridgeMemory.remembered.backendUrl', rememberedBridgeUrl)]
         : []),
@@ -125,6 +133,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', homeNodeBridge.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
+      createBackendTargetCandidate('bridgeTransport.tailscale.executionUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.executionUrl),
       createBackendTargetCandidate('bridgeTransport.tailscale.backendUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
       createBackendTargetCandidate('runtimeContext.bridgeTransportTruth.tailscale.backendUrl', runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl),
     ] : []),

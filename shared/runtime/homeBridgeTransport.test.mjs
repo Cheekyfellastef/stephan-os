@@ -112,6 +112,32 @@ test('tailscale transport preserves explicit http backend URL without protocol c
   assert.equal(truth.bridgeProbeTarget, input);
 });
 
+test('tailscale transport stores hosted HTTPS execution URL separately from operator transport URL', () => {
+  const prefs = normalizeBridgeTransportPreferences({
+    selectedTransport: 'tailscale',
+    transports: {
+      tailscale: {
+        enabled: true,
+        backendUrl: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        hostOverride: 'desktop-9flonkj.taild6f215.ts.net',
+        accepted: true,
+        active: true,
+        reachability: 'reachable',
+        usable: true,
+      },
+    },
+  });
+  const memory = deriveBridgeMemoryFromPreferences(prefs);
+  const truth = projectHomeBridgeTransportTruth(prefs, {
+    bridgeMemory: memory,
+  });
+  assert.equal(memory.backendUrl, 'http://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.equal(memory.executionUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(truth.bridgeOperatorTransportUrl, 'http://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.equal(truth.bridgeHostedExecutionBridgeUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(truth.tailscale.executionUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+});
+
 test('home bridge durable memory normalization is bounded and null-safe', () => {
   const memory = normalizeHomeBridgeMemory({
     transport: 'tailscale',
