@@ -6,8 +6,14 @@
   "buildTarget": "apps/stephanos/dist",
   "buildTargetIdentifier": "apps/stephanos/dist",
   "runtimeId": "live-vite-shell",
+<<<<<<< HEAD
   "runtimeMarker": "antifriction-live-v3::f9e938b::ad82141b7347",
   "gitCommit": "f9e938b",
   "buildTimestamp": "2026-04-13T15:27:20.357Z",
+=======
+  "runtimeMarker": "antifriction-live-v3::f9e938b::ad38f8d8c871",
+  "gitCommit": "f9e938b",
+  "buildTimestamp": "2026-04-13T15:16:38.298Z",
+>>>>>>> d4c2159 (Fix hosted Home Bridge mixed-scheme execution truth and bridge path)
   "sourceTruth": "sourceFingerprint"
 }
