@@ -488,6 +488,29 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemory: rememberedMemory,
     autoRevalidation,
   });
+  const bridgeInputRaw = normalizeReason(bridgeMemoryPersistence?.bridgeInputRaw, hasMemory ? rememberedMemory.backendUrl : '');
+  const bridgeInputNormalized = normalizeReason(bridgeMemoryPersistence?.bridgeInputNormalized, hasMemory ? rememberedMemory.backendUrl : '');
+  const bridgePersistedValue = normalizeReason(bridgeMemoryPersistence?.bridgePersistedValue, hasMemory ? rememberedMemory.backendUrl : '');
+  const bridgeRehydratedValue = normalizeReason(
+    bridgeMemoryPersistence?.bridgeRehydratedValue,
+    hasMemory && bridgeMemoryRehydrated === true ? rememberedMemory.backendUrl : '',
+  );
+  const bridgeProbeTarget = normalizeReason(
+    bridgeMemoryPersistence?.bridgeProbeTarget,
+    autoRevalidation?.executionTarget || (hasMemory ? rememberedMemory.backendUrl : ''),
+  );
+  const tailscaleReason = (
+    rememberedMemory.transport === 'tailscale'
+    && reconciliation.state === 'remembered-execution-incompatible'
+    && normalizeReason(tailscaleConfig.reason, '') === 'Tailscale transport not configured.'
+  )
+    ? (reconciliation.reason || 'Remembered Tailscale bridge state available.')
+    : normalizeReason(
+      tailscaleConfig.reason,
+      rememberedMemory.transport === 'tailscale'
+        ? (reconciliation.reason || 'Remembered Tailscale bridge state available.')
+        : '',
+    );
   const persistenceTruth = projectPersistenceTruth({
     lastWrite: bridgeMemoryPersistence?.lastWrite || null,
     previousPersistence: bridgeMemoryPersistence?.persistence || bridgeMemoryPersistence || {},
@@ -541,11 +564,11 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemoryStorageKey: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryStorageKey, 'stephanos.durable.memory.v2'),
     bridgeMemoryStorageScope: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryStorageScope, 'shared-runtime-memory'),
     bridgeMemoryLastRawValueSummary: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryLastRawValueSummary, 'none'),
-    bridgeInputRaw: normalizeReason(bridgeMemoryPersistence?.bridgeInputRaw, ''),
-    bridgeInputNormalized: normalizeReason(bridgeMemoryPersistence?.bridgeInputNormalized, ''),
-    bridgePersistedValue: normalizeReason(bridgeMemoryPersistence?.bridgePersistedValue, ''),
-    bridgeRehydratedValue: normalizeReason(bridgeMemoryPersistence?.bridgeRehydratedValue, ''),
-    bridgeProbeTarget: normalizeReason(bridgeMemoryPersistence?.bridgeProbeTarget, ''),
+    bridgeInputRaw,
+    bridgeInputNormalized,
+    bridgePersistedValue,
+    bridgeRehydratedValue,
+    bridgeProbeTarget,
     bridgeDirectReachability: normalizeBridgeDirectReachability(autoRevalidation?.directReachability, 'unknown'),
     bridgeHostedExecutionCompatibility: normalizeBridgeExecutionCompatibility(autoRevalidation?.executionCompatibility, 'unknown'),
     bridgeHostedExecutionTarget: normalizeReason(autoRevalidation?.executionTarget, ''),
@@ -558,7 +581,7 @@ export function projectHomeBridgeTransportTruth(
       accepted: tailscaleConfig.accepted === true,
       reachable: tailscaleConfig.reachability === 'reachable',
       usable: tailscaleConfig.usable === true,
-      reason: tailscaleConfig.reason || '',
+      reason: tailscaleReason,
       diagnostics: Array.isArray(tailscaleConfig.diagnostics) ? tailscaleConfig.diagnostics : [],
     },
   };
