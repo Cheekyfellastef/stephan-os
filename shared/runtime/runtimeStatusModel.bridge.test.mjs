@@ -134,6 +134,42 @@ test('createRuntimeStatusModel surfaces tailscale backend target candidate truth
   assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
 });
 
+test('createRuntimeStatusModel prefers tailscale HTTPS execution URL over operator transport URL for hosted sessions', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+            executionUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+        },
+        cloud: { configured: true, available: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.backendTargetCandidates[0].url, 'https://desktop-9flonkj.taild6f215.ts.net');
+});
+
 test('hosted backend target candidate order prefers remembered tailscale bridge over stale LAN manual candidate', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,

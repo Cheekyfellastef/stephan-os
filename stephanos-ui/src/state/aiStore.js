@@ -1722,32 +1722,69 @@ export function AIStoreProvider({ children }) {
       const existingDirectReachability = backendTargetDiagnostic.available === true
         ? 'reachable'
         : 'unknown';
+      const preferredHostedExecutionUrl = plan.transport === 'tailscale'
+        ? String(bridgeTransportPreferences?.transports?.tailscale?.executionUrl || '').trim()
+        : '';
+      const preferredHostedExecutionValidation = preferredHostedExecutionUrl
+        ? validateStephanosHomeBridgeUrl(preferredHostedExecutionUrl, {
+          frontendOrigin,
+          requireHttps: true,
+        })
+        : { ok: false, normalizedUrl: '' };
+      const executionProbeTarget = preferredHostedExecutionValidation.ok
+        ? preferredHostedExecutionValidation.normalizedUrl
+        : validation.normalizedUrl;
       if (hostedSession && frontendProtocol === 'https:' && bridgeProtocol === 'http:') {
-        const reason = 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.';
-        updateBridgeTransportConfig(plan.transport, {
-          enabled: true,
-          backendUrl: validation.normalizedUrl,
-          accepted: false,
-          active: false,
-          usable: false,
-          reachability: existingDirectReachability === 'reachable' ? 'reachable' : 'unknown',
-          reason,
-        });
-        setBridgeAutoRevalidation({
-          state: 'execution-incompatible',
-          reason,
-          attemptedAt: new Date().toISOString(),
-          attemptedConfigKey,
-          directReachability: existingDirectReachability,
-          executionCompatibility: 'mixed-scheme-blocked',
-          executionTarget: '',
-          executionReason: reason,
-          infrastructureRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy) to allow hosted execution from HTTPS surfaces.',
-        });
-        return;
+        if (preferredHostedExecutionValidation.ok) {
+          updateBridgeTransportConfig(plan.transport, {
+            enabled: true,
+            backendUrl: validation.normalizedUrl,
+            executionUrl: preferredHostedExecutionValidation.normalizedUrl,
+            accepted: false,
+            active: false,
+            usable: false,
+            reachability: 'pending',
+            reason: 'Remembered operator transport is HTTP; using configured HTTPS hosted execution bridge target.',
+          });
+          setBridgeAutoRevalidation({
+            state: 'probing',
+            reason: 'Using configured HTTPS hosted execution bridge target for hosted revalidation.',
+            attemptedAt: new Date().toISOString(),
+            attemptedConfigKey,
+            directReachability: existingDirectReachability,
+            executionCompatibility: 'compatible',
+            executionTarget: preferredHostedExecutionValidation.normalizedUrl,
+            executionReason: '',
+            infrastructureRequirement: '',
+          });
+        } else {
+          const reason = 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.';
+          updateBridgeTransportConfig(plan.transport, {
+            enabled: true,
+            backendUrl: validation.normalizedUrl,
+            accepted: false,
+            active: false,
+            usable: false,
+            reachability: existingDirectReachability === 'reachable' ? 'reachable' : 'unknown',
+            reason,
+          });
+          setBridgeAutoRevalidation({
+            state: 'execution-incompatible',
+            reason,
+            attemptedAt: new Date().toISOString(),
+            attemptedConfigKey,
+            directReachability: existingDirectReachability,
+            executionCompatibility: 'mixed-scheme-blocked',
+            executionTarget: '',
+            executionReason: reason,
+            infrastructureRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy) to allow hosted execution from HTTPS surfaces.',
+          });
+          return;
+        }
       }
       updateBridgeTransportConfig(plan.transport, {
         backendUrl: validation.normalizedUrl,
+        ...(preferredHostedExecutionValidation.ok ? { executionUrl: preferredHostedExecutionValidation.normalizedUrl } : {}),
         accepted: false,
         active: false,
         usable: false,
@@ -1761,22 +1798,23 @@ export function AIStoreProvider({ children }) {
         attemptedConfigKey,
         directReachability: 'unknown',
         executionCompatibility: 'compatible',
-        executionTarget: validation.normalizedUrl,
+        executionTarget: executionProbeTarget,
         executionReason: '',
         infrastructureRequirement: '',
       });
       setBridgeMemoryPersistence((prev) => ({
         ...(prev || {}),
-        bridgeProbeTarget: validation.normalizedUrl,
+        bridgeProbeTarget: executionProbeTarget,
       }));
       try {
-        const probe = await checkApiHealth({ baseUrl: validation.normalizedUrl, timeoutMs: 12000 });
+        const probe = await checkApiHealth({ baseUrl: executionProbeTarget, timeoutMs: 12000 });
         if (cancelled) return;
         const serviceOk = probe.ok && probe.data?.service === 'stephanos-server';
         const nextReachability = serviceOk ? 'reachable' : 'unreachable';
         updateBridgeTransportConfig(plan.transport, {
           enabled: true,
           backendUrl: validation.normalizedUrl,
+          ...(preferredHostedExecutionValidation.ok ? { executionUrl: preferredHostedExecutionValidation.normalizedUrl } : {}),
           accepted: serviceOk,
           active: serviceOk,
           usable: serviceOk,
@@ -1793,7 +1831,7 @@ export function AIStoreProvider({ children }) {
               ...(prev?.runtimeContext?.homeNodeBridge || {}),
               configured: true,
               accepted: serviceOk,
-              backendUrl: validation.normalizedUrl,
+              backendUrl: executionProbeTarget,
               reachability: nextReachability,
               reason: serviceOk
                 ? 'Remembered bridge revalidated and promoted to live route truth.'
@@ -1812,7 +1850,7 @@ export function AIStoreProvider({ children }) {
           attemptedConfigKey,
           directReachability: serviceOk ? 'reachable' : 'unreachable',
           executionCompatibility: 'compatible',
-          executionTarget: validation.normalizedUrl,
+          executionTarget: executionProbeTarget,
           executionReason: '',
           infrastructureRequirement: '',
         });
@@ -1836,7 +1874,7 @@ export function AIStoreProvider({ children }) {
           attemptedConfigKey,
           directReachability: 'unknown',
           executionCompatibility: 'unknown',
-          executionTarget: validation.normalizedUrl,
+          executionTarget: executionProbeTarget,
           executionReason: error?.message || '',
           infrastructureRequirement: '',
         });

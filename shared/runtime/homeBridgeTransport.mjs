@@ -66,6 +66,7 @@ const DEFAULT_BRIDGE_TRANSPORT_PREFERENCES = Object.freeze({
       tailnetIp: '',
       hostOverride: '',
       backendUrl: '',
+      executionUrl: '',
       accepted: false,
       active: false,
       reachability: 'unknown',
@@ -154,6 +155,22 @@ function normalizeTimestamp(value = '') {
   const parsed = Date.parse(text);
   if (!Number.isFinite(parsed)) return '';
   return new Date(parsed).toISOString();
+}
+
+function deriveTsNetExecutionUrl(hostOverride = '') {
+  const hostname = normalizeString(hostOverride).toLowerCase();
+  if (!hostname || !hostname.endsWith('.ts.net')) {
+    return '';
+  }
+  return `https://${hostname}`;
+}
+
+function isTsNetOrigin(value = '') {
+  try {
+    return new URL(value).hostname.endsWith('.ts.net');
+  } catch {
+    return false;
+  }
 }
 
 export function resolvePersistenceWriteSource(sessionKind = '') {
@@ -251,6 +268,7 @@ function createEmptyBridgeMemory() {
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: 'none',
     backendUrl: '',
+    executionUrl: '',
     tailscaleDeviceName: '',
     tailscaleHostnameOverride: '',
     tailscaleIp: '',
@@ -265,6 +283,7 @@ export function normalizeHomeBridgeMemory(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const transport = normalizeBridgeTransportSelection(source.transport);
   const backendUrl = normalizeString(source.backendUrl);
+  const executionUrl = normalizeString(source.executionUrl);
   const rememberedAt = normalizeTimestamp(source.rememberedAt);
   const normalizedTransport = backendUrl ? transport : 'none';
   return {
@@ -273,6 +292,7 @@ export function normalizeHomeBridgeMemory(value = {}) {
       : HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: normalizedTransport,
     backendUrl: normalizedTransport === 'none' ? '' : backendUrl,
+    executionUrl: normalizedTransport === 'none' ? '' : executionUrl,
     tailscaleDeviceName: normalizeString(source.tailscaleDeviceName),
     tailscaleHostnameOverride: normalizeString(source.tailscaleHostnameOverride),
     tailscaleIp: normalizeString(source.tailscaleIp),
@@ -298,6 +318,7 @@ export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {
     manual: normalizeString(manual.backendUrl),
     tailscale: normalizeString(tailscale.backendUrl),
   };
+  const tailscaleExecutionUrl = normalizeString(tailscale.executionUrl) || deriveTsNetExecutionUrl(tailscale.hostOverride);
   const candidateOrder = [
     selectedTransport,
     preferredTransport,
@@ -320,6 +341,7 @@ export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: resolvedTransport,
     backendUrl,
+    executionUrl: resolvedTransport === 'tailscale' ? tailscaleExecutionUrl : '',
     tailscaleDeviceName: tailscale.deviceName,
     tailscaleHostnameOverride: tailscale.hostOverride,
     tailscaleIp: tailscale.tailnetIp,
@@ -355,6 +377,10 @@ function normalizeTailscaleTransport(value = {}, { frontendOrigin = '', requireH
     ? validateStephanosHomeBridgeUrl(backendUrlCandidate, { frontendOrigin, requireHttps })
     : { ok: false, normalizedUrl: '', reason: 'Tailscale backend URL not set.' };
   const hostOverride = normalizeString(value.hostOverride);
+  const executionUrlCandidate = normalizeString(value.executionUrl) || deriveTsNetExecutionUrl(hostOverride);
+  const executionValidation = executionUrlCandidate
+    ? validateStephanosHomeBridgeUrl(executionUrlCandidate, { frontendOrigin, requireHttps: true })
+    : { ok: false, normalizedUrl: '', reason: 'Tailscale hosted execution URL not set.' };
   const tailnetIp = normalizeString(value.tailnetIp);
   const deviceName = normalizeString(value.deviceName);
   const nodeId = normalizeString(value.nodeId);
@@ -365,6 +391,9 @@ function normalizeTailscaleTransport(value = {}, { frontendOrigin = '', requireH
   const diagnostics = normalizeList(value.diagnostics);
   if (enabled && !backendValidation.ok) {
     diagnostics.push(backendValidation.reason || 'Tailscale backend URL is invalid or missing.');
+  }
+  if (enabled && executionUrlCandidate && !executionValidation.ok) {
+    diagnostics.push(executionValidation.reason || 'Tailscale hosted execution URL is invalid.');
   }
   if (enabled && !tailnetIp && !hostOverride) {
     diagnostics.push('Set a Tailnet IP or hostname override to identify the remote node.');
@@ -377,6 +406,7 @@ function normalizeTailscaleTransport(value = {}, { frontendOrigin = '', requireH
     tailnetIp,
     hostOverride,
     backendUrl: backendValidation.ok ? backendValidation.normalizedUrl : '',
+    executionUrl: executionValidation.ok ? executionValidation.normalizedUrl : '',
     accepted,
     active,
     reachability,
@@ -518,6 +548,16 @@ export function projectHomeBridgeTransportTruth(
       || reconciliation.state === 'remembered-revalidated',
   });
 
+  const operatorTransportUrl = selectedTransport === 'tailscale'
+    ? normalizeString(tailscaleConfig.backendUrl)
+    : normalizeString(runtimeBridge?.backendUrl || manualConfig.backendUrl);
+  const hostedExecutionBridgeUrl = selectedTransport === 'tailscale'
+    ? normalizeString(tailscaleConfig.executionUrl || rememberedMemory.executionUrl || autoRevalidation?.executionTarget)
+    : '';
+  const bridgeMode = selectedTransport === 'tailscale' && isTsNetOrigin(hostedExecutionBridgeUrl)
+    ? 'tailnet-private-https'
+    : 'standard';
+
   return {
     selectedTransport,
     configuredTransport,
@@ -569,6 +609,9 @@ export function projectHomeBridgeTransportTruth(
     bridgePersistedValue,
     bridgeRehydratedValue,
     bridgeProbeTarget,
+    bridgeOperatorTransportUrl: operatorTransportUrl,
+    bridgeHostedExecutionBridgeUrl: hostedExecutionBridgeUrl,
+    bridgeMode,
     bridgeDirectReachability: normalizeBridgeDirectReachability(autoRevalidation?.directReachability, 'unknown'),
     bridgeHostedExecutionCompatibility: normalizeBridgeExecutionCompatibility(autoRevalidation?.executionCompatibility, 'unknown'),
     bridgeHostedExecutionTarget: normalizeReason(autoRevalidation?.executionTarget, ''),
@@ -578,6 +621,7 @@ export function projectHomeBridgeTransportTruth(
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
       backendUrl: tailscaleConfig.backendUrl || '',
+      executionUrl: tailscaleConfig.executionUrl || rememberedMemory.executionUrl || '',
       accepted: tailscaleConfig.accepted === true,
       reachable: tailscaleConfig.reachability === 'reachable',
       usable: tailscaleConfig.usable === true,
