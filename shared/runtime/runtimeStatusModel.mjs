@@ -74,6 +74,15 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     && bridgeTruth.selectedTransport === 'tailscale'
     && bridgeTruth?.tailscale?.accepted === true
     && bridgeTruth?.tailscale?.reachable === true;
+  const canonicalHostedTailscale = hostedSession
+    && bridgeTruth.bridgeMemoryTransport === 'tailscale'
+    && Boolean(rememberedBridgeUrl || liveTailscaleUrl)
+    && bridgeTruth?.tailscale?.accepted === true
+    && bridgeTruth?.tailscale?.reachable === true
+    && (
+      bridgeTruth.selectedTransport === 'tailscale'
+      || rememberedRevalidatedAsTailscale
+    );
   const rememberedBridgeEligible = hostedSession
     && rememberedBridgeUrl
     && [
@@ -89,8 +98,8 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       'remembered-revalidated',
       'remembered-unreachable',
     ].includes(rememberedBridgeReconciliationState);
-  const preferLanHomeNode = hostedSession && onLanSession;
-  const preferBridgeHomeNode = hostedSession && !onLanSession;
+  const preferLanHomeNode = hostedSession && onLanSession && !canonicalHostedTailscale;
+  const preferBridgeHomeNode = hostedSession && (!onLanSession || canonicalHostedTailscale);
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
 
   const prioritizedCandidates = [
@@ -420,6 +429,42 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       ? 'lan-companion'
       : 'off-network';
   const sessionKind = launcherLocal || localDesktopBackendSession ? 'local-desktop' : 'hosted-web';
+  const rememberedBridgeMemory = bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
+    ? String(bridgeTransportTruth.bridgeMemoryUrl || '').trim()
+    : '';
+  const liveTailscaleConfig = bridgeTransportPreferences?.transports?.tailscale || {};
+  const hostedValidatedRememberedTailscale = sessionKind === 'hosted-web'
+    && Boolean(rememberedBridgeMemory)
+    && liveTailscaleConfig.enabled === true
+    && liveTailscaleConfig.accepted === true
+    && String(liveTailscaleConfig.reachability || '').trim() === 'reachable';
+  if (hostedValidatedRememberedTailscale && bridgeTransportPreferences.selectedTransport !== 'tailscale') {
+    bridgeTransportPreferences = normalizeBridgeTransportPreferences({
+      ...bridgeTransportPreferences,
+      selectedTransport: 'tailscale',
+      transports: {
+        ...(bridgeTransportPreferences?.transports || {}),
+        tailscale: {
+          ...liveTailscaleConfig,
+          enabled: true,
+          backendUrl: rememberedBridgeMemory,
+          accepted: true,
+          active: true,
+          reachability: 'reachable',
+          usable: true,
+        },
+      },
+    }, {
+      homeBridgeUrl: homeNodeBridge.backendUrl || '',
+      frontendOrigin,
+    });
+    bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+      runtimeBridge: homeNodeBridge,
+      bridgeMemory: runtimeContext.bridgeMemory,
+      bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
+      autoRevalidation: runtimeContext.bridgeAutoRevalidation,
+    });
+  }
   const hostedRememberedTailscaleCandidatePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
     && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
@@ -589,8 +634,10 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       || 'unresolved');
   const backendTargetFallbackUsed = sameOriginStaticHostedFallbackInvalid
     ? false
-    : (runtimeContext.backendTargetFallbackUsed === true
-      || (!runtimeResolvedBackendTarget && Boolean(compatibleActualTarget)));
+    : (acceptedBackendCandidate?.source === 'fallback.actualTarget'
+      ? true
+      : (runtimeContext.backendTargetFallbackUsed === true
+        || (!runtimeResolvedBackendTarget && Boolean(compatibleActualTarget) && !acceptedBackendCandidate)));
   const backendTargetInvalidReason = String(
     runtimeContext.backendTargetInvalidReason
     || (sameOriginStaticHostedFallbackInvalid
@@ -1013,8 +1060,21 @@ function buildRouteCandidates({ runtimeContext = {}, evaluations = {}, preferenc
   const tailscaleUsable = bridgeTruth?.tailscale?.usable === true && homeNodeBridge.usable === true;
   const manualConfigured = runtimeContext.bridgeTransportPreferences?.transports?.manual?.enabled !== false
     && Boolean(runtimeContext.bridgeTransportPreferences?.transports?.manual?.backendUrl || runtimeContext.homeNodeBridge?.backendUrl);
-  const manualReachable = homeNode.available === true || homeNodeBridge.available === true;
-  const manualUsable = homeNode.usable === true;
+  const homeNodeSource = String(homeNode.routeVariant || homeNode.source || '').trim();
+  const hostedSession = runtimeContext.sessionKind === 'hosted-web';
+  const hostedManualProbe = runtimeContext.routeDiagnostics?.['home-node-lan'] || {};
+  const hostedManualEvidence = hostedManualProbe.available === true || hostedManualProbe.usable === true;
+  const homeNodeBridgeBacked = homeNodeSource.includes('bridge');
+  const hostedCanonicalTailscale = hostedSession
+    && bridgeTruth.selectedTransport === 'tailscale'
+    && bridgeTruth?.tailscale?.accepted === true
+    && bridgeTruth?.tailscale?.reachable === true;
+  const manualReachable = hostedSession
+    ? (hostedManualEvidence || (homeNode.available === true && (!hostedCanonicalTailscale || !homeNodeBridgeBacked)))
+    : (homeNode.available === true || homeNodeBridge.available === true);
+  const manualUsable = hostedSession
+    ? (hostedManualEvidence || (homeNode.usable === true && (!hostedCanonicalTailscale || !homeNodeBridgeBacked)))
+    : (homeNode.usable === true);
 
   const candidates = [
     createRouteCandidate({
