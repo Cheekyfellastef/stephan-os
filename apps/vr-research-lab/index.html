@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VR Research Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #03060f;
+      --panel: #0b1730;
+      --line: #2a4f87;
+      --text: #d9ecff;
+      --muted: #89a7c9;
+      --accent: #58b8ff;
+      --priority: #ffd47d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: radial-gradient(circle at top, #0f1d38 0%, #02050b 72%);
+      color: var(--text);
+      padding: 20px;
+    }
+    .shell { max-width: 1180px; margin: 0 auto; display: grid; gap: 14px; }
+    .panel {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(10,18,36,.95), rgba(4,9,20,.96));
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, .28);
+    }
+    .title { margin: 0 0 8px; font-size: 1.4rem; }
+    .subtitle { margin: 0; color: var(--muted); }
+    .grid { display: grid; gap: 10px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+    .grid.three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .card {
+      border: 1px solid #2b4f7f;
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(7, 14, 30, .84);
+      display: grid;
+      gap: 6px;
+    }
+    .label { font-size: .8rem; text-transform: uppercase; color: var(--muted); letter-spacing: .04em; }
+    .pill {
+      display: inline-flex;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid #446ea6;
+      font-size: .78rem;
+      color: #d7eeff;
+      background: rgba(46, 99, 161, .27);
+    }
+    .priority { border-color: #8a6c2a; color: #ffe7b1; background: rgba(100, 71, 15, .35); }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 4px 0; }
+    a { color: #8fcfff; word-break: break-all; }
+    code { color: #bfe5ff; font-size: .85rem; }
+    .status { color: var(--muted); font-size: .92rem; margin: 0; }
+  </style>
+</head>
+<body>
+  <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
+  <main class="shell">
+    <section class="panel">
+      <h1 class="title">VR Research Lab</h1>
+      <p class="subtitle" id="mission-text">Loading lab mission…</p>
+      <p class="status">Operational scope: Starfield + flat-to-VR conversion research with cockpit-first practical workflows.</p>
+    </section>
+
+    <section class="panel grid two">
+      <div>
+        <h2 class="title">Overview / Mission</h2>
+        <ul id="overview-list"></ul>
+      </div>
+      <div>
+        <h2 class="title">Research Targets</h2>
+        <div id="targets-grid" class="grid"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Knowledge Shape</h2>
+      <div id="bucket-grid" class="grid three"></div>
+    </section>
+
+    <section class="panel grid two">
+      <div>
+        <h2 class="title">Techniques</h2>
+        <div id="techniques-grid" class="grid"></div>
+      </div>
+      <div>
+        <h2 class="title">Experiments / Hypotheses</h2>
+        <div id="experiments-grid" class="grid"></div>
+      </div>
+    </section>
+
+    <section class="panel grid two">
+      <div>
+        <h2 class="title">Folder-Backed Workspace Links</h2>
+        <ul id="folder-map"></ul>
+      </div>
+      <div>
+        <h2 class="title">Next Steps + Integration Seams</h2>
+        <h3 class="label">What to capture next</h3>
+        <ul id="next-actions"></ul>
+        <h3 class="label">Prepared seams</h3>
+        <ul id="integration-seams"></ul>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    const nodes = {
+      mission: document.getElementById('mission-text'),
+      overview: document.getElementById('overview-list'),
+      targets: document.getElementById('targets-grid'),
+      buckets: document.getElementById('bucket-grid'),
+      techniques: document.getElementById('techniques-grid'),
+      experiments: document.getElementById('experiments-grid'),
+      folderMap: document.getElementById('folder-map'),
+      nextActions: document.getElementById('next-actions'),
+      seams: document.getElementById('integration-seams')
+    };
+
+    function textList(node, items = []) {
+      node.innerHTML = '';
+      items.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        node.appendChild(li);
+      });
+    }
+
+    function card({ label, text, extra = '', classes = [] }) {
+      const div = document.createElement('article');
+      div.className = ['card', ...classes].join(' ');
+      div.innerHTML = `<div class="label">${label}</div><div>${text}</div>${extra}`;
+      return div;
+    }
+
+    async function loadWorkspace() {
+      const response = await fetch('../../VR-Research-Lab/lab-workspace.json', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`workspace model unavailable (${response.status})`);
+      }
+      return response.json();
+    }
+
+    function render(data) {
+      nodes.mission.textContent = data.mission;
+      textList(nodes.overview, data.overview);
+
+      nodes.targets.innerHTML = '';
+      (data.targets || []).forEach((target) => {
+        const priorityClass = String(target.priority || '').toUpperCase().startsWith('P0') ? 'priority' : '';
+        const extra = `<div><span class="pill ${priorityClass}">${target.priority || 'P?'}</span></div><div><strong>Mode:</strong> ${target.mode}</div><div><strong>Focus:</strong> ${target.focus}</div>`;
+        nodes.targets.appendChild(card({ label: target.name, text: 'Target game track', extra }));
+      });
+
+      nodes.buckets.innerHTML = '';
+      (data.knowledgeBuckets || []).forEach((bucket) => {
+        nodes.buckets.appendChild(card({ label: 'Bucket', text: bucket }));
+      });
+
+      nodes.techniques.innerHTML = '';
+      (data.techniques || []).forEach((technique) => {
+        const extra = `<div><span class="pill">${technique.status}</span></div><div><strong>Goal:</strong> ${technique.goal}</div><div><a href="../../${technique.path}">${technique.path}</a></div>`;
+        nodes.techniques.appendChild(card({ label: technique.name, text: 'Reusable conversion technique', extra }));
+      });
+
+      nodes.experiments.innerHTML = '';
+      (data.experiments || []).forEach((experiment) => {
+        const extra = `<div><strong>Hypothesis:</strong> ${experiment.hypothesis}</div><div><a href="../../${experiment.logPath}">${experiment.logPath}</a></div>`;
+        nodes.experiments.appendChild(card({ label: experiment.name, text: 'Experiment track', extra }));
+      });
+
+      nodes.folderMap.innerHTML = '';
+      (data.folderMap || []).forEach((item) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${item.label}:</strong> <a href="../../${item.path}"><code>${item.path}</code></a>`;
+        nodes.folderMap.appendChild(li);
+      });
+
+      textList(nodes.nextActions, data.nextActions);
+      textList(nodes.seams, data.integrationSeams);
+    }
+
+    loadWorkspace()
+      .then(render)
+      .catch((error) => {
+        nodes.mission.textContent = `VR workspace model failed to load: ${error.message}`;
+      });
+  </script>
+</body>
+</html>

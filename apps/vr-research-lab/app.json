@@ -1,0 +1,23 @@
+{
+  "name": "VR Research Lab",
+  "icon": "🥽",
+  "entry": "index.html",
+  "type": "research",
+  "packaging": "classic-static",
+  "capabilities": [
+    "vr-analysis",
+    "research-workspace",
+    "technique-catalog"
+  ],
+  "eventsPublished": [
+    "vr:experiment_logged",
+    "vr:finding_recorded"
+  ],
+  "eventsConsumed": [
+    "memory:context_updated",
+    "tile:context_requested"
+  ],
+  "memoryUsage": "folder-backed-research-notes",
+  "continuityParticipation": "planned",
+  "aiAddressable": true
+}
