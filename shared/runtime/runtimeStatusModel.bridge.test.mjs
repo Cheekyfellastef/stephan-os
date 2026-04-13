@@ -520,11 +520,14 @@ test('hosted remembered-revalidated tailscale promotes route winner when backend
 
 test('hosted https with remembered http bridge classifies execution-incompatible instead of generic unreachable', () => {
   const bridgeUrl = 'http://desktop-9flonkj.taild6f215.ts.net:8787';
+  const staleLanUrl = 'http://192.168.0.198:8787';
   const model = createRuntimeStatusModel({
     backendAvailable: true,
     providerHealth: { groq: { ok: true } },
     runtimeContext: {
       frontendOrigin: 'https://cheekyfellastef.github.io',
+      preferredTarget: staleLanUrl,
+      actualTargetUsed: staleLanUrl,
       bridgeMemory: { transport: 'tailscale', backendUrl: bridgeUrl },
       bridgeAutoRevalidation: {
         state: 'execution-incompatible',
@@ -547,6 +550,12 @@ test('hosted https with remembered http bridge classifies execution-incompatible
         },
       },
       routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          target: staleLanUrl,
+          actualTarget: staleLanUrl,
+        },
         'home-node-bridge': {
           configured: true,
           available: true,
@@ -561,6 +570,15 @@ test('hosted https with remembered http bridge classifies execution-incompatible
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-execution-incompatible');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeHostedExecutionCompatibility, 'mixed-scheme-blocked');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeDirectReachability, 'reachable');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeInputRaw, bridgeUrl);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeInputNormalized, bridgeUrl);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgePersistedValue, bridgeUrl);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeProbeTarget, bridgeUrl);
+  assert.match(model.runtimeContext.bridgeTransportTruth.tailscale.reason, /cannot execute HTTP Home Bridge fetches/i);
+  assert.equal(model.runtimeContext.preferredTarget, '');
+  assert.equal(model.runtimeContext.actualTargetUsed, '');
+  const staleLanCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === staleLanUrl);
+  assert.equal(staleLanCandidate, undefined);
   assert.equal(model.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].code, 'hosted-backend-execution-incompatible');
 });
 

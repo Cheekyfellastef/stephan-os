@@ -1328,9 +1328,18 @@ test('buildSupportSnapshot reports hosted mixed-scheme execution incompatibility
       },
       bridgeTransportTruth: {
         bridgeMemoryReconciliationState: 'remembered-execution-incompatible',
+        bridgeMemoryUrl: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        bridgeInputRaw: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        bridgeInputNormalized: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        bridgePersistedValue: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        bridgeRehydratedValue: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        bridgeProbeTarget: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
         bridgeDirectReachability: 'reachable',
         bridgeHostedExecutionCompatibility: 'mixed-scheme-blocked',
         bridgeHostedExecutionRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy).',
+        tailscale: {
+          reason: 'Remembered Tailscale bridge preserved, but hosted execution is blocked by mixed-scheme browser policy.',
+        },
       },
     },
     safeApiStatus: {},
@@ -1340,4 +1349,10 @@ test('buildSupportSnapshot reports hosted mixed-scheme execution incompatibility
   assert.match(snapshot, /hosted execution is blocked by browser security policy/);
   assert.match(snapshot, /Bridge Direct Reachability: reachable/);
   assert.match(snapshot, /Bridge Hosted Execution Compatibility: mixed-scheme-blocked/);
+  assert.match(snapshot, /Bridge Input Raw: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
+  assert.match(snapshot, /Bridge Input Normalized: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
+  assert.match(snapshot, /Bridge Persisted Value: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
+  assert.match(snapshot, /Bridge Rehydrated Value: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
+  assert.match(snapshot, /Bridge Probe Target: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
+  assert.match(snapshot, /Tailscale Bridge Reason: Remembered Tailscale bridge preserved, but hosted execution is blocked by mixed-scheme browser policy\./);
 });

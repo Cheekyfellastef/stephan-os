@@ -68,6 +68,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     ? runtimeContext.bridgeTransportTruth
     : {};
   const rememberedBridgeReconciliationState = String(bridgeTruth.bridgeMemoryReconciliationState || '').trim();
+  const hostedExecutionIncompatible = hostedSession
+    && rememberedBridgeReconciliationState === 'remembered-execution-incompatible'
+    && ['mixed-scheme-blocked', 'cors-blocked'].includes(String(bridgeTruth.bridgeHostedExecutionCompatibility || '').trim());
   const rememberedBridgeUrl = String(bridgeTruth.bridgeMemoryUrl || '').trim();
   const liveTailscaleUrl = String(bridgeTruth?.tailscale?.backendUrl || '').trim();
   const rememberedRevalidatedAsTailscale = rememberedBridgeReconciliationState === 'remembered-revalidated'
@@ -103,11 +106,11 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
 
   const prioritizedCandidates = [
-    ...(preferLanHomeNode ? [
+    ...(preferLanHomeNode && !hostedExecutionIncompatible ? [
       createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', homeNodeLan.actualTarget),
       createBackendTargetCandidate('routeDiagnostics.home-node-lan.target', homeNodeLan.target),
     ] : []),
-    ...(preferLanHomeNode && homeNodeLooksLan ? [
+    ...(preferLanHomeNode && homeNodeLooksLan && !hostedExecutionIncompatible ? [
       createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
@@ -127,15 +130,17 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     ] : []),
     ...(preferBridgeHomeNode ? [
       ...(!rememberedRevalidatedAsTailscale ? [
-        createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
-        createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+        ...(hostedExecutionIncompatible ? [] : [
+          createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', homeNode.actualTarget),
+          createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
+        ]),
       ] : []),
     ] : []),
     createBackendTargetCandidate('routeDiagnostics.cloud.actualTarget', diagnostics.cloud?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.cloud.target', diagnostics.cloud?.target),
   ];
   const compatibilityCandidates = [
-    ...(!hostedRememberedTailscaleState ? [
+    ...(!hostedRememberedTailscaleState && !hostedExecutionIncompatible ? [
       createBackendTargetCandidate('routeDiagnostics.home-node.actualTarget', diagnostics['home-node']?.actualTarget),
       createBackendTargetCandidate('routeDiagnostics.home-node.target', diagnostics['home-node']?.target),
       createBackendTargetCandidate('routeDiagnostics.home-node-lan.actualTarget', diagnostics['home-node-lan']?.actualTarget),
@@ -144,7 +149,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     createBackendTargetCandidate('routeDiagnostics.home-node-bridge.actualTarget', diagnostics['home-node-bridge']?.actualTarget),
     createBackendTargetCandidate('routeDiagnostics.home-node-bridge.target', diagnostics['home-node-bridge']?.target),
     createBackendTargetCandidate('runtimeContext.backendTargetResolvedUrl', runtimeContext.backendTargetResolvedUrl),
-    ...(!hostedRememberedTailscaleState ? [
+    ...(!hostedRememberedTailscaleState && !hostedExecutionIncompatible ? [
       createBackendTargetCandidate('runtimeContext.actualTargetUsed', runtimeContext.actualTargetUsed),
       createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
       createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
@@ -559,18 +564,25 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   const hostedRememberedTailscaleCanonicalTarget = hostedRememberedTailscaleCandidatePromotion
     ? String(bridgeTransportTruth?.tailscale?.backendUrl || bridgeTransportTruth.bridgeMemoryUrl || '').trim()
     : '';
+  const hostedExecutionBlocked = sessionKind === 'hosted-web'
+    && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-execution-incompatible'
+    && ['mixed-scheme-blocked', 'cors-blocked'].includes(String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim());
   const compatiblePreferredTarget = hostedRememberedTailscaleCanonicalTarget
-    || resolveCompatibleUrl(
-      runtimeContext.preferredTarget,
-      homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
-      { allowLoopback: launcherLocal },
-    );
+    || (hostedExecutionBlocked
+      ? ''
+      : resolveCompatibleUrl(
+        runtimeContext.preferredTarget,
+        homeNode?.uiUrl || frontendOrigin || apiBaseUrl,
+        { allowLoopback: launcherLocal },
+      ));
   const compatibleActualTarget = hostedRememberedTailscaleCanonicalTarget
-    || resolveCompatibleUrl(
-      runtimeContext.actualTargetUsed,
-      homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
-      { allowLoopback: launcherLocal },
-    );
+    || (hostedExecutionBlocked
+      ? ''
+      : resolveCompatibleUrl(
+        runtimeContext.actualTargetUsed,
+        homeNode?.backendUrl || (!loopbackBackendMismatch ? apiBaseUrl : ''),
+        { allowLoopback: launcherLocal },
+      ));
   const runtimeResolvedBackendTarget = String(runtimeContext.backendTargetResolvedUrl || '').trim();
   const backendTargetResolutionSourceRaw = String(runtimeContext.backendTargetResolutionSource || '').trim();
   const backendTargetCandidates = collectBackendTargetCandidates({
@@ -1301,6 +1313,15 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const bridgeReachable = homeNodeBridgeProbe.available === true
     || runtimeContext.homeNodeBridge?.reachability === 'reachable'
     || runtimeContext.bridgeTransportTruth?.tailscale?.reachable === true;
+  const hostedExecutionCompatibility = String(runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionCompatibility || '').trim();
+  const hostedExecutionIncompatible = runtimeContext.sessionKind === 'hosted-web'
+    && runtimeContext.bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-execution-incompatible'
+    && ['mixed-scheme-blocked', 'cors-blocked'].includes(hostedExecutionCompatibility);
+  const hostedExecutionBlockedReason = String(
+    runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionReason
+    || runtimeContext.bridgeTransportTruth?.bridgeMemoryReconciliationReason
+    || 'Hosted surface can reach remembered bridge, but browser execution policy blocks this target.',
+  ).trim();
   const hostedResolvedBackendCandidate = runtimeContext.sessionKind === 'hosted-web'
     && runtimeContext.deviceContext === 'lan-companion'
     && backendAvailable
@@ -1386,6 +1407,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : (runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : hostedExecutionIncompatible
+        ? hostedExecutionBlockedReason
         : effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
@@ -1395,10 +1418,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           : 'Home PC node is not configured'),
       blockedReason: homeNodeOverrideActive
         ? 'home-node/manual route source ignored by local operator override'
+        : hostedExecutionIncompatible
+        ? hostedExecutionBlockedReason
         : effectiveHomeNodeConfigured
         ? (homeNodeProbe.blockedReason || (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
         : 'home node is not configured',
-      usable: effectiveHomeNodeReachable && !homeNodePublicationBlocked,
+      usable: !hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked,
     }, {
       ...homeNodeProbe,
       configured: effectiveHomeNodeConfigured || hostedResolvedBackendCandidate,
@@ -1411,6 +1436,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : (homeNodeProbe.source || runtimeContext.homeNode?.source || (effectiveHomeNodeConfigured ? 'configured-home-node' : 'not-configured')),
       reason: homeNodeOverrideActive
         ? 'Home-node/manual route source ignored for this local browser session by operator override.'
+        : hostedExecutionIncompatible
+        ? hostedExecutionBlockedReason
         : homeNodeProbe.reason || (effectiveHomeNodeReachable
         ? (homeNodeMisconfigured
           ? 'Home PC node is reachable, but the published client route is misconfigured'
@@ -1420,12 +1447,14 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           : 'Home PC node is not configured')),
       blockedReason: homeNodeOverrideActive
         ? 'home-node/manual route source ignored by local operator override'
+        : hostedExecutionIncompatible
+        ? hostedExecutionBlockedReason
         : homeNodeProbe.blockedReason || (effectiveHomeNodeConfigured
         ? (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route')
         : 'home node is not configured'),
       usable: homeNodeProbe.usable === false
         ? false
-        : (effectiveHomeNodeReachable && !homeNodePublicationBlocked),
+        : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked),
     }),
     'home-node-bridge': createRouteEvaluation('home-node-bridge', {
       configured: homeNodeBridgeProbe.configured === true || runtimeContext.homeNodeBridge?.configured === true,
@@ -1436,10 +1465,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       actualTarget: homeNodeBridgeProbe.actualTarget || runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl || runtimeContext.homeNodeBridge?.backendUrl || '',
       source: homeNodeBridgeProbe.source || runtimeContext.bridgeTransportTruth?.source || 'home-node-bridge',
       reason: homeNodeBridgeProbe.reason || runtimeContext.bridgeTransportTruth?.detail || (bridgeReachable ? 'Home-node bridge configured and reachable' : 'Home-node bridge unavailable'),
-      blockedReason: homeNodeBridgeProbe.blockedReason || (bridgeReachable ? '' : 'home-node bridge unavailable'),
+      blockedReason: hostedExecutionIncompatible
+        ? hostedExecutionBlockedReason
+        : (homeNodeBridgeProbe.blockedReason || (bridgeReachable ? '' : 'home-node bridge unavailable')),
       backendReachable: bridgeReachable,
       uiReachable: bridgeReachable,
-      usable: bridgeReachable,
+      usable: !hostedExecutionIncompatible && bridgeReachable,
     }, homeNodeBridgeProbe),
     dist: createRouteEvaluation('dist', {
       configured: Boolean(distProbe.configured),
