@@ -521,3 +521,61 @@ test('adjudicator keeps tile-readiness contradiction warning when canonical host
 
   assert.equal(adjudicated.runtimeTruth.diagnostics.invariantWarnings.some((issue) => issue.code === 'tile-not-ready-while-runtime-ready'), true);
 });
+
+test('adjudicator projects cognitive watcher analysis with protocol-boundary known pattern', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      frontendOrigin: 'https://stephanos.example',
+    },
+    finalRoute: {
+      routeKind: 'home-node',
+      preferredTarget: 'https://home.stephanos.example',
+      actualTarget: 'http://100.88.0.2:8787',
+      source: 'home-bridge-memory',
+      winnerReason: 'remembered home bridge target selected',
+      reachability: { selectedRouteReachable: true },
+      providerEligibility: {},
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      routeKind: 'home-node',
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'auto',
+      preferredTarget: 'https://home.stephanos.example',
+      actualTarget: 'http://100.88.0.2:8787',
+      source: 'home-bridge-memory',
+      winnerReason: 'remembered home bridge target selected',
+      routeUsable: false,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      backendReachable: true,
+      uiReachabilityState: 'unreachable',
+    },
+    routePlan: {
+      requestedRouteMode: 'auto',
+      effectiveRouteMode: 'auto',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeEvaluations: {
+      'home-node': { available: true, usable: false, reason: 'blocked on hosted surface policy' },
+      cloud: { available: true, usable: true, reason: 'cloud route available' },
+    },
+    routePreferenceOrder: ['home-node', 'cloud'],
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: { groq: { ok: true } },
+    fallbackActive: false,
+    appLaunchState: 'degraded',
+  }));
+
+  assert.equal(adjudicated.cognitiveAdjudication.mode, 'observer-only');
+  assert.equal(adjudicated.cognitiveAdjudication.patternMatches.some((entry) => entry.patternId === 'protocol-boundary-mismatch'), true);
+});

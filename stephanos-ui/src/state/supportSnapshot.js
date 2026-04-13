@@ -304,6 +304,14 @@ export function buildSupportSnapshot({
     ? routeDiagnosticsSummary
     : (hostedBackendTargetGuidance?.summary || routeDiagnosticsSummary);
 
+  const cognitiveAdjudication = runtimeStatus?.cognitiveAdjudication && typeof runtimeStatus.cognitiveAdjudication === 'object'
+    ? runtimeStatus.cognitiveAdjudication
+    : {};
+  const watcherSummary = cognitiveAdjudication.diagnosisSummary || {};
+  const watcherTopPattern = Array.isArray(cognitiveAdjudication.patternMatches)
+    ? cognitiveAdjudication.patternMatches[0]
+    : null;
+
   const operatorGuidance = buildOperatorGuidanceProjection({
     finalRouteTruth: routeTruthView,
     orchestrationTruth,
@@ -423,6 +431,11 @@ export function buildSupportSnapshot({
     `Surface Friction Pattern Latest: ${latestPattern ? `${asText(latestPattern.frictionType)} strength=${asText(latestPattern.patternStrength)} recurrence=${asText(latestPattern.recurrenceCount)}` : 'n/a'}`,
     `Surface Active Recommendations: ${String(surfaceProtocolRecommendations.filter((entry) => entry.status !== 'rejected').length)}`,
     `Surface Accepted Rules: ${String(acceptedSurfaceRules.length)}`,
+    `System Watcher Status: ${asText(watcherSummary.status, 'stable')}`,
+    `System Watcher Headline: ${asText(watcherSummary.headline, 'No high-confidence contradiction pattern detected.')}`,
+    `System Watcher Failing Layer: ${asText(watcherSummary.likelyFailingLayer, 'none-detected')}`,
+    `System Watcher Contradictions: ${asText(watcherSummary.contradictionCount, '0')}`,
+    `System Watcher Top Pattern: ${asText(watcherTopPattern?.patternId, 'none')}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,
