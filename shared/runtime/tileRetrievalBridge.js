@@ -1,6 +1,6 @@
 import { createTileTruthAdapter } from './tileTruthAdapter.js';
 
-const DEFAULT_ALLOWLIST = ['ideas', 'wealthapp', 'music-tile'];
+const DEFAULT_ALLOWLIST = ['ideas', 'wealthapp', 'music-tile', 'vr-research-lab'];
 
 function normalizeString(value, fallback = '') {
   const normalized = String(value ?? '').trim();
