@@ -1,0 +1,114 @@
+{
+  "mission": "Build a practical Stephanos VR analysis workspace that turns flat-to-VR research into reusable conversion patterns with Starfield as a primary target.",
+  "overview": [
+    "This lab captures engine, camera, rendering, input, HUD, and performance findings for seated-first VR conversion work.",
+    "Cockpit Mode is the pragmatic default: head-tracked seated play with low-friction control mapping and comfort-first frame pacing.",
+    "Use this surface as the operational front door while the repo folders hold durable notes, experiments, and tools."
+  ],
+  "targets": [
+    {
+      "name": "Starfield",
+      "priority": "P0",
+      "mode": "Cockpit Mode first, then assisted VR",
+      "focus": "Camera control seams, stereo viability, HUD adaptation, input remapping."
+    },
+    {
+      "name": "Red Dead Redemption 2",
+      "priority": "P1",
+      "mode": "Seated VR conversion",
+      "focus": "Rendering pipeline constraints and reusable module extraction."
+    }
+  ],
+  "knowledgeBuckets": [
+    "Target Games",
+    "VR Mode Type (Cockpit, Assisted, Motion Control Viability)",
+    "Graphics / Rendering",
+    "Camera / View",
+    "Input / Interaction",
+    "UI / HUD",
+    "Performance / Frame Pacing",
+    "Tooling / Analysis",
+    "Reusable Conversion Techniques",
+    "Open Questions",
+    "Priority Opportunities"
+  ],
+  "techniques": [
+    {
+      "name": "Camera Injection",
+      "status": "active",
+      "path": "VR-Research-Lab/docs/vr-techniques/camera-injection-techniques.md",
+      "goal": "Stabilize head-tracked seated camera behavior without breaking core gameplay loops."
+    },
+    {
+      "name": "Stereo Rendering",
+      "status": "active",
+      "path": "VR-Research-Lab/docs/vr-techniques/stereo-rendering-methods.md",
+      "goal": "Assess depth reconstruction and stereo strategies for non-native VR pipelines."
+    },
+    {
+      "name": "Tooling Integration",
+      "status": "active",
+      "path": "VR-Research-Lab/docs/research-notes/tooling-integration-workflow.md",
+      "goal": "Standardize capture workflows with RenderDoc/PIX/Ghidra-class tooling."
+    }
+  ],
+  "experiments": [
+    {
+      "name": "Camera latency + comfort baseline",
+      "hypothesis": "Seated camera injection can stay comfortable if rotational latency and snap controls are bounded.",
+      "logPath": "VR-Research-Lab/experiments/camera-tests/"
+    },
+    {
+      "name": "Stereo compatibility triage",
+      "hypothesis": "Deferred render stages can be selectively bypassed or patched to reduce stereo conflicts.",
+      "logPath": "VR-Research-Lab/experiments/rendering-tests/"
+    },
+    {
+      "name": "Frame pacing guardrails",
+      "hypothesis": "Technique-level constraints can be codified into reusable performance heuristics for conversion projects.",
+      "logPath": "VR-Research-Lab/experiments/vr-performance-tests/"
+    }
+  ],
+  "nextActions": [
+    "Capture initial Starfield research brief in VR-Research-Lab/examples/starfield-vr/README.md.",
+    "Add first experiment note under docs/experiment-logs/ with timestamped findings.",
+    "Run engine-scanner prototype against target code snapshots and commit reports.",
+    "Promote stable findings into module folders (camera-injection, stereo-rendering, input-hooks)."
+  ],
+  "folderMap": [
+    {
+      "label": "Primary Lab README",
+      "path": "VR-Research-Lab/README.md"
+    },
+    {
+      "label": "Technique Docs",
+      "path": "VR-Research-Lab/docs/vr-techniques/"
+    },
+    {
+      "label": "Engine Architecture Notes",
+      "path": "VR-Research-Lab/docs/engine-architecture/"
+    },
+    {
+      "label": "Research Notes",
+      "path": "VR-Research-Lab/docs/research-notes/"
+    },
+    {
+      "label": "Experiment Logs",
+      "path": "VR-Research-Lab/docs/experiment-logs/"
+    },
+    {
+      "label": "Reusable Modules",
+      "path": "VR-Research-Lab/modules/"
+    },
+    {
+      "label": "Engine Scanner Tool",
+      "path": "VR-Research-Lab/tools/engine-scanner/README.md"
+    }
+  ],
+  "integrationSeams": [
+    "Memory seam: findings can be serialized as memory candidates for future retrieval indexing.",
+    "Experiment seam: docs/experiment-logs and experiments/* are canonical drop points for run artifacts.",
+    "Pattern seam: modules/* folders are the reusable output contract for flat-to-VR techniques.",
+    "Game-lab seam: examples/starfield-vr and examples/rdr2-vr can evolve into game-specific research tracks."
+  ]
+}
