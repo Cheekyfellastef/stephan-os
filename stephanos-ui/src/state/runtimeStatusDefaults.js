@@ -142,6 +142,37 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     issues: [],
     computedFromPersistence: false,
   },
+  cognitiveAdjudication: {
+    watcherVersion: 'system-watcher.v1',
+    mode: 'observer-only',
+    diagnosisSummary: {
+      status: 'stable',
+      contradictionCount: 0,
+      matchedPatternCount: 0,
+      likelyFailingLayer: 'none-detected',
+      headline: 'No high-confidence contradiction pattern detected.',
+    },
+    contradictions: [],
+    failureFamilies: [],
+    patternMatches: [],
+    rootCauseCandidates: [],
+    recommendations: {
+      nextInspectionBoundary: 'Continue normal monitoring; no contradiction cluster requires action.',
+      verificationChecks: [],
+    },
+    patternMemory: {
+      memoryVersion: 'runtime-operational-pattern-memory.v1',
+      knownPatternCatalog: [],
+      recentMatchedPatterns: [],
+      candidatePatterns: [],
+      promotionPolicy: 'observer-only-no-auto-durable-promotion',
+    },
+    reasoningBoundaries: {
+      evidenceSources: [],
+      interpretationRule: 'Evidence and interpretations are separated; unknowns remain explicit.',
+      speculationPolicy: 'No speculative conclusions are promoted to durable memory automatically.',
+    },
+  },
   canonicalRouteRuntimeTruth: {
     sessionKind: 'unknown',
     sessionReality: 'unknown',

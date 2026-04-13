@@ -145,6 +145,11 @@ export default function StatusPanel() {
   const missionPacketDecision = missionPacketWorkflow?.decisions?.find((entry) => entry.packetKey === missionPacketKey) || null;
   const missionPacketDecisionLabel = missionPacketDecision?.decision || 'pending-review';
   const guardrails = runtimeStatus.guardrails ?? { summary: { total: 0, errors: 0, warnings: 0 }, errors: [], warnings: [] };
+  const cognitiveAdjudication = runtimeStatus.cognitiveAdjudication ?? {};
+  const watcherSummary = cognitiveAdjudication.diagnosisSummary ?? {};
+  const watcherContradictions = Array.isArray(cognitiveAdjudication.contradictions) ? cognitiveAdjudication.contradictions : [];
+  const watcherPatterns = Array.isArray(cognitiveAdjudication.patternMatches) ? cognitiveAdjudication.patternMatches : [];
+  const watcherCandidates = Array.isArray(cognitiveAdjudication.rootCauseCandidates) ? cognitiveAdjudication.rootCauseCandidates : [];
   const primaryGuardrailMessage = guardrails.errors?.[0]?.message || guardrails.warnings?.[0]?.message || 'none';
   const executionTruth = isBusy
     ? 'busy'
@@ -924,6 +929,37 @@ export default function StatusPanel() {
         <li>[CONTINUITY LOOP] Recent Activity: {continuitySnapshot.recentContinuityEvents.length > 0 ? continuitySnapshot.recentContinuityEvents.map((event) => event.summary).join(' | ') : 'none observed'}</li>
         <li>Debug Console: F1</li>
       </ul>
+      <div className="status-panel-copy-actions">
+        <strong>System Watcher (Observer-Only)</strong>
+        <ul>
+          <li>Status: {watcherSummary.status || 'stable'}</li>
+          <li>Headline: {watcherSummary.headline || 'No high-confidence contradiction pattern detected.'}</li>
+          <li>Likely Failing Layer: {watcherSummary.likelyFailingLayer || 'none-detected'}</li>
+          <li>Contradictions: {watcherSummary.contradictionCount ?? watcherContradictions.length}</li>
+          <li>Matched Patterns: {watcherSummary.matchedPatternCount ?? watcherPatterns.length}</li>
+          <li>Next Inspection Boundary: {cognitiveAdjudication.recommendations?.nextInspectionBoundary || 'n/a'}</li>
+        </ul>
+        <strong>Why this diagnosis?</strong>
+        <ul>
+          {watcherContradictions.slice(0, 5).map((entry) => (
+            <li key={entry.id}>
+              [{entry.severity}] {entry.title} · family={entry.family}
+              <br />
+              interpretation: {entry.interpretation || 'n/a'}
+            </li>
+          ))}
+        </ul>
+        <strong>Root Cause Candidates</strong>
+        <ul>
+          {watcherCandidates.slice(0, 3).map((candidate) => (
+            <li key={candidate.candidateId}>
+              #{candidate.rank} {candidate.failingLayer} · conf={candidate.confidence}
+              <br />
+              cause: {candidate.suspectedRootCause}
+            </li>
+          ))}
+        </ul>
+      </div>
       <div className="status-panel-copy-actions">
         <label htmlFor="surface-friction-input">Report friction on this surface</label>
         <input

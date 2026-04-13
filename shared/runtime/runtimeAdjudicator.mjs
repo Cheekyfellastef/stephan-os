@@ -1,5 +1,6 @@
 import { extractHostname, isLoopbackHost } from './stephanosHomeNode.mjs';
 import { buildRuntimeTruthSnapshot } from './truthContract.mjs';
+import { buildSystemWatcherModel } from './systemWatcherModel.mjs';
 
 function asObject(value) {
   return value && typeof value === 'object' ? value : {};
@@ -488,6 +489,11 @@ export function adjudicateRuntimeTruth({
   }
 
   const canonicalRouteRuntimeTruth = buildCanonicalRouteRuntimeTruth(runtimeTruth, issues);
+  const cognitiveAdjudication = buildSystemWatcherModel({
+    runtimeTruth,
+    canonicalRouteRuntimeTruth,
+    runtimeContext,
+  });
 
   const derivedFinalRouteTruth = projectFinalRouteTruthFromCanonical(
     canonicalRouteRuntimeTruth,
@@ -511,6 +517,7 @@ export function adjudicateRuntimeTruth({
       routeEvaluations,
       routePreferenceOrder,
     }),
+    cognitiveAdjudication,
     issues,
   };
 }

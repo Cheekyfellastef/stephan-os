@@ -2203,6 +2203,8 @@ export function createRuntimeStatusModel({
       issues: runtimeAdjudication.issues,
       computedFromPersistence: false,
     },
+    cognitiveAdjudication: runtimeAdjudication.cognitiveAdjudication,
     guardrails,
   };
 }
+
