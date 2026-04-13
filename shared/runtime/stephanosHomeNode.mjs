@@ -30,6 +30,15 @@ function safeUrlParse(value = '') {
   }
 }
 
+function normalizeHomeBridgeCandidateUrl(target = '') {
+  const rawTarget = String(target || '').trim();
+  if (!rawTarget) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawTarget)) {
+    return rawTarget;
+  }
+  return `http://${rawTarget}`;
+}
+
 export function isLoopbackHost(hostname = '') {
   return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(String(hostname).trim().toLowerCase());
 }
@@ -123,7 +132,8 @@ export function validateStephanosBackendTargetUrl(target = '', {
     };
   }
 
-  const parsed = safeUrlParse(rawTarget);
+  const normalizedCandidate = normalizeHomeBridgeCandidateUrl(rawTarget);
+  const parsed = safeUrlParse(normalizedCandidate);
   if (!parsed) {
     return {
       ok: false,
@@ -177,7 +187,7 @@ export function validateStephanosBackendTargetUrl(target = '', {
 
 export function validateStephanosHomeBridgeUrl(target = '', {
   frontendOrigin = '',
-  requireHttps = true,
+  requireHttps = false,
 } = {}) {
   const validation = validateStephanosBackendTargetUrl(target, { allowLoopback: false });
   if (!validation.ok) {
@@ -432,7 +442,7 @@ export function clearPersistedStephanosLastKnownNode(storage = globalThis?.local
 
 export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localStorage, {
   frontendOrigin = globalThis?.location?.origin || '',
-  requireHttps = true,
+  requireHttps = false,
 } = {}) {
   const raw = readJsonStorage(storage, STEPHANOS_HOME_BRIDGE_STORAGE_KEY);
   const validation = validateStephanosHomeBridgeUrl(typeof raw === 'string' ? raw : '', {
@@ -448,7 +458,7 @@ export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localS
 
 export function persistStephanosHomeBridgeUrl(bridgeUrl = '', storage = globalThis?.localStorage, {
   frontendOrigin = globalThis?.location?.origin || '',
-  requireHttps = true,
+  requireHttps = false,
 } = {}) {
   const validation = validateStephanosHomeBridgeUrl(bridgeUrl, {
     frontendOrigin,

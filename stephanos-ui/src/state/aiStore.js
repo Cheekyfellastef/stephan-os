@@ -185,6 +185,7 @@ function readPersistedBridgeMemory() {
         bridgeMemoryStorageKey: storageKey,
         bridgeMemoryStorageScope: storageScope,
         bridgeMemoryLastRawValueSummary: 'none',
+        bridgeRehydratedValue: '',
       },
     };
   }
@@ -218,6 +219,7 @@ function readPersistedBridgeMemory() {
         bridgeMemoryLastRawValueSummary: payloadHasShape
           ? `record-payload:${Object.keys(payloadBridgeMemory || {}).slice(0, 6).join(',')}`
           : 'none',
+        bridgeRehydratedValue: normalized.backendUrl || '',
       },
     };
   } catch {
@@ -233,6 +235,7 @@ function readPersistedBridgeMemory() {
         bridgeMemoryStorageKey: storageKey,
         bridgeMemoryStorageScope: storageScope,
         bridgeMemoryLastRawValueSummary: 'read-error',
+        bridgeRehydratedValue: '',
       },
     };
   }
@@ -1373,6 +1376,8 @@ export function AIStoreProvider({ children }) {
         bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
         bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
         bridgeMemoryLastRawValueSummary: 'validation-blocked',
+        bridgeInputRaw: String(candidateUrl || '').trim(),
+        bridgeInputNormalized: validation.normalizedUrl || '',
         lastWrite: normalizePersistenceResult({
           attempted: true,
           succeeded: false,
@@ -1416,6 +1421,8 @@ export function AIStoreProvider({ children }) {
           bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
           bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
           bridgeMemoryLastRawValueSummary: 'manual-url-persist-failed',
+          bridgeInputRaw: String(candidateUrl || '').trim(),
+          bridgeInputNormalized: validation.normalizedUrl || '',
         });
         return { ok: false, reason: persistedManual.reason || 'Failed to persist bridge URL.', normalizedUrl: '' };
       }
@@ -1473,6 +1480,9 @@ export function AIStoreProvider({ children }) {
       bridgeMemoryStorageKey: resolveBridgeMemoryStorageKey(),
       bridgeMemoryStorageScope: getStephanosMemoryRuntime() ? 'shared-runtime-memory' : 'unavailable',
       bridgeMemoryLastRawValueSummary: summarizeBridgeMemoryPayload(nextBridgeMemory),
+      bridgeInputRaw: String(candidateUrl || '').trim(),
+      bridgeInputNormalized: validation.normalizedUrl,
+      bridgePersistedValue: validation.normalizedUrl,
       lastWrite: normalizePersistenceResult({
         attempted: true,
         succeeded: false,
@@ -1703,6 +1713,10 @@ export function AIStoreProvider({ children }) {
         attemptedAt: new Date().toISOString(),
         attemptedConfigKey,
       });
+      setBridgeMemoryPersistence((prev) => ({
+        ...(prev || {}),
+        bridgeProbeTarget: validation.normalizedUrl,
+      }));
       try {
         const probe = await checkApiHealth({ baseUrl: validation.normalizedUrl, timeoutMs: 12000 });
         if (cancelled) return;

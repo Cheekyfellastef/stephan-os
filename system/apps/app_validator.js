@@ -730,7 +730,7 @@ export async function validateStephanosRuntime(entryPath, context = {}, options 
   ).trim();
   const bridgeValidation = validateStephanosHomeBridgeUrl(configuredBridgeUrl, {
     frontendOrigin: currentOrigin,
-    requireHttps: hostedWebSession,
+    requireHttps: false,
   });
   const bridgeConfigured = Boolean(configuredBridgeUrl);
   const bridgeProbe = bridgeValidation.ok

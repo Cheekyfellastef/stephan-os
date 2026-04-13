@@ -91,20 +91,20 @@ function normalizeSessionKind(value = '') {
 export function resolveBridgeUrlRequireHttps({
   sessionKind = '',
   selectedTransport = 'manual',
-  fallbackRequireHttps = true,
+  fallbackRequireHttps = false,
 } = {}) {
   const normalizedTransport = normalizeBridgeTransportSelection(selectedTransport);
-  if (normalizedTransport === 'tailscale') return true;
   const normalizedSessionKind = normalizeSessionKind(sessionKind);
-  if (normalizedSessionKind === 'local-desktop') return false;
-  if (normalizedSessionKind === 'hosted-web') return true;
-  return fallbackRequireHttps !== false;
+  if (normalizedTransport === 'wireguard' && normalizedSessionKind === 'unknown') {
+    return fallbackRequireHttps === true;
+  }
+  return false;
 }
 
 export function resolveBridgeValidationTruth({
   runtimeStatusModel = null,
   selectedTransport = 'manual',
-  fallbackRequireHttps = true,
+  fallbackRequireHttps = false,
 } = {}) {
   const model = runtimeStatusModel && typeof runtimeStatusModel === 'object' ? runtimeStatusModel : {};
   const canonicalTruth = model.canonicalRouteRuntimeTruth && typeof model.canonicalRouteRuntimeTruth === 'object'
@@ -385,8 +385,8 @@ export function createDefaultBridgeTransportPreferences() {
 export function normalizeBridgeTransportPreferences(value = {}, {
   homeBridgeUrl = '',
   frontendOrigin = '',
-  manualRequireHttps = true,
-  tailscaleRequireHttps = true,
+  manualRequireHttps = false,
+  tailscaleRequireHttps = false,
 } = {}) {
   const defaults = createDefaultBridgeTransportPreferences();
   const source = value && typeof value === 'object' ? value : {};
@@ -524,6 +524,11 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemoryStorageKey: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryStorageKey, 'stephanos.durable.memory.v2'),
     bridgeMemoryStorageScope: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryStorageScope, 'shared-runtime-memory'),
     bridgeMemoryLastRawValueSummary: normalizeReason(bridgeMemoryPersistence?.bridgeMemoryLastRawValueSummary, 'none'),
+    bridgeInputRaw: normalizeReason(bridgeMemoryPersistence?.bridgeInputRaw, ''),
+    bridgeInputNormalized: normalizeReason(bridgeMemoryPersistence?.bridgeInputNormalized, ''),
+    bridgePersistedValue: normalizeReason(bridgeMemoryPersistence?.bridgePersistedValue, ''),
+    bridgeRehydratedValue: normalizeReason(bridgeMemoryPersistence?.bridgeRehydratedValue, ''),
+    bridgeProbeTarget: normalizeReason(bridgeMemoryPersistence?.bridgeProbeTarget, ''),
     tailscale: {
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
