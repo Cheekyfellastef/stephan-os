@@ -273,6 +273,48 @@ test('bridge memory reconciliation reports revalidated and unreachable outcomes 
   assert.equal(unreachable.provenance, 'remembered-tailscale-unreachable');
 });
 
+test('bridge memory reconciliation classifies hosted execution-incompatible truth separately from unreachable', () => {
+  const result = resolveBridgeMemoryReconciliation({
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: { enabled: true, backendUrl: 'http://desktop.tailnet.ts.net:8787', accepted: false, reachability: 'reachable' },
+      },
+    }),
+    runtimeBridge: { accepted: false, backendUrl: 'http://desktop.tailnet.ts.net:8787', reachability: 'reachable' },
+    bridgeMemory: { transport: 'tailscale', backendUrl: 'http://desktop.tailnet.ts.net:8787' },
+    autoRevalidation: {
+      state: 'execution-incompatible',
+      reason: 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.',
+      directReachability: 'reachable',
+      executionCompatibility: 'mixed-scheme-blocked',
+      infrastructureRequirement: 'Publish HTTPS bridge endpoint.',
+    },
+  });
+  assert.equal(result.state, 'remembered-execution-incompatible');
+  assert.equal(result.provenance, 'remembered-tailscale-execution-incompatible');
+
+  const projected = projectHomeBridgeTransportTruth(
+    normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: { tailscale: { enabled: true, backendUrl: 'http://desktop.tailnet.ts.net:8787' } },
+    }),
+    {
+      bridgeMemory: { transport: 'tailscale', backendUrl: 'http://desktop.tailnet.ts.net:8787' },
+      autoRevalidation: {
+        state: 'execution-incompatible',
+        reason: 'blocked',
+        directReachability: 'reachable',
+        executionCompatibility: 'mixed-scheme-blocked',
+        infrastructureRequirement: 'Publish HTTPS bridge endpoint.',
+      },
+    },
+  );
+  assert.equal(projected.bridgeMemoryReconciliationState, 'remembered-execution-incompatible');
+  assert.equal(projected.bridgeDirectReachability, 'reachable');
+  assert.equal(projected.bridgeHostedExecutionCompatibility, 'mixed-scheme-blocked');
+});
+
 test('bridge memory reconciliation requires canonical tailscale selection before projecting tailscale revalidated provenance', () => {
   const revalidated = resolveBridgeMemoryReconciliation({
     preferences: normalizeBridgeTransportPreferences({

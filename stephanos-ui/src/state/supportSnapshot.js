@@ -204,7 +204,9 @@ function buildHostedBackendTargetGuidance({
         || `Backend target unresolved: ${reason}`)
       : '',
     operatorGuidance: blocked
-      ? 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.'
+      ? (hostedTruth?.blockingIssues?.[0]?.code === 'hosted-backend-execution-incompatible'
+        ? 'Hosted HTTPS surface cannot execute HTTP bridge fetches. Publish an HTTPS Home Bridge endpoint (or HTTPS reverse proxy) and keep operator transport truth separate.'
+        : 'Resolve a reachable non-loopback backend target for hosted-web (cloud or home-node) and republish route diagnostics before relaunch.')
       : '',
   };
 }
@@ -341,6 +343,8 @@ export function buildSupportSnapshot({
     }
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-unreachable') {
     guidanceItems.push('Remembered Home Bridge exists but is unreachable from this surface.');
+  } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-execution-incompatible') {
+    guidanceItems.push('Remembered Home Bridge exists and may be directly reachable, but hosted execution is blocked by browser security policy (HTTPS frontend to HTTP bridge).');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-validation-failed') {
     guidanceItems.push('Remembered Home Bridge exists but failed validation and needs operator review.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
@@ -754,6 +758,10 @@ export function buildSupportSnapshot({
     `Bridge Persisted Value: ${asText(bridgeTransportTruth.bridgePersistedValue, 'none')}`,
     `Bridge Rehydrated Value: ${asText(bridgeTransportTruth.bridgeRehydratedValue, 'none')}`,
     `Bridge Probe Target: ${asText(bridgeTransportTruth.bridgeProbeTarget, 'none')}`,
+    `Bridge Direct Reachability: ${asText(bridgeTransportTruth.bridgeDirectReachability, 'unknown')}`,
+    `Bridge Hosted Execution Compatibility: ${asText(bridgeTransportTruth.bridgeHostedExecutionCompatibility, 'unknown')}`,
+    `Bridge Hosted Execution Target: ${asText(bridgeTransportTruth.bridgeHostedExecutionTarget, 'none')}`,
+    `Bridge Hosted Execution Requirement: ${asText(bridgeTransportTruth.bridgeHostedExecutionRequirement, 'none')}`,
     `Bridge Auto Revalidation State: ${asText(bridgeTransportTruth.bridgeAutoRevalidationState, 'idle')}`,
     `Bridge Auto Revalidation Reason: ${asText(bridgeTransportTruth.bridgeAutoRevalidationReason, 'n/a')}`,
     `Tailscale Device Name: ${asText(bridgeTransportTruth?.tailscale?.deviceName)}`,

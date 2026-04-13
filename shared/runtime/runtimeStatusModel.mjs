@@ -334,6 +334,12 @@ function buildCanonicalHostedRouteTruth({
     : (runtimeContext.backendTargetInvalidReason ? 'invalid' : 'unresolved');
   const homeNodeDiagnostic = runtimeContext.routeDiagnostics?.['home-node'] || {};
   const backendTargetDiagnostic = runtimeContext.routeDiagnostics?.['backend-target'] || {};
+  const bridgeTruth = runtimeContext.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
+    ? runtimeContext.bridgeTransportTruth
+    : {};
+  const hostedExecutionCompatibility = String(bridgeTruth.bridgeHostedExecutionCompatibility || '').trim();
+  const executionIncompatible = hostedExecutionCompatibility === 'mixed-scheme-blocked'
+    || hostedExecutionCompatibility === 'cors-blocked';
   const selectedKind = String(selectedRouteKind || 'unavailable');
   const selectedRouteReachable = selectedRoute?.available === true;
   const selectedRouteUsable = selectedRoute?.usable === true;
@@ -351,6 +357,12 @@ function buildCanonicalHostedRouteTruth({
       message: backendTargetValidity === 'invalid'
         ? (runtimeContext.backendTargetInvalidReason || 'Hosted backend target is invalid.')
         : 'Hosted backend target is unresolved.',
+    });
+  } else if (executionIncompatible) {
+    blockingIssues.push({
+      code: 'hosted-backend-execution-incompatible',
+      message: bridgeTruth.bridgeHostedExecutionReason
+        || 'Hosted backend target is directly reachable but blocked for execution by browser security policy.',
     });
   } else if (!backendTargetReachable) {
     blockingIssues.push({
@@ -575,6 +587,9 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
     );
+    const candidateMixedSchemeBlocked = sessionKind === 'hosted-web'
+      && bridgeTransportTruth.bridgeHostedExecutionCompatibility === 'mixed-scheme-blocked'
+      && candidate.url === bridgeTransportTruth.bridgeMemoryUrl;
     const bridgeTargetReachable = canonicalHomeNodeBridge.accepted === true
       && canonicalHomeNodeBridge.reachability === 'reachable'
       && Boolean(canonicalHomeNodeBridge.backendUrl)
@@ -584,17 +599,20 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       : backendReachabilityByTarget.has(candidate.url)
       ? backendReachabilityByTarget.get(candidate.url) === true
       : (sessionKind === 'local-desktop' ? validation.ok : false);
-    const accepted = validation.ok && reachable;
+    const accepted = validation.ok && reachable && !candidateMixedSchemeBlocked;
     return {
       source: candidate.source,
       url: candidate.url,
       accepted,
-      reachable,
+      reachable: candidateMixedSchemeBlocked ? true : reachable,
       reason: accepted
         ? ''
+        : (candidateMixedSchemeBlocked
+          ? (bridgeTransportTruth.bridgeHostedExecutionReason
+            || 'Hosted HTTPS frontend cannot execute this HTTP bridge target due browser mixed-content policy.')
         : (validation.ok
           ? 'Backend target candidate failed reachability probe or has no route probe evidence.'
-          : validation.reason),
+          : validation.reason)),
     };
   });
   const acceptedBackendCandidate = backendTargetCandidateDecisions.find((candidate) => candidate.accepted);

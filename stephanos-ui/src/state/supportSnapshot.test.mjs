@@ -1301,3 +1301,43 @@ test('buildSupportSnapshot reports remembered tailscale backend candidate reject
 
   assert.match(snapshot, /backend target candidate is not yet accepted/);
 });
+
+test('buildSupportSnapshot reports hosted mixed-scheme execution incompatibility truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {
+      selectedRouteKind: 'home-node',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'no',
+      backendReachableState: 'yes',
+    },
+    runtimeSessionTruth: { sessionKind: 'hosted-web' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      canonicalHostedRouteTruth: {
+        backendTargetValidity: 'valid',
+        selectedRouteKind: 'home-node',
+        selectedRouteUsable: false,
+        blockingIssues: [{
+          code: 'hosted-backend-execution-incompatible',
+          message: 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.',
+        }],
+      },
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-execution-incompatible',
+        bridgeDirectReachability: 'reachable',
+        bridgeHostedExecutionCompatibility: 'mixed-scheme-blocked',
+        bridgeHostedExecutionRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy).',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /hosted execution is blocked by browser security policy/);
+  assert.match(snapshot, /Bridge Direct Reachability: reachable/);
+  assert.match(snapshot, /Bridge Hosted Execution Compatibility: mixed-scheme-blocked/);
+});

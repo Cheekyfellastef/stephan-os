@@ -148,6 +148,11 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
   reason: '',
   attemptedAt: '',
   attemptedConfigKey: '',
+  directReachability: 'unknown',
+  executionCompatibility: 'unknown',
+  executionTarget: '',
+  executionReason: '',
+  infrastructureRequirement: '',
 });
 
 function resolveBridgeMemoryStorageKey() {
@@ -1699,6 +1704,48 @@ export function AIStoreProvider({ children }) {
         setHomeBridgeUrlState(validation.normalizedUrl);
         setStephanosHomeBridgeGlobal(validation.normalizedUrl);
       }
+      const frontendProtocol = (() => {
+        try {
+          return new URL(frontendOrigin).protocol;
+        } catch {
+          return '';
+        }
+      })();
+      const bridgeProtocol = (() => {
+        try {
+          return new URL(validation.normalizedUrl).protocol;
+        } catch {
+          return '';
+        }
+      })();
+      const backendTargetDiagnostic = apiStatus?.runtimeContext?.routeDiagnostics?.['backend-target'] || {};
+      const existingDirectReachability = backendTargetDiagnostic.available === true
+        ? 'reachable'
+        : 'unknown';
+      if (hostedSession && frontendProtocol === 'https:' && bridgeProtocol === 'http:') {
+        const reason = 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.';
+        updateBridgeTransportConfig(plan.transport, {
+          enabled: true,
+          backendUrl: validation.normalizedUrl,
+          accepted: false,
+          active: false,
+          usable: false,
+          reachability: existingDirectReachability === 'reachable' ? 'reachable' : 'unknown',
+          reason,
+        });
+        setBridgeAutoRevalidation({
+          state: 'execution-incompatible',
+          reason,
+          attemptedAt: new Date().toISOString(),
+          attemptedConfigKey,
+          directReachability: existingDirectReachability,
+          executionCompatibility: 'mixed-scheme-blocked',
+          executionTarget: '',
+          executionReason: reason,
+          infrastructureRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy) to allow hosted execution from HTTPS surfaces.',
+        });
+        return;
+      }
       updateBridgeTransportConfig(plan.transport, {
         backendUrl: validation.normalizedUrl,
         accepted: false,
@@ -1712,6 +1759,11 @@ export function AIStoreProvider({ children }) {
         reason: 'Remembered bridge validated; probing reachability from this surface.',
         attemptedAt: new Date().toISOString(),
         attemptedConfigKey,
+        directReachability: 'unknown',
+        executionCompatibility: 'compatible',
+        executionTarget: validation.normalizedUrl,
+        executionReason: '',
+        infrastructureRequirement: '',
       });
       setBridgeMemoryPersistence((prev) => ({
         ...(prev || {}),
@@ -1758,6 +1810,11 @@ export function AIStoreProvider({ children }) {
             : (probe.data?.error || 'Remembered Home Bridge is unreachable from this surface.'),
           attemptedAt: new Date().toISOString(),
           attemptedConfigKey,
+          directReachability: serviceOk ? 'reachable' : 'unreachable',
+          executionCompatibility: 'compatible',
+          executionTarget: validation.normalizedUrl,
+          executionReason: '',
+          infrastructureRequirement: '',
         });
         if (serviceOk) {
           setBridgeTransportSelection(plan.transport);
@@ -1777,6 +1834,11 @@ export function AIStoreProvider({ children }) {
           reason: error?.message || 'Remembered Home Bridge probe failed from this surface.',
           attemptedAt: new Date().toISOString(),
           attemptedConfigKey,
+          directReachability: 'unknown',
+          executionCompatibility: 'unknown',
+          executionTarget: validation.normalizedUrl,
+          executionReason: error?.message || '',
+          infrastructureRequirement: '',
         });
       }
     };
@@ -1785,6 +1847,7 @@ export function AIStoreProvider({ children }) {
       cancelled = true;
     };
   }, [
+    apiStatus?.runtimeContext?.routeDiagnostics,
     bridgeMemory,
     bridgeTransportPreferences,
     bridgeValidationTruth,

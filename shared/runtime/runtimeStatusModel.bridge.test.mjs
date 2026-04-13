@@ -518,6 +518,52 @@ test('hosted remembered-revalidated tailscale promotes route winner when backend
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-revalidated');
 });
 
+test('hosted https with remembered http bridge classifies execution-incompatible instead of generic unreachable', () => {
+  const bridgeUrl = 'http://desktop-9flonkj.taild6f215.ts.net:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeMemory: { transport: 'tailscale', backendUrl: bridgeUrl },
+      bridgeAutoRevalidation: {
+        state: 'execution-incompatible',
+        reason: 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.',
+        directReachability: 'reachable',
+        executionCompatibility: 'mixed-scheme-blocked',
+        infrastructureRequirement: 'Publish HTTPS bridge endpoint.',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: bridgeUrl,
+            accepted: false,
+            active: false,
+            reachability: 'reachable',
+            usable: false,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          target: bridgeUrl,
+          actualTarget: bridgeUrl,
+        },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-execution-incompatible');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeHostedExecutionCompatibility, 'mixed-scheme-blocked');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeDirectReachability, 'reachable');
+  assert.equal(model.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].code, 'hosted-backend-execution-incompatible');
+});
+
 test('hosted remembered-revalidated tailscale downgrades to blocker state when backend evidence is not accepted', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: false,

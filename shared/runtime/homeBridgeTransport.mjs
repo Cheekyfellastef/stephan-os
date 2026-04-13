@@ -222,11 +222,28 @@ function normalizeAutoRevalidationState(value = '') {
     'validation-failed',
     'probing',
     'unreachable',
+    'execution-incompatible',
     'revalidated',
   ].includes(normalized)) {
     return normalized;
   }
   return 'idle';
+}
+
+function normalizeBridgeDirectReachability(value = '', fallback = 'unknown') {
+  const normalized = normalizeString(value).toLowerCase();
+  if (['reachable', 'unreachable', 'unknown'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function normalizeBridgeExecutionCompatibility(value = '', fallback = 'unknown') {
+  const normalized = normalizeString(value).toLowerCase();
+  if (['compatible', 'mixed-scheme-blocked', 'cors-blocked', 'unknown'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
 }
 
 function createEmptyBridgeMemory() {
@@ -529,6 +546,11 @@ export function projectHomeBridgeTransportTruth(
     bridgePersistedValue: normalizeReason(bridgeMemoryPersistence?.bridgePersistedValue, ''),
     bridgeRehydratedValue: normalizeReason(bridgeMemoryPersistence?.bridgeRehydratedValue, ''),
     bridgeProbeTarget: normalizeReason(bridgeMemoryPersistence?.bridgeProbeTarget, ''),
+    bridgeDirectReachability: normalizeBridgeDirectReachability(autoRevalidation?.directReachability, 'unknown'),
+    bridgeHostedExecutionCompatibility: normalizeBridgeExecutionCompatibility(autoRevalidation?.executionCompatibility, 'unknown'),
+    bridgeHostedExecutionTarget: normalizeReason(autoRevalidation?.executionTarget, ''),
+    bridgeHostedExecutionReason: normalizeReason(autoRevalidation?.executionReason || autoRevalidation?.reason, ''),
+    bridgeHostedExecutionRequirement: normalizeReason(autoRevalidation?.infrastructureRequirement, ''),
     tailscale: {
       deviceName: tailscaleConfig.deviceName || '',
       tailnetIp: tailscaleConfig.tailnetIp || '',
@@ -627,6 +649,14 @@ export function resolveBridgeMemoryReconciliation({
       reason: autoRevalidation?.reason || 'Remembered bridge failed canonical validation on this surface.',
       superseded: false,
       provenance: `remembered-${rememberedMemory.transport}-validation-failed`,
+    };
+  }
+  if (autoState === 'execution-incompatible') {
+    return {
+      state: 'remembered-execution-incompatible',
+      reason: autoRevalidation?.reason || 'Remembered bridge is directly reachable but cannot execute from this hosted surface due browser security boundaries.',
+      superseded: false,
+      provenance: `remembered-${rememberedMemory.transport}-execution-incompatible`,
     };
   }
   if (autoState === 'unreachable' || liveReachability === 'unreachable') {
