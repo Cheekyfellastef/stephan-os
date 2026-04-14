@@ -7,6 +7,59 @@ function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const SURFACE_PANEL_STYLE_ID = 'stephanos-surface-panel-shared-styles';
+const SURFACE_PANEL_SHARED_STYLES = `
+.stephanos-surface-panel {
+  padding: 12px;
+}
+.stephanos-surface-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.stephanos-surface-panel-header .title {
+  margin: 0;
+}
+.stephanos-surface-panel-knob {
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 1.05rem;
+  line-height: 1;
+  border: 1px solid #4b6f94;
+  background: rgba(8, 21, 35, 0.95);
+  color: #daf3ff;
+  cursor: pointer;
+}
+.stephanos-surface-panel-knob .dial {
+  display: inline-block;
+  transition: transform 180ms ease;
+}
+.stephanos-surface-panel-knob .chevron {
+  display: inline-block;
+  font-size: 0.78rem;
+  opacity: 0.9;
+  transition: transform 180ms ease;
+}
+.stephanos-surface-panel-knob:hover,
+.stephanos-surface-panel-knob:focus-visible {
+  border-color: #8ec9ff;
+  background: rgba(15, 34, 54, 0.97);
+}
+.stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .dial {
+  transform: rotate(-90deg);
+}
+.stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .chevron {
+  transform: rotate(-90deg);
+}
+`;
+
 function readSurfacePanelState(surfaceId, storage = globalThis?.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);
   const panels = memory?.session?.ui?.uiLayout?.surfacePanels;
@@ -15,6 +68,19 @@ function readSurfacePanelState(surfaceId, storage = globalThis?.localStorage) {
   }
   const entry = panels[surfaceId];
   return entry && typeof entry === 'object' ? { ...entry } : {};
+}
+
+function ensureSurfacePanelStyles(documentRef = globalThis?.document) {
+  if (!documentRef?.head || typeof documentRef.createElement !== 'function') {
+    return;
+  }
+  if (documentRef.getElementById(SURFACE_PANEL_STYLE_ID)) {
+    return;
+  }
+  const style = documentRef.createElement('style');
+  style.id = SURFACE_PANEL_STYLE_ID;
+  style.textContent = SURFACE_PANEL_SHARED_STYLES;
+  documentRef.head.appendChild(style);
 }
 
 function writeSurfacePanelState(surfaceId, panelId, collapsed, storage = globalThis?.localStorage) {
@@ -64,7 +130,7 @@ function createPanelShell({ panel, titleNode }) {
   const knob = document.createElement('button');
   knob.type = 'button';
   knob.className = 'stephanos-surface-panel-knob';
-  knob.innerHTML = '<span class="dial">◉</span>';
+  knob.innerHTML = '<span class="dial">◉</span><span class="chevron" aria-hidden="true">⌄</span>';
 
   header.append(heading, knob);
 
@@ -87,6 +153,8 @@ export function initStephanosSurfacePanels({
   if (!normalizedSurfaceId) {
     throw new Error('initStephanosSurfacePanels requires a non-empty surfaceId.');
   }
+
+  ensureSurfacePanelStyles(globalThis?.document);
 
   const persistedState = readSurfacePanelState(normalizedSurfaceId, storage);
   const panels = Array.from(document.querySelectorAll(panelSelector));

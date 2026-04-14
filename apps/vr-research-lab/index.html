@@ -83,6 +83,10 @@
       background: rgba(6, 12, 24, .9);
       padding: 8px 10px;
     }
+    textarea, input, select {
+      width: 100%;
+      min-width: 0;
+    }
     button { cursor: pointer; background: rgba(45, 105, 180, .3); }
     .answer {
       min-height: 180px;
@@ -94,6 +98,18 @@
     }
     .mini { font-size: .84rem; color: var(--muted); }
     .split { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+    .mission-console > * {
+      width: 100%;
+      min-width: 0;
+    }
+    .mission-console .toolbar {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) auto;
+    }
+    #prompt-input {
+      width: 100%;
+      min-width: 0;
+      resize: vertical;
+    }
     ul { margin: 0; padding-left: 18px; }
     li { margin: 4px 0; }
     a { color: #8fcfff; word-break: break-all; }
@@ -101,37 +117,6 @@
     @media (max-width: 1120px) {
       .surface { grid-template-columns: 1fr; }
       .mission-console { position: static; }
-    }
-    .stephanos-surface-panel {
-      padding: 12px;
-    }
-    .stephanos-surface-panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-    .stephanos-surface-panel-header .title {
-      margin: 0;
-    }
-    .stephanos-surface-panel-knob {
-      border-radius: 999px;
-      width: 38px;
-      height: 38px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.25rem;
-      line-height: 1;
-      background: rgba(34, 80, 141, 0.35);
-    }
-    .stephanos-surface-panel-knob .dial {
-      display: inline-block;
-      transition: transform 180ms ease;
-    }
-    .stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .dial {
-      transform: rotate(-90deg);
     }
   </style>
 </head>
@@ -314,6 +299,37 @@
       return record.output_text || record.answer || record.text || record.message || JSON.stringify(record, null, 2);
     }
 
+    function resolveMissionConsoleRuntimeContext() {
+      let parentRuntimeStatusModel = null;
+      try {
+        parentRuntimeStatusModel = window.parent?.__STEPHANOS_RUNTIME_STATUS_MODEL
+          || window.parent?.stephanosRuntimeStatusModel
+          || window.parent?.runtimeStatusModel
+          || null;
+      } catch {
+        parentRuntimeStatusModel = null;
+      }
+
+      const runtimeTruth = parentRuntimeStatusModel?.runtimeTruth || {};
+      const timeoutPolicy = runtimeTruth.timeoutPolicy && typeof runtimeTruth.timeoutPolicy === 'object'
+        ? runtimeTruth.timeoutPolicy
+        : {};
+      const timeoutMs = Number(timeoutPolicy.uiRequestTimeoutMs || runtimeTruth.uiRequestTimeoutMs) || null;
+      const timeoutSource = String(timeoutPolicy.timeoutPolicySource || runtimeTruth.timeoutPolicySource || '').trim();
+
+      return {
+        tileId: TILE_ID,
+        tileSource: TILE_SOURCE,
+        tileCategory: 'vr-research',
+        frontendOrigin: window.location.origin,
+        timeoutMs: timeoutMs || undefined,
+        timeoutSource: timeoutSource || undefined,
+        timeoutPolicy,
+        finalRouteTruth: runtimeTruth.finalRouteTruth || parentRuntimeStatusModel?.finalRouteTruth || null,
+        canonicalRouteRuntimeTruth: runtimeTruth.canonicalRouteRuntimeTruth || null,
+      };
+    }
+
     async function askMissionConsole() {
       const prompt = String(nodes.promptInput.value || '').trim();
       if (!prompt) {
@@ -342,12 +358,7 @@
             retrievalContext: state.retrievalContext,
             vrResearchContext: context,
           },
-          runtimeContext: {
-            tileId: TILE_ID,
-            tileSource: TILE_SOURCE,
-            tileCategory: 'vr-research',
-            frontendOrigin: window.location.origin,
-          },
+          runtimeContext: resolveMissionConsoleRuntimeContext(),
         });
         const answerText = extractAnswer(data);
         state.lastPrompt = prompt;

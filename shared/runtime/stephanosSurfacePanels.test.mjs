@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   readSurfacePanelState,
   writeSurfacePanelState,
@@ -31,4 +32,11 @@ test('surface panel state writes and reads through stephanos session memory layo
     techniques: false,
   });
   assert.deepEqual(readSurfacePanelState('music-lab', storage), { queue: true });
+});
+
+test('surface panel shell uses shared rotating dial + chevron affordance', () => {
+  const source = fs.readFileSync(new URL('./stephanosSurfacePanels.mjs', import.meta.url), 'utf8');
+  assert.match(source, /className = 'stephanos-surface-panel-knob'/);
+  assert.match(source, /<span class=\"dial\">◉<\/span><span class=\"chevron\"/);
+  assert.match(source, /SURFACE_PANEL_STYLE_ID = 'stephanos-surface-panel-shared-styles'/);
 });

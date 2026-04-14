@@ -68,3 +68,29 @@ test('queryStephanosAI throws cleanly on backend failures', async () => {
     /provider failed/,
   );
 });
+
+test('queryStephanosAI honors canonical runtime timeout policy instead of backend default timeout', async () => {
+  const fetchImpl = async (_url, options) => new Promise((_, reject) => {
+    options.signal?.addEventListener('abort', () => {
+      const abortError = new Error('aborted');
+      abortError.name = 'AbortError';
+      reject(abortError);
+    }, { once: true });
+  });
+
+  await assert.rejects(
+    () => queryStephanosAI({
+      provider: 'ollama',
+      messages: [{ role: 'user', content: 'timeout policy test' }],
+      runtimeContext: {
+        baseUrl: 'http://localhost:8787',
+        timeoutPolicy: {
+          uiRequestTimeoutMs: 25,
+          timeoutPolicySource: 'runtime:timeout-policy',
+        },
+      },
+      fetchImpl,
+    }),
+    /timed out after 25ms/,
+  );
+});
