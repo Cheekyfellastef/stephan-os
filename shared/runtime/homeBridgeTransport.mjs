@@ -235,10 +235,12 @@ function normalizeAutoRevalidationState(value = '') {
   if ([
     'idle',
     'skipped',
+    'backoff',
     'validating',
     'validation-failed',
     'probing',
     'unreachable',
+    'blocked-by-policy',
     'execution-incompatible',
     'revalidated',
   ].includes(normalized)) {
@@ -261,6 +263,12 @@ function normalizeBridgeExecutionCompatibility(value = '', fallback = 'unknown')
     return normalized;
   }
   return fallback;
+}
+
+function normalizeAttemptCount(value = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.min(8, Math.floor(parsed));
 }
 
 function createEmptyBridgeMemory() {
@@ -567,6 +575,24 @@ export function projectHomeBridgeTransportTruth(
   const bridgeMode = selectedTransport === 'tailscale' && isTsNetOrigin(hostedExecutionBridgeUrl)
     ? 'tailnet-private-https'
     : 'standard';
+  const autoState = normalizeAutoRevalidationState(autoRevalidation?.state);
+  const autoAttempts = normalizeAttemptCount(autoRevalidation?.attemptCount);
+  const promotedToRouteCandidate = autoState === 'revalidated' && reconciliation.state === 'remembered-revalidated';
+  const promotionReason = promotedToRouteCandidate
+    ? normalizeReason(
+      autoRevalidation?.promotionReason,
+      'Remembered bridge validated/reachable on this surface and promoted to route candidates.',
+    )
+    : normalizeReason(
+      autoRevalidation?.promotionReason,
+      reconciliation.state === 'remembered-superseded-by-live-config'
+        ? 'Remembered bridge retained but not promoted because stronger live config already exists.'
+        : (
+          reconciliation.state === 'remembered-execution-incompatible'
+            ? 'Remembered bridge retained but blocked by hosted/browser policy; not promoted.'
+            : 'Remembered bridge retained but not promoted pending successful validation/reachability on this surface.'
+        ),
+    );
 
   return {
     selectedTransport,
@@ -589,9 +615,23 @@ export function projectHomeBridgeTransportTruth(
     bridgeMemoryReconciliationState: reconciliation.state,
     bridgeMemoryReconciliationReason: reconciliation.reason,
     bridgeMemoryReconciliationProvenance: reconciliation.provenance || '',
-    bridgeAutoRevalidationState: normalizeAutoRevalidationState(autoRevalidation?.state),
+    bridgeAutoRevalidationAttempted: autoAttempts > 0 || Boolean(normalizeTimestamp(autoRevalidation?.attemptedAt || '')),
+    bridgeAutoRevalidationState: autoState,
     bridgeAutoRevalidationReason: normalizeReason(autoRevalidation?.reason, ''),
     bridgeAutoRevalidationAttemptedAt: normalizeTimestamp(autoRevalidation?.attemptedAt || ''),
+    bridgeAutoRevalidationAttemptCount: autoAttempts,
+    bridgeAutoRevalidationNextRetryAt: normalizeTimestamp(autoRevalidation?.nextRetryAt || ''),
+    bridgeAutoRevalidationTrigger: normalizeReason(autoRevalidation?.trigger, ''),
+    bridgeAutoRevalidationBlocked: autoState === 'blocked-by-policy' || autoState === 'execution-incompatible',
+    bridgeMemoryAutoValidationAttempted: autoAttempts > 0 || Boolean(normalizeTimestamp(autoRevalidation?.attemptedAt || '')),
+    bridgeMemoryAutoValidationState: autoState,
+    bridgeMemoryAutoValidationReason: normalizeReason(autoRevalidation?.reason, ''),
+    bridgeMemoryValidatedOnThisSurface: reconciliation.state === 'remembered-revalidated',
+    bridgeMemoryReachableOnThisSurface: reconciliation.state === 'remembered-revalidated'
+      || normalizeReachability(reachability) === 'reachable',
+    bridgeMemoryPromotedToRouteCandidate: promotedToRouteCandidate,
+    bridgeMemoryPromotionReason: promotionReason,
+    bridgeMemoryLastValidatedAt: normalizeTimestamp(autoRevalidation?.attemptedAt || ''),
     bridgeMemoryPersistenceState: normalizeReason(bridgeMemoryPersistence?.state, 'idle'),
     bridgeMemoryPersistenceReason: normalizeReason(bridgeMemoryPersistence?.reason, 'No bridge memory persistence event recorded.'),
     bridgeMemoryPersistenceAt: normalizeTimestamp(bridgeMemoryPersistence?.at || ''),
@@ -775,6 +815,7 @@ export function resolveAutoBridgeRevalidationPlan({
     };
   }
   const selectedTransport = normalizeBridgeTransportSelection(preferences?.selectedTransport || remembered.transport);
+  const sessionKind = normalizeSessionKind(bridgeValidationTruth?.sessionKind || 'unknown');
   const manual = preferences?.transports?.manual || {};
   const tailscale = preferences?.transports?.tailscale || {};
   const activeConfig = selectedTransport === 'tailscale' ? tailscale : manual;
@@ -787,16 +828,25 @@ export function resolveAutoBridgeRevalidationPlan({
     };
   }
   const requireHttps = resolveBridgeUrlRequireHttps({
-    sessionKind: bridgeValidationTruth?.sessionKind || 'unknown',
+    sessionKind,
     selectedTransport: remembered.transport,
     fallbackRequireHttps: bridgeValidationTruth?.requireHttps !== false,
   });
+  const policyAllowed = sessionKind === 'local-desktop' || sessionKind === 'hosted-web' || sessionKind === 'unknown';
+  const policyReason = policyAllowed
+    ? 'Current surface policy allows remembered bridge auto-validation.'
+    : 'Current surface policy does not allow remembered bridge auto-validation.';
   return {
-    shouldAttempt: true,
-    reason: 'Remembered bridge config is eligible for canonical auto-revalidation.',
+    shouldAttempt: policyAllowed,
+    reason: policyAllowed
+      ? 'Remembered bridge config is eligible for canonical auto-revalidation.'
+      : 'Remembered bridge auto-validation blocked by current-surface policy.',
     outcome: 'remembered-awaiting-validation',
     transport: remembered.transport,
     candidateUrl: remembered.backendUrl,
     requireHttps,
+    sessionKind,
+    policyAllowed,
+    policyReason,
   };
 }

@@ -31,6 +31,7 @@ export default function HomeBridgePanel() {
     bridgeTransportTruth,
     bridgeMemory,
     bridgeAutoRevalidation,
+    revalidateRememberedBridge,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     uiLayout,
@@ -80,21 +81,40 @@ export default function HomeBridgePanel() {
   const reconciliationState = transportTruth.bridgeMemoryReconciliationState || 'no-remembered-bridge';
   const rememberedBridgeStatusLabel = useMemo(() => {
     if (!transportTruth.bridgeMemoryPresent) return 'No saved bridge config';
+    if (transportTruth.bridgeMemoryAutoValidationState === 'validating' || transportTruth.bridgeMemoryAutoValidationState === 'probing') {
+      return 'Remembered and auto-validation in progress';
+    }
+    if (transportTruth.bridgeMemoryPromotedToRouteCandidate) return 'Remembered, validated, and promoted into route candidates';
     if (reconciliationState === 'remembered-revalidated') return 'Remembered and validated on this surface';
     if (reconciliationState === 'remembered-unreachable') return 'Remembered but unreachable on this surface';
     if (reconciliationState === 'remembered-validation-failed') return 'Remembered but validation failed on this surface';
     if (reconciliationState === 'remembered-execution-incompatible') return 'Remembered but blocked by hosted browser execution constraints';
     if (transportTruth.bridgeMemoryNeedsValidation) return 'Remembered and awaiting validation on this surface';
     return 'Remembered bridge loaded';
-  }, [reconciliationState, transportTruth.bridgeMemoryNeedsValidation, transportTruth.bridgeMemoryPresent]);
+  }, [
+    reconciliationState,
+    transportTruth.bridgeMemoryAutoValidationState,
+    transportTruth.bridgeMemoryNeedsValidation,
+    transportTruth.bridgeMemoryPresent,
+    transportTruth.bridgeMemoryPromotedToRouteCandidate,
+  ]);
   const reconciliationDetail = useMemo(() => {
+    if (transportTruth.bridgeMemoryAutoValidationState === 'validating' || transportTruth.bridgeMemoryAutoValidationState === 'probing') {
+      return 'Remembered config is being auto-validated and probed on this surface.';
+    }
+    if (transportTruth.bridgeMemoryPromotedToRouteCandidate) return transportTruth.bridgeMemoryPromotionReason || 'Remembered config validated and promoted.';
     if (reconciliationState === 'remembered-revalidated') return 'Remembered config has been auto-revalidated and matches live bridge truth.';
     if (reconciliationState === 'remembered-validation-failed') return 'Remembered config exists but failed canonical validation on this surface.';
     if (reconciliationState === 'remembered-unreachable') return 'Remembered config validates structurally but is unreachable from this surface.';
     if (reconciliationState === 'remembered-superseded-by-live-config') return 'Remembered config exists, but current live accepted config supersedes it.';
     if (reconciliationState === 'remembered-awaiting-validation') return 'Remembered config is present and waiting for canonical revalidation.';
     return 'No remembered bridge config currently exists.';
-  }, [reconciliationState]);
+  }, [
+    reconciliationState,
+    transportTruth.bridgeMemoryAutoValidationState,
+    transportTruth.bridgeMemoryPromotedToRouteCandidate,
+    transportTruth.bridgeMemoryPromotionReason,
+  ]);
 
   useEffect(() => {
     const activeUrl = selectedTransport === 'tailscale'
@@ -350,6 +370,7 @@ export default function HomeBridgePanel() {
         <button type="button" className="ghost-button" onClick={selectedTransport === 'tailscale' ? handleSaveTailscale : handleSaveManual}>{saveInFlight ? 'Saving…' : 'Save'}</button>
         <button type="button" className="ghost-button" onClick={handleValidate}>Validate</button>
         <button type="button" className="ghost-button" onClick={handleProbe}>Test Reachability</button>
+        <button type="button" className="ghost-button" onClick={() => revalidateRememberedBridge('panel-retry')} disabled={!transportTruth.bridgeMemoryPresent}>Retry Remembered Validation</button>
         <button type="button" className="ghost-button" onClick={handleClear}>Clear</button>
       </div>
 
@@ -377,6 +398,11 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Reconciliation reason: <strong>{transportTruth.bridgeMemoryReconciliationReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation state: <strong>{transportTruth.bridgeAutoRevalidationState || 'idle'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation reason: <strong>{transportTruth.bridgeAutoRevalidationReason || 'n/a'}</strong></p>
+      <p className="home-bridge-detail">Auto validation attempted: <strong>{transportTruth.bridgeMemoryAutoValidationAttempted ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Validated on this surface: <strong>{transportTruth.bridgeMemoryValidatedOnThisSurface ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Reachable on this surface: <strong>{transportTruth.bridgeMemoryReachableOnThisSurface ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Promoted to route candidates: <strong>{transportTruth.bridgeMemoryPromotedToRouteCandidate ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Promotion reason: <strong>{transportTruth.bridgeMemoryPromotionReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Validation reason: <strong>{validationReason}</strong></p>
       <p className="home-bridge-detail">Reachability reason: <strong>{reachabilityReason}</strong></p>
       <p className="home-bridge-detail">Last checked: <strong>{formatTime(lastCheckedAt)}</strong></p>

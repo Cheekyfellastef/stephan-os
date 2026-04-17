@@ -349,10 +349,15 @@ export function buildSupportSnapshot({
     } else {
       guidanceItems.push('Remembered Home Bridge revalidated successfully on this hosted surface.');
     }
+    if (bridgeTransportTruth?.bridgeMemoryPromotedToRouteCandidate === true) {
+      guidanceItems.push('Remembered bridge promoted into route candidates after successful current-surface validation.');
+    }
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-unreachable') {
     guidanceItems.push('Remembered Home Bridge exists but is unreachable from this surface.');
+    guidanceItems.push('Remembered bridge retained but not promoted while reachability fails on this surface.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-execution-incompatible') {
     guidanceItems.push('Remembered Home Bridge exists and may be directly reachable, but hosted execution is blocked by browser security policy (HTTPS frontend to HTTP bridge).');
+    guidanceItems.push('Remembered bridge blocked by hosted/browser constraints and therefore not promoted.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-validation-failed') {
     guidanceItems.push('Remembered Home Bridge exists but failed validation and needs operator review.');
   } else if (bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-awaiting-validation') {
@@ -754,6 +759,14 @@ export function buildSupportSnapshot({
     `Bridge Memory Reconciliation State: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationState, 'no-remembered-bridge')}`,
     `Bridge Memory Reconciliation Reason: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationReason, 'n/a')}`,
     `Bridge Memory Reconciliation Provenance: ${asText(bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'n/a')}`,
+    `Bridge Memory Auto Validation Attempted: ${bridgeTransportTruth.bridgeMemoryAutoValidationAttempted === true ? 'yes' : 'no'}`,
+    `Bridge Memory Auto Validation State: ${asText(bridgeTransportTruth.bridgeMemoryAutoValidationState, 'idle')}`,
+    `Bridge Memory Auto Validation Reason: ${asText(bridgeTransportTruth.bridgeMemoryAutoValidationReason, 'n/a')}`,
+    `Bridge Memory Validated On This Surface: ${bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface === true ? 'yes' : 'no'}`,
+    `Bridge Memory Reachable On This Surface: ${bridgeTransportTruth.bridgeMemoryReachableOnThisSurface === true ? 'yes' : 'no'}`,
+    `Bridge Memory Promoted To Route Candidate: ${bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate === true ? 'yes' : 'no'}`,
+    `Bridge Memory Promotion Reason: ${asText(bridgeTransportTruth.bridgeMemoryPromotionReason, 'n/a')}`,
+    `Bridge Memory Last Validated At: ${asText(bridgeTransportTruth.bridgeMemoryLastValidatedAt, 'not yet')}`,
     `Bridge Memory Persistence State: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceState, 'idle')}`,
     `Bridge Memory Persistence Reason: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceReason, 'n/a')}`,
     `Bridge Memory Persistence At: ${asText(bridgeTransportTruth.bridgeMemoryPersistenceAt, 'not yet')}`,
