@@ -263,6 +263,50 @@ test('auto bridge revalidation plan skips when stronger accepted live config exi
   assert.equal(plan.outcome, 'remembered-superseded-by-live-config');
 });
 
+test('auto bridge revalidation plan allows remembered manual bridge on local desktop surfaces', () => {
+  const plan = resolveAutoBridgeRevalidationPlan({
+    bridgeMemory: {
+      transport: 'manual',
+      backendUrl: 'http://192.168.1.22:8787',
+    },
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'manual',
+      transports: {
+        manual: {
+          enabled: true,
+          backendUrl: 'http://192.168.1.22:8787',
+        },
+      },
+    }),
+    bridgeValidationTruth: { sessionKind: 'local-desktop', requireHttps: false },
+  });
+  assert.equal(plan.shouldAttempt, true);
+  assert.equal(plan.transport, 'manual');
+  assert.equal(plan.policyAllowed, true);
+});
+
+test('auto bridge revalidation plan allows remembered tailscale bridge on hosted surfaces', () => {
+  const plan = resolveAutoBridgeRevalidationPlan({
+    bridgeMemory: {
+      transport: 'tailscale',
+      backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+    },
+    preferences: normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: {
+          enabled: true,
+          backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+        },
+      },
+    }),
+    bridgeValidationTruth: { sessionKind: 'hosted-web', requireHttps: true },
+  });
+  assert.equal(plan.shouldAttempt, true);
+  assert.equal(plan.transport, 'tailscale');
+  assert.equal(plan.policyAllowed, true);
+});
+
 test('auto bridge revalidation plan reports no-remembered-bridge when durable memory is absent', () => {
   const plan = resolveAutoBridgeRevalidationPlan({
     bridgeMemory: {},
@@ -343,6 +387,42 @@ test('bridge memory reconciliation classifies hosted execution-incompatible trut
   assert.equal(projected.bridgeMemoryReconciliationState, 'remembered-execution-incompatible');
   assert.equal(projected.bridgeDirectReachability, 'reachable');
   assert.equal(projected.bridgeHostedExecutionCompatibility, 'mixed-scheme-blocked');
+  assert.equal(projected.bridgeMemoryPromotedToRouteCandidate, false);
+  assert.match(projected.bridgeMemoryPromotionReason, /blocked by hosted\/browser policy/i);
+});
+
+test('home bridge projection reports promoted remembered bridge and promotion reason truth', () => {
+  const projected = projectHomeBridgeTransportTruth(
+    normalizeBridgeTransportPreferences({
+      selectedTransport: 'tailscale',
+      transports: {
+        tailscale: {
+          enabled: true,
+          backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+          accepted: true,
+          active: true,
+          reachability: 'reachable',
+          usable: true,
+        },
+      },
+    }),
+    {
+      bridgeMemory: { transport: 'tailscale', backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net' },
+      autoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+        attemptedAt: '2026-04-17T08:00:00.000Z',
+        attemptCount: 1,
+        promotionReason: 'Remembered tailscale bridge promoted into live route candidates.',
+      },
+    },
+  );
+  assert.equal(projected.bridgeMemoryAutoValidationAttempted, true);
+  assert.equal(projected.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(projected.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(projected.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(projected.bridgeMemoryPromotionReason, 'Remembered tailscale bridge promoted into live route candidates.');
+  assert.equal(projected.bridgeMemoryLastValidatedAt, '2026-04-17T08:00:00.000Z');
 });
 
 test('bridge memory reconciliation requires canonical tailscale selection before projecting tailscale revalidated provenance', () => {

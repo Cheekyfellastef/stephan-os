@@ -148,12 +148,18 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
   reason: '',
   attemptedAt: '',
   attemptedConfigKey: '',
+  attemptCount: 0,
+  nextRetryAt: '',
+  trigger: '',
+  promotionReason: '',
   directReachability: 'unknown',
   executionCompatibility: 'unknown',
   executionTarget: '',
   executionReason: '',
   infrastructureRequirement: '',
 });
+const BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS = 2;
+const BRIDGE_AUTO_REVALIDATION_BACKOFF_MS = 60_000;
 
 function resolveBridgeMemoryStorageKey() {
   return typeof globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY === 'string'
@@ -722,6 +728,7 @@ export function AIStoreProvider({ children }) {
   const [bridgeMemoryHydrationPending, setBridgeMemoryHydrationPending] = useState(Boolean(getStephanosMemoryRuntime()?.hydrate));
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
   const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const [bridgeRevalidationNonce, setBridgeRevalidationNonce] = useState(0);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
     nonLocalSession: false,
@@ -1648,52 +1655,103 @@ export function AIStoreProvider({ children }) {
     }
   }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind, homeBridgeUrl]);
 
+  const revalidateRememberedBridge = useCallback((trigger = 'manual') => {
+    setBridgeAutoRevalidation((prev) => ({
+      ...prev,
+      state: 'idle',
+      reason: trigger === 'manual'
+        ? 'Manual remembered-bridge revalidation requested.'
+        : 'Remembered bridge revalidation scheduled.',
+      trigger,
+      nextRetryAt: '',
+    }));
+    setBridgeRevalidationNonce((value) => value + 1);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const sessionKind = bridgeValidationTruth?.sessionKind || 'unknown';
-    const hostedSession = sessionKind === 'hosted-web';
     const plan = resolveAutoBridgeRevalidationPlan({
       bridgeMemory,
       preferences: bridgeTransportPreferences,
       bridgeValidationTruth,
     });
     const attemptedConfigKey = `${plan.transport || 'none'}::${plan.candidateUrl || ''}::${bridgeMemory?.rememberedAt || ''}`;
-    const terminalStates = new Set(['skipped', 'validation-failed', 'unreachable', 'revalidated']);
-    if (bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey && terminalStates.has(bridgeAutoRevalidation.state)) {
+    const attemptCount = Number(bridgeAutoRevalidation?.attemptCount || 0);
+    const terminalStates = new Set(['skipped', 'validation-failed', 'unreachable', 'revalidated', 'execution-incompatible', 'blocked-by-policy', 'backoff']);
+    const alreadyAttemptedCurrentConfig = bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey
+      && attemptCount >= BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS
+      && terminalStates.has(bridgeAutoRevalidation.state);
+    if (alreadyAttemptedCurrentConfig) {
       return () => {
         cancelled = true;
       };
     }
-    if (!hostedSession || !plan.shouldAttempt || !plan.transport || !plan.candidateUrl) {
+    if (!plan.shouldAttempt || !plan.transport || !plan.candidateUrl) {
       setBridgeAutoRevalidation((prev) => (
-        prev.state === 'revalidated'
+        prev.state === 'revalidated' && prev.attemptedConfigKey === attemptedConfigKey
           ? prev
           : {
-            state: 'skipped',
-            reason: !hostedSession
-              ? 'Auto-revalidation only runs on hosted surfaces.'
-              : (plan.reason || 'Remembered bridge not eligible for auto-revalidation.'),
+            ...prev,
+            state: plan.policyAllowed === false ? 'blocked-by-policy' : 'skipped',
+            reason: plan.reason || 'Remembered bridge not eligible for auto-revalidation.',
             attemptedAt: prev.attemptedAt || new Date().toISOString(),
             attemptedConfigKey,
+            trigger: prev.trigger || 'startup',
+            attemptCount: prev.attemptCount || 0,
+            promotionReason: prev.promotionReason || 'Remembered bridge retained but not promoted.',
           }
       ));
       return () => {
         cancelled = true;
       };
     }
-    if (bridgeAutoRevalidation.state === 'revalidated' && bridgeAutoRevalidation.attemptedAt) {
+    if (bridgeAutoRevalidation.state === 'revalidated' && bridgeAutoRevalidation.attemptedAt
+      && bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const nextRetryAtMs = Date.parse(bridgeAutoRevalidation?.nextRetryAt || '');
+    if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs && bridgeRevalidationNonce === 0) {
+      setBridgeAutoRevalidation((prev) => ({
+        ...prev,
+        state: 'backoff',
+        reason: prev.reason || 'Remembered bridge retry is backing off after a prior failure.',
+        attemptedConfigKey,
+      }));
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (attemptCount >= BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS && bridgeRevalidationNonce === 0) {
+      setBridgeAutoRevalidation((prev) => ({
+        ...prev,
+        state: 'backoff',
+        reason: 'Remembered bridge auto-validation exhausted bounded retries for this surface session.',
+        attemptedConfigKey,
+        nextRetryAt: new Date(Date.now() + BRIDGE_AUTO_REVALIDATION_BACKOFF_MS).toISOString(),
+      }));
       return () => {
         cancelled = true;
       };
     }
 
     const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const trigger = bridgeRevalidationNonce > 0 ? 'manual-retry' : (bridgeAutoRevalidation.trigger || 'startup');
+    const nextAttemptCount = bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey
+      ? attemptCount + 1
+      : 1;
     const executeAutoRevalidation = async () => {
       setBridgeAutoRevalidation({
         state: 'validating',
-        reason: `Auto-validating remembered ${plan.transport} bridge for this hosted surface.`,
+        reason: `Validating remembered ${plan.transport} bridge for this surface (${sessionKind}).`,
         attemptedAt: new Date().toISOString(),
         attemptedConfigKey,
+        attemptCount: nextAttemptCount,
+        trigger,
+        nextRetryAt: '',
+        promotionReason: '',
       });
       const validation = validateStephanosHomeBridgeUrl(plan.candidateUrl, {
         frontendOrigin,
@@ -1713,6 +1771,10 @@ export function AIStoreProvider({ children }) {
           reason: validation.reason || 'Remembered bridge failed canonical validation on this surface.',
           attemptedAt: new Date().toISOString(),
           attemptedConfigKey,
+          attemptCount: nextAttemptCount,
+          trigger,
+          nextRetryAt: new Date(Date.now() + BRIDGE_AUTO_REVALIDATION_BACKOFF_MS).toISOString(),
+          promotionReason: 'Remembered bridge retained but not promoted because canonical validation failed.',
         });
         return;
       }
@@ -1750,7 +1812,7 @@ export function AIStoreProvider({ children }) {
       const executionProbeTarget = preferredHostedExecutionValidation.ok
         ? preferredHostedExecutionValidation.normalizedUrl
         : validation.normalizedUrl;
-      if (hostedSession && frontendProtocol === 'https:' && bridgeProtocol === 'http:') {
+      if (sessionKind === 'hosted-web' && frontendProtocol === 'https:' && bridgeProtocol === 'http:') {
         if (preferredHostedExecutionValidation.ok) {
           updateBridgeTransportConfig(plan.transport, {
             enabled: true,
@@ -1767,11 +1829,14 @@ export function AIStoreProvider({ children }) {
             reason: 'Using configured HTTPS hosted execution bridge target for hosted revalidation.',
             attemptedAt: new Date().toISOString(),
             attemptedConfigKey,
+            attemptCount: nextAttemptCount,
+            trigger,
             directReachability: existingDirectReachability,
             executionCompatibility: 'compatible',
             executionTarget: preferredHostedExecutionValidation.normalizedUrl,
             executionReason: '',
             infrastructureRequirement: '',
+            promotionReason: '',
           });
         } else {
           const reason = 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.';
@@ -1789,11 +1854,15 @@ export function AIStoreProvider({ children }) {
             reason,
             attemptedAt: new Date().toISOString(),
             attemptedConfigKey,
+            attemptCount: nextAttemptCount,
+            trigger,
             directReachability: existingDirectReachability,
             executionCompatibility: 'mixed-scheme-blocked',
             executionTarget: '',
             executionReason: reason,
             infrastructureRequirement: 'Publish the Home Bridge on HTTPS (or provide an HTTPS reverse proxy) to allow hosted execution from HTTPS surfaces.',
+            nextRetryAt: new Date(Date.now() + BRIDGE_AUTO_REVALIDATION_BACKOFF_MS).toISOString(),
+            promotionReason: 'Remembered bridge retained but blocked by hosted/browser policy; not promoted.',
           });
           return;
         }
@@ -1812,11 +1881,14 @@ export function AIStoreProvider({ children }) {
         reason: 'Remembered bridge validated; probing reachability from this surface.',
         attemptedAt: new Date().toISOString(),
         attemptedConfigKey,
+        attemptCount: nextAttemptCount,
+        trigger,
         directReachability: 'unknown',
         executionCompatibility: 'compatible',
         executionTarget: executionProbeTarget,
         executionReason: '',
         infrastructureRequirement: '',
+        promotionReason: '',
       });
       setBridgeMemoryPersistence((prev) => ({
         ...(prev || {}),
@@ -1864,11 +1936,17 @@ export function AIStoreProvider({ children }) {
             : (probe.data?.error || 'Remembered Home Bridge is unreachable from this surface.'),
           attemptedAt: new Date().toISOString(),
           attemptedConfigKey,
+          attemptCount: nextAttemptCount,
+          trigger,
           directReachability: serviceOk ? 'reachable' : 'unreachable',
           executionCompatibility: 'compatible',
           executionTarget: executionProbeTarget,
           executionReason: '',
           infrastructureRequirement: '',
+          nextRetryAt: serviceOk ? '' : new Date(Date.now() + BRIDGE_AUTO_REVALIDATION_BACKOFF_MS).toISOString(),
+          promotionReason: serviceOk
+            ? `Remembered ${plan.transport} bridge auto-validated and promoted into live route candidates on this surface.`
+            : 'Remembered bridge retained but not promoted because current-surface reachability failed.',
         });
         if (serviceOk) {
           setBridgeTransportSelection(plan.transport);
@@ -1888,11 +1966,15 @@ export function AIStoreProvider({ children }) {
           reason: error?.message || 'Remembered Home Bridge probe failed from this surface.',
           attemptedAt: new Date().toISOString(),
           attemptedConfigKey,
+          attemptCount: nextAttemptCount,
+          trigger,
           directReachability: 'unknown',
           executionCompatibility: 'unknown',
           executionTarget: executionProbeTarget,
           executionReason: error?.message || '',
           infrastructureRequirement: '',
+          nextRetryAt: new Date(Date.now() + BRIDGE_AUTO_REVALIDATION_BACKOFF_MS).toISOString(),
+          promotionReason: 'Remembered bridge retained but not promoted because probe failed on this surface.',
         });
       }
     };
@@ -1906,10 +1988,44 @@ export function AIStoreProvider({ children }) {
     bridgeTransportPreferences,
     bridgeValidationTruth,
     bridgeAutoRevalidation.attemptedAt,
+    bridgeAutoRevalidation.attemptCount,
+    bridgeAutoRevalidation.attemptedConfigKey,
+    bridgeAutoRevalidation.nextRetryAt,
     bridgeAutoRevalidation.state,
+    bridgeAutoRevalidation.trigger,
+    bridgeRevalidationNonce,
     setBridgeTransportSelection,
     setApiStatus,
     updateBridgeTransportConfig,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || bridgeMemoryHydrationPending) {
+      return undefined;
+    }
+    const terminalFailed = new Set(['unreachable', 'validation-failed', 'execution-incompatible', 'blocked-by-policy']);
+    const attemptCount = Number(bridgeAutoRevalidation?.attemptCount || 0);
+    if (!terminalFailed.has(bridgeAutoRevalidation?.state) || attemptCount >= BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS) {
+      return undefined;
+    }
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'hidden') return;
+      const nextRetryAtMs = Date.parse(bridgeAutoRevalidation?.nextRetryAt || '');
+      if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) return;
+      revalidateRememberedBridge('focus-retry');
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [
+    bridgeAutoRevalidation?.attemptCount,
+    bridgeAutoRevalidation?.nextRetryAt,
+    bridgeAutoRevalidation?.state,
+    bridgeMemoryHydrationPending,
+    revalidateRememberedBridge,
   ]);
   const value = useMemo(() => ({
     commandHistory,
@@ -1983,6 +2099,7 @@ export function AIStoreProvider({ children }) {
     bridgeMemoryPersistence,
     bridgeMemoryRehydrated,
     bridgeAutoRevalidation,
+    revalidateRememberedBridge,
     setBridgeTransportSelection,
     updateBridgeTransportConfig,
     saveBridgeTransportConfig,
@@ -2057,6 +2174,7 @@ export function AIStoreProvider({ children }) {
     bridgeMemory,
     bridgeMemoryRehydrated,
     bridgeAutoRevalidation,
+    revalidateRememberedBridge,
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
