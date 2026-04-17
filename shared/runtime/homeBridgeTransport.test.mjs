@@ -140,13 +140,15 @@ test('tailscale transport stores hosted HTTPS execution URL separately from oper
 
 test('home bridge durable memory normalization is bounded and null-safe', () => {
   const memory = normalizeHomeBridgeMemory({
-    transport: 'tailscale',
-    backendUrl: 'https://100.64.0.10',
+    selectedTransport: 'tailscale',
+    savedBridgeUrl: 'https://100.64.0.10',
     tailscaleDeviceName: 'home-node',
     rememberedAt: '2026-04-11T10:00:00.000Z',
   });
   assert.equal(memory.transport, 'tailscale');
+  assert.equal(memory.selectedTransport, 'tailscale');
   assert.equal(memory.backendUrl, 'https://100.64.0.10');
+  assert.equal(memory.savedBridgeUrl, 'https://100.64.0.10');
   assert.equal(memory.tailscaleDeviceName, 'home-node');
   assert.equal(normalizeHomeBridgeMemory(null).transport, 'none');
 });
@@ -233,7 +235,9 @@ test('bridge memory derivation prefers valid configured tailscale transport even
   );
 
   assert.equal(derived.transport, 'tailscale');
-  assert.equal(derived.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(derived.selectedTransport, 'tailscale');
+  assert.equal(derived.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.equal(derived.savedBridgeUrl, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   assert.equal(derived.tailscaleDeviceName, 'desktop-9flonkj');
 });
 

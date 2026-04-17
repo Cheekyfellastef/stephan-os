@@ -78,6 +78,15 @@ export default function HomeBridgePanel() {
     [bridgeTransportTruth],
   );
   const reconciliationState = transportTruth.bridgeMemoryReconciliationState || 'no-remembered-bridge';
+  const rememberedBridgeStatusLabel = useMemo(() => {
+    if (!transportTruth.bridgeMemoryPresent) return 'No saved bridge config';
+    if (reconciliationState === 'remembered-revalidated') return 'Remembered and validated on this surface';
+    if (reconciliationState === 'remembered-unreachable') return 'Remembered but unreachable on this surface';
+    if (reconciliationState === 'remembered-validation-failed') return 'Remembered but validation failed on this surface';
+    if (reconciliationState === 'remembered-execution-incompatible') return 'Remembered but blocked by hosted browser execution constraints';
+    if (transportTruth.bridgeMemoryNeedsValidation) return 'Remembered and awaiting validation on this surface';
+    return 'Remembered bridge loaded';
+  }, [reconciliationState, transportTruth.bridgeMemoryNeedsValidation, transportTruth.bridgeMemoryPresent]);
   const reconciliationDetail = useMemo(() => {
     if (reconciliationState === 'remembered-revalidated') return 'Remembered config has been auto-revalidated and matches live bridge truth.';
     if (reconciliationState === 'remembered-validation-failed') return 'Remembered config exists but failed canonical validation on this surface.';
@@ -355,6 +364,7 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Transport detail: <strong>{transportTruth.detail}</strong></p>
       <p className="home-bridge-detail">Transport source: <strong>{transportTruth.source}</strong></p>
       <p className="home-bridge-detail">Saved URL: <strong>{selectedTransport === 'tailscale' ? (tailscale.backendUrl || 'none') : (homeBridgeUrl || 'none')}</strong></p>
+      <p className="home-bridge-detail">Remembered status: <strong>{rememberedBridgeStatusLabel}</strong></p>
       <p className="home-bridge-detail">Remembered bridge: <strong>{transportTruth.bridgeMemoryPresent ? transportTruth.bridgeMemoryTransport : 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered URL: <strong>{transportTruth.bridgeMemoryUrl || 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered at: <strong>{formatTime(transportTruth.bridgeMemoryRememberedAt || bridgeMemory?.rememberedAt)}</strong></p>

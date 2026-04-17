@@ -80,6 +80,7 @@ test('HomeBridgePanel renders bridge controls and saved URL status', async () =>
   assert.match(rendered, /Selected transport/);
   assert.match(rendered, /Test Reachability/);
   assert.match(rendered, /Tailscale Backend URL/);
+  assert.match(rendered, /Remembered status: <strong>Remembered and awaiting validation on this surface<\/strong>/);
   assert.match(rendered, /Remembered bridge: <strong>tailscale<\/strong>/);
   assert.match(rendered, /Memory validation state: <strong>awaiting-validation<\/strong>/);
   assert.match(rendered, /Route winner: <strong>home-node\/tailscale<\/strong>/);
