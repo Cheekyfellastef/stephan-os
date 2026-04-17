@@ -586,6 +586,7 @@ function createInitialMemorySnapshot() {
         [bridgeMemory.transport]: {
           ...(initialBridgeTransportPreferences.transports?.[bridgeMemory.transport] || {}),
           backendUrl: bridgeMemory.backendUrl,
+          executionUrl: bridgeMemory.executionUrl || '',
           accepted: false,
           active: false,
           usable: false,
@@ -882,7 +883,22 @@ export function AIStoreProvider({ children }) {
               [read.bridgeMemory.transport]: {
                 ...(prev?.transports?.[read.bridgeMemory.transport] || {}),
                 backendUrl: read.bridgeMemory.backendUrl,
+                executionUrl: read.bridgeMemory.executionUrl || '',
                 enabled: true,
+                accepted: false,
+                active: false,
+                usable: false,
+                reachability: 'unknown',
+                ...(read.bridgeMemory.transport === 'tailscale'
+                  ? {
+                    deviceName: read.bridgeMemory.tailscaleDeviceName,
+                    hostOverride: read.bridgeMemory.tailscaleHostnameOverride,
+                    tailnetIp: read.bridgeMemory.tailscaleIp,
+                    reason: 'Remembered Tailscale bridge loaded from shared memory; validation pending on this surface.',
+                  }
+                  : {
+                    reason: 'Remembered Manual/LAN bridge loaded from shared memory; validation pending on this surface.',
+                  }),
               },
             },
           }, {

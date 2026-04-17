@@ -267,7 +267,9 @@ function createEmptyBridgeMemory() {
   return {
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: 'none',
+    selectedTransport: 'none',
     backendUrl: '',
+    savedBridgeUrl: '',
     executionUrl: '',
     tailscaleDeviceName: '',
     tailscaleHostnameOverride: '',
@@ -281,8 +283,8 @@ function createEmptyBridgeMemory() {
 
 export function normalizeHomeBridgeMemory(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
-  const transport = normalizeBridgeTransportSelection(source.transport);
-  const backendUrl = normalizeString(source.backendUrl);
+  const transport = normalizeBridgeTransportSelection(source.transport || source.selectedTransport);
+  const backendUrl = normalizeString(source.backendUrl || source.savedBridgeUrl);
   const executionUrl = normalizeString(source.executionUrl);
   const rememberedAt = normalizeTimestamp(source.rememberedAt);
   const normalizedTransport = backendUrl ? transport : 'none';
@@ -291,7 +293,9 @@ export function normalizeHomeBridgeMemory(value = {}) {
       ? Number(source.schemaVersion)
       : HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: normalizedTransport,
+    selectedTransport: normalizedTransport,
     backendUrl: normalizedTransport === 'none' ? '' : backendUrl,
+    savedBridgeUrl: normalizedTransport === 'none' ? '' : backendUrl,
     executionUrl: normalizedTransport === 'none' ? '' : executionUrl,
     tailscaleDeviceName: normalizeString(source.tailscaleDeviceName),
     tailscaleHostnameOverride: normalizeString(source.tailscaleHostnameOverride),
@@ -340,7 +344,9 @@ export function deriveBridgeMemoryFromPreferences(preferences = {}, metadata = {
   return normalizeHomeBridgeMemory({
     schemaVersion: HOME_BRIDGE_MEMORY_SCHEMA_VERSION,
     transport: resolvedTransport,
+    selectedTransport: resolvedTransport,
     backendUrl,
+    savedBridgeUrl: backendUrl,
     executionUrl: resolvedTransport === 'tailscale' ? tailscaleExecutionUrl : '',
     tailscaleDeviceName: tailscale.deviceName,
     tailscaleHostnameOverride: tailscale.hostOverride,
