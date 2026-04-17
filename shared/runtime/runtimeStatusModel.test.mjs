@@ -875,6 +875,10 @@ test('createRuntimeStatusModel rejects same-origin static-host fallback backend 
   assert.equal(status.runtimeContext.backendTargetResolvedUrl, '');
   assert.equal(status.runtimeContext.backendTargetFallbackUsed, false);
   assert.match(status.runtimeContext.backendTargetInvalidReason, /Same-origin static-host backend fallback is invalid/);
+  const rejectedOriginCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === 'https://cheekyfellastef.github.io');
+  assert.ok(rejectedOriginCandidate);
+  assert.equal(rejectedOriginCandidate.accepted, false);
+  assert.match(rejectedOriginCandidate.reason, /cannot be a backend target/i);
 });
 
 test('createRuntimeStatusModel rejects malformed hosted backend target URL and keeps route truth explicit', () => {

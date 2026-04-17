@@ -30,13 +30,22 @@ function safeUrlParse(value = '') {
   }
 }
 
-function normalizeHomeBridgeCandidateUrl(target = '') {
+function normalizeHomeBridgeCandidateUrl(target = '', { preferredPort = null } = {}) {
   const rawTarget = String(target || '').trim();
   if (!rawTarget) return '';
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawTarget)) {
-    return rawTarget;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawTarget)
+    ? rawTarget
+    : `http://${rawTarget}`;
+  if (!preferredPort) {
+    return withProtocol;
   }
-  return `http://${rawTarget}`;
+  const parsed = safeUrlParse(withProtocol);
+  if (!parsed || parsed.port) {
+    return withProtocol;
+  }
+  const normalizedPort = normalizePort(preferredPort, DEFAULT_HOME_NODE_BACKEND_PORT);
+  parsed.port = String(normalizedPort);
+  return parsed.toString();
 }
 
 export function isLoopbackHost(hostname = '') {
@@ -76,6 +85,20 @@ function parseIpv4Octets(hostname = '') {
   }
 
   return value.split('.').map((part) => Number.parseInt(part, 10));
+}
+
+function isTailscaleIpv4Host(hostname = '') {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) {
+    return false;
+  }
+  const [first, second] = octets;
+  return first === 100 && second >= 64 && second <= 127;
+}
+
+function isTailscaleHostname(hostname = '') {
+  const normalized = String(hostname || '').trim().toLowerCase();
+  return Boolean(normalized) && normalized.endsWith('.ts.net');
 }
 
 export function isUnroutableStephanosIpv4Host(hostname = '') {
@@ -120,6 +143,7 @@ export function isMalformedStephanosHost(hostname = '') {
 
 export function validateStephanosBackendTargetUrl(target = '', {
   allowLoopback = false,
+  preferredPort = null,
 } = {}) {
   const rawTarget = String(target || '').trim();
   if (!rawTarget) {
@@ -132,7 +156,7 @@ export function validateStephanosBackendTargetUrl(target = '', {
     };
   }
 
-  const normalizedCandidate = normalizeHomeBridgeCandidateUrl(rawTarget);
+  const normalizedCandidate = normalizeHomeBridgeCandidateUrl(rawTarget, { preferredPort });
   const parsed = safeUrlParse(normalizedCandidate);
   if (!parsed) {
     return {
@@ -188,8 +212,17 @@ export function validateStephanosBackendTargetUrl(target = '', {
 export function validateStephanosHomeBridgeUrl(target = '', {
   frontendOrigin = '',
   requireHttps = false,
+  preferBackendPortForTailscale = false,
 } = {}) {
-  const validation = validateStephanosBackendTargetUrl(target, { allowLoopback: false });
+  const rawTarget = String(target || '').trim();
+  const rawCandidate = normalizeHomeBridgeCandidateUrl(rawTarget);
+  const parsedRawCandidate = safeUrlParse(rawCandidate);
+  const host = String(parsedRawCandidate?.hostname || '').trim().toLowerCase();
+  const tailscaleHost = isTailscaleHostname(host) || isTailscaleIpv4Host(host);
+  const preferredPort = preferBackendPortForTailscale && tailscaleHost
+    ? DEFAULT_HOME_NODE_BACKEND_PORT
+    : null;
+  const validation = validateStephanosBackendTargetUrl(target, { allowLoopback: false, preferredPort });
   if (!validation.ok) {
     return { ...validation, bridgeType: 'invalid' };
   }
@@ -448,6 +481,7 @@ export function readPersistedStephanosHomeBridgeUrl(storage = globalThis?.localS
   const validation = validateStephanosHomeBridgeUrl(typeof raw === 'string' ? raw : '', {
     frontendOrigin,
     requireHttps,
+    preferBackendPortForTailscale: true,
   });
   if (typeof raw === 'string' && !validation.ok) {
     writeJsonStorage(storage, STEPHANOS_HOME_BRIDGE_STORAGE_KEY, null);
@@ -463,6 +497,7 @@ export function persistStephanosHomeBridgeUrl(bridgeUrl = '', storage = globalTh
   const validation = validateStephanosHomeBridgeUrl(bridgeUrl, {
     frontendOrigin,
     requireHttps,
+    preferBackendPortForTailscale: true,
   });
   if (!validation.ok) {
     return { ok: false, reason: validation.reason, normalizedUrl: '' };
@@ -997,7 +1032,8 @@ export function resolveStephanosBackendBaseUrl({
 
   const bridge = validateStephanosHomeBridgeUrl(bridgeUrl, {
     frontendOrigin: currentOrigin,
-    requireHttps: true,
+    requireHttps: false,
+    preferBackendPortForTailscale: true,
   });
   if (bridge.ok && bridge.normalizedUrl) {
     return bridge.normalizedUrl;

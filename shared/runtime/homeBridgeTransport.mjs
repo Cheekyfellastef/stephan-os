@@ -374,7 +374,11 @@ function normalizeTailscaleTransport(value = {}, { frontendOrigin = '', requireH
   const enabled = value.enabled === true;
   const backendUrlCandidate = normalizeString(value.backendUrl);
   const backendValidation = backendUrlCandidate
-    ? validateStephanosHomeBridgeUrl(backendUrlCandidate, { frontendOrigin, requireHttps })
+    ? validateStephanosHomeBridgeUrl(backendUrlCandidate, {
+      frontendOrigin,
+      requireHttps,
+      preferBackendPortForTailscale: true,
+    })
     : { ok: false, normalizedUrl: '', reason: 'Tailscale backend URL not set.' };
   const hostOverride = normalizeString(value.hostOverride);
   const executionUrlCandidate = normalizeString(value.executionUrl) || deriveTsNetExecutionUrl(hostOverride);

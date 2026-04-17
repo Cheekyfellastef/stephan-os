@@ -134,6 +134,76 @@ test('createRuntimeStatusModel surfaces tailscale backend target candidate truth
   assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
 });
 
+test('createRuntimeStatusModel accepts ts.net tailscale backend URL for hosted backend target resolution', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+          actualTarget: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'http://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /home-node-bridge|tailscale/);
+});
+
+test('createRuntimeStatusModel accepts 100.x tailscale backend URL for hosted backend target resolution', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'http://100.88.0.2:8787',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: 'http://100.88.0.2:8787',
+          actualTarget: 'http://100.88.0.2:8787',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'http://100.88.0.2:8787');
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /home-node-bridge|tailscale/);
+});
+
 test('createRuntimeStatusModel prefers tailscale HTTPS execution URL over operator transport URL for hosted sessions', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,
@@ -281,14 +351,14 @@ test('hosted remembered tailscale revalidation promotes live transport truth and
 
   assert.equal(model.runtimeContext.bridgeTransportTruth.selectedTransport, 'tailscale');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-tailscale-revalidated-as-tailscale');
-  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.backendUrl, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.reachable, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
-  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   assert.equal(model.runtimeContext.routeCandidateWinner.candidateKey, 'home-node-tailscale');
-  assert.equal(model.runtimeContext.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
-  assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.equal(model.runtimeContext.actualTargetUsed, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
 });
 
 test('hosted remembered tailscale http bridge remains operator-authoritative through runtimeStatusModel flow', () => {
@@ -550,7 +620,7 @@ test('hosted remembered-revalidated tailscale promotes route winner when backend
 
   assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
   assert.equal(model.finalRoute.routeKind, 'home-node');
-  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-revalidated');
 });
 
@@ -742,13 +812,13 @@ test('hosted lan-companion canonicalizes validated remembered tailscale bridge a
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.reachable, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.usable, true);
-  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   assert.equal(model.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.backendUrl');
   assert.equal(model.runtimeContext.backendTargetFallbackUsed, false);
   assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
   assert.equal(model.runtimeContext.routeCandidateWinner?.transportKind, 'tailscale');
-  assert.equal(model.finalRoute.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
-  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(model.finalRoute.preferredTarget, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
+  assert.equal(model.finalRoute.actualTarget, 'https://desktop-9flonkj.taild6f215.ts.net:8787');
   const manualCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-manual');
   assert.ok(manualCandidate);
   assert.equal(manualCandidate.usable, false);

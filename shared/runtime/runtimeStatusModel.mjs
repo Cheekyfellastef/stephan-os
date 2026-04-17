@@ -604,6 +604,10 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
   }, compatibleActualTarget);
   const backendReachabilityByTarget = resolveBackendReachabilityByTarget(runtimeContext.routeDiagnostics || {});
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
+    const sameOriginStaticHostedCandidate = sessionKind === 'hosted-web'
+      && isStaticGithubPagesOrigin(frontendOrigin)
+      && Boolean(frontendOrigin)
+      && candidate.url === frontendOrigin;
     const validation = validateStephanosBackendTargetUrl(
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
@@ -620,7 +624,10 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       : backendReachabilityByTarget.has(candidate.url)
       ? backendReachabilityByTarget.get(candidate.url) === true
       : (sessionKind === 'local-desktop' ? validation.ok : false);
-    const accepted = validation.ok && reachable && !candidateMixedSchemeBlocked;
+    const accepted = validation.ok
+      && reachable
+      && !candidateMixedSchemeBlocked
+      && !sameOriginStaticHostedCandidate;
     return {
       source: candidate.source,
       url: candidate.url,
@@ -628,12 +635,14 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       reachable: candidateMixedSchemeBlocked ? true : reachable,
       reason: accepted
         ? ''
+        : (sameOriginStaticHostedCandidate
+          ? 'Same-origin static-host backend fallback is invalid for hosted-web sessions (GitHub Pages origin cannot be a backend target).'
         : (candidateMixedSchemeBlocked
           ? (bridgeTransportTruth.bridgeHostedExecutionReason
             || 'Hosted HTTPS frontend cannot execute this HTTP bridge target due browser mixed-content policy.')
         : (validation.ok
           ? 'Backend target candidate failed reachability probe or has no route probe evidence.'
-          : validation.reason)),
+          : validation.reason))),
     };
   });
   const acceptedBackendCandidate = backendTargetCandidateDecisions.find((candidate) => candidate.accepted);
@@ -2207,4 +2216,3 @@ export function createRuntimeStatusModel({
     guardrails,
   };
 }
-
