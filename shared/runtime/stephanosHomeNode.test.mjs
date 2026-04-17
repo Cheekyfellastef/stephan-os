@@ -158,6 +158,34 @@ test('resolveStephanosBackendBaseUrl ignores malformed explicit backend target a
   assert.equal(resolved, 'http://192.168.0.198:8787');
 });
 
+test('resolveStephanosBackendBaseUrl accepts hosted tailscale bridge URL over manual fallback', () => {
+  const resolved = resolveStephanosBackendBaseUrl({
+    currentOrigin: 'https://cheekyfellastef.github.io',
+    bridgeUrl: 'http://desktop-9flonkj.taild6f215.ts.net:8787',
+    manualNode: { host: '192.168.0.198', backendPort: 8787, source: 'manual' },
+  });
+
+  assert.equal(resolved, 'http://desktop-9flonkj.taild6f215.ts.net:8787');
+});
+
+test('validateStephanosHomeBridgeUrl defaults tailscale hosts to backend port 8787 when omitted', () => {
+  const tsNet = validateStephanosHomeBridgeUrl('http://desktop-9flonkj.taild6f215.ts.net', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: false,
+    preferBackendPortForTailscale: true,
+  });
+  assert.equal(tsNet.ok, true);
+  assert.equal(tsNet.normalizedUrl, 'http://desktop-9flonkj.taild6f215.ts.net:8787');
+
+  const tailnetIp = validateStephanosHomeBridgeUrl('http://100.88.0.2', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: false,
+    preferBackendPortForTailscale: true,
+  });
+  assert.equal(tailnetIp.ok, true);
+  assert.equal(tailnetIp.normalizedUrl, 'http://100.88.0.2:8787');
+});
+
 test('normalizeStephanosHomeNode rejects malformed backendUrl publication candidates and keeps canonical host backend URL', () => {
   const normalized = normalizeStephanosHomeNode({
     host: '192.168.0.198',
