@@ -11,6 +11,18 @@ function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asObject(value) {
+  return value && typeof value === 'object' ? value : {};
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = safeString(value);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 function resolvePromptFromMessages(messages = []) {
   const normalized = (Array.isArray(messages) ? messages : [])
     .filter((message) => message && typeof message === 'object')
@@ -39,12 +51,74 @@ function asPositiveNumber(value, fallback = null) {
 }
 
 function resolveRuntimeProviderConfigs(runtimeContext = {}) {
-  if (runtimeContext.providerConfigs && typeof runtimeContext.providerConfigs === 'object') {
-    return runtimeContext.providerConfigs;
+  const sourceContext = asObject(runtimeContext);
+  if (sourceContext.providerConfigs && typeof sourceContext.providerConfigs === 'object') {
+    return sourceContext.providerConfigs;
   }
-  const storage = runtimeContext.storage || globalThis?.localStorage;
+  const nestedRuntimeContext = asObject(sourceContext.runtimeContext);
+  if (nestedRuntimeContext.providerConfigs && typeof nestedRuntimeContext.providerConfigs === 'object') {
+    return nestedRuntimeContext.providerConfigs;
+  }
+  const runtimeTruth = asObject(sourceContext.runtimeTruth);
+  if (runtimeTruth.providerConfigs && typeof runtimeTruth.providerConfigs === 'object') {
+    return runtimeTruth.providerConfigs;
+  }
+  const storage = sourceContext.storage || globalThis?.localStorage;
   const sessionMemory = readPersistedStephanosSessionMemory(storage);
   return sessionMemory?.session?.providerPreferences?.providerConfigs || {};
+}
+
+function resolveRuntimeTimeoutPolicy(runtimeContext = {}) {
+  const sourceContext = asObject(runtimeContext);
+  const nestedRuntimeContext = asObject(sourceContext.runtimeContext);
+  const runtimeTruth = asObject(sourceContext.runtimeTruth);
+  const finalRouteTruth = asObject(sourceContext.finalRouteTruth);
+  const canonicalRouteRuntimeTruth = asObject(sourceContext.canonicalRouteRuntimeTruth);
+  const candidates = [
+    sourceContext.timeoutPolicy,
+    nestedRuntimeContext.timeoutPolicy,
+    runtimeTruth.timeoutPolicy,
+    finalRouteTruth.timeoutPolicy,
+    canonicalRouteRuntimeTruth.timeoutPolicy,
+  ];
+  return candidates.find((candidate) => candidate && typeof candidate === 'object') || {};
+}
+
+function resolveTimeoutExecutionTruth({
+  provider = '',
+  model = '',
+  runtimeContext = {},
+} = {}) {
+  const sourceContext = asObject(runtimeContext);
+  const timeoutExecutionEnvelope = asObject(sourceContext.timeoutExecutionEnvelope);
+  const runtimeTruth = asObject(sourceContext.runtimeTruth);
+  const finalRouteTruth = asObject(sourceContext.finalRouteTruth || runtimeTruth.finalRouteTruth);
+  const canonicalRouteRuntimeTruth = asObject(
+    sourceContext.canonicalRouteRuntimeTruth || runtimeTruth.canonicalRouteRuntimeTruth,
+  );
+  const requestedProvider = safeString(provider).toLowerCase();
+  const effectiveProvider = firstNonEmpty(
+    timeoutExecutionEnvelope.effectiveProvider,
+    timeoutExecutionEnvelope.timeoutProvider,
+    finalRouteTruth.executedProvider,
+    canonicalRouteRuntimeTruth.executedProvider,
+    finalRouteTruth.selectedProvider,
+    canonicalRouteRuntimeTruth.selectedProvider,
+    requestedProvider,
+  ).toLowerCase();
+  const effectiveModel = firstNonEmpty(
+    safeString(model),
+    timeoutExecutionEnvelope.effectiveModel,
+    timeoutExecutionEnvelope.timeoutModel,
+    canonicalRouteRuntimeTruth.timeoutModel,
+    finalRouteTruth.timeoutModel,
+    resolveRuntimeProviderConfigs(sourceContext)?.[effectiveProvider]?.model,
+  );
+  return {
+    requestedProvider,
+    effectiveProvider: effectiveProvider || requestedProvider || '',
+    effectiveModel: effectiveModel || '',
+  };
 }
 
 function resolveOllamaProviderTimeout({ providerConfig = {}, model = '' } = {}) {
@@ -68,9 +142,7 @@ function resolveUiRequestTimeoutMs({
   model = '',
   runtimeContext = {},
 } = {}) {
-  const timeoutPolicy = runtimeContext?.timeoutPolicy && typeof runtimeContext.timeoutPolicy === 'object'
-    ? runtimeContext.timeoutPolicy
-    : {};
+  const timeoutPolicy = resolveRuntimeTimeoutPolicy(runtimeContext);
   const baselineUiTimeoutMs = asPositiveNumber(runtimeContext?.timeoutMs, DEFAULT_UI_REQUEST_TIMEOUT_MS);
   const canonicalUiTimeoutMs = asPositiveNumber(timeoutPolicy.uiRequestTimeoutMs);
   const canonicalBackendRouteTimeoutMs = asPositiveNumber(
@@ -86,12 +158,12 @@ function resolveUiRequestTimeoutMs({
     return Math.max(baselineUiTimeoutMs, backendFloor);
   }
 
-  const normalizedProvider = safeString(provider).toLowerCase();
-  if (normalizedProvider === 'ollama') {
+  const timeoutExecutionTruth = resolveTimeoutExecutionTruth({ provider, model, runtimeContext });
+  if (timeoutExecutionTruth.effectiveProvider === 'ollama') {
     const providerConfigs = resolveRuntimeProviderConfigs(runtimeContext);
     const providerTimeout = resolveOllamaProviderTimeout({
       providerConfig: providerConfigs?.ollama || {},
-      model,
+      model: timeoutExecutionTruth.effectiveModel,
     });
     if (providerTimeout) {
       const providerDrivenFloor = providerTimeout + UI_TIMEOUT_GRACE_MS;
@@ -149,4 +221,7 @@ export async function queryStephanosAI({
   return response.json || {};
 }
 
-export { resolveBackendBaseUrl as resolveStephanosAiBackendBaseUrl };
+export {
+  resolveBackendBaseUrl as resolveStephanosAiBackendBaseUrl,
+  resolveUiRequestTimeoutMs as resolveStephanosAiUiRequestTimeoutMs,
+};
