@@ -19,23 +19,46 @@ This approach keeps:
 - **Hosted execution compatibility**: whether hosted HTTPS browser execution is compatible (`compatible`, `mixed-scheme-blocked`, `cors-blocked`).
 - **Bridge mode**: `tailnet-private-https` when Tailscale HTTPS execution URL is active.
 
-## Home PC commands (exact)
+## Home PC commands (exact, syntax-safe by installed CLI)
 
-Run on the home PC (already logged into Tailscale):
+Run on the home PC (already logged into Tailscale). Always inspect the installed CLI first because `tailscale serve` syntax differs across versions.
 
 ```bash
-tailscale status
+tailscale version
+tailscale serve --help
+tailscale serve status
+```
+
+Then apply the reverse proxy mapping to the local Stephanos backend (`127.0.0.1:8787`) using the command shape shown by your installed `--help`:
+
+### Modern syntax (common on recent versions)
+
+```bash
+tailscale serve https / http://127.0.0.1:8787
+tailscale serve status
+```
+
+### Flag-style syntax (older versions)
+
+```bash
 tailscale serve --https=443 / http://127.0.0.1:8787
 tailscale serve status
+```
+
+If your tailnet has not enabled HTTPS certificates yet, follow the CLI prompt or explicitly run:
+
+```bash
 tailscale cert $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')
 ```
 
-Optional persistence (Linux systemd):
+For persistence/background-safe behavior where supported by the installed version:
 
 ```bash
-sudo tailscale serve --bg --https=443 / http://127.0.0.1:8787
+tailscale serve --bg https / http://127.0.0.1:8787
 tailscale serve status
 ```
+
+If `--bg` is not supported in your CLI build, persist with your normal machine startup flow after confirming `tailscale serve status` keeps the mapping across reconnect/reboot.
 
 ## Backend CORS requirement
 
@@ -54,14 +77,14 @@ before starting `stephanos-server`.
 ## Validation workflow
 
 1. **Direct bridge access (from any tailnet device/browser):**
-   - Open `https://<home-machine>.<tailnet>.ts.net/api/health`
+   - Open `https://<home-machine>.<tailnet>.ts.net/api/health` (or include `:PORT` if your serve status reports a non-default HTTPS port)
    - Expect JSON with `service: "stephanos-server"`.
 
 2. **Hosted frontend fetch validation (GitHub Pages surface):**
    - Open hosted Stephanos.
    - Configure Tailscale transport:
      - operator transport URL can stay as authored HTTP target,
-     - set hosted execution URL to `https://<home-machine>.<tailnet>.ts.net`.
+     - set hosted execution URL to `https://<home-machine>.<tailnet>.ts.net` (or `https://<home-machine>.<tailnet>.ts.net:PORT` when required by serve status).
    - Confirm runtime/support snapshot shows:
      - `Bridge Mode: tailnet-private-https`
      - `Bridge Hosted Execution Compatibility: compatible`
@@ -71,4 +94,3 @@ before starting `stephanos-server`.
    - Submit an AI prompt from the iPad hosted surface.
    - Confirm response succeeds.
    - Confirm runtime target truth resolves to the HTTPS `ts.net` execution URL.
-
