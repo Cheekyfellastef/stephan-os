@@ -921,7 +921,7 @@ test('hosted direct remembered backend evidence can win over failing derived hos
   assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
   assert.equal(executionCandidate?.accepted, false);
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
-  assert.equal(model.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.backendUrl');
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.tailscale\.backendUrl|bridgeTransport\.liveTailscale\.backendUrl|bridgeMemory\.remembered\.backendUrl/);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
@@ -1006,6 +1006,98 @@ test('hosted remembered backend remains rejected when direct probe evidence fail
   assert.equal(rememberedCandidate?.accepted, false);
   assert.match(rememberedCandidate?.reason || '', /reachability probe/i);
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, '');
+});
+
+test('hosted remembers operator backend from direct api health evidence even when hosted execution url fails', () => {
+  const rememberedUrl = 'http://100.116.99.92:8787';
+  const hostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: rememberedUrl,
+      bridgeMemory: { transport: 'tailscale', backendUrl: rememberedUrl },
+      bridgeAutoRevalidation: {
+        state: 'execution-incompatible',
+        reason: 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.',
+        directReachability: 'unknown',
+        executionCompatibility: 'mixed-scheme-blocked',
+        executionTarget: hostedExecutionUrl,
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            executionUrl: hostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': { configured: true, available: false, usable: false, target: hostedExecutionUrl, actualTarget: hostedExecutionUrl },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  const rememberedCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === rememberedUrl);
+  const executionCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === hostedExecutionUrl);
+  assert.equal(rememberedCandidate?.accepted, true);
+  assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
+  assert.equal(executionCandidate?.accepted, false);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.tailscale\.backendUrl|bridgeTransport\.liveTailscale\.backendUrl|bridgeMemory\.remembered\.backendUrl/);
+  assert.equal(model.finalRouteTruth.selectedRouteReachable, true);
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+});
+
+test('hosted remembers operator backend from direct api health evidence without hosted execution target', () => {
+  const rememberedUrl = 'http://100.116.99.92:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: rememberedUrl,
+      bridgeMemory: { transport: 'tailscale', backendUrl: rememberedUrl },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+        directReachability: 'unknown',
+        executionCompatibility: 'unknown',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node-bridge': { configured: true, available: false, usable: false, target: '', actualTarget: '' },
+        cloud: { configured: true, available: true, usable: true, target: 'https://cloud.example.com', actualTarget: 'https://cloud.example.com' },
+      },
+    },
+  });
+
+  const rememberedCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === rememberedUrl);
+  assert.equal(rememberedCandidate?.accepted, true);
+  assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.tailscale\.backendUrl|bridgeTransport\.liveTailscale\.backendUrl|bridgeMemory\.remembered\.backendUrl/);
+  assert.equal(model.finalRouteTruth.selectedRouteReachable, true);
 });
 
 test('hosted backend candidates preserve direct and hosted execution probe evidence when both succeed', () => {

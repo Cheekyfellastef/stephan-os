@@ -52,6 +52,19 @@ function createBackendTargetCandidate(source = '', url = '') {
   };
 }
 
+function canonicalizeBackendTargetKey(value = '') {
+  const candidate = String(value || '').trim();
+  if (!candidate) {
+    return '';
+  }
+  try {
+    const parsed = new URL(candidate);
+    return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+  } catch {
+    return candidate.toLowerCase();
+  }
+}
+
 function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
   const diagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
     ? runtimeContext.routeDiagnostics
@@ -201,13 +214,13 @@ function resolveBackendReachabilityByTarget(diagnostics = {}) {
     const routeTarget = typeof route.target === 'string' ? route.target.trim() : '';
     const routeActualTarget = typeof route.actualTarget === 'string' ? route.actualTarget.trim() : '';
     if (routeTarget) {
-      reachabilityByTarget.set(routeTarget, reachable);
+      reachabilityByTarget.set(canonicalizeBackendTargetKey(routeTarget), reachable);
     }
     if (routeActualTarget) {
-      reachabilityByTarget.set(routeActualTarget, reachable);
+      reachabilityByTarget.set(canonicalizeBackendTargetKey(routeActualTarget), reachable);
     }
     if (routeKey === 'home-node' && String(route.routeVariant || '').includes('bridge') && routeActualTarget) {
-      reachabilityByTarget.set(routeActualTarget, reachable);
+      reachabilityByTarget.set(canonicalizeBackendTargetKey(routeActualTarget), reachable);
     }
   }
   return reachabilityByTarget;
@@ -410,7 +423,7 @@ function buildCanonicalHostedRouteTruth({
   };
 }
 
-export function normalizeRuntimeContext(runtimeContext = {}) {
+export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable = false } = {}) {
   const frontendOrigin = String(runtimeContext.frontendOrigin || '');
   const apiBaseUrl = String(runtimeContext.apiBaseUrl || runtimeContext.backendBaseUrl || runtimeContext.baseUrl || '');
   const frontendHost = parseHostname(frontendOrigin);
@@ -647,6 +660,11 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
     homeNodeBridge: canonicalHomeNodeBridge,
   }, compatibleActualTarget);
   const backendReachabilityByTarget = resolveBackendReachabilityByTarget(runtimeContext.routeDiagnostics || {});
+  const directProbeEvidenceTargets = new Set([
+    runtimeContext.apiBaseUrl,
+    runtimeContext.actualTargetUsed,
+    runtimeContext.backendTargetResolvedUrl,
+  ].map((value) => canonicalizeBackendTargetKey(value)).filter(Boolean));
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
     const sameOriginStaticHostedCandidate = sessionKind === 'hosted-web'
       && isStaticGithubPagesOrigin(frontendOrigin)
@@ -656,11 +674,24 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       candidate.url,
       { allowLoopback: sessionKind === 'local-desktop' },
     );
+    const candidateTargetKey = canonicalizeBackendTargetKey(candidate.url);
+    const routeProbeReachable = backendReachabilityByTarget.has(candidateTargetKey)
+      ? backendReachabilityByTarget.get(candidateTargetKey) === true
+      : false;
+    const directApiProbeEvidence = sessionKind === 'hosted-web'
+      && backendAvailable === true
+      && directProbeEvidenceTargets.has(candidateTargetKey);
     const directBackendProbeSucceeded = sessionKind === 'hosted-web'
-      && rememberedBridgeDirectlyReachable
       && (
-        candidate.url === String(bridgeTransportTruth.bridgeMemoryUrl || '').trim()
-        || candidate.url === String(bridgeTransportTruth?.tailscale?.backendUrl || '').trim()
+        (
+          rememberedBridgeDirectlyReachable
+          && (
+            candidate.url === String(bridgeTransportTruth.bridgeMemoryUrl || '').trim()
+            || candidate.url === String(bridgeTransportTruth?.tailscale?.backendUrl || '').trim()
+          )
+        )
+        || directApiProbeEvidence
+        || routeProbeReachable
       );
     const hostedExecutionProbeSucceeded = sessionKind === 'hosted-web'
       && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
@@ -678,8 +709,8 @@ export function normalizeRuntimeContext(runtimeContext = {}) {
       ? true
       : directBackendProbeSucceeded
       ? true
-      : backendReachabilityByTarget.has(candidate.url)
-      ? backendReachabilityByTarget.get(candidate.url) === true
+      : backendReachabilityByTarget.has(candidateTargetKey)
+      ? backendReachabilityByTarget.get(candidateTargetKey) === true
       : (sessionKind === 'local-desktop' ? validation.ok : false);
     const accepted = validation.ok
       && reachable
@@ -2021,7 +2052,7 @@ export function createRuntimeStatusModel({
   const normalizedProvider = normalizeProviderSelection(selectedProvider);
   const health = normalizeProviderHealth(providerHealth);
   const localPending = LOCAL_PROVIDER_KEYS.some((providerKey) => health[providerKey]?.state === 'SEARCHING');
-  const normalizedRuntimeContext = normalizeRuntimeContext(runtimeContext);
+  const normalizedRuntimeContext = normalizeRuntimeContext(runtimeContext, { backendAvailable });
   const routePlan = deriveRoutePlan({
     selectedProvider: normalizedProvider,
     routeMode,
