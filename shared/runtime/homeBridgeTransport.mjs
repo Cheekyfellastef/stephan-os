@@ -818,6 +818,9 @@ export function resolveAutoBridgeRevalidationPlan({
   const sessionKind = normalizeSessionKind(bridgeValidationTruth?.sessionKind || 'unknown');
   const manual = preferences?.transports?.manual || {};
   const tailscale = preferences?.transports?.tailscale || {};
+  const hostedExecutionCandidate = remembered.transport === 'tailscale'
+    ? normalizeString(remembered.executionUrl || tailscale.executionUrl || deriveTsNetExecutionUrl(remembered.tailscaleHostnameOverride || tailscale.hostOverride))
+    : '';
   const activeConfig = selectedTransport === 'tailscale' ? tailscale : manual;
   const activeUrl = normalizeString(activeConfig.backendUrl);
   if (activeConfig.accepted === true && activeUrl && activeUrl !== remembered.backendUrl) {
@@ -844,6 +847,7 @@ export function resolveAutoBridgeRevalidationPlan({
     outcome: 'remembered-awaiting-validation',
     transport: remembered.transport,
     candidateUrl: remembered.backendUrl,
+    hostedExecutionCandidate,
     requireHttps,
     sessionKind,
     policyAllowed,

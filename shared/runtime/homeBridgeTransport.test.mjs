@@ -289,14 +289,16 @@ test('auto bridge revalidation plan allows remembered tailscale bridge on hosted
   const plan = resolveAutoBridgeRevalidationPlan({
     bridgeMemory: {
       transport: 'tailscale',
-      backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      backendUrl: 'http://100.116.99.92:8787',
+      executionUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
     },
     preferences: normalizeBridgeTransportPreferences({
       selectedTransport: 'tailscale',
       transports: {
         tailscale: {
           enabled: true,
-          backendUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+          backendUrl: 'http://100.116.99.92:8787',
+          executionUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
         },
       },
     }),
@@ -304,6 +306,8 @@ test('auto bridge revalidation plan allows remembered tailscale bridge on hosted
   });
   assert.equal(plan.shouldAttempt, true);
   assert.equal(plan.transport, 'tailscale');
+  assert.equal(plan.candidateUrl, 'http://100.116.99.92:8787');
+  assert.equal(plan.hostedExecutionCandidate, 'https://desktop-9flonkj.taild6f215.ts.net');
   assert.equal(plan.policyAllowed, true);
 });
 

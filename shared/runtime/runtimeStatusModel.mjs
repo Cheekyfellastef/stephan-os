@@ -122,6 +122,16 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       'remembered-unreachable',
       ...(rememberedBridgeDirectlyReachable ? ['remembered-execution-incompatible'] : []),
     ].includes(rememberedBridgeReconciliationState);
+  const apiBaseUrl = String(runtimeContext.apiBaseUrl || '').trim();
+  const apiBaseHost = parseHostname(apiBaseUrl);
+  const suppressHostedLanApiBaseCandidate = hostedRememberedTailscaleState
+    && isLikelyLanHost(apiBaseHost)
+    && ![
+      apiBaseUrl,
+      rememberedBridgeUrl,
+      liveTailscaleUrl,
+      liveTailscaleExecutionUrl,
+    ].filter(Boolean).every((url, index, arr) => index === 0 || url === arr[0]);
   const preferLanHomeNode = hostedSession && onLanSession && !canonicalHostedTailscale;
   const preferBridgeHomeNode = hostedSession && (!onLanSession || canonicalHostedTailscale);
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
@@ -136,11 +146,11 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
-      ...(rememberedRevalidatedAsTailscale && liveTailscaleUrl
-        ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.backendUrl', liveTailscaleUrl)]
-        : []),
       ...(liveTailscaleExecutionUrl
         ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.executionUrl', liveTailscaleExecutionUrl)]
+        : []),
+      ...(rememberedRevalidatedAsTailscale && liveTailscaleUrl
+        ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.backendUrl', liveTailscaleUrl)]
         : []),
       ...(rememberedBridgeEligible
         ? [createBackendTargetCandidate('bridgeMemory.remembered.backendUrl', rememberedBridgeUrl)]
@@ -179,7 +189,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('runtimeContext.preferredTarget', runtimeContext.preferredTarget),
       createBackendTargetCandidate('runtimeContext.homeNode.backendUrl', runtimeContext.homeNode?.backendUrl),
     ] : []),
-    createBackendTargetCandidate('runtimeContext.apiBaseUrl', runtimeContext.apiBaseUrl),
+    ...(!suppressHostedLanApiBaseCandidate ? [
+      createBackendTargetCandidate('runtimeContext.apiBaseUrl', apiBaseUrl),
+    ] : []),
     createBackendTargetCandidate('bridgeTransport.tailscale.backendUrl', runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl),
     createBackendTargetCandidate('fallback.actualTarget', fallbackUrl),
   ];
@@ -719,6 +731,8 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     const reachable = bridgeTargetReachable
       ? true
       : directBackendProbeSucceeded
+      ? true
+      : hostedExecutionProbeSucceeded
       ? true
       : backendReachabilityByTarget.has(candidateTargetKey)
       ? backendReachabilityByTarget.get(candidateTargetKey) === true

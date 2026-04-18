@@ -1801,7 +1801,7 @@ export function AIStoreProvider({ children }) {
         ? 'reachable'
         : 'unknown';
       const preferredHostedExecutionUrl = plan.transport === 'tailscale'
-        ? String(bridgeTransportPreferences?.transports?.tailscale?.executionUrl || '').trim()
+        ? String(plan.hostedExecutionCandidate || bridgeTransportPreferences?.transports?.tailscale?.executionUrl || '').trim()
         : '';
       const preferredHostedExecutionValidation = preferredHostedExecutionUrl
         ? validateStephanosHomeBridgeUrl(preferredHostedExecutionUrl, {
