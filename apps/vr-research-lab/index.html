@@ -310,23 +310,53 @@
         parentRuntimeStatusModel = null;
       }
 
-      const runtimeTruth = parentRuntimeStatusModel?.runtimeTruth || {};
-      const timeoutPolicy = runtimeTruth.timeoutPolicy && typeof runtimeTruth.timeoutPolicy === 'object'
-        ? runtimeTruth.timeoutPolicy
+      const runtimeStatusModel = parentRuntimeStatusModel && typeof parentRuntimeStatusModel === 'object'
+        ? parentRuntimeStatusModel
         : {};
-      const timeoutMs = Number(timeoutPolicy.uiRequestTimeoutMs || runtimeTruth.uiRequestTimeoutMs) || null;
-      const timeoutSource = String(timeoutPolicy.timeoutPolicySource || runtimeTruth.timeoutPolicySource || '').trim();
+      const runtimeContext = runtimeStatusModel.runtimeContext && typeof runtimeStatusModel.runtimeContext === 'object'
+        ? runtimeStatusModel.runtimeContext
+        : {};
+      const runtimeTruth = runtimeStatusModel.runtimeTruth && typeof runtimeStatusModel.runtimeTruth === 'object'
+        ? runtimeStatusModel.runtimeTruth
+        : {};
+      const timeoutPolicyCandidates = [
+        runtimeContext.timeoutPolicy,
+        runtimeTruth.timeoutPolicy,
+        runtimeStatusModel.finalRouteTruth?.timeoutPolicy,
+        runtimeStatusModel.canonicalRouteRuntimeTruth?.timeoutPolicy,
+      ];
+      const timeoutPolicy = timeoutPolicyCandidates.find((candidate) => candidate && typeof candidate === 'object') || {};
+      const timeoutMs = Number(
+        timeoutPolicy.uiRequestTimeoutMs
+        || runtimeContext.timeoutMs
+        || runtimeTruth.uiRequestTimeoutMs
+        || runtimeStatusModel.uiRequestTimeoutMs,
+      ) || null;
+      const timeoutSource = String(
+        timeoutPolicy.timeoutPolicySource
+        || runtimeContext.timeoutSource
+        || runtimeTruth.timeoutPolicySource
+        || '',
+      ).trim();
+      const timeoutExecutionEnvelope = runtimeContext.timeoutExecutionEnvelope
+        && typeof runtimeContext.timeoutExecutionEnvelope === 'object'
+        ? runtimeContext.timeoutExecutionEnvelope
+        : {};
 
       return {
         tileId: TILE_ID,
         tileSource: TILE_SOURCE,
         tileCategory: 'vr-research',
         frontendOrigin: window.location.origin,
+        runtimeContext,
+        runtimeTruth,
         timeoutMs: timeoutMs || undefined,
         timeoutSource: timeoutSource || undefined,
         timeoutPolicy,
-        finalRouteTruth: runtimeTruth.finalRouteTruth || parentRuntimeStatusModel?.finalRouteTruth || null,
-        canonicalRouteRuntimeTruth: runtimeTruth.canonicalRouteRuntimeTruth || null,
+        timeoutExecutionEnvelope,
+        providerConfigs: runtimeContext.providerConfigs || runtimeTruth.providerConfigs || {},
+        finalRouteTruth: runtimeStatusModel.finalRouteTruth || runtimeTruth.finalRouteTruth || null,
+        canonicalRouteRuntimeTruth: runtimeStatusModel.canonicalRouteRuntimeTruth || runtimeTruth.canonicalRouteRuntimeTruth || null,
       };
     }
 

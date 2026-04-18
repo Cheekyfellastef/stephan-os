@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { queryStephanosAI, resolveStephanosAiBackendBaseUrl } from './stephanosClient.mjs';
+import {
+  queryStephanosAI,
+  resolveStephanosAiBackendBaseUrl,
+  resolveStephanosAiUiRequestTimeoutMs,
+} from './stephanosClient.mjs';
 
 test('resolveStephanosAiBackendBaseUrl reuses shared backend base URL resolver defaults', () => {
   const baseUrl = resolveStephanosAiBackendBaseUrl({
@@ -93,4 +97,50 @@ test('queryStephanosAI honors canonical runtime timeout policy instead of backen
     }),
     /timed out after 25ms/,
   );
+});
+
+test('resolveStephanosAiUiRequestTimeoutMs inherits ollama timeout from canonical execution provider truth', () => {
+  const timeoutMs = resolveStephanosAiUiRequestTimeoutMs({
+    provider: 'auto',
+    runtimeContext: {
+      timeoutMs: 1000,
+      providerConfigs: {
+        ollama: {
+          defaultOllamaTimeoutMs: 1200,
+        },
+      },
+      finalRouteTruth: {
+        executedProvider: 'ollama',
+      },
+    },
+  });
+
+  assert.equal(timeoutMs, 2700);
+});
+
+test('resolveStephanosAiUiRequestTimeoutMs prefers canonical timeout policy from nested runtime context', () => {
+  const timeoutMs = resolveStephanosAiUiRequestTimeoutMs({
+    provider: 'auto',
+    runtimeContext: {
+      runtimeContext: {
+        timeoutPolicy: {
+          uiRequestTimeoutMs: 9500,
+          timeoutPolicySource: 'canonical-runtime-execution-truth:provider:ollama:default-timeout:ui-grace',
+        },
+      },
+    },
+  });
+
+  assert.equal(timeoutMs, 9500);
+});
+
+test('resolveStephanosAiUiRequestTimeoutMs safely falls back to frontend default when richer timeout truth is absent', () => {
+  const timeoutMs = resolveStephanosAiUiRequestTimeoutMs({
+    provider: 'auto',
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:4173',
+    },
+  });
+
+  assert.equal(timeoutMs, 30000);
 });
