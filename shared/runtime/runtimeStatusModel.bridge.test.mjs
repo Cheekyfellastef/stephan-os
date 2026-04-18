@@ -1145,3 +1145,122 @@ test('hosted backend candidates preserve direct and hosted execution probe evide
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
   assert.equal(model.finalRoute.routeKind, 'home-node');
 });
+
+test('caravan mode: hosted iPad safari keeps route reachable when browser blocks mixed-content HTTP backend', () => {
+  const rememberedUrl = 'http://100.116.99.92:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: rememberedUrl,
+      bridgeMemory: { transport: 'tailscale', backendUrl: rememberedUrl },
+      bridgeAutoRevalidation: {
+        state: 'execution-incompatible',
+        reason: 'Hosted HTTPS frontend cannot execute HTTP Home Bridge fetches due browser mixed-content policy.',
+        directReachability: 'reachable',
+        executionCompatibility: 'mixed-scheme-blocked',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      routeDiagnostics: {
+        'home-node': { configured: true, available: true, usable: true, target: rememberedUrl, actualTarget: rememberedUrl },
+        'home-node-bridge': { configured: true, available: true, usable: true, target: rememberedUrl, actualTarget: rememberedUrl },
+        cloud: { configured: false, available: false, usable: false },
+      },
+    },
+  });
+
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+  assert.equal(model.finalRouteTruth.selectedRouteReachable, true);
+  assert.equal(model.finalRouteTruth.routeUsable, true);
+  assert.equal(model.finalRouteTruth.browserDirectAccessState, 'blocked-mixed-content');
+  assert.equal(model.finalRouteTruth.transportCompatibilityLayer, 'required');
+  assert.notEqual(model.finalRouteTruth.routeKind, 'unavailable');
+});
+
+test('caravan mode: hosted iPad safari with HTTPS backend keeps direct browser compatibility', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+        directReachability: 'reachable',
+        executionCompatibility: 'compatible',
+        executionTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+        },
+        cloud: { configured: false, available: false, usable: false },
+      },
+    },
+  });
+
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+  assert.equal(model.finalRouteTruth.browserDirectAccessState, 'compatible');
+  assert.equal(model.finalRouteTruth.transportCompatibilityLayer, 'not-required');
+});
+
+test('caravan mode: desktop browser + http backend remains direct-compatible', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { ollama: { ok: true } },
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: 'http://localhost:8787',
+          actualTarget: 'http://localhost:8787',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+  assert.equal(model.finalRouteTruth.browserDirectAccessState, 'compatible');
+  assert.equal(model.finalRouteTruth.transportCompatibilityLayer, 'not-required');
+  assert.equal(model.finalRouteTruth.routeKind, 'local-desktop');
+});
+
+test('caravan mode: no backend remains rejected', () => {
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: {},
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: 'http://100.116.99.92:8787',
+      routeDiagnostics: {
+        'home-node': { configured: true, available: false, usable: false },
+        cloud: { configured: false, available: false, usable: false },
+      },
+    },
+  });
+
+  assert.equal(model.finalRouteTruth.backendReachable, false);
+  assert.equal(model.finalRouteTruth.routeKind, 'unavailable');
+});

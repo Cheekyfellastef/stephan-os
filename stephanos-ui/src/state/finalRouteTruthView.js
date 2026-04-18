@@ -82,6 +82,10 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   );
   const executableProviderValid = isKnownProvider(executedProvider);
   const backendReachable = canonicalTruth.backendReachable === true;
+  const networkReachabilityState = pickTruth(canonicalTruth.networkReachabilityState) || 'unknown';
+  const browserDirectAccessState = pickTruth(canonicalTruth.browserDirectAccessState)
+    || (canonicalTruth.sessionKind === 'hosted-web' ? 'unknown' : 'compatible');
+  const transportCompatibilityLayer = pickTruth(canonicalTruth.transportCompatibilityLayer) || 'not-required';
   const selectedRouteReachable = canonicalTruth.routeReachable === true;
   const liveProviderConnected = ['READY', 'CONNECTED'].includes(providerState);
   const liveUsabilitySignalsMet = backendReachable
@@ -121,6 +125,9 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeKind,
     fallbackActive: canonicalTruth.fallbackActive === true,
     backendReachableState: asBooleanState(canonicalTruth.backendReachable),
+    networkReachabilityState,
+    browserDirectAccessState,
+    transportCompatibilityLayer,
     uiReachableState,
     routeUsableState,
     homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable),
