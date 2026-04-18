@@ -1142,7 +1142,8 @@ test('hosted backend candidates preserve direct and hosted execution probe evide
   assert.equal(rememberedCandidate?.accepted, true);
   assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
   assert.equal(hostedExecutionCandidate?.hostedExecutionProbeSucceeded, true);
-  assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, hostedExecutionUrl);
+  assert.equal(model.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.executionUrl');
   assert.equal(model.finalRoute.routeKind, 'home-node');
 });
 

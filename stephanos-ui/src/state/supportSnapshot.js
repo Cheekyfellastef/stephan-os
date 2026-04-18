@@ -375,6 +375,9 @@ export function buildSupportSnapshot({
     } else {
       guidanceItems.push('Remembered Home Bridge exists and is awaiting validation on this surface.');
     }
+    if (bridgeTransportTruth?.bridgeAutoRevalidationState === 'backoff') {
+      guidanceItems.push('Remembered bridge auto-validation entered bounded backoff after retry exhaustion; route remains blocked until operator retries revalidation or updates bridge transport target.');
+    }
   }
   const hasBlockingIssues = blockingIssues.length > 0;
   const selectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';

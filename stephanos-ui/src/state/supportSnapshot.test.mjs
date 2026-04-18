@@ -1305,6 +1305,30 @@ test('buildSupportSnapshot reports remembered tailscale backend candidate reject
   assert.match(snapshot, /backend target candidate is not yet accepted/);
 });
 
+test('buildSupportSnapshot reports bounded revalidation backoff with explicit operator action', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { blockingIssues: [], invariantWarnings: [] },
+    runtimeContext: {
+      bridgeTransportTruth: {
+        bridgeMemoryReconciliationState: 'remembered-awaiting-validation',
+        bridgeMemoryTransport: 'tailscale',
+        bridgeAutoRevalidationState: 'backoff',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /bounded backoff after retry exhaustion/i);
+  assert.match(snapshot, /operator retries revalidation or updates bridge transport target/i);
+});
+
 test('buildSupportSnapshot reports hosted mixed-scheme execution incompatibility truth', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {},

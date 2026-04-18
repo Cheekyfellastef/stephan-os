@@ -979,6 +979,65 @@ test('createRuntimeStatusModel keeps hosted route truthful when published candid
   assert.match(status.runtimeContext.canonicalHostedRouteTruth.blockingIssues[0].message, /invalid|unresolved/i);
 });
 
+test('createRuntimeStatusModel accepts hosted tailscale execution target from remembered bridge revalidation evidence', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      sessionKind: 'hosted-web',
+      deviceContext: 'lan-companion',
+      apiBaseUrl: 'http://192.168.0.198:8787',
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: 'https://desktop-9flonkj.taild6f215.ts.net',
+          actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+          reason: 'Awaiting bridge probe result.',
+        },
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: 'http://100.116.99.92:8787',
+            executionUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: 'http://100.116.99.92:8787',
+        executionUrl: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        executionTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+        executionCompatibility: 'compatible',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+      },
+    },
+  });
+
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.executionUrl');
+  const staleLanCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.source === 'runtimeContext.apiBaseUrl');
+  assert.equal(staleLanCandidate, undefined);
+});
+
 test('createRuntimeStatusModel keeps publication failure explicit for hosted LAN backend target', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'groq',
