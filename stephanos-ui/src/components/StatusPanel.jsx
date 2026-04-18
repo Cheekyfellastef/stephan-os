@@ -787,6 +787,8 @@ export default function StatusPanel() {
         <li>Diagnostics Event Rate (/s): {runtimeDiagnostics.eventRatePerSecond ?? 0}</li>
         <li>Node Address Source: {routeTruthView.source}</li>
         <li>Backend Reachable: {routeTruthView.backendReachableState}</li>
+        <li>Browser Direct Access: {routeTruthView.browserDirectAccessState || 'unknown'}</li>
+        <li>Transport Compatibility Layer: {routeTruthView.transportCompatibilityLayer || 'not-required'}</li>
         <li>Backend URL In Use: {uiDiagnostics.backendUrlInUse || runtimeContext.apiBaseUrl || safeApiStatus.baseUrl || 'n/a'}</li>
         <li>Ollama Base URL In Use: {uiDiagnostics.ollamaBaseUrlInUse || 'n/a'}</li>
         <li>Requested Provider (UI): {uiDiagnostics.requestedProvider || provider}</li>
