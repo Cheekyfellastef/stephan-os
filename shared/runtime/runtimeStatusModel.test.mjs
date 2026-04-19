@@ -1033,9 +1033,82 @@ test('createRuntimeStatusModel accepts hosted tailscale execution target from re
   });
 
   assert.equal(status.runtimeContext.backendTargetResolvedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
-  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.liveTailscale.executionUrl');
+  assert.equal(status.runtimeContext.backendTargetResolutionSource, 'bridgeTransport.hostedExecution.target');
   const staleLanCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.source === 'runtimeContext.apiBaseUrl');
   assert.equal(staleLanCandidate, undefined);
+});
+
+
+test('createRuntimeStatusModel maps remembered tailscale :8787 candidate to canonical hosted HTTPS probe evidence', () => {
+  const canonicalHostedTarget = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const rememberedBackendUrl = `${canonicalHostedTarget}:8787`;
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: {
+      groq: { ok: true },
+      ollama: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      sessionKind: 'hosted-web',
+      apiBaseUrl: canonicalHostedTarget,
+      actualTargetUsed: canonicalHostedTarget,
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedBackendUrl,
+            executionUrl: canonicalHostedTarget,
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: rememberedBackendUrl,
+        executionUrl: canonicalHostedTarget,
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        executionTarget: canonicalHostedTarget,
+        executionCompatibility: 'compatible',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+        promotionReason: 'Remembered tailscale bridge promoted into live route candidates from direct probe evidence.',
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          blockedReason: 'Stale LAN bridge candidate should not dominate canonical hosted evidence.',
+        },
+      },
+    },
+  });
+
+  const hostedExecutionCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.source === 'bridgeTransport.hostedExecution.target');
+  const rememberedCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.source === 'bridgeMemory.remembered.backendUrl');
+  const staleHttpCandidate = status.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === 'http://192.168.0.198:8787');
+
+  assert.equal(status.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(status.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(status.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(status.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(status.runtimeContext.bridgeTransportTruth.configuredTransport, 'tailscale');
+  assert.equal(status.runtimeContext.backendTargetResolvedUrl, canonicalHostedTarget);
+  assert.equal(hostedExecutionCandidate?.accepted, true);
+  assert.ok(!rememberedCandidate || rememberedCandidate.accepted === true);
+  assert.ok(!rememberedCandidate || rememberedCandidate.reason === '');
+  assert.ok(!staleHttpCandidate || staleHttpCandidate.accepted === false);
 });
 
 test('createRuntimeStatusModel keeps publication failure explicit for hosted LAN backend target', () => {

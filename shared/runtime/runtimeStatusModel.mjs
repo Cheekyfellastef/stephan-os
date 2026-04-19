@@ -13,6 +13,7 @@ import {
   normalizeRouteMode,
 } from '../ai/providerDefaults.mjs';
 import {
+  DEFAULT_HOME_NODE_BACKEND_PORT,
   isMalformedStephanosHost,
   isLikelyLanHost,
   isLoopbackHost,
@@ -59,7 +60,16 @@ function canonicalizeBackendTargetKey(value = '') {
   }
   try {
     const parsed = new URL(candidate);
-    return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+    const protocol = String(parsed.protocol || '').toLowerCase();
+    const hostname = String(parsed.hostname || '').trim().toLowerCase();
+    const port = String(parsed.port || '').trim();
+    const tailscaleHttpsBridgeWithBackendPort = protocol === 'https:'
+      && hostname.endsWith('.ts.net')
+      && port === String(DEFAULT_HOME_NODE_BACKEND_PORT);
+    if (tailscaleHttpsBridgeWithBackendPort) {
+      return `${protocol}//${hostname}`;
+    }
+    return `${protocol}//${parsed.host}`.toLowerCase();
   } catch {
     return candidate.toLowerCase();
   }
@@ -784,6 +794,10 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     runtimeContext.apiBaseUrl,
     runtimeContext.actualTargetUsed,
     runtimeContext.backendTargetResolvedUrl,
+    runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionTarget,
+    runtimeContext.bridgeTransportTruth?.bridgeProbeTarget,
+    runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    runtimeContext.bridgeAutoRevalidation?.executionTarget,
   ].map((value) => canonicalizeBackendTargetKey(value)).filter(Boolean));
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
     const sameOriginStaticHostedCandidate = sessionKind === 'hosted-web'
