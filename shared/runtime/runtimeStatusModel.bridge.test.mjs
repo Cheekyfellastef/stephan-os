@@ -977,6 +977,74 @@ test('hosted strict revalidation gate accepts canonical hosted execution target 
   assert.equal(model.finalRoute.actualTarget, canonicalHostedExecutionUrl);
 });
 
+test('hosted canonical execution evidence promotes remembered tailscale out of backoff and outranks stale HTTP backend candidates', () => {
+  const rememberedUrl = 'https://desktop-9flonkj.taild6f215.ts.net:8787';
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const staleApiBaseUrl = 'http://100.116.99.92:8787';
+  const staleFallbackUrl = 'http://192.168.0.198:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://192.168.0.50',
+      apiBaseUrl: staleApiBaseUrl,
+      actualTargetUsed: staleFallbackUrl,
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: rememberedUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+        rememberedAt: '2026-04-19T00:00:00.000Z',
+      },
+      bridgeAutoRevalidation: {
+        state: 'backoff',
+        reason: 'Remembered bridge auto-validation exhausted bounded retries for this surface session.',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+          reason: 'HTTPS bridge /api/health reachable from hosted surface.',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.configuredTransport, 'tailscale');
+  const tailscaleCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-tailscale');
+  assert.equal(tailscaleCandidate?.usable, true);
+  const canonicalBackendCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === canonicalHostedExecutionUrl);
+  assert.equal(canonicalBackendCandidate?.accepted, true);
+  const staleHttpCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === staleApiBaseUrl);
+  assert.ok(staleHttpCandidate);
+  assert.ok(model.runtimeContext.backendTargetCandidates.indexOf(canonicalBackendCandidate) < model.runtimeContext.backendTargetCandidates.indexOf(staleHttpCandidate));
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+});
+
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,

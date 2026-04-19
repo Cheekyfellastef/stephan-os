@@ -123,6 +123,10 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       'remembered-unreachable',
       ...(rememberedBridgeDirectlyReachable ? ['remembered-execution-incompatible'] : []),
     ].includes(rememberedBridgeReconciliationState);
+  const hostedCanonicalExecutionEvidence = hostedSession
+    && hostedRememberedTailscaleState
+    && String(bridgeTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
+    && Boolean(hostedExecutionTarget);
   const apiBaseUrl = String(runtimeContext.apiBaseUrl || '').trim();
   const apiBaseHost = parseHostname(apiBaseUrl);
   const suppressHostedLanApiBaseCandidate = hostedRememberedTailscaleState
@@ -134,7 +138,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       liveTailscaleExecutionUrl,
     ].filter(Boolean).every((url, index, arr) => index === 0 || url === arr[0]);
   const preferLanHomeNode = hostedSession && onLanSession && !canonicalHostedTailscale;
-  const preferBridgeHomeNode = hostedSession && (!onLanSession || canonicalHostedTailscale);
+  const preferBridgeHomeNode = hostedSession && (!onLanSession || canonicalHostedTailscale || hostedCanonicalExecutionEvidence);
   const homeNodeLooksLan = !String(homeNode.routeVariant || homeNode.source || '').includes('bridge');
 
   const prioritizedCandidates = [
@@ -215,6 +219,27 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     deduped.push(candidate);
   }
   return deduped;
+}
+
+function hasReachableRouteTarget(diagnostics = {}, targetUrl = '') {
+  const canonicalTarget = canonicalizeBackendTargetKey(targetUrl);
+  if (!canonicalTarget) {
+    return false;
+  }
+  for (const route of Object.values(diagnostics || {})) {
+    if (!route || typeof route !== 'object') {
+      continue;
+    }
+    const targetKey = canonicalizeBackendTargetKey(route.target);
+    const actualTargetKey = canonicalizeBackendTargetKey(route.actualTarget);
+    if (targetKey !== canonicalTarget && actualTargetKey !== canonicalTarget) {
+      continue;
+    }
+    if (route.available === true || route.usable === true || route.backendReachable === true) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolveBackendReachabilityByTarget(diagnostics = {}) {
@@ -595,6 +620,50 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
       },
     });
   }
+  const hostedCanonicalExecutionTarget = String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim();
+  const hostedCanonicalExecutionEvidencePromotion = sessionKind === 'hosted-web'
+    && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
+    && Boolean(hostedCanonicalExecutionTarget)
+    && validateStephanosBackendTargetUrl(hostedCanonicalExecutionTarget, { allowLoopback: false }).ok
+    && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
+    && hasReachableRouteTarget(runtimeContext.routeDiagnostics, hostedCanonicalExecutionTarget);
+  if (hostedCanonicalExecutionEvidencePromotion) {
+    bridgeTransportPreferences = normalizeBridgeTransportPreferences({
+      ...bridgeTransportPreferences,
+      selectedTransport: 'tailscale',
+      transports: {
+        ...(bridgeTransportPreferences?.transports || {}),
+        tailscale: {
+          ...(bridgeTransportPreferences?.transports?.tailscale || {}),
+          enabled: true,
+          backendUrl: hostedPromotedTailscaleBackendUrl || bridgeTransportTruth.bridgeMemoryUrl || hostedCanonicalExecutionTarget,
+          executionUrl: hostedCanonicalExecutionTarget,
+          accepted: true,
+          active: true,
+          reachability: 'reachable',
+          usable: true,
+          reason: bridgeTransportTruth.bridgeHostedExecutionReason
+            || 'Hosted execution target is compatible and route diagnostics report it reachable on this surface.',
+        },
+      },
+    }, {
+      homeBridgeUrl: homeNodeBridge.backendUrl || '',
+      frontendOrigin,
+    });
+    bridgeTransportTruth = projectHomeBridgeTransportTruth(bridgeTransportPreferences, {
+      runtimeBridge: homeNodeBridge,
+      bridgeMemory: runtimeContext.bridgeMemory,
+      bridgeMemoryRehydrated: runtimeContext.bridgeMemoryRehydrated === true,
+      autoRevalidation: {
+        ...(runtimeContext.bridgeAutoRevalidation || {}),
+        state: 'revalidated',
+        reason: runtimeContext.bridgeAutoRevalidation?.reason
+          || 'Hosted execution target accepted from reachable route evidence on this surface.',
+        promotionReason: runtimeContext.bridgeAutoRevalidation?.promotionReason
+          || 'Canonical hosted execution target promoted into route candidates from reachable route evidence.',
+      },
+    });
+  }
   const hostedRememberedTailscaleCandidatePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
     && bridgeTransportTruth.bridgeMemoryReconciliationState === 'remembered-revalidated'
@@ -747,7 +816,10 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     const hostedExecutionProbeSucceeded = sessionKind === 'hosted-web'
       && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
       && candidate.url === String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim()
-      && String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim() === 'revalidated';
+      && (
+        String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim() === 'revalidated'
+        || routeProbeReachable
+      );
     const candidateMixedSchemeBlocked = sessionKind === 'hosted-web'
       && bridgeTransportTruth.bridgeHostedExecutionCompatibility === 'mixed-scheme-blocked'
       && candidate.url === bridgeTransportTruth.bridgeMemoryUrl
