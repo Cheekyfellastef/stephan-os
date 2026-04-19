@@ -326,8 +326,10 @@ function detectContradictions({ runtimeTruth = {}, canonicalRouteRuntimeTruth = 
   const bridgeTruth = asObject(context.bridgeTransportTruth);
   const bridgeHostedExecutionTarget = asText(bridgeTruth.bridgeHostedExecutionTarget);
   const bridgeExecutionCompatible = asText(bridgeTruth.bridgeHostedExecutionCompatibility) === 'compatible';
+  const bridgeExecutionCompatibleHttpsTarget = bridgeExecutionCompatible
+    && bridgeHostedExecutionTarget.startsWith('https://');
   const bridgeExecutionReachable = bridgeExecutionCompatible
-    && bridgeHostedExecutionTarget.startsWith('https://')
+    && bridgeExecutionCompatibleHttpsTarget
     && (
       asText(bridgeTruth.bridgeAutoRevalidationState) === 'revalidated'
       || asText(bridgeTruth.bridgeMemoryReconciliationState) === 'remembered-revalidated'
@@ -350,6 +352,24 @@ function detectContradictions({ runtimeTruth = {}, canonicalRouteRuntimeTruth = 
         },
         interpretation: 'Bridge promotion/detection drift is likely preventing canonical HTTPS bridge route adoption.',
         unknowns: ['Whether candidate precedence or promotion gating blocked bridge route adoption.'],
+      }));
+    } else if (bridgeExecutionCompatibleHttpsTarget) {
+      contradictions.push(contradiction({
+        id: 'https-bridge-validation-pending',
+        family: 'backend-target-precedence-drift',
+        severity: 'warning',
+        title: 'Hosted HTTPS bridge target exists, but validation/promotion truth is still pending.',
+        evidence: {
+          frontendOrigin,
+          actualTarget: route.actualTarget,
+          bridgeHostedExecutionTarget,
+          bridgeHostedExecutionCompatibility: bridgeTruth.bridgeHostedExecutionCompatibility,
+          bridgeAutoRevalidationState: bridgeTruth.bridgeAutoRevalidationState,
+          selectedRouteKind: route.selectedRouteKind,
+          selectedRouteUsable: reachability.selectedRouteUsable,
+        },
+        interpretation: 'HTTPS bridge/proxy is present; validation or candidate-promotion gating is lagging behind route adoption.',
+        unknowns: ['Whether bounded retry state, stale probe evidence, or candidate precedence is blocking promotion.'],
       }));
     } else {
       contradictions.push(contradiction({

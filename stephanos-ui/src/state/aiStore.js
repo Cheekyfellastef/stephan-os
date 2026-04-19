@@ -81,6 +81,10 @@ import {
   revertAcceptedSurfaceRule,
 } from '../system/friction/frictionPipeline.js';
 import { explainStephanosMemory } from '../system/friction/memoryExplanation.js';
+import {
+  buildBridgeRevalidationAttemptedConfigKey,
+  shouldTreatBridgeHealthProbeAsReachable,
+} from './bridgeAutoRevalidation.mjs';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -1676,10 +1680,11 @@ export function AIStoreProvider({ children }) {
       preferences: bridgeTransportPreferences,
       bridgeValidationTruth,
     });
-    const attemptedConfigKey = `${plan.transport || 'none'}::${plan.candidateUrl || ''}::${bridgeMemory?.rememberedAt || ''}`;
+    const attemptedConfigKey = buildBridgeRevalidationAttemptedConfigKey(plan, bridgeMemory);
     const attemptCount = Number(bridgeAutoRevalidation?.attemptCount || 0);
     const terminalStates = new Set(['skipped', 'validation-failed', 'unreachable', 'revalidated', 'execution-incompatible', 'blocked-by-policy', 'backoff']);
-    const alreadyAttemptedCurrentConfig = bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey
+    const alreadyAttemptedCurrentConfig = bridgeRevalidationNonce === 0
+      && bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey
       && attemptCount >= BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS
       && terminalStates.has(bridgeAutoRevalidation.state);
     if (alreadyAttemptedCurrentConfig) {
@@ -1897,7 +1902,7 @@ export function AIStoreProvider({ children }) {
       try {
         const probe = await checkApiHealth({ baseUrl: executionProbeTarget, timeoutMs: 12000 });
         if (cancelled) return;
-        const serviceOk = probe.ok && probe.data?.service === 'stephanos-server';
+        const serviceOk = shouldTreatBridgeHealthProbeAsReachable(probe);
         const nextReachability = serviceOk ? 'reachable' : 'unreachable';
         updateBridgeTransportConfig(plan.transport, {
           enabled: true,

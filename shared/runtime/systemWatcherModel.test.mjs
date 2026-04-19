@@ -45,6 +45,30 @@ test('detects bridge promotion drift instead of missing bridge when hosted HTTPS
   assert.match(model.rootCauseCandidates[0].suspectedRootCause, /Candidate precedence/i);
 });
 
+test('does not claim missing HTTPS proxy when hosted HTTPS bridge compatibility exists but validation is still pending/backoff', () => {
+  const model = buildSystemWatcherModel({
+    runtimeTruth: {
+      session: { sessionKind: 'hosted-web', nonLocalSession: true },
+      route: { selectedRouteKind: 'home-node', actualTarget: 'http://100.88.0.2:8787' },
+      reachabilityTruth: { selectedRouteReachable: true, selectedRouteUsable: false, uiReachableState: 'unreachable' },
+      provider: { selectedProvider: 'groq', executableProvider: 'groq' },
+    },
+    canonicalRouteRuntimeTruth: {},
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example.com',
+      bridgeTransportTruth: {
+        bridgeHostedExecutionCompatibility: 'compatible',
+        bridgeHostedExecutionTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+        bridgeAutoRevalidationState: 'backoff',
+      },
+    },
+  });
+
+  assert.ok(model.contradictions.some((entry) => entry.id === 'https-bridge-validation-pending'));
+  assert.ok(model.failureFamilies.includes('backend-target-precedence-drift'));
+  assert.ok(!model.failureFamilies.includes('protocol-boundary-mismatch'));
+});
+
 test('detects provider intent vs execution drift', () => {
   const model = buildSystemWatcherModel({
     runtimeTruth: {
