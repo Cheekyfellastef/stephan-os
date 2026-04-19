@@ -218,8 +218,9 @@ export function validateStephanosHomeBridgeUrl(target = '', {
   const rawCandidate = normalizeHomeBridgeCandidateUrl(rawTarget);
   const parsedRawCandidate = safeUrlParse(rawCandidate);
   const host = String(parsedRawCandidate?.hostname || '').trim().toLowerCase();
+  const rawProtocol = String(parsedRawCandidate?.protocol || '').toLowerCase();
   const tailscaleHost = isTailscaleHostname(host) || isTailscaleIpv4Host(host);
-  const preferredPort = preferBackendPortForTailscale && tailscaleHost
+  const preferredPort = preferBackendPortForTailscale && tailscaleHost && rawProtocol !== 'https:'
     ? DEFAULT_HOME_NODE_BACKEND_PORT
     : null;
   const validation = validateStephanosBackendTargetUrl(target, { allowLoopback: false, preferredPort });

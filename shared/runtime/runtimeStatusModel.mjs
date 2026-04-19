@@ -92,6 +92,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     || bridgeTruth?.bridgeHostedExecutionBridgeUrl
     || '',
   ).trim();
+  const hostedExecutionTarget = String(bridgeTruth?.bridgeHostedExecutionTarget || '').trim();
   const rememberedRevalidatedAsTailscale = rememberedBridgeReconciliationState === 'remembered-revalidated'
     && bridgeTruth.selectedTransport === 'tailscale'
     && bridgeTruth?.tailscale?.accepted === true
@@ -146,6 +147,9 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
       createBackendTargetCandidate('routeDiagnostics.home-node.target', homeNode.target),
     ] : []),
     ...(preferBridgeHomeNode ? [
+      ...(hostedExecutionTarget
+        ? [createBackendTargetCandidate('bridgeTransport.hostedExecution.target', hostedExecutionTarget)]
+        : []),
       ...(liveTailscaleExecutionUrl
         ? [createBackendTargetCandidate('bridgeTransport.liveTailscale.executionUrl', liveTailscaleExecutionUrl)]
         : []),
@@ -497,6 +501,11 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
   const rememberedBridgeMemory = bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
     ? String(bridgeTransportTruth.bridgeMemoryUrl || '').trim()
     : '';
+  const canonicalHostedExecutionTarget = sessionKind === 'hosted-web'
+    && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
+    ? String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim()
+    : '';
+  const hostedPromotedTailscaleBackendUrl = canonicalHostedExecutionTarget || rememberedBridgeMemory;
   const liveTailscaleConfig = bridgeTransportPreferences?.transports?.tailscale || {};
   const hostedValidatedRememberedTailscale = sessionKind === 'hosted-web'
     && Boolean(rememberedBridgeMemory)
@@ -512,7 +521,8 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
         tailscale: {
           ...liveTailscaleConfig,
           enabled: true,
-          backendUrl: rememberedBridgeMemory,
+          backendUrl: hostedPromotedTailscaleBackendUrl || rememberedBridgeMemory,
+          executionUrl: canonicalHostedExecutionTarget || liveTailscaleConfig.executionUrl || '',
           accepted: true,
           active: true,
           reachability: 'reachable',
@@ -543,7 +553,10 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
         tailscale: {
           ...(bridgeTransportPreferences?.transports?.tailscale || {}),
           enabled: true,
-          backendUrl: bridgeTransportTruth.bridgeMemoryUrl,
+          backendUrl: hostedPromotedTailscaleBackendUrl || bridgeTransportTruth.bridgeMemoryUrl,
+          executionUrl: canonicalHostedExecutionTarget
+            || bridgeTransportPreferences?.transports?.tailscale?.executionUrl
+            || '',
           accepted: true,
           active: true,
           reachability: 'reachable',
@@ -585,7 +598,10 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
         tailscale: {
           ...(bridgeTransportPreferences?.transports?.tailscale || {}),
           enabled: true,
-          backendUrl: bridgeTransportTruth.bridgeMemoryUrl,
+          backendUrl: hostedPromotedTailscaleBackendUrl || bridgeTransportTruth.bridgeMemoryUrl,
+          executionUrl: canonicalHostedExecutionTarget
+            || bridgeTransportPreferences?.transports?.tailscale?.executionUrl
+            || '',
           accepted: bridgeTransportTruth?.tailscale?.accepted === true,
           active: bridgeTransportTruth?.tailscale?.accepted === true
             && bridgeTransportTruth?.tailscale?.reachable === true,

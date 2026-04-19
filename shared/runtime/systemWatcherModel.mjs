@@ -323,21 +323,50 @@ function detectContradictions({ runtimeTruth = {}, canonicalRouteRuntimeTruth = 
   const frontendOrigin = asText(context.frontendOrigin);
   const isHostedHttps = frontendOrigin.startsWith('https://') || asText(context.sessionKind) === 'hosted-web';
   const isHttpActualTarget = asText(route.actualTarget).startsWith('http://');
+  const bridgeTruth = asObject(context.bridgeTransportTruth);
+  const bridgeHostedExecutionTarget = asText(bridgeTruth.bridgeHostedExecutionTarget);
+  const bridgeExecutionCompatible = asText(bridgeTruth.bridgeHostedExecutionCompatibility) === 'compatible';
+  const bridgeExecutionReachable = bridgeExecutionCompatible
+    && bridgeHostedExecutionTarget.startsWith('https://')
+    && (
+      asText(bridgeTruth.bridgeAutoRevalidationState) === 'revalidated'
+      || asText(bridgeTruth.bridgeMemoryReconciliationState) === 'remembered-revalidated'
+      || bridgeTruth.bridgeMemoryReachableOnThisSurface === true
+    );
   if (isHostedHttps && isHttpActualTarget && reachability.selectedRouteUsable !== true) {
-    contradictions.push(contradiction({
-      id: 'https-http-boundary-mismatch',
-      family: 'protocol-boundary-mismatch',
-      severity: 'error',
-      title: 'Hosted HTTPS surface is executing against HTTP backend target.',
-      evidence: {
-        frontendOrigin,
-        actualTarget: route.actualTarget,
-        selectedRouteKind: route.selectedRouteKind,
-        selectedRouteUsable: reachability.selectedRouteUsable,
-      },
-      interpretation: 'Protocol translation boundary is likely missing (HTTPS browser to HTTP backend).',
-      unknowns: ['Whether HTTPS bridge exists but is stale/unreachable.'],
-    }));
+    if (bridgeExecutionReachable) {
+      contradictions.push(contradiction({
+        id: 'https-bridge-promotion-drift',
+        family: 'backend-target-precedence-drift',
+        severity: 'error',
+        title: 'Reachable HTTPS bridge exists, but selected route still uses HTTP backend target.',
+        evidence: {
+          frontendOrigin,
+          actualTarget: route.actualTarget,
+          bridgeHostedExecutionTarget,
+          bridgeHostedExecutionCompatibility: bridgeTruth.bridgeHostedExecutionCompatibility,
+          selectedRouteKind: route.selectedRouteKind,
+          selectedRouteUsable: reachability.selectedRouteUsable,
+        },
+        interpretation: 'Bridge promotion/detection drift is likely preventing canonical HTTPS bridge route adoption.',
+        unknowns: ['Whether candidate precedence or promotion gating blocked bridge route adoption.'],
+      }));
+    } else {
+      contradictions.push(contradiction({
+        id: 'https-http-boundary-mismatch',
+        family: 'protocol-boundary-mismatch',
+        severity: 'error',
+        title: 'Hosted HTTPS surface is executing against HTTP backend target.',
+        evidence: {
+          frontendOrigin,
+          actualTarget: route.actualTarget,
+          selectedRouteKind: route.selectedRouteKind,
+          selectedRouteUsable: reachability.selectedRouteUsable,
+        },
+        interpretation: 'Protocol translation boundary is likely missing (HTTPS browser to HTTP backend).',
+        unknowns: ['Whether HTTPS bridge exists but is stale/unreachable.'],
+      }));
+    }
   }
 
   const resolvedUrl = asText(context.backendTargetResolvedUrl);
