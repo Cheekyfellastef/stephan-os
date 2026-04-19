@@ -293,9 +293,12 @@ function enforceHostedRememberedTailscaleRevalidationTruthGate({
   const tailscale = bridgeTruth.tailscale && typeof bridgeTruth.tailscale === 'object' ? bridgeTruth.tailscale : {};
   const selectedTransport = String(bridgeTruth.selectedTransport || '').trim();
   const backendUrl = String(tailscale.backendUrl || '').trim();
+  const hostedExecutionTarget = String(bridgeTruth.bridgeHostedExecutionTarget || '').trim();
+  const canonicalTarget = hostedExecutionTarget || backendUrl;
   const autoState = String(bridgeTruth.bridgeAutoRevalidationState || '').trim();
   const provenance = String(bridgeTruth.bridgeMemoryReconciliationProvenance || '').trim();
   const reconciliationState = String(bridgeTruth.bridgeMemoryReconciliationState || '').trim();
+  const hostedExecutionCompatible = String(bridgeTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible';
   const claimsRevalidated = reconciliationState === 'remembered-revalidated'
     || provenance === 'remembered-tailscale-revalidated-as-tailscale'
     || autoState === 'revalidated';
@@ -304,12 +307,21 @@ function enforceHostedRememberedTailscaleRevalidationTruthGate({
   }
 
   const backendCandidateAccepted = Array.isArray(runtimeContext.backendTargetCandidates)
-    && runtimeContext.backendTargetCandidates.some((candidate) => candidate?.url === backendUrl && candidate?.accepted === true);
+    && runtimeContext.backendTargetCandidates.some((candidate) => (
+      candidate?.accepted === true
+      && (
+        candidate?.url === backendUrl
+        || (hostedExecutionCompatible && hostedExecutionTarget && candidate?.url === hostedExecutionTarget)
+      )
+    ));
   const winnerUsesTailscale = nodeRoute?.routeCandidateWinner?.candidateKey === 'home-node-tailscale'
     && nodeRoute?.routeCandidateWinner?.usable === true
-    && String(finalRoute?.actualTarget || '').trim() === backendUrl;
+    && (
+      String(finalRoute?.actualTarget || '').trim() === backendUrl
+      || (hostedExecutionCompatible && hostedExecutionTarget && String(finalRoute?.actualTarget || '').trim() === hostedExecutionTarget)
+    );
   const strictGate = selectedTransport === 'tailscale'
-    && Boolean(backendUrl)
+    && Boolean(canonicalTarget)
     && tailscale.accepted === true
     && tailscale.reachable === true
     && backendCandidateAccepted

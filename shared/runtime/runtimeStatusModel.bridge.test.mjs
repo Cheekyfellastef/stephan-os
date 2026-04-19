@@ -912,6 +912,71 @@ test('hosted reachable HTTPS tailscale bridge promotes canonical no-port target 
   assert.equal(model.finalRoute.actualTarget, canonicalHostedExecutionUrl);
 });
 
+test('hosted strict revalidation gate accepts canonical hosted execution target when tailscale operator URL keeps :8787 provenance', () => {
+  const rawPersistedBridgeUrl = 'https://desktop-9flonkj.taild6f215.ts.net:8787';
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rawPersistedBridgeUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: rawPersistedBridgeUrl,
+        savedBridgeUrl: rawPersistedBridgeUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+        rememberedAt: '2026-04-19T00:00:00.000Z',
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Remembered Home Bridge revalidated successfully.',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          routeVariant: 'home-node-bridge',
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-revalidated');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'revalidated');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.activeTransport, 'tailscale');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+  assert.equal(model.finalRoute.actualTarget, canonicalHostedExecutionUrl);
+});
+
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,
