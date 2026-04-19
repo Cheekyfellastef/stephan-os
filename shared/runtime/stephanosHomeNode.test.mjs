@@ -186,6 +186,16 @@ test('validateStephanosHomeBridgeUrl defaults tailscale hosts to backend port 87
   assert.equal(tailnetIp.normalizedUrl, 'http://100.88.0.2:8787');
 });
 
+test('validateStephanosHomeBridgeUrl keeps hosted-safe https tailscale origins without forcing backend port', () => {
+  const hostedTsNet = validateStephanosHomeBridgeUrl('https://desktop-9flonkj.taild6f215.ts.net', {
+    frontendOrigin: 'https://cheekyfellastef.github.io',
+    requireHttps: true,
+    preferBackendPortForTailscale: true,
+  });
+  assert.equal(hostedTsNet.ok, true);
+  assert.equal(hostedTsNet.normalizedUrl, 'https://desktop-9flonkj.taild6f215.ts.net');
+});
+
 test('normalizeStephanosHomeNode rejects malformed backendUrl publication candidates and keeps canonical host backend URL', () => {
   const normalized = normalizeStephanosHomeNode({
     host: '192.168.0.198',
