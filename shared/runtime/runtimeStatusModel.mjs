@@ -641,8 +641,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     });
   }
   const hostedCanonicalExecutionTarget = String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim();
-  const hostedCanonicalExecutionDirectEvidence = backendAvailable === true
-    && [
+  const hostedCanonicalExecutionDirectEvidence = [
       runtimeContext.apiBaseUrl,
       runtimeContext.actualTargetUsed,
       runtimeContext.backendTargetResolvedUrl,
@@ -654,6 +653,12 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
       bridgeTransportTruth.bridgeProbeTarget,
       bridgeTransportTruth.bridgeHostedExecutionBridgeUrl,
     ].some((candidate) => backendTargetsMatch(candidate, hostedCanonicalExecutionTarget));
+  const hostedCanonicalExecutionAutoRevalidated = sessionKind === 'hosted-web'
+    && String(runtimeContext.bridgeAutoRevalidation?.state || '').trim() === 'revalidated'
+    && backendTargetsMatch(
+      runtimeContext.bridgeAutoRevalidation?.executionTarget || bridgeTransportTruth.bridgeProbeTarget,
+      hostedCanonicalExecutionTarget,
+    );
   const hostedCanonicalExecutionEvidencePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
     && Boolean(hostedCanonicalExecutionTarget)
@@ -662,6 +667,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     && (
       hasReachableRouteTarget(runtimeContext.routeDiagnostics, hostedCanonicalExecutionTarget)
       || hostedCanonicalExecutionDirectEvidence
+      || hostedCanonicalExecutionAutoRevalidated
     );
   if (hostedCanonicalExecutionEvidencePromotion) {
     bridgeTransportPreferences = normalizeBridgeTransportPreferences({
@@ -845,11 +851,17 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     const routeProbeReachable = backendReachabilityByTarget.has(candidateTargetKey)
       ? backendReachabilityByTarget.get(candidateTargetKey) === true
       : false;
-    const directApiProbeEvidence = sessionKind === 'hosted-web'
-      && backendAvailable === true
-      && directProbeEvidenceTargets.has(candidateTargetKey);
     const hostedExecutionTarget = String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim();
     const hostedExecutionCompatibility = String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim();
+    const directApiProbeEvidence = sessionKind === 'hosted-web'
+      && directProbeEvidenceTargets.has(candidateTargetKey)
+      && (
+        backendAvailable === true
+        || (
+          hostedExecutionCompatibility === 'compatible'
+          && String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim() === 'revalidated'
+        )
+      );
     const hostedExecutionDirectReachabilityEvidence = sessionKind === 'hosted-web'
       && rememberedBridgeDirectlyReachable
       && hostedExecutionCompatibility === 'compatible'
@@ -2290,6 +2302,13 @@ export function createRuntimeStatusModel({
   const health = normalizeProviderHealth(providerHealth);
   const localPending = LOCAL_PROVIDER_KEYS.some((providerKey) => health[providerKey]?.state === 'SEARCHING');
   const normalizedRuntimeContext = normalizeRuntimeContext(runtimeContext, { backendAvailable });
+  const hostedCanonicalBridgeBackendReachable = normalizedRuntimeContext.sessionKind === 'hosted-web'
+    && normalizedRuntimeContext.bridgeTransportTruth?.bridgeMemoryTransport === 'tailscale'
+    && normalizedRuntimeContext.bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-revalidated'
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.accepted === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.reachable === true
+    && Boolean(normalizedRuntimeContext.backendTargetResolvedUrl);
+  const effectiveBackendAvailable = backendAvailable || hostedCanonicalBridgeBackendReachable;
   const routePlan = deriveRoutePlan({
     selectedProvider: normalizedProvider,
     routeMode,
@@ -2301,7 +2320,7 @@ export function createRuntimeStatusModel({
 
   const nodeRoute = deriveNodeRoute({
     runtimeContext: normalizedRuntimeContext,
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
     cloudAvailable: routePlan.cloudAvailable,
     validationState,
   });
@@ -2315,7 +2334,7 @@ export function createRuntimeStatusModel({
   const finalRoute = finalizeRuntimeRouteResolution({
     runtimeContext: normalizedRuntimeContext,
     nodeRoute,
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
     localAvailable: routePlan.localAvailable,
     cloudAvailable: routePlan.cloudAvailable,
   });
@@ -2340,7 +2359,7 @@ export function createRuntimeStatusModel({
   const hostedCloudExecutionConfirmed = normalizedRuntimeContext.sessionKind === 'hosted-web'
     && selectedRouteKey === 'cloud'
     && selectedEvaluationRaw?.available === true
-    && backendAvailable
+    && effectiveBackendAvailable
     && routePlan.cloudAvailable
     && Boolean(activeProvider)
     && CLOUD_PROVIDER_KEYS.includes(activeProvider)
@@ -2368,7 +2387,7 @@ export function createRuntimeStatusModel({
     runtimeContext: normalizedRuntimeContext,
     selectedRouteKind: selectedRouteKey || 'unavailable',
     selectedRoute: selectedEvaluation || {},
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
   });
   const selectedRouteReachable = selectedEvaluation?.available === true;
   const selectedRouteUsable = selectedEvaluation?.usable === true;
@@ -2391,7 +2410,7 @@ export function createRuntimeStatusModel({
     && selectedRouteReachable
     && selectedRouteUsable
     && !selectedRouteBlocked
-    && backendAvailable
+    && effectiveBackendAvailable
     && routePlan.cloudAvailable
     && Boolean(activeProvider)
     && CLOUD_PROVIDER_KEYS.includes(activeProvider)
@@ -2402,7 +2421,7 @@ export function createRuntimeStatusModel({
   const launchDegraded = !launchUnavailable && (
     validationState === 'launching'
     || (nodeRoute.routeKind === 'unavailable' && !routePlan.cloudAvailable)
-    || (nodeRoute.routeKind !== 'cloud' && !backendAvailable)
+    || (nodeRoute.routeKind !== 'cloud' && !effectiveBackendAvailable)
     || !selectedRouteReachable
     || !selectedRouteUsable
     || tileExecutionExplicitlyBlocked
@@ -2437,7 +2456,7 @@ export function createRuntimeStatusModel({
     localAvailable: routePlan.localAvailable,
     localPending,
     cloudAvailable: routePlan.cloudAvailable,
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
     fallbackActive,
     appLaunchState,
     validationState,
@@ -2488,7 +2507,7 @@ export function createRuntimeStatusModel({
     nodeRoute,
     finalRoute,
     routePlan,
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
     activeProvider,
     routeSelectedProvider: reconciledRouteSelectedProvider,
     fallbackActive,
@@ -2496,7 +2515,7 @@ export function createRuntimeStatusModel({
     appLaunchState,
   });
   const dependencySummary = buildDependencySummary({
-    backendAvailable,
+    backendAvailable: effectiveBackendAvailable,
     localAvailable: routePlan.localAvailable,
     localPending,
     cloudAvailable: routePlan.cloudAvailable,
