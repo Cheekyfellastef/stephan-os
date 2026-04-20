@@ -290,3 +290,34 @@ test('stale remembered home-node state cannot override canonical route-unusable 
   assert.equal(gate.selectedRouteKind, 'local-desktop');
   assert.equal(gate.reasonCode, 'provider-not-ready');
 });
+
+test('hosted home-node tailscale route dispatches explicit groq request once canonical route is usable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      selectedProvider: 'groq',
+      requestedProviderForRequest: 'groq',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      selectedRouteReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'home-node',
+        routeUsable: true,
+        backendReachable: true,
+        actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.reasonCode, null);
+  assert.equal(gate.selectedRouteKind, 'home-node');
+});
