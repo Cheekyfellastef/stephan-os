@@ -44,6 +44,17 @@ function hasBlockingIssues(runtimeDiagnosticsTruth = {}, canonicalTruth = {}) {
   return false;
 }
 
+function classifyRouteLayerStatus({
+  selectedRouteReachableState = 'unknown',
+  routeUsableState = 'unknown',
+  backendReachableState = 'unknown',
+} = {}) {
+  if (selectedRouteReachableState === 'no' || backendReachableState === 'no') return 'route-failure';
+  if (selectedRouteReachableState === 'yes' && routeUsableState === 'yes' && backendReachableState === 'yes') return 'healthy';
+  if (selectedRouteReachableState === 'yes' && routeUsableState !== 'yes') return 'reachable-not-usable';
+  return 'indeterminate';
+}
+
 // UI truth projection contract:
 // - runtimeStatus.canonicalRouteRuntimeTruth is canonical runtime route/provider/session truth.
 // - this helper is the only approved projection layer for route/provider/operator UI labels.
@@ -120,6 +131,29 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     && !blockingIssuesPresent
     ? 'ready'
     : runtimeStatus.appLaunchState;
+  const routeLayerStatus = classifyRouteLayerStatus({
+    selectedRouteReachableState: canonicalTruth.routeReachable === true
+      ? 'yes'
+      : canonicalTruth.routeReachable === false
+        ? 'no'
+        : 'unknown',
+    routeUsableState,
+    backendReachableState: asBooleanState(canonicalTruth.backendReachable),
+  });
+  const backendExecutionContractStatus = routeLayerStatus === 'healthy'
+    && !executableProviderValid
+    && isKnownProvider(selectedProvider)
+    ? 'stale-or-incomplete'
+    : executableProviderValid
+      ? 'validated'
+      : 'indeterminate';
+  const providerExecutionGateStatus = routeLayerStatus === 'route-failure'
+    ? 'route-blocked'
+    : executableProviderValid
+      ? 'open'
+      : isKnownProvider(selectedProvider)
+        ? 'blocked'
+        : 'pending-selection';
 
   return {
     routeKind,
@@ -151,6 +185,9 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeReconciled,
     routeReconciliationReason,
     routeUsabilityVetoReason,
+    routeLayerStatus,
+    backendExecutionContractStatus,
+    providerExecutionGateStatus,
     providerState,
     effectiveLaunchState,
     persistence,

@@ -15,6 +15,9 @@ export function MeaningStrip({ finalRouteTruth }) {
     providerExecution,
     fallbackActive,
     memoryMode,
+    routeLayerStatus,
+    backendExecutionContractStatus,
+    providerExecutionGateStatus,
   } = finalRouteTruth;
 
   const systemState = backendReachable === true ? '🟢 SYSTEM HEALTHY' : '🔴 BACKEND OFFLINE';
@@ -34,10 +37,15 @@ export function MeaningStrip({ finalRouteTruth }) {
   const memoryState = memoryMode
     ? `💾 MEMORY: ${memoryMode.toUpperCase()}`
     : '💾 MEMORY: UNKNOWN';
+  const operatorBoundaryState = routeLayerStatus === 'healthy' && backendExecutionContractStatus === 'stale-or-incomplete'
+    ? '🛠️ ROUTE HEALTHY · BACKEND CONTRACT STALE'
+    : providerExecutionGateStatus === 'route-blocked'
+      ? '🚧 ROUTE ISSUE'
+      : '🧭 BOUNDARY: STABLE';
 
   return (
     <div className="meaning-strip">
-      {systemState} | {aiState} | {routeState} | {fallbackState} | {memoryState}
+      {systemState} | {aiState} | {routeState} | {fallbackState} | {memoryState} | {operatorBoundaryState}
     </div>
   );
 }

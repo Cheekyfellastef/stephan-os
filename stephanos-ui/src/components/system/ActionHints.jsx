@@ -2,11 +2,15 @@ import React from 'react';
 import CollapsiblePanel from '../CollapsiblePanel';
 import { useAIStore } from '../../state/aiStore';
 import { collectActionHints } from './actionHints.js';
+import { buildFinalRouteTruthView } from '../../state/finalRouteTruthView.js';
 
 export default function ActionHints({ runtimeStatusModel }) {
   const { uiLayout, togglePanel } = useAIStore();
+  const projectedRouteTruth = runtimeStatusModel
+    ? buildFinalRouteTruthView(runtimeStatusModel)
+    : null;
   const hints = collectActionHints(
-    runtimeStatusModel?.finalRouteTruth ?? null,
+    projectedRouteTruth,
     runtimeStatusModel?.orchestration || {},
   );
 
@@ -22,7 +26,12 @@ export default function ActionHints({ runtimeStatusModel }) {
     >
       <ul className="action-hints-list" aria-live="polite">
         {hints.map((hint) => (
-          <li key={hint} className="action-hints-item">{hint}</li>
+          <li
+            key={typeof hint === 'string' ? hint : `${hint.subsystem}:${hint.text}`}
+            className="action-hints-item"
+          >
+            {typeof hint === 'string' ? hint : `[${hint.subsystem}] ${hint.text}`}
+          </li>
         ))}
       </ul>
     </CollapsiblePanel>

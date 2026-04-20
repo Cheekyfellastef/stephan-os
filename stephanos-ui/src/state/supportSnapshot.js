@@ -138,6 +138,60 @@ function summarizeRouteCandidates(candidates = []) {
   });
 }
 
+function buildOperatorBoundaryDiagnostics({
+  routeTruthView = {},
+  runtimeStatus = {},
+  runtimeProviderTruth = {},
+  sourceDistAlignment = {},
+  runtimeContext = {},
+} = {}) {
+  const sessionKind = String(runtimeStatus?.canonicalRouteRuntimeTruth?.sessionKind || runtimeStatus?.sessionKind || '').trim();
+  const selectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
+  const routeUsable = String(routeTruthView?.routeUsableState || '').trim().toLowerCase() === 'yes';
+  const backendReachable = String(routeTruthView?.backendReachableState || '').trim().toLowerCase() === 'yes';
+  const routeHealthy = selectedRouteReachable && routeUsable && backendReachable;
+  const requestedProvider = String(routeTruthView?.requestedProvider || '').trim().toLowerCase();
+  const selectedProvider = String(routeTruthView?.selectedProvider || '').trim().toLowerCase();
+  const executableProvider = String(routeTruthView?.executedProvider || runtimeProviderTruth?.executableProvider || '').trim().toLowerCase();
+  const providerRequested = requestedProvider && !['unknown', 'n/a'].includes(requestedProvider);
+  const providerSelected = selectedProvider && !['unknown', 'n/a'].includes(selectedProvider);
+  const providerExecutable = executableProvider && !['unknown', 'none', 'n/a'].includes(executableProvider);
+  const executionBlocked = routeHealthy && (providerRequested || providerSelected) && !providerExecutable;
+  const hostedRoute = sessionKind === 'hosted-web';
+  const sourceStatus = String(sourceDistAlignment?.buildTruthStatus || 'indeterminate').trim().toLowerCase();
+  const hostedSurfaceBuildCertainty = sourceStatus === 'aligned' ? 'high' : sourceStatus === 'mismatch' ? 'low' : 'unavailable';
+  const backendBuildCertainty = hostedRoute ? 'unavailable-from-hosted-surface' : hostedSurfaceBuildCertainty;
+  const staleIndicators = [];
+  if (executionBlocked) staleIndicators.push('provider-non-executable-while-route-healthy');
+  if (String(runtimeStatus?.executionTruth || '').trim().toLowerCase() === 'error') staleIndicators.push('execution-truth-error');
+  if (!providerExecutable) staleIndicators.push('executable-provider-none');
+  if (String(runtimeStatus?.lastActualProviderUsed || '').trim().toLowerCase() === 'unknown') staleIndicators.push('last-actual-provider-unknown');
+  if (String(sourceDistAlignment?.buildTruthStatus || '').trim().toLowerCase() === 'indeterminate') staleIndicators.push('build-truth-indeterminate');
+
+  return {
+    routeLayerStatus: routeHealthy ? 'healthy' : (backendReachable || selectedRouteReachable ? 'degraded' : 'route-failure'),
+    backendExecutionContractStatus: executionBlocked ? 'stale-or-incomplete' : (providerExecutable ? 'validated' : 'unknown'),
+    backendBuildAlignmentStatus: asText(sourceDistAlignment?.buildAlignmentState, 'unknown'),
+    providerExecutionGateStatus: executionBlocked ? 'blocked-by-backend-contract' : (providerExecutable ? 'open' : 'unknown'),
+    likelyOperatorBoundary: executionBlocked ? 'backend-execution-contract' : (routeHealthy ? 'provider-execution' : 'route-reachability'),
+    likelyNeedsBattleBridgeRebuild: executionBlocked ? 'yes' : 'no',
+    likelyNeedsBackendRestart: executionBlocked ? 'yes' : 'unknown',
+    routeHealthyButBackendContractStale: executionBlocked ? 'yes' : 'no',
+    requestSelectionSucceededButExecutionBlocked: executionBlocked && (providerRequested || providerSelected) ? 'yes' : 'no',
+    selectedProviderRequestedButNotExecutable: executionBlocked && providerRequested ? 'yes' : 'no',
+    staleBattleBridgeIndicators: staleIndicators.length > 0 ? staleIndicators.join('|') : 'none',
+    hostedSurfaceBuildCertainty,
+    backendBuildCertainty,
+    servedPublishedBuildTruthAvailable: sourceDistAlignment?.buildTruthEvidence?.served ? 'yes' : 'no',
+    backendRuntimeContractVersion: asText(runtimeContext?.backendRuntimeContractVersion || runtimeStatus?.backendRuntimeContractVersion, 'unknown'),
+    operatorNextClassification: !routeHealthy
+      ? 'route issue unresolved'
+      : executionBlocked
+        ? 'rebuild Battle Bridge required before further provider testing'
+        : 'safe to continue testing remotely',
+  };
+}
+
 function buildHostedBackendTargetGuidance({
   canonicalHostedRouteTruth,
   sessionKind,
@@ -334,11 +388,26 @@ export function buildSupportSnapshot({
     .filter((warning) => !(hostedCloudCanonicalReady && isTileReadinessContradictionWarning(warning)));
 
   const guidanceItems = [];
+  const operatorBoundary = buildOperatorBoundaryDiagnostics({
+    routeTruthView,
+    runtimeStatus,
+    runtimeProviderTruth,
+    sourceDistAlignment,
+    runtimeContext,
+  });
   if (routeTruthView?.operatorReason && routeTruthView.operatorReason !== 'n/a') {
     guidanceItems.push(routeTruthView.operatorReason);
   }
   if (runtimeContext?.restoreDecision && !hostedCloudCanonicalReady) {
     guidanceItems.push(runtimeContext.restoreDecision);
+  }
+  if (operatorBoundary.routeHealthyButBackendContractStale === 'yes') {
+    guidanceItems.push('Route healthy; backend execution contract appears stale.');
+    guidanceItems.push('Hosted route is up; backend handshake is the likely failing boundary.');
+    guidanceItems.push('Rebuild/restart Battle Bridge before trusting provider execution.');
+    if (operatorBoundary.selectedProviderRequestedButNotExecutable === 'yes') {
+      guidanceItems.push('Route is healthy, but selected provider is not executable under current backend contract.');
+    }
   }
   if (hostedBackendTargetGuidance?.operatorGuidance) {
     guidanceItems.push(hostedBackendTargetGuidance.operatorGuidance);
@@ -727,6 +796,22 @@ export function buildSupportSnapshot({
     `Build Truth Status: ${asText(sourceDistAlignment?.buildTruthStatus, 'indeterminate')}`,
     `Build Truth Verdict: ${asText(sourceDistAlignment?.buildTruthOperatorLabel, 'Build certainty unavailable')}`,
     `Build Truth Reason: ${asText(sourceDistAlignment?.buildTruthReason, 'Build certainty unavailable')}`,
+    `Route Layer Status: ${asText(operatorBoundary.routeLayerStatus, 'unknown')}`,
+    `Backend Execution Contract Status: ${asText(operatorBoundary.backendExecutionContractStatus, 'unknown')}`,
+    `Backend Build Alignment Status: ${asText(operatorBoundary.backendBuildAlignmentStatus, 'unknown')}`,
+    `Provider Execution Gate Status: ${asText(operatorBoundary.providerExecutionGateStatus, 'unknown')}`,
+    `Likely Operator Boundary: ${asText(operatorBoundary.likelyOperatorBoundary, 'unknown')}`,
+    `Likely Needs Battle Bridge Rebuild: ${asText(operatorBoundary.likelyNeedsBattleBridgeRebuild, 'unknown')}`,
+    `Likely Needs Backend Restart: ${asText(operatorBoundary.likelyNeedsBackendRestart, 'unknown')}`,
+    `Route Healthy But Backend Contract Stale: ${asText(operatorBoundary.routeHealthyButBackendContractStale, 'unknown')}`,
+    `Request Selection Succeeded But Execution Blocked: ${asText(operatorBoundary.requestSelectionSucceededButExecutionBlocked, 'unknown')}`,
+    `Selected Provider Requested But Not Executable: ${asText(operatorBoundary.selectedProviderRequestedButNotExecutable, 'unknown')}`,
+    `Stale Battle Bridge Indicators: ${asText(operatorBoundary.staleBattleBridgeIndicators, 'none')}`,
+    `Hosted Surface Build Certainty: ${asText(operatorBoundary.hostedSurfaceBuildCertainty, 'unknown')}`,
+    `Backend Build Certainty: ${asText(operatorBoundary.backendBuildCertainty, 'unknown')}`,
+    `Served Published Build Truth Available: ${asText(operatorBoundary.servedPublishedBuildTruthAvailable, 'unknown')}`,
+    `Backend Runtime Contract Version: ${asText(operatorBoundary.backendRuntimeContractVersion, 'unknown')}`,
+    `Operator Next Classification: ${asText(operatorBoundary.operatorNextClassification, 'unknown')}`,
     `Build Alignment Severity: ${asText(sourceDistAlignment?.blockingSeverity, 'caution')}`,
     `Build Alignment Reason: ${asText(sourceDistAlignment?.alignmentReason, 'Build alignment cannot be verified from this surface.')}`,
     `Build Alignment Action Required: ${sourceDistAlignment?.operatorActionRequired === true ? 'yes' : 'no'}`,
