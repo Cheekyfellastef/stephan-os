@@ -62,6 +62,87 @@ function normalizeBlockingSeverity(value) {
   return 'none';
 }
 
+export function adjudicateCanonicalBuildTruth({
+  runtimeBuild = {},
+  servedBuild = {},
+} = {}) {
+  const runtime = runtimeBuild && typeof runtimeBuild === 'object' ? runtimeBuild : {};
+  const served = servedBuild && typeof servedBuild === 'object' ? servedBuild : {};
+  const runtimeTruth = {
+    gitCommit: toNullableTruthText(runtime.gitCommit),
+    runtimeMarker: toNullableTruthText(runtime.runtimeMarker),
+    buildTimestamp: toNullableTruthText(runtime.buildTimestamp),
+    sourceFingerprint: toNullableTruthText(runtime.sourceFingerprint),
+  };
+  const servedTruth = {
+    gitCommit: toNullableTruthText(served.gitCommit),
+    runtimeMarker: toNullableTruthText(served.runtimeMarker),
+    buildTimestamp: toNullableTruthText(served.buildTimestamp),
+    sourceFingerprint: toNullableTruthText(served.sourceFingerprint),
+  };
+
+  const servedTruthAvailable = Boolean(
+    servedTruth.gitCommit
+    || servedTruth.runtimeMarker
+    || servedTruth.buildTimestamp
+    || servedTruth.sourceFingerprint,
+  );
+
+  if (!servedTruthAvailable) {
+    return {
+      status: 'indeterminate',
+      reason: 'Served published build truth is unavailable from this surface.',
+      operatorLabel: 'Build certainty unavailable',
+      evidence: {
+        served: servedTruth,
+        runtime: runtimeTruth,
+      },
+    };
+  }
+
+  const comparableFields = ['gitCommit', 'runtimeMarker', 'buildTimestamp', 'sourceFingerprint']
+    .filter((key) => Boolean(servedTruth[key]) && Boolean(runtimeTruth[key]));
+  const mismatches = comparableFields
+    .filter((key) => servedTruth[key] !== runtimeTruth[key]);
+
+  if (comparableFields.length === 0) {
+    return {
+      status: 'indeterminate',
+      reason: 'Build certainty unavailable because served/runtime build fields do not overlap yet.',
+      operatorLabel: 'Build certainty unavailable',
+      evidence: {
+        served: servedTruth,
+        runtime: runtimeTruth,
+      },
+    };
+  }
+
+  if (mismatches.length > 0) {
+    return {
+      status: 'stale',
+      reason: `Runtime build differs from published served build (${mismatches.join(', ')})`,
+      operatorLabel: 'This surface is stale',
+      evidence: {
+        comparableFields,
+        mismatches,
+        served: servedTruth,
+        runtime: runtimeTruth,
+      },
+    };
+  }
+
+  return {
+    status: 'match',
+    reason: 'Runtime build matches published served build truth.',
+    operatorLabel: 'Current build confirmed',
+    evidence: {
+      comparableFields,
+      served: servedTruth,
+      runtime: runtimeTruth,
+    },
+  };
+}
+
 export function buildCanonicalSourceDistAlignment({
   sourceFingerprint = '',
   buildRuntimeMarker = '',
@@ -81,11 +162,27 @@ export function buildCanonicalSourceDistAlignment({
   const servedMarker = toNullableTruthText(truth.servedMarker || context.servedMarker);
   const servedBuildTimestamp = toNullableTruthText(truth.servedBuildTimestamp || context.servedBuildTimestamp);
   const servedSourceFingerprint = toNullableTruthText(truth.servedSourceFingerprint || context.servedSourceFingerprint);
+  const servedBuildCommit = toNullableTruthText(truth.servedBuildCommit || context.servedBuildCommit);
   const distFingerprint = servedSourceFingerprint || servedMarker;
   const servedTruthAvailable = truth.servedSourceTruthAvailable === true
     || truth.servedDistTruthAvailable === true
     || Boolean(servedMarker || servedBuildTimestamp || servedSourceFingerprint);
   const evidenceMissing = !source || !buildMarker;
+
+  const buildTruthAdjudication = adjudicateCanonicalBuildTruth({
+    runtimeBuild: {
+      gitCommit: commit,
+      runtimeMarker: buildMarker,
+      buildTimestamp: timestamp,
+      sourceFingerprint: source,
+    },
+    servedBuild: {
+      gitCommit: servedBuildCommit,
+      runtimeMarker: servedMarker,
+      buildTimestamp: servedBuildTimestamp,
+      sourceFingerprint: servedSourceFingerprint,
+    },
+  });
 
   let buildAlignmentState = 'unknown';
   let alignmentReason = 'Runtime/source alignment cannot be verified from this surface.';
@@ -95,17 +192,17 @@ export function buildCanonicalSourceDistAlignment({
     buildAlignmentState = 'missing-build-truth';
     alignmentReason = 'Runtime is missing local build truth markers; rebuild is required before trusting parity claims.';
     blockingSeverity = 'warning';
-  } else if (parityState === true) {
+  } else if (buildTruthAdjudication.status === 'match' || parityState === true) {
     buildAlignmentState = 'aligned';
     alignmentReason = 'Runtime artifacts are aligned with build truth.';
     blockingSeverity = 'none';
-  } else if (parityState === false) {
+  } else if (buildTruthAdjudication.status === 'stale' || parityState === false) {
     buildAlignmentState = 'stale';
     alignmentReason = 'Hosted/runtime dist appears stale relative to expected build truth.';
     blockingSeverity = 'warning';
-  } else if (!servedTruthAvailable) {
+  } else if (buildTruthAdjudication.status === 'indeterminate' || !servedTruthAvailable) {
     buildAlignmentState = 'unknown';
-    alignmentReason = 'Build alignment cannot be verified from this surface because served build truth is unavailable.';
+    alignmentReason = buildTruthAdjudication.reason || 'Build alignment cannot be verified from this surface because served build truth is unavailable.';
     blockingSeverity = 'caution';
   }
 
@@ -125,6 +222,11 @@ export function buildCanonicalSourceDistAlignment({
     buildCommit: commit,
     buildTimestamp: timestamp,
     servedBuildTimestamp,
+    servedBuildCommit,
+    buildTruthStatus: buildTruthAdjudication.status,
+    buildTruthReason: buildTruthAdjudication.reason,
+    buildTruthOperatorLabel: buildTruthAdjudication.operatorLabel,
+    buildTruthEvidence: buildTruthAdjudication.evidence,
     alignmentReason,
     operatorActionRequired,
     operatorActionText,

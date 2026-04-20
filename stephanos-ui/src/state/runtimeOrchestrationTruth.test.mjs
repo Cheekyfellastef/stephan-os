@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  adjudicateCanonicalBuildTruth,
   buildCanonicalCurrentIntent,
   buildCanonicalMemoryContext,
   buildCanonicalMissionPacket,
@@ -113,4 +114,59 @@ test('canonical source/dist alignment reports unknown when served truth is unava
   });
   assert.equal(alignment.buildAlignmentState, 'unknown');
   assert.equal(alignment.blockingSeverity, 'caution');
+});
+
+test('canonical build truth adjudicator returns match when runtime and served build truths align', () => {
+  const adjudication = adjudicateCanonicalBuildTruth({
+    runtimeBuild: {
+      gitCommit: 'abc1234',
+      runtimeMarker: 'marker-1',
+      buildTimestamp: '2026-04-11T00:00:00.000Z',
+      sourceFingerprint: 'src-fp',
+    },
+    servedBuild: {
+      gitCommit: 'abc1234',
+      runtimeMarker: 'marker-1',
+      buildTimestamp: '2026-04-11T00:00:00.000Z',
+      sourceFingerprint: 'src-fp',
+    },
+  });
+
+  assert.equal(adjudication.status, 'match');
+  assert.equal(adjudication.operatorLabel, 'Current build confirmed');
+});
+
+test('canonical build truth adjudicator returns stale when runtime and served build truths diverge', () => {
+  const adjudication = adjudicateCanonicalBuildTruth({
+    runtimeBuild: {
+      gitCommit: 'abc1234',
+      runtimeMarker: 'marker-2',
+      buildTimestamp: '2026-04-11T00:00:00.000Z',
+      sourceFingerprint: 'src-fp',
+    },
+    servedBuild: {
+      gitCommit: 'def9999',
+      runtimeMarker: 'marker-1',
+      buildTimestamp: '2026-04-10T00:00:00.000Z',
+      sourceFingerprint: 'src-fp',
+    },
+  });
+
+  assert.equal(adjudication.status, 'stale');
+  assert.match(adjudication.reason, /differs/i);
+});
+
+test('canonical build truth adjudicator returns indeterminate when served build truth is unavailable', () => {
+  const adjudication = adjudicateCanonicalBuildTruth({
+    runtimeBuild: {
+      gitCommit: 'abc1234',
+      runtimeMarker: 'marker-1',
+      buildTimestamp: '2026-04-11T00:00:00.000Z',
+      sourceFingerprint: 'src-fp',
+    },
+    servedBuild: {},
+  });
+
+  assert.equal(adjudication.status, 'indeterminate');
+  assert.match(adjudication.reason, /unavailable/i);
 });

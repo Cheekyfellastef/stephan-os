@@ -1110,7 +1110,7 @@ test('hosted-web safari-like direct api health evidence maps remembered https :8
   const staleHttpCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === staleApiBaseUrl);
 
   assert.equal(canonicalBackendCandidate?.accepted, true);
-  assert.ok(rememberedVariantCandidate);
+  assert.equal(rememberedVariantCandidate, undefined);
   assert.equal(canonicalBackendCandidate?.directBackendProbeSucceeded, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
@@ -1513,6 +1513,70 @@ test('hosted backend candidates preserve direct and hosted execution probe evide
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, hostedExecutionUrl);
   assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.liveTailscale\.executionUrl|bridgeTransport\.hostedExecution\.target/);
   assert.equal(model.finalRoute.routeKind, 'home-node');
+});
+
+test('hosted-web Safari-like remembered canonical HTTPS bridge evidence is accepted and promoted for backend target resolution', () => {
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: canonicalHostedExecutionUrl,
+      surfaceAwareness: {
+        surfaceIdentity: { os: 'macos', browser: 'safari' },
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: canonicalHostedExecutionUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: canonicalHostedExecutionUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+        rememberedAt: '2026-04-20T00:00:00.000Z',
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'HTTPS bridge /api/health reachable from hosted surface.',
+        directReachability: 'reachable',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+          blockedReason: 'stale route probe evidence',
+        },
+      },
+    },
+  });
+
+  const canonicalBackendCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === canonicalHostedExecutionUrl);
+  assert.equal(canonicalBackendCandidate?.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.configuredTransport, 'tailscale');
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
 });
 
 test('caravan mode: hosted iPad safari keeps route reachable when browser blocks mixed-content HTTP backend', () => {
