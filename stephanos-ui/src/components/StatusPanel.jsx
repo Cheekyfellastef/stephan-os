@@ -917,11 +917,20 @@ export default function StatusPanel() {
         <li>UI Runtime ID: {STEPHANOS_UI_RUNTIME_ID}</li>
         <li>UI Runtime Marker: {STEPHANOS_UI_RUNTIME_MARKER}</li>
         <li>Build Alignment State: {sourceDistAlignment.buildAlignmentState}</li>
+        <li>Build Truth Status: {sourceDistAlignment.buildTruthStatus || 'indeterminate'}</li>
+        <li>Build Truth Verdict: {sourceDistAlignment.buildTruthOperatorLabel || 'Build certainty unavailable'}</li>
+        <li>Build Truth Reason: {sourceDistAlignment.buildTruthReason || 'Build certainty unavailable'}</li>
         <li>Build Alignment Severity: {sourceDistAlignment.blockingSeverity}</li>
         <li>Build Alignment Reason: {sourceDistAlignment.alignmentReason}</li>
         <li>Build Alignment Action Required: {sourceDistAlignment.operatorActionRequired ? 'yes' : 'no'}</li>
         <li>Build Alignment Action: {sourceDistAlignment.operatorActionText}</li>
         <li>Dist Fingerprint (served): {sourceDistAlignment.distFingerprint || 'unknown'}</li>
+        <li>Served Build Commit: {sourceDistAlignment.buildTruthEvidence?.served?.gitCommit || 'unknown'}</li>
+        <li>Runtime Build Commit: {sourceDistAlignment.buildTruthEvidence?.runtime?.gitCommit || 'unknown'}</li>
+        <li>Served Runtime Marker: {sourceDistAlignment.buildTruthEvidence?.served?.runtimeMarker || 'unknown'}</li>
+        <li>Runtime Runtime Marker: {sourceDistAlignment.buildTruthEvidence?.runtime?.runtimeMarker || 'unknown'}</li>
+        <li>Served Build Timestamp: {sourceDistAlignment.buildTruthEvidence?.served?.buildTimestamp || 'unknown'}</li>
+        <li>Runtime Build Timestamp: {sourceDistAlignment.buildTruthEvidence?.runtime?.buildTimestamp || 'unknown'}</li>
         <li>UI Build Target: {STEPHANOS_UI_BUILD_TARGET}</li>
         <li>UI Build Target Identifier: {STEPHANOS_UI_BUILD_TARGET_IDENTIFIER}</li>
         <li>UI Source: {STEPHANOS_UI_SOURCE}</li>

@@ -227,7 +227,7 @@ function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
     if (!candidate.url) {
       continue;
     }
-    const key = candidate.url;
+    const key = canonicalizeBackendTargetKey(candidate.url) || candidate.url;
     if (seen.has(key)) {
       continue;
     }
@@ -820,14 +820,14 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     runtimeContext.apiBaseUrl,
     runtimeContext.actualTargetUsed,
     runtimeContext.backendTargetResolvedUrl,
-    runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionTarget,
-    runtimeContext.bridgeTransportTruth?.bridgeProbeTarget,
-    runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
-    runtimeContext.bridgeTransportTruth?.bridgeMemoryUrl,
-    runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl,
-    runtimeContext.bridgeTransportTruth?.tailscale?.executionUrl,
-    runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl,
-    runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.executionUrl,
+    bridgeTransportTruth?.bridgeHostedExecutionTarget,
+    bridgeTransportTruth?.bridgeProbeTarget,
+    bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    bridgeTransportTruth?.bridgeMemoryUrl,
+    bridgeTransportTruth?.tailscale?.backendUrl,
+    bridgeTransportTruth?.tailscale?.executionUrl,
+    bridgeTransportPreferences?.transports?.tailscale?.backendUrl,
+    bridgeTransportPreferences?.transports?.tailscale?.executionUrl,
     runtimeContext.bridgeMemory?.backendUrl,
     runtimeContext.bridgeMemory?.executionUrl,
     runtimeContext.bridgeAutoRevalidation?.executionTarget,
@@ -859,8 +859,8 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
         (
           rememberedBridgeDirectlyReachable
           && (
-            candidate.url === String(bridgeTransportTruth.bridgeMemoryUrl || '').trim()
-            || candidate.url === String(bridgeTransportTruth?.tailscale?.backendUrl || '').trim()
+            backendTargetsMatch(candidate.url, String(bridgeTransportTruth.bridgeMemoryUrl || '').trim())
+            || backendTargetsMatch(candidate.url, String(bridgeTransportTruth?.tailscale?.backendUrl || '').trim())
           )
         )
         || hostedExecutionDirectReachabilityEvidence
@@ -878,12 +878,12 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
       );
     const candidateMixedSchemeBlocked = sessionKind === 'hosted-web'
       && bridgeTransportTruth.bridgeHostedExecutionCompatibility === 'mixed-scheme-blocked'
-      && candidate.url === bridgeTransportTruth.bridgeMemoryUrl
+      && backendTargetsMatch(candidate.url, bridgeTransportTruth.bridgeMemoryUrl)
       && !directBackendProbeSucceeded;
     const bridgeTargetReachable = canonicalHomeNodeBridge.accepted === true
       && canonicalHomeNodeBridge.reachability === 'reachable'
       && Boolean(canonicalHomeNodeBridge.backendUrl)
-      && candidate.url === canonicalHomeNodeBridge.backendUrl;
+      && backendTargetsMatch(candidate.url, canonicalHomeNodeBridge.backendUrl);
     const reachable = bridgeTargetReachable
       ? true
       : directBackendProbeSucceeded
