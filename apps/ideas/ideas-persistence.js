@@ -21,51 +21,128 @@ function normalizeStringList(values = []) {
   return [...new Set(values.map((value) => normalizeString(value)).filter(Boolean))];
 }
 
+function normalizeConfidence(value) {
+  const normalized = normalizeString(value, 'unknown');
+  return normalized || 'unknown';
+}
+
+function sanitizeEvidenceItems(values = []) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .filter((evidence) => isRecord(evidence))
+    .map((evidence) => ({
+      id: normalizeString(evidence.id, `${normalizeString(evidence.type, 'reference')}:${normalizeString(evidence.title, 'untitled')}`),
+      type: normalizeString(evidence.type, 'reference'),
+      title: normalizeString(evidence.title),
+      source: normalizeString(evidence.source),
+      notes: normalizeString(evidence.notes),
+      provenance: normalizeString(evidence.provenance),
+      confidence: normalizeConfidence(evidence.confidence),
+      linkedArtifactIds: normalizeStringList(evidence.linkedArtifactIds),
+      linkedPaths: normalizeStringList(evidence.linkedPaths),
+      linkedUrls: normalizeStringList(evidence.linkedUrls),
+      snapshotRef: normalizeString(evidence.snapshotRef),
+    }))
+    .filter((evidence) => evidence.title && evidence.source);
+}
+
+function sanitizeIdeaRelations(values = []) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .filter((relation) => isRecord(relation))
+    .map((relation) => ({
+      targetId: normalizeString(relation.targetId),
+      relationType: normalizeString(relation.relationType, 'related'),
+      notes: normalizeString(relation.notes),
+      confidence: normalizeConfidence(relation.confidence),
+    }))
+    .filter((relation) => relation.targetId);
+}
+
+function sanitizePromotionState(value = {}) {
+  const source = isRecord(value) ? value : {};
+  const memorySource = isRecord(source.memory) ? source.memory : {};
+  const retrievalSource = isRecord(source.retrieval) ? source.retrieval : {};
+  const roadmapSource = isRecord(source.roadmap) ? source.roadmap : {};
+  const codexSource = isRecord(source.codex) ? source.codex : {};
+  const simulationSource = isRecord(source.simulation) ? source.simulation : {};
+  const vrLabSource = isRecord(source.vrLab) ? source.vrLab : {};
+  const continuitySource = isRecord(source.continuity) ? source.continuity : {};
+
+  return {
+    memory: normalizeString(memorySource.state, 'not-submitted'),
+    retrieval: normalizeString(retrievalSource.state, 'not-submitted'),
+    roadmap: normalizeString(roadmapSource.state, 'not-promoted'),
+    codex: normalizeString(codexSource.state, 'not-prepared'),
+    simulation: normalizeString(simulationSource.state, 'not-targeted'),
+    vrLab: normalizeString(vrLabSource.state, 'not-targeted'),
+    continuity: normalizeString(continuitySource.state, 'not-submitted'),
+    lastTransitionAt: normalizeString(source.lastTransitionAt),
+    lastActor: normalizeString(source.lastActor),
+    provenance: normalizeString(source.provenance),
+    trace: Array.isArray(source.trace)
+      ? source.trace
+        .filter((entry) => isRecord(entry))
+        .map((entry) => ({
+          target: normalizeString(entry.target),
+          state: normalizeString(entry.state),
+          at: normalizeString(entry.at),
+          notes: normalizeString(entry.notes),
+        }))
+        .filter((entry) => entry.target && entry.state)
+      : [],
+  };
+}
+
 function sanitizeIdeaKnowledge(record = {}) {
-  const legacyEvidence = Array.isArray(record.media)
-    ? record.media
-      .filter((media) => isRecord(media))
-      .map((media) => ({
-        id: normalizeString(media.id, `${normalizeString(media.type, 'reference')}:${normalizeString(media.title, 'untitled')}`),
-        type: normalizeString(media.type, 'reference'),
-        title: normalizeString(media.title),
-        source: normalizeString(media.source),
-        notes: normalizeString(media.notes),
-      }))
-      .filter((media) => media.title && media.source)
-    : [];
-
-  const relations = Array.isArray(record.knowledge?.relations)
-    ? record.knowledge.relations
-      .filter((relation) => isRecord(relation))
-      .map((relation) => ({
-        targetId: normalizeString(relation.targetId),
-        relationType: normalizeString(relation.relationType, 'related'),
-        notes: normalizeString(relation.notes),
-      }))
-      .filter((relation) => relation.targetId)
-    : [];
-
-  const nodeType = normalizeString(record.knowledge?.nodeType || record.nodeType, 'idea-node');
+  const legacyEvidence = sanitizeEvidenceItems(record.media);
+  const knowledge = isRecord(record.knowledge) ? record.knowledge : {};
+  const relations = sanitizeIdeaRelations(knowledge.relations);
+  const relatedIdeas = normalizeStringList(record.relatedIdeas?.length ? record.relatedIdeas : relations.map((relation) => relation.targetId));
+  const collectionIds = normalizeStringList(
+    record.collectionIds?.length
+      ? record.collectionIds
+      : [knowledge.collectionId || record.collectionId].filter(Boolean),
+  );
+  const promotionState = sanitizePromotionState(record.promotionState);
+  const memoryLinks = normalizeStringList(record.memoryLinks);
+  const retrievalLinks = normalizeStringList(record.retrievalLinks);
+  const roadmapLinks = normalizeStringList(record.roadmapLinks);
+  const simulationLinks = normalizeStringList(record.simulationLinks);
+  const sourceArtifacts = normalizeStringList(record.sourceArtifacts);
+  const nodeType = normalizeString(knowledge.nodeType || record.nodeType, 'concept');
+  const status = normalizeString(record.status, 'spark');
+  const priority = normalizeString(record.priority, 'normal');
+  const operatorNotes = normalizeString(record.notes || record.operatorNotes);
+  const evidence = sanitizeEvidenceItems(knowledge.evidence?.length ? knowledge.evidence : legacyEvidence);
+  const primaryCollectionId = collectionIds[0] || '';
+  const memoryPromotionStatus = normalizeString(knowledge.promotionStatus, promotionState.memory === 'promoted' ? 'promoted' : 'draft');
 
   return {
     nodeType,
-    collectionId: normalizeString(record.knowledge?.collectionId || record.collectionId),
-    actionTarget: normalizeString(record.knowledge?.actionTarget || record.actionTarget),
-    promotionStatus: normalizeString(record.knowledge?.promotionStatus || record.promotionStatus, 'draft'),
+    status,
+    priority,
+    collectionId: normalizeString(primaryCollectionId),
+    collectionIds,
+    actionTarget: normalizeString(knowledge.actionTarget || record.actionTarget),
+    promotionStatus: memoryPromotionStatus,
+    promotionState,
+    relatedIdeas,
     relations,
-    evidence: Array.isArray(record.knowledge?.evidence) && record.knowledge.evidence.length
-      ? record.knowledge.evidence
-        .filter((evidence) => isRecord(evidence))
-        .map((evidence) => ({
-          id: normalizeString(evidence.id, `${normalizeString(evidence.type, 'reference')}:${normalizeString(evidence.title, 'untitled')}`),
-          type: normalizeString(evidence.type, 'reference'),
-          title: normalizeString(evidence.title),
-          source: normalizeString(evidence.source),
-          notes: normalizeString(evidence.notes),
-        }))
-        .filter((evidence) => evidence.title && evidence.source)
-      : legacyEvidence,
+    evidence,
+    sourceTile: normalizeString(record.sourceTile),
+    sourceArtifacts,
+    memoryLinks,
+    retrievalLinks,
+    roadmapLinks,
+    simulationLinks,
+    operatorNotes,
   };
 }
 
@@ -89,6 +166,19 @@ function sanitizeIdeaRecord(record) {
     tags: normalizeStringList(record.tags),
     media: knowledge.evidence,
     knowledge,
+    nodeType: knowledge.nodeType,
+    status: knowledge.status,
+    priority: knowledge.priority,
+    collectionIds: knowledge.collectionIds,
+    relatedIdeas: knowledge.relatedIdeas,
+    sourceTile: knowledge.sourceTile,
+    sourceArtifacts: knowledge.sourceArtifacts,
+    promotionState: knowledge.promotionState,
+    memoryLinks: knowledge.memoryLinks,
+    retrievalLinks: knowledge.retrievalLinks,
+    roadmapLinks: knowledge.roadmapLinks,
+    simulationLinks: knowledge.simulationLinks,
+    notes: knowledge.operatorNotes,
     createdAt: normalizeString(record.createdAt),
     updatedAt: normalizeString(record.updatedAt),
   };
