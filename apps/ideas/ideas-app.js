@@ -1,5 +1,12 @@
 import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
-import { buildIdeaActions, buildIdeasKnowledgeDigest, startIdeaEdit, upsertIdeaRecord } from './ideas-model.js';
+import {
+  buildIdeaActions,
+  buildIdeaContextPackage,
+  buildIdeasKnowledgeDigest,
+  startIdeaEdit,
+  transitionIdeaPromotionState,
+  upsertIdeaRecord,
+} from './ideas-model.js';
 import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
 import { createTileRetrievalBridge } from '../../shared/runtime/tileRetrievalBridge.js';
@@ -103,6 +110,10 @@ const tileRetrievalBridge = createTileRetrievalBridge({
   tileId: IDEAS_APP_ID,
   tileSource: 'ideas-tile',
 });
+if (window.parent && window.parent !== window) {
+  window.parent.StephanosTileRetrievalRegistry = window.parent.StephanosTileRetrievalRegistry || {};
+  window.parent.StephanosTileRetrievalRegistry[IDEAS_APP_ID] = tileRetrievalBridge;
+}
 
 function describeMemoryStatus() {
   if (!hydrationCompleted) {
@@ -190,6 +201,9 @@ function publishIdeasTileContext(records = []) {
       latestIdeaTitle: latestRecord?.title || '',
       tagsPreview: latestRecord?.tags || [],
       knowledgeDigest: digest,
+      ideaContextPackage: buildIdeaContextPackage(records, {
+        selectedIdeaId: latestRecord?.id || '',
+      }),
     },
     visibility: 'workspace',
   });
@@ -435,6 +449,11 @@ function renderIdeas() {
 
     const actions = buildIdeaActions(record);
     const editAction = actions.find((action) => action.type === 'edit');
+    const relationCount = Array.isArray(record.knowledge?.relations) ? record.knowledge.relations.length : 0;
+    const collectionCount = Array.isArray(record.collectionIds) ? record.collectionIds.length : 0;
+    const memoryState = record.promotionState?.memory || record.knowledge?.promotionState?.memory || 'not-submitted';
+    const retrievalState = record.promotionState?.retrieval || record.knowledge?.promotionState?.retrieval || 'not-submitted';
+    const codexState = record.promotionState?.codex || record.knowledge?.promotionState?.codex || 'not-prepared';
 
     item.innerHTML = `
       <header>
@@ -449,8 +468,24 @@ function renderIdeas() {
         <strong>References</strong>
         <div>${mediaHtml}</div>
       </section>
+      <section>
+        <strong>Knowledge</strong>
+        <div class="subtle">
+          type=${record.nodeType || record.knowledge?.nodeType || 'idea-node'} ·
+          status=${record.status || record.knowledge?.status || 'spark'} ·
+          priority=${record.priority || record.knowledge?.priority || 'normal'} ·
+          collections=${collectionCount} ·
+          relationships=${relationCount}
+        </div>
+        <div class="subtle">
+          promotions: memory=${memoryState}, retrieval=${retrievalState}, codex=${codexState}
+        </div>
+      </section>
       <section class="entry-actions">
         ${editAction ? `<button type="button" class="ghost idea-edit-button" data-idea-edit-id="${record.id}">${editAction.label}</button>` : ''}
+        <button type="button" class="ghost" data-idea-promote-memory="${record.id}">Promote Memory</button>
+        <button type="button" class="ghost" data-idea-promote-retrieval="${record.id}">Promote Retrieval</button>
+        <button type="button" class="ghost" data-idea-promote-codex="${record.id}">Prepare Codex Seed</button>
       </section>
     `;
 
@@ -671,43 +706,97 @@ elements.contextReadButton?.addEventListener('click', () => {
   setContractStatus(`Context read complete (memory=${memoryCount}, retrieval=${retrievalCount}, source=${bundle?.runtimeTruth?.retrievalSource || 'unknown'}).`);
 });
 
-elements.submitMemoryButton?.addEventListener('click', () => {
-  const latest = readAll()[0];
-  if (!latest) {
+function promoteIdeaToMemory(ideaId = '') {
+  const target = readAll().find((record) => record.id === ideaId) || readAll()[0];
+  if (!target) {
     setContractStatus('Memory candidate skipped: no saved ideas yet.');
     return;
   }
 
   const result = tileMemoryBridge.submitMemoryCandidate({
-    key: `idea.insight.${latest.id}`,
-    value: latest.summary || latest.title,
-    sourceRef: `idea:${latest.id}`,
+    key: `idea.insight.${target.id}`,
+    value: target.summary || target.title,
+    sourceRef: `idea:${target.id}`,
     reason: 'Operator promoted latest idea insight for durable continuity memory.',
     type: 'tile.result',
-    confidence: latest.knowledge?.promotionStatus === 'promoted' ? 'high' : 'medium',
-    relatedIdeaIds: (latest.knowledge?.relations || []).map((relation) => relation.targetId),
-    tags: ['ideas', 'memory-candidate', latest.knowledge?.promotionStatus || 'draft'],
+    confidence: target.knowledge?.promotionStatus === 'promoted' ? 'high' : 'medium',
+    relatedIdeaIds: (target.knowledge?.relations || []).map((relation) => relation.targetId),
+    tags: ['ideas', 'memory-candidate', target.knowledge?.promotionStatus || 'draft'],
   });
+  if (result?.execution?.adjudication === 'promoted') {
+    const promoted = transitionIdeaPromotionState(target, 'memory', 'promoted', {
+      notes: 'Adjudicator promoted memory candidate from Ideas tile.',
+    });
+    if (promoted) {
+      const retained = readAll().filter((record) => record.id !== promoted.id);
+      state = sanitizeIdeasState({ records: [promoted, ...retained] });
+      writeAll(state.records).then(() => renderIdeas()).catch(() => null);
+    }
+  }
   setContractStatus(`Memory candidate adjudicated (${result.promoted ? 'promoted' : 'rejected'}; mode=${result.execution?.mode || 'unknown'}).`);
-});
+}
 
-elements.submitRetrievalButton?.addEventListener('click', () => {
-  const latest = readAll()[0];
-  if (!latest) {
+elements.submitMemoryButton?.addEventListener('click', () => promoteIdeaToMemory());
+
+function promoteIdeaToRetrieval(ideaId = '') {
+  const target = readAll().find((record) => record.id === ideaId) || readAll()[0];
+  if (!target) {
     setContractStatus('Retrieval contribution skipped: no saved ideas yet.');
     return;
   }
 
   const result = tileRetrievalBridge.contributeDocument({
-    document: `${latest.title}\n${latest.summary}\nTags: ${(latest.tags || []).join(', ')}`,
-    sourceRef: `idea:${latest.id}`,
+    document: `${target.title}\n${target.summary}\nTags: ${(target.tags || []).join(', ')}`,
+    sourceRef: `idea:${target.id}`,
     tags: ['ideas', 'retrieval'],
     triggerReindex: true,
   });
+  const retrievalState = result.ingested
+    ? (result.execution?.mode === 'shared-backed' ? 'ingested' : 'scaffolded-unvalidated')
+    : (result.execution?.mode === 'local-fallback' ? 'fallback-only' : 'blocked');
+  const promoted = transitionIdeaPromotionState(target, 'retrieval', retrievalState, {
+    notes: `Retrieval contribution result (${result.execution?.mode || 'unknown'}).`,
+  });
+  if (promoted) {
+    const retained = readAll().filter((record) => record.id !== promoted.id);
+    state = sanitizeIdeasState({ records: [promoted, ...retained] });
+    writeAll(state.records).then(() => renderIdeas()).catch(() => null);
+  }
   setContractStatus(`Retrieval contribution ${result.ingested ? 'ingested' : 'blocked'} (allowlisted=${result.allowlisted}; mode=${result.execution?.mode || 'unknown'}).`);
-});
+}
+
+elements.submitRetrievalButton?.addEventListener('click', () => promoteIdeaToRetrieval());
 
 elements.ideasList?.addEventListener('click', (event) => {
+  const memoryButton = event?.target?.closest?.('[data-idea-promote-memory]');
+  if (memoryButton) {
+    const ideaId = memoryButton.getAttribute('data-idea-promote-memory') || '';
+    promoteIdeaToMemory(ideaId);
+    return;
+  }
+  const retrievalButton = event?.target?.closest?.('[data-idea-promote-retrieval]');
+  if (retrievalButton) {
+    const ideaId = retrievalButton.getAttribute('data-idea-promote-retrieval') || '';
+    promoteIdeaToRetrieval(ideaId);
+    return;
+  }
+  const codexButton = event?.target?.closest?.('[data-idea-promote-codex]');
+  if (codexButton) {
+    const ideaId = codexButton.getAttribute('data-idea-promote-codex') || '';
+    const selected = readAll().find((record) => record.id === ideaId);
+    if (!selected) return;
+    const promoted = transitionIdeaPromotionState(selected, 'codex', 'seed-ready', {
+      notes: 'Operator marked idea as Codex prompt seed ready.',
+    });
+    if (promoted) {
+      const retained = readAll().filter((record) => record.id !== promoted.id);
+      writeAll([promoted, ...retained]).then(() => {
+        renderIdeas();
+        setContractStatus(`Codex seed prepared for ${promoted.id}.`);
+      }).catch(() => null);
+    }
+    return;
+  }
   const button = event?.target?.closest?.('[data-idea-edit-id]');
   if (!button) {
     return;

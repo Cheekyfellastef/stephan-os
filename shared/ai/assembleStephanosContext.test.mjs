@@ -90,5 +90,7 @@ test('assembleStephanosContext includes bounded ideas knowledge digest and retri
   assert.equal(assembled.ideasKnowledge.selectedIdea.id, 'idea_1');
   assert.equal(assembled.ideasKnowledge.relatedIdeas.length > 0, true);
   assert.equal(assembled.ideasKnowledge.retrievalExcerpts.length, 1);
+  assert.equal(assembled.ideasContextPackage.included, true);
   assert.equal(assembled.diagnostics.ideasKnowledgeIncluded, true);
+  assert.equal(assembled.diagnostics.ideaContextPackageIncluded, true);
 });

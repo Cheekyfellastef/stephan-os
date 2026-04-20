@@ -3,7 +3,7 @@ import {
   getAllTileContextSnapshots,
   getSelectedTileContextSnapshot,
 } from '../runtime/tileContextRegistry.mjs';
-import { buildIdeasKnowledgeDigest } from '../../apps/ideas/ideas-model.js';
+import { buildIdeaContextPackage, buildIdeasKnowledgeDigest } from '../../apps/ideas/ideas-model.js';
 import { sanitizeIdeasState } from '../../apps/ideas/ideas-persistence.js';
 
 function safeString(value = '') {
@@ -118,6 +118,11 @@ export function assembleStephanosContext({
     selectedIdeaId: runtimeContext.selectedIdeaId || '',
   });
   const retrievalExcerpts = extractBoundedRetrieval(runtimeContext);
+  const ideaContextPackage = buildIdeaContextPackage(ideasState.records, {
+    selectedIdeaId: runtimeContext.selectedIdeaId || ideaDigest?.selectedIdea?.id || '',
+    retrievalExcerpts,
+    memoryRecords: runtimeContext.memoryContext || [],
+  });
 
   return {
     contextVersion: 2,
@@ -128,6 +133,7 @@ export function assembleStephanosContext({
       ...ideaDigest,
       retrievalExcerpts,
     },
+    ideasContextPackage: ideaContextPackage,
     runtimeTruth: {
       frontendOrigin: safeString(runtimeContext.frontendOrigin),
       target: safeString(runtimeContext.target),
@@ -152,6 +158,7 @@ export function assembleStephanosContext({
       selectedFrom: activeTileIdFromRuntime ? 'runtime-context' : (activeHint?.tileId ? 'workspace-hint' : 'none'),
       ideasKnowledgeIncluded: ideaDigest?.diagnostics?.included === true,
       ideasKnowledgeReason: ideaDigest?.diagnostics?.reason || 'none',
+      ideaContextPackageIncluded: ideaContextPackage?.included === true,
       retrievalExcerptsIncluded: retrievalExcerpts.length,
     },
   };

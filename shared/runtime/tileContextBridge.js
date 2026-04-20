@@ -45,6 +45,28 @@
     }
   }
 
+  function readRetrievalViaAdapter(tileId, limit) {
+    const adapter = global.parent?.StephanosTileRetrievalRegistry?.[tileId];
+    if (!adapter || typeof adapter.listCorpusEntries !== 'function') {
+      return null;
+    }
+
+    try {
+      const entries = adapter.listCorpusEntries(limit);
+      if (!Array.isArray(entries)) {
+        return null;
+      }
+      return {
+        entries,
+        sourceTruth: typeof adapter.getSourceTruth === 'function'
+          ? adapter.getSourceTruth()
+          : 'scaffolded-unvalidated',
+      };
+    } catch {
+      return null;
+    }
+  }
+
   function publishTileContextSnapshot(tileId, snapshot) {
     const normalizedTileId = String(tileId || '').trim();
     if (!normalizedTileId) {
@@ -98,13 +120,20 @@
     let retrievalSource = 'not-requested';
 
     if (includeRetrieval) {
-      const shared = readRetrievalCorpusShared(normalizedTileId);
-      if (shared.length > 0) {
-        retrieval = shared.slice(0, Math.max(1, Number(retrievalLimit) || 4));
-        retrievalSource = 'shared-backed (implemented but not battle-bridge validated)';
+      const boundedLimit = Math.max(1, Number(retrievalLimit) || 4);
+      const adapterResult = readRetrievalViaAdapter(normalizedTileId, boundedLimit);
+      if (adapterResult && adapterResult.entries.length > 0) {
+        retrieval = adapterResult.entries.slice(0, boundedLimit);
+        retrievalSource = adapterResult.sourceTruth;
       } else {
-        retrieval = readRetrievalCorpusLocal(normalizedTileId).slice(0, Math.max(1, Number(retrievalLimit) || 4));
-        retrievalSource = retrieval.length > 0 ? 'local-fallback' : 'unavailable';
+        const shared = readRetrievalCorpusShared(normalizedTileId);
+        if (shared.length > 0) {
+          retrieval = shared.slice(0, boundedLimit);
+          retrievalSource = 'shared-backed';
+        } else {
+          retrieval = readRetrievalCorpusLocal(normalizedTileId).slice(0, boundedLimit);
+          retrievalSource = retrieval.length > 0 ? 'local-fallback' : 'unavailable';
+        }
       }
     }
 

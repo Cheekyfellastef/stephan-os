@@ -229,9 +229,20 @@ export function createTileRetrievalBridge({
     };
   }
 
+  function getSourceTruth() {
+    if (!allowSet.has(normalizedTileId)) {
+      return 'unavailable';
+    }
+    if (memoryGateway?.persistTypedRecord) {
+      return 'scaffolded-unvalidated';
+    }
+    return 'local-fallback';
+  }
+
   return {
     contributeDocument,
     listCorpusEntries: retrievalStore.listEntries,
+    getSourceTruth,
     storageKey: retrievalStore.storageKey,
   };
 }

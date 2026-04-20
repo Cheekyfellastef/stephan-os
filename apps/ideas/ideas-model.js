@@ -1,5 +1,18 @@
 import { sanitizeIdeasState } from './ideas-persistence.js';
 
+const RELATIONSHIP_LABELS = {
+  supports: 'supports',
+  depends_on: 'depends on',
+  derived_from: 'derived from',
+  contradicts: 'contradicts',
+  expands: 'expands',
+  similar_to: 'similar to',
+  part_of: 'part of',
+  promotes_to: 'promotes to',
+  evidence_for: 'evidence for',
+  evidence_against: 'evidence against',
+};
+
 function cloneIdeaRecord(record) {
   return {
     id: record.id,
@@ -32,11 +45,12 @@ function cloneIdeaRecord(record) {
         promotionState: {
           memory: 'not-submitted',
           retrieval: 'not-submitted',
-          roadmap: 'not-promoted',
           codex: 'not-prepared',
+          roadmap: 'not-promoted',
           simulation: 'not-targeted',
-          vrLab: 'not-targeted',
           continuity: 'not-submitted',
+          memoryLink: 'not-linked',
+          retrievalLink: 'not-linked',
         },
         relatedIdeas: [],
         relations: [],
@@ -64,9 +78,48 @@ function buildIdeaActions(record) {
     return [];
   }
 
+  const memoryState = record?.promotionState?.memory || record?.knowledge?.promotionState?.memory || 'not-submitted';
+  const retrievalState = record?.promotionState?.retrieval || record?.knowledge?.promotionState?.retrieval || 'not-submitted';
+  const codexState = record?.promotionState?.codex || record?.knowledge?.promotionState?.codex || 'not-prepared';
   return [
     { type: 'edit', label: 'Edit' },
+    { type: 'promote-memory', label: `Memory: ${memoryState}` },
+    { type: 'promote-retrieval', label: `Retrieval: ${retrievalState}` },
+    { type: 'prepare-codex', label: `Codex: ${codexState}` },
   ];
+}
+
+function transitionIdeaPromotionState(record, target = 'memory', state = 'submitted', { actor = 'operator', notes = '' } = {}) {
+  const sanitized = sanitizeIdeasState({ records: [record] }).records[0];
+  if (!sanitized) {
+    return null;
+  }
+
+  const current = sanitized.knowledge?.promotionState || {};
+  const next = {
+    ...current,
+    [target]: String(state || '').trim() || 'unknown',
+    lastTransitionAt: new Date().toISOString(),
+    lastActor: String(actor || '').trim() || 'operator',
+    trace: [...(Array.isArray(current.trace) ? current.trace : []), {
+      target: String(target || '').trim() || 'unknown',
+      state: String(state || '').trim() || 'unknown',
+      at: new Date().toISOString(),
+      notes: String(notes || '').trim(),
+    }].slice(-30),
+  };
+
+  return sanitizeIdeasState({
+    records: [{
+      ...sanitized,
+      promotionState: next,
+      knowledge: {
+        ...sanitized.knowledge,
+        promotionState: next,
+      },
+      updatedAt: new Date().toISOString(),
+    }],
+  }).records[0] || null;
 }
 
 function startIdeaEdit(records, ideaId) {
@@ -148,6 +201,11 @@ function buildIdeasKnowledgeDigest(records = [], {
   }])).values()].slice(0, Math.max(1, Number(maxRelated) || 3));
 
   const selectedEvidence = (selected.knowledge?.evidence || []).slice(0, Math.max(1, Number(maxEvidence) || 3));
+  const relationSummary = (selected.knowledge?.relations || []).reduce((acc, relation) => {
+    const key = relation?.relationType || 'supports';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
   return {
     selectedIdea: {
@@ -164,6 +222,8 @@ function buildIdeasKnowledgeDigest(records = [], {
       collectionIds: selected.collectionIds || selected.knowledge?.collectionIds || [],
       evidence: selectedEvidence,
       relatedIdeaIds: selected.relatedIdeas || selected.knowledge?.relatedIdeas || [],
+      relationSummary,
+      aiContextHints: selected.aiContextHints || selected.knowledge?.aiContextHints || null,
     },
     relatedIdeas,
     promotedMemories: [],
@@ -174,14 +234,77 @@ function buildIdeasKnowledgeDigest(records = [], {
       selectedIdeaId: selected.id,
       relatedCount: relatedIdeas.length,
       evidenceCount: selectedEvidence.length,
+      relationTypes: Object.keys(relationSummary).length,
+    },
+  };
+}
+
+function buildIdeaContextPackage(records = [], {
+  selectedIdeaId = '',
+  retrievalExcerpts = [],
+  memoryRecords = [],
+  maxRelated = 3,
+  maxEvidence = 2,
+} = {}) {
+  const digest = buildIdeasKnowledgeDigest(records, { selectedIdeaId, maxRelated, maxEvidence });
+  if (!digest.selectedIdea) {
+    return {
+      packageVersion: 1,
+      included: false,
+      reason: 'no-selected-idea',
+      diagnostics: digest.diagnostics,
+    };
+  }
+
+  const boundedRetrieval = Array.isArray(retrievalExcerpts) ? retrievalExcerpts.slice(0, 2) : [];
+  const boundedMemory = Array.isArray(memoryRecords)
+    ? memoryRecords
+      .slice(0, 2)
+      .map((record) => ({
+        id: record.id || '',
+        type: record.type || '',
+        summary: record.summary || '',
+      }))
+    : [];
+  const relationshipSummary = Object.entries(digest.selectedIdea.relationSummary || {})
+    .map(([type, count]) => ({
+      type,
+      label: RELATIONSHIP_LABELS[type] || type,
+      count,
+    }))
+    .slice(0, 5);
+
+  return {
+    packageVersion: 1,
+    included: true,
+    selectedIdea: digest.selectedIdea,
+    relatedIdeas: digest.relatedIdeas.slice(0, 3),
+    evidenceSummaries: (digest.selectedIdea.evidence || []).map((entry) => ({
+      type: entry.type,
+      title: entry.title,
+      source: entry.source,
+    })),
+    relationshipSummary,
+    promotionState: digest.selectedIdea.promotionState || null,
+    memorySummaries: boundedMemory,
+    retrievalExcerpts: boundedRetrieval,
+    diagnostics: {
+      inclusionReason: 'idea-context-package',
+      selectedIdeaId: digest.selectedIdea.id,
+      bounded: true,
+      relatedIncluded: Math.min(digest.relatedIdeas.length, 3),
+      memoryIncluded: boundedMemory.length,
+      retrievalIncluded: boundedRetrieval.length,
     },
   };
 }
 
 export {
   buildIdeaActions,
+  buildIdeaContextPackage,
   buildIdeasKnowledgeDigest,
   createIdeaId,
   startIdeaEdit,
+  transitionIdeaPromotionState,
   upsertIdeaRecord,
 };
