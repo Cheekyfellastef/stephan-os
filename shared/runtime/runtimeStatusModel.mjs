@@ -75,6 +75,12 @@ function canonicalizeBackendTargetKey(value = '') {
   }
 }
 
+function backendTargetsMatch(left = '', right = '') {
+  const leftKey = canonicalizeBackendTargetKey(left);
+  const rightKey = canonicalizeBackendTargetKey(right);
+  return Boolean(leftKey) && Boolean(rightKey) && leftKey === rightKey;
+}
+
 function collectBackendTargetCandidates(runtimeContext = {}, fallbackUrl = '') {
   const diagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
     ? runtimeContext.routeDiagnostics
@@ -345,22 +351,26 @@ function enforceHostedRememberedTailscaleRevalidationTruthGate({
     && runtimeContext.backendTargetCandidates.some((candidate) => (
       candidate?.accepted === true
       && (
-        candidate?.url === backendUrl
-        || (hostedExecutionCompatible && hostedExecutionTarget && candidate?.url === hostedExecutionTarget)
+        backendTargetsMatch(candidate?.url, backendUrl)
+        || (hostedExecutionCompatible && hostedExecutionTarget && backendTargetsMatch(candidate?.url, hostedExecutionTarget))
       )
     ));
   const winnerUsesTailscale = nodeRoute?.routeCandidateWinner?.candidateKey === 'home-node-tailscale'
     && nodeRoute?.routeCandidateWinner?.usable === true
     && (
-      String(finalRoute?.actualTarget || '').trim() === backendUrl
-      || (hostedExecutionCompatible && hostedExecutionTarget && String(finalRoute?.actualTarget || '').trim() === hostedExecutionTarget)
+      backendTargetsMatch(String(finalRoute?.actualTarget || '').trim(), backendUrl)
+      || (hostedExecutionCompatible && hostedExecutionTarget && backendTargetsMatch(String(finalRoute?.actualTarget || '').trim(), hostedExecutionTarget))
     );
+  const backendTargetUsesTailscale = (
+    backendTargetsMatch(runtimeContext?.backendTargetResolvedUrl, backendUrl)
+    || (hostedExecutionCompatible && hostedExecutionTarget && backendTargetsMatch(runtimeContext?.backendTargetResolvedUrl, hostedExecutionTarget))
+  );
   const strictGate = selectedTransport === 'tailscale'
     && Boolean(canonicalTarget)
     && tailscale.accepted === true
     && tailscale.reachable === true
     && backendCandidateAccepted
-    && winnerUsesTailscale;
+    && (winnerUsesTailscale || backendTargetUsesTailscale);
   if (strictGate) {
     return runtimeContext;
   }
@@ -631,12 +641,28 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     });
   }
   const hostedCanonicalExecutionTarget = String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim();
+  const hostedCanonicalExecutionDirectEvidence = backendAvailable === true
+    && [
+      runtimeContext.apiBaseUrl,
+      runtimeContext.actualTargetUsed,
+      runtimeContext.backendTargetResolvedUrl,
+      runtimeContext.bridgeAutoRevalidation?.executionTarget,
+      runtimeContext.bridgeMemory?.backendUrl,
+      runtimeContext.bridgeMemory?.executionUrl,
+      bridgeTransportPreferences?.transports?.tailscale?.backendUrl,
+      bridgeTransportPreferences?.transports?.tailscale?.executionUrl,
+      bridgeTransportTruth.bridgeProbeTarget,
+      bridgeTransportTruth.bridgeHostedExecutionBridgeUrl,
+    ].some((candidate) => backendTargetsMatch(candidate, hostedCanonicalExecutionTarget));
   const hostedCanonicalExecutionEvidencePromotion = sessionKind === 'hosted-web'
     && bridgeTransportTruth.bridgeMemoryTransport === 'tailscale'
     && Boolean(hostedCanonicalExecutionTarget)
     && validateStephanosBackendTargetUrl(hostedCanonicalExecutionTarget, { allowLoopback: false }).ok
     && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
-    && hasReachableRouteTarget(runtimeContext.routeDiagnostics, hostedCanonicalExecutionTarget);
+    && (
+      hasReachableRouteTarget(runtimeContext.routeDiagnostics, hostedCanonicalExecutionTarget)
+      || hostedCanonicalExecutionDirectEvidence
+    );
   if (hostedCanonicalExecutionEvidencePromotion) {
     bridgeTransportPreferences = normalizeBridgeTransportPreferences({
       ...bridgeTransportPreferences,
@@ -797,6 +823,13 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionTarget,
     runtimeContext.bridgeTransportTruth?.bridgeProbeTarget,
     runtimeContext.bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    runtimeContext.bridgeTransportTruth?.bridgeMemoryUrl,
+    runtimeContext.bridgeTransportTruth?.tailscale?.backendUrl,
+    runtimeContext.bridgeTransportTruth?.tailscale?.executionUrl,
+    runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.backendUrl,
+    runtimeContext.bridgeTransportPreferences?.transports?.tailscale?.executionUrl,
+    runtimeContext.bridgeMemory?.backendUrl,
+    runtimeContext.bridgeMemory?.executionUrl,
     runtimeContext.bridgeAutoRevalidation?.executionTarget,
   ].map((value) => canonicalizeBackendTargetKey(value)).filter(Boolean));
   const backendTargetCandidateDecisions = backendTargetCandidates.map((candidate) => {
@@ -829,10 +862,11 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
       );
     const hostedExecutionProbeSucceeded = sessionKind === 'hosted-web'
       && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
-      && candidate.url === String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim()
+      && backendTargetsMatch(candidate.url, String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim())
       && (
         String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim() === 'revalidated'
         || routeProbeReachable
+        || directApiProbeEvidence
       );
     const candidateMixedSchemeBlocked = sessionKind === 'hosted-web'
       && bridgeTransportTruth.bridgeHostedExecutionCompatibility === 'mixed-scheme-blocked'
