@@ -1761,3 +1761,72 @@ test('caravan mode: no backend remains rejected', () => {
   assert.equal(model.finalRouteTruth.backendReachable, false);
   assert.equal(model.finalRouteTruth.routeKind, 'unavailable');
 });
+
+test('hosted low-freshness local-private ollama intent keeps executable provider when tailscale home bridge is usable and provider health is unknown', () => {
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      providerExecutionIntent: {
+        freshnessNeed: 'low',
+        answerMode: 'local-private',
+        requestedProviderForRequest: 'ollama',
+        selectedProvider: 'ollama',
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: canonicalHostedExecutionUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: true,
+            active: true,
+            reachability: 'reachable',
+            usable: true,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: canonicalHostedExecutionUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Canonical HTTPS Home Bridge /api/health probe succeeded.',
+        directReachability: 'reachable',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          routeVariant: 'home-node-bridge',
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+        },
+        'home-node-bridge': {
+          configured: true,
+          available: true,
+          usable: true,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+        },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'home-node');
+  assert.equal(model.routeSelectedProvider, 'ollama');
+  assert.equal(model.activeProvider, 'ollama');
+  assert.equal(model.runtimeTruth.provider.executableProvider, 'ollama');
+  assert.equal(model.canonicalRouteRuntimeTruth.executedProvider, 'ollama');
+  assert.equal(model.finalRouteTruth.routeUsable, true);
+});
