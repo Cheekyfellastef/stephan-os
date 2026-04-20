@@ -92,6 +92,22 @@ function isLiveCloudProvider(providerKey = '') {
   return !['none', 'n/a', 'unknown', 'mock', 'ollama'].includes(provider);
 }
 
+function isHostedExecutionContractMismatch({
+  runtimeTruth = {},
+  selectedProvider = '',
+  activeProviderTruth = '',
+  executableProviderValidated = false,
+  providerHealth = {},
+} = {}) {
+  if (executableProviderValidated) return false;
+  if (!selectedProvider || !activeProviderTruth || activeProviderTruth !== selectedProvider) return false;
+  if (runtimeTruth.session?.sessionKind !== 'hosted-web') return false;
+  if (runtimeTruth.reachabilityTruth?.backendReachable !== true) return false;
+  if (runtimeTruth.reachabilityTruth?.selectedRouteUsable !== true) return false;
+  if (providerHealthStateFor(selectedProvider, providerHealth) !== 'unknown') return false;
+  return true;
+}
+
 function createIssue(code, severity, category, message, details = {}) {
   return {
     code,
@@ -335,8 +351,23 @@ export function adjudicateRuntimeTruth({
   );
   const memoryTruth = normalizeMemoryTruth(context.memoryTruth);
   const tileTruth = normalizeTileTruth(context.tileTruth);
+  const hostedExecutionContractMismatch = isHostedExecutionContractMismatch({
+    runtimeTruth: {
+      session: { sessionKind: truth.sessionKind || context.sessionKind || 'unknown' },
+      reachabilityTruth: {
+        backendReachable: truth.backendReachable === true,
+        selectedRouteUsable: truth.routeUsable === true || selectedEvaluation.usable === true,
+      },
+    },
+    selectedProvider: selectedProviderTruth,
+    activeProviderTruth,
+    executableProviderValidated,
+    providerHealth,
+  });
   const fallbackReason = fallbackProviderUsed
     ? `Selected ${selectedProviderTruth}, executed ${executableProvider}.`
+    : hostedExecutionContractMismatch
+      ? 'Hosted route is usable, but backend execution contract metadata is stale or missing for provider adjudication.'
     : (truth.fallbackActive === true || fallbackActive === true)
       ? 'Fallback route active.'
       : '';
@@ -464,6 +495,19 @@ export function adjudicateRuntimeTruth({
       {
         likelyCause: 'Provider stage collapse between selection and executable validation.',
         suggestedAction: 'Only promote selectedProvider to executableProvider when providerHealth.ok is true.',
+      },
+    ));
+  }
+
+  if (hostedExecutionContractMismatch) {
+    issues.push(createIssue(
+      'backend-execution-contract-mismatch',
+      'error',
+      'provider',
+      'Hosted route truth is usable, but backend/provider execution contract is stale or incomplete.',
+      {
+        likelyCause: 'Frontend/runtime expects provider health/execution metadata that older Battle Bridge builds do not emit.',
+        suggestedAction: 'Rebuild/restart Battle Bridge so provider execution metadata and dispatch contract match hosted runtime expectations.',
       },
     ));
   }

@@ -800,9 +800,14 @@ function createRouteUnavailableResult({
   const routeUsableState = requestDispatchGate.routeUsableState || routeDecision?.requestRouteTruth?.routeUsableState || 'unknown';
   const routeProviderMismatchBlocker = routeDecision?.requestRouteTruth?.providerMismatch ? 'provider-route-mismatch' : null;
   const fallbackVetoReason = requestDispatchGate.fallbackVetoReason || routeDecision?.requestRouteTruth?.routeUsabilityVetoReason || null;
+  const dispatchBlockedDespiteUsableRoute = routeUsableState === 'yes'
+    && fallbackReason === 'backend-execution-contract-mismatch';
   const output = routeDecision?.selectedAnswerMode === 'fallback-stale-risk'
     ? `Fresh route unavailable; safe stale fallback used. (${fallbackReason})`
+    : dispatchBlockedDespiteUsableRoute
+      ? 'Route truth is healthy, but backend execution contract is stale or incompatible. Rebuild/restart Battle Bridge and retry provider dispatch.'
     : `Selected route unusable at request time (${routeKind}).`;
+  const errorCode = dispatchBlockedDespiteUsableRoute ? 'PROVIDER_EXECUTION_CONTRACT_MISMATCH' : 'ROUTE_UNAVAILABLE';
 
   return {
     data: {
@@ -811,7 +816,7 @@ function createRouteUnavailableResult({
       success: false,
       output_text: output,
       error: output,
-      error_code: 'ROUTE_UNAVAILABLE',
+      error_code: errorCode,
       timing_ms: Math.round(performance.now() - startedAt),
       data: {
         request_trace: {
@@ -855,6 +860,7 @@ function createRouteUnavailableResult({
           selected_route_usable: routeUsableState === 'yes',
           selected_route_usable_state: routeUsableState,
           route_unavailable_reason: fallbackReason,
+          provider_execution_block_reason: dispatchBlockedDespiteUsableRoute ? fallbackReason : null,
           route_provider_mismatch_blocker: routeProviderMismatchBlocker,
           fallback_veto_reason: fallbackVetoReason,
         },
@@ -873,8 +879,8 @@ function createRouteUnavailableResult({
       timing_ms: Math.round(performance.now() - startedAt),
       timestamp: new Date().toISOString(),
       error: output,
-      error_code: 'ROUTE_UNAVAILABLE',
-      response: { type: 'assistant_response', route: 'assistant', success: false, output_text: output, error: output, error_code: 'ROUTE_UNAVAILABLE' },
+      error_code: errorCode,
+      response: { type: 'assistant_response', route: 'assistant', success: false, output_text: output, error: output, error_code: errorCode },
       continuity_mode: continuityMode,
       continuity_context: continuityContext,
       continuity_retrieval_state: continuityLookup.retrievalState,

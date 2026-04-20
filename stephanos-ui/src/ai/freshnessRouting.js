@@ -93,6 +93,13 @@ function providerHealthy(providerHealth = {}, providerKey = '') {
   return health?.ok === true || String(health?.state || '').toLowerCase() === 'healthy';
 }
 
+function providerExplicitlyUnhealthy(providerHealth = {}, providerKey = '') {
+  const health = providerHealth?.[providerKey] || {};
+  if (health?.ok === false) return true;
+  const normalizedState = String(health?.state || '').trim().toLowerCase();
+  return ['failed', 'error', 'unhealthy', 'offline', 'down'].includes(normalizedState);
+}
+
 function providerTransportReachable(providerHealth = {}, providerKey = '') {
   const health = providerHealth?.[providerKey] || {};
   const capabilityTruth = health?.providerCapability || {};
@@ -111,6 +118,19 @@ function providerTransportReachable(providerHealth = {}, providerKey = '') {
   }
 
   return providerHealthy(providerHealth, providerKey);
+}
+
+function providerTransportExplicitlyUnreachable(providerHealth = {}, providerKey = '') {
+  const health = providerHealth?.[providerKey] || {};
+  const capabilityTruth = health?.providerCapability || {};
+  const explicitSignals = [
+    capabilityTruth.transportReachable,
+    health?.transportReachable,
+    health?.transport?.reachable,
+    health?.network?.reachable,
+    health?.connectivity?.reachable,
+  ].filter((value) => typeof value === 'boolean');
+  return explicitSignals.some((value) => value === false);
 }
 
 function resolveWebCapabilityState(providerHealth = {}, providerKey = '') {
@@ -196,12 +216,16 @@ export function resolveFreshnessRoutingDecision({
     && Object.keys(requestedProviderHealth).length > 0;
   const requestedProviderHealthy = providerHealthy(providerHealth, requested);
   const requestedProviderTransportReachable = providerTransportReachable(providerHealth, requested);
+  const requestedProviderExplicitlyUnhealthy = providerExplicitlyUnhealthy(providerHealth, requested);
+  const requestedProviderTransportExplicitlyUnreachable = providerTransportExplicitlyUnreachable(providerHealth, requested);
   const requestedProviderRouteViable = isKnownProvider(requested)
     && hostedSession
     && routeUsable
     && backendReachable
     && backendTargetResolved
-    && (!requestedProviderHealthKnown || (requestedProviderHealthy && requestedProviderTransportReachable));
+    && (!requestedProviderHealthKnown
+      || (!requestedProviderExplicitlyUnhealthy && !requestedProviderTransportExplicitlyUnreachable)
+      || (requestedProviderHealthy && requestedProviderTransportReachable));
   const cloudRouteUsable = runtimeStatus?.cloudAvailable === true && backendReachable;
   const freshProviderPreference = ['gemini', 'groq', 'openrouter'];
   const primaryFreshProvider = freshProviderPreference.find((providerKey) => providerHealth?.[providerKey]) || 'groq';
@@ -243,7 +267,13 @@ export function resolveFreshnessRoutingDecision({
     || requestedProviderRouteViable;
   const homeNodeUsable = String(routeTruthView?.homeNodeUsableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.homeNodeAvailable === true;
-  const localRouteCandidateAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
+  const localRouteCandidateAvailable = providerHealthy(providerHealth, 'ollama')
+    || runtimeStatus?.localAvailable === true
+    || (hostedSession
+      && requested === 'ollama'
+      && routeUsable
+      && backendReachable
+      && backendTargetResolved);
   const localRouteAvailable = hostedSession
     ? localRouteCandidateAvailable && homeNodeUsable
     : localRouteCandidateAvailable;
@@ -331,8 +361,17 @@ export function resolveFreshnessRoutingDecision({
     } else if (!cloudRouteAvailable) {
       selectedProvider = requested;
       selectedAnswerMode = 'route-unavailable';
-      fallbackReasonCode = 'no-viable-execution-path';
-      policyReason = 'Hosted low-freshness request has no reachable cloud or local execution path.';
+      const hostedContractMismatch = hostedSession
+        && routeUsable
+        && backendReachable
+        && backendTargetResolved
+        && !requestedProviderExplicitlyUnhealthy;
+      fallbackReasonCode = hostedContractMismatch
+        ? 'backend-execution-contract-mismatch'
+        : 'no-viable-execution-path';
+      policyReason = hostedContractMismatch
+        ? 'Hosted route is usable, but backend execution contract metadata is missing or stale.'
+        : 'Hosted low-freshness request has no reachable cloud or local execution path.';
     }
   }
 
