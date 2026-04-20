@@ -48,19 +48,42 @@ function isRouteQualifiedHostedLocalOllamaExecution({
   const routeTruth = asObject(finalRouteTruth);
   const routeEval = asObject(selectedEvaluation);
   const tailscaleTruth = asObject(asObject(context.bridgeTransportTruth).tailscale);
+  const freshnessNeed = String(
+    providerIntent.freshnessNeed
+    || context.freshnessNeed
+    || '',
+  ).trim().toLowerCase();
+  const answerMode = String(
+    providerIntent.answerMode
+    || context.selectedAnswerMode
+    || '',
+  ).trim().toLowerCase();
+  const requestedProviderForRequest = String(
+    providerIntent.requestedProviderForRequest
+    || requestedProvider
+    || '',
+  ).trim().toLowerCase();
+  const intentSelectedProvider = String(
+    providerIntent.selectedProvider
+    || selectedProvider
+    || '',
+  ).trim().toLowerCase();
+  const routeReachable = routeTruth.selectedRouteReachable === true || routeEval.available === true;
+  const routeUsable = routeTruth.routeUsable === true || routeEval.usable === true;
+  const routeBlocked = Boolean(routeEval.blockedReason || routeTruth.selectedRouteBlocked);
 
   return context.sessionKind === 'hosted-web'
     && String(routeTruth.routeKind || '').trim() === 'home-node'
-    && (routeTruth.routeUsable === true || routeEval.usable === true)
-    && routeEval.available === true
-    && !routeEval.blockedReason
+    && routeReachable
+    && routeUsable
+    && !routeBlocked
     && tailscaleTruth.accepted === true
     && tailscaleTruth.reachable === true
     && tailscaleTruth.usable === true
-    && String(providerIntent.freshnessNeed || '').trim().toLowerCase() === 'low'
-    && String(providerIntent.answerMode || '').trim().toLowerCase() === 'local-private'
-    && String(providerIntent.requestedProviderForRequest || '').trim().toLowerCase() === 'ollama'
-    && String(providerIntent.selectedProvider || '').trim().toLowerCase() === 'ollama';
+    && freshnessNeed === 'low'
+    && answerMode === 'local-private'
+    && requestedProviderForRequest === 'ollama'
+    && intentSelectedProvider === 'ollama';
 }
 
 function isLiveCloudProvider(providerKey = '') {

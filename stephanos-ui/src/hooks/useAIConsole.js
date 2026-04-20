@@ -885,6 +885,8 @@ function createRouteUnavailableResult({
 
 function transportErrorToUi(error, { routeDecision = null } = {}) {
   const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
+  const routeTruthUsable = routeDecision?.requestDispatchGate?.selectedRouteUsable === true
+    || routeDecision?.requestRouteTruth?.routeUsable === true;
   if (!error?.code && routeFailureReason === 'groq-web-capability-unsupported') {
     return {
       error: 'Fresh-web route override is unsupported by the active provider capability set.',
@@ -912,6 +914,13 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
         error: 'Selected route is unusable for transport dispatch.',
         errorCode: 'SELECTED_ROUTE_UNUSABLE',
         output: `Selected route unusable at request time (${routeFailureReason}). No transport dispatch was attempted.`,
+      };
+    }
+    if (routeTruthUsable) {
+      return {
+        error: 'Route is usable, but executable provider adjudication failed.',
+        errorCode: 'PROVIDER_EXECUTION_UNAVAILABLE',
+        output: 'Route truth is healthy, but no executable provider was adjudicated. Refresh provider execution truth and retry dispatch.',
       };
     }
     return {

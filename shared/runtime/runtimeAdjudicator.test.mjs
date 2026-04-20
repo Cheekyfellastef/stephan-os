@@ -170,6 +170,49 @@ test('adjudicator does not promote selected provider to executable when health i
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
 });
 
+test('adjudicator keeps hosted low-freshness local-private ollama executable on usable home-node tailscale route when provider health is unknown', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      bridgeTransportTruth: {
+        tailscale: {
+          accepted: true,
+          reachable: true,
+          usable: true,
+        },
+      },
+      providerExecutionIntent: {
+        freshnessNeed: 'low',
+        answerMode: 'local-private',
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'home-node',
+      routeUsable: true,
+      selectedRouteReachable: true,
+      requestedProvider: 'ollama',
+      selectedProvider: 'ollama',
+      executedProvider: '',
+      backendReachable: true,
+      uiReachabilityState: 'reachable',
+    },
+    routeEvaluations: {
+      'home-node': { available: true, usable: true, blockedReason: '', reason: 'Home bridge reachable via Tailscale' },
+    },
+    selectedProvider: 'ollama',
+    routeSelectedProvider: 'ollama',
+    activeProvider: '',
+    providerHealth: {},
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.selectedProvider, 'ollama');
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'ollama');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.executedProvider, 'ollama');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.routeUsable, true);
+});
+
 test('adjudicator does not promote selected provider to executable when provider health is failed/unhealthy', () => {
   const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
     selectedProvider: 'ollama',
