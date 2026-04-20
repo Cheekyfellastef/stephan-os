@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { upsertIdeaRecord } from './ideas-model.js';
+import { buildIdeasKnowledgeDigest, upsertIdeaRecord } from './ideas-model.js';
 
 test('upsertIdeaRecord creates a new idea record with durable timestamps and id', () => {
   const nowIso = '2026-04-06T00:00:00.000Z';
@@ -46,4 +46,36 @@ test('upsertIdeaRecord prepends newly created idea so render list includes the n
   assert.equal(records.length, 2);
   assert.equal(records[0].id, 'ideas_new_001');
   assert.equal(records[1].id, 'ideas_existing_001');
+});
+
+test('buildIdeasKnowledgeDigest returns selected idea and related links', () => {
+  const digest = buildIdeasKnowledgeDigest([{
+    id: 'idea_1',
+    title: 'Idea 1',
+    summary: 'Primary',
+    tags: ['retrieval', 'ideas'],
+    knowledge: {
+      nodeType: 'idea-node',
+      collectionId: 'core',
+      actionTarget: 'runtime',
+      promotionStatus: 'promoted',
+      relations: [{ targetId: 'idea_2', relationType: 'related', notes: '' }],
+      evidence: [{ id: 'ev-1', type: 'note', title: 'Note', source: 'repo://note', notes: '' }],
+    },
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }, {
+    id: 'idea_2',
+    title: 'Idea 2',
+    summary: 'Related',
+    tags: ['retrieval'],
+    media: [],
+    createdAt: '2026-04-05T00:00:00.000Z',
+    updatedAt: '2026-04-05T00:00:00.000Z',
+  }], { selectedIdeaId: 'idea_1' });
+
+  assert.equal(digest.selectedIdea.id, 'idea_1');
+  assert.equal(digest.relatedIdeas.length, 1);
+  assert.equal(digest.selectedIdea.evidence.length, 1);
+  assert.equal(digest.diagnostics.included, true);
 });

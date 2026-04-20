@@ -3,6 +3,8 @@ import {
   getAllTileContextSnapshots,
   getSelectedTileContextSnapshot,
 } from '../runtime/tileContextRegistry.mjs';
+import { buildIdeasKnowledgeDigest } from '../../apps/ideas/ideas-model.js';
+import { sanitizeIdeasState } from '../../apps/ideas/ideas-persistence.js';
 
 function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
@@ -41,6 +43,44 @@ function limitTileContexts(contexts = [], maxSnapshots = 3) {
   return contexts.slice(0, Math.max(1, Number(maxSnapshots) || 3));
 }
 
+function readIdeasState(runtimeContext = {}, storage) {
+  const fromRuntime = runtimeContext?.ideasState;
+  if (fromRuntime && typeof fromRuntime === 'object') {
+    return sanitizeIdeasState(fromRuntime);
+  }
+
+  try {
+    const raw = storage?.getItem?.('stephanos.simulationNodes.v1.ideas');
+    if (!raw) {
+      return { records: [] };
+    }
+
+    const parsed = JSON.parse(raw);
+    return sanitizeIdeasState(parsed);
+  } catch {
+    return { records: [] };
+  }
+}
+
+function extractBoundedRetrieval(runtimeContext = {}, {
+  maxExcerpts = 2,
+  maxChars = 180,
+} = {}) {
+  const source = Array.isArray(runtimeContext?.retrievalContext)
+    ? runtimeContext.retrievalContext
+    : [];
+
+  return source
+    .filter((entry) => entry && typeof entry === 'object')
+    .slice(0, Math.max(0, Number(maxExcerpts) || 2))
+    .map((entry) => ({
+      sourceRef: safeString(entry?.provenance?.sourceRef || entry?.sourceRef || ''),
+      excerpt: safeString(String(entry.document || '').slice(0, Math.max(32, Number(maxChars) || 180))),
+      storageMode: safeString(entry.storageMode || 'unknown'),
+    }))
+    .filter((entry) => entry.excerpt);
+}
+
 export function assembleStephanosContext({
   userPrompt = '',
   runtimeContext = {},
@@ -71,14 +111,23 @@ export function assembleStephanosContext({
     .map((candidate) => candidate.snapshot);
 
   const relevantTileSnapshots = limitTileContexts(relevantCandidates, maxSnapshots);
-
   const tileContexts = [activeTileSnapshot, ...relevantTileSnapshots].filter(Boolean);
 
+  const ideasState = readIdeasState(runtimeContext, storage);
+  const ideaDigest = buildIdeasKnowledgeDigest(ideasState.records, {
+    selectedIdeaId: runtimeContext.selectedIdeaId || '',
+  });
+  const retrievalExcerpts = extractBoundedRetrieval(runtimeContext);
+
   return {
-    contextVersion: 1,
+    contextVersion: 2,
     activeTileContext: activeTileSnapshot || null,
     relevantTileContexts: relevantTileSnapshots,
     tileContexts,
+    ideasKnowledge: {
+      ...ideaDigest,
+      retrievalExcerpts,
+    },
     runtimeTruth: {
       frontendOrigin: safeString(runtimeContext.frontendOrigin),
       target: safeString(runtimeContext.target),
@@ -101,6 +150,9 @@ export function assembleStephanosContext({
       contextCount: tileContexts.length,
       usedTileContextInjection: tileContexts.length > 0,
       selectedFrom: activeTileIdFromRuntime ? 'runtime-context' : (activeHint?.tileId ? 'workspace-hint' : 'none'),
+      ideasKnowledgeIncluded: ideaDigest?.diagnostics?.included === true,
+      ideasKnowledgeReason: ideaDigest?.diagnostics?.reason || 'none',
+      retrievalExcerptsIncluded: retrievalExcerpts.length,
     },
   };
 }
