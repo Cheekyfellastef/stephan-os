@@ -1579,6 +1579,70 @@ test('hosted-web Safari-like remembered canonical HTTPS bridge evidence is accep
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
 });
 
+test('hosted-web Safari-like canonical HTTPS bridge revalidation keeps ollama executable when upstream backendAvailable is stale false', () => {
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      sessionKind: 'hosted-web',
+      surfaceAwareness: {
+        surfaceIdentity: { os: 'macos', browser: 'safari' },
+      },
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: canonicalHostedExecutionUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: canonicalHostedExecutionUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+      },
+      bridgeAutoRevalidation: {
+        state: 'revalidated',
+        reason: 'Canonical HTTPS Home Bridge /api/health probe succeeded.',
+        directReachability: 'reachable',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+          blockedReason: 'stale route probe evidence',
+        },
+      },
+    },
+  });
+
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+  assert.equal(model.routeKind, 'home-node');
+  assert.equal(model.backendAvailable, true);
+  assert.equal(model.routeSelectedProvider, 'ollama');
+  assert.equal(model.activeProvider, 'ollama');
+  assert.equal(model.appLaunchState, 'ready');
+});
+
 test('caravan mode: hosted iPad safari keeps route reachable when browser blocks mixed-content HTTP backend', () => {
   const rememberedUrl = 'http://100.116.99.92:8787';
   const model = createRuntimeStatusModel({
