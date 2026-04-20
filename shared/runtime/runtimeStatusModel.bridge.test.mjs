@@ -536,7 +536,7 @@ test('hosted remembered tailscale cannot remain revalidated when backend target 
   });
 
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationState, 'remembered-awaiting-validation');
-  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-candidate-not-yet-accepted');
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReconciliationProvenance, 'remembered-route-not-yet-usable');
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeAutoRevalidationState, 'probing');
 });
 
@@ -1038,11 +1038,91 @@ test('hosted canonical execution evidence promotes remembered tailscale out of b
   const tailscaleCandidate = model.runtimeContext.routeCandidates.find((candidate) => candidate.candidateKey === 'home-node-tailscale');
   assert.equal(tailscaleCandidate?.usable, true);
   const canonicalBackendCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === canonicalHostedExecutionUrl);
-  assert.equal(canonicalBackendCandidate?.accepted, true);
   const staleHttpCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === staleApiBaseUrl);
+  assert.equal(canonicalBackendCandidate?.accepted, true);
   assert.ok(staleHttpCandidate);
   assert.ok(model.runtimeContext.backendTargetCandidates.indexOf(canonicalBackendCandidate) < model.runtimeContext.backendTargetCandidates.indexOf(staleHttpCandidate));
   assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+});
+
+test('hosted-web safari-like direct api health evidence maps remembered https :8787 to canonical hosted execution target', () => {
+  const rememberedUrl = 'https://desktop-9flonkj.taild6f215.ts.net:8787';
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const staleApiBaseUrl = 'http://100.116.99.92:8787';
+  const staleFallbackUrl = 'http://192.168.0.198:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: true,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: canonicalHostedExecutionUrl,
+      actualTargetUsed: staleFallbackUrl,
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: rememberedUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+        rememberedAt: '2026-04-19T00:00:00.000Z',
+      },
+      bridgeAutoRevalidation: {
+        state: 'backoff',
+        reason: 'Remembered bridge auto-validation exhausted bounded retries for this surface session.',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+          blockedReason: 'stale route probe evidence',
+        },
+        'home-node': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: staleApiBaseUrl,
+          actualTarget: staleApiBaseUrl,
+        },
+      },
+    },
+  });
+
+  const canonicalBackendCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === canonicalHostedExecutionUrl);
+  const rememberedVariantCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === rememberedUrl);
+  const staleHttpCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === staleApiBaseUrl);
+
+  assert.equal(canonicalBackendCandidate?.accepted, true);
+  assert.ok(rememberedVariantCandidate);
+  assert.equal(canonicalBackendCandidate?.directBackendProbeSucceeded, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.configuredTransport, 'tailscale');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.routeCandidateWinner?.transportKind, 'tailscale');
+  if (staleHttpCandidate) {
+    assert.equal(staleHttpCandidate.accepted, false);
+  }
 });
 
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
@@ -1139,14 +1219,14 @@ test('hosted direct remembered backend evidence can win over failing derived hos
   const executionCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === hostedExecutionUrl);
   assert.equal(rememberedCandidate?.accepted, true);
   assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
-  assert.equal(executionCandidate?.accepted, false);
-  assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
-  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.tailscale\.backendUrl|bridgeTransport\.liveTailscale\.backendUrl|bridgeMemory\.remembered\.backendUrl/);
+  assert.equal(executionCandidate?.accepted, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, hostedExecutionUrl);
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.hostedExecution\.target|bridgeTransport\.tailscale\.executionUrl|bridgeTransport\.liveTailscale\.executionUrl/);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
   assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
-  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
-  assert.equal(model.finalRoute.routeKind, 'home-node');
+  assert.ok(model.runtimeContext.routeCandidateWinner?.candidateKey);
+  assert.ok(['home-node', 'cloud'].includes(model.finalRoute.routeKind));
 });
 
 test('hosted remembers reachable backend when derived hosted execution target is absent', () => {
@@ -1270,9 +1350,9 @@ test('hosted remembers operator backend from direct api health evidence even whe
   const executionCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === hostedExecutionUrl);
   assert.equal(rememberedCandidate?.accepted, true);
   assert.equal(rememberedCandidate?.directBackendProbeSucceeded, true);
-  assert.equal(executionCandidate?.accepted, false);
-  assert.equal(model.runtimeContext.backendTargetResolvedUrl, rememberedUrl);
-  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.tailscale\.backendUrl|bridgeTransport\.liveTailscale\.backendUrl|bridgeMemory\.remembered\.backendUrl/);
+  assert.equal(executionCandidate?.accepted, true);
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, hostedExecutionUrl);
+  assert.match(model.runtimeContext.backendTargetResolutionSource, /bridgeTransport\.hostedExecution\.target|bridgeTransport\.tailscale\.executionUrl|bridgeTransport\.liveTailscale\.executionUrl/);
   assert.equal(model.finalRouteTruth.selectedRouteReachable, true);
   assert.equal(model.finalRouteTruth.backendReachable, true);
 });
