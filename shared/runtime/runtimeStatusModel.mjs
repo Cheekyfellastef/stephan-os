@@ -848,6 +848,12 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     const directApiProbeEvidence = sessionKind === 'hosted-web'
       && backendAvailable === true
       && directProbeEvidenceTargets.has(candidateTargetKey);
+    const hostedExecutionTarget = String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim();
+    const hostedExecutionCompatibility = String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim();
+    const hostedExecutionDirectReachabilityEvidence = sessionKind === 'hosted-web'
+      && rememberedBridgeDirectlyReachable
+      && hostedExecutionCompatibility === 'compatible'
+      && backendTargetsMatch(candidate.url, hostedExecutionTarget);
     const directBackendProbeSucceeded = sessionKind === 'hosted-web'
       && (
         (
@@ -857,14 +863,16 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
             || candidate.url === String(bridgeTransportTruth?.tailscale?.backendUrl || '').trim()
           )
         )
+        || hostedExecutionDirectReachabilityEvidence
         || directApiProbeEvidence
         || routeProbeReachable
       );
     const hostedExecutionProbeSucceeded = sessionKind === 'hosted-web'
-      && String(bridgeTransportTruth.bridgeHostedExecutionCompatibility || '').trim() === 'compatible'
-      && backendTargetsMatch(candidate.url, String(bridgeTransportTruth.bridgeHostedExecutionTarget || '').trim())
+      && hostedExecutionCompatibility === 'compatible'
+      && backendTargetsMatch(candidate.url, hostedExecutionTarget)
       && (
         String(bridgeTransportTruth.bridgeAutoRevalidationState || '').trim() === 'revalidated'
+        || hostedExecutionDirectReachabilityEvidence
         || routeProbeReachable
         || directApiProbeEvidence
       );

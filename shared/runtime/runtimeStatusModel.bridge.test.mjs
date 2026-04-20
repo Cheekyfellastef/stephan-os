@@ -1125,6 +1125,74 @@ test('hosted-web safari-like direct api health evidence maps remembered https :8
   }
 });
 
+
+test('hosted-web remembers canonical HTTPS bridge probe evidence even when auto-validation is in backoff', () => {
+  const rememberedUrl = 'https://desktop-9flonkj.taild6f215.ts.net:8787';
+  const canonicalHostedExecutionUrl = 'https://desktop-9flonkj.taild6f215.ts.net';
+  const staleFallbackUrl = 'http://192.168.0.198:8787';
+  const model = createRuntimeStatusModel({
+    backendAvailable: false,
+    providerHealth: { ollama: { ok: true }, groq: { ok: true } },
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      apiBaseUrl: staleFallbackUrl,
+      actualTargetUsed: staleFallbackUrl,
+      bridgeTransportPreferences: {
+        selectedTransport: 'tailscale',
+        transports: {
+          tailscale: {
+            enabled: true,
+            backendUrl: rememberedUrl,
+            executionUrl: canonicalHostedExecutionUrl,
+            accepted: false,
+            active: false,
+            reachability: 'unknown',
+            usable: false,
+          },
+        },
+      },
+      bridgeMemory: {
+        transport: 'tailscale',
+        backendUrl: canonicalHostedExecutionUrl,
+        executionUrl: canonicalHostedExecutionUrl,
+        rememberedAt: '2026-04-19T00:00:00.000Z',
+      },
+      bridgeAutoRevalidation: {
+        state: 'backoff',
+        reason: 'Remembered bridge auto-validation exhausted bounded retries for this surface session.',
+        directReachability: 'reachable',
+        executionCompatibility: 'compatible',
+        executionTarget: canonicalHostedExecutionUrl,
+      },
+      routeDiagnostics: {
+        'home-node-bridge': {
+          configured: true,
+          available: false,
+          usable: false,
+          target: canonicalHostedExecutionUrl,
+          actualTarget: canonicalHostedExecutionUrl,
+          blockedReason: 'stale route probe evidence',
+        },
+      },
+    },
+  });
+
+  const canonicalBackendCandidate = model.runtimeContext.backendTargetCandidates.find((candidate) => candidate.url === canonicalHostedExecutionUrl);
+
+  assert.equal(canonicalBackendCandidate?.accepted, true);
+  assert.equal(canonicalBackendCandidate?.directBackendProbeSucceeded, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryValidatedOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryReachableOnThisSurface, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.bridgeMemoryPromotedToRouteCandidate, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.tailscale.accepted, true);
+  assert.equal(model.runtimeContext.bridgeTransportTruth.configuredTransport, 'tailscale');
+  assert.equal(model.runtimeContext.backendTargetResolvedUrl, canonicalHostedExecutionUrl);
+  assert.equal(model.runtimeContext.routeCandidateWinner?.candidateKey, 'home-node-tailscale');
+  assert.equal(model.runtimeContext.routeCandidateWinner?.transportKind, 'tailscale');
+});
+
 test('route candidates allow usable tailscale route to beat cloud for hosted off-network session', () => {
   const model = createRuntimeStatusModel({
     backendAvailable: true,
