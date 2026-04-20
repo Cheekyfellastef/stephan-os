@@ -106,7 +106,53 @@ test('sanitizeIdeasState migrates legacy media into structured knowledge evidenc
   });
 
   assert.equal(sanitized.records.length, 1);
-  assert.equal(sanitized.records[0].knowledge.nodeType, 'idea-node');
+  assert.equal(sanitized.records[0].knowledge.nodeType, 'concept');
   assert.equal(sanitized.records[0].knowledge.evidence.length, 1);
   assert.equal(sanitized.records[0].media.length, 1);
+});
+
+test('sanitizeIdeasState preserves expanded node metadata with safe defaults', () => {
+  const sanitized = sanitizeIdeasState({
+    records: [{
+      id: 'idea_rich_1',
+      title: 'Rich idea',
+      summary: 'Expanded metadata',
+      tags: ['ideas', 'knowledge'],
+      nodeType: 'hypothesis',
+      status: 'evidence-backed',
+      priority: 'high',
+      collectionIds: ['memory-systems', 'core'],
+      relatedIdeas: ['idea_rich_2'],
+      sourceTile: 'vr-research-lab',
+      sourceArtifacts: ['artifact://snapshot/1'],
+      memoryLinks: ['memory://candidate/1'],
+      retrievalLinks: ['retrieval://entry/1'],
+      roadmapLinks: ['roadmap://seed/1'],
+      simulationLinks: ['simulation://target/1'],
+      promotionState: {
+        memory: { state: 'submitted' },
+        retrieval: { state: 'ingested' },
+      },
+      notes: 'Operator note',
+      knowledge: {
+        relations: [{ targetId: 'idea_rich_2', relationType: 'supports' }],
+        evidence: [{ type: 'note', title: 'Validated note', source: 'repo://notes/validated.md' }],
+      },
+      createdAt: '2026-04-06T00:00:00.000Z',
+      updatedAt: '2026-04-06T00:00:00.000Z',
+    }],
+  });
+
+  assert.equal(sanitized.records.length, 1);
+  const [record] = sanitized.records;
+  assert.equal(record.nodeType, 'hypothesis');
+  assert.equal(record.status, 'evidence-backed');
+  assert.equal(record.priority, 'high');
+  assert.deepEqual(record.collectionIds, ['memory-systems', 'core']);
+  assert.deepEqual(record.relatedIdeas, ['idea_rich_2']);
+  assert.equal(record.sourceTile, 'vr-research-lab');
+  assert.equal(record.promotionState.memory, 'submitted');
+  assert.equal(record.promotionState.retrieval, 'ingested');
+  assert.equal(record.promotionState.roadmap, 'not-promoted');
+  assert.equal(record.notes, 'Operator note');
 });

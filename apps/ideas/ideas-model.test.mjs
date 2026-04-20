@@ -55,7 +55,7 @@ test('buildIdeasKnowledgeDigest returns selected idea and related links', () => 
     summary: 'Primary',
     tags: ['retrieval', 'ideas'],
     knowledge: {
-      nodeType: 'idea-node',
+      nodeType: 'concept',
       collectionId: 'core',
       actionTarget: 'runtime',
       promotionStatus: 'promoted',
@@ -77,5 +77,41 @@ test('buildIdeasKnowledgeDigest returns selected idea and related links', () => 
   assert.equal(digest.selectedIdea.id, 'idea_1');
   assert.equal(digest.relatedIdeas.length, 1);
   assert.equal(digest.selectedIdea.evidence.length, 1);
+  assert.equal(digest.selectedIdea.nodeType, 'concept');
   assert.equal(digest.diagnostics.included, true);
+});
+
+test('buildIdeasKnowledgeDigest projects progression metadata and related idea ids', () => {
+  const digest = buildIdeasKnowledgeDigest([{
+    id: 'idea_progression_1',
+    title: 'Progression idea',
+    summary: 'Track progression',
+    status: 'linked',
+    priority: 'critical',
+    relatedIdeas: ['idea_progression_2'],
+    collectionIds: ['stephanos-core'],
+    tags: ['ideas', 'graph'],
+    knowledge: {
+      nodeType: 'roadmap',
+      promotionState: {
+        memory: 'submitted',
+      },
+      evidence: [{ id: 'ev-1', type: 'note', title: 'Proof', source: 'repo://proof' }],
+    },
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }, {
+    id: 'idea_progression_2',
+    title: 'Related',
+    summary: 'Related node',
+    tags: ['graph'],
+    media: [],
+    createdAt: '2026-04-05T00:00:00.000Z',
+    updatedAt: '2026-04-05T00:00:00.000Z',
+  }], { selectedIdeaId: 'idea_progression_1' });
+
+  assert.equal(digest.selectedIdea.status, 'linked');
+  assert.equal(digest.selectedIdea.priority, 'critical');
+  assert.deepEqual(digest.selectedIdea.collectionIds, ['stephanos-core']);
+  assert.deepEqual(digest.selectedIdea.relatedIdeaIds, ['idea_progression_2']);
 });
