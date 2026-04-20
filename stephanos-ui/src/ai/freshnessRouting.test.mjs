@@ -235,6 +235,40 @@ test('high-freshness PM question requests Groq when cloud fresh route is availab
   assert.equal(decision.selectedAnswerMode, 'fresh-cloud');
 });
 
+test('hosted home-node tailscale route keeps explicit groq request dispatchable when provider health is stale/unknown', () => {
+  const classification = classifyPromptFreshness('Summarize the current mission console state.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification: { ...classification, freshnessNeed: 'low', explicitFreshness: false },
+    requestedProvider: 'groq',
+    providerHealth: {},
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: true,
+      localAvailable: false,
+      backendReachable: true,
+      homeNodeAvailable: true,
+      canonicalRouteRuntimeTruth: {
+        routeUsable: true,
+        backendReachable: true,
+        actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      selectedRouteReachableState: 'yes',
+      homeNodeUsableState: 'yes',
+      actualTarget: 'https://desktop-9flonkj.taild6f215.ts.net',
+    },
+  });
+
+  assert.equal(decision.selectedProvider, 'groq');
+  assert.equal(decision.requestedProviderForRequest, 'groq');
+  assert.equal(decision.selectedAnswerMode, 'cloud-basic');
+  assert.equal(decision.cloudRouteAvailable, true);
+});
+
 test('hosted high-freshness request pins to groq fresh route when fresh candidate exists', () => {
   const classification = classifyPromptFreshness('Who is the current US president today?');
   const decision = resolveFreshnessRoutingDecision({

@@ -22,6 +22,11 @@ function includesAnyPattern(prompt, patterns = []) {
   return patterns.some((pattern) => pattern.test(prompt));
 }
 
+function isKnownProvider(providerKey = '') {
+  const normalized = String(providerKey || '').trim().toLowerCase();
+  return normalized.length > 0 && !['unknown', 'none', 'n/a', 'pending', 'unavailable'].includes(normalized);
+}
+
 function hasExplicitFreshnessPhrase(prompt = '') {
   return /\b(latest|current|today|now|real[-\s]?time|recent|up-to-date)\b/i.test(prompt);
 }
@@ -177,8 +182,26 @@ export function resolveFreshnessRoutingDecision({
     cloudReasonRequired: true,
   };
   const requested = String(requestedProvider || 'ollama');
+  const routeUsable = String(routeTruthView?.routeUsableState || '').toLowerCase() === 'yes'
+    || runtimeStatus?.canonicalRouteRuntimeTruth?.routeUsable === true;
   const backendReachable = String(routeTruthView?.backendReachableState || '').toLowerCase() === 'yes'
-    || runtimeStatus?.backendReachable === true;
+    || runtimeStatus?.backendReachable === true
+    || runtimeStatus?.canonicalRouteRuntimeTruth?.backendReachable === true;
+  const backendTargetResolved = Boolean(
+    String(routeTruthView?.actualTarget || routeTruthView?.preferredTarget || '').trim()
+    || String(runtimeStatus?.canonicalRouteRuntimeTruth?.actualTarget || runtimeStatus?.canonicalRouteRuntimeTruth?.preferredTarget || '').trim(),
+  );
+  const requestedProviderHealth = providerHealth?.[requested];
+  const requestedProviderHealthKnown = requestedProviderHealth && typeof requestedProviderHealth === 'object'
+    && Object.keys(requestedProviderHealth).length > 0;
+  const requestedProviderHealthy = providerHealthy(providerHealth, requested);
+  const requestedProviderTransportReachable = providerTransportReachable(providerHealth, requested);
+  const requestedProviderRouteViable = isKnownProvider(requested)
+    && hostedSession
+    && routeUsable
+    && backendReachable
+    && backendTargetResolved
+    && (!requestedProviderHealthKnown || (requestedProviderHealthy && requestedProviderTransportReachable));
   const cloudRouteUsable = runtimeStatus?.cloudAvailable === true && backendReachable;
   const freshProviderPreference = ['gemini', 'groq', 'openrouter'];
   const primaryFreshProvider = freshProviderPreference.find((providerKey) => providerHealth?.[providerKey]) || 'groq';
@@ -216,7 +239,8 @@ export function resolveFreshnessRoutingDecision({
   const selectedFreshProviderSupportsCurrentAnswers = selectedFreshCandidate?.supportsCurrentAnswers ?? null;
   const freshRouteAvailable = cloudRouteUsable
     && Boolean(selectedFreshProvider);
-  const cloudRouteAvailable = cloudRouteUsable && freshCandidates.some((candidate) => candidate.healthy && candidate.transportReachable);
+  const cloudRouteAvailable = (cloudRouteUsable && freshCandidates.some((candidate) => candidate.healthy && candidate.transportReachable))
+    || requestedProviderRouteViable;
   const homeNodeUsable = String(routeTruthView?.homeNodeUsableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.homeNodeAvailable === true;
   const localRouteCandidateAvailable = providerHealthy(providerHealth, 'ollama') || runtimeStatus?.localAvailable === true;
@@ -292,7 +316,9 @@ export function resolveFreshnessRoutingDecision({
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   } else if (classification?.freshnessNeed === 'low' && hostedSession) {
     if (!localRouteAvailable && cloudRouteAvailable) {
-      selectedProvider = selectedFreshProvider || 'gemini';
+      selectedProvider = requestedProviderRouteViable
+        ? requested
+        : (selectedFreshProvider || 'gemini');
       selectedAnswerMode = 'cloud-basic';
       freshnessRouted = true;
       policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
