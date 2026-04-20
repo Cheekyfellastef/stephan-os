@@ -31,6 +31,38 @@ function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
   return true;
 }
 
+function isRouteQualifiedHostedLocalOllamaExecution({
+  executableProviderCandidate = '',
+  selectedProvider = '',
+  requestedProvider = '',
+  runtimeContext = {},
+  finalRouteTruth = {},
+  selectedEvaluation = {},
+} = {}) {
+  if (String(executableProviderCandidate || '').trim().toLowerCase() !== 'ollama') return false;
+  if (String(selectedProvider || '').trim().toLowerCase() !== 'ollama') return false;
+  if (String(requestedProvider || '').trim().toLowerCase() !== 'ollama') return false;
+
+  const context = asObject(runtimeContext);
+  const providerIntent = asObject(context.providerExecutionIntent);
+  const routeTruth = asObject(finalRouteTruth);
+  const routeEval = asObject(selectedEvaluation);
+  const tailscaleTruth = asObject(asObject(context.bridgeTransportTruth).tailscale);
+
+  return context.sessionKind === 'hosted-web'
+    && String(routeTruth.routeKind || '').trim() === 'home-node'
+    && (routeTruth.routeUsable === true || routeEval.usable === true)
+    && routeEval.available === true
+    && !routeEval.blockedReason
+    && tailscaleTruth.accepted === true
+    && tailscaleTruth.reachable === true
+    && tailscaleTruth.usable === true
+    && String(providerIntent.freshnessNeed || '').trim().toLowerCase() === 'low'
+    && String(providerIntent.answerMode || '').trim().toLowerCase() === 'local-private'
+    && String(providerIntent.requestedProviderForRequest || '').trim().toLowerCase() === 'ollama'
+    && String(providerIntent.selectedProvider || '').trim().toLowerCase() === 'ollama';
+}
+
 function isLiveCloudProvider(providerKey = '') {
   const provider = String(providerKey || '').trim().toLowerCase();
   if (!provider) return false;
@@ -262,7 +294,16 @@ export function adjudicateRuntimeTruth({
   const activeProviderTruth = truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
   const executableProviderCandidate = activeProviderTruth || selectedProviderTruth;
-  const executableProviderValidated = isSelectedProviderHealthy(executableProviderCandidate, providerHealth);
+  const routeQualifiedHostedLocalOllama = isRouteQualifiedHostedLocalOllamaExecution({
+    executableProviderCandidate,
+    selectedProvider: selectedProviderTruth,
+    requestedProvider,
+    runtimeContext: context,
+    finalRouteTruth: truth,
+    selectedEvaluation,
+  });
+  const executableProviderValidated = isSelectedProviderHealthy(executableProviderCandidate, providerHealth)
+    || routeQualifiedHostedLocalOllama;
   const executableProvider = executableProviderValidated ? executableProviderCandidate : '';
   const fallbackProviderUsed = Boolean(
     executableProvider
@@ -390,7 +431,8 @@ export function adjudicateRuntimeTruth({
   if (runtimeTruth.provider.selectedProvider
     && activeProviderTruth === runtimeTruth.provider.selectedProvider
     && executableProviderCandidate === runtimeTruth.provider.selectedProvider
-    && executableProviderValidated !== true) {
+    && executableProviderValidated !== true
+    && !routeQualifiedHostedLocalOllama) {
     issues.push(createIssue(
       'provider-execution-unvalidated',
       'error',

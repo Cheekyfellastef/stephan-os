@@ -34,6 +34,46 @@ function normalizeProviderHealth(providerHealth = {}) {
   return providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
 }
 
+function normalizeProviderExecutionIntent(runtimeContext = {}) {
+  const metadata = runtimeContext.lastExecutionMetadata && typeof runtimeContext.lastExecutionMetadata === 'object'
+    ? runtimeContext.lastExecutionMetadata
+    : {};
+  const source = runtimeContext.providerExecutionIntent && typeof runtimeContext.providerExecutionIntent === 'object'
+    ? runtimeContext.providerExecutionIntent
+    : {};
+  const normalizeText = (value = '', fallback = 'unknown') => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || fallback;
+  };
+
+  return {
+    freshnessNeed: normalizeText(
+      source.freshnessNeed
+        || runtimeContext.freshnessNeed
+        || metadata.freshness_need,
+      'unknown',
+    ),
+    answerMode: normalizeText(
+      source.answerMode
+        || runtimeContext.selectedAnswerMode
+        || metadata.selected_answer_mode,
+      'unknown',
+    ),
+    requestedProviderForRequest: normalizeProviderSelection(
+      source.requestedProviderForRequest
+      || runtimeContext.requestedProviderForRequest
+      || metadata.requested_provider_for_request
+      || metadata.requested_provider,
+    ),
+    selectedProvider: normalizeProviderSelection(
+      source.selectedProvider
+      || runtimeContext.executionSelectedProvider
+      || metadata.execution_selected_provider
+      || metadata.selected_provider,
+    ),
+  };
+}
+
 function parseHostname(value = '') {
   try {
     return new URL(value).hostname || '';
@@ -1029,6 +1069,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
 
   const surfaceAwareness = normalizeSurfaceAwareness(runtimeContext.surfaceAwareness);
   const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
+  const providerExecutionIntent = normalizeProviderExecutionIntent(runtimeContext);
   return {
     frontendOrigin,
     apiBaseUrl,
@@ -1081,6 +1122,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     loopbackBackendMismatch,
     surfaceAwareness,
     surfaceRoutingBiasHint,
+    providerExecutionIntent,
   };
 }
 
@@ -1183,6 +1225,23 @@ function reconcileHostedSelectedProvider({
   const selectedIsLocal = LOCAL_PROVIDER_KEYS.includes(selectedProvider);
   const localEligible = finalRoute?.providerEligibility?.localProviders === true;
   const cloudEligible = finalRoute?.providerEligibility?.cloudProviders === true;
+  const providerIntent = runtimeContext.providerExecutionIntent || {};
+  const routeDiagnostics = runtimeContext.routeDiagnostics && typeof runtimeContext.routeDiagnostics === 'object'
+    ? runtimeContext.routeDiagnostics
+    : {};
+  const selectedHomeNodeRoute = routeDiagnostics['home-node'] || {};
+  const hostedRouteQualifiedLocalOllamaIntent = selectedProvider === 'ollama'
+    && requestedProvider === 'ollama'
+    && finalRoute?.routeKind === 'home-node'
+    && selectedHomeNodeRoute.available === true
+    && selectedHomeNodeRoute.usable === true
+    && runtimeContext.bridgeTransportTruth?.tailscale?.accepted === true
+    && runtimeContext.bridgeTransportTruth?.tailscale?.reachable === true
+    && runtimeContext.bridgeTransportTruth?.tailscale?.usable === true
+    && providerIntent.freshnessNeed === 'low'
+    && providerIntent.answerMode === 'local-private'
+    && providerIntent.requestedProviderForRequest === 'ollama'
+    && providerIntent.selectedProvider === 'ollama';
   const preferredCloud = routePlan?.readyCloudProviders?.[0]
     || (CLOUD_PROVIDER_KEYS.includes(requestedProvider) ? requestedProvider : '');
 
@@ -1194,6 +1253,10 @@ function reconcileHostedSelectedProvider({
   }
 
   if (localEligible) {
+    return selectedProvider;
+  }
+
+  if (hostedRouteQualifiedLocalOllamaIntent) {
     return selectedProvider;
   }
 
@@ -2338,24 +2401,55 @@ export function createRuntimeStatusModel({
     localAvailable: routePlan.localAvailable,
     cloudAvailable: routePlan.cloudAvailable,
   });
+  const providerIntent = normalizedRuntimeContext.providerExecutionIntent || {};
+  const selectedHomeNodeRoute = nodeRoute.routeEvaluations?.['home-node'] || {};
+  const routeQualifiedLocalOllamaSelection = normalizedRuntimeContext.sessionKind === 'hosted-web'
+    && routeSelectedProvider === 'groq'
+    && normalizedProvider === 'ollama'
+    && providerIntent.freshnessNeed === 'low'
+    && providerIntent.answerMode === 'local-private'
+    && providerIntent.requestedProviderForRequest === 'ollama'
+    && providerIntent.selectedProvider === 'ollama'
+    && finalRoute.routeKind === 'home-node'
+    && selectedHomeNodeRoute.available === true
+    && selectedHomeNodeRoute.usable === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.accepted === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.reachable === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.usable === true;
   const reconciledRouteSelectedProvider = reconcileHostedSelectedProvider({
     runtimeContext: normalizedRuntimeContext,
-    selectedProvider: routeSelectedProvider,
+    selectedProvider: routeQualifiedLocalOllamaSelection ? 'ollama' : routeSelectedProvider,
     requestedProvider: routePlan.requestedProvider,
     finalRoute,
     routePlan,
   });
   const hintedProvider = normalizeProviderSelection(activeProviderHint || reconciledRouteSelectedProvider);
   const executableProviderHealthy = Boolean(hintedProvider && health[hintedProvider]?.ok === true);
-  const activeProvider = executableProviderHealthy ? hintedProvider : '';
-
+  const selectedRouteKey = nodeRoute?.preferredRoute || '';
+  const selectedEvaluationRaw = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
+  const selectedRouteReachableRaw = selectedEvaluationRaw?.available === true;
+  const selectedRouteUsableRaw = selectedEvaluationRaw?.usable === true;
+  const selectedRouteBlockedRaw = Boolean(selectedEvaluationRaw?.blockedReason);
+  const routeQualifiedHostedLocalOllama = hintedProvider === 'ollama'
+    && normalizedRuntimeContext.sessionKind === 'hosted-web'
+    && finalRoute.routeKind === 'home-node'
+    && selectedRouteReachableRaw
+    && selectedRouteUsableRaw
+    && !selectedRouteBlockedRaw
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.accepted === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.reachable === true
+    && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.usable === true
+    && providerIntent.freshnessNeed === 'low'
+    && providerIntent.answerMode === 'local-private'
+    && providerIntent.requestedProviderForRequest === 'ollama'
+    && providerIntent.selectedProvider === 'ollama';
+  const executableProviderAdmissible = executableProviderHealthy || routeQualifiedHostedLocalOllama;
+  const activeProvider = executableProviderAdmissible ? hintedProvider : '';
   const activeRouteKind = LOCAL_PROVIDER_KEYS.includes(activeProvider)
     ? 'local'
     : CLOUD_PROVIDER_KEYS.includes(activeProvider)
       ? 'cloud'
       : 'dev';
-  const selectedRouteKey = nodeRoute?.preferredRoute || '';
-  const selectedEvaluationRaw = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
   const hostedCloudExecutionConfirmed = normalizedRuntimeContext.sessionKind === 'hosted-web'
     && selectedRouteKey === 'cloud'
     && selectedEvaluationRaw?.available === true
@@ -2383,15 +2477,15 @@ export function createRuntimeStatusModel({
     };
   }
   const selectedEvaluation = selectedRouteKey ? nodeRoute.routeEvaluations?.[selectedRouteKey] : null;
+  const selectedRouteReachable = selectedEvaluation?.available === true;
+  const selectedRouteUsable = selectedEvaluation?.usable === true;
+  const selectedRouteBlocked = Boolean(selectedEvaluation?.blockedReason);
   const canonicalHostedRouteTruth = buildCanonicalHostedRouteTruth({
     runtimeContext: normalizedRuntimeContext,
     selectedRouteKind: selectedRouteKey || 'unavailable',
     selectedRoute: selectedEvaluation || {},
     backendAvailable: effectiveBackendAvailable,
   });
-  const selectedRouteReachable = selectedEvaluation?.available === true;
-  const selectedRouteUsable = selectedEvaluation?.usable === true;
-  const selectedRouteBlocked = Boolean(selectedEvaluation?.blockedReason);
   const hasTileReadinessSignal = Boolean(
     normalizedRuntimeContext?.tileTruth
     && typeof normalizedRuntimeContext.tileTruth === 'object'
@@ -2425,7 +2519,7 @@ export function createRuntimeStatusModel({
     || !selectedRouteReachable
     || !selectedRouteUsable
     || tileExecutionExplicitlyBlocked
-    || (localPending && routePlan.effectiveRouteMode !== 'cloud-first' && !executableProviderHealthy)
+    || (localPending && routePlan.effectiveRouteMode !== 'cloud-first' && !executableProviderAdmissible)
     || (routePlan.effectiveRouteMode === 'local-first' && !routePlan.localAvailable && nodeRoute.routeKind === 'local-desktop')
     || (routePlan.effectiveRouteMode === 'cloud-first' && !routePlan.cloudAvailable)
     || fallbackActive
