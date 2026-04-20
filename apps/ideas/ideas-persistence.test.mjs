@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createIdeasPersistence } from './ideas-persistence.js';
+import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
 
 function createMemoryStorage() {
   const store = new Map();
@@ -85,4 +85,28 @@ test('saveState reports failure when backend save fails and local fallback is un
 
   assert.equal(result.ok, false);
   assert.equal(result.source, 'save-failed');
+});
+
+test('sanitizeIdeasState migrates legacy media into structured knowledge evidence', () => {
+  const sanitized = sanitizeIdeasState({
+    records: [{
+      id: 'idea_legacy_1',
+      title: 'Legacy idea',
+      summary: 'Legacy structure',
+      tags: ['ideas'],
+      media: [{
+        type: 'link',
+        title: 'Doc',
+        source: 'repo://doc',
+        notes: 'legacy',
+      }],
+      createdAt: '2026-04-06T00:00:00.000Z',
+      updatedAt: '2026-04-06T00:00:00.000Z',
+    }],
+  });
+
+  assert.equal(sanitized.records.length, 1);
+  assert.equal(sanitized.records[0].knowledge.nodeType, 'idea-node');
+  assert.equal(sanitized.records[0].knowledge.evidence.length, 1);
+  assert.equal(sanitized.records[0].media.length, 1);
 });

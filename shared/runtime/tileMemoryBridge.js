@@ -1,27 +1,10 @@
 import { createTileTruthAdapter } from './tileTruthAdapter.js';
-
-function normalizeString(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
-
-function normalizeCandidate(candidate = {}, tileId = '') {
-  return {
-    key: normalizeString(candidate.key),
-    value: candidate?.value,
-    sourceType: 'tile',
-    sourceRef: normalizeString(candidate.sourceRef, `tile:${tileId}`),
-    reason: normalizeString(candidate.reason),
-    type: normalizeString(candidate.type, 'tile.result'),
-    importance: normalizeString(candidate.importance, 'normal'),
-    tags: Array.isArray(candidate.tags) ? candidate.tags.map((tag) => normalizeString(tag)).filter(Boolean) : [],
-  };
-}
+import { createExecution, createMemoryCandidate, normalizeString, normalizeTags } from './tileCognitionContract.mjs';
 
 function defaultAdjudicate(candidate) {
   const hasKey = Boolean(candidate.key);
   const hasValue = candidate.value !== undefined && candidate.value !== null && String(candidate.value).trim() !== '';
-  const hasReason = candidate.reason.length >= 12;
+  const hasReason = candidate.provenance.operatorReason.length >= 12;
   const promoted = hasKey && hasValue && hasReason;
 
   return {
@@ -48,7 +31,11 @@ export function createTileMemoryBridge({
   }
 
   function submitMemoryCandidate(candidate = {}) {
-    const normalized = normalizeCandidate(candidate, normalizedTileId);
+    const normalized = createMemoryCandidate({
+      tileId: normalizedTileId,
+      tileSource,
+      candidate,
+    });
     const adjudication = adjudicate(normalized);
 
     let persistedRecord = null;
@@ -61,11 +48,12 @@ export function createTileMemoryBridge({
         payload: {
           key: normalized.key,
           value: normalized.value,
-          sourceType: normalized.sourceType,
-          sourceRef: normalized.sourceRef,
-          reason: normalized.reason,
+          sourceType: 'tile',
+          sourceRef: normalized.provenance.sourceRef,
+          reason: normalized.provenance.operatorReason,
+          relatedIdeaIds: normalized.relatedIdeaIds,
         },
-        tags: ['tile.memory.candidate', `tile.${normalizedTileId}`, ...normalized.tags],
+        tags: normalizeTags(['tile.memory.candidate', `tile.${normalizedTileId}`, ...normalized.tags]),
         importance: normalized.importance,
       });
     }
@@ -74,7 +62,7 @@ export function createTileMemoryBridge({
       tileActionType: 'tile.memory.candidate.submit',
       tileSource,
       tileId: normalizedTileId,
-      sourceRef: normalized.sourceRef,
+      sourceRef: normalized.provenance.sourceRef,
       memoryCandidateSubmitted: true,
       memoryPromoted: adjudication.promoted === true,
       memoryReason: adjudication.reason,
@@ -83,9 +71,20 @@ export function createTileMemoryBridge({
       retrievalSourceRef: '',
       additional: {
         memoryConfidence: adjudication.confidence || 'low',
+        candidateSchema: normalized.schemaVersion,
       },
     });
     const executionMetadata = truthAdapter.toExecutionMetadata(truth);
+    const execution = createExecution({
+      mode: adjudication.promoted ? 'promoted' : 'rejected',
+      adapter: stephanosMemory?.saveRecord ? 'stephanos-memory' : 'memory-unavailable',
+      adjudication: adjudication.promoted ? 'promoted' : 'rejected',
+      persisted: Boolean(persistedRecord),
+      diagnostics: {
+        eligible: adjudication.eligible === true,
+        confidence: adjudication.confidence || 'low',
+      },
+    });
 
     executionLoop?.publishTileEvent?.({
       tileId: normalizedTileId,
@@ -95,6 +94,7 @@ export function createTileMemoryBridge({
       result: {
         candidate: normalized,
         adjudication,
+        execution,
         persistedRecord,
         execution_metadata: executionMetadata,
       },
@@ -106,6 +106,7 @@ export function createTileMemoryBridge({
       ok: true,
       candidate: normalized,
       adjudication,
+      execution,
       promoted: adjudication.promoted === true,
       record: persistedRecord,
       executionMetadata,

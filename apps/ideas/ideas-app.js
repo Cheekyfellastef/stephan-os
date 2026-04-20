@@ -1,5 +1,5 @@
 import { createIdeasPersistence, sanitizeIdeasState } from './ideas-persistence.js';
-import { buildIdeaActions, startIdeaEdit, upsertIdeaRecord } from './ideas-model.js';
+import { buildIdeaActions, buildIdeasKnowledgeDigest, startIdeaEdit, upsertIdeaRecord } from './ideas-model.js';
 import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
 import { createTileRetrievalBridge } from '../../shared/runtime/tileRetrievalBridge.js';
@@ -172,18 +172,24 @@ function publishIdeasTileContext(records = []) {
   }
 
   const latestRecord = records[0] || null;
+  const digest = buildIdeasKnowledgeDigest(records, {
+    selectedIdeaId: latestRecord?.id || '',
+    maxRelated: 3,
+    maxEvidence: 2,
+  });
   const snapshot = bridge.publishTileContextSnapshot(IDEAS_APP_ID, {
     tileTitle: 'Ideas',
     tileType: 'knowledge',
-    contextVersion: 1,
+    contextVersion: 2,
     summary: latestRecord
-      ? `Ideas has ${records.length} record(s). Latest: ${latestRecord.title}.`
+      ? `Ideas has ${records.length} node(s). Focus: ${latestRecord.title}.`
       : 'Ideas currently has no records.',
     structuredData: {
       recordCount: records.length,
       latestIdeaId: latestRecord?.id || '',
       latestIdeaTitle: latestRecord?.title || '',
       tagsPreview: latestRecord?.tags || [],
+      knowledgeDigest: digest,
     },
     visibility: 'workspace',
   });
@@ -662,7 +668,7 @@ elements.contextReadButton?.addEventListener('click', () => {
     sourceRef: 'tile:ideas:context-read',
     tags: ['context-read'],
   });
-  setContractStatus(`Context read complete (memory=${memoryCount}, retrieval=${retrievalCount}).`);
+  setContractStatus(`Context read complete (memory=${memoryCount}, retrieval=${retrievalCount}, source=${bundle?.runtimeTruth?.retrievalSource || 'unknown'}).`);
 });
 
 elements.submitMemoryButton?.addEventListener('click', () => {
@@ -678,9 +684,11 @@ elements.submitMemoryButton?.addEventListener('click', () => {
     sourceRef: `idea:${latest.id}`,
     reason: 'Operator promoted latest idea insight for durable continuity memory.',
     type: 'tile.result',
-    tags: ['ideas', 'memory-candidate'],
+    confidence: latest.knowledge?.promotionStatus === 'promoted' ? 'high' : 'medium',
+    relatedIdeaIds: (latest.knowledge?.relations || []).map((relation) => relation.targetId),
+    tags: ['ideas', 'memory-candidate', latest.knowledge?.promotionStatus || 'draft'],
   });
-  setContractStatus(`Memory candidate adjudicated (${result.promoted ? 'promoted' : 'rejected'}).`);
+  setContractStatus(`Memory candidate adjudicated (${result.promoted ? 'promoted' : 'rejected'}; mode=${result.execution?.mode || 'unknown'}).`);
 });
 
 elements.submitRetrievalButton?.addEventListener('click', () => {
@@ -696,7 +704,7 @@ elements.submitRetrievalButton?.addEventListener('click', () => {
     tags: ['ideas', 'retrieval'],
     triggerReindex: true,
   });
-  setContractStatus(`Retrieval contribution ${result.ingested ? 'ingested' : 'blocked'} (allowlisted=${result.allowlisted}).`);
+  setContractStatus(`Retrieval contribution ${result.ingested ? 'ingested' : 'blocked'} (allowlisted=${result.allowlisted}; mode=${result.execution?.mode || 'unknown'}).`);
 });
 
 elements.ideasList?.addEventListener('click', (event) => {

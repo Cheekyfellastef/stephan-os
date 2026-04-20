@@ -13,6 +13,62 @@ function normalizeString(value, fallback = '') {
   return normalized || fallback;
 }
 
+function normalizeStringList(values = []) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return [...new Set(values.map((value) => normalizeString(value)).filter(Boolean))];
+}
+
+function sanitizeIdeaKnowledge(record = {}) {
+  const legacyEvidence = Array.isArray(record.media)
+    ? record.media
+      .filter((media) => isRecord(media))
+      .map((media) => ({
+        id: normalizeString(media.id, `${normalizeString(media.type, 'reference')}:${normalizeString(media.title, 'untitled')}`),
+        type: normalizeString(media.type, 'reference'),
+        title: normalizeString(media.title),
+        source: normalizeString(media.source),
+        notes: normalizeString(media.notes),
+      }))
+      .filter((media) => media.title && media.source)
+    : [];
+
+  const relations = Array.isArray(record.knowledge?.relations)
+    ? record.knowledge.relations
+      .filter((relation) => isRecord(relation))
+      .map((relation) => ({
+        targetId: normalizeString(relation.targetId),
+        relationType: normalizeString(relation.relationType, 'related'),
+        notes: normalizeString(relation.notes),
+      }))
+      .filter((relation) => relation.targetId)
+    : [];
+
+  const nodeType = normalizeString(record.knowledge?.nodeType || record.nodeType, 'idea-node');
+
+  return {
+    nodeType,
+    collectionId: normalizeString(record.knowledge?.collectionId || record.collectionId),
+    actionTarget: normalizeString(record.knowledge?.actionTarget || record.actionTarget),
+    promotionStatus: normalizeString(record.knowledge?.promotionStatus || record.promotionStatus, 'draft'),
+    relations,
+    evidence: Array.isArray(record.knowledge?.evidence) && record.knowledge.evidence.length
+      ? record.knowledge.evidence
+        .filter((evidence) => isRecord(evidence))
+        .map((evidence) => ({
+          id: normalizeString(evidence.id, `${normalizeString(evidence.type, 'reference')}:${normalizeString(evidence.title, 'untitled')}`),
+          type: normalizeString(evidence.type, 'reference'),
+          title: normalizeString(evidence.title),
+          source: normalizeString(evidence.source),
+          notes: normalizeString(evidence.notes),
+        }))
+        .filter((evidence) => evidence.title && evidence.source)
+      : legacyEvidence,
+  };
+}
+
 function sanitizeIdeaRecord(record) {
   if (!isRecord(record)) {
     return null;
@@ -24,24 +80,15 @@ function sanitizeIdeaRecord(record) {
     return null;
   }
 
+  const knowledge = sanitizeIdeaKnowledge(record);
+
   return {
     id,
     title,
     summary: typeof record.summary === 'string' ? record.summary.trim() : '',
-    tags: Array.isArray(record.tags)
-      ? record.tags.filter((tag) => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean)
-      : [],
-    media: Array.isArray(record.media)
-      ? record.media
-        .filter((media) => isRecord(media))
-        .map((media) => ({
-          type: normalizeString(media.type),
-          title: normalizeString(media.title),
-          source: normalizeString(media.source),
-          notes: normalizeString(media.notes),
-        }))
-        .filter((media) => media.type && media.title && media.source)
-      : [],
+    tags: normalizeStringList(record.tags),
+    media: knowledge.evidence,
+    knowledge,
     createdAt: normalizeString(record.createdAt),
     updatedAt: normalizeString(record.updatedAt),
   };
