@@ -170,6 +170,37 @@ test('adjudicator does not promote selected provider to executable when health i
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
 });
 
+test('adjudicator reports hosted backend execution contract mismatch when route is usable but provider health metadata is missing', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: {
+      groq: {
+        provider: 'groq',
+        config: { enabled: true },
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'home-node',
+      routeUsable: true,
+      backendReachable: true,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      uiReachabilityState: 'reachable',
+    },
+    routeEvaluations: {
+      'home-node': { available: true, usable: true, blockedReason: '', reason: 'Home bridge reachable via Tailscale' },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, '');
+  assert.match(adjudicated.runtimeTruth.provider.fallbackReason, /backend execution contract metadata is stale or missing/i);
+  assert.ok(adjudicated.issues.some((issue) => issue.code === 'backend-execution-contract-mismatch'));
+});
+
 test('adjudicator keeps hosted low-freshness local-private ollama executable on usable home-node tailscale route when provider health is unknown', () => {
   const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
     runtimeContext: {
