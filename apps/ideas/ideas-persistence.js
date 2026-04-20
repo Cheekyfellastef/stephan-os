@@ -3,6 +3,18 @@ const STORAGE_VERSION = 1;
 const LEGACY_STORAGE_KEY = 'stephanos.simulationNodes.v1.ideas';
 const LOCAL_UI_STORAGE_KEY = 'stephanos.ideas.ui.local.v1';
 const LOG_PREFIX = '[IDEAS TILE DATA]';
+const IDEA_RELATION_TYPES = new Set([
+  'supports',
+  'depends_on',
+  'derived_from',
+  'contradicts',
+  'expands',
+  'similar_to',
+  'part_of',
+  'promotes_to',
+  'evidence_for',
+  'evidence_against',
+]);
 
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -58,31 +70,65 @@ function sanitizeIdeaRelations(values = []) {
     .filter((relation) => isRecord(relation))
     .map((relation) => ({
       targetId: normalizeString(relation.targetId),
-      relationType: normalizeString(relation.relationType, 'related'),
+      relationType: normalizeRelationType(relation.relationType),
       notes: normalizeString(relation.notes),
       confidence: normalizeConfidence(relation.confidence),
     }))
     .filter((relation) => relation.targetId);
 }
 
+function normalizeRelationType(value) {
+  const normalized = normalizeString(value, 'supports')
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
+  return IDEA_RELATION_TYPES.has(normalized) ? normalized : 'supports';
+}
+
+function sanitizeContextHints(value = {}) {
+  const source = isRecord(value) ? value : {};
+  const includeRelated = Math.max(0, Math.min(8, Number(source.includeRelated) || 3));
+  const includeEvidence = Math.max(0, Math.min(8, Number(source.includeEvidence) || 2));
+  const includeRetrieval = Math.max(0, Math.min(6, Number(source.includeRetrieval) || 2));
+  return {
+    brief: normalizeString(source.brief),
+    includeRelated,
+    includeEvidence,
+    includeRetrieval,
+    focusTerms: normalizeStringList(source.focusTerms),
+    includePromotionState: source.includePromotionState !== false,
+  };
+}
+
+function sanitizeCollectionIds(record = {}, knowledge = {}) {
+  const topLevel = Array.isArray(record.collectionIds) ? record.collectionIds : [];
+  const knowledgeIds = Array.isArray(knowledge.collectionIds) ? knowledge.collectionIds : [];
+  const singletons = [
+    record.collectionId,
+    knowledge.collectionId,
+  ].filter(Boolean);
+  return normalizeStringList([...topLevel, ...knowledgeIds, ...singletons]);
+}
+
 function sanitizePromotionState(value = {}) {
   const source = isRecord(value) ? value : {};
-  const memorySource = isRecord(source.memory) ? source.memory : {};
-  const retrievalSource = isRecord(source.retrieval) ? source.retrieval : {};
-  const roadmapSource = isRecord(source.roadmap) ? source.roadmap : {};
-  const codexSource = isRecord(source.codex) ? source.codex : {};
-  const simulationSource = isRecord(source.simulation) ? source.simulation : {};
-  const vrLabSource = isRecord(source.vrLab) ? source.vrLab : {};
-  const continuitySource = isRecord(source.continuity) ? source.continuity : {};
+  const memorySource = isRecord(source.memory) ? source.memory : { state: source.memory };
+  const retrievalSource = isRecord(source.retrieval) ? source.retrieval : { state: source.retrieval };
+  const roadmapSource = isRecord(source.roadmap) ? source.roadmap : { state: source.roadmap };
+  const codexSource = isRecord(source.codex) ? source.codex : { state: source.codex };
+  const simulationSource = isRecord(source.simulation) ? source.simulation : { state: source.simulation };
+  const continuitySource = isRecord(source.continuity) ? source.continuity : { state: source.continuity };
+  const memoryLinkSource = isRecord(source.memoryLink) ? source.memoryLink : {};
+  const retrievalLinkSource = isRecord(source.retrievalLink) ? source.retrievalLink : {};
 
   return {
     memory: normalizeString(memorySource.state, 'not-submitted'),
     retrieval: normalizeString(retrievalSource.state, 'not-submitted'),
-    roadmap: normalizeString(roadmapSource.state, 'not-promoted'),
     codex: normalizeString(codexSource.state, 'not-prepared'),
+    roadmap: normalizeString(roadmapSource.state, 'not-promoted'),
     simulation: normalizeString(simulationSource.state, 'not-targeted'),
-    vrLab: normalizeString(vrLabSource.state, 'not-targeted'),
     continuity: normalizeString(continuitySource.state, 'not-submitted'),
+    memoryLink: normalizeString(memoryLinkSource.state, 'not-linked'),
+    retrievalLink: normalizeString(retrievalLinkSource.state, 'not-linked'),
     lastTransitionAt: normalizeString(source.lastTransitionAt),
     lastActor: normalizeString(source.lastActor),
     provenance: normalizeString(source.provenance),
@@ -105,24 +151,25 @@ function sanitizeIdeaKnowledge(record = {}) {
   const knowledge = isRecord(record.knowledge) ? record.knowledge : {};
   const relations = sanitizeIdeaRelations(knowledge.relations);
   const relatedIdeas = normalizeStringList(record.relatedIdeas?.length ? record.relatedIdeas : relations.map((relation) => relation.targetId));
-  const collectionIds = normalizeStringList(
-    record.collectionIds?.length
-      ? record.collectionIds
-      : [knowledge.collectionId || record.collectionId].filter(Boolean),
+  const collectionIds = sanitizeCollectionIds(record, knowledge);
+  const promotionState = sanitizePromotionState(
+    isRecord(record.promotionState) || isRecord(knowledge.promotionState)
+      ? { ...knowledge.promotionState, ...record.promotionState }
+      : {},
   );
-  const promotionState = sanitizePromotionState(record.promotionState);
   const memoryLinks = normalizeStringList(record.memoryLinks);
   const retrievalLinks = normalizeStringList(record.retrievalLinks);
   const roadmapLinks = normalizeStringList(record.roadmapLinks);
   const simulationLinks = normalizeStringList(record.simulationLinks);
   const sourceArtifacts = normalizeStringList(record.sourceArtifacts);
-  const nodeType = normalizeString(knowledge.nodeType || record.nodeType, 'concept');
-  const status = normalizeString(record.status, 'spark');
+  const nodeType = normalizeString(knowledge.nodeType || record.nodeType, 'idea-node');
+  const status = normalizeString(knowledge.status || record.status, 'spark');
   const priority = normalizeString(record.priority, 'normal');
-  const operatorNotes = normalizeString(record.notes || record.operatorNotes);
+  const operatorNotes = normalizeString(knowledge.operatorNotes || record.notes || record.operatorNotes);
   const evidence = sanitizeEvidenceItems(knowledge.evidence?.length ? knowledge.evidence : legacyEvidence);
   const primaryCollectionId = collectionIds[0] || '';
-  const memoryPromotionStatus = normalizeString(knowledge.promotionStatus, promotionState.memory === 'promoted' ? 'promoted' : 'draft');
+  const memoryPromotionStatus = normalizeString(knowledge.promotionStatus || record.promotionStatus, promotionState.memory === 'promoted' ? 'promoted' : 'draft');
+  const aiContextHints = sanitizeContextHints(knowledge.aiContextHints || record.aiContextHints);
 
   return {
     nodeType,
@@ -143,6 +190,7 @@ function sanitizeIdeaKnowledge(record = {}) {
     roadmapLinks,
     simulationLinks,
     operatorNotes,
+    aiContextHints,
   };
 }
 
@@ -178,6 +226,7 @@ function sanitizeIdeaRecord(record) {
     retrievalLinks: knowledge.retrievalLinks,
     roadmapLinks: knowledge.roadmapLinks,
     simulationLinks: knowledge.simulationLinks,
+    aiContextHints: knowledge.aiContextHints,
     notes: knowledge.operatorNotes,
     createdAt: normalizeString(record.createdAt),
     updatedAt: normalizeString(record.updatedAt),

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIdeasKnowledgeDigest, upsertIdeaRecord } from './ideas-model.js';
+import {
+  buildIdeaContextPackage,
+  buildIdeasKnowledgeDigest,
+  transitionIdeaPromotionState,
+  upsertIdeaRecord,
+} from './ideas-model.js';
 
 test('upsertIdeaRecord creates a new idea record with durable timestamps and id', () => {
   const nowIso = '2026-04-06T00:00:00.000Z';
@@ -114,4 +119,57 @@ test('buildIdeasKnowledgeDigest projects progression metadata and related idea i
   assert.equal(digest.selectedIdea.priority, 'critical');
   assert.deepEqual(digest.selectedIdea.collectionIds, ['stephanos-core']);
   assert.deepEqual(digest.selectedIdea.relatedIdeaIds, ['idea_progression_2']);
+});
+
+test('transitionIdeaPromotionState updates traceable promotion state', () => {
+  const transitioned = transitionIdeaPromotionState({
+    id: 'idea_1',
+    title: 'Idea',
+    summary: '',
+    tags: [],
+    media: [],
+    promotionState: {
+      memory: 'not-submitted',
+    },
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }, 'codex', 'seed-ready', { actor: 'operator-test', notes: 'Prepared prompt seed' });
+
+  assert.equal(transitioned.promotionState.codex, 'seed-ready');
+  assert.equal(Array.isArray(transitioned.promotionState.trace), true);
+  assert.equal(transitioned.promotionState.trace.length, 1);
+  assert.equal(transitioned.promotionState.trace[0].target, 'codex');
+});
+
+test('buildIdeaContextPackage returns bounded package diagnostics', () => {
+  const pkg = buildIdeaContextPackage([{
+    id: 'idea_pkg_1',
+    title: 'Package candidate',
+    summary: 'Bounded packet test',
+    tags: ['ideas'],
+    knowledge: {
+      relations: [{ targetId: 'idea_pkg_2', relationType: 'supports' }],
+      evidence: [{ id: 'e1', type: 'note', title: 'Reference', source: 'repo://ref' }],
+    },
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }, {
+    id: 'idea_pkg_2',
+    title: 'Neighbor',
+    summary: 'Related',
+    tags: ['ideas'],
+    media: [],
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }], {
+    selectedIdeaId: 'idea_pkg_1',
+    retrievalExcerpts: [{ sourceRef: 'idea:idea_pkg_1', excerpt: 'short excerpt' }],
+    memoryRecords: [{ id: 'mem_1', type: 'tile.memory', summary: 'Memory summary' }],
+  });
+
+  assert.equal(pkg.included, true);
+  assert.equal(pkg.relatedIdeas.length <= 3, true);
+  assert.equal(pkg.memorySummaries.length, 1);
+  assert.equal(pkg.retrievalExcerpts.length, 1);
+  assert.equal(pkg.diagnostics.bounded, true);
 });

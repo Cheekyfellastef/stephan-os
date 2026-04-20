@@ -106,7 +106,7 @@ test('sanitizeIdeasState migrates legacy media into structured knowledge evidenc
   });
 
   assert.equal(sanitized.records.length, 1);
-  assert.equal(sanitized.records[0].knowledge.nodeType, 'concept');
+  assert.equal(sanitized.records[0].knowledge.nodeType, 'idea-node');
   assert.equal(sanitized.records[0].knowledge.evidence.length, 1);
   assert.equal(sanitized.records[0].media.length, 1);
 });
@@ -135,8 +135,14 @@ test('sanitizeIdeasState preserves expanded node metadata with safe defaults', (
       },
       notes: 'Operator note',
       knowledge: {
-        relations: [{ targetId: 'idea_rich_2', relationType: 'supports' }],
+        relations: [{ targetId: 'idea_rich_2', relationType: 'depends-on' }],
         evidence: [{ type: 'note', title: 'Validated note', source: 'repo://notes/validated.md' }],
+        aiContextHints: {
+          brief: 'Keep this bounded for Codex packaging.',
+          includeRelated: 4,
+          includeEvidence: 3,
+          includeRetrieval: 2,
+        },
       },
       createdAt: '2026-04-06T00:00:00.000Z',
       updatedAt: '2026-04-06T00:00:00.000Z',
@@ -154,5 +160,7 @@ test('sanitizeIdeasState preserves expanded node metadata with safe defaults', (
   assert.equal(record.promotionState.memory, 'submitted');
   assert.equal(record.promotionState.retrieval, 'ingested');
   assert.equal(record.promotionState.roadmap, 'not-promoted');
+  assert.equal(record.knowledge.relations[0].relationType, 'depends_on');
+  assert.equal(record.aiContextHints.includeRelated, 4);
   assert.equal(record.notes, 'Operator note');
 });

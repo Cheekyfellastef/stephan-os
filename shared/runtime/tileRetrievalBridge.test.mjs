@@ -32,6 +32,7 @@ test('tile retrieval bridge uses local fallback when shared gateway is unavailab
   assert.equal(result.execution.mode, 'local-fallback');
   assert.equal(result.truth.retrievalValidationState, 'caravan-local-fallback');
   assert.equal(bridge.listCorpusEntries().length, 1);
+  assert.equal(bridge.getSourceTruth(), 'local-fallback');
 });
 
 test('tile retrieval bridge reports shared-backed mode when gateway persists contribution', () => {
@@ -54,4 +55,5 @@ test('tile retrieval bridge reports shared-backed mode when gateway persists con
   assert.equal(result.ingested, true);
   assert.equal(result.execution.mode, 'shared-backed');
   assert.equal(result.truth.retrievalValidationState, 'implemented-not-battle-bridge-validated');
+  assert.equal(bridge.getSourceTruth(), 'scaffolded-unvalidated');
 });
