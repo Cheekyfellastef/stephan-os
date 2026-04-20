@@ -323,6 +323,46 @@ test('buildSupportSnapshot does not promote selected provider to executable when
   assert.doesNotMatch(snapshot, /Executable Provider: ollama/);
 });
 
+test('buildSupportSnapshot classifies hosted healthy-route stale-contract boundary without blaming route', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      executionTruth: 'error',
+      lastActualProviderUsed: 'unknown',
+    },
+    routeTruthView: {
+      routeKind: 'home-node',
+      backendReachableState: 'yes',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: 'none',
+    },
+    runtimeSessionTruth: { sessionKind: 'hosted-web' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: { executableProvider: '' },
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    orchestrationTruth: {
+      canonicalSourceDistAlignment: {
+        buildAlignmentState: 'unknown',
+        buildTruthStatus: 'indeterminate',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Route Layer Status: healthy/);
+  assert.match(snapshot, /Backend Execution Contract Status: stale-or-incomplete/);
+  assert.match(snapshot, /Route Healthy But Backend Contract Stale: yes/);
+  assert.match(snapshot, /Likely Needs Battle Bridge Rebuild: yes/);
+  assert.match(snapshot, /Operator Next Classification: rebuild Battle Bridge required before further provider testing/);
+  assert.match(snapshot, /operatorGuidance:\n- Route healthy; backend execution contract appears stale\./);
+});
+
 test('buildSupportSnapshot prefers last request provider truth over stale route truth provider', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

@@ -184,3 +184,21 @@ test('buildFinalRouteTruthView exposes explicit veto reason when route is reacha
   assert.equal(view.routeUsableState, 'no');
   assert.equal(view.routeUsabilityVetoReason, 'ui-reachability-unreachable');
 });
+
+test('buildFinalRouteTruthView marks backend execution contract stale when route is healthy but executable provider is missing', () => {
+  const view = buildFinalRouteTruthView({
+    appLaunchState: 'ready',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'home-node',
+      routeReachable: true,
+      routeUsable: true,
+      backendReachable: true,
+      selectedProvider: 'ollama',
+      executedProvider: '',
+    },
+  });
+
+  assert.equal(view.routeLayerStatus, 'healthy');
+  assert.equal(view.backendExecutionContractStatus, 'stale-or-incomplete');
+  assert.equal(view.providerExecutionGateStatus, 'blocked');
+});

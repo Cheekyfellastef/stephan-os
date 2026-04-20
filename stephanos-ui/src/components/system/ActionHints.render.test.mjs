@@ -36,10 +36,12 @@ test('ActionHints renders route/provider warnings from shared guidance projectio
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore();
   const rendered = renderActionHints({
-    finalRouteTruth: {
-      routeKind: 'cloud',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'cloud',
+      routeReachable: false,
+      routeUsable: false,
       backendReachable: false,
-      providerExecution: { executableProvider: 'mock' },
+      executedProvider: 'mock',
     },
     orchestration: {
       selectors: {
@@ -55,7 +57,7 @@ test('ActionHints renders route/provider warnings from shared guidance projectio
     },
   });
 
-  assert.match(rendered, /Backend route is unreachable/);
+  assert.match(rendered, /Route issue unresolved: verify Home Bridge reachability/);
   assert.match(rendered, /Mock provider is executing/);
   assert.match(rendered, /Blocked now: start-mission/);
 });
@@ -69,10 +71,13 @@ test('ActionHints renders continuity-aware caution when intent is inferred', asy
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore();
   const rendered = renderActionHints({
-    finalRouteTruth: {
-      routeKind: 'local',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local',
+      routeReachable: true,
+      routeUsable: true,
       backendReachable: true,
-      providerExecution: { executableProvider: 'openai' },
+      selectedProvider: 'openai',
+      executedProvider: 'openai',
     },
     orchestration: {
       selectors: {

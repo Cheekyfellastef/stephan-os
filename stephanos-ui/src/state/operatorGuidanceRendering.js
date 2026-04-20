@@ -85,10 +85,23 @@ export function buildOperatorGuidanceProjection({
 
   const inferredIntent = currentMissionState?.intentSource === 'inferred';
   const routeWarnings = [];
+  const routeHealthy = finalRouteTruth?.selectedRouteReachableState === 'yes'
+    && finalRouteTruth?.routeUsableState === 'yes'
+    && finalRouteTruth?.backendReachableState === 'yes';
+  const providerRequested = asText(finalRouteTruth?.requestedProvider).toLowerCase();
+  const providerSelected = asText(finalRouteTruth?.selectedProvider).toLowerCase();
+  const providerExecutable = asText(finalRouteTruth?.executedProvider).toLowerCase();
+  const providerExecutionBlocked = routeHealthy
+    && (providerRequested || providerSelected)
+    && ['unknown', 'none', 'n/a', ''].includes(providerExecutable);
   if (finalRouteTruth?.backendReachable === false) {
     routeWarnings.push('Backend route is unreachable from this runtime session.');
   }
-  if (finalRouteTruth?.providerExecution?.executableProvider === 'mock') {
+  if (providerExecutionBlocked) {
+    routeWarnings.push('Route healthy; backend execution contract appears stale or incomplete.');
+    routeWarnings.push(`Requested/selected provider (${providerRequested || providerSelected}) is not executable under current backend contract.`);
+  }
+  if (finalRouteTruth?.providerExecution?.executableProvider === 'mock' || providerExecutable === 'mock') {
     routeWarnings.push('Mock provider is executing; outputs are simulation-only execution truth.');
   }
 
