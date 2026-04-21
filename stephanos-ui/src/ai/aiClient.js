@@ -48,9 +48,13 @@ function resolveHostedCloudDispatch({
     || '',
   ).trim().toLowerCase();
   const providerProxy = String(hostedConfig?.providerProxyUrls?.[provider] || '').trim();
+  const providerEnabled = hostedConfig?.providers?.[provider]?.enabled !== false;
   const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
   const targetBaseUrl = providerProxy || sharedProxy;
-  const enabled = routeDecision?.hostedCloudPathAvailable === true && Boolean(targetBaseUrl);
+  const enabled = hostedConfig?.enabled === true
+    && providerEnabled
+    && routeDecision?.hostedCloudPathAvailable === true
+    && Boolean(targetBaseUrl);
 
   return {
     enabled,

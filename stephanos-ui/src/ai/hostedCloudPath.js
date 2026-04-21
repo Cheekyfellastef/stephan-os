@@ -32,6 +32,8 @@ export function resolveHostedCloudPathCapability({
   const providerSupported = HOSTED_COGNITION_PROVIDERS.has(provider);
   const hasProxyPath = hasHostedProxyForProvider(provider, hostedCloudConfig);
   const hasHostedCredentials = hasHostedProviderCredentials(provider, providerConfigs);
+  const hostedEnabled = hostedCloudConfig?.enabled === true;
+  const providerEnabled = hostedCloudConfig?.providers?.[provider]?.enabled !== false;
   const backendOnlySecrets = hostedCloudConfig?.backendOnlySecrets === true;
 
   const secretPathKind = hasProxyPath
@@ -41,7 +43,7 @@ export function resolveHostedCloudPathCapability({
       : backendOnlySecrets
         ? 'backend-only'
         : 'none';
-  const available = providerSupported && (hasProxyPath || hasHostedCredentials);
+  const available = providerSupported && hostedEnabled && providerEnabled && (hasProxyPath || hasHostedCredentials);
 
   return {
     provider,

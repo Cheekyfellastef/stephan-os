@@ -31,6 +31,21 @@ function createStore(overrides = {}) {
       ollama: { errors: {}, message: '', savedAt: null },
       openrouter: { errors: {}, message: '', savedAt: null },
     },
+    hostedCloudCognition: {
+      enabled: true,
+      selectedProvider: 'groq',
+      providers: {
+        groq: { enabled: true, baseURL: 'https://worker-groq.example.workers.dev', model: 'openai/gpt-oss-20b' },
+        gemini: { enabled: true, baseURL: 'https://worker-gemini.example.workers.dev', model: 'gemini-2.5-flash' },
+      },
+      lastHealth: {
+        groq: { status: 'healthy', reason: 'Groq worker reachable.', checkedAt: '2026-04-21T00:00:00.000Z' },
+        gemini: { status: 'unknown', reason: 'No provider health data yet.', checkedAt: '' },
+      },
+    },
+    setHostedCloudCognitionEnabled: () => {},
+    setHostedCloudCognitionProvider: () => {},
+    updateHostedCloudCognitionProviderConfig: () => {},
     getDraftProviderConfig: (providerKey) => ({
       mock: { model: 'stephanos-mock-v1', mode: 'echo', latencyMs: 0, failRate: 0 },
       groq: { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1', apiKey: '' },
@@ -58,6 +73,14 @@ function createStore(overrides = {}) {
     setHomeNodePreference: () => {},
     homeNodeLastKnown: null,
     homeNodeStatus: { state: 'idle', detail: 'Home node not checked yet.', attempts: [] },
+    runtimeStatusModel: {
+      canonicalRouteRuntimeTruth: {
+        battleBridgeAuthorityAvailable: false,
+        hostedCloudPathAvailable: true,
+        cloudCognitionAvailable: true,
+        operatorSummary: 'Battle Bridge unavailable; hosted cloud cognition available.',
+      },
+    },
     ...overrides,
   };
 }
@@ -150,6 +173,22 @@ test('ProviderToggle surfaces manual home-node guidance for hosted-web manual-ne
   assert.match(rendered, /Home PC node unreachable/);
   assert.match(rendered, /Set manual home-node to the reachable LAN backend host\/IP:port/i);
   assert.match(rendered, /Home PC Host or IP/);
+});
+
+test('ProviderToggle renders Hosted Cloud Cognition pane with worker URL and model controls', async () => {
+  const { renderProviderToggle } = await importBundledModule(
+    path.join(srcRoot, 'test/renderProviderToggleEntry.jsx'),
+    { '../state/aiStore': storeModulePath },
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createStore();
+  const rendered = renderProviderToggle();
+
+  assert.match(rendered, /Hosted Cloud Cognition/);
+  assert.match(rendered, /Hosted-safe reasoning through Worker-backed providers/i);
+  assert.match(rendered, /Worker\/proxy base URL/);
+  assert.match(rendered, /https:\/\/worker-groq\.example\.workers\.dev/);
+  assert.match(rendered, /Authority:\s*<\/strong>\s*cognition-only \(execution deferred\)/);
 });
 
 test('resolveHomeNodeDraftSync keeps in-progress edits from being clobbered', async () => {

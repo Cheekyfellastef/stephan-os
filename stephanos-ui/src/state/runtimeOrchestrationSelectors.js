@@ -301,7 +301,7 @@ export function deriveRuntimeOrchestrationSelectors({
   const operatorSummary = localAuthorityAvailable
     ? 'Local authority available; execution, planning, and continuity are online.'
     : cloudCognitionAvailable
-      ? 'Battle Bridge unavailable; cloud cognition available. Execution deferred; hosted-safe planning remains available.'
+      ? 'Battle Bridge unavailable; hosted cloud cognition available. Hosted-safe planning and reasoning remain available. Execution deferred pending local authority.'
       : hostedSafePlanningAvailable
         ? 'Route recovery needed for local authority, but hosted orchestration can continue.'
         : 'Recovery needed. Capture intent and continuity while route truth is restored.';

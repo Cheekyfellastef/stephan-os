@@ -8,6 +8,31 @@ export const DEFAULT_ROUTE_MODE = 'auto';
 export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
 export const LOCAL_FIRST_PROVIDER_KEYS = ['ollama', 'groq', 'gemini', 'mock'];
 export const CLOUD_FIRST_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter', 'mock', 'ollama'];
+export const HOSTED_COGNITION_PROVIDER_KEYS = ['groq', 'gemini'];
+
+export function createDefaultHostedCloudCognitionSettings() {
+  return {
+    enabled: false,
+    selectedProvider: 'groq',
+    chatPath: '/api/ai/chat',
+    providers: {
+      groq: {
+        enabled: true,
+        baseURL: '',
+        model: PROVIDER_DEFINITIONS.groq.defaults.model,
+      },
+      gemini: {
+        enabled: true,
+        baseURL: '',
+        model: PROVIDER_DEFINITIONS.gemini.defaults.model,
+      },
+    },
+    lastHealth: {
+      groq: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
+      gemini: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
+    },
+  };
+}
 
 export const PROVIDER_DEFINITIONS = {
   mock: {
@@ -176,6 +201,7 @@ export function createDefaultRouterSettings() {
     disableHomeNodeForLocalSession: false,
     fallbackOrder: [...FALLBACK_PROVIDER_KEYS],
     providerConfigs: createDefaultSavedProviderConfigs(),
+    hostedCloudCognition: createDefaultHostedCloudCognitionSettings(),
   };
 }
 

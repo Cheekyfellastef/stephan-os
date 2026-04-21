@@ -159,6 +159,10 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     disableHomeNodeForLocalSession,
     setDisableHomeNodeForLocalSession,
     providerHealth,
+    hostedCloudCognition,
+    setHostedCloudCognitionEnabled,
+    setHostedCloudCognitionProvider,
+    updateHostedCloudCognitionProviderConfig,
     providerDraftStatus,
     getDraftProviderConfig,
     updateDraftProviderConfig,
@@ -175,6 +179,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setHomeNodePreference,
     homeNodeLastKnown,
     homeNodeStatus,
+    runtimeStatusModel,
   } = useAIStore();
 
   const runtimeConfig = getApiRuntimeConfig();
@@ -420,6 +425,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     ? 'empty'
     : (!normalizedManualHomeNodeHost || isMalformedStephanosHost(normalizedManualHomeNodeHost) ? 'invalid' : 'valid');
   const homeNodeSourceLabel = homeNodePreference?.source || homeNodeLastKnown?.source || 'none';
+  const hostedTruth = runtimeStatusModel?.canonicalRouteRuntimeTruth || {};
+  const hostedProvider = hostedCloudCognition?.selectedProvider || 'groq';
 
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
@@ -536,6 +543,69 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         <label className="toggle-chip"><input type="checkbox" checked={fallbackEnabled} onChange={(event) => setFallbackEnabled(event.target.checked)} /> Fallback enabled</label>
         <label className="toggle-chip"><input type="checkbox" checked={disableHomeNodeForLocalSession} onChange={(event) => setDisableHomeNodeForLocalSession(event.target.checked)} /> Force Local On This PC</label>
       </div>
+      <section className="provider-hint-box hosted-cloud-cognition-pane">
+        <div className="provider-help-panel">
+          <strong>Hosted Cloud Cognition</strong>
+          <p>Hosted-safe reasoning through Worker-backed providers. This is cognition-only authority and never local execution authority.</p>
+        </div>
+        <div className="provider-status-box">
+          <p><strong>Authority:</strong> cognition-only (execution deferred)</p>
+          <p><strong>Battle Bridge authority:</strong> {hostedTruth.battleBridgeAuthorityAvailable === true ? 'available' : 'unavailable'}</p>
+          <p><strong>Route posture:</strong> {hostedTruth.hostedCloudPathAvailable === true ? 'Worker-backed provider path active' : 'Execution deferred'}</p>
+          <p><strong>Cloud cognition available:</strong> {hostedTruth.cloudCognitionAvailable === true ? 'yes' : 'no'}</p>
+          <p><strong>Reason:</strong> {hostedTruth.operatorSummary || 'Battle Bridge authority unavailable'}</p>
+        </div>
+        <div className="provider-form-grid hosted-cloud-form-grid">
+          <label>
+            <span>Hosted cognition enabled</span>
+            <input type="checkbox" checked={hostedCloudCognition?.enabled === true} onChange={(event) => setHostedCloudCognitionEnabled(event.target.checked)} />
+          </label>
+          <label>
+            <span>Hosted provider selection</span>
+            <select value={hostedProvider} onChange={(event) => setHostedCloudCognitionProvider(event.target.value)}>
+              <option value="groq">Groq</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </label>
+          {['groq', 'gemini'].map((providerKey) => {
+            const hostedProviderConfig = hostedCloudCognition?.providers?.[providerKey] || {};
+            const hostedProviderHealth = hostedCloudCognition?.lastHealth?.[providerKey] || {};
+            return (
+              <div key={`hosted-${providerKey}`} className="hosted-provider-card">
+                <h4>{providerKey === 'groq' ? 'Groq hosted Worker route' : 'Gemini hosted Worker route'}</h4>
+                <label>
+                  <span>Enabled</span>
+                  <input
+                    type="checkbox"
+                    checked={hostedProviderConfig.enabled !== false}
+                    onChange={(event) => updateHostedCloudCognitionProviderConfig(providerKey, { enabled: event.target.checked })}
+                  />
+                </label>
+                <label>
+                  <span>Worker/proxy base URL</span>
+                  <input
+                    type="url"
+                    value={hostedProviderConfig.baseURL || ''}
+                    placeholder="https://worker.example.workers.dev"
+                    onChange={(event) => updateHostedCloudCognitionProviderConfig(providerKey, { baseURL: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>Model</span>
+                  <input
+                    type="text"
+                    value={hostedProviderConfig.model || ''}
+                    onChange={(event) => updateHostedCloudCognitionProviderConfig(providerKey, { model: event.target.value })}
+                  />
+                </label>
+                <p><strong>Health:</strong> {hostedProviderHealth.status || 'unknown'}</p>
+                <p><strong>Last check:</strong> {hostedProviderHealth.checkedAt || 'n/a'}</p>
+                <p><strong>Reason:</strong> {hostedProviderHealth.reason || 'No health check result yet.'}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <div className="provider-card-grid">
         {PROVIDER_KEYS.map((providerKey) => {

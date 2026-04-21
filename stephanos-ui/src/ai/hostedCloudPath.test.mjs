@@ -5,7 +5,7 @@ import { resolveHostedCloudPathCapability } from './hostedCloudPath.js';
 test('prefers hosted proxy secret path when configured', () => {
   const result = resolveHostedCloudPathCapability({
     providerKey: 'groq',
-    hostedCloudConfig: { proxyUrl: 'https://proxy.example.com' },
+    hostedCloudConfig: { enabled: true, proxyUrl: 'https://proxy.example.com' },
     providerConfigs: { groq: { apiKey: 'gsk_live' } },
   });
 
@@ -18,12 +18,27 @@ test('prefers hosted proxy secret path when configured', () => {
 test('falls back to hosted provider credentials when proxy is absent', () => {
   const result = resolveHostedCloudPathCapability({
     providerKey: 'gemini',
-    hostedCloudConfig: {},
+    hostedCloudConfig: { enabled: true },
     providerConfigs: { gemini: { apiKey: 'gm_live' } },
   });
 
   assert.equal(result.available, true);
   assert.equal(result.secretPathKind, 'hosted-provider-credentials');
+});
+
+test('marks hosted path unavailable when hosted cognition is disabled for provider', () => {
+  const result = resolveHostedCloudPathCapability({
+    providerKey: 'groq',
+    hostedCloudConfig: {
+      enabled: true,
+      proxyUrl: 'https://proxy.example.com',
+      providers: { groq: { enabled: false } },
+    },
+    providerConfigs: { groq: { apiKey: 'gsk_live' } },
+  });
+
+  assert.equal(result.available, false);
+  assert.equal(result.providerExecutionPath, 'none');
 });
 
 test('returns clean backend-only posture when no hosted secret path exists', () => {

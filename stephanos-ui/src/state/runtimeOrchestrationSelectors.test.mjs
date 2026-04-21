@@ -121,7 +121,7 @@ test('selectors expose degraded-but-operational capability posture when battle b
   assert.equal(selectors.capabilityPosture.cloudCognitionAvailable, true);
   assert.equal(selectors.capabilityPosture.executionDeferred, true);
   assert.equal(selectors.capabilityPosture.hostedSafePlanningAvailable, true);
-  assert.match(selectors.capabilityPosture.operatorSummary, /Execution deferred; hosted-safe planning remains available/i);
+  assert.match(selectors.capabilityPosture.operatorSummary, /Hosted-safe planning and reasoning remain available\. Execution deferred pending local authority/i);
 });
 
 test('selectors expose provider execution summary and operator action ladder when route is down and intent unknown', () => {
@@ -140,4 +140,23 @@ test('selectors expose provider execution summary and operator action ladder whe
   assert.equal(selectors.operatorActionLadder.length, 4);
   assert.match(selectors.operatorActionLadder[0], /establish intent/i);
   assert.match(selectors.operatorActionLadder[2], /retry remembered bridge validation/i);
+});
+
+test('selectors keep selected vs executable provider truth explicit when hosted cloud path executes', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'awaiting-approval', blockers: [] },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      backendReachable: false,
+      selectedProvider: 'gemini',
+      executedProvider: 'gemini-hosted-cloud',
+      hostedCloudPathAvailable: true,
+      actualProviderPath: 'gemini-hosted-cloud',
+    },
+  });
+
+  assert.match(selectors.providerExecutionSummary, /selected, backend execution unavailable, hosted cloud path executable as gemini-hosted-cloud/i);
+  assert.equal(selectors.capabilityPosture.executionDeferred, true);
+  assert.equal(selectors.capabilityPosture.localAuthorityAvailable, false);
 });
