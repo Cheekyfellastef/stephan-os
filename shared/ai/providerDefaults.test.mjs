@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   PROVIDER_DEFINITIONS,
   createDefaultHostedCloudCognitionSettings,
@@ -29,4 +30,18 @@ test('providerDefaults module can be imported and initialized without startup TD
 
   assert.doesNotThrow(() => mod.createDefaultHostedCloudCognitionSettings());
   assert.doesNotThrow(() => mod.createDefaultRouterSettings());
+});
+
+test('providerDefaults keeps provider definitions initialized before hosted cloud defaults helper', async () => {
+  const sourcePath = new URL('./providerDefaults.mjs', import.meta.url);
+  const source = await readFile(sourcePath, 'utf8');
+  const definitionsIndex = source.indexOf('export const PROVIDER_DEFINITIONS =');
+  const helperIndex = source.indexOf('export function createDefaultHostedCloudCognitionSettings()');
+
+  assert.ok(definitionsIndex >= 0, 'provider definitions constant must exist');
+  assert.ok(helperIndex >= 0, 'hosted cloud defaults helper must exist');
+  assert.ok(
+    definitionsIndex < helperIndex,
+    'PROVIDER_DEFINITIONS must be initialized before createDefaultHostedCloudCognitionSettings is declared',
+  );
 });

@@ -36,6 +36,14 @@ test('readPersistedStephanosSessionMemory falls back to safe defaults when stora
   assert.deepEqual(memory, createDefaultStephanosSessionMemory());
 });
 
+test('stephanosSessionMemory startup import path initializes without TDZ/uninitialized variable errors', async () => {
+  const moduleUrl = new URL(`./stephanosSessionMemory.mjs?startup-init=${Date.now()}`, import.meta.url);
+  const mod = await import(moduleUrl.href);
+
+  assert.doesNotThrow(() => mod.createDefaultStephanosSessionMemory());
+  assert.doesNotThrow(() => mod.readPersistedStephanosSessionMemory(null));
+});
+
 test('persistStephanosSessionMemory writes central schema and legacy mirrors for reload compatibility', () => {
   const storage = createMemoryStorage();
   const persisted = persistStephanosSessionMemory({
