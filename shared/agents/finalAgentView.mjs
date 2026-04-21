@@ -46,6 +46,39 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
     .filter((entry) => !entry.active && entry.state === 'blocked')
     .map((entry) => `${entry.displayName}: ${entry.stateReason}`);
 
+  const missionModel = adjudicated.missionModel || {};
+  const approvalQueue = asArray(adjudicated.approvalQueue);
+  const continuityProjection = adjudicated.continuityProjection || {};
+
+  const finalMissionOrchestrationView = {
+    activeGoals: asArray(missionModel.goals).filter((goal) => ['active', 'waiting', 'blocked'].includes(goal.status)),
+    taskOwnership: visibleAgents.map((agent) => ({
+      agentId: agent.agentId,
+      displayName: agent.displayName,
+      ownedTaskIds: asArray(agent.ownedTaskIds),
+      delegatedTaskIds: asArray(agent.delegatedTaskIds),
+      blockedTaskCount: Number(agent.blockedTaskCount || 0),
+      resumableTaskCount: Number(agent.resumableTaskCount || 0),
+    })),
+    blockedQueue: asArray(continuityProjection.blockedQueue),
+    operatorSummary: asArray(missionModel.goals).length === 0
+      ? 'No active mission goals in orchestration truth.'
+      : `${asArray(missionModel.goals).filter((goal) => goal.status === 'active').length} active goals, ${asArray(missionModel.tasks).filter((task) => !['completed', 'failed', 'canceled'].includes(task.status)).length} open tasks.`,
+  };
+
+  const finalApprovalQueueView = {
+    queue: approvalQueue,
+    pendingCount: approvalQueue.filter((entry) => entry.approvalState === 'pending').length,
+    deniedCount: approvalQueue.filter((entry) => entry.approvalState === 'denied').length,
+    blockedByPolicyCount: approvalQueue.filter((entry) => entry.approvalState === 'blocked-by-policy').length,
+  };
+
+  const finalResumeView = {
+    resumableQueue: asArray(continuityProjection.resumableQueue),
+    blockedQueue: asArray(continuityProjection.blockedQueue),
+    operatorResumeSummary: continuityProjection.operatorResumeSummary || 'No resumable continuity work.',
+  };
+
   return {
     visibleAgents: visibleAgents.map((entry) => ({
       ...entry,
@@ -60,9 +93,12 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
     recentTransitions,
     visibleHandoffChain,
     suppressionReasons,
+    finalMissionOrchestrationView,
+    finalApprovalQueueView,
+    finalResumeView,
     operatorSummary: actingAgent
       ? `${actingAgent.displayName} is acting. ${actingAgent.stateReason}`
-      : suppressionReasons[0] || 'Fleet idle and watching current context.',
+      : suppressionReasons[0] || finalMissionOrchestrationView.operatorSummary || 'Fleet idle and watching current context.',
     globalAutonomyStatus: adjudicated.global?.globalAutonomy || 'manual',
     safeModeStatus: adjudicated.global?.safeMode === true ? 'enabled' : 'disabled',
     timestamps: {
