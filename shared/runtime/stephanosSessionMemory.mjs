@@ -1,6 +1,8 @@
 import {
   AI_SETTINGS_STORAGE_KEY,
+  HOSTED_COGNITION_PROVIDER_KEYS,
   PROVIDER_KEYS,
+  createDefaultHostedCloudCognitionSettings,
   createDefaultRouterSettings,
   normalizeFallbackOrder,
   normalizeProviderSelection,
@@ -321,6 +323,44 @@ function normalizeHomeNodePreference(value = null) {
   return isValidStephanosHomeNode(normalized) ? normalized : null;
 }
 
+function normalizeHostedCloudCognition(value = {}) {
+  const defaults = createDefaultHostedCloudCognitionSettings();
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    ...defaults,
+    ...source,
+    enabled: source.enabled === true,
+    selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(source.selectedProvider)
+      ? source.selectedProvider
+      : defaults.selectedProvider,
+    providers: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
+      const defaultProvider = defaults.providers?.[providerKey] || {};
+      const sourceProvider = source.providers?.[providerKey] || {};
+      return [providerKey, {
+        ...defaultProvider,
+        ...sourceProvider,
+        enabled: sourceProvider.enabled !== false,
+        baseURL: normalizeString(sourceProvider.baseURL),
+        model: normalizeString(sourceProvider.model || defaultProvider.model),
+      }];
+    })),
+    lastHealth: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
+      const defaultHealth = defaults.lastHealth?.[providerKey] || {};
+      const sourceHealth = source.lastHealth?.[providerKey] || {};
+      return [providerKey, {
+        ...defaultHealth,
+        ...sourceHealth,
+        status: normalizeString(sourceHealth.status || defaultHealth.status || 'unknown', 'unknown'),
+        reason: normalizeString(sourceHealth.reason || defaultHealth.reason || ''),
+        checkedAt: normalizeString(sourceHealth.checkedAt || defaultHealth.checkedAt || ''),
+        lastSuccessAt: normalizeString(sourceHealth.lastSuccessAt || defaultHealth.lastSuccessAt || ''),
+        lastFailureAt: normalizeString(sourceHealth.lastFailureAt || defaultHealth.lastFailureAt || ''),
+      }];
+    })),
+    chatPath: normalizeString(source.chatPath || defaults.chatPath, defaults.chatPath),
+  };
+}
+
 function normalizeProviderPreferences(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const surfaceOverride = String(source.surfaceOverride || 'auto').trim().toLowerCase();
@@ -332,6 +372,7 @@ function normalizeProviderPreferences(value = {}) {
     disableHomeNodeForLocalSession: source.disableHomeNodeForLocalSession === true,
     fallbackOrder: normalizeFallbackOrder(source.fallbackOrder),
     providerConfigs: normalizeProviderConfigs(source.providerConfigs),
+    hostedCloudCognition: normalizeHostedCloudCognition(source.hostedCloudCognition),
     ollamaConnection: normalizeOllamaConnection(source.ollamaConnection),
     surfaceOverride: ['auto', 'force-desktop', 'force-tablet', 'force-phone', 'force-vr'].includes(surfaceOverride)
       ? surfaceOverride
@@ -561,6 +602,7 @@ function createLegacyProviderPreferencesPayload(memory) {
     fallbackEnabled: providerPreferences.fallbackEnabled,
     fallbackOrder: providerPreferences.fallbackOrder,
     providerConfigs: providerPreferences.providerConfigs,
+    hostedCloudCognition: providerPreferences.hostedCloudCognition,
     ollamaConnection: providerPreferences.ollamaConnection,
     surfaceOverride: providerPreferences.surfaceOverride,
   };

@@ -21,3 +21,9 @@ test('provider secret draft clears only after successful backend confirmation', 
 test('provider secret clear uses backend DELETE helper', () => {
   assert.match(source, /const clearResult = await clearLocalProviderSecret\(providerKey,\s*runtimeConfig\);/m);
 });
+
+test('hosted cloud cognition pane includes explicit save and provider test actions', () => {
+  assert.match(source, /Save Hosted Cloud Cognition/);
+  assert.match(source, /Test Hosted Provider/);
+  assert.match(source, /Unsaved changes/);
+});

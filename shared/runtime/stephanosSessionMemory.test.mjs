@@ -59,6 +59,14 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
           recentHosts: ['192.168.0.8'],
           lastSelectedModel: 'qwen:14b',
         },
+        hostedCloudCognition: {
+          enabled: true,
+          selectedProvider: 'gemini',
+          providers: {
+            groq: { enabled: true, baseURL: 'https://worker-groq.example.workers.dev', model: 'openai/gpt-oss-20b' },
+            gemini: { enabled: true, baseURL: 'https://worker-gemini.example.workers.dev', model: 'gemini-2.5-flash' },
+          },
+        },
       },
       ui: {
         activeWorkspace: 'mission-console',
@@ -91,11 +99,44 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
   const restored = readPersistedStephanosSessionMemory(storage);
   assert.equal(restored.session.providerPreferences.provider, 'groq');
   assert.equal(restored.session.providerPreferences.routeMode, 'cloud-first');
+  assert.equal(restored.session.providerPreferences.hostedCloudCognition.enabled, true);
+  assert.equal(restored.session.providerPreferences.hostedCloudCognition.selectedProvider, 'gemini');
+  assert.equal(restored.session.providerPreferences.hostedCloudCognition.providers.gemini.baseURL, 'https://worker-gemini.example.workers.dev');
+  assert.equal(restored.session.providerPreferences.hostedCloudCognition.providers.groq.baseURL, 'https://worker-groq.example.workers.dev');
   assert.equal(restored.session.ui.recentRoute, 'memory');
   assert.equal(restored.session.ui.debugConsoleVisible, true);
   assert.equal(restored.working.recentCommands.length, 1);
   assert.equal(restored.working.recentCommands[0].raw_input, '/status');
   assert.match(persisted.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('hosted cloud cognition worker URLs survive save and full reload simulation', () => {
+  const storage = createMemoryStorage();
+  persistStephanosSessionMemory({
+    session: {
+      providerPreferences: {
+        hostedCloudCognition: {
+          enabled: true,
+          selectedProvider: 'groq',
+          providers: {
+            groq: { enabled: true, baseURL: 'https://groq-worker.example.workers.dev', model: 'openai/gpt-oss-20b' },
+            gemini: { enabled: true, baseURL: 'https://gemini-worker.example.workers.dev', model: 'gemini-2.5-flash' },
+          },
+        },
+      },
+    },
+  }, storage);
+
+  const reloaded = restoreStephanosSessionMemoryForDevice({
+    storage,
+    currentOrigin: 'https://stephanos.example',
+  });
+
+  assert.equal(reloaded.memory.session.providerPreferences.hostedCloudCognition.enabled, true);
+  assert.equal(reloaded.memory.session.providerPreferences.hostedCloudCognition.providers.groq.baseURL, 'https://groq-worker.example.workers.dev');
+  assert.equal(reloaded.memory.session.providerPreferences.hostedCloudCognition.providers.gemini.baseURL, 'https://gemini-worker.example.workers.dev');
+  assert.equal(reloaded.memory.session.providerPreferences.hostedCloudCognition.providers.groq.model, 'openai/gpt-oss-20b');
+  assert.equal(reloaded.memory.session.providerPreferences.hostedCloudCognition.providers.gemini.model, 'gemini-2.5-flash');
 });
 
 test('persistStephanosSessionMemory strips runtime-only truth fields from persisted core memory', () => {
