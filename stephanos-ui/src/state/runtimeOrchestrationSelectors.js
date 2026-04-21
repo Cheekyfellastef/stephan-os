@@ -268,6 +268,24 @@ export function deriveRuntimeOrchestrationSelectors({
   const missionResumability = deriveMissionResumability(missionLineage, {
     preferredMissionId: asText(packet?.packetKey),
   });
+  const sessionKind = asText(finalRouteTruth?.sessionKind, 'local-dev');
+  const hostedSession = sessionKind === 'hosted-web' || sessionKind === 'hosted' || sessionKind === 'hosted_web';
+  const localAuthorityAvailable = hostedSession === false && finalRouteTruth?.backendReachable === true;
+  const researchRouteAvailable = finalRouteTruth?.routeUsable !== false && finalRouteTruth?.selectedRouteKind !== 'unavailable';
+  const continuityAvailable = continuityStrength !== 'unknown';
+  const missionConsoleMode = {
+    posture: localAuthorityAvailable ? 'battle-bridge-mode' : hostedSession ? 'hosted-safe-orchestration-mode' : 'planning-only-mode',
+    localAuthorityAvailable,
+    executionDeferredToBattleBridge: !localAuthorityAvailable,
+    hostedSafePlanningAvailable: true,
+    hostedResearchAvailable: Boolean(researchRouteAvailable),
+    continuityAvailable,
+    reason: localAuthorityAvailable
+      ? 'Local authority path is reachable; execution-capable mission actions are available.'
+      : hostedSession
+        ? 'Hosted surface detected: planning, decomposition, and continuity remain available while execution defers to Battle Bridge.'
+        : 'No confirmed local authority. Planning and resumable prep remain available.',
+  };
   const commandReadiness = deriveCommandReadiness({
     missionPhase,
     missionBlocked,
@@ -322,6 +340,7 @@ export function deriveRuntimeOrchestrationSelectors({
       continuityStrength,
     },
     missionResumability,
+    missionConsoleMode,
     promptBuilderSnapshot: {
       activeMissionSummary: asText(missionResumability?.missionSummary, 'No active mission.'),
       resumableMissionCount: Number.isFinite(Number(missionResumability?.resumableMissionCount)) ? Number(missionResumability.resumableMissionCount) : 0,
@@ -330,4 +349,3 @@ export function deriveRuntimeOrchestrationSelectors({
     },
   };
 }
-

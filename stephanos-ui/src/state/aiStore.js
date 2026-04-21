@@ -107,6 +107,7 @@ const DEFAULT_UI_LAYOUT = {
   promptBuilderPanel: true,
   roadmapPanel: true,
   missionDashboardPanel: true,
+  intentEnginePanel: true,
   missionFingerprintPanel: true,
   missionPacketQueuePanel: true,
   debugConsole: false,
@@ -128,6 +129,7 @@ const DEFAULT_OPERATOR_PANE_ORDER = [
   'promptBuilderPanel',
   'roadmapPanel',
   'missionDashboardPanel',
+  'intentEnginePanel',
   'missionFingerprintPanel',
   'missionPacketQueuePanel',
 ];

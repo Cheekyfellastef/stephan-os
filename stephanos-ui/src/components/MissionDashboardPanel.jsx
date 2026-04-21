@@ -44,7 +44,12 @@ function progressClassName(percent) {
   return 'low';
 }
 
-export default function MissionDashboardPanel() {
+export default function MissionDashboardPanel({
+  finalAgentView = {},
+  orchestrationSelectors = {},
+  runtimeStatus = {},
+  finalRouteTruth = null,
+} = {}) {
   const {
     uiLayout,
     togglePanel,
@@ -150,6 +155,24 @@ export default function MissionDashboardPanel() {
   }, [dashboardState.milestones, uiState.showBlockedOnly]);
 
   const metrics = useMemo(() => buildMissionSummaryMetrics(dashboardState), [dashboardState]);
+  const liveProjection = useMemo(() => {
+    const missionView = finalAgentView?.finalMissionOrchestrationView || {};
+    const approvalView = finalAgentView?.finalApprovalQueueView || {};
+    const resumeView = finalAgentView?.finalResumeView || {};
+    const sessionKind = runtimeStatus?.runtimeContext?.sessionKind || 'unknown';
+    const hostedSession = sessionKind === 'hosted-web';
+    const localAuthorityAvailable = hostedSession === false && finalRouteTruth?.backendReachable === true;
+    return {
+      actingAgent: finalAgentView?.actingAgentId || 'intent-engine',
+      activeGoals: Array.isArray(missionView.activeGoals) ? missionView.activeGoals : [],
+      openTasks: Number(missionView?.taskOwnership?.reduce((sum, entry) => sum + Number((entry?.ownedTaskIds || []).length || 0), 0) || 0),
+      blockedItems: Array.isArray(resumeView.blockedQueue) ? resumeView.blockedQueue : [],
+      pendingApprovals: Number(approvalView.pendingCount || 0),
+      resumableWork: Array.isArray(resumeView.resumableQueue) ? resumeView.resumableQueue : [],
+      localAuthorityAvailable,
+      hostedSession,
+    };
+  }, [finalAgentView, finalRouteTruth?.backendReachable, runtimeStatus?.runtimeContext?.sessionKind]);
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
@@ -325,6 +348,21 @@ export default function MissionDashboardPanel() {
         Health: <strong>{dashboardState.overallSummary.projectHealth}</strong> · Last updated: <strong>{formatTimestamp(metrics.lastUpdatedAt)}</strong>
       </p>
       <p className="mission-note">{dashboardState.overallSummary.missionNote}</p>
+      <section className="mission-live-projection" aria-label="Live system projection">
+        <h3>Live System Projection</h3>
+        <p className="mission-note">
+          Mode: <strong>{liveProjection.hostedSession ? 'hosted-safe planning/orchestration' : 'local-authority runtime'}</strong> · Local authority: <strong>{liveProjection.localAuthorityAvailable ? 'available' : 'unavailable'}</strong>
+        </p>
+        <ul className="compact-list">
+          <li>Acting agent: {liveProjection.actingAgent}</li>
+          <li>Active goals: {liveProjection.activeGoals.length}</li>
+          <li>Open tasks: {liveProjection.openTasks}</li>
+          <li>Blocked items: {liveProjection.blockedItems.length}</li>
+          <li>Pending approvals: {liveProjection.pendingApprovals}</li>
+          <li>Resumable work: {liveProjection.resumableWork.length}</li>
+          <li>Next recommended step: {orchestrationSelectors?.nextRecommendedAction || 'Review mission packet and choose explicit operator decision.'}</li>
+        </ul>
+      </section>
 
       <label className="mission-filter-toggle">
         <input
