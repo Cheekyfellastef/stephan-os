@@ -2033,6 +2033,25 @@ pre {
   margin: 0 auto;
 }
 
+.agents-surface-mode .operator-pane-wall,
+.agents-surface-mode .provider-dock,
+.agents-surface-mode .runtime-diagnostic,
+.agents-surface-mode .meaning-strip {
+  display: none;
+}
+
+.agents-surface-stage {
+  padding: 16px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.agents-surface-stage .agents-tile {
+  border: 1px solid rgba(84, 132, 218, 0.45);
+  border-radius: 14px;
+  background: rgba(4, 11, 24, 0.9);
+}
+
 .power-shell-merge-panel .panel-body {
   gap: 0.75rem;
 }

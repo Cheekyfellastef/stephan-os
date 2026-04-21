@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildAgentRegistry } from './agentRegistry.mjs';
 import { adjudicateAgents } from './agentAdjudicator.mjs';
 import { buildFinalAgentView } from './finalAgentView.mjs';
+import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from './agentSurfaceProjection.mjs';
 
 function buildBaseContext() {
   return {
@@ -94,4 +95,26 @@ test('final projection yields handoff chain and suppression visibility', () => {
   assert.equal(view.actingAgentId, 'intent-engine');
   assert.ok(view.visibleHandoffChain[0].includes('intent-engine'));
   assert.ok(view.suppressionReasons.some((entry) => entry.includes('Research Agent')));
+});
+
+test('agents surface mode remains runtime projection consumer with launcher-safe summary', () => {
+  const registry = buildAgentRegistry();
+  const now = new Date().toISOString();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: { ...buildBaseContext(), surface: 'agents' },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [
+      { agentId: 'intent-engine', type: 'state', state: 'acting', reason: 'routing', at: now },
+      { agentId: 'intent-engine', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'execution-agent', reason: 'intent-engine → execution-agent', at: now },
+    ],
+  });
+  const finalAgentView = buildFinalAgentView({ adjudicated });
+  const projection = buildAgentSurfaceProjection({ finalAgentView, surfaceMode: resolveAgentSurfaceMode('agents') });
+  assert.equal(resolveAgentSurfaceMode('agents'), 'agents');
+  assert.equal(resolveAgentSurfaceMode('cockpit'), 'cockpit');
+  assert.equal(resolveAgentSurfaceMode('unknown'), 'mission-control');
+  assert.equal(projection.surfaceMode, 'agents');
+  assert.equal(projection.launcherSummary.status, 'acting');
+  assert.ok(projection.launcherSummary.handoffCount >= 1);
 });
