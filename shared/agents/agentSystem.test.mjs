@@ -20,6 +20,81 @@ function buildBaseContext() {
   };
 }
 
+function buildV3OrchestrationState() {
+  const now = new Date().toISOString();
+  return {
+    goals: [
+      {
+        goalId: 'goal-bridge-stability',
+        title: 'Stabilize bridge runtime truth',
+        status: 'active',
+        initiatingAgentId: 'intent-engine',
+        linkedMemoryRefs: ['mem:bridge-incident'],
+        linkedTaskIds: ['task-diagnose', 'task-execute'],
+      },
+    ],
+    tasks: [
+      {
+        taskId: 'task-diagnose',
+        parentGoalId: 'goal-bridge-stability',
+        title: 'Collect diagnostics',
+        assignedAgentId: 'research-agent',
+        requestedByAgentId: 'intent-engine',
+        status: 'ready',
+        continuityRefs: ['continuity:bridge'],
+        executionSessionKinds: ['hosted-web', 'local-dev'],
+        executionSurfaceKinds: ['mission-control', 'agents'],
+      },
+      {
+        taskId: 'task-execute',
+        parentGoalId: 'goal-bridge-stability',
+        title: 'Apply runtime patch',
+        assignedAgentId: 'execution-agent',
+        requestedByAgentId: 'intent-engine',
+        status: 'blocked',
+        requiresApproval: true,
+        approvalState: 'pending',
+        blockers: ['Awaiting operator approval'],
+        continuityRefs: ['continuity:bridge'],
+        executionSessionKinds: ['local-dev'],
+        executionSurfaceKinds: ['mission-control'],
+      },
+    ],
+    handoffs: [
+      {
+        handoffId: 'handoff-1',
+        taskId: 'task-execute',
+        goalId: 'goal-bridge-stability',
+        fromAgentId: 'intent-engine',
+        toAgentId: 'execution-agent',
+        reason: 'intent-engine delegated execution task',
+        createdAt: now,
+      },
+    ],
+    approvalRequests: [
+      {
+        approvalRequestId: 'approval-1',
+        taskId: 'task-execute',
+        goalId: 'goal-bridge-stability',
+        requestedByAgentId: 'execution-agent',
+        classification: 'approval-required-action',
+        state: 'pending',
+        reason: 'Applying runtime patch changes meaningful execution behavior.',
+      },
+    ],
+    resumeTokens: [
+      {
+        resumeTokenId: 'resume-1',
+        goalId: 'goal-bridge-stability',
+        taskId: 'task-execute',
+        ownerAgentId: 'execution-agent',
+        bestSurface: 'mission-control',
+        status: 'resumable',
+      },
+    ],
+  };
+}
+
 test('adjudicator separates enabled, eligible, active, and acting', () => {
   const registry = buildAgentRegistry();
   const adjudicated = adjudicateAgents({
@@ -117,4 +192,41 @@ test('agents surface mode remains runtime projection consumer with launcher-safe
   assert.equal(projection.surfaceMode, 'agents');
   assert.equal(projection.launcherSummary.status, 'acting');
   assert.ok(projection.launcherSummary.handoffCount >= 1);
+});
+
+test('v3 orchestration persists goals tasks approvals and resumable continuity', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    orchestrationState: buildV3OrchestrationState(),
+    context: buildBaseContext(),
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+
+  assert.equal(adjudicated.missionModel.schemaVersion, 'agent-layer.v3.persistent-orchestration');
+  assert.equal(adjudicated.missionModel.goals.length, 1);
+  assert.equal(adjudicated.missionModel.tasks.length, 2);
+  assert.equal(adjudicated.approvalQueue.some((entry) => entry.taskId === 'task-execute' && entry.approvalState === 'pending'), true);
+  assert.equal(adjudicated.continuityProjection.resumableQueue.length >= 1, true);
+
+  const view = buildFinalAgentView({ adjudicated });
+  assert.equal(view.finalMissionOrchestrationView.activeGoals.length, 1);
+  assert.equal(view.finalApprovalQueueView.pendingCount, 1);
+  assert.equal(view.finalResumeView.resumableQueue.length >= 1, true);
+});
+
+test('surface-aware blocking marks local-only execution tasks as blocked on hosted-web', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    orchestrationState: buildV3OrchestrationState(),
+    context: { ...buildBaseContext(), sessionKind: 'hosted-web', surface: 'agents' },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+
+  const blockedResume = adjudicated.continuityProjection.blockedQueue.find((entry) => entry.taskId === 'task-execute');
+  assert.ok(blockedResume);
+  assert.match(blockedResume.blockedReason, /Session hosted-web cannot execute this task/);
 });

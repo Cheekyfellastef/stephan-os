@@ -16,6 +16,10 @@ export function buildAgentSurfaceProjection({ finalAgentView = {}, surfaceMode =
   const actingAgentId = String(view.actingAgentId || '').trim();
   const activeCount = asArray(view.activeAgentIds).length;
 
+  const orchestration = view.finalMissionOrchestrationView || {};
+  const approvals = view.finalApprovalQueueView || {};
+  const resume = view.finalResumeView || {};
+
   const status = actingAgentId
     ? 'acting'
     : blockedCount > 0
@@ -40,6 +44,10 @@ export function buildAgentSurfaceProjection({ finalAgentView = {}, surfaceMode =
       actingAgentId,
       handoffCount: asArray(view.visibleHandoffChain).length,
       eventCount: asArray(view.recentTransitions).length,
+      activeGoalCount: asArray(orchestration.activeGoals).length,
+      pendingApprovalCount: Number(approvals.pendingCount || 0),
+      resumableCount: asArray(resume.resumableQueue).length,
+      blockedResumeCount: asArray(resume.blockedQueue).length,
     },
   };
 }

@@ -1,4 +1,8 @@
 import { buildAgentRuntimeModel } from './agentRuntimeModel.mjs';
+import { buildAgentMissionModel } from './agentMissionModel.mjs';
+import { buildAgentTaskGraph } from './agentTaskGraph.mjs';
+import { buildApprovalQueue } from './agentApprovalPolicy.mjs';
+import { buildAgentContinuityProjection } from './agentContinuityProjection.mjs';
 
 const AUTO_LEVELS = new Set(['guarded-auto', 'full-auto']);
 
@@ -25,7 +29,7 @@ function modeAllowsAgent({ effectiveAutonomy = 'manual', safeMode = false, agent
   return { allowed: true, reason: 'Autonomy policy allows this agent.' };
 }
 
-export function adjudicateAgents({ registry = [], eventLog = [], context = {}, operatorControls = {} } = {}) {
+export function adjudicateAgents({ registry = [], eventLog = [], orchestrationState = {}, context = {}, operatorControls = {} } = {}) {
   const runtimeEntries = buildAgentRuntimeModel({ registry, eventLog });
   const nowIso = new Date().toISOString();
   const enabledMap = operatorControls.agentEnabledMap && typeof operatorControls.agentEnabledMap === 'object'
@@ -39,6 +43,11 @@ export function adjudicateAgents({ registry = [], eventLog = [], context = {}, o
   const masterEnabled = operatorControls.autonomyMasterToggle !== false;
   const safeMode = operatorControls.safeMode === true;
   const effectiveAutonomy = masterEnabled ? toText(operatorControls.globalAutonomy || 'assisted') : 'manual';
+
+  const missionModel = buildAgentMissionModel({ orchestrationState });
+  const taskGraph = buildAgentTaskGraph({ missionModel });
+  const approvalQueue = buildApprovalQueue({ missionModel, context });
+  const continuityProjection = buildAgentContinuityProjection({ missionModel, context });
 
   const entries = runtimeEntries.map((runtimeEntry) => {
     const registryEntry = registry.find((entry) => entry.agentId === runtimeEntry.agentId) || {};
@@ -82,6 +91,16 @@ export function adjudicateAgents({ registry = [], eventLog = [], context = {}, o
         ? 'watching'
         : runtimeEntry.state;
 
+    const ownedTaskIds = Array.from(taskGraph.taskById?.keys?.() || [])
+      .filter((taskId) => taskGraph.taskById.get(taskId)?.assignedAgentId === runtimeEntry.agentId);
+    const delegatedTaskIds = missionModel.handoffs
+      .filter((handoff) => handoff.fromAgentId === runtimeEntry.agentId)
+      .map((handoff) => handoff.taskId)
+      .filter(Boolean);
+    const pendingApprovalCount = approvalQueue.filter((entry) => entry.assignedAgentId === runtimeEntry.agentId && entry.approvalState === 'pending').length;
+    const blockedTaskCount = continuityProjection.blockedQueue.filter((entry) => entry.taskId && ownedTaskIds.includes(entry.taskId)).length;
+    const resumableTaskCount = continuityProjection.resumableQueue.filter((entry) => entry.taskId && ownedTaskIds.includes(entry.taskId)).length;
+
     return {
       ...runtimeEntry,
       registered: true,
@@ -103,10 +122,26 @@ export function adjudicateAgents({ registry = [], eventLog = [], context = {}, o
       allowedSurfaces: registryEntry.allowedSurfaces || [],
       allowedSessionKinds: registryEntry.allowedSessionKinds || [],
       kind: registryEntry.kind || 'specialist',
+      ownedTaskIds,
+      delegatedTaskIds,
+      pendingApprovalCount,
+      blockedTaskCount,
+      resumableTaskCount,
+      currentGoalId: missionModel.tasks.find((task) => task.assignedAgentId === runtimeEntry.agentId && ['active', 'ready', 'waiting', 'blocked'].includes(task.status))?.parentGoalId || '',
     };
   });
 
   return {
+    missionModel,
+    taskGraph: {
+      goals: taskGraph.goals,
+      tasksByGoal: taskGraph.tasksByGoal,
+      childrenByTask: taskGraph.childrenByTask,
+      handoffChains: taskGraph.handoffChains,
+      ownership: taskGraph.ownership,
+    },
+    approvalQueue,
+    continuityProjection,
     global: {
       safeMode,
       masterEnabled,

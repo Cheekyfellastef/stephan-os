@@ -9,6 +9,10 @@ export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgen
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
   const selected = visibleAgents.find((entry) => entry.agentId === selectedAgentId) || visibleAgents[0] || null;
 
+  const missionView = view.finalMissionOrchestrationView || {};
+  const approvalView = view.finalApprovalQueueView || {};
+  const resumeView = view.finalResumeView || {};
+
   return (
     <CollapsiblePanel
       panelId="agentsPanel"
@@ -39,6 +43,25 @@ export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgen
         <p>{(view.visibleHandoffChain || []).join(' → ') || 'No active handoff chain.'}</p>
       </section>
 
+      <section className="agents-region">
+        <h4>Active Goals</h4>
+        <ul>
+          {(missionView.activeGoals || []).slice(0, 8).map((goal) => (
+            <li key={goal.goalId}><strong>{goal.title}</strong> · {goal.status}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="agents-region">
+        <h4>Pending Approvals</h4>
+        <p>Pending {approvalView.pendingCount || 0} · Denied {approvalView.deniedCount || 0} · Policy Blocked {approvalView.blockedByPolicyCount || 0}</p>
+      </section>
+
+      <section className="agents-region">
+        <h4>Resumable Work</h4>
+        <p>{resumeView.operatorResumeSummary || 'No resumable items.'}</p>
+      </section>
+
       {selected ? (
         <section className="agents-region">
           <h4>Agent Detail</h4>
@@ -52,6 +75,11 @@ export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgen
             <li><strong>Allowed surfaces:</strong> {formatList(selected.allowedSurfaces)}</li>
             <li><strong>Allowed sessions:</strong> {formatList(selected.allowedSessionKinds)}</li>
             <li><strong>Current task:</strong> {selected.currentTaskSummary || 'none'}</li>
+            <li><strong>Owned tasks:</strong> {(selected.ownedTaskIds || []).length}</li>
+            <li><strong>Delegated tasks:</strong> {(selected.delegatedTaskIds || []).length}</li>
+            <li><strong>Pending approvals:</strong> {selected.pendingApprovalCount || 0}</li>
+            <li><strong>Blocked queue:</strong> {selected.blockedTaskCount || 0}</li>
+            <li><strong>Resumable queue:</strong> {selected.resumableTaskCount || 0}</li>
             <li><strong>Last action:</strong> {selected.actionAgeLabel}</li>
             <li><strong>Last success:</strong> {selected.successAgeLabel}</li>
             <li><strong>Last failure:</strong> {selected.failureAgeLabel}</li>
