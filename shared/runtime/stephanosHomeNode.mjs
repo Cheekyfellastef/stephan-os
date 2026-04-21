@@ -1,5 +1,3 @@
-import { requestStephanosBackend } from './backendClient.mjs';
-
 const DEFAULT_HOME_NODE_UI_PORT = 5173;
 const DEFAULT_HOME_NODE_BACKEND_PORT = 8787;
 const DEFAULT_HOME_NODE_DIST_PORT = 4173;
@@ -796,26 +794,41 @@ async function fetchJsonWithTimeout(url, { fetchImpl = globalThis?.fetch, timeou
     return { ok: false, reason: 'invalid-url' };
   }
 
+  const parsed = safeUrlParse(url);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1500)
+    : null;
+
   try {
-    const parsed = safeUrlParse(url);
-    const probe = await requestStephanosBackend({
-      path: '/api/health',
+    const response = await fetchImpl(url, {
       method: 'GET',
-      runtimeContext: {
-        baseUrl: parsed?.origin || '',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
       },
-      fetchImpl,
-      timeoutMs,
+      signal: controller?.signal,
     });
-    return { ok: true, json: probe.json };
+    const text = await response.text();
+    const json = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      return { ok: false, status: response.status, reason: `http-${response.status}` };
+    }
+    return { ok: true, json };
   } catch (error) {
     return {
       ok: false,
       status: error?.status,
       reason: error?.code === 'backend-timeout'
+        || error?.name === 'AbortError'
         ? 'timeout'
         : (error?.status ? `http-${error.status}` : (error?.message || 'network-error')),
     };
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
