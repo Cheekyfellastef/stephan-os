@@ -729,7 +729,36 @@ function createInitialMemorySnapshot() {
 }
 
 export function AIStoreProvider({ children }) {
-  const initialSnapshot = useMemo(() => createInitialMemorySnapshot(), []);
+  const initialSnapshot = useMemo(() => {
+    recordStartupRenderStage({
+      stage: 'runtime-store-snapshot-init-started',
+      status: 'ok',
+      sourceModule: 'stephanos-ui/src/state/aiStore.js',
+      sourceFunction: 'AIStoreProvider.useMemo',
+    });
+    try {
+      const snapshot = createInitialMemorySnapshot();
+      recordStartupRenderStage({
+        stage: 'runtime-store-snapshot-init-complete',
+        status: 'ok',
+        sourceModule: 'stephanos-ui/src/state/aiStore.js',
+        sourceFunction: 'AIStoreProvider.useMemo',
+      });
+      return snapshot;
+    } catch (error) {
+      recordStartupRenderStage({
+        stage: 'runtime-store-snapshot-init-failed',
+        status: 'fatal',
+        sourceModule: 'stephanos-ui/src/state/aiStore.js',
+        sourceFunction: 'AIStoreProvider.useMemo',
+        details: {
+          message: String(error?.message || 'unknown'),
+          stack: String(error?.stack || '').split('\n').slice(0, 8).join('\n'),
+        },
+      });
+      throw error;
+    }
+  }, []);
   useEffect(() => {
     recordStartupRenderStage({
       stage: 'runtime-store-initialized',
