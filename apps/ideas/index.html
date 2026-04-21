@@ -82,7 +82,21 @@
     }
     .entry-actions {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      background: rgba(8, 19, 37, 0.95);
     }
 
     .media-pill {
@@ -171,6 +185,61 @@
       <label>Title <input id="idea-title" type="text" maxlength="120" required /></label>
       <label>Summary <textarea id="idea-summary" rows="3" placeholder="Core concept, direction, or question..."></textarea></label>
       <label>Tags (comma-separated) <input id="idea-tags" type="text" placeholder="ideas, research, vr" /></label>
+      <div class="grid two">
+        <label>Node type
+          <select id="idea-node-type">
+            <option value="idea-node">Idea node</option>
+            <option value="concept">Concept</option>
+            <option value="hypothesis">Hypothesis</option>
+            <option value="roadmap-seed">Roadmap seed</option>
+            <option value="simulation-target">Simulation target</option>
+          </select>
+        </label>
+        <label>Status
+          <select id="idea-status">
+            <option value="spark">Spark</option>
+            <option value="shaped">Shaped</option>
+            <option value="linked">Linked concept</option>
+            <option value="evidence-backed">Evidence-backed</option>
+            <option value="promoted-intent">Promoted intent</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid two">
+        <label>Priority
+          <select id="idea-priority">
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </label>
+        <label>Collections (comma-separated)
+          <input id="idea-collections" type="text" placeholder="Stephanos Core, Memory Systems" />
+        </label>
+      </div>
+      <label>Related idea IDs (comma-separated)
+        <input id="idea-related-ideas" type="text" placeholder="ideas_123, ideas_456" />
+      </label>
+      <div class="grid two">
+        <label>Relation type
+          <select id="idea-relation-type">
+            <option value="supports">supports</option>
+            <option value="depends_on">depends_on</option>
+            <option value="derived_from">derived_from</option>
+            <option value="contradicts">contradicts</option>
+            <option value="expands">expands</option>
+            <option value="similar_to">similar_to</option>
+            <option value="part_of">part_of</option>
+            <option value="promotes_to">promotes_to</option>
+            <option value="evidence_for">evidence_for</option>
+            <option value="evidence_against">evidence_against</option>
+          </select>
+        </label>
+        <label>Primary relation target idea ID
+          <input id="idea-relation-target-id" type="text" placeholder="ideas_789" />
+        </label>
+      </div>
+      <label>Operator notes <textarea id="idea-operator-notes" rows="2" placeholder="What matters, what is uncertain, what to validate next..."></textarea></label>
 
       <div class="grid two">
         <label>Reference type
@@ -196,6 +265,7 @@
       </div>
       <p id="save-status" class="subtle" aria-live="polite"></p>
       <p id="ideas-link-status" class="subtle" aria-live="polite">Tile link: checking…</p>
+      <p id="ideas-cognition-status" class="subtle" aria-live="polite">Cognition truth: waiting for hydration.</p>
       <div class="data-port-actions">
         <button id="ideas-load-context" type="button" class="ghost">Load Shared Context</button>
         <button id="ideas-submit-memory-candidate" type="button" class="ghost">Submit Memory Candidate</button>
@@ -236,6 +306,7 @@
 
     <section class="card">
       <h2 class="headline">Stored ideas</h2>
+      <p class="subtle">Cards show structured cognition state, promotion states, and bounded packet readiness.</p>
       <div id="ideas-list" class="grid"></div>
     </section>
   </main>

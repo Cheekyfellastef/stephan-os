@@ -143,6 +143,17 @@ test('sanitizeIdeasState preserves expanded node metadata with safe defaults', (
           includeEvidence: 3,
           includeRetrieval: 2,
         },
+        aiContextPackageMeta: {
+          packageVersion: 2,
+          readiness: 'seed-ready',
+          maxRelated: 4,
+        },
+        sourceTruth: {
+          persistence: 'shared-backend',
+          retrieval: 'scaffolded-unvalidated',
+          memory: 'memory linked (shared durable)',
+          validation: 'implemented-not-battle-bridge-validated',
+        },
       },
       createdAt: '2026-04-06T00:00:00.000Z',
       updatedAt: '2026-04-06T00:00:00.000Z',
@@ -162,5 +173,7 @@ test('sanitizeIdeasState preserves expanded node metadata with safe defaults', (
   assert.equal(record.promotionState.roadmap, 'not-promoted');
   assert.equal(record.knowledge.relations[0].relationType, 'depends_on');
   assert.equal(record.aiContextHints.includeRelated, 4);
+  assert.equal(record.aiContextPackageMeta.readiness, 'seed-ready');
+  assert.equal(record.sourceTruth.retrieval, 'scaffolded-unvalidated');
   assert.equal(record.notes, 'Operator note');
 });

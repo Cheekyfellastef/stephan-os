@@ -60,6 +60,14 @@ const elements = {
   title: document.getElementById('idea-title'),
   summary: document.getElementById('idea-summary'),
   tags: document.getElementById('idea-tags'),
+  nodeType: document.getElementById('idea-node-type'),
+  ideaStatus: document.getElementById('idea-status'),
+  priority: document.getElementById('idea-priority'),
+  collections: document.getElementById('idea-collections'),
+  relatedIdeas: document.getElementById('idea-related-ideas'),
+  relationType: document.getElementById('idea-relation-type'),
+  relationTargetId: document.getElementById('idea-relation-target-id'),
+  operatorNotes: document.getElementById('idea-operator-notes'),
   mediaType: document.getElementById('media-type'),
   mediaTitle: document.getElementById('media-title'),
   mediaSource: document.getElementById('media-source'),
@@ -69,6 +77,7 @@ const elements = {
   seedButton: document.getElementById('seed-ideas'),
   status: document.getElementById('save-status'),
   linkStatus: document.getElementById('ideas-link-status'),
+  cognitionStatus: document.getElementById('ideas-cognition-status'),
   modeLabel: document.getElementById('idea-form-mode'),
   ideasList: document.getElementById('ideas-list'),
   dataPortText: document.getElementById('ideas-data-port-text'),
@@ -97,6 +106,7 @@ let lastSaveSource = 'none';
 let lastExecutionMode = 'unknown';
 let lastSaveError = '';
 let lastContractStatus = 'No tile contract actions yet.';
+let lastRetrievalTruth = 'unavailable';
 
 const tileEventBridge = createTileEventBridge({
   tileId: IDEAS_APP_ID,
@@ -157,6 +167,9 @@ function refreshLinkStatus() {
   }
 
   elements.linkStatus.textContent = `Tile link: ${describeMemoryStatus()}; ${describeExecutionStatus()}.`;
+  if (elements.cognitionStatus) {
+    elements.cognitionStatus.textContent = `Cognition truth: persistence=${lastSaveSource || hydrationSource}; memory=${describeMemoryStatus()}; retrieval=${lastRetrievalTruth}.`;
+  }
 }
 
 function setContractStatus(message) {
@@ -203,6 +216,9 @@ function publishIdeasTileContext(records = []) {
       knowledgeDigest: digest,
       ideaContextPackage: buildIdeaContextPackage(records, {
         selectedIdeaId: latestRecord?.id || '',
+        retrievalSource: lastRetrievalTruth,
+        memorySource: describeMemoryStatus(),
+        persistenceSource: lastSaveSource || hydrationSource,
       }),
     },
     visibility: 'workspace',
@@ -454,6 +470,17 @@ function renderIdeas() {
     const memoryState = record.promotionState?.memory || record.knowledge?.promotionState?.memory || 'not-submitted';
     const retrievalState = record.promotionState?.retrieval || record.knowledge?.promotionState?.retrieval || 'not-submitted';
     const codexState = record.promotionState?.codex || record.knowledge?.promotionState?.codex || 'not-prepared';
+    const packetReadiness = record.knowledge?.aiContextPackageMeta?.readiness || 'draft';
+    const relatedIdeas = Array.isArray(record.relatedIdeas) ? record.relatedIdeas : [];
+    const relationSummary = (record.knowledge?.relations || []).reduce((acc, relation) => {
+      acc[relation.relationType] = (acc[relation.relationType] || 0) + 1;
+      return acc;
+    }, {});
+    const relationSummaryText = Object.entries(relationSummary)
+      .map(([type, count]) => `${type}:${count}`)
+      .join(', ') || 'none';
+    const collections = Array.isArray(record.collectionIds) ? record.collectionIds : [];
+    const sourceTruth = record.sourceTruth || record.knowledge?.sourceTruth || {};
 
     item.innerHTML = `
       <header>
@@ -480,12 +507,29 @@ function renderIdeas() {
         <div class="subtle">
           promotions: memory=${memoryState}, retrieval=${retrievalState}, codex=${codexState}
         </div>
+        <div class="subtle">
+          packet=${packetReadiness} · related=${relatedIdeas.length} · relationSummary=${relationSummaryText}
+        </div>
+      </section>
+      <section>
+        <strong>Collections</strong>
+        <div class="pill-row">${collections.length ? collections.map((collection) => `<span class="pill">${collection}</span>`).join('') : '<span class="subtle">none</span>'}</div>
+      </section>
+      <section>
+        <strong>Cognition truth</strong>
+        <div class="subtle">
+          persistence=${sourceTruth.persistence || lastSaveSource || hydrationSource} ·
+          retrieval=${sourceTruth.retrieval || lastRetrievalTruth} ·
+          memory=${sourceTruth.memory || 'unknown'} ·
+          validation=${sourceTruth.validation || 'caravan-source-validated'}
+        </div>
       </section>
       <section class="entry-actions">
         ${editAction ? `<button type="button" class="ghost idea-edit-button" data-idea-edit-id="${record.id}">${editAction.label}</button>` : ''}
         <button type="button" class="ghost" data-idea-promote-memory="${record.id}">Promote Memory</button>
         <button type="button" class="ghost" data-idea-promote-retrieval="${record.id}">Promote Retrieval</button>
         <button type="button" class="ghost" data-idea-promote-codex="${record.id}">Prepare Codex Seed</button>
+        <button type="button" class="ghost" data-idea-promote-roadmap="${record.id}">Promote Roadmap Seed</button>
       </section>
     `;
 
@@ -509,6 +553,8 @@ function getFormPayload() {
   const title = elements.title.value.trim();
   const summary = elements.summary.value.trim();
   const tags = elements.tags.value.split(',').map((tag) => tag.trim()).filter(Boolean);
+  const collections = elements.collections.value.split(',').map((tag) => tag.trim()).filter(Boolean);
+  const relatedIdeas = elements.relatedIdeas.value.split(',').map((tag) => tag.trim()).filter(Boolean);
   const mediaTitle = elements.mediaTitle.value.trim();
   const mediaSource = elements.mediaSource.value.trim();
   const mediaNotes = elements.mediaNotes.value.trim();
@@ -526,11 +572,44 @@ function getFormPayload() {
     }]
     : [];
 
+  const relationTargetId = elements.relationTargetId.value.trim();
+  const relationType = elements.relationType.value;
+  const relations = relationTargetId
+    ? [{
+      targetId: relationTargetId,
+      relationType,
+      notes: '',
+      confidence: 'unknown',
+    }]
+    : [];
+
   return {
     title,
     summary,
     tags,
     media,
+    nodeType: elements.nodeType.value,
+    status: elements.ideaStatus.value,
+    priority: elements.priority.value,
+    collectionIds: collections,
+    relatedIdeas,
+    notes: elements.operatorNotes.value.trim(),
+    knowledge: {
+      relations,
+      collectionIds: collections,
+      relatedIdeas,
+      sourceTruth: {
+        persistence: lastSaveSource || hydrationSource,
+        retrieval: lastRetrievalTruth,
+        memory: describeMemoryStatus(),
+        validation: 'caravan-source-validated',
+      },
+      aiContextPackageMeta: {
+        packageVersion: 1,
+        readiness: 'seed-ready',
+        bounded: true,
+      },
+    },
   };
 }
 
@@ -538,6 +617,14 @@ function clearForm() {
   elements.title.value = '';
   elements.summary.value = '';
   elements.tags.value = '';
+  elements.nodeType.value = 'idea-node';
+  elements.ideaStatus.value = 'spark';
+  elements.priority.value = 'normal';
+  elements.collections.value = '';
+  elements.relatedIdeas.value = '';
+  elements.relationTargetId.value = '';
+  elements.relationType.value = 'supports';
+  elements.operatorNotes.value = '';
   elements.mediaTitle.value = '';
   elements.mediaSource.value = '';
   elements.mediaNotes.value = '';
@@ -566,6 +653,15 @@ function setEditMode(record = null) {
   elements.title.value = record.title || '';
   elements.summary.value = record.summary || '';
   elements.tags.value = Array.isArray(record.tags) ? record.tags.join(', ') : '';
+  elements.nodeType.value = record.nodeType || record.knowledge?.nodeType || 'idea-node';
+  elements.ideaStatus.value = record.status || record.knowledge?.status || 'spark';
+  elements.priority.value = record.priority || record.knowledge?.priority || 'normal';
+  elements.collections.value = Array.isArray(record.collectionIds) ? record.collectionIds.join(', ') : '';
+  elements.relatedIdeas.value = Array.isArray(record.relatedIdeas) ? record.relatedIdeas.join(', ') : '';
+  const relation = Array.isArray(record.knowledge?.relations) ? record.knowledge.relations[0] : null;
+  elements.relationType.value = relation?.relationType || 'supports';
+  elements.relationTargetId.value = relation?.targetId || '';
+  elements.operatorNotes.value = record.notes || record.knowledge?.operatorNotes || '';
   const media = Array.isArray(record.media) ? record.media[0] : null;
   elements.mediaType.value = media?.type || 'text';
   elements.mediaTitle.value = media?.title || '';
@@ -758,11 +854,24 @@ function promoteIdeaToRetrieval(ideaId = '') {
     notes: `Retrieval contribution result (${result.execution?.mode || 'unknown'}).`,
   });
   if (promoted) {
+    promoted.sourceTruth = {
+      ...(promoted.sourceTruth || promoted.knowledge?.sourceTruth || {}),
+      retrieval: result.execution?.mode === 'shared-backed' ? 'shared-backed' : (result.execution?.mode || 'local-fallback'),
+      validation: result.execution?.mode === 'shared-backed'
+        ? 'implemented-not-battle-bridge-validated'
+        : 'caravan-source-validated',
+    };
+    promoted.knowledge = {
+      ...(promoted.knowledge || {}),
+      sourceTruth: promoted.sourceTruth,
+    };
     const retained = readAll().filter((record) => record.id !== promoted.id);
     state = sanitizeIdeasState({ records: [promoted, ...retained] });
     writeAll(state.records).then(() => renderIdeas()).catch(() => null);
   }
   setContractStatus(`Retrieval contribution ${result.ingested ? 'ingested' : 'blocked'} (allowlisted=${result.allowlisted}; mode=${result.execution?.mode || 'unknown'}).`);
+  lastRetrievalTruth = tileRetrievalBridge.getSourceTruth?.() || (result.execution?.mode || 'unavailable');
+  refreshLinkStatus();
 }
 
 elements.submitRetrievalButton?.addEventListener('click', () => promoteIdeaToRetrieval());
@@ -793,6 +902,23 @@ elements.ideasList?.addEventListener('click', (event) => {
       writeAll([promoted, ...retained]).then(() => {
         renderIdeas();
         setContractStatus(`Codex seed prepared for ${promoted.id}.`);
+      }).catch(() => null);
+    }
+    return;
+  }
+  const roadmapButton = event?.target?.closest?.('[data-idea-promote-roadmap]');
+  if (roadmapButton) {
+    const ideaId = roadmapButton.getAttribute('data-idea-promote-roadmap') || '';
+    const selected = readAll().find((record) => record.id === ideaId);
+    if (!selected) return;
+    const promoted = transitionIdeaPromotionState(selected, 'roadmap', 'seeded', {
+      notes: 'Operator promoted idea into roadmap seed state.',
+    });
+    if (promoted) {
+      const retained = readAll().filter((record) => record.id !== promoted.id);
+      writeAll([promoted, ...retained]).then(() => {
+        renderIdeas();
+        setContractStatus(`Roadmap seed prepared for ${promoted.id}.`);
       }).catch(() => null);
     }
     return;
@@ -965,6 +1091,7 @@ elements.dataPortUploadInput?.addEventListener('change', async (event) => {
   hydrationSource = loaded.meta.source || 'unknown';
   hydrationCompleted = true;
   lastSaveSource = hydrationSource;
+  lastRetrievalTruth = tileRetrievalBridge.getSourceTruth?.() || 'unavailable';
   lastExecutionMode = 'execution-loop-unavailable';
   lastSaveError = '';
   logIdeas('hydration-complete', {

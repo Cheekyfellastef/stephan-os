@@ -81,6 +81,20 @@ function extractBoundedRetrieval(runtimeContext = {}, {
     .filter((entry) => entry.excerpt);
 }
 
+function deriveRetrievalSource(runtimeContext = {}, retrievalExcerpts = []) {
+  const explicit = safeString(runtimeContext.retrievalSourceTruth);
+  if (explicit) {
+    return explicit;
+  }
+  if (retrievalExcerpts.some((entry) => entry.storageMode === 'shared-backed')) {
+    return 'shared-backed';
+  }
+  if (retrievalExcerpts.length > 0) {
+    return 'local-fallback';
+  }
+  return 'unavailable';
+}
+
 export function assembleStephanosContext({
   userPrompt = '',
   runtimeContext = {},
@@ -118,10 +132,16 @@ export function assembleStephanosContext({
     selectedIdeaId: runtimeContext.selectedIdeaId || '',
   });
   const retrievalExcerpts = extractBoundedRetrieval(runtimeContext);
+  const retrievalSource = deriveRetrievalSource(runtimeContext, retrievalExcerpts);
+  const memorySource = safeString(runtimeContext.memorySourceTruth) || 'unknown';
+  const persistenceSource = safeString(runtimeContext.ideasPersistenceSource) || 'unknown';
   const ideaContextPackage = buildIdeaContextPackage(ideasState.records, {
     selectedIdeaId: runtimeContext.selectedIdeaId || ideaDigest?.selectedIdea?.id || '',
     retrievalExcerpts,
     memoryRecords: runtimeContext.memoryContext || [],
+    retrievalSource,
+    memorySource,
+    persistenceSource,
   });
 
   return {
@@ -160,6 +180,9 @@ export function assembleStephanosContext({
       ideasKnowledgeReason: ideaDigest?.diagnostics?.reason || 'none',
       ideaContextPackageIncluded: ideaContextPackage?.included === true,
       retrievalExcerptsIncluded: retrievalExcerpts.length,
+      retrievalSource,
+      memorySource,
+      persistenceSource,
     },
   };
 }
