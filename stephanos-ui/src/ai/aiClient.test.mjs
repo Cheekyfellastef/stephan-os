@@ -48,6 +48,8 @@ test('sendPrompt supports hosted cloud cognition fallback path when backend tran
   assert.match(clientSource, /if \(!hostedDispatch\.enabled\) \{\s*throw error;\s*\}/m);
   assert.match(clientSource, /hostedCloudExecutionPath:\s*\{/);
   assert.match(clientSource, /authorityLevel:\s*hostedDispatch\.authorityLevel/);
+  assert.match(clientSource, /hostedConfig\?\.enabled === true/);
+  assert.match(clientSource, /providerEnabled/);
 });
 
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {

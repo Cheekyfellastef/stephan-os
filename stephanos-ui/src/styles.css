@@ -1357,6 +1357,28 @@ pre {
   border-color: rgba(72, 145, 236, 0.45);
 }
 
+.hosted-cloud-cognition-pane .hosted-cloud-form-grid {
+  grid-template-columns: 1fr;
+}
+
+.hosted-provider-card {
+  border: 1px solid rgba(84, 162, 236, 0.24);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: rgba(3, 11, 22, 0.82);
+}
+
+.hosted-provider-card h4 {
+  margin: 0 0 0.55rem;
+}
+
+.hosted-provider-card input,
+.hosted-provider-card select,
+.hosted-cloud-form-grid input,
+.hosted-cloud-form-grid select {
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .provider-manual-address {
     gap: 0.55rem;

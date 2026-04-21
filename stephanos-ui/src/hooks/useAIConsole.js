@@ -1127,6 +1127,8 @@ export function useAIConsole() {
     providerSelectionSource,
     getActiveProviderConfigSource,
     getEffectiveProviderConfigs,
+    hostedCloudCognition,
+    setHostedCloudCognitionHealth,
     getDraftProviderConfig,
     updateDraftProviderConfig,
     ollamaConnection,
@@ -1157,6 +1159,16 @@ export function useAIConsole() {
 
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
   const runtimeConfig = useMemo(() => getApiRuntimeConfig(), [runtimeConfigKey]);
+  const hostedCloudConfigOverlay = useMemo(() => ({
+    enabled: hostedCloudCognition?.enabled === true,
+    proxyUrl: '',
+    providerProxyUrls: {
+      groq: String(hostedCloudCognition?.providers?.groq?.baseURL || '').trim(),
+      gemini: String(hostedCloudCognition?.providers?.gemini?.baseURL || '').trim(),
+    },
+    chatPath: String(hostedCloudCognition?.chatPath || '/api/ai/chat').trim() || '/api/ai/chat',
+    backendOnlySecrets: true,
+  }), [hostedCloudCognition]);
   const startupOllamaSyncAttemptedRef = useRef(false);
   const providerHealthRef = useRef(providerHealth);
   const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
@@ -1299,7 +1311,10 @@ export function useAIConsole() {
   ]);
 
   const resolveRuntimeConfig = useCallback(async () => {
-    const baseRuntimeConfig = getApiRuntimeConfig();
+    const baseRuntimeConfig = {
+      ...getApiRuntimeConfig(),
+      hostedCloudConfig: hostedCloudConfigOverlay,
+    };
     const localDesktopSession = isLoopbackHost(extractHostname(baseRuntimeConfig.frontendOrigin));
     const shouldIgnoreHomeNodeForThisSession = localDesktopSession && disableHomeNodeForLocalSession;
     const effectiveManualNode = shouldIgnoreHomeNodeForThisSession ? null : homeNodePreference;
@@ -1349,7 +1364,10 @@ export function useAIConsole() {
       setHomeNodeLastKnown(discovery.preferredNode);
     }
 
-    const nextRuntimeConfig = getApiRuntimeConfig();
+    const nextRuntimeConfig = {
+      ...getApiRuntimeConfig(),
+      hostedCloudConfig: hostedCloudConfigOverlay,
+    };
     const localDesktopBackendUrl = resolveLocalDesktopBackendBaseUrl(nextRuntimeConfig.frontendOrigin);
     const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession
       ? localDesktopBackendUrl
@@ -1395,7 +1413,7 @@ export function useAIConsole() {
       },
       discovery,
     };
-  }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus, disableHomeNodeForLocalSession]);
+  }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus, disableHomeNodeForLocalSession, hostedCloudConfigOverlay]);
 
 
   const refreshHealth = useCallback(async () => {
@@ -1408,6 +1426,17 @@ export function useAIConsole() {
       const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
       const nextProviderHealth = providerHealth.data || {};
       setProviderHealth(nextProviderHealth);
+      ['groq', 'gemini'].forEach((providerKey) => {
+        const health = nextProviderHealth?.[providerKey] || {};
+        const ok = health.ok === true;
+        setHostedCloudCognitionHealth(providerKey, {
+          status: ok ? 'healthy' : (health.detail ? 'unhealthy' : 'unknown'),
+          reason: String(health.detail || health.reason || (ok ? 'Provider reachable.' : 'No provider health data yet.')),
+          checkedAt: new Date().toISOString(),
+          lastSuccessAt: ok ? new Date().toISOString() : (hostedCloudCognition?.lastHealth?.[providerKey]?.lastSuccessAt || ''),
+          lastFailureAt: ok ? (hostedCloudCognition?.lastHealth?.[providerKey]?.lastFailureAt || '') : new Date().toISOString(),
+        });
+      });
       const finalized = finalizeRuntimeContext(hydratedRuntimeContext, nextProviderHealth, health.ok);
       if (finalized.runtimeContext.homeNode?.reachable && !isLoopbackHost(extractHostname(finalized.runtimeContext.frontendOrigin))) {
         setHomeNodeLastKnown(finalized.runtimeContext.homeNode);
@@ -1460,7 +1489,7 @@ export function useAIConsole() {
         meta: null,
       });
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth, hostedCloudCognition?.lastHealth]);
 
   useEffect(() => {
     void refreshHealth();
