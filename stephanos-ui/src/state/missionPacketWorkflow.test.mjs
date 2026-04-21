@@ -73,6 +73,25 @@ test('mission packet decisions persist through normalization and preserve no-aut
   assert.equal(restored.decisions[0].lifecycleStatus, 'awaiting-approval');
 });
 
+test('normalizeMissionPacketWorkflow preserves operator intent capture envelope', () => {
+  const normalized = normalizeMissionPacketWorkflow({
+    operatorIntentCapture: {
+      status: 'approved',
+      approved: true,
+      intentLabel: 'repair',
+      missionType: 'repair',
+      missionTitle: 'Hosted route recovery',
+      missionClass: 'runtime-repair',
+      executionMode: 'hosted-safe',
+      packetSummary: 'Operator-approved hosted-safe repair packet.',
+    },
+  });
+
+  assert.equal(normalized.operatorIntentCapture.approved, true);
+  assert.equal(normalized.operatorIntentCapture.intentLabel, 'repair');
+  assert.equal(normalized.operatorIntentCapture.missionTitle, 'Hosted route recovery');
+});
+
 test('promotion adds packet to proposal and roadmap queues only after accept decision', () => {
   const packet = normalizeMissionPacketTruth({
     proposal_packet_active: true,

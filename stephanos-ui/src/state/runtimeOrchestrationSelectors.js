@@ -286,6 +286,21 @@ export function deriveRuntimeOrchestrationSelectors({
         ? 'Hosted surface detected: planning, decomposition, and continuity remain available while execution defers to Battle Bridge.'
         : 'No confirmed local authority. Planning and resumable prep remain available.',
   };
+  const selectedProvider = asText(finalRouteTruth?.selectedProvider, 'unknown');
+  const executableProvider = asText(finalRouteTruth?.executedProvider, 'unknown');
+  const selectedProviderConfigured = !['', 'unknown', 'none', 'n/a'].includes(selectedProvider.toLowerCase());
+  const executableProviderAvailable = !['', 'unknown', 'none', 'n/a'].includes(executableProvider.toLowerCase());
+  const providerExecutionSummary = selectedProviderConfigured && !executableProviderAvailable
+    ? `${selectedProvider} selected, but no executable route exists.`
+    : selectedProviderConfigured && executableProviderAvailable
+      ? `${selectedProvider} selected and ${executableProvider} executable.`
+      : 'Provider choice pending explicit configuration.';
+  const operatorActionLadder = [
+    blockedByIntent ? '1) establish intent / create mission packet' : '1) intent established / mission packet can be refined',
+    '2) optionally queue hosted-safe planning tasks',
+    blockedByRoute ? '3) retry remembered bridge validation' : '3) route currently reachable; monitor bridge health',
+    blockedByRoute ? '4) defer execution to Battle Bridge if route remains unavailable' : '4) execute when operator approval is complete',
+  ];
   const commandReadiness = deriveCommandReadiness({
     missionPhase,
     missionBlocked,
@@ -341,6 +356,8 @@ export function deriveRuntimeOrchestrationSelectors({
     },
     missionResumability,
     missionConsoleMode,
+    providerExecutionSummary,
+    operatorActionLadder,
     promptBuilderSnapshot: {
       activeMissionSummary: asText(missionResumability?.missionSummary, 'No active mission.'),
       resumableMissionCount: Number.isFinite(Number(missionResumability?.resumableMissionCount)) ? Number(missionResumability.resumableMissionCount) : 0,

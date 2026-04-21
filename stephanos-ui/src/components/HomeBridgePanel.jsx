@@ -115,6 +115,19 @@ export default function HomeBridgePanel() {
     transportTruth.bridgeMemoryPromotedToRouteCandidate,
     transportTruth.bridgeMemoryPromotionReason,
   ]);
+  const routeRecoveryRecommendedAction = useMemo(() => {
+    if (!transportTruth.bridgeMemoryPresent) return 'No remembered bridge found. Add bridge target and save.';
+    if (transportTruth.bridgeMemoryPromotedToRouteCandidate) return 'Remembered bridge validated and promoted. Continue with mission intent capture.';
+    if (transportTruth.bridgeAutoRevalidationState === 'backoff') return 'Backoff active. Retry validation now, or edit bridge target/transport before retrying.';
+    if (reconciliationState === 'remembered-validation-failed') return 'Fix bridge target details, then re-probe and retry validation.';
+    if (reconciliationState === 'remembered-unreachable') return 'Re-probe remembered bridge; if still unreachable, switch transport or edit target.';
+    return 'Probe remembered bridge and retry validation to recover executable route.';
+  }, [
+    reconciliationState,
+    transportTruth.bridgeAutoRevalidationState,
+    transportTruth.bridgeMemoryPresent,
+    transportTruth.bridgeMemoryPromotedToRouteCandidate,
+  ]);
 
   useEffect(() => {
     const activeUrl = selectedTransport === 'tailscale'
@@ -369,8 +382,17 @@ export default function HomeBridgePanel() {
       <div className="home-bridge-actions" data-no-drag>
         <button type="button" className="ghost-button" onClick={selectedTransport === 'tailscale' ? handleSaveTailscale : handleSaveManual}>{saveInFlight ? 'Saving…' : 'Save'}</button>
         <button type="button" className="ghost-button" onClick={handleValidate}>Validate</button>
-        <button type="button" className="ghost-button" onClick={handleProbe}>Test Reachability</button>
-        <button type="button" className="ghost-button" onClick={() => revalidateRememberedBridge('panel-retry')} disabled={!transportTruth.bridgeMemoryPresent}>Retry Remembered Validation</button>
+        <button type="button" className="ghost-button" onClick={handleProbe}>Re-probe Remembered Bridge</button>
+        <button type="button" className="ghost-button" onClick={() => revalidateRememberedBridge('panel-retry')} disabled={!transportTruth.bridgeMemoryPresent}>Retry Bridge Validation Now</button>
+        <button type="button" className="ghost-button" onClick={() => setBridgeTransportSelection(selectedTransport === 'tailscale' ? 'manual' : 'tailscale')}>Switch Transport</button>
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={!transportTruth.bridgeMemoryValidatedOnThisSurface || transportTruth.bridgeMemoryPromotedToRouteCandidate}
+          onClick={() => revalidateRememberedBridge('operator-promote-validated')}
+        >
+          Promote Validated Bridge
+        </button>
         <button type="button" className="ghost-button" onClick={handleClear}>Clear</button>
       </div>
 
@@ -386,6 +408,7 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Transport source: <strong>{transportTruth.source}</strong></p>
       <p className="home-bridge-detail">Saved URL: <strong>{selectedTransport === 'tailscale' ? (tailscale.backendUrl || 'none') : (homeBridgeUrl || 'none')}</strong></p>
       <p className="home-bridge-detail">Remembered status: <strong>{rememberedBridgeStatusLabel}</strong></p>
+      <p className="home-bridge-detail">Route recovery recommended action: <strong>{routeRecoveryRecommendedAction}</strong></p>
       <p className="home-bridge-detail">Remembered bridge: <strong>{transportTruth.bridgeMemoryPresent ? transportTruth.bridgeMemoryTransport : 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered URL: <strong>{transportTruth.bridgeMemoryUrl || 'none'}</strong></p>
       <p className="home-bridge-detail">Remembered at: <strong>{formatTime(transportTruth.bridgeMemoryRememberedAt || bridgeMemory?.rememberedAt)}</strong></p>
@@ -398,6 +421,10 @@ export default function HomeBridgePanel() {
       <p className="home-bridge-detail">Reconciliation reason: <strong>{transportTruth.bridgeMemoryReconciliationReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation state: <strong>{transportTruth.bridgeAutoRevalidationState || 'idle'}</strong></p>
       <p className="home-bridge-detail">Auto revalidation reason: <strong>{transportTruth.bridgeAutoRevalidationReason || 'n/a'}</strong></p>
+      <p className="home-bridge-detail">Backoff active: <strong>{transportTruth.bridgeAutoRevalidationState === 'backoff' ? 'yes' : 'no'}</strong></p>
+      <p className="home-bridge-detail">Retry eligible now: <strong>{transportTruth.bridgeAutoRevalidationState === 'probing' ? 'no' : 'yes'}</strong></p>
+      <p className="home-bridge-detail">Last probe target: <strong>{bridgeAutoRevalidation?.executionTarget || transportTruth.bridgeMemoryUrl || 'none'}</strong></p>
+      <p className="home-bridge-detail">Probe failure reason: <strong>{bridgeAutoRevalidation?.executionReason || transportTruth.bridgeMemoryReconciliationReason || 'n/a'}</strong></p>
       <p className="home-bridge-detail">Auto validation attempted: <strong>{transportTruth.bridgeMemoryAutoValidationAttempted ? 'yes' : 'no'}</strong></p>
       <p className="home-bridge-detail">Validated on this surface: <strong>{transportTruth.bridgeMemoryValidatedOnThisSurface ? 'yes' : 'no'}</strong></p>
       <p className="home-bridge-detail">Reachable on this surface: <strong>{transportTruth.bridgeMemoryReachableOnThisSurface ? 'yes' : 'no'}</strong></p>

@@ -193,6 +193,18 @@ function normalizeCodexHandoffEntry(entry = {}) {
 export function createDefaultMissionPacketWorkflow() {
   return {
     schemaVersion: MISSION_PACKET_WORKFLOW_SCHEMA_VERSION,
+    operatorIntentCapture: {
+      status: 'idle',
+      approved: false,
+      intentLabel: '',
+      missionType: '',
+      missionTitle: '',
+      missionClass: '',
+      executionMode: '',
+      packetSummary: '',
+      capturedAt: '',
+      approvedAt: '',
+    },
     decisions: [],
     proposalQueue: [],
     roadmapQueue: [],
@@ -203,8 +215,23 @@ export function createDefaultMissionPacketWorkflow() {
 
 export function normalizeMissionPacketWorkflow(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
+  const operatorIntentCapture = source.operatorIntentCapture && typeof source.operatorIntentCapture === 'object'
+    ? source.operatorIntentCapture
+    : {};
   return {
     schemaVersion: MISSION_PACKET_WORKFLOW_SCHEMA_VERSION,
+    operatorIntentCapture: {
+      status: safeText(operatorIntentCapture.status, 'idle'),
+      approved: operatorIntentCapture.approved === true,
+      intentLabel: safeText(operatorIntentCapture.intentLabel),
+      missionType: safeText(operatorIntentCapture.missionType),
+      missionTitle: safeText(operatorIntentCapture.missionTitle),
+      missionClass: safeText(operatorIntentCapture.missionClass),
+      executionMode: safeText(operatorIntentCapture.executionMode),
+      packetSummary: safeText(operatorIntentCapture.packetSummary),
+      capturedAt: safeText(operatorIntentCapture.capturedAt),
+      approvedAt: safeText(operatorIntentCapture.approvedAt),
+    },
     decisions: Array.isArray(source.decisions)
       ? source.decisions.map(normalizeDecisionEntry).filter((entry) => entry.packetKey).slice(0, MAX_DECISIONS)
       : [],

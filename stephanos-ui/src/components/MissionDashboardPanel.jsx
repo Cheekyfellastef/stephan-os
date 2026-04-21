@@ -171,8 +171,15 @@ export default function MissionDashboardPanel({
       resumableWork: Array.isArray(resumeView.resumableQueue) ? resumeView.resumableQueue : [],
       localAuthorityAvailable,
       hostedSession,
+      routeState: finalRouteTruth?.routeKind || 'unavailable',
+      executionAvailability: finalRouteTruth?.executedProvider && finalRouteTruth?.executedProvider !== 'unknown' ? 'available' : 'deferred',
+      canonicalIntentState: orchestrationSelectors?.currentMissionState?.intentSource || 'unknown',
+      missionPacketState: orchestrationSelectors?.currentMissionState?.missionPhase || 'proposed',
+      blockedReason: orchestrationSelectors?.blockageExplanation || 'none',
+      providerSummary: orchestrationSelectors?.providerExecutionSummary || 'Provider status unavailable.',
+      actionLadder: Array.isArray(orchestrationSelectors?.operatorActionLadder) ? orchestrationSelectors.operatorActionLadder : [],
     };
-  }, [finalAgentView, finalRouteTruth?.backendReachable, runtimeStatus?.runtimeContext?.sessionKind]);
+  }, [finalAgentView, finalRouteTruth?.backendReachable, finalRouteTruth?.executedProvider, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary, runtimeStatus?.runtimeContext?.sessionKind]);
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
@@ -358,10 +365,24 @@ export default function MissionDashboardPanel({
           <li>Active goals: {liveProjection.activeGoals.length}</li>
           <li>Open tasks: {liveProjection.openTasks}</li>
           <li>Blocked items: {liveProjection.blockedItems.length}</li>
+          <li>Route state: {liveProjection.routeState}</li>
+          <li>Execution availability: {liveProjection.executionAvailability}</li>
+          <li>Canonical intent: {liveProjection.canonicalIntentState}</li>
+          <li>Mission packet state: {liveProjection.missionPacketState}</li>
+          <li>Blockage reason: {liveProjection.blockedReason}</li>
+          <li>Provider truth: {liveProjection.providerSummary}</li>
           <li>Pending approvals: {liveProjection.pendingApprovals}</li>
           <li>Resumable work: {liveProjection.resumableWork.length}</li>
           <li>Next recommended step: {orchestrationSelectors?.nextRecommendedAction || 'Review mission packet and choose explicit operator decision.'}</li>
         </ul>
+        {liveProjection.actionLadder.length > 0 ? (
+          <>
+            <h4>Next-step ladder</h4>
+            <ol className="compact-list">
+              {liveProjection.actionLadder.map((step) => <li key={step}>{step}</li>)}
+            </ol>
+          </>
+        ) : null}
       </section>
 
       <label className="mission-filter-toggle">

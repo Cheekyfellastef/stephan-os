@@ -290,20 +290,36 @@ export function buildCanonicalMemoryContext({
 
 export function buildCanonicalCurrentIntent({
   intent = {},
+  operatorIntentCapture = {},
   missionPacket = {},
   proposal = {},
   execution = {},
 } = {}) {
   const explicitIntent = intent?.intentDetected === true;
+  const capturedIntent = operatorIntentCapture && typeof operatorIntentCapture === 'object'
+    ? operatorIntentCapture
+    : {};
+  const capturedApproved = capturedIntent.approved === true;
+  const capturedLabel = asText(capturedIntent.intentLabel || capturedIntent.missionType);
   const inferredIntent = !explicitIntent && asText(intent?.intentType) && asText(intent?.intentType) !== 'unknown';
 
   return {
     intentTruthVersion: 'runtime-current-intent.v1',
     operatorIntent: {
-      label: asText(intent?.intentType, 'unknown'),
-      source: explicitIntent ? 'explicit' : (inferredIntent ? 'inferred' : 'unknown'),
-      confidence: Number.isFinite(Number(intent?.confidence)) ? Number(intent.confidence) : 0,
-      reason: asText(intent?.reason, explicitIntent ? 'explicit operator request observed' : 'operator intent not yet established'),
+      label: capturedApproved
+        ? asText(capturedLabel, 'unknown')
+        : asText(intent?.intentType, 'unknown'),
+      source: capturedApproved
+        ? 'explicit'
+        : explicitIntent
+          ? 'explicit'
+          : (inferredIntent ? 'inferred' : 'unknown'),
+      confidence: capturedApproved
+        ? 1
+        : (Number.isFinite(Number(intent?.confidence)) ? Number(intent.confidence) : 0),
+      reason: capturedApproved
+        ? asText(capturedIntent.packetSummary, 'Operator approved canonical intent via Intent Engine.')
+        : asText(intent?.reason, explicitIntent ? 'explicit operator request observed' : 'operator intent not yet established'),
     },
     missionPacketState: {
       status: normalizeLifecycle(missionPacket?.status, missionPacket?.active ? 'awaiting-approval' : 'proposed'),
@@ -329,7 +345,11 @@ export function buildCanonicalMissionPacket({
   missionPacketTruth = {},
   missionPacketWorkflow = {},
   currentIntent = {},
+  operatorIntentCapture = {},
 } = {}) {
+  const capturedIntent = operatorIntentCapture && typeof operatorIntentCapture === 'object'
+    ? operatorIntentCapture
+    : {};
   const latestDecision = Array.isArray(missionPacketWorkflow?.decisions) ? missionPacketWorkflow.decisions[0] : null;
   const latestHandoff = Array.isArray(missionPacketWorkflow?.codexHandoffs) ? missionPacketWorkflow.codexHandoffs[0] : null;
   const decision = asText(latestDecision?.decision, 'pending-review');
@@ -352,8 +372,8 @@ export function buildCanonicalMissionPacket({
   return {
     missionPacketTruthVersion: 'runtime-mission-packet.v1',
     packetKey: buildMissionPacketKey(missionPacketTruth),
-    missionTitle: asText(missionPacketTruth?.moveTitle, 'not yet established'),
-    missionSummary: asText(missionPacketTruth?.rationale, 'not yet established'),
+    missionTitle: asText(missionPacketTruth?.moveTitle || capturedIntent?.missionTitle, 'not yet established'),
+    missionSummary: asText(missionPacketTruth?.rationale || capturedIntent?.packetSummary, 'not yet established'),
     objective: asText(currentIntent?.operatorIntent?.label, 'not yet established'),
     currentPhase: status,
     blockers: asList(missionPacketTruth?.blockers, 5),

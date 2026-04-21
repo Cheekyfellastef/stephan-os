@@ -28,6 +28,21 @@ test('canonical current intent labels inferred intent truthfully', () => {
   assert.equal(intent.executionState.status, 'not-executing');
 });
 
+test('canonical current intent honors approved intent capture as explicit canonical truth', () => {
+  const intent = buildCanonicalCurrentIntent({
+    intent: { intentDetected: false, intentType: 'unknown', confidence: 0, reason: 'none' },
+    operatorIntentCapture: {
+      approved: true,
+      intentLabel: 'repair',
+      packetSummary: 'Operator-approved hosted-safe repair mission.',
+    },
+  });
+
+  assert.equal(intent.operatorIntent.label, 'repair');
+  assert.equal(intent.operatorIntent.source, 'explicit');
+  assert.equal(intent.operatorIntent.confidence, 1);
+});
+
 test('canonical mission packet keeps lifecycle separate from execution truth', () => {
   const packet = buildCanonicalMissionPacket({
     missionPacketTruth: {
