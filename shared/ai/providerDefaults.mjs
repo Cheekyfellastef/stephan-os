@@ -166,19 +166,10 @@ export const PROVIDER_DEFINITIONS = {
   },
 };
 
-function resolveProviderDefaultModel(providerKey, fallbackModel) {
-  try {
-    const model = PROVIDER_DEFINITIONS?.[providerKey]?.defaults?.model;
-    return typeof model === 'string' && model ? model : fallbackModel;
-  } catch (error) {
-    if (error instanceof ReferenceError) {
-      return fallbackModel;
-    }
-    throw error;
-  }
-}
-
 export function createDefaultHostedCloudCognitionSettings() {
+  const groqModel = PROVIDER_DEFINITIONS.groq?.defaults?.model || DEFAULT_PROVIDER_MODELS.groq;
+  const geminiModel = PROVIDER_DEFINITIONS.gemini?.defaults?.model || DEFAULT_PROVIDER_MODELS.gemini;
+
   return {
     enabled: false,
     selectedProvider: 'groq',
@@ -187,12 +178,12 @@ export function createDefaultHostedCloudCognitionSettings() {
       groq: {
         enabled: true,
         baseURL: '',
-        model: resolveProviderDefaultModel('groq', DEFAULT_PROVIDER_MODELS.groq),
+        model: groqModel,
       },
       gemini: {
         enabled: true,
         baseURL: '',
-        model: resolveProviderDefaultModel('gemini', DEFAULT_PROVIDER_MODELS.gemini),
+        model: geminiModel,
       },
     },
     lastHealth: {
