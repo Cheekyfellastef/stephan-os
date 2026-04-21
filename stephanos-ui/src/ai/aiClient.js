@@ -9,6 +9,8 @@ import {
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 
+const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
+
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
 }
@@ -64,7 +66,199 @@ function resolveHostedCloudDispatch({
     secretPathKind: String(routeDecision?.hostedCloudSecretPathKind || 'none'),
     authorityLevel: String(routeDecision?.hostedCloudAuthorityLevel || 'none'),
     providerPath: String(routeDecision?.hostedCloudExecutionProvider || 'none'),
+    executionDeferred: routeDecision?.executionDeferred === true,
+    battleBridgeAuthorityAvailable: routeDecision?.battleBridgeAuthorityAvailable === true,
   };
+}
+
+function shouldPreferHostedDispatch(hostedDispatch = {}, routeDecision = {}) {
+  if (!hostedDispatch?.enabled) return false;
+  if (routeDecision?.battleBridgeAuthorityAvailable === false) return true;
+  if (hostedDispatch?.battleBridgeAuthorityAvailable === false) return true;
+  if (routeDecision?.executionDeferred === true || hostedDispatch?.executionDeferred === true) return true;
+  const selectedAnswerMode = String(routeDecision?.selectedAnswerMode || '').trim().toLowerCase();
+  return selectedAnswerMode === 'cloud-basic' || selectedAnswerMode === 'route-unavailable';
+}
+
+function normalizeHostedCloudResponseData(data = {}, fallbackProvider = '') {
+  const source = data && typeof data === 'object' ? data : {};
+  const nestedData = source?.data && typeof source.data === 'object' ? source.data : {};
+  const textOutput = String(
+    source.output_text
+    || nestedData.output_text
+    || source.output
+    || nestedData.output
+    || source.response
+    || nestedData.response
+    || '',
+  );
+  const provider = String(source.provider || nestedData.provider || fallbackProvider || '').trim();
+  const model = String(source.model || nestedData.model || '').trim();
+  const executionMetadata = {
+    ...((nestedData.execution_metadata && typeof nestedData.execution_metadata === 'object') ? nestedData.execution_metadata : {}),
+    ...((source.execution_metadata && typeof source.execution_metadata === 'object') ? source.execution_metadata : {}),
+    actual_provider_used: source.execution_metadata?.actual_provider_used
+      || nestedData.execution_metadata?.actual_provider_used
+      || provider
+      || `${fallbackProvider}-hosted-cloud`,
+    selected_provider: source.execution_metadata?.selected_provider
+      || nestedData.execution_metadata?.selected_provider
+      || fallbackProvider,
+    execution_selected_provider: source.execution_metadata?.execution_selected_provider
+      || nestedData.execution_metadata?.execution_selected_provider
+      || `${fallbackProvider}-hosted-cloud`,
+    authority_level: source.execution_metadata?.authority_level
+      || nestedData.execution_metadata?.authority_level
+      || 'cloud-cognition-only',
+    execution_deferred: true,
+  };
+
+  return {
+    ...source,
+    ok: source.ok !== false,
+    data: {
+      ...nestedData,
+      output_text: textOutput || nestedData.output_text || '',
+      provider: provider || nestedData.provider || `${fallbackProvider}-hosted-cloud`,
+      actual_provider_used: nestedData.actual_provider_used || source.actual_provider_used || `${fallbackProvider}-hosted-cloud`,
+      provider_model: nestedData.provider_model || model || null,
+      model_used: nestedData.model_used || model || null,
+      execution_metadata: executionMetadata,
+    },
+  };
+}
+
+function buildHostedCloudPayload({
+  payload,
+  hostedDispatch,
+  requestedProvider,
+  routeDecision,
+}) {
+  return {
+    contractVersion: HOSTED_COGNITION_CONTRACT_VERSION,
+    requestKind: 'hosted-cloud-cognition-chat',
+    prompt: payload.prompt,
+    provider: hostedDispatch.provider || requestedProvider,
+    selectedProvider: routeDecision?.selectedProvider || requestedProvider,
+    executableProvider: hostedDispatch.providerPath || `${requestedProvider}-hosted-cloud`,
+    authorityLevel: hostedDispatch.authorityLevel || 'cloud-cognition-only',
+    executionDeferred: true,
+    model: payload.providerConfigs?.[hostedDispatch.provider || requestedProvider]?.model
+      || payload.providerConfig?.model
+      || '',
+    routeMode: payload.routeMode,
+    continuityMode: payload.continuityMode,
+    runtimeContext: {
+      ...(payload.runtimeContext || {}),
+      hostedCloudExecutionPath: {
+        active: true,
+        secretPathKind: hostedDispatch.secretPathKind,
+        authorityLevel: hostedDispatch.authorityLevel,
+        providerPath: hostedDispatch.providerPath,
+        battleBridgeAuthorityAvailable: false,
+      },
+    },
+    contextAssemblyMetadata: payload.contextAssemblyMetadata || {},
+    continuityContext: payload.continuityContext || null,
+    freshnessContext: payload.freshnessContext || null,
+    routeDecision: payload.routeDecision || routeDecision || null,
+  };
+}
+
+async function requestHostedCloudChat({ hostedDispatch, hostedPayload, runtimeContext, timeoutPolicy }) {
+  const hostedRuntimeContext = {
+    ...runtimeContext,
+    baseUrl: hostedDispatch.targetBaseUrl,
+  };
+  const hostedResult = await requestJson(hostedDispatch.chatPath, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(hostedPayload),
+  }, hostedRuntimeContext, timeoutPolicy);
+  return {
+    ...hostedResult,
+    data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
+  };
+}
+
+async function probeHostedProviderHealth({
+  providerKey,
+  hostedCloudConfig,
+  providerConfigs,
+  runtimeConfig,
+  timeoutPolicy,
+}) {
+  const provider = String(providerKey || '').trim().toLowerCase();
+  const providerConfig = hostedCloudConfig?.providers?.[provider] || {};
+  const enabled = hostedCloudConfig?.enabled === true && providerConfig?.enabled !== false;
+  const baseUrl = String(providerConfig?.baseURL || hostedCloudConfig?.providerProxyUrls?.[provider] || hostedCloudConfig?.proxyUrl || '').trim();
+  const model = String(providerConfig?.model || providerConfigs?.[provider]?.model || '').trim();
+  const chatPath = String(hostedCloudConfig?.chatPath || '/api/ai/chat').trim() || '/api/ai/chat';
+  const checkedAt = new Date().toISOString();
+  if (!enabled || !baseUrl) {
+    return {
+      ok: false,
+      status: 0,
+      detail: enabled ? 'Hosted Worker base URL is not configured.' : 'Hosted cognition is disabled for this provider.',
+      reachable: false,
+      transportReachable: false,
+      executableNow: false,
+      authorityLevel: 'cloud-cognition-only',
+      executionPath: `${provider}-hosted-cloud`,
+      reason: enabled ? 'missing-worker-base-url' : 'provider-disabled',
+      checkedAt,
+      model,
+    };
+  }
+
+  const hostedRuntimeContext = { ...runtimeConfig, baseUrl };
+  const probePayload = {
+    contractVersion: HOSTED_COGNITION_CONTRACT_VERSION,
+    requestKind: 'hosted-cloud-cognition-health-probe',
+    provider,
+    model,
+    authorityLevel: 'cloud-cognition-only',
+  };
+
+  try {
+    const result = await requestJson(chatPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Stephanos-Probe': 'health' },
+      body: JSON.stringify(probePayload),
+    }, hostedRuntimeContext, timeoutPolicy);
+    const responseData = normalizeHostedCloudResponseData(result.data, provider);
+    const reachable = result.ok;
+    return {
+      ok: reachable,
+      status: result.status,
+      detail: reachable
+        ? 'Hosted Worker reached via chat-path probe.'
+        : (responseData?.error || `Hosted Worker returned status ${result.status}.`),
+      reachable,
+      transportReachable: reachable,
+      executableNow: reachable,
+      authorityLevel: 'cloud-cognition-only',
+      executionPath: `${provider}-hosted-cloud`,
+      reason: reachable ? 'probe-ok' : 'probe-failed',
+      checkedAt,
+      model: model || responseData?.data?.model_used || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      detail: error?.message || 'Hosted Worker probe request failed.',
+      reachable: false,
+      transportReachable: false,
+      executableNow: false,
+      authorityLevel: 'cloud-cognition-only',
+      executionPath: `${provider}-hosted-cloud`,
+      reason: error?.code || 'probe-transport-error',
+      checkedAt,
+      model,
+      errorCode: error?.code || '',
+    };
+  }
 }
 
 export function resolveTimeoutExecutionTruth({
@@ -258,6 +452,33 @@ export async function sendPrompt({
       : {}),
   };
 
+  const hostedDispatch = resolveHostedCloudDispatch({
+    routeDecision,
+    runtimeConfig: runtimeContext,
+    requestedProvider: provider,
+  });
+  const hostedPayload = buildHostedCloudPayload({
+    payload,
+    hostedDispatch,
+    requestedProvider: provider,
+    routeDecision,
+  });
+  if (shouldPreferHostedDispatch(hostedDispatch, routeDecision)) {
+    const hostedResult = await requestHostedCloudChat({
+      hostedDispatch,
+      hostedPayload,
+      runtimeContext,
+      timeoutPolicy: timeoutPolicyWithExecution,
+    });
+    return {
+      ok: hostedResult.ok,
+      transportError: null,
+      data: normalizeResponse(hostedResult.data),
+      requestPayload: payload,
+      status: hostedResult.status,
+    };
+  }
+
   console.debug('[Stephanos UI] Dispatching /api/ai/chat request', {
     requestedProvider: payload.provider,
     fallbackEnabled: payload.fallbackEnabled,
@@ -272,36 +493,15 @@ export async function sendPrompt({
       body: JSON.stringify(payload),
     }, runtimeContext, timeoutPolicyWithExecution);
   } catch (error) {
-    const hostedDispatch = resolveHostedCloudDispatch({
-      routeDecision,
-      runtimeConfig: runtimeContext,
-      requestedProvider: provider,
-    });
     if (!hostedDispatch.enabled) {
       throw error;
     }
-    const hostedRuntimeContext = {
-      ...runtimeContext,
-      baseUrl: hostedDispatch.targetBaseUrl,
-    };
-    const hostedPayload = {
-      ...payload,
-      runtimeContext: {
-        ...payload.runtimeContext,
-        hostedCloudExecutionPath: {
-          active: true,
-          secretPathKind: hostedDispatch.secretPathKind,
-          authorityLevel: hostedDispatch.authorityLevel,
-          providerPath: hostedDispatch.providerPath,
-          battleBridgeAuthorityAvailable: false,
-        },
-      },
-    };
-    result = await requestJson(hostedDispatch.chatPath, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(hostedPayload),
-    }, hostedRuntimeContext, timeoutPolicyWithExecution);
+    result = await requestHostedCloudChat({
+      hostedDispatch,
+      hostedPayload,
+      runtimeContext,
+      timeoutPolicy: timeoutPolicyWithExecution,
+    });
   }
 
   return {
@@ -326,14 +526,48 @@ export async function getProviderHealth(payload, runtimeConfig = getApiRuntimeCo
     providerConfigs: safePayload.providerConfigs,
     requestedModel,
   });
-  const result = await requestJson('/api/ai/providers/health', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(safePayload),
-  }, runtimeConfig, timeoutPolicy);
+  try {
+    const result = await requestJson('/api/ai/providers/health', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(safePayload),
+    }, runtimeConfig, timeoutPolicy);
+    return { ok: result.ok, status: result.status, data: result.data?.data || {} };
+  } catch (error) {
+    const hostedCloudConfig = runtimeConfig?.hostedCloudConfig || {};
+    if (hostedCloudConfig?.enabled !== true) {
+      throw error;
+    }
 
-  return { ok: result.ok, status: result.status, data: result.data?.data || {} };
+    const [groqHealth, geminiHealth] = await Promise.all([
+      probeHostedProviderHealth({
+        providerKey: 'groq',
+        hostedCloudConfig,
+        providerConfigs: safePayload.providerConfigs,
+        runtimeConfig,
+        timeoutPolicy,
+      }),
+      probeHostedProviderHealth({
+        providerKey: 'gemini',
+        hostedCloudConfig,
+        providerConfigs: safePayload.providerConfigs,
+        runtimeConfig,
+        timeoutPolicy,
+      }),
+    ]);
+
+    return {
+      ok: groqHealth.ok || geminiHealth.ok,
+      status: 207,
+      data: {
+        groq: groqHealth,
+        gemini: geminiHealth,
+      },
+    };
+  }
 }
+
+export { normalizeHostedCloudResponseData, shouldPreferHostedDispatch, buildHostedCloudPayload };
 
 export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson('/api/health', {}, runtimeConfig);
