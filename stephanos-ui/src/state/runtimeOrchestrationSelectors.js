@@ -12,6 +12,11 @@ function asList(value, limit = 4) {
     .slice(0, limit);
 }
 
+function isKnownValue(value) {
+  const normalized = asText(value).toLowerCase();
+  return normalized.length > 0 && !['unknown', 'none', 'n/a', 'unavailable', 'pending'].includes(normalized);
+}
+
 function explainBuildAssistState(state, context = {}) {
   const nextAction = asText(context.nextRecommendedAction, 'Wait for explicit operator guidance.');
   const blockedReason = asText(context.blockageExplanation, 'No explicit blocker recorded.');
@@ -271,23 +276,64 @@ export function deriveRuntimeOrchestrationSelectors({
   const sessionKind = asText(finalRouteTruth?.sessionKind, 'local-dev');
   const hostedSession = sessionKind === 'hosted-web' || sessionKind === 'hosted' || sessionKind === 'hosted_web';
   const localAuthorityAvailable = hostedSession === false && finalRouteTruth?.backendReachable === true;
-  const researchRouteAvailable = finalRouteTruth?.routeUsable !== false && finalRouteTruth?.selectedRouteKind !== 'unavailable';
+  const routeKind = asText(finalRouteTruth?.routeKind, 'unavailable');
+  const selectedProvider = asText(finalRouteTruth?.selectedProvider, 'unknown');
+  const executableProvider = asText(finalRouteTruth?.executedProvider, 'unknown');
+  const cloudCognitionAvailable = routeKind === 'cloud' && (finalRouteTruth?.routeUsable !== false || isKnownValue(executableProvider) || isKnownValue(selectedProvider));
+  const hostedSafePlanningAvailable = true;
+  const intentCaptureAvailable = true;
+  const researchRouteAvailable = finalRouteTruth?.routeUsable !== false && routeKind !== 'unavailable';
   const continuityAvailable = continuityStrength !== 'unknown';
+  const executionAvailable = localAuthorityAvailable;
+  const routeRecoveryNeeded = localAuthorityAvailable === false;
+  const executionDeferred = !executionAvailable;
+  const capabilityMode = localAuthorityAvailable
+    ? 'full-local-authority'
+    : cloudCognitionAvailable
+      ? 'hosted-safe-cloud-cognition'
+      : hostedSafePlanningAvailable
+        ? 'planning-only-degraded'
+        : routeRecoveryNeeded
+          ? 'recovery-needed'
+          : 'execution-deferred';
+  const operatorSummary = localAuthorityAvailable
+    ? 'Local authority available; execution, planning, and continuity are online.'
+    : cloudCognitionAvailable
+      ? 'Battle Bridge unavailable; hosted-safe cloud cognition remains available. Execution deferred; planning and mission capture available.'
+      : hostedSafePlanningAvailable
+        ? 'Route recovery needed for local authority, but hosted orchestration can continue.'
+        : 'Recovery needed. Capture intent and continuity while route truth is restored.';
+
+  const capabilityPosture = {
+    mode: capabilityMode,
+    localAuthorityAvailable,
+    hostedSafePlanningAvailable,
+    cloudCognitionAvailable,
+    executionAvailable,
+    executionDeferred,
+    routeRecoveryNeeded,
+    intentCaptureAvailable,
+    researchAvailable: Boolean(researchRouteAvailable),
+    continuityResumeAvailable: continuityAvailable,
+    deferredDomains: executionDeferred ? ['local-execution'] : [],
+    operatorSummary,
+  };
+
   const missionConsoleMode = {
     posture: localAuthorityAvailable ? 'battle-bridge-mode' : hostedSession ? 'hosted-safe-orchestration-mode' : 'planning-only-mode',
     localAuthorityAvailable,
-    executionDeferredToBattleBridge: !localAuthorityAvailable,
-    hostedSafePlanningAvailable: true,
+    executionDeferredToBattleBridge: executionDeferred,
+    hostedSafePlanningAvailable,
     hostedResearchAvailable: Boolean(researchRouteAvailable),
     continuityAvailable,
     reason: localAuthorityAvailable
       ? 'Local authority path is reachable; execution-capable mission actions are available.'
-      : hostedSession
-        ? 'Hosted surface detected: planning, decomposition, and continuity remain available while execution defers to Battle Bridge.'
-        : 'No confirmed local authority. Planning and resumable prep remain available.',
+      : cloudCognitionAvailable
+        ? 'Hosted-safe cloud cognition remains online; planning and intent capture continue while execution defers to Battle Bridge.'
+        : hostedSession
+          ? 'Hosted surface detected: planning, decomposition, and continuity remain available while execution defers to Battle Bridge.'
+          : 'No confirmed local authority. Planning and resumable prep remain available.',
   };
-  const selectedProvider = asText(finalRouteTruth?.selectedProvider, 'unknown');
-  const executableProvider = asText(finalRouteTruth?.executedProvider, 'unknown');
   const selectedProviderConfigured = !['', 'unknown', 'none', 'n/a'].includes(selectedProvider.toLowerCase());
   const executableProviderAvailable = !['', 'unknown', 'none', 'n/a'].includes(executableProvider.toLowerCase());
   const providerExecutionSummary = selectedProviderConfigured && !executableProviderAvailable
@@ -355,6 +401,7 @@ export function deriveRuntimeOrchestrationSelectors({
       continuityStrength,
     },
     missionResumability,
+    capabilityPosture,
     missionConsoleMode,
     providerExecutionSummary,
     operatorActionLadder,

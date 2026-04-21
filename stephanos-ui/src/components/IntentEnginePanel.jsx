@@ -79,9 +79,12 @@ export default function IntentEnginePanel({
     selectors: orchestrationSelectors,
   }), [canonicalMissionPacket, orchestrationSelectors]);
 
-  const hostedSession = runtimeStatus?.runtimeContext?.sessionKind === 'hosted-web';
-  const localAuthorityAvailable = finalRouteTruth?.backendReachable === true && hostedSession === false;
-  const executionDeferred = hostedSession && !localAuthorityAvailable;
+  const capabilityPosture = orchestrationSelectors?.capabilityPosture || {};
+  const localAuthorityAvailable = capabilityPosture.localAuthorityAvailable === true;
+  const executionDeferred = capabilityPosture.executionDeferred === true;
+  const postureLabel = capabilityPosture.operatorSummary || (runtimeStatus?.runtimeContext?.sessionKind === 'hosted-web'
+    ? 'Battle Bridge unavailable; hosted-safe cloud cognition remains available.'
+    : 'Local authority available for execution and orchestration.');
   const acceptedCapture = orchestrationSelectors?.currentMissionState?.intentSource === 'explicit';
 
   const packetSummary = useMemo(() => {
@@ -120,39 +123,41 @@ export default function IntentEnginePanel({
       onToggle={() => togglePanel('intentEnginePanel')}
     >
       <p className="mission-note">
-        Mode: <strong>{executionDeferred ? 'hosted-safe orchestration' : 'battle-bridge execution-capable'}</strong> · Acting agent: <strong>{asText(orchestrationSelectors?.currentMissionState?.intentLabel, 'intent-engine')}</strong>
+        Mode: <strong>{capabilityPosture.mode || (executionDeferred ? 'hosted-safe-cloud-cognition' : 'full-local-authority')}</strong> · Acting agent: <strong>{asText(orchestrationSelectors?.currentMissionState?.intentLabel, 'intent-engine')}</strong>
       </p>
       <p className="mission-note">
-        Local authority: <strong>{localAuthorityAvailable ? 'available' : 'unavailable'}</strong> · Execution deferred to Battle Bridge: <strong>{executionDeferred ? 'yes' : 'no'}</strong>
+        Local authority: <strong>{localAuthorityAvailable ? 'available' : 'unavailable'}</strong> · Execution deferred to Battle Bridge: <strong>{executionDeferred ? 'yes' : 'no'}</strong> · Cloud cognition: <strong>{capabilityPosture.cloudCognitionAvailable ? 'available' : 'unavailable'}</strong>
       </p>
       <p className="mission-note">
-        Planning can continue while execution is down: <strong>{executionDeferred ? 'yes' : 'yes'}</strong>.
+        {postureLabel}
       </p>
 
-      <label>
+      <div className="paneFormLayout">
+      <label className="paneFieldGroup">
         Canonical mission title
-        <input type="text" value={missionTitle} onChange={(event) => setMissionTitle(event.target.value)} placeholder="Hosted route recovery + mission intent capture" />
+        <input className="paneInput paneControl" type="text" value={missionTitle} onChange={(event) => setMissionTitle(event.target.value)} placeholder="Hosted route recovery + mission intent capture" />
       </label>
-      <label>
+      <label className="paneFieldGroup">
         Mission intent
-        <textarea rows={3} value={intentText} onChange={(event) => setIntentText(event.target.value)} placeholder="Describe mission intent for decomposition and handoff..." />
+        <textarea className="paneTextarea paneControl" rows={3} value={intentText} onChange={(event) => setIntentText(event.target.value)} placeholder="Describe mission intent for decomposition and handoff..." />
       </label>
-      <label>
+      <label className="paneFieldGroup">
         Mission type
-        <select value={intentClass} onChange={(event) => setIntentClass(event.target.value)}>
+        <select className="paneSelect paneControl" value={intentClass} onChange={(event) => setIntentClass(event.target.value)}>
           {INTENT_CLASSES.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
         </select>
       </label>
-      <label>
+      <label className="paneFieldGroup">
         Mission class
-        <input type="text" value={missionClass} onChange={(event) => setMissionClass(event.target.value)} placeholder="runtime-orchestration-repair" />
+        <input className="paneInput paneControl" type="text" value={missionClass} onChange={(event) => setMissionClass(event.target.value)} placeholder="runtime-orchestration-repair" />
       </label>
-      <label>
+      <label className="paneFieldGroup">
         Execution mode
-        <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+        <select className="paneSelect paneControl" value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
           {EXECUTION_MODES.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
         </select>
       </label>
+      </div>
 
       <section className="agents-region">
         <h4>Interpreted Mission Packet</h4>
@@ -179,9 +184,10 @@ export default function IntentEnginePanel({
                 <br />
                 <small>{task.reason}</small>
                 <br />
-                <label>
+                <label className="paneFieldGroup">
                   Execution posture
                   <select
+                    className="paneSelect paneControl"
                     value={selection}
                     onChange={(event) => setTaskExecutionMap((prev) => ({ ...prev, [task.taskId]: event.target.value }))}
                   >

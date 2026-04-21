@@ -187,24 +187,39 @@ body {
   flex: 0 0 auto;
 }
 
+.pane-collapse-dial,
 .panel-chevron {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
   border-radius: 999px;
   border: 1px solid rgba(92, 176, 255, 0.35);
   color: #97d6ff;
-  transform: rotate(-90deg);
-  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
+.pane-collapse-chevron,
+.panel-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  transform: rotate(-90deg);
+  transition: transform 160ms ease;
+}
+
+.pane-collapse-chevron.open,
 .panel-chevron.open {
   transform: rotate(0deg);
 }
 
+.panel-collapse-toggle:hover .pane-collapse-dial,
 .panel-collapse-toggle:hover .panel-chevron {
   background: rgba(14, 38, 70, 0.65);
   border-color: rgba(150, 214, 255, 0.62);
@@ -219,6 +234,7 @@ body {
   display: grid;
   gap: 0.85rem;
   margin-top: 0.9rem;
+  min-width: 0;
 }
 
 .panel-body[hidden] {
@@ -447,10 +463,42 @@ body {
   gap: 0.5rem;
 }
 
+.paneFormLayout {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.paneFieldGroup {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.82rem;
+}
+
+.paneControl,
+.paneInput,
+.paneTextarea,
+.paneSelect,
+.paneEditorRegion {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.paneTextarea {
+  resize: vertical;
+}
+
 input,
 textarea,
 select {
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   background: rgba(3, 10, 20, 0.95);
   border: 1px solid rgba(68, 138, 212, 0.5);
   color: #dff4ff;

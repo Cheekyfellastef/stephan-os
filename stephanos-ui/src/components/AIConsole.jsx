@@ -161,8 +161,9 @@ export default function AIConsole({
             </details>
           ) : null}
         </div>
-        <form className="command-form mission-console-input" onSubmit={onSubmit}>
+        <form className="command-form mission-console-input paneFormLayout" onSubmit={onSubmit}>
           <input
+            className="paneInput paneControl"
             ref={inputRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}

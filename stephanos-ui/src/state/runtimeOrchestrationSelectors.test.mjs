@@ -99,7 +99,29 @@ test('selectors expose hosted-safe mission console mode when local authority is 
   assert.equal(selectors.missionConsoleMode.posture, 'hosted-safe-orchestration-mode');
   assert.equal(selectors.missionConsoleMode.localAuthorityAvailable, false);
   assert.equal(selectors.missionConsoleMode.executionDeferredToBattleBridge, true);
-  assert.match(selectors.missionConsoleMode.reason, /Hosted surface detected/i);
+  assert.match(selectors.missionConsoleMode.reason, /Hosted-safe cloud cognition remains online|Hosted surface detected/i);
+});
+
+test('selectors expose degraded-but-operational capability posture when battle bridge is unavailable and cloud cognition is available', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'awaiting-approval', blockers: [] },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      backendReachable: false,
+      routeKind: 'cloud',
+      routeUsable: true,
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+    },
+  });
+
+  assert.equal(selectors.capabilityPosture.mode, 'hosted-safe-cloud-cognition');
+  assert.equal(selectors.capabilityPosture.localAuthorityAvailable, false);
+  assert.equal(selectors.capabilityPosture.cloudCognitionAvailable, true);
+  assert.equal(selectors.capabilityPosture.executionDeferred, true);
+  assert.equal(selectors.capabilityPosture.hostedSafePlanningAvailable, true);
+  assert.match(selectors.capabilityPosture.operatorSummary, /Execution deferred; planning and mission capture available/i);
 });
 
 test('selectors expose provider execution summary and operator action ladder when route is down and intent unknown', () => {

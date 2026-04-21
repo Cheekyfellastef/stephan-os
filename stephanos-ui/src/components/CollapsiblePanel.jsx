@@ -1,3 +1,5 @@
+import PaneCollapseDial from './PaneCollapseDial';
+
 export default function CollapsiblePanel({
   as: Component = 'section',
   panelId,
@@ -33,7 +35,7 @@ export default function CollapsiblePanel({
             aria-label={toggleLabel}
             title={toggleLabel}
           >
-            <span className={`panel-chevron ${isOpen ? 'open' : ''}`} aria-hidden="true">⌄</span>
+            <PaneCollapseDial isOpen={isOpen} />
             <span className="panel-heading-copy">
               <TitleTag>{title}</TitleTag>
               {description ? <span className="panel-description">{description}</span> : null}
