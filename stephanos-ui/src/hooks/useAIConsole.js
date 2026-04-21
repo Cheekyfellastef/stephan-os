@@ -1879,6 +1879,7 @@ export function useAIConsole() {
           providerHealth: refreshedProviderHealth,
           runtimeStatus: requestRuntimeStatus,
           routeTruthView: requestRouteTruthView,
+          providerConfigs: effectiveProviderConfigs,
         }),
         defaultProvider: provider,
         requestRouteTruth,

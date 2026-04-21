@@ -43,6 +43,13 @@ test('sendPrompt resolves timeout policy from effective execution provider truth
   assert.match(clientSource, /timeoutProvider:\s*timeoutExecutionTruth\.effectiveProvider/);
 });
 
+test('sendPrompt supports hosted cloud cognition fallback path when backend transport fails', () => {
+  assert.match(clientSource, /const hostedDispatch = resolveHostedCloudDispatch\(/);
+  assert.match(clientSource, /if \(!hostedDispatch\.enabled\) \{\s*throw error;\s*\}/m);
+  assert.match(clientSource, /hostedCloudExecutionPath:\s*\{/);
+  assert.match(clientSource, /authorityLevel:\s*hostedDispatch\.authorityLevel/);
+});
+
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {
   assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*runtimeFinalRouteTruth\?\.executedProvider[\s\S]*runtimeFinalRouteTruth\?\.selectedProvider[\s\S]*canonicalRouteTruth\?\.executedProvider[\s\S]*canonicalRouteTruth\?\.selectedProvider[\s\S]*hydratedEnvelope\?\.effectiveProvider[\s\S]*providerModeReconciled[\s\S]*routeDecision\?\.requestedProviderForRequest[\s\S]*requestedProviderNormalized[\s\S]*\)\.toLowerCase\(\)/m);
   assert.match(clientSource, /const effectiveModel = firstNonEmpty\([\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model[\s\S]*\)/m);

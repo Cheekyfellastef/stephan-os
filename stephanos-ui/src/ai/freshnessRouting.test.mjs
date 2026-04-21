@@ -563,3 +563,68 @@ test('hosted session-kind alias still resolves low-freshness Groq requests to cl
   assert.equal(decision.selectedProvider, 'groq');
   assert.equal(decision.selectedAnswerMode, 'cloud-basic');
 });
+
+test('hosted backend-unreachable request remains cloud-operational when hosted proxy path is configured', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'groq',
+    providerHealth: {
+      groq: { ok: true, transportReachable: true },
+      ollama: { ok: false },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: false,
+      localAvailable: false,
+      homeNodeAvailable: false,
+      backendReachable: false,
+      runtimeContext: {
+        hostedCloudConfig: {
+          proxyUrl: 'https://hosted-proxy.example.com',
+        },
+      },
+    },
+    routeTruthView: {
+      backendReachableState: 'no',
+      homeNodeUsableState: 'no',
+    },
+  });
+
+  assert.equal(decision.selectedAnswerMode, 'cloud-basic');
+  assert.equal(decision.hostedCloudPathAvailable, true);
+  assert.equal(decision.hostedCloudSecretPathKind, 'hosted-proxy');
+  assert.equal(decision.hostedCloudAuthorityLevel, 'cloud-cognition-only');
+  assert.equal(decision.hostedCloudExecutionProvider, 'groq-hosted-cloud');
+});
+
+test('hosted backend-unreachable request reports clean backend-only secret posture when no hosted path exists', () => {
+  const classification = classifyPromptFreshness('Summarize this architecture section.');
+  const decision = resolveFreshnessRoutingDecision({
+    classification,
+    requestedProvider: 'gemini',
+    providerHealth: {
+      gemini: { ok: false, transportReachable: false },
+      ollama: { ok: false },
+    },
+    runtimeStatus: {
+      sessionKind: 'hosted-web',
+      cloudAvailable: false,
+      localAvailable: false,
+      homeNodeAvailable: false,
+      backendReachable: false,
+      runtimeContext: {
+        hostedCloudConfig: {
+          backendOnlySecrets: true,
+        },
+      },
+    },
+    routeTruthView: {
+      backendReachableState: 'no',
+      homeNodeUsableState: 'no',
+    },
+  });
+
+  assert.equal(decision.hostedCloudPathAvailable, false);
+  assert.equal(decision.hostedCloudSecretPathKind, 'backend-only');
+});

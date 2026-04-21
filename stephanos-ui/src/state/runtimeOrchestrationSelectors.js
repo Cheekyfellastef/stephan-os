@@ -279,7 +279,9 @@ export function deriveRuntimeOrchestrationSelectors({
   const routeKind = asText(finalRouteTruth?.routeKind, 'unavailable');
   const selectedProvider = asText(finalRouteTruth?.selectedProvider, 'unknown');
   const executableProvider = asText(finalRouteTruth?.executedProvider, 'unknown');
-  const cloudCognitionAvailable = routeKind === 'cloud' && (finalRouteTruth?.routeUsable !== false || isKnownValue(executableProvider) || isKnownValue(selectedProvider));
+  const hostedCloudPathAvailable = finalRouteTruth?.hostedCloudPathAvailable === true;
+  const cloudCognitionAvailable = hostedCloudPathAvailable
+    || (routeKind === 'cloud' && (finalRouteTruth?.routeUsable !== false || isKnownValue(executableProvider) || isKnownValue(selectedProvider)));
   const hostedSafePlanningAvailable = true;
   const intentCaptureAvailable = true;
   const researchRouteAvailable = finalRouteTruth?.routeUsable !== false && routeKind !== 'unavailable';
@@ -299,7 +301,7 @@ export function deriveRuntimeOrchestrationSelectors({
   const operatorSummary = localAuthorityAvailable
     ? 'Local authority available; execution, planning, and continuity are online.'
     : cloudCognitionAvailable
-      ? 'Battle Bridge unavailable; hosted-safe cloud cognition remains available. Execution deferred; planning and mission capture available.'
+      ? 'Battle Bridge unavailable; cloud cognition available. Execution deferred; hosted-safe planning remains available.'
       : hostedSafePlanningAvailable
         ? 'Route recovery needed for local authority, but hosted orchestration can continue.'
         : 'Recovery needed. Capture intent and continuity while route truth is restored.';
@@ -339,7 +341,9 @@ export function deriveRuntimeOrchestrationSelectors({
   const providerExecutionSummary = selectedProviderConfigured && !executableProviderAvailable
     ? `${selectedProvider} selected, but no executable route exists.`
     : selectedProviderConfigured && executableProviderAvailable
-      ? `${selectedProvider} selected and ${executableProvider} executable.`
+      ? (hostedCloudPathAvailable
+        ? `${selectedProvider} selected, backend execution unavailable, hosted cloud path executable as ${finalRouteTruth?.actualProviderPath || executableProvider}.`
+        : `${selectedProvider} selected and ${executableProvider} executable.`)
       : 'Provider choice pending explicit configuration.';
   const operatorActionLadder = [
     blockedByIntent ? '1) establish intent / create mission packet' : '1) intent established / mission packet can be refined',

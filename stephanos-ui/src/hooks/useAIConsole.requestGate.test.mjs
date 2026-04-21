@@ -167,6 +167,27 @@ test('blocks dispatch when backend reachability is explicitly no', () => {
   assert.equal(gate.backendReachabilityState, 'no');
 });
 
+test('allows hosted cloud cognition dispatch when backend is unreachable but hosted cloud path is available', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      selectedProvider: 'groq',
+      localRouteAvailable: false,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: false,
+      hostedCloudPathAvailable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'no',
+      routeUsableState: 'no',
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.reasonCode, null);
+  assert.equal(gate.hostedCloudPathAvailable, true);
+});
+
 test('canonical local-desktop winner cannot be overridden by stale home-node route decision at dispatch time', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {

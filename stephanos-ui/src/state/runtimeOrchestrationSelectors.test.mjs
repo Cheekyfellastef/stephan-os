@@ -121,7 +121,7 @@ test('selectors expose degraded-but-operational capability posture when battle b
   assert.equal(selectors.capabilityPosture.cloudCognitionAvailable, true);
   assert.equal(selectors.capabilityPosture.executionDeferred, true);
   assert.equal(selectors.capabilityPosture.hostedSafePlanningAvailable, true);
-  assert.match(selectors.capabilityPosture.operatorSummary, /Execution deferred; planning and mission capture available/i);
+  assert.match(selectors.capabilityPosture.operatorSummary, /Execution deferred; hosted-safe planning remains available/i);
 });
 
 test('selectors expose provider execution summary and operator action ladder when route is down and intent unknown', () => {
