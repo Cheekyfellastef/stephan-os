@@ -9,30 +9,10 @@ export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
 export const LOCAL_FIRST_PROVIDER_KEYS = ['ollama', 'groq', 'gemini', 'mock'];
 export const CLOUD_FIRST_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter', 'mock', 'ollama'];
 export const HOSTED_COGNITION_PROVIDER_KEYS = ['groq', 'gemini'];
-
-export function createDefaultHostedCloudCognitionSettings() {
-  return {
-    enabled: false,
-    selectedProvider: 'groq',
-    chatPath: '/api/ai/chat',
-    providers: {
-      groq: {
-        enabled: true,
-        baseURL: '',
-        model: PROVIDER_DEFINITIONS.groq.defaults.model,
-      },
-      gemini: {
-        enabled: true,
-        baseURL: '',
-        model: PROVIDER_DEFINITIONS.gemini.defaults.model,
-      },
-    },
-    lastHealth: {
-      groq: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
-      gemini: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
-    },
-  };
-}
+const DEFAULT_PROVIDER_MODELS = Object.freeze({
+  groq: 'openai/gpt-oss-20b',
+  gemini: 'gemini-2.5-flash',
+});
 
 export const PROVIDER_DEFINITIONS = {
   mock: {
@@ -89,7 +69,7 @@ export const PROVIDER_DEFINITIONS = {
     targetSummary: 'cloud-backed Groq routed through the Stephanos backend',
     defaults: {
       baseURL: 'https://api.groq.com/openai/v1',
-      model: 'openai/gpt-oss-20b',
+      model: DEFAULT_PROVIDER_MODELS.groq,
       freshWebModel: null,
       freshWebModelCandidates: [],
       apiKey: '',
@@ -118,7 +98,7 @@ export const PROVIDER_DEFINITIONS = {
     },
     targetSummary: 'free-tier cloud via Gemini API',
     defaults: {
-      model: 'gemini-2.5-flash',
+      model: DEFAULT_PROVIDER_MODELS.gemini,
       apiKey: '',
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
       groundingEnabled: true,
@@ -185,6 +165,42 @@ export const PROVIDER_DEFINITIONS = {
     },
   },
 };
+
+function resolveProviderDefaultModel(providerKey, fallbackModel) {
+  try {
+    const model = PROVIDER_DEFINITIONS?.[providerKey]?.defaults?.model;
+    return typeof model === 'string' && model ? model : fallbackModel;
+  } catch (error) {
+    if (error instanceof ReferenceError) {
+      return fallbackModel;
+    }
+    throw error;
+  }
+}
+
+export function createDefaultHostedCloudCognitionSettings() {
+  return {
+    enabled: false,
+    selectedProvider: 'groq',
+    chatPath: '/api/ai/chat',
+    providers: {
+      groq: {
+        enabled: true,
+        baseURL: '',
+        model: resolveProviderDefaultModel('groq', DEFAULT_PROVIDER_MODELS.groq),
+      },
+      gemini: {
+        enabled: true,
+        baseURL: '',
+        model: resolveProviderDefaultModel('gemini', DEFAULT_PROVIDER_MODELS.gemini),
+      },
+    },
+    lastHealth: {
+      groq: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
+      gemini: { status: 'unknown', reason: 'No health probe yet.', checkedAt: '', lastSuccessAt: '', lastFailureAt: '' },
+    },
+  };
+}
 
 export function createDefaultSavedProviderConfigs() {
   return Object.fromEntries(
