@@ -99,6 +99,29 @@ function sanitizeContextHints(value = {}) {
   };
 }
 
+function sanitizeSourceTruth(value = {}) {
+  const source = isRecord(value) ? value : {};
+  return {
+    persistence: normalizeString(source.persistence, 'unknown'),
+    retrieval: normalizeString(source.retrieval, 'unavailable'),
+    memory: normalizeString(source.memory, 'unknown'),
+    validation: normalizeString(source.validation, 'caravan-source-validated'),
+  };
+}
+
+function sanitizeAiContextPackageMeta(value = {}) {
+  const source = isRecord(value) ? value : {};
+  return {
+    packageVersion: Number.isFinite(Number(source.packageVersion)) ? Number(source.packageVersion) : 1,
+    readiness: normalizeString(source.readiness, 'draft'),
+    bounded: source.bounded !== false,
+    maxRelated: Math.max(1, Math.min(6, Number(source.maxRelated) || 3)),
+    maxEvidence: Math.max(1, Math.min(6, Number(source.maxEvidence) || 2)),
+    maxRetrievalExcerpts: Math.max(0, Math.min(4, Number(source.maxRetrievalExcerpts) || 2)),
+    notes: normalizeString(source.notes),
+  };
+}
+
 function sanitizeCollectionIds(record = {}, knowledge = {}) {
   const topLevel = Array.isArray(record.collectionIds) ? record.collectionIds : [];
   const knowledgeIds = Array.isArray(knowledge.collectionIds) ? knowledge.collectionIds : [];
@@ -170,6 +193,8 @@ function sanitizeIdeaKnowledge(record = {}) {
   const primaryCollectionId = collectionIds[0] || '';
   const memoryPromotionStatus = normalizeString(knowledge.promotionStatus || record.promotionStatus, promotionState.memory === 'promoted' ? 'promoted' : 'draft');
   const aiContextHints = sanitizeContextHints(knowledge.aiContextHints || record.aiContextHints);
+  const aiContextPackageMeta = sanitizeAiContextPackageMeta(knowledge.aiContextPackageMeta || record.aiContextPackageMeta);
+  const sourceTruth = sanitizeSourceTruth(knowledge.sourceTruth || record.sourceTruth);
 
   return {
     nodeType,
@@ -191,6 +216,8 @@ function sanitizeIdeaKnowledge(record = {}) {
     simulationLinks,
     operatorNotes,
     aiContextHints,
+    aiContextPackageMeta,
+    sourceTruth,
   };
 }
 
@@ -227,6 +254,8 @@ function sanitizeIdeaRecord(record) {
     roadmapLinks: knowledge.roadmapLinks,
     simulationLinks: knowledge.simulationLinks,
     aiContextHints: knowledge.aiContextHints,
+    aiContextPackageMeta: knowledge.aiContextPackageMeta,
+    sourceTruth: knowledge.sourceTruth,
     notes: knowledge.operatorNotes,
     createdAt: normalizeString(record.createdAt),
     updatedAt: normalizeString(record.updatedAt),

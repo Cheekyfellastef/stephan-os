@@ -172,4 +172,27 @@ test('buildIdeaContextPackage returns bounded package diagnostics', () => {
   assert.equal(pkg.memorySummaries.length, 1);
   assert.equal(pkg.retrievalExcerpts.length, 1);
   assert.equal(pkg.diagnostics.bounded, true);
+  assert.equal(pkg.diagnostics.sourceTruth.retrieval, 'unavailable');
+  assert.equal(pkg.diagnostics.includedFrom.selectedIdea, 'ideas-tile-state');
+});
+
+test('buildIdeaContextPackage includes bounded source truth diagnostics when explicit sources are passed', () => {
+  const pkg = buildIdeaContextPackage([{
+    id: 'idea_pkg_truth_1',
+    title: 'Truth idea',
+    summary: 'Truth labels',
+    tags: ['ideas'],
+    media: [],
+    createdAt: '2026-04-06T00:00:00.000Z',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+  }], {
+    retrievalSource: 'scaffolded-unvalidated',
+    memorySource: 'shared durable',
+    persistenceSource: 'shared-backend',
+  });
+
+  assert.equal(pkg.included, true);
+  assert.equal(pkg.diagnostics.sourceTruth.persistence, 'shared-backend');
+  assert.equal(pkg.diagnostics.sourceTruth.retrieval, 'scaffolded-unvalidated');
+  assert.equal(pkg.diagnostics.sourceTruth.memory, 'shared durable');
 });

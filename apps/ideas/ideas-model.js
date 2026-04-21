@@ -13,6 +13,35 @@ const RELATIONSHIP_LABELS = {
   evidence_against: 'evidence against',
 };
 
+const DEFAULT_PROMOTION_STATE = {
+  memory: 'not-submitted',
+  retrieval: 'not-submitted',
+  codex: 'not-prepared',
+  roadmap: 'not-promoted',
+  simulation: 'not-targeted',
+  continuity: 'not-submitted',
+  memoryLink: 'not-linked',
+  retrievalLink: 'not-linked',
+};
+
+function normalizeSourceTruth(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    persistence: typeof source.persistence === 'string' && source.persistence.trim()
+      ? source.persistence.trim()
+      : 'unknown',
+    retrieval: typeof source.retrieval === 'string' && source.retrieval.trim()
+      ? source.retrieval.trim()
+      : 'unavailable',
+    memory: typeof source.memory === 'string' && source.memory.trim()
+      ? source.memory.trim()
+      : 'unknown',
+    validation: typeof source.validation === 'string' && source.validation.trim()
+      ? source.validation.trim()
+      : 'caravan-source-validated',
+  };
+}
+
 function cloneIdeaRecord(record) {
   return {
     id: record.id,
@@ -27,12 +56,16 @@ function cloneIdeaRecord(record) {
         evidence: Array.isArray(record.knowledge.evidence) ? record.knowledge.evidence.map((evidence) => ({ ...evidence })) : [],
         collectionIds: Array.isArray(record.knowledge.collectionIds) ? [...record.knowledge.collectionIds] : [],
         relatedIdeas: Array.isArray(record.knowledge.relatedIdeas) ? [...record.knowledge.relatedIdeas] : [],
-        promotionState: record.knowledge.promotionState ? { ...record.knowledge.promotionState } : undefined,
+        promotionState: record.knowledge.promotionState ? { ...record.knowledge.promotionState } : { ...DEFAULT_PROMOTION_STATE },
         sourceArtifacts: Array.isArray(record.knowledge.sourceArtifacts) ? [...record.knowledge.sourceArtifacts] : [],
         memoryLinks: Array.isArray(record.knowledge.memoryLinks) ? [...record.knowledge.memoryLinks] : [],
         retrievalLinks: Array.isArray(record.knowledge.retrievalLinks) ? [...record.knowledge.retrievalLinks] : [],
         roadmapLinks: Array.isArray(record.knowledge.roadmapLinks) ? [...record.knowledge.roadmapLinks] : [],
         simulationLinks: Array.isArray(record.knowledge.simulationLinks) ? [...record.knowledge.simulationLinks] : [],
+        aiContextPackageMeta: record.knowledge.aiContextPackageMeta && typeof record.knowledge.aiContextPackageMeta === 'object'
+          ? { ...record.knowledge.aiContextPackageMeta }
+          : undefined,
+        sourceTruth: normalizeSourceTruth(record.knowledge.sourceTruth),
       }
       : {
         nodeType: 'concept',
@@ -42,16 +75,7 @@ function cloneIdeaRecord(record) {
         collectionIds: [],
         actionTarget: '',
         promotionStatus: 'draft',
-        promotionState: {
-          memory: 'not-submitted',
-          retrieval: 'not-submitted',
-          codex: 'not-prepared',
-          roadmap: 'not-promoted',
-          simulation: 'not-targeted',
-          continuity: 'not-submitted',
-          memoryLink: 'not-linked',
-          retrievalLink: 'not-linked',
-        },
+        promotionState: { ...DEFAULT_PROMOTION_STATE },
         relatedIdeas: [],
         relations: [],
         evidence: [],
@@ -62,6 +86,8 @@ function cloneIdeaRecord(record) {
         roadmapLinks: [],
         simulationLinks: [],
         operatorNotes: '',
+        aiContextPackageMeta: {},
+        sourceTruth: normalizeSourceTruth(),
       },
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -201,6 +227,7 @@ function buildIdeasKnowledgeDigest(records = [], {
   }])).values()].slice(0, Math.max(1, Number(maxRelated) || 3));
 
   const selectedEvidence = (selected.knowledge?.evidence || []).slice(0, Math.max(1, Number(maxEvidence) || 3));
+  const selectedCollections = selected.collectionIds || selected.knowledge?.collectionIds || [];
   const relationSummary = (selected.knowledge?.relations || []).reduce((acc, relation) => {
     const key = relation?.relationType || 'supports';
     acc[key] = (acc[key] || 0) + 1;
@@ -219,11 +246,16 @@ function buildIdeasKnowledgeDigest(records = [], {
       promotionState: selected.promotionState || selected.knowledge?.promotionState || null,
       actionTarget: selected.knowledge?.actionTarget || '',
       collectionId: selected.knowledge?.collectionId || selected.collectionIds?.[0] || '',
-      collectionIds: selected.collectionIds || selected.knowledge?.collectionIds || [],
+      collectionIds: selectedCollections,
       evidence: selectedEvidence,
       relatedIdeaIds: selected.relatedIdeas || selected.knowledge?.relatedIdeas || [],
       relationSummary,
       aiContextHints: selected.aiContextHints || selected.knowledge?.aiContextHints || null,
+      sourceTruth: normalizeSourceTruth(selected.knowledge?.sourceTruth || selected.sourceTruth),
+      collectionsSummary: {
+        count: selectedCollections.length,
+        labels: selectedCollections.slice(0, 4),
+      },
     },
     relatedIdeas,
     promotedMemories: [],
@@ -243,6 +275,9 @@ function buildIdeaContextPackage(records = [], {
   selectedIdeaId = '',
   retrievalExcerpts = [],
   memoryRecords = [],
+  retrievalSource = 'unavailable',
+  memorySource = 'unknown',
+  persistenceSource = 'unknown',
   maxRelated = 3,
   maxEvidence = 2,
 } = {}) {
@@ -256,7 +291,13 @@ function buildIdeaContextPackage(records = [], {
     };
   }
 
-  const boundedRetrieval = Array.isArray(retrievalExcerpts) ? retrievalExcerpts.slice(0, 2) : [];
+  const boundedRetrieval = Array.isArray(retrievalExcerpts)
+    ? retrievalExcerpts.slice(0, 2).map((entry) => ({
+      sourceRef: entry.sourceRef || '',
+      excerpt: entry.excerpt || '',
+      storageMode: entry.storageMode || retrievalSource,
+    }))
+    : [];
   const boundedMemory = Array.isArray(memoryRecords)
     ? memoryRecords
       .slice(0, 2)
@@ -295,6 +336,19 @@ function buildIdeaContextPackage(records = [], {
       relatedIncluded: Math.min(digest.relatedIdeas.length, 3),
       memoryIncluded: boundedMemory.length,
       retrievalIncluded: boundedRetrieval.length,
+      sourceTruth: {
+        persistence: persistenceSource,
+        retrieval: retrievalSource,
+        memory: memorySource,
+        validation: 'caravan-source-validated',
+      },
+      includedFrom: {
+        selectedIdea: 'ideas-tile-state',
+        relatedIdeas: digest.relatedIdeas.length ? 'ideas-relation+tag-projection' : 'none',
+        evidence: (digest.selectedIdea.evidence || []).length ? 'idea-knowledge-evidence' : 'none',
+        memory: boundedMemory.length ? memorySource : 'none',
+        retrieval: boundedRetrieval.length ? retrievalSource : 'none',
+      },
     },
   };
 }

@@ -91,6 +91,32 @@ test('assembleStephanosContext includes bounded ideas knowledge digest and retri
   assert.equal(assembled.ideasKnowledge.relatedIdeas.length > 0, true);
   assert.equal(assembled.ideasKnowledge.retrievalExcerpts.length, 1);
   assert.equal(assembled.ideasContextPackage.included, true);
+  assert.equal(assembled.diagnostics.retrievalSource, 'local-fallback');
   assert.equal(assembled.diagnostics.ideasKnowledgeIncluded, true);
   assert.equal(assembled.diagnostics.ideaContextPackageIncluded, true);
+});
+
+test('assembleStephanosContext keeps explicit source-truth labels for cognition packet diagnostics', () => {
+  const assembled = assembleStephanosContext({
+    runtimeContext: {
+      ideasState: {
+        records: [{
+          id: 'idea_src_1',
+          title: 'Source truth',
+          summary: 'Diagnostics',
+          tags: ['ideas'],
+          media: [],
+          createdAt: '2026-04-20T00:00:00.000Z',
+          updatedAt: '2026-04-20T00:00:00.000Z',
+        }],
+      },
+      retrievalSourceTruth: 'scaffolded-unvalidated',
+      memorySourceTruth: 'shared-backed',
+      ideasPersistenceSource: 'shared-backend',
+    },
+  });
+
+  assert.equal(assembled.ideasContextPackage.diagnostics.sourceTruth.retrieval, 'scaffolded-unvalidated');
+  assert.equal(assembled.ideasContextPackage.diagnostics.sourceTruth.memory, 'shared-backed');
+  assert.equal(assembled.diagnostics.persistenceSource, 'shared-backend');
 });
