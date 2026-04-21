@@ -10,7 +10,7 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
-export default function CockpitPanel({ forceOpen = false, standalone = false, telemetryEntries = [] } = {}) {
+export default function CockpitPanel({ forceOpen = false, standalone = false, telemetryEntries = [], finalAgentView = null } = {}) {
   const {
     runtimeStatusModel,
     apiStatus,
@@ -37,6 +37,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     return buildCockpitModel({
       runtimeStatus,
       routeTruthView,
+      finalAgentView,
       apiStatus: apiStatus || {},
       providerHealth: providerHealth?.[routeTruthView.selectedProvider] || providerHealth?.[routeTruthView.executedProvider] || {},
       workingMemory,
@@ -44,7 +45,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       commandHistory,
       telemetryEntries,
     });
-  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
+  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -94,6 +95,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           `Route kind: ${routeTruthView.routeKind}`,
           `Fallback active: ${routeTruthView.fallbackActive ? 'yes' : 'no'}`,
           `Continuity loop: ${cockpitModel.continuitySnapshot.continuityLoopState}`,
+          `Acting agent: ${finalAgentView?.actingAgentId || 'none'}`,
         ],
       };
     }
@@ -108,12 +110,13 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           `To: ${NODE_LAYOUT[connection.to].label}`,
           `Route usable: ${routeTruthView.routeUsableState}`,
           `Continuity activity: ${cockpitModel.continuitySnapshot.recentActivityActive ? 'recent-active' : 'idle'}`,
+          `Agent fleet: ${Array.isArray(finalAgentView?.activeAgentIds) ? finalAgentView.activeAgentIds.join(', ') || 'idle' : 'idle'}`,
         ],
       };
     }
 
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
-  }, [detailId, cockpitModel, runtimeStatus.appLaunchState, routeTruthView]);
+  }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
 
   return (
     <CollapsiblePanel

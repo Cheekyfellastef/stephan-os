@@ -22,6 +22,8 @@ import CollapsiblePanel from './components/CollapsiblePanel';
 import MeaningStrip from './components/system/MeaningStrip';
 import TelemetryFeed from './components/system/TelemetryFeed';
 import PromptBuilder from './components/system/PromptBuilder.jsx';
+import AgentsTile from './components/AgentsTile.jsx';
+import AgentQuickControls from './components/AgentQuickControls.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -53,6 +55,9 @@ import {
 } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
 import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs';
+import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
+import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
+import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -120,6 +125,15 @@ export default function App() {
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const cockpitSurfaceMode = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const surface = String(params.get('surface') || params.get('app') || '').trim().toLowerCase();
+    return surface === 'cockpit';
+  }, []);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const providerSummary = buildProviderStatusSummary(
     provider,
@@ -162,6 +176,16 @@ export default function App() {
     [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
   );
   const [telemetryEntries, setTelemetryEntries] = useState([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [agentControls, setAgentControls] = useState({
+    visible: false,
+    globalVisibilityToggle: true,
+    autonomyMasterToggle: true,
+    safeMode: false,
+    debugVisibility: false,
+    globalAutonomy: 'assisted',
+    agentEnabledMap: {},
+  });
   const [metricsTick, setMetricsTick] = useState(() => Date.now());
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
@@ -235,6 +259,77 @@ export default function App() {
     .map((hint) => (typeof hint === 'string'
       ? { severity: 'info', subsystem: 'SYSTEM', text: hint }
       : hint)), [finalRouteTruth, orchestrationTruth]);
+  const agentRegistry = useMemo(() => buildAgentRegistry(), []);
+  const agentEventLog = useMemo(() => {
+    const now = new Date().toISOString();
+    const latestCommand = Array.isArray(commandHistory) && commandHistory.length > 0 ? commandHistory[commandHistory.length - 1] : null;
+    const latestPrompt = String(latestCommand?.prompt || latestCommand?.command || '').trim();
+    const latestTaskId = String(latestCommand?.id || latestCommand?.request_id || '').trim();
+    const includesResearch = /research|fresh|latest|today|news/i.test(latestPrompt);
+    const includesExecution = /run|execute|build|test|install|deploy/i.test(latestPrompt);
+    const includesIdeas = /idea|brainstorm|concept/i.test(latestPrompt);
+    const events = [
+      { agentId: 'intent-engine', type: 'state', state: latestPrompt ? 'acting' : 'watching', reason: latestPrompt ? 'Parsing operator request into task graph.' : 'Watching for operator intent.', at: now },
+      { agentId: 'intent-engine', type: 'task', taskId: latestTaskId, taskSummary: latestPrompt || 'Awaiting operator request.', at: now },
+      { agentId: 'intent-engine', type: 'action', reason: 'Intent normalization updated.', at: now },
+      { agentId: 'memory-agent', type: 'state', state: missionPacketWorkflow?.active ? 'preparing' : 'watching', reason: missionPacketWorkflow?.active ? 'Evaluating mission packet for continuity memory candidates.' : 'Watching continuity stream for new candidates.', at: now },
+    ];
+    if (includesResearch) {
+      events.push(
+        { agentId: 'research-agent', type: 'state', state: 'acting', reason: 'Fresh-world evidence required by operator request.', at: now },
+        { agentId: 'research-agent', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'research-agent', reason: 'intent-engine → research-agent', at: now },
+      );
+    }
+    if (missionPacketWorkflow?.active || String(latestCommand?.continuity_mode || '').toLowerCase() === 'retrieval-active') {
+      events.push(
+        { agentId: 'memory-agent', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'memory-agent', reason: 'intent-engine → memory-agent', at: now },
+        { agentId: 'memory-agent', type: 'action', reason: 'Continuity retrieval/adjudication cycle advanced.', at: now },
+      );
+    }
+    if (aiActionState?.isRunning || includesExecution) {
+      events.push(
+        { agentId: 'execution-agent', type: 'state', state: aiActionState?.isRunning ? 'acting' : 'preparing', reason: aiActionState?.isRunning ? 'Executing approved workflow action.' : 'Execution-capable task detected, awaiting approval.', at: now },
+        { agentId: 'execution-agent', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'execution-agent', reason: 'intent-engine → execution-agent', at: now },
+      );
+    }
+    if (includesIdeas) {
+      events.push(
+        { agentId: 'ideas-agent', type: 'state', state: 'acting', reason: 'Idea signal detected and being normalized.', at: now },
+        { agentId: 'ideas-agent', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'ideas-agent', reason: 'intent-engine → ideas-agent', at: now },
+      );
+    }
+    return events;
+  }, [aiActionState?.isRunning, commandHistory, missionPacketWorkflow?.active]);
+  const agentTruth = useMemo(() => adjudicateAgents({
+    registry: agentRegistry,
+    eventLog: agentEventLog,
+    context: {
+      sessionKind: runtimeStatus?.runtimeContext?.sessionKind || 'local-dev',
+      surface: cockpitSurfaceMode ? 'cockpit' : 'mission-control',
+      dependencyReadyMap: {
+        'runtime-truth': runtimeStatus?.appLaunchState === 'ready',
+        'provider-routing': routeTruthView?.routeUsableState !== 'no',
+        'shared-memory': continuitySnapshot?.sharedMemorySource !== 'unavailable',
+        'operator-policy': true,
+        'intent-engine': true,
+        'memory-agent': true,
+      },
+    },
+    operatorControls: agentControls,
+  }), [agentControls, agentEventLog, agentRegistry, cockpitSurfaceMode, continuitySnapshot?.sharedMemorySource, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  const finalAgentView = useMemo(() => buildFinalAgentView({
+    adjudicated: agentTruth,
+    selectedAgentId,
+  }), [agentTruth, selectedAgentId]);
+  const displayAgentView = agentControls.globalVisibilityToggle
+    ? finalAgentView
+    : {
+      ...finalAgentView,
+      visibleAgents: [],
+      activeAgentIds: [],
+      actingAgentId: '',
+      operatorSummary: 'Agent visuals are hidden by operator quick control.',
+    };
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -346,7 +441,21 @@ export default function App() {
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
     { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
-    { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} /> },
+    { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} /> },
+    {
+      id: 'agentsPanel',
+      className: 'pane-span-2',
+      render: () => (
+        <AgentsTile
+          finalAgentView={displayAgentView}
+          selectedAgentId={displayAgentView.selectedAgentId}
+          onSelectAgent={setSelectedAgentId}
+          isOpen={safeUiLayout.agentsPanel !== false}
+          onToggle={() => togglePanel('agentsPanel')}
+          debugVisibility={agentControls.debugVisibility}
+        />
+      ),
+    },
     { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={orchestrationTruth} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
@@ -361,10 +470,14 @@ export default function App() {
     runtimeStatusModel,
     runtimeStatus.headline,
     telemetryEntries,
+    finalAgentView,
+    displayAgentView,
+    agentControls.debugVisibility,
     actionHints,
     runtimeStatus.dependencySummary,
     safeApiStatus.detail,
     setInput,
+    togglePanel,
     startupDiagnosticsVisible,
     submitPrompt,
   ]);
@@ -381,15 +494,6 @@ export default function App() {
     .map((paneId) => paneMap.get(paneId))
     .filter(Boolean), [safePaneOrder, paneMap]);
   const [dragPaneId, setDragPaneId] = useState('');
-  const cockpitSurfaceMode = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    const surface = String(params.get('surface') || params.get('app') || '').trim().toLowerCase();
-    return surface === 'cockpit';
-  }, []);
 
   function reorderPanes(sourcePaneId, targetPaneId) {
     if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {
@@ -446,7 +550,7 @@ export default function App() {
           COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="cockpit-surface-stage">
-          <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} />
+          <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
         </section>
         <DebugConsole />
       </main>
@@ -458,6 +562,19 @@ export default function App() {
       <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
         IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
       </div>
+      <AgentQuickControls
+        controls={agentControls}
+        registry={agentRegistry}
+        onToggle={(field) => setAgentControls((prev) => ({ ...prev, [field]: !prev[field] }))}
+        onSetAutonomy={(value) => setAgentControls((prev) => ({ ...prev, globalAutonomy: value }))}
+        onToggleAgent={(agentId) => setAgentControls((prev) => ({
+          ...prev,
+          agentEnabledMap: {
+            ...prev.agentEnabledMap,
+            [agentId]: !(prev.agentEnabledMap?.[agentId] ?? agentRegistry.find((entry) => entry.agentId === agentId)?.enabledByDefault === true),
+          },
+        }))}
+      />
       <CollapsiblePanel
         panelId="providerControlsPanel"
         title="AI Provider Controls"
