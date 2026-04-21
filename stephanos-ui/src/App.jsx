@@ -12,6 +12,7 @@ import ProposalPanel from './components/ProposalPanel';
 import ActivityPanel from './components/ActivityPanel';
 import RoadmapPanel from './components/RoadmapPanel';
 import MissionDashboardPanel from './components/MissionDashboardPanel';
+import IntentEnginePanel from './components/IntentEnginePanel.jsx';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import MissionPacketQueuePanel from './components/MissionPacketQueuePanel';
@@ -464,7 +465,31 @@ export default function App() {
     },
     { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={orchestrationTruth} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
-    { id: 'missionDashboardPanel', className: 'pane-span-2', render: () => <MissionDashboardPanel /> },
+    {
+      id: 'missionDashboardPanel',
+      className: 'pane-span-2',
+      render: () => (
+        <MissionDashboardPanel
+          finalAgentView={displayAgentView}
+          orchestrationSelectors={orchestrationSelectors}
+          runtimeStatus={runtimeStatus}
+          finalRouteTruth={finalRouteTruth}
+        />
+      ),
+    },
+    {
+      id: 'intentEnginePanel',
+      className: 'pane-span-2',
+      render: () => (
+        <IntentEnginePanel
+          canonicalCurrentIntent={canonicalCurrentIntent}
+          canonicalMissionPacket={canonicalMissionPacket}
+          orchestrationSelectors={orchestrationSelectors}
+          runtimeStatus={runtimeStatus}
+          finalRouteTruth={finalRouteTruth}
+        />
+      ),
+    },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
     { id: 'missionPacketQueuePanel', className: 'pane-span-2', render: () => <MissionPacketQueuePanel /> },
   ]), [
@@ -480,6 +505,11 @@ export default function App() {
     displayAgentView,
     agentControls.debugVisibility,
     actionHints,
+    canonicalCurrentIntent,
+    canonicalMissionPacket,
+    orchestrationSelectors,
+    runtimeStatus,
+    finalRouteTruth,
     runtimeStatus.dependencySummary,
     safeApiStatus.detail,
     setInput,

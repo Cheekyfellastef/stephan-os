@@ -10,22 +10,21 @@ const STATUS_PRIORITY = Object.freeze({
 });
 
 const DEFAULT_SUMMARY = Object.freeze({
-  projectHealth: 'manual-review',
-  completionEstimate: 22,
-  missionNote: 'Manual operator-entered baseline. Update milestones as truth changes.',
+  projectHealth: 'hosted-repair-in-progress',
+  completionEstimate: 48,
+  missionNote: 'Manual milestone editing remains available; live projection sections reflect canonical runtime/agent truth when present.',
 });
 
 const DEFAULT_MILESTONES = Object.freeze([
-  createSeedMilestone('runtime-truth', 'Runtime Truth', 'Runtime truth markers, parity checks, and route execution confidence.', 'runtime-core', 'in-progress', 45, false),
-  createSeedMilestone('routing-truth-sharing', 'Routing / Localhost / Hosted Truth Sharing', 'Keep launchability truth explicit across localhost and hosted sessions.', 'routing', 'in-progress', 40, true),
-  createSeedMilestone('memory-system', 'Memory System', 'Durable/shared memory and session memory contracts remain separated and reliable.', 'memory', 'in-progress', 55, false),
-  createSeedMilestone('tile-system', 'Tile System', 'Launcher tile registry and runtime tile contracts remain healthy.', 'tiles', 'planned', 20, false),
-  createSeedMilestone('ai-integration', 'AI Integration', 'Provider routing, diagnostics, and prompt tooling alignment.', 'ai', 'in-progress', 50, false),
-  createSeedMilestone('cross-device-continuity', 'Cross-Device Continuity', 'Portable continuity across localhost/hosted/mobile contexts.', 'continuity', 'planned', 25, true),
-  createSeedMilestone('knowledge-graph-sim-core', 'Knowledge Graph / Simulation Core', 'Graph + simulation paths with truthful validation surfaces.', 'graph-simulation', 'planned', 18, false),
-  createSeedMilestone('operator-panels-ux', 'Operator Panels / UX', 'Panel ergonomics, touch behavior, and operator workflows.', 'ux', 'in-progress', 42, false),
-  createSeedMilestone('vr-research-lab', 'VR / Research Lab', 'Exploratory research milestone (manual planning state).', 'research', 'not-started', 5, false),
-  createSeedMilestone('deployment-build-reliability', 'Deployment / Build Reliability', 'Build/verify/serve gate reliability and stale-process protections.', 'build-reliability', 'in-progress', 60, false),
+  createSeedMilestone('agent-layer-v1-foundation', 'Agent Layer v1 Foundation', 'Canonical adjudicator, runtime mission model, and shared task truth are active baselines.', 'agent-layer', 'in-progress', 78, false),
+  createSeedMilestone('agent-layer-v2-surface-elevation', 'Agent Layer v2 Surface Elevation', 'Agent surface projections and operator-facing fleet visibility are being elevated across panels.', 'agent-layer', 'in-progress', 63, false),
+  createSeedMilestone('agent-layer-v3-persistent-orchestration', 'Agent Layer v3 Persistent Orchestration', 'Continuity-safe orchestration state and resumable handoff flow across sessions/surfaces.', 'agent-layer', 'planned', 36, true),
+  createSeedMilestone('mission-console-hosted-repair', 'Mission Console Hosted Repair', 'Hosted/caravan mode should remain useful as planning/orchestration when Battle Bridge is unavailable.', 'hosted-mode', 'in-progress', 58, false),
+  createSeedMilestone('launcher-agents-entry', 'Launcher Agents Entry', 'Launcher → agents/mission entry and posture handoff remain explicit and truthful.', 'launcher', 'planned', 44, false),
+  createSeedMilestone('intent-engine-operator-interface', 'Intent Engine Operator Interface', 'Dedicated mission intent capture/decomposition/review interface for operators.', 'operator-interface', 'in-progress', 52, false),
+  createSeedMilestone('provider-routing-hosted-safety', 'Provider Routing Hosted Safety', 'Provider-routing truth should keep hosted research safe and explicit when cloud/local routes change.', 'provider-routing', 'in-progress', 57, false),
+  createSeedMilestone('continuity-resume-handoff', 'Continuity Resume Handoff', 'Resumable mission packets and handoff exports stay durable and surface-aware.', 'continuity', 'in-progress', 54, false),
+  createSeedMilestone('build-verify-truth-gates', 'Build / Verify Truth Gates', 'Build/verify/served/source markers remain mandatory before route trust claims.', 'truth-gates', 'in-progress', 67, false),
 ]);
 
 function createSeedMilestone(id, title, description, category, status, percentComplete, blockerFlag) {

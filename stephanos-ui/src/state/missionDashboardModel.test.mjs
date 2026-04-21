@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildMissionHandoffText,
+  createDefaultMissionDashboardState,
   normalizeMissionDashboardState,
   sortMilestonesForOperations,
 } from './missionDashboardModel.js';
@@ -58,4 +59,15 @@ test('buildMissionHandoffText produces deterministic operator sections', () => {
   assert.match(text, /Active Blockers Summary/);
   assert.match(text, /Dependencies Summary/);
   assert.match(text, /Mission Note/);
+});
+
+test('default mission milestones include current agent-layer and hosted repair tracks', () => {
+  const state = createDefaultMissionDashboardState();
+  const milestoneIds = state.milestones.map((entry) => entry.id);
+  assert.ok(milestoneIds.includes('agent-layer-v1-foundation'));
+  assert.ok(milestoneIds.includes('agent-layer-v2-surface-elevation'));
+  assert.ok(milestoneIds.includes('agent-layer-v3-persistent-orchestration'));
+  assert.ok(milestoneIds.includes('mission-console-hosted-repair'));
+  assert.ok(milestoneIds.includes('launcher-agents-entry'));
+  assert.ok(milestoneIds.includes('intent-engine-operator-interface'));
 });

@@ -88,3 +88,16 @@ test('selectors expose resumability and prompt builder snapshot from mission lin
   assert.equal(selectors.promptBuilderSnapshot.resumableMissionCount, 1);
   assert.match(selectors.promptBuilderSnapshot.activeMissionSummary, /Mission Three/);
 });
+
+test('selectors expose hosted-safe mission console mode when local authority is unavailable', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'explicit' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'awaiting-approval', blockers: ['local execution required'] },
+    finalRouteTruth: { sessionKind: 'hosted-web', backendReachable: false, routeUsable: true, selectedRouteKind: 'cloud' },
+  });
+
+  assert.equal(selectors.missionConsoleMode.posture, 'hosted-safe-orchestration-mode');
+  assert.equal(selectors.missionConsoleMode.localAuthorityAvailable, false);
+  assert.equal(selectors.missionConsoleMode.executionDeferredToBattleBridge, true);
+  assert.match(selectors.missionConsoleMode.reason, /Hosted surface detected/i);
+});
