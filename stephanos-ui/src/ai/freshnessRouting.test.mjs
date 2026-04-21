@@ -581,6 +581,7 @@ test('hosted backend-unreachable request remains cloud-operational when hosted p
       backendReachable: false,
       runtimeContext: {
         hostedCloudConfig: {
+          enabled: true,
           proxyUrl: 'https://hosted-proxy.example.com',
         },
       },

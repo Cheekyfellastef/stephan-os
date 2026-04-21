@@ -189,6 +189,9 @@ test('ProviderToggle renders Hosted Cloud Cognition pane with worker URL and mod
   assert.match(rendered, /Worker\/proxy base URL/);
   assert.match(rendered, /https:\/\/worker-groq\.example\.workers\.dev/);
   assert.match(rendered, /Authority:\s*<\/strong>\s*cognition-only \(execution deferred\)/);
+  assert.match(rendered, /Reachable:\s*<\/strong>\s*unknown/);
+  assert.match(rendered, /Executable now:\s*<\/strong>\s*unknown/);
+  assert.match(rendered, /Model:\s*<\/strong>\s*gemini-2\.5-flash/);
 });
 
 test('resolveHomeNodeDraftSync keeps in-progress edits from being clobbered', async () => {

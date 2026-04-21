@@ -598,9 +598,12 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     onChange={(event) => updateHostedCloudCognitionProviderConfig(providerKey, { model: event.target.value })}
                   />
                 </label>
-                <p><strong>Health:</strong> {hostedProviderHealth.status || 'unknown'}</p>
+                <p><strong>Health:</strong> {hostedProviderHealth.status || (hostedProviderHealth.ok === true ? 'healthy' : 'unknown')}</p>
+                <p><strong>Reachable:</strong> {hostedProviderHealth.reachable === true ? 'yes' : (hostedProviderHealth.reachable === false ? 'no' : 'unknown')}</p>
+                <p><strong>Executable now:</strong> {hostedProviderHealth.executableNow === true ? 'yes' : (hostedProviderHealth.executableNow === false ? 'no' : 'unknown')}</p>
+                <p><strong>Model:</strong> {hostedProviderHealth.model || hostedProviderConfig.model || 'n/a'}</p>
                 <p><strong>Last check:</strong> {hostedProviderHealth.checkedAt || 'n/a'}</p>
-                <p><strong>Reason:</strong> {hostedProviderHealth.reason || 'No health check result yet.'}</p>
+                <p><strong>Reason:</strong> {hostedProviderHealth.reason || hostedProviderHealth.detail || 'No health check result yet.'}</p>
               </div>
             );
           })}
