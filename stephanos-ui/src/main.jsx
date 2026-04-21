@@ -10,6 +10,11 @@ import {
 } from "./runtimeInfo";
 import { createStephanosLocalUrls } from "../../shared/runtime/stephanosLocalUrls.mjs";
 import { installTopLevelCommandDeckReturnControls } from "../../shared/runtime/commandDeckReturnControls.mjs";
+import {
+  getStartupDiagnosticsSnapshot,
+  recordStartupRenderStage,
+} from "../../shared/runtime/startupLaunchDiagnostics.mjs";
+import { StartupFailureFallback } from "./startupFailureFallback.jsx";
 
 // LIVE SOURCE OF TRUTH: this Vite entry boots the Stephanos Mission Console UI from stephanos-ui/src.
 // Production output is generated into apps/stephanos/dist and embedded by the root launcher.
@@ -89,10 +94,79 @@ if (typeof installTopLevelCommandDeckReturnControls !== "function") {
 }
 installTopLevelCommandDeckReturnControls();
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+function getLatestStage() {
+  const diagnostics = getStartupDiagnosticsSnapshot();
+  return diagnostics.renderStages?.[0] || null;
+}
+
+class StartupErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false, stage: "unknown", error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    const latestStage = getLatestStage();
+    return {
+      failed: true,
+      stage: latestStage?.stage || "unknown",
+      error,
+    };
+  }
+
+  componentDidCatch(error) {
+    const latestStage = getLatestStage();
+    recordStartupRenderStage({
+      stage: latestStage?.stage || "fatal-render-error-caught",
+      status: "fatal",
+      sourceModule: "stephanos-ui/src/main.jsx",
+      sourceFunction: "StartupErrorBoundary.componentDidCatch",
+      details: {
+        message: String(error?.message || "unknown"),
+        stack: String(error?.stack || "").split("\n").slice(0, 8).join("\n"),
+      },
+    });
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <StartupFailureFallback stage={this.state.stage} error={this.state.error} />;
+    }
+    return this.props.children;
+  }
+}
+
+function StartupRenderSentinel() {
+  React.useEffect(() => {
+    recordStartupRenderStage({
+      stage: "first-paint-complete",
+      status: "ok",
+      sourceModule: "stephanos-ui/src/main.jsx",
+      sourceFunction: "StartupRenderSentinel.useEffect",
+    });
+  }, []);
+
+  return null;
+}
+
+recordStartupRenderStage({
+  stage: "stephanos-root-app-mount-started",
+  status: "ok",
+  sourceModule: "stephanos-ui/src/main.jsx",
+  sourceFunction: "bootstrap",
+  details: { href: window.location.href },
+});
+const rootNode = document.getElementById("root");
+if (!rootNode) {
+  throw new Error("Stephanos runtime root element #root was not found.");
+}
+ReactDOM.createRoot(rootNode).render(
   <React.StrictMode>
-    <AIStoreProvider>
-      <App />
-    </AIStoreProvider>
+    <StartupErrorBoundary>
+      <AIStoreProvider>
+        <StartupRenderSentinel />
+        <App />
+      </AIStoreProvider>
+    </StartupErrorBoundary>
   </React.StrictMode>,
 );

@@ -5,6 +5,8 @@ import {
   markRootLandingLoaded,
   markStartupSettled,
   recordStartupLaunchTrigger,
+  recordStartupRenderStage,
+  resetStartupDiagnostics,
 } from './startupLaunchDiagnostics.mjs';
 
 test('startup launch diagnostics captures trigger source, URL resolution, and remembered session signals', () => {
@@ -33,6 +35,7 @@ test('startup launch diagnostics captures trigger source, URL resolution, and re
   };
 
   try {
+    resetStartupDiagnostics();
     markRootLandingLoaded({ href: globalThis.location.href, readyState: 'complete' });
     markStartupSettled();
 
@@ -55,8 +58,36 @@ test('startup launch diagnostics captures trigger source, URL resolution, and re
     assert.equal(snapshot.launchTriggers.length > 0, true);
     assert.equal(snapshot.launchTriggers[0].sourceModule, 'modules/command-deck/command-deck.js');
   } finally {
+    resetStartupDiagnostics();
     globalThis.location = originalLocation;
     globalThis.localStorage = originalLocalStorage;
     globalThis.sessionStorage = originalSessionStorage;
+  }
+});
+
+test('startup launch diagnostics captures render-stage timeline and fatal stage', () => {
+  resetStartupDiagnostics();
+  try {
+    recordStartupRenderStage({
+      stage: 'runtime-store-initialized',
+      status: 'ok',
+      sourceModule: 'stephanos-ui/src/state/aiStore.js',
+      sourceFunction: 'AIStoreProvider.useEffect',
+    });
+    recordStartupRenderStage({
+      stage: 'first-render-after-mount',
+      status: 'fatal',
+      sourceModule: 'stephanos-ui/src/main.jsx',
+      sourceFunction: 'StartupErrorBoundary.componentDidCatch',
+      details: { message: 'Cannot read properties of undefined' },
+    });
+
+    const snapshot = getStartupDiagnosticsSnapshot();
+    assert.equal(snapshot.renderStages.length, 2);
+    assert.equal(snapshot.renderStages[0].stage, 'first-render-after-mount');
+    assert.equal(snapshot.fatalRenderError?.status, 'fatal');
+    assert.equal(snapshot.fatalRenderError?.details?.message, 'Cannot read properties of undefined');
+  } finally {
+    resetStartupDiagnostics();
   }
 });
