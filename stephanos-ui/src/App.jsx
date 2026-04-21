@@ -210,6 +210,7 @@ export default function App() {
   }), [continuitySnapshot, missionPacketWorkflow, runtimeStatus?.runtimeContext?.surfaceAwareness, runtimeStatus?.runtimeTruth?.memoryElevation, surfaceFrictionPatterns]);
   const canonicalCurrentIntent = useMemo(() => buildCanonicalCurrentIntent({
     intent: runtimeStatus?.runtimeTruth?.intent || {},
+    operatorIntentCapture: missionPacketWorkflow?.operatorIntentCapture || {},
     missionPacket: {
       ...missionPacketTruth,
       status: missionPacketTruth.active ? 'awaiting-approval' : 'proposed',
@@ -228,11 +229,12 @@ export default function App() {
         : lastExecutionMetadata?.actual_provider_used ? 'completed' : 'not-executing',
       actualProvider: lastExecutionMetadata?.actual_provider_used,
     },
-  }), [lastExecutionMetadata, missionPacketTruth, runtimeStatus?.runtimeTruth?.intent]);
+  }), [lastExecutionMetadata, missionPacketTruth, missionPacketWorkflow?.operatorIntentCapture, runtimeStatus?.runtimeTruth?.intent]);
   const canonicalMissionPacket = useMemo(() => buildCanonicalMissionPacket({
     missionPacketTruth,
     missionPacketWorkflow,
     currentIntent: canonicalCurrentIntent,
+    operatorIntentCapture: missionPacketWorkflow?.operatorIntentCapture || {},
   }), [canonicalCurrentIntent, missionPacketTruth, missionPacketWorkflow]);
   const canonicalSourceDistAlignment = useMemo(() => buildCanonicalSourceDistAlignment({
     sourceFingerprint: STEPHANOS_UI_SOURCE_FINGERPRINT,

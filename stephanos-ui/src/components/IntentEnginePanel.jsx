@@ -3,7 +3,8 @@ import CollapsiblePanel from './CollapsiblePanel';
 import { useAIStore } from '../state/aiStore';
 import { classifyOperatorIntent } from '../ai/intentEngine.js';
 
-const INTENT_CLASSES = ['plan', 'research', 'prepare', 'execute-later', 'review'];
+const INTENT_CLASSES = ['plan', 'research', 'build', 'repair', 'review', 'execute-later'];
+const EXECUTION_MODES = ['analysis-only', 'hosted-safe', 'battle-bridge-required', 'mixed'];
 
 function asText(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -56,9 +57,12 @@ export default function IntentEnginePanel({
   runtimeStatus = {},
   finalRouteTruth = null,
 } = {}) {
-  const { uiLayout, togglePanel } = useAIStore();
+  const { uiLayout, togglePanel, setMissionPacketWorkflow } = useAIStore();
   const [intentText, setIntentText] = useState('');
   const [intentClass, setIntentClass] = useState('plan');
+  const [missionTitle, setMissionTitle] = useState('');
+  const [missionClass, setMissionClass] = useState('operator-mission');
+  const [executionMode, setExecutionMode] = useState('hosted-safe');
   const [taskExecutionMap, setTaskExecutionMap] = useState({});
   const [decompositionDecision, setDecompositionDecision] = useState('pending-review');
 
@@ -78,6 +82,33 @@ export default function IntentEnginePanel({
   const hostedSession = runtimeStatus?.runtimeContext?.sessionKind === 'hosted-web';
   const localAuthorityAvailable = finalRouteTruth?.backendReachable === true && hostedSession === false;
   const executionDeferred = hostedSession && !localAuthorityAvailable;
+  const acceptedCapture = orchestrationSelectors?.currentMissionState?.intentSource === 'explicit';
+
+  const packetSummary = useMemo(() => {
+    const title = asText(missionTitle, 'Untitled mission');
+    const intent = asText(intentText, 'No intent text captured yet.');
+    return `${title} · ${intentClass} · ${executionMode} · ${intent}`;
+  }, [executionMode, intentClass, intentText, missionTitle]);
+
+  function commitIntentCapture(status, approved) {
+    const now = new Date().toISOString();
+    setMissionPacketWorkflow((prev) => ({
+      ...prev,
+      operatorIntentCapture: {
+        status,
+        approved,
+        intentLabel: asText(intentPreview?.intentType, intentClass),
+        missionType: intentClass,
+        missionTitle: asText(missionTitle, 'Untitled mission'),
+        missionClass: asText(missionClass, 'operator-mission'),
+        executionMode,
+        packetSummary,
+        capturedAt: now,
+        approvedAt: approved ? now : '',
+      },
+    }));
+    setDecompositionDecision(status);
+  }
 
   return (
     <CollapsiblePanel
@@ -94,15 +125,32 @@ export default function IntentEnginePanel({
       <p className="mission-note">
         Local authority: <strong>{localAuthorityAvailable ? 'available' : 'unavailable'}</strong> · Execution deferred to Battle Bridge: <strong>{executionDeferred ? 'yes' : 'no'}</strong>
       </p>
+      <p className="mission-note">
+        Planning can continue while execution is down: <strong>{executionDeferred ? 'yes' : 'yes'}</strong>.
+      </p>
 
+      <label>
+        Canonical mission title
+        <input type="text" value={missionTitle} onChange={(event) => setMissionTitle(event.target.value)} placeholder="Hosted route recovery + mission intent capture" />
+      </label>
       <label>
         Mission intent
         <textarea rows={3} value={intentText} onChange={(event) => setIntentText(event.target.value)} placeholder="Describe mission intent for decomposition and handoff..." />
       </label>
       <label>
-        Intent class
+        Mission type
         <select value={intentClass} onChange={(event) => setIntentClass(event.target.value)}>
           {INTENT_CLASSES.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
+        </select>
+      </label>
+      <label>
+        Mission class
+        <input type="text" value={missionClass} onChange={(event) => setMissionClass(event.target.value)} placeholder="runtime-orchestration-repair" />
+      </label>
+      <label>
+        Execution mode
+        <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+          {EXECUTION_MODES.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
         </select>
       </label>
 
@@ -113,7 +161,10 @@ export default function IntentEnginePanel({
           <li>Live mission: {asText(canonicalMissionPacket?.missionTitle, 'not established')}</li>
           <li>Phase: {asText(orchestrationSelectors?.currentMissionState?.missionPhase, 'proposed')}</li>
           <li>Intent preview type: {asText(intentPreview?.intentType, 'unknown')} · confidence {Number(intentPreview?.confidence || 0).toFixed(2)}</li>
+          <li>Mission class: {asText(missionClass, 'operator-mission')}</li>
+          <li>Execution mode: {asText(executionMode, 'hosted-safe')}</li>
           <li>Reason: {asText(intentPreview?.reason, 'No interpreted reason yet.')}</li>
+          <li>Packet summary: {packetSummary}</li>
         </ul>
       </section>
 
@@ -145,13 +196,14 @@ export default function IntentEnginePanel({
       </section>
 
       <section className="status-panel-copy-actions" data-no-drag>
-        <button type="button" onClick={() => setDecompositionDecision('accepted')}>Accept decomposition</button>
-        <button type="button" onClick={() => setDecompositionDecision('rejected')}>Reject decomposition</button>
-        <button type="button" onClick={() => setDecompositionDecision('refine-requested')}>Refine decomposition</button>
+        <button type="button" onClick={() => commitIntentCapture('approved', true)}>Approve mission packet</button>
+        <button type="button" onClick={() => commitIntentCapture('refine-requested', false)}>Refine mission packet</button>
+        <button type="button" onClick={() => commitIntentCapture('deferred', false)}>Defer mission packet</button>
+        <button type="button" onClick={() => commitIntentCapture('rejected', false)}>Reject mission packet</button>
       </section>
 
       <p className="muted">
-        Decision: <strong>{decompositionDecision}</strong> · Pending approvals: <strong>{orchestrationSelectors?.commandReadiness?.['accept-mission']?.approvalRequired ? 'yes' : 'no'}</strong> · Resumable work: <strong>{orchestrationSelectors?.missionResumability?.resumableMissionCount || 0}</strong>
+        Decision: <strong>{decompositionDecision}</strong> · Canonical approval state: <strong>{acceptedCapture ? 'accepted' : 'pending'}</strong> · Pending approvals: <strong>{orchestrationSelectors?.commandReadiness?.['accept-mission']?.approvalRequired ? 'yes' : 'no'}</strong> · Resumable work: <strong>{orchestrationSelectors?.missionResumability?.resumableMissionCount || 0}</strong>
       </p>
       <p className="muted">
         Next recommended step: {asText(orchestrationSelectors?.nextRecommendedAction, 'Review mission packet and choose explicit lifecycle action.')}.

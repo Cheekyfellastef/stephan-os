@@ -101,3 +101,21 @@ test('selectors expose hosted-safe mission console mode when local authority is 
   assert.equal(selectors.missionConsoleMode.executionDeferredToBattleBridge, true);
   assert.match(selectors.missionConsoleMode.reason, /Hosted surface detected/i);
 });
+
+test('selectors expose provider execution summary and operator action ladder when route is down and intent unknown', () => {
+  const selectors = deriveRuntimeOrchestrationSelectors({
+    canonicalCurrentIntent: { operatorIntent: { source: 'unknown' }, executionState: { status: 'not-executing' } },
+    canonicalMissionPacket: { currentPhase: 'awaiting-approval', blockers: [] },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      backendReachable: false,
+      selectedProvider: 'groq',
+      executedProvider: 'none',
+    },
+  });
+
+  assert.match(selectors.providerExecutionSummary, /selected, but no executable route exists/i);
+  assert.equal(selectors.operatorActionLadder.length, 4);
+  assert.match(selectors.operatorActionLadder[0], /establish intent/i);
+  assert.match(selectors.operatorActionLadder[2], /retry remembered bridge validation/i);
+});
