@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stephanos Agents Surface</title>
+    <script>
+      (function redirectToAgentsSurface() {
+        const destination = new URL('../stephanos/dist/index.html', window.location.href);
+        destination.searchParams.set('surface', 'agents');
+        const launcherShellUrl = new URL('../../index.html', window.location.href);
+        destination.searchParams.set('stephanosLauncherShellUrl', launcherShellUrl.href);
+        window.location.replace(destination.href);
+      })();
+    </script>
+  </head>
+  <body>
+    <p>Opening Stephanos Agents surface…</p>
+    <p><a href="../stephanos/dist/index.html?surface=agents">Continue manually</a></p>
+  </body>
+</html>

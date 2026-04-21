@@ -1,0 +1,7 @@
+{
+  "name": "Agents",
+  "icon": "🧬",
+  "entry": "index.html",
+  "type": "system",
+  "packaging": "classic-static"
+}

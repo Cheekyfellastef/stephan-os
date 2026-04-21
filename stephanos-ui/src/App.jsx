@@ -58,6 +58,7 @@ import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs'
 import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
 import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
 import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
+import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -125,15 +126,16 @@ export default function App() {
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
-  const cockpitSurfaceMode = useMemo(() => {
+  const surfaceMode = useMemo(() => {
     if (typeof window === 'undefined') {
-      return false;
+      return 'mission-control';
     }
 
     const params = new URLSearchParams(window.location.search);
-    const surface = String(params.get('surface') || params.get('app') || '').trim().toLowerCase();
-    return surface === 'cockpit';
+    return resolveAgentSurfaceMode(params.get('surface') || params.get('app'));
   }, []);
+  const cockpitSurfaceMode = surfaceMode === 'cockpit';
+  const agentsSurfaceMode = surfaceMode === 'agents';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const providerSummary = buildProviderStatusSummary(
     provider,
@@ -305,7 +307,7 @@ export default function App() {
     eventLog: agentEventLog,
     context: {
       sessionKind: runtimeStatus?.runtimeContext?.sessionKind || 'local-dev',
-      surface: cockpitSurfaceMode ? 'cockpit' : 'mission-control',
+      surface: agentsSurfaceMode ? 'agents' : cockpitSurfaceMode ? 'cockpit' : 'mission-control',
       dependencyReadyMap: {
         'runtime-truth': runtimeStatus?.appLaunchState === 'ready',
         'provider-routing': routeTruthView?.routeUsableState !== 'no',
@@ -316,7 +318,7 @@ export default function App() {
       },
     },
     operatorControls: agentControls,
-  }), [agentControls, agentEventLog, agentRegistry, cockpitSurfaceMode, continuitySnapshot?.sharedMemorySource, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, continuitySnapshot?.sharedMemorySource, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
   const finalAgentView = useMemo(() => buildFinalAgentView({
     adjudicated: agentTruth,
     selectedAgentId,
@@ -330,6 +332,10 @@ export default function App() {
       actingAgentId: '',
       operatorSummary: 'Agent visuals are hidden by operator quick control.',
     };
+  const agentSurfaceProjection = useMemo(() => buildAgentSurfaceProjection({
+    finalAgentView: displayAgentView,
+    surfaceMode,
+  }), [displayAgentView, surfaceMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -551,6 +557,40 @@ export default function App() {
         </div>
         <section className="cockpit-surface-stage">
           <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
+  if (agentsSurfaceMode) {
+    return (
+      <main className="app-shell-root agents-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          AGENTS SURFACE · <strong>{ignitionModeBanner.mode}</strong> · {agentSurfaceProjection.launcherSummary.summaryLabel} · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <AgentQuickControls
+          controls={agentControls}
+          registry={agentRegistry}
+          onToggle={(field) => setAgentControls((prev) => ({ ...prev, [field]: !prev[field] }))}
+          onSetAutonomy={(value) => setAgentControls((prev) => ({ ...prev, globalAutonomy: value }))}
+          onToggleAgent={(agentId) => setAgentControls((prev) => ({
+            ...prev,
+            agentEnabledMap: {
+              ...prev.agentEnabledMap,
+              [agentId]: !(prev.agentEnabledMap?.[agentId] ?? agentRegistry.find((entry) => entry.agentId === agentId)?.enabledByDefault === true),
+            },
+          }))}
+        />
+        <section className="agents-surface-stage">
+          <AgentsTile
+            finalAgentView={displayAgentView}
+            selectedAgentId={displayAgentView.selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+            isOpen
+            onToggle={() => {}}
+            debugVisibility={agentControls.debugVisibility}
+          />
         </section>
         <DebugConsole />
       </main>
