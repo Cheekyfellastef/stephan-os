@@ -159,9 +159,7 @@ export default function MissionDashboardPanel({
     const missionView = finalAgentView?.finalMissionOrchestrationView || {};
     const approvalView = finalAgentView?.finalApprovalQueueView || {};
     const resumeView = finalAgentView?.finalResumeView || {};
-    const sessionKind = runtimeStatus?.runtimeContext?.sessionKind || 'unknown';
-    const hostedSession = sessionKind === 'hosted-web';
-    const localAuthorityAvailable = hostedSession === false && finalRouteTruth?.backendReachable === true;
+    const capabilityPosture = orchestrationSelectors?.capabilityPosture || {};
     return {
       actingAgent: finalAgentView?.actingAgentId || 'intent-engine',
       activeGoals: Array.isArray(missionView.activeGoals) ? missionView.activeGoals : [],
@@ -169,17 +167,19 @@ export default function MissionDashboardPanel({
       blockedItems: Array.isArray(resumeView.blockedQueue) ? resumeView.blockedQueue : [],
       pendingApprovals: Number(approvalView.pendingCount || 0),
       resumableWork: Array.isArray(resumeView.resumableQueue) ? resumeView.resumableQueue : [],
-      localAuthorityAvailable,
-      hostedSession,
+      localAuthorityAvailable: capabilityPosture.localAuthorityAvailable === true,
+      hostedSession: capabilityPosture.hostedSafePlanningAvailable === true && capabilityPosture.localAuthorityAvailable !== true,
+      mode: capabilityPosture.mode || 'planning-only-degraded',
+      postureSummary: capabilityPosture.operatorSummary || 'Capability posture unavailable.',
       routeState: finalRouteTruth?.routeKind || 'unavailable',
-      executionAvailability: finalRouteTruth?.executedProvider && finalRouteTruth?.executedProvider !== 'unknown' ? 'available' : 'deferred',
+      executionAvailability: capabilityPosture.executionAvailable ? 'available' : 'deferred',
       canonicalIntentState: orchestrationSelectors?.currentMissionState?.intentSource || 'unknown',
       missionPacketState: orchestrationSelectors?.currentMissionState?.missionPhase || 'proposed',
       blockedReason: orchestrationSelectors?.blockageExplanation || 'none',
       providerSummary: orchestrationSelectors?.providerExecutionSummary || 'Provider status unavailable.',
       actionLadder: Array.isArray(orchestrationSelectors?.operatorActionLadder) ? orchestrationSelectors.operatorActionLadder : [],
     };
-  }, [finalAgentView, finalRouteTruth?.backendReachable, finalRouteTruth?.executedProvider, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary, runtimeStatus?.runtimeContext?.sessionKind]);
+  }, [finalAgentView, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.capabilityPosture, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary]);
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
@@ -358,8 +358,9 @@ export default function MissionDashboardPanel({
       <section className="mission-live-projection" aria-label="Live system projection">
         <h3>Live System Projection</h3>
         <p className="mission-note">
-          Mode: <strong>{liveProjection.hostedSession ? 'hosted-safe planning/orchestration' : 'local-authority runtime'}</strong> · Local authority: <strong>{liveProjection.localAuthorityAvailable ? 'available' : 'unavailable'}</strong>
+          Mode: <strong>{liveProjection.mode}</strong> · Local authority: <strong>{liveProjection.localAuthorityAvailable ? 'available' : 'unavailable'}</strong>
         </p>
+        <p className="mission-note">{liveProjection.postureSummary}</p>
         <ul className="compact-list">
           <li>Acting agent: {liveProjection.actingAgent}</li>
           <li>Active goals: {liveProjection.activeGoals.length}</li>
@@ -385,8 +386,9 @@ export default function MissionDashboardPanel({
         ) : null}
       </section>
 
-      <label className="mission-filter-toggle">
+      <label className="mission-filter-toggle paneFieldGroup">
         <input
+          className="paneControl"
           type="checkbox"
           checked={uiState.showBlockedOnly}
           onChange={(event) => setMissionDashboardUiState((prev) => ({ ...normalizeMissionDashboardUiState(prev), showBlockedOnly: event.target.checked }))}
@@ -436,19 +438,21 @@ export default function MissionDashboardPanel({
         <section className="mission-editor-pane" aria-label="Mission milestone editor">
           <h3>{selectedMilestone ? `Edit: ${selectedMilestone.title}` : 'Select a milestone'}</h3>
           {selectedMilestone ? (
-            <>
-              <label>
+            <div className="paneFormLayout">
+              <label className="paneFieldGroup">
                 Status
                 <select
+                  className="paneSelect paneControl"
                   value={editorState.status}
                   onChange={(event) => setEditorState((prev) => ({ ...prev, status: event.target.value }))}
                 >
                   {STATUS_VALUES.map((status) => <option key={status} value={status}>{getMissionStatusLabel(status)}</option>)}
                 </select>
               </label>
-              <label>
+              <label className="paneFieldGroup">
                 Percent complete
                 <input
+                  className="paneInput paneControl"
                   type="number"
                   min={0}
                   max={100}
@@ -456,33 +460,37 @@ export default function MissionDashboardPanel({
                   onChange={(event) => setEditorState((prev) => ({ ...prev, percentComplete: Number(event.target.value) }))}
                 />
               </label>
-              <label>
+              <label className="paneFieldGroup">
                 Next action
                 <input
+                  className="paneInput paneControl"
                   type="text"
                   value={editorState.nextAction}
                   onChange={(event) => setEditorState((prev) => ({ ...prev, nextAction: event.target.value }))}
                 />
               </label>
-              <label className="mission-inline-toggle">
+              <label className="mission-inline-toggle paneFieldGroup">
                 <input
+                  className="paneControl"
                   type="checkbox"
                   checked={editorState.blockerFlag}
                   onChange={(event) => setEditorState((prev) => ({ ...prev, blockerFlag: event.target.checked }))}
                 />
                 Blocked
               </label>
-              <label>
+              <label className="paneFieldGroup">
                 Blocker details
                 <textarea
+                  className="paneTextarea paneControl"
                   rows={2}
                   value={editorState.blockerDetails}
                   onChange={(event) => setEditorState((prev) => ({ ...prev, blockerDetails: event.target.value }))}
                 />
               </label>
-              <label>
+              <label className="paneFieldGroup">
                 Notes
                 <textarea
+                  className="paneTextarea paneControl"
                   rows={3}
                   value={editorState.notes}
                   onChange={(event) => setEditorState((prev) => ({ ...prev, notes: event.target.value }))}
@@ -491,7 +499,7 @@ export default function MissionDashboardPanel({
               <div className="mission-editor-actions">
                 <button type="button" onClick={handleSaveMilestone} disabled={isSaving}>{isSaving ? 'Saving…' : 'Save milestone'}</button>
               </div>
-            </>
+            </div>
           ) : (
             <p className="muted">No milestone selected.</p>
           )}
@@ -503,6 +511,7 @@ export default function MissionDashboardPanel({
           <h3>Manual Copy Mission Handoff</h3>
           <p>Clipboard access is unavailable. Copy this text manually.</p>
           <textarea
+            className="paneTextarea paneEditorRegion"
             value={fallbackCopyText}
             readOnly
             rows={14}

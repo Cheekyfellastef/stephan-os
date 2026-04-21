@@ -36,4 +36,6 @@ test('CollapsiblePanel collapse toggle is marked as non-draggable and controls i
   assert.match(rendered, /class="panel-collapse-toggle"/);
   assert.match(rendered, /data-no-drag="true"/);
   assert.match(rendered, /aria-controls="testPanel-body"/);
+  assert.match(rendered, /class="pane-collapse-dial"/);
+  assert.match(rendered, /class="pane-collapse-chevron open"/);
 });
