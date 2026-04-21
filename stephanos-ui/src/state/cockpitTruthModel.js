@@ -37,7 +37,7 @@ function providerHealthStateToState(value) {
   return 'unknown';
 }
 
-export function isExecutionActive(runtimeStatus, continuitySnapshot) {
+export function isExecutionActive(runtimeStatus, continuitySnapshot, finalAgentView = null) {
   const executionTruth = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
   const executionStatus = String(runtimeStatus?.executionStatus || '').trim().toLowerCase();
   const appLaunchState = String(runtimeStatus?.appLaunchState || '').trim().toLowerCase();
@@ -46,10 +46,11 @@ export function isExecutionActive(runtimeStatus, continuitySnapshot) {
     return true;
   }
 
-  return appLaunchState === 'ready' && continuitySnapshot?.recentActivityActive === true;
+  return appLaunchState === 'ready'
+    && (continuitySnapshot?.recentActivityActive === true || Boolean(finalAgentView?.actingAgentId));
 }
 
-export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory, continuitySnapshot, continuityRetrievalActive = false }) {
+export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, providerHealth, workingMemory, projectMemory, continuitySnapshot, continuityRetrievalActive = false, finalAgentView = null }) {
   const runtimeTruth = runtimeStatus.runtimeTruth ?? {};
   const reachability = runtimeTruth.reachabilityTruth ?? {};
   const providerTruth = runtimeTruth.provider ?? {};
@@ -79,7 +80,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
       || projectMemory?.currentMilestone,
     );
 
-  const executionActive = isExecutionActive(runtimeStatus, continuitySnapshot);
+  const executionActive = isExecutionActive(runtimeStatus, continuitySnapshot, finalAgentView);
 
   const nodeStates = {
     operator: launchState === 'pending' ? 'unknown' : 'alive',
@@ -210,7 +211,7 @@ export function deriveConnectionState({
   return 'alive';
 }
 
-export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {}, providerHealth = {}, workingMemory, projectMemory, commandHistory = [], telemetryEntries = [] }) {
+export function buildCockpitModel({ runtimeStatus, routeTruthView, finalAgentView = null, apiStatus = {}, providerHealth = {}, workingMemory, projectMemory, commandHistory = [], telemetryEntries = [] }) {
   const continuitySnapshot = deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory, telemetryEntries });
   const latestCommand = Array.isArray(commandHistory) && commandHistory.length > 0 ? commandHistory[commandHistory.length - 1] : null;
   const continuityRetrievalActive = String(latestCommand?.continuity_mode || '').trim().toLowerCase() === 'retrieval-active';
@@ -223,6 +224,7 @@ export function buildCockpitModel({ runtimeStatus, routeTruthView, apiStatus = {
     projectMemory,
     continuitySnapshot,
     continuityRetrievalActive,
+    finalAgentView,
   });
 
   const connectionStates = Object.fromEntries(
