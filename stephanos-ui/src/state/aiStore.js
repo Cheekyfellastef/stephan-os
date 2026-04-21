@@ -484,6 +484,40 @@ function sanitizeObjectList(entries = [], max = 12) {
     .slice(-max);
 }
 
+function normalizeHostedCloudCognitionSettings(value = {}) {
+  const defaultsHosted = createDefaultHostedCloudCognitionSettings();
+  const persistedHosted = value && typeof value === 'object'
+    ? value
+    : {};
+  return {
+    ...defaultsHosted,
+    ...persistedHosted,
+    enabled: persistedHosted.enabled === true,
+    selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(persistedHosted.selectedProvider)
+      ? persistedHosted.selectedProvider
+      : defaultsHosted.selectedProvider,
+    providers: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
+      const defaultsProvider = defaultsHosted.providers?.[providerKey] || {};
+      const persistedProvider = persistedHosted.providers?.[providerKey] || {};
+      return [providerKey, {
+        ...defaultsProvider,
+        ...persistedProvider,
+        enabled: persistedProvider.enabled !== false,
+        baseURL: String(persistedProvider.baseURL || ''),
+        model: String(persistedProvider.model || defaultsProvider.model || ''),
+      }];
+    })),
+    lastHealth: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
+      const defaultsHealth = defaultsHosted.lastHealth?.[providerKey] || {};
+      const persistedHealth = persistedHosted.lastHealth?.[providerKey] || {};
+      return [providerKey, {
+        ...defaultsHealth,
+        ...persistedHealth,
+      }];
+    })),
+  };
+}
+
 function normalizeStoredSettings(persistedSession) {
   const defaults = createDefaultRouterSettings();
   const persistedSettings = persistedSession?.session?.providerPreferences || {};
@@ -505,39 +539,7 @@ function normalizeStoredSettings(persistedSession) {
         apiKey: '',
       })]),
     ),
-    hostedCloudCognition: (() => {
-      const defaultsHosted = createDefaultHostedCloudCognitionSettings();
-      const persistedHosted = persistedSettings.hostedCloudCognition && typeof persistedSettings.hostedCloudCognition === 'object'
-        ? persistedSettings.hostedCloudCognition
-        : {};
-      return {
-        ...defaultsHosted,
-        ...persistedHosted,
-        enabled: persistedHosted.enabled === true,
-        selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(persistedHosted.selectedProvider)
-          ? persistedHosted.selectedProvider
-          : defaultsHosted.selectedProvider,
-        providers: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
-          const defaultsProvider = defaultsHosted.providers?.[providerKey] || {};
-          const persistedProvider = persistedHosted.providers?.[providerKey] || {};
-          return [providerKey, {
-            ...defaultsProvider,
-            ...persistedProvider,
-            enabled: persistedProvider.enabled !== false,
-            baseURL: String(persistedProvider.baseURL || ''),
-            model: String(persistedProvider.model || defaultsProvider.model || ''),
-          }];
-        })),
-        lastHealth: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
-          const defaultsHealth = defaultsHosted.lastHealth?.[providerKey] || {};
-          const persistedHealth = persistedHosted.lastHealth?.[providerKey] || {};
-          return [providerKey, {
-            ...defaultsHealth,
-            ...persistedHealth,
-          }];
-        })),
-      };
-    })(),
+    hostedCloudCognition: normalizeHostedCloudCognitionSettings(persistedSettings.hostedCloudCognition),
     ollamaConnection: normalizeOllamaConnection(persistedSettings.ollamaConnection || {}),
     surfaceOverride: normalizeSurfaceOverride(persistedSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE),
   };
@@ -658,6 +660,21 @@ function createInitialMemorySnapshot() {
       tailscaleRequireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'tailscale' }),
     })
     : initialBridgeTransportPreferences;
+  const restoredHostedCloudCognition = persistedSession?.session?.providerPreferences?.hostedCloudCognition;
+  const hostedCloudCognitionRestored = Boolean(restoredHostedCloudCognition && typeof restoredHostedCloudCognition === 'object');
+  const normalizedRestoredHostedCloudCognition = normalizeHostedCloudCognitionSettings(restoredHostedCloudCognition);
+  const restoredHostedProvider = normalizedRestoredHostedCloudCognition?.selectedProvider || 'groq';
+  const restoredHostedBaseUrl = normalizedRestoredHostedCloudCognition?.providers?.[restoredHostedProvider]?.baseURL || '';
+  const hostedCloudCognitionRestoreDiagnostics = {
+    restoreAttempted: true,
+    restoreSucceeded: hostedCloudCognitionRestored,
+    restoredFromSession: hostedCloudCognitionRestored,
+    reason: hostedCloudCognitionRestored
+      ? 'Restored hosted cognition settings from session memory.'
+      : 'No hosted cognition payload found in session memory; defaults applied.',
+    lastRestoredSummary: `${restoredHostedProvider}:${restoredHostedBaseUrl || 'no-base-url'}`,
+    restoredAt: new Date().toISOString(),
+  };
 
   return {
     persistedSession,
@@ -668,6 +685,7 @@ function createInitialMemorySnapshot() {
       homeNodeLastKnown,
     }),
     settings: normalizeStoredSettings(persistedSession),
+    hostedCloudCognitionRestoreDiagnostics,
     uiLayout: effectiveUiLayout,
     paneLayout: {
       order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
@@ -729,7 +747,32 @@ export function AIStoreProvider({ children }) {
   const [fallbackOrder, setFallbackOrderState] = useState(initialSettings.fallbackOrder);
   const [savedProviderConfigs, setSavedProviderConfigs] = useState(initialSettings.providerConfigs);
   const [draftProviderConfigs, setDraftProviderConfigs] = useState(initialSettings.providerConfigs);
-  const [hostedCloudCognition, setHostedCloudCognitionState] = useState(initialSettings.hostedCloudCognition || createDefaultHostedCloudCognitionSettings());
+  const [savedHostedCloudCognition, setSavedHostedCloudCognition] = useState(
+    normalizeHostedCloudCognitionSettings(initialSettings.hostedCloudCognition || createDefaultHostedCloudCognitionSettings()),
+  );
+  const [hostedCloudCognition, setHostedCloudCognitionState] = useState(
+    normalizeHostedCloudCognitionSettings(initialSettings.hostedCloudCognition || createDefaultHostedCloudCognitionSettings()),
+  );
+  const [hostedCloudCognitionSaveState, setHostedCloudCognitionSaveState] = useState(() => ({
+    state: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredFromSession ? 'restored' : 'idle',
+    message: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.reason || 'Hosted cognition settings loaded.',
+    diagnostics: {
+      saveAttempted: false,
+      saveSucceeded: false,
+      saveAttemptedAt: '',
+      saveSucceededAt: '',
+      restoreAttempted: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoreAttempted === true,
+      restoreSucceeded: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoreSucceeded === true,
+      restoreAttemptedAt: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredAt || '',
+      restoreSucceededAt: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoreSucceeded === true
+        ? (initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredAt || '')
+        : '',
+      lastRestoreReason: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.reason || '',
+      lastRestoredSummary: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.lastRestoredSummary || '',
+      restoredFromSession: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredFromSession === true,
+    },
+    lastSavedAt: '',
+  }));
   const [providerDraftStatus, setProviderDraftStatus] = useState(Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { mode: 'saved', message: '', savedAt: null, errors: {} }] )));
   const [providerHealth, setProviderHealth] = useState({});
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
@@ -1032,7 +1075,7 @@ export function AIStoreProvider({ children }) {
           disableHomeNodeForLocalSession,
           fallbackOrder,
           providerConfigs: sanitizeConfigForStorage(savedProviderConfigs),
-          hostedCloudCognition,
+          hostedCloudCognition: savedHostedCloudCognition,
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
           surfaceOverride: normalizeSurfaceOverride(surfaceOverride),
         },
@@ -1081,7 +1124,7 @@ export function AIStoreProvider({ children }) {
     disableHomeNodeForLocalSession,
     fallbackOrder,
     savedProviderConfigs,
-    hostedCloudCognition,
+    savedHostedCloudCognition,
     ollamaConnection,
     surfaceOverride,
     bridgeTransportPreferences,
@@ -1101,6 +1144,30 @@ export function AIStoreProvider({ children }) {
     projectMemory,
     debugVisible,
   ]);
+
+  useEffect(() => {
+    if (hostedCloudCognitionDirty) {
+      setHostedCloudCognitionSaveState((prev) => (prev.state === 'unsaved'
+        ? prev
+        : {
+          ...prev,
+          state: 'unsaved',
+          message: 'Unsaved changes',
+        }));
+    }
+  }, [hostedCloudCognitionDirty]);
+
+  useEffect(() => {
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      hostedCognitionSaveAttempted: hostedCloudCognitionSaveState.diagnostics?.saveAttempted === true,
+      hostedCognitionSaveSucceeded: hostedCloudCognitionSaveState.diagnostics?.saveSucceeded === true,
+      hostedCognitionRestoreAttempted: hostedCloudCognitionSaveState.diagnostics?.restoreAttempted === true,
+      hostedCognitionRestoreSucceeded: hostedCloudCognitionSaveState.diagnostics?.restoreSucceeded === true,
+      hostedCognitionLastRestoredSummary: hostedCloudCognitionSaveState.diagnostics?.lastRestoredSummary || '',
+      hostedCognitionLastRestoreReason: hostedCloudCognitionSaveState.diagnostics?.lastRestoreReason || '',
+    }));
+  }, [hostedCloudCognitionSaveState, setUiDiagnostics]);
 
 
   const setMissionDashboardUiState = useCallback((nextState) => {
@@ -1186,13 +1253,27 @@ export function AIStoreProvider({ children }) {
   const setSurfaceOverride = useCallback((nextMode) => {
     setSurfaceOverrideState(normalizeSurfaceOverride(nextMode));
   }, []);
+  const hostedCloudCognitionDirty = useMemo(
+    () => JSON.stringify(hostedCloudCognition) !== JSON.stringify(savedHostedCloudCognition),
+    [hostedCloudCognition, savedHostedCloudCognition],
+  );
   const setHostedCloudCognitionEnabled = useCallback((enabled) => {
     setHostedCloudCognitionState((prev) => ({ ...prev, enabled: enabled === true }));
+    setHostedCloudCognitionSaveState((prev) => ({
+      ...prev,
+      state: 'unsaved',
+      message: 'Unsaved changes',
+    }));
   }, []);
   const setHostedCloudCognitionProvider = useCallback((providerKey) => {
     setHostedCloudCognitionState((prev) => ({
       ...prev,
       selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(providerKey) ? providerKey : prev.selectedProvider,
+    }));
+    setHostedCloudCognitionSaveState((prev) => ({
+      ...prev,
+      state: 'unsaved',
+      message: 'Unsaved changes',
     }));
   }, []);
   const updateHostedCloudCognitionProviderConfig = useCallback((providerKey, patch = {}) => {
@@ -1206,6 +1287,11 @@ export function AIStoreProvider({ children }) {
           ...(patch && typeof patch === 'object' ? patch : {}),
         },
       },
+    }));
+    setHostedCloudCognitionSaveState((prev) => ({
+      ...prev,
+      state: 'unsaved',
+      message: 'Unsaved changes',
     }));
   }, []);
   const setHostedCloudCognitionHealth = useCallback((providerKey, healthPatch = {}) => {
@@ -1221,6 +1307,45 @@ export function AIStoreProvider({ children }) {
       },
     }));
   }, []);
+  const saveHostedCloudCognitionSettings = useCallback(() => {
+    const attemptedAt = new Date().toISOString();
+    try {
+      const normalized = normalizeHostedCloudCognitionSettings(hostedCloudCognition);
+      const summaryProvider = normalized.selectedProvider || 'groq';
+      const summaryBaseUrl = normalized.providers?.[summaryProvider]?.baseURL || '';
+      setSavedHostedCloudCognition(normalized);
+      setHostedCloudCognitionState(normalized);
+      setHostedCloudCognitionSaveState((prev) => ({
+        ...prev,
+        state: 'saved',
+        message: 'Saved',
+        lastSavedAt: attemptedAt,
+        diagnostics: {
+          ...prev.diagnostics,
+          saveAttempted: true,
+          saveSucceeded: true,
+          saveAttemptedAt: attemptedAt,
+          saveSucceededAt: attemptedAt,
+          lastRestoredSummary: `${summaryProvider}:${summaryBaseUrl || 'no-base-url'}`,
+        },
+      }));
+      return { ok: true, savedAt: attemptedAt };
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : 'Unknown save failure.';
+      setHostedCloudCognitionSaveState((prev) => ({
+        ...prev,
+        state: 'save-failed',
+        message: `Save failed: ${failureMessage}`,
+        diagnostics: {
+          ...prev.diagnostics,
+          saveAttempted: true,
+          saveSucceeded: false,
+          saveAttemptedAt: attemptedAt,
+        },
+      }));
+      return { ok: false, error: failureMessage };
+    }
+  }, [hostedCloudCognition]);
 
   const reportSurfaceFriction = useCallback(({ userText = '', source = 'operator-text', now = new Date() } = {}) => {
     const frictionEvent = createFrictionEvent({
@@ -2145,6 +2270,8 @@ export function AIStoreProvider({ children }) {
     savedProviderConfigs,
     draftProviderConfigs,
     hostedCloudCognition,
+    hostedCloudCognitionSaveState,
+    hostedCloudCognitionDirty,
     providerDraftStatus,
     providerHealth,
     setProviderHealth,
@@ -2161,6 +2288,7 @@ export function AIStoreProvider({ children }) {
     setHostedCloudCognitionProvider,
     updateHostedCloudCognitionProviderConfig,
     setHostedCloudCognitionHealth,
+    saveHostedCloudCognitionSettings,
     reportSurfaceFriction,
     clearSurfaceFrictionEvents,
     acceptSurfaceRecommendation,
@@ -2241,6 +2369,8 @@ export function AIStoreProvider({ children }) {
     savedProviderConfigs,
     draftProviderConfigs,
     hostedCloudCognition,
+    hostedCloudCognitionSaveState,
+    hostedCloudCognitionDirty,
     providerDraftStatus,
     providerHealth,
     ollamaConnection,
@@ -2285,6 +2415,7 @@ export function AIStoreProvider({ children }) {
     setHostedCloudCognitionProvider,
     updateHostedCloudCognitionProviderConfig,
     setHostedCloudCognitionHealth,
+    saveHostedCloudCognitionSettings,
     reportSurfaceFriction,
     clearSurfaceFrictionEvents,
     acceptSurfaceRecommendation,

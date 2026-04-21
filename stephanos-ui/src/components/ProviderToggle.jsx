@@ -160,9 +160,12 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setDisableHomeNodeForLocalSession,
     providerHealth,
     hostedCloudCognition,
+    hostedCloudCognitionSaveState,
+    hostedCloudCognitionDirty,
     setHostedCloudCognitionEnabled,
     setHostedCloudCognitionProvider,
     updateHostedCloudCognitionProviderConfig,
+    saveHostedCloudCognitionSettings,
     providerDraftStatus,
     getDraftProviderConfig,
     updateDraftProviderConfig,
@@ -192,6 +195,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [homeNodeSaveResult, setHomeNodeSaveResult] = useState('');
   const [secretDrafts, setSecretDrafts] = useState({});
   const [secretSaveStatus, setSecretSaveStatus] = useState({});
+  const [hostedProviderTestStatus, setHostedProviderTestStatus] = useState({});
 
   useEffect(() => {
     const syncResult = resolveHomeNodeDraftSync({
@@ -427,6 +431,43 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const homeNodeSourceLabel = homeNodePreference?.source || homeNodeLastKnown?.source || 'none';
   const hostedTruth = runtimeStatusModel?.canonicalRouteRuntimeTruth || {};
   const hostedProvider = hostedCloudCognition?.selectedProvider || 'groq';
+  const hostedSaveMessage = hostedCloudCognitionSaveState?.message || (hostedCloudCognitionDirty ? 'Unsaved changes' : 'Saved');
+
+  const testHostedProvider = async (providerKey) => {
+    const providerConfig = hostedCloudCognition?.providers?.[providerKey] || {};
+    const baseURL = String(providerConfig.baseURL || '').trim();
+    if (!baseURL) {
+      setHostedProviderTestStatus((prev) => ({
+        ...prev,
+        [providerKey]: { state: 'failed', message: 'Set a Worker/proxy base URL before testing.', checkedAt: new Date().toISOString() },
+      }));
+      return;
+    }
+    setHostedProviderTestStatus((prev) => ({
+      ...prev,
+      [providerKey]: { state: 'testing', message: 'Testing reachability…', checkedAt: new Date().toISOString() },
+    }));
+    try {
+      const response = await fetch(baseURL, { method: 'GET' });
+      setHostedProviderTestStatus((prev) => ({
+        ...prev,
+        [providerKey]: {
+          state: response.ok ? 'passed' : 'failed',
+          message: response.ok ? `Reachable (${response.status})` : `Unreachable (${response.status})`,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    } catch (error) {
+      setHostedProviderTestStatus((prev) => ({
+        ...prev,
+        [providerKey]: {
+          state: 'failed',
+          message: `Fetch failed: ${error instanceof Error ? error.message : 'network/CORS error'}`,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    }
+  };
 
   return (
     <div className="provider-toggle-block" data-component-marker={PROVIDER_COMPONENT_MARKER}>
@@ -554,6 +595,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <p><strong>Route posture:</strong> {hostedTruth.hostedCloudPathAvailable === true ? 'Worker-backed provider path active' : 'Execution deferred'}</p>
           <p><strong>Cloud cognition available:</strong> {hostedTruth.cloudCognitionAvailable === true ? 'yes' : 'no'}</p>
           <p><strong>Reason:</strong> {hostedTruth.operatorSummary || 'Battle Bridge authority unavailable'}</p>
+          <p><strong>Save state:</strong> {hostedSaveMessage}</p>
+          <p><strong>Restore:</strong> {hostedCloudCognitionSaveState?.diagnostics?.restoreSucceeded === true ? 'Restored from session' : 'Defaulted (no saved hosted session payload)'}</p>
+          <p><strong>Last restored summary:</strong> {hostedCloudCognitionSaveState?.diagnostics?.lastRestoredSummary || 'n/a'}</p>
+          <p><strong>Restore reason:</strong> {hostedCloudCognitionSaveState?.diagnostics?.lastRestoreReason || 'n/a'}</p>
+          <div className="provider-quick-actions">
+            <button type="button" className="ghost-button" onClick={() => saveHostedCloudCognitionSettings()}>Save Hosted Cloud Cognition</button>
+          </div>
         </div>
         <div className="provider-form-grid hosted-cloud-form-grid">
           <label>
@@ -570,6 +618,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           {['groq', 'gemini'].map((providerKey) => {
             const hostedProviderConfig = hostedCloudCognition?.providers?.[providerKey] || {};
             const hostedProviderHealth = hostedCloudCognition?.lastHealth?.[providerKey] || {};
+            const hostedTest = hostedProviderTestStatus?.[providerKey] || {};
             return (
               <div key={`hosted-${providerKey}`} className="hosted-provider-card">
                 <h4>{providerKey === 'groq' ? 'Groq hosted Worker route' : 'Gemini hosted Worker route'}</h4>
@@ -598,12 +647,17 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                     onChange={(event) => updateHostedCloudCognitionProviderConfig(providerKey, { model: event.target.value })}
                   />
                 </label>
+                <div className="provider-quick-actions">
+                  <button type="button" className="ghost-button" onClick={() => testHostedProvider(providerKey)}>Test Hosted Provider</button>
+                </div>
                 <p><strong>Health:</strong> {hostedProviderHealth.status || (hostedProviderHealth.ok === true ? 'healthy' : 'unknown')}</p>
                 <p><strong>Reachable:</strong> {hostedProviderHealth.reachable === true ? 'yes' : (hostedProviderHealth.reachable === false ? 'no' : 'unknown')}</p>
                 <p><strong>Executable now:</strong> {hostedProviderHealth.executableNow === true ? 'yes' : (hostedProviderHealth.executableNow === false ? 'no' : 'unknown')}</p>
                 <p><strong>Model:</strong> {hostedProviderHealth.model || hostedProviderConfig.model || 'n/a'}</p>
                 <p><strong>Last check:</strong> {hostedProviderHealth.checkedAt || 'n/a'}</p>
                 <p><strong>Reason:</strong> {hostedProviderHealth.reason || hostedProviderHealth.detail || 'No health check result yet.'}</p>
+                <p><strong>Test result:</strong> {hostedTest.message || 'Not tested yet.'}</p>
+                <p><strong>Test checked at:</strong> {hostedTest.checkedAt || 'n/a'}</p>
               </div>
             );
           })}

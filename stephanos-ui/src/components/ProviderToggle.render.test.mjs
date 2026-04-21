@@ -43,9 +43,20 @@ function createStore(overrides = {}) {
         gemini: { status: 'unknown', reason: 'No provider health data yet.', checkedAt: '' },
       },
     },
+    hostedCloudCognitionSaveState: {
+      state: 'restored',
+      message: 'Restored from session',
+      diagnostics: {
+        restoreSucceeded: true,
+        lastRestoredSummary: 'groq:https://worker-groq.example.workers.dev',
+        lastRestoreReason: 'Restored hosted cognition settings from session memory.',
+      },
+    },
+    hostedCloudCognitionDirty: false,
     setHostedCloudCognitionEnabled: () => {},
     setHostedCloudCognitionProvider: () => {},
     updateHostedCloudCognitionProviderConfig: () => {},
+    saveHostedCloudCognitionSettings: () => ({ ok: true }),
     getDraftProviderConfig: (providerKey) => ({
       mock: { model: 'stephanos-mock-v1', mode: 'echo', latencyMs: 0, failRate: 0 },
       groq: { model: 'openai/gpt-oss-20b', baseURL: 'https://api.groq.com/openai/v1', apiKey: '' },
@@ -189,6 +200,10 @@ test('ProviderToggle renders Hosted Cloud Cognition pane with worker URL and mod
   assert.match(rendered, /Worker\/proxy base URL/);
   assert.match(rendered, /https:\/\/worker-groq\.example\.workers\.dev/);
   assert.match(rendered, /Authority:\s*<\/strong>\s*cognition-only \(execution deferred\)/);
+  assert.match(rendered, /Save state:\s*<\/strong>\s*Restored from session/);
+  assert.match(rendered, /Restore:\s*<\/strong>\s*Restored from session/);
+  assert.match(rendered, /Save Hosted Cloud Cognition/);
+  assert.match(rendered, /Test Hosted Provider/);
   assert.match(rendered, /Reachable:\s*<\/strong>\s*unknown/);
   assert.match(rendered, /Executable now:\s*<\/strong>\s*unknown/);
   assert.match(rendered, /Model:\s*<\/strong>\s*gemini-2\.5-flash/);
