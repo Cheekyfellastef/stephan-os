@@ -12,6 +12,8 @@ function getGlobalDiagnostics() {
       },
       startupSettledAt: null,
       launchTriggers: [],
+      renderStages: [],
+      fatalRenderError: null,
     };
   }
 
@@ -97,6 +99,36 @@ export function markStartupSettled() {
   return diagnostics.startupSettledAt;
 }
 
+export function recordStartupRenderStage({
+  stage = 'unknown',
+  status = 'info',
+  sourceModule = 'unknown',
+  sourceFunction = 'unknown',
+  details = null,
+} = {}) {
+  const diagnostics = getGlobalDiagnostics();
+  const stageRecord = {
+    at: new Date().toISOString(),
+    stage: String(stage || 'unknown'),
+    status: String(status || 'info'),
+    sourceModule,
+    sourceFunction,
+    details,
+  };
+
+  diagnostics.renderStages.unshift(stageRecord);
+  if (diagnostics.renderStages.length > 100) {
+    diagnostics.renderStages.length = 100;
+  }
+
+  if (stageRecord.status === 'fatal') {
+    diagnostics.fatalRenderError = stageRecord;
+  }
+
+  console.info('[StartupAudit] Render stage observed', stageRecord);
+  return stageRecord;
+}
+
 export function recordStartupLaunchTrigger({
   sourceModule = 'unknown',
   sourceFunction = 'unknown',
@@ -138,5 +170,11 @@ export function getStartupDiagnosticsSnapshot() {
   return {
     ...diagnostics,
     launchTriggers: diagnostics.launchTriggers.map((entry) => ({ ...entry })),
+    renderStages: diagnostics.renderStages.map((entry) => ({ ...entry })),
+    fatalRenderError: diagnostics.fatalRenderError ? { ...diagnostics.fatalRenderError } : null,
   };
+}
+
+export function resetStartupDiagnostics() {
+  delete globalThis[DIAGNOSTIC_GLOBAL_KEY];
 }

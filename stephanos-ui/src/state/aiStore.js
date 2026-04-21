@@ -87,6 +87,7 @@ import {
   buildBridgeRevalidationAttemptedConfigKey,
   shouldTreatBridgeHealthProbeAsReachable,
 } from './bridgeAutoRevalidation.mjs';
+import { recordStartupRenderStage } from '../../../shared/runtime/startupLaunchDiagnostics.mjs';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -729,6 +730,18 @@ function createInitialMemorySnapshot() {
 
 export function AIStoreProvider({ children }) {
   const initialSnapshot = useMemo(() => createInitialMemorySnapshot(), []);
+  useEffect(() => {
+    recordStartupRenderStage({
+      stage: 'runtime-store-initialized',
+      status: 'ok',
+      sourceModule: 'stephanos-ui/src/state/aiStore.js',
+      sourceFunction: 'AIStoreProvider.useEffect',
+      details: {
+        hasPersistedUiLayout: Boolean(initialSnapshot?.hasPersistedUiLayout),
+        restoreDecision: String(initialSnapshot?.runtimeContext?.restoreDecision || ''),
+      },
+    });
+  }, [initialSnapshot?.hasPersistedUiLayout, initialSnapshot?.runtimeContext?.restoreDecision]);
   const initialSettings = initialSnapshot.settings;
   const [commandHistory, setCommandHistory] = useState(initialSnapshot.commandHistory);
   const [status, setStatus] = useState('idle');

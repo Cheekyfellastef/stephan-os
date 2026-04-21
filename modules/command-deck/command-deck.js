@@ -1,4 +1,4 @@
-import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
+import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger, recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
@@ -184,6 +184,19 @@ function launchProject(project, context, trigger = {}) {
     rawTarget: chosenTarget,
     resolvedTarget: resolvedEntry,
   });
+  recordStartupRenderStage({
+    stage: 'launcher-launch-target-resolved',
+    status: 'ok',
+    sourceModule: 'modules/command-deck/command-deck.js',
+    sourceFunction: 'launchProject',
+    details: {
+      projectId,
+      isStephanos,
+      rawEntry: chosenTarget,
+      resolvedEntry,
+      triggerType: trigger?.type || 'unknown',
+    },
+  });
 
   const startupDiagnostics = getStartupDiagnosticsSnapshot();
   if (isStephanos && trigger?.type === 'event-bus' && startupDiagnostics.userInteraction?.interacted !== true) {
@@ -215,11 +228,22 @@ function launchProject(project, context, trigger = {}) {
       });
     }
 
+    const navigationTarget = withCommandDeckDestination(resolvedEntry, window);
     console.info('[CommandDeck] Stephanos launch forcing top-level navigation', {
       reason: 'avoid iframe-based local ignition/recovery from invalid frame contexts',
-      target: resolvedEntry,
+      target: navigationTarget,
     });
-    window.location.assign(withCommandDeckDestination(resolvedEntry, window));
+    recordStartupRenderStage({
+      stage: 'top-level-navigation-attempted',
+      status: 'ok',
+      sourceModule: 'modules/command-deck/command-deck.js',
+      sourceFunction: 'launchProject',
+      details: {
+        projectId,
+        navigationTarget,
+      },
+    });
+    window.location.assign(navigationTarget);
     return;
   }
 
