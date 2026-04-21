@@ -1,0 +1,97 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildAgentRegistry } from './agentRegistry.mjs';
+import { adjudicateAgents } from './agentAdjudicator.mjs';
+import { buildFinalAgentView } from './finalAgentView.mjs';
+
+function buildBaseContext() {
+  return {
+    sessionKind: 'local-dev',
+    surface: 'mission-control',
+    dependencyReadyMap: {
+      'runtime-truth': true,
+      'provider-routing': true,
+      'shared-memory': true,
+      'operator-policy': true,
+      'intent-engine': true,
+      'memory-agent': true,
+    },
+  };
+}
+
+test('adjudicator separates enabled, eligible, active, and acting', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: buildBaseContext(),
+    operatorControls: {
+      autonomyMasterToggle: true,
+      safeMode: false,
+      globalAutonomy: 'assisted',
+      agentEnabledMap: { 'research-agent': false },
+    },
+    eventLog: [{ agentId: 'intent-engine', type: 'state', state: 'acting', reason: 'active test', at: new Date().toISOString() }],
+  });
+  const intent = adjudicated.agents.find((entry) => entry.agentId === 'intent-engine');
+  const research = adjudicated.agents.find((entry) => entry.agentId === 'research-agent');
+  assert.equal(intent.eligible, true);
+  assert.equal(intent.active, true);
+  assert.equal(intent.acting, true);
+  assert.equal(research.enabled, false);
+  assert.equal(research.active, false);
+  assert.equal(research.state, 'blocked');
+});
+
+test('surface and session eligibility suppresses agents with reason strings', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: { ...buildBaseContext(), surface: 'cockpit', sessionKind: 'hosted-web' },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const execution = adjudicated.agents.find((entry) => entry.agentId === 'execution-agent');
+  assert.equal(execution.eligible, false);
+  assert.equal(execution.state, 'blocked');
+  assert.match(execution.stateReason, /Surface cockpit is not allowed|Session kind hosted-web is not allowed/);
+});
+
+test('dependency, safe mode, and autonomy master toggles produce explicit suppression', () => {
+  const registry = buildAgentRegistry([{ agentId: 'ideas-agent', autonomyLevel: 'guarded-auto' }]);
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      dependencyReadyMap: { ...buildBaseContext().dependencyReadyMap, 'shared-memory': false },
+    },
+    operatorControls: {
+      autonomyMasterToggle: false,
+      safeMode: true,
+      globalAutonomy: 'full-auto',
+      agentEnabledMap: {},
+    },
+    eventLog: [],
+  });
+  const ideas = adjudicated.agents.find((entry) => entry.agentId === 'ideas-agent');
+  assert.equal(ideas.active, false);
+  assert.ok(ideas.blockers.some((entry) => entry.includes('safe mode') || entry.includes('Global autonomy is manual')));
+  assert.ok(ideas.blockers.some((entry) => entry.includes('Autonomy master toggle is off')));
+});
+
+test('final projection yields handoff chain and suppression visibility', () => {
+  const registry = buildAgentRegistry();
+  const now = new Date().toISOString();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: buildBaseContext(),
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: { 'research-agent': false } },
+    eventLog: [
+      { agentId: 'intent-engine', type: 'state', state: 'acting', reason: 'routing', at: now },
+      { agentId: 'intent-engine', type: 'handoff', fromAgentId: 'intent-engine', toAgentId: 'research-agent', reason: 'intent-engine → research-agent', at: now },
+    ],
+  });
+  const view = buildFinalAgentView({ adjudicated });
+  assert.equal(view.actingAgentId, 'intent-engine');
+  assert.ok(view.visibleHandoffChain[0].includes('intent-engine'));
+  assert.ok(view.suppressionReasons.some((entry) => entry.includes('Research Agent')));
+});
