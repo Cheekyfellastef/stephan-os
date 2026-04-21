@@ -1123,6 +1123,9 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     surfaceAwareness,
     surfaceRoutingBiasHint,
     providerExecutionIntent,
+    hostedCloudConfig: runtimeContext.hostedCloudConfig && typeof runtimeContext.hostedCloudConfig === 'object'
+      ? runtimeContext.hostedCloudConfig
+      : {},
   };
 }
 

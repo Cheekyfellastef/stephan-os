@@ -226,6 +226,15 @@ function projectFinalRouteTruthFromCanonical(canonicalRouteRuntimeTruth, baseFin
     requestedProvider: canonical.requestedProvider || base.requestedProvider || 'unknown',
     selectedProvider: canonical.selectedProvider || base.selectedProvider || 'unknown',
     executedProvider: canonical.executedProvider || base.executedProvider || '',
+    providerConfigured: canonical.providerConfigured === true,
+    executableViaBackend: canonical.executableViaBackend === true,
+    executableViaHostedCloud: canonical.executableViaHostedCloud === true,
+    actualProviderPath: canonical.actualProviderPath || 'none',
+    providerAuthorityLevel: canonical.providerAuthorityLevel || 'none',
+    battleBridgeAuthorityAvailable: canonical.battleBridgeAuthorityAvailable === true,
+    cloudCognitionAvailable: canonical.cloudCognitionAvailable === true,
+    hostedCloudPathAvailable: canonical.hostedCloudPathAvailable === true,
+    hostedCloudSecretPathKind: canonical.hostedCloudSecretPathKind || 'none',
     providerHealthState: canonical.providerHealthState || base.providerHealthState || 'unknown',
     fallbackReason: canonical.fallbackReason || provider.fallbackReason || base.fallbackReason || '',
     validationState: canonical.validationState || diagnostics.validationState || base.validationState || 'unknown',
@@ -268,6 +277,31 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
   const hostedBlockingCodes = Array.isArray(hostedRouteTruth.blockingIssues)
     ? hostedRouteTruth.blockingIssues.map((issue) => issue?.code).filter(Boolean)
     : [];
+  const hostedCloudConfig = asObject(runtimeTruth?.session?.hostedCloudConfig || runtimeTruth?.hostedCloudConfig);
+  const hostedSession = session.sessionKind === 'hosted-web';
+  const selectedProviderNormalized = String(provider.selectedProvider || '').trim().toLowerCase();
+  const cloudCognitionProvider = ['groq', 'gemini'].includes(selectedProviderNormalized);
+  const hostedCloudProxyConfigured = Boolean(
+    hostedCloudConfig.proxyUrl
+    || hostedCloudConfig?.providerProxyUrls?.[selectedProviderNormalized],
+  );
+  const hostedCloudPathAvailable = hostedSession && cloudCognitionProvider && hostedCloudProxyConfigured;
+  const battleBridgeAuthorityAvailable = reachabilityTruth.backendReachable === true;
+  const executableViaHostedCloud = hostedCloudPathAvailable && cloudCognitionProvider;
+  const executableViaBackend = battleBridgeAuthorityAvailable && Boolean(provider.executableProvider);
+  const actualProviderPath = executableViaHostedCloud && !battleBridgeAuthorityAvailable
+    ? `${selectedProviderNormalized}-hosted-cloud`
+    : (provider.executableProvider || '');
+  const providerAuthorityLevel = executableViaHostedCloud && !battleBridgeAuthorityAvailable
+    ? 'cloud-cognition-only'
+    : executableViaBackend
+      ? 'battle-bridge-authority'
+      : 'none';
+  const hostedCloudSecretPathKind = hostedCloudPathAvailable
+    ? 'hosted-proxy'
+    : hostedCloudConfig.backendOnlySecrets === true
+      ? 'backend-only'
+      : 'none';
 
   return {
     sessionKind: session.sessionKind || 'unknown',
@@ -295,6 +329,15 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     requestedProvider: provider.requestedProvider || 'unknown',
     selectedProvider: provider.selectedProvider || 'unknown',
     executedProvider: provider.executableProvider || '',
+    providerConfigured: provider.selectedProvider && provider.selectedProvider !== 'unknown',
+    executableViaBackend,
+    executableViaHostedCloud,
+    actualProviderPath: actualProviderPath || 'none',
+    providerAuthorityLevel,
+    battleBridgeAuthorityAvailable,
+    cloudCognitionAvailable: reachabilityTruth.cloudAvailable === true || executableViaHostedCloud,
+    hostedCloudPathAvailable,
+    hostedCloudSecretPathKind,
     providerHealthState: provider.providerHealthState || 'unknown',
     fallbackActive: route.fallbackActive === true || provider.fallbackProviderUsed === true,
     fallbackReason,
@@ -379,6 +422,7 @@ export function adjudicateRuntimeTruth({
       localEligible: (truth.sessionKind || context.sessionKind) === 'local-desktop',
       hostedSession: (truth.sessionKind || context.sessionKind) === 'hosted-web',
       nonLocalSession: (truth.sessionKind || context.sessionKind) !== 'local-desktop',
+      hostedCloudConfig: asObject(context.hostedCloudConfig),
     },
     route: {
       requestedMode: truth.requestedRouteMode || routePlan.requestedRouteMode || 'auto',
@@ -434,6 +478,7 @@ export function adjudicateRuntimeTruth({
     routePreferenceOrder: Array.isArray(routePreferenceOrder) ? routePreferenceOrder : [],
     computedFromPersistence: false,
     hostedRouteTruth: asObject(context.canonicalHostedRouteTruth),
+    hostedCloudConfig: asObject(context.hostedCloudConfig),
   };
 
   const issues = [];

@@ -101,6 +101,16 @@ function getResolvedApiBaseUrl() {
   return normalizeBaseUrl(runtimeEnv.VITE_API_BASE_URL);
 }
 
+function normalizeOptionalUrl(value = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  try {
+    return new URL(normalized).href.replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
 function getApiBaseUrlStrategy(baseUrl) {
   if (runtimeEnv.VITE_API_BASE_URL?.trim()) {
     return 'env:VITE_API_BASE_URL';
@@ -132,6 +142,10 @@ export function getApiTargetLabel(baseUrl = getResolvedApiBaseUrl()) {
 export function getApiRuntimeConfig() {
   const config = getApiConfig();
   const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const hostedProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_COGNITION_PROXY_URL);
+  const hostedGroqProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GROQ_PROXY_URL);
+  const hostedGeminiProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GEMINI_PROXY_URL);
+  const backendOnlySecrets = String(runtimeEnv.VITE_HOSTED_CLOUD_BACKEND_ONLY_SECRETS || '').trim().toLowerCase() === 'true';
 
   return {
     frontendOrigin: getFrontendOrigin(),
@@ -142,6 +156,16 @@ export function getApiRuntimeConfig() {
     strategy: getApiBaseUrlStrategy(config.baseUrl),
     backendTargetEndpoint: buildApiUrl('/api/ai/chat', config.baseUrl),
     healthEndpoint: buildApiUrl('/api/health', config.baseUrl),
+    hostedCloudConfig: {
+      enabled: Boolean(hostedProxyUrl || hostedGroqProxyUrl || hostedGeminiProxyUrl),
+      proxyUrl: hostedProxyUrl,
+      providerProxyUrls: {
+        groq: hostedGroqProxyUrl,
+        gemini: hostedGeminiProxyUrl,
+      },
+      chatPath: String(runtimeEnv.VITE_HOSTED_COGNITION_CHAT_PATH || '/api/ai/chat').trim() || '/api/ai/chat',
+      backendOnlySecrets,
+    },
     bridgeUrl,
     homeNode: manualNode || lastKnownNode || null,
   };

@@ -28,7 +28,15 @@ function resolveFallbackVetoReason({
   routeTruthView,
   backendReachabilityState,
   selectedRouteKind,
+  hostedCloudPathAvailable,
+  selectedAnswerMode,
 }) {
+  const hostedCloudCognitionMode = selectedAnswerMode === 'cloud-basic'
+    || selectedAnswerMode === 'fresh-cloud'
+    || selectedAnswerMode === 'fresh-web';
+  if (hostedCloudPathAvailable && hostedCloudCognitionMode && backendReachabilityState === 'no') {
+    return null;
+  }
   if (routeUsableState !== 'no') {
     return null;
   }
@@ -58,7 +66,8 @@ export function evaluateRequestDispatchGate({
   ).trim() || 'unavailable';
   const routeUsableState = resolveRouteUsableState(routeTruthView, canonicalRouteTruth);
   const backendReachabilityState = resolveBackendReachabilityState(routeTruthView, runtimeStatus, canonicalRouteTruth);
-  const backendReachable = backendReachabilityState !== 'no';
+  const hostedCloudPathAvailable = routeDecision?.hostedCloudPathAvailable === true;
+  const backendReachable = backendReachabilityState !== 'no' || hostedCloudPathAvailable;
   const explicitBackendUnreachable = backendReachabilityState === 'no';
 
   const freshRouteViable = routeDecision?.freshRouteAvailable === true && backendReachable;
@@ -84,6 +93,8 @@ export function evaluateRequestDispatchGate({
     routeTruthView,
     backendReachabilityState,
     selectedRouteKind,
+    hostedCloudPathAvailable,
+    selectedAnswerMode: effectiveAnswerMode,
   });
 
   if (modeRouteUnavailable) {
@@ -110,7 +121,10 @@ export function evaluateRequestDispatchGate({
       : modePrefersLocalExecution
         ? localRouteViable || freshRouteViable || cloudRouteViable
         : freshRouteViable || localRouteViable || cloudRouteViable;
-  const dispatchAllowed = dispatchAllowedByMode && routeUsableState !== 'no';
+  const bypassRouteUsabilityVeto = hostedCloudPathAvailable
+    && (effectiveAnswerMode === 'cloud-basic' || effectiveAnswerMode === 'fresh-cloud' || effectiveAnswerMode === 'fresh-web')
+    && (routeUsableState === 'no' || explicitBackendUnreachable);
+  const dispatchAllowed = dispatchAllowedByMode && (routeUsableState !== 'no' || bypassRouteUsabilityVeto);
 
   if (dispatchAllowed) {
     return {
@@ -122,6 +136,7 @@ export function evaluateRequestDispatchGate({
       localRouteViable,
       backendReachable,
       backendReachabilityState,
+      hostedCloudPathAvailable,
       selectedRouteKind,
       selectedRouteUsable: true,
       routeUsableState,
@@ -131,7 +146,7 @@ export function evaluateRequestDispatchGate({
 
   const reasonCode = fallbackVetoReason
     || (explicitBackendUnreachable
-      ? 'backend-unreachable'
+      ? (hostedCloudPathAvailable ? 'battle-bridge-unreachable-hosted-cloud-cognition-available' : 'backend-unreachable')
       : modeRequiresFreshRoute
         ? routeDecision?.fallbackReasonCode || 'fresh-route-unavailable'
         : modeRequiresCloudRoute
@@ -147,6 +162,7 @@ export function evaluateRequestDispatchGate({
     localRouteViable,
     backendReachable,
     backendReachabilityState,
+    hostedCloudPathAvailable,
     selectedRouteKind,
     selectedRouteUsable: routeUsableState === 'yes',
     routeUsableState,

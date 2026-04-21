@@ -35,6 +35,34 @@ function firstNonEmpty(...values) {
   return '';
 }
 
+function resolveHostedCloudDispatch({
+  routeDecision = {},
+  runtimeConfig = {},
+  requestedProvider = '',
+} = {}) {
+  const hostedConfig = runtimeConfig?.hostedCloudConfig || {};
+  const provider = String(
+    routeDecision?.requestedProviderForRequest
+    || routeDecision?.selectedProvider
+    || requestedProvider
+    || '',
+  ).trim().toLowerCase();
+  const providerProxy = String(hostedConfig?.providerProxyUrls?.[provider] || '').trim();
+  const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
+  const targetBaseUrl = providerProxy || sharedProxy;
+  const enabled = routeDecision?.hostedCloudPathAvailable === true && Boolean(targetBaseUrl);
+
+  return {
+    enabled,
+    targetBaseUrl,
+    chatPath: String(hostedConfig?.chatPath || '/api/ai/chat').trim() || '/api/ai/chat',
+    provider,
+    secretPathKind: String(routeDecision?.hostedCloudSecretPathKind || 'none'),
+    authorityLevel: String(routeDecision?.hostedCloudAuthorityLevel || 'none'),
+    providerPath: String(routeDecision?.hostedCloudExecutionProvider || 'none'),
+  };
+}
+
 export function resolveTimeoutExecutionTruth({
   requestedProvider = '',
   routeDecision = null,
@@ -232,11 +260,45 @@ export async function sendPrompt({
     fallbackOrder: payload.fallbackOrder,
   });
 
-  const result = await requestJson('/api/ai/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }, runtimeContext, timeoutPolicyWithExecution);
+  let result;
+  try {
+    result = await requestJson('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, runtimeContext, timeoutPolicyWithExecution);
+  } catch (error) {
+    const hostedDispatch = resolveHostedCloudDispatch({
+      routeDecision,
+      runtimeConfig: runtimeContext,
+      requestedProvider: provider,
+    });
+    if (!hostedDispatch.enabled) {
+      throw error;
+    }
+    const hostedRuntimeContext = {
+      ...runtimeContext,
+      baseUrl: hostedDispatch.targetBaseUrl,
+    };
+    const hostedPayload = {
+      ...payload,
+      runtimeContext: {
+        ...payload.runtimeContext,
+        hostedCloudExecutionPath: {
+          active: true,
+          secretPathKind: hostedDispatch.secretPathKind,
+          authorityLevel: hostedDispatch.authorityLevel,
+          providerPath: hostedDispatch.providerPath,
+          battleBridgeAuthorityAvailable: false,
+        },
+      },
+    };
+    result = await requestJson(hostedDispatch.chatPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(hostedPayload),
+    }, hostedRuntimeContext, timeoutPolicyWithExecution);
+  }
 
   return {
     ok: result.ok,

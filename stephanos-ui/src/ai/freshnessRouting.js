@@ -192,6 +192,7 @@ export function resolveFreshnessRoutingDecision({
   providerHealth = {},
   runtimeStatus = {},
   routeTruthView = {},
+  providerConfigs = {},
 } = {}) {
   const sessionKind = String(runtimeStatus?.sessionKind || routeTruthView?.sessionKind || '').trim().toLowerCase();
   const hostedSession = sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
@@ -227,6 +228,13 @@ export function resolveFreshnessRoutingDecision({
       || (!requestedProviderExplicitlyUnhealthy && !requestedProviderTransportExplicitlyUnreachable)
       || (requestedProviderHealthy && requestedProviderTransportReachable));
   const cloudRouteUsable = runtimeStatus?.cloudAvailable === true && backendReachable;
+  const hostedCloudPathCapability = resolveHostedCloudPathCapability({
+    providerKey: requested,
+    hostedCloudConfig: runtimeStatus?.runtimeContext?.hostedCloudConfig || {},
+    providerConfigs,
+  });
+  const hostedCloudPathAvailable = hostedSession && hostedCloudPathCapability.available;
+  const cloudCognitionAvailableWithoutBackend = hostedCloudPathAvailable && !backendReachable;
   const freshProviderPreference = ['gemini', 'groq', 'openrouter'];
   const primaryFreshProvider = freshProviderPreference.find((providerKey) => providerHealth?.[providerKey]) || 'groq';
   const primaryFreshProviderHealthy = providerHealthy(providerHealth, primaryFreshProvider);
@@ -261,9 +269,10 @@ export function resolveFreshnessRoutingDecision({
   const candidateFreshPath = String(selectedFreshCapability?.freshWebPath || '').trim();
   const webCapabilityState = selectedFreshCandidate?.webCapabilityState || 'unknown';
   const selectedFreshProviderSupportsCurrentAnswers = selectedFreshCandidate?.supportsCurrentAnswers ?? null;
-  const freshRouteAvailable = cloudRouteUsable
+  const freshRouteAvailable = (cloudRouteUsable || cloudCognitionAvailableWithoutBackend)
     && Boolean(selectedFreshProvider);
-  const cloudRouteAvailable = (cloudRouteUsable && freshCandidates.some((candidate) => candidate.healthy && candidate.transportReachable))
+  const cloudRouteAvailable = ((cloudRouteUsable || cloudCognitionAvailableWithoutBackend) && freshCandidates.some((candidate) => candidate.healthy && candidate.transportReachable))
+    || hostedCloudPathAvailable
     || requestedProviderRouteViable;
   const homeNodeUsable = String(routeTruthView?.homeNodeUsableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.homeNodeAvailable === true;
@@ -302,7 +311,9 @@ export function resolveFreshnessRoutingDecision({
       selectedAnswerMode = 'fresh-cloud';
       freshnessRouted = true;
       policyReason = hostedSession
-        ? `Hosted high-freshness request pinned to ${selectedFreshProvider} fresh-cloud path.`
+        ? (backendReachable
+          ? `Hosted high-freshness request pinned to ${selectedFreshProvider} fresh-cloud path.`
+          : `Battle Bridge unavailable; using ${selectedFreshProvider} hosted-safe cloud cognition path.`)
         : 'Cloud routing allowed and selected because current real-world truth is required.';
     } else {
       selectedProvider = hostedSession
@@ -351,7 +362,9 @@ export function resolveFreshnessRoutingDecision({
         : (selectedFreshProvider || 'gemini');
       selectedAnswerMode = 'cloud-basic';
       freshnessRouted = true;
-      policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
+      policyReason = backendReachable
+        ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
+        : 'Battle Bridge unavailable; hosted-safe cloud cognition path remains available for planning and reasoning.';
     } else if (localRouteAvailable) {
       selectedProvider = requested === 'groq' && cloudRouteAvailable ? 'groq' : 'ollama';
       selectedAnswerMode = selectedProvider === 'ollama' ? 'local-private' : 'cloud-basic';
@@ -386,7 +399,9 @@ export function resolveFreshnessRoutingDecision({
     selectedAnswerMode = 'cloud-basic';
     freshnessRouted = true;
     fallbackReasonCode = null;
-    policyReason = 'Hosted session using zero-cost cloud reasoning path for low-freshness request.';
+    policyReason = backendReachable
+      ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
+      : 'Battle Bridge unavailable; hosted-safe cloud cognition path remains available for planning and reasoning.';
   }
 
   const requestedProviderForRequest = selectedProvider;
@@ -415,6 +430,12 @@ export function resolveFreshnessRoutingDecision({
     cloudRouteAvailable,
     localRouteAvailable,
     fallbackReasonCode,
+    hostedCloudPathAvailable,
+    hostedCloudSecretPathKind: hostedCloudPathCapability.secretPathKind,
+    hostedCloudAuthorityLevel: hostedCloudPathCapability.authorityLevel,
+    hostedCloudExecutionProvider: hostedCloudPathCapability.providerExecutionPath,
+    battleBridgeAuthorityAvailable: backendReachable,
+    executionDeferred: backendReachable ? false : hostedCloudPathAvailable,
     candidateFreshModel: candidateFreshModel || null,
     candidateFreshPath: candidateFreshPath || null,
     freshRouteValidation: {
@@ -430,3 +451,4 @@ export function resolveFreshnessRoutingDecision({
     freshnessCandidateProvider: selectedFreshProvider || null,
   };
 }
+import { resolveHostedCloudPathCapability } from './hostedCloudPath.js';
