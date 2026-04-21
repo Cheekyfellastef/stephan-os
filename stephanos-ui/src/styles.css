@@ -2187,3 +2187,83 @@ pre {
     min-height: 44px;
   }
 }
+
+.agent-quick-controls {
+  position: fixed;
+  right: 1rem;
+  top: 3.5rem;
+  z-index: 30;
+}
+
+.agent-cog-button {
+  border: 1px solid rgba(138, 180, 248, 0.6);
+  border-radius: 999px;
+  background: rgba(12, 19, 34, 0.9);
+  color: #dce7ff;
+  padding: 0.45rem 0.7rem;
+}
+
+.agent-cog-popup {
+  margin-top: 0.4rem;
+  padding: 0.6rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(138, 180, 248, 0.35);
+  background: rgba(10, 14, 24, 0.98);
+  display: grid;
+  gap: 0.35rem;
+  min-width: 240px;
+}
+
+.agent-cog-popup label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.agents-fleet-strip {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 0.75rem;
+}
+
+.agent-pill {
+  text-align: left;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(124, 139, 173, 0.45);
+  background: rgba(20, 26, 39, 0.8);
+  color: #e5ecff;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.agent-pill.pulse-acting,
+.agent-pill.acting {
+  border-color: rgba(90, 226, 164, 0.95);
+  box-shadow: 0 0 0.8rem rgba(90, 226, 164, 0.35);
+}
+
+.agent-pill.pulse-active {
+  border-color: rgba(138, 180, 248, 0.9);
+}
+
+.agent-pill.pulse-blocked {
+  border-color: rgba(247, 117, 117, 0.9);
+}
+
+.agent-pill.selected {
+  outline: 2px solid rgba(138, 180, 248, 0.5);
+}
+
+.agents-region {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(124, 139, 173, 0.28);
+}
+
+.agents-event-stream {
+  max-height: 180px;
+  overflow: auto;
+}

@@ -249,3 +249,35 @@ test('cockpit model treats retrieval-active continuity mode as active memory flo
   assert.equal(model.nodeStates.memory, 'active');
   assert.ok(model.animatedNodeIds.includes('memory'));
 });
+
+test('cockpit model consumes projected agent truth to animate execution when an agent is acting', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      executionTruth: 'idle',
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      uiReachableState: 'yes',
+      executedProvider: 'groq',
+      selectedProvider: 'groq',
+    },
+    finalAgentView: {
+      actingAgentId: 'execution-agent',
+      activeAgentIds: ['intent-engine', 'execution-agent'],
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.ok(model.animatedConnectionIds.includes('backend-execution'));
+  assert.ok(model.animatedNodeIds.includes('execution'));
+});
