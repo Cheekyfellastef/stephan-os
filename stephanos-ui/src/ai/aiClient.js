@@ -11,6 +11,7 @@ import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
+const HOSTED_COGNITION_PROVIDER_ORDER = ['groq', 'gemini'];
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -59,66 +60,146 @@ function resolveHostedCloudDispatch({
   const hostedConfig = runtimeConfig?.hostedCloudConfig || {};
   const configuredSelectedProvider = String(hostedConfig?.selectedProvider || '').trim().toLowerCase();
   const selectedProvider = configuredSelectedProvider || 'groq';
-  const provider = String(
+  const requestedProviderNormalized = String(
     configuredSelectedProvider
     || routeDecision?.requestedProviderForRequest
     || routeDecision?.selectedProvider
     || requestedProvider
     || '',
   ).trim().toLowerCase();
-  const providerProxy = String(
-    hostedConfig?.providers?.[provider]?.baseURL
-    || hostedConfig?.providerProxyUrls?.[provider]
-    || '',
-  ).trim();
-  const providerEnabled = hostedConfig?.providers?.[provider]?.enabled !== false;
-  const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
-  const targetBaseUrl = providerProxy || sharedProxy;
-  let validTarget = false;
-  try {
-    if (targetBaseUrl) {
-      const parsed = new URL(targetBaseUrl);
-      validTarget = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  const providerOrder = [
+    requestedProviderNormalized || selectedProvider,
+    ...HOSTED_COGNITION_PROVIDER_ORDER.filter((providerKey) => providerKey !== requestedProviderNormalized && providerKey !== selectedProvider),
+  ];
+  const providerCandidates = providerOrder.map((providerKey) => {
+    const provider = String(providerKey || '').trim().toLowerCase();
+    const providerProxy = String(
+      hostedConfig?.providers?.[provider]?.baseURL
+      || hostedConfig?.providerProxyUrls?.[provider]
+      || '',
+    ).trim();
+    const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
+    const targetBaseUrl = providerProxy || sharedProxy;
+    let validTarget = false;
+    try {
+      if (targetBaseUrl) {
+        const parsed = new URL(targetBaseUrl);
+        validTarget = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+      }
+    } catch {
+      validTarget = false;
     }
-  } catch {
-    validTarget = false;
-  }
-  const enabled = hostedConfig?.enabled === true && providerEnabled && validTarget;
-  const providerHealth = hostedConfig?.lastHealth?.[provider] || {};
-  const reachableNow = providerHealth.reachable === true;
-  const explicitHealthHealthy = reachableNow || providerHealth.status === 'healthy' || providerHealth.ok === true;
+    const providerEnabled = hostedConfig?.providers?.[provider]?.enabled !== false;
+    const enabled = hostedConfig?.enabled === true && providerEnabled && validTarget;
+    const providerHealth = hostedConfig?.lastHealth?.[provider] || {};
+    const reachableNow = providerHealth.reachable === true;
+    const explicitHealthHealthy = reachableNow || providerHealth.status === 'healthy' || providerHealth.ok === true;
+    return {
+      provider,
+      targetBaseUrl,
+      validTarget,
+      providerEnabled,
+      enabled,
+      providerHealth,
+      reachableNow,
+      explicitHealthHealthy,
+    };
+  });
   const selectedAnswerMode = String(routeDecision?.selectedAnswerMode || '').trim().toLowerCase();
-  const optimisticExecutionAllowed = enabled && !explicitHealthHealthy && (
+  const optimisticExecutionConditions = (
     routeDecision?.battleBridgeAuthorityAvailable === false
     || routeDecision?.executionDeferred === true
     || selectedAnswerMode === 'route-unavailable'
     || selectedAnswerMode === 'cloud-basic'
   );
-  const executableNow = enabled && (explicitHealthHealthy || optimisticExecutionAllowed);
+  const providerSelection = providerCandidates.find((candidate) => candidate.provider === requestedProviderNormalized)
+    || providerCandidates.find((candidate) => candidate.provider === selectedProvider)
+    || providerCandidates[0]
+    || {
+      provider: requestedProviderNormalized || selectedProvider || 'groq',
+      enabled: false,
+      providerEnabled: false,
+      validTarget: false,
+      explicitHealthHealthy: false,
+      reachableNow: false,
+      targetBaseUrl: '',
+      providerHealth: {},
+    };
+  const selectedProviderCandidate = providerCandidates.find((candidate) => candidate.provider === selectedProvider) || providerSelection;
+  const optimisticExecutionAllowed = providerSelection.enabled
+    && !providerSelection.explicitHealthHealthy
+    && optimisticExecutionConditions;
+  const executableNow = providerSelection.enabled && (providerSelection.explicitHealthHealthy || optimisticExecutionAllowed);
+  const selectedProviderExecutableNow = selectedProviderCandidate.enabled && (
+    selectedProviderCandidate.explicitHealthHealthy
+    || optimisticExecutionAllowed
+  );
+  const fallbackCandidate = executableNow
+    ? providerSelection
+    : providerCandidates.find((candidate) => candidate.enabled && (
+      candidate.explicitHealthHealthy
+      || optimisticExecutionConditions
+    ));
+  const activeProvider = fallbackCandidate?.provider || providerSelection.provider;
+  const providerSwitchApplied = Boolean(
+    activeProvider
+    && selectedProvider
+    && activeProvider !== selectedProvider
+    && fallbackCandidate?.enabled,
+  );
+  const activeCandidate = fallbackCandidate || providerSelection;
+  const blockedReason = fallbackCandidate
+    ? ''
+    : (!selectedProviderCandidate.providerEnabled
+      ? 'provider-disabled'
+      : 'no-hosted-provider-executable');
+  const operatorAction = fallbackCandidate
+    ? ''
+    : (!selectedProviderCandidate.providerEnabled
+      ? `Selected provider (${selectedProvider}) is disabled for hosted cognition. Enable it or enable an alternate hosted provider with a healthy Worker endpoint.`
+      : 'No hosted provider is executable now. Verify hosted provider enablement, Worker base URLs, and health probes.');
+  const providerSelectionReason = providerSwitchApplied
+    ? 'selected-provider-unavailable-switched-to-hosted-alternative'
+    : (selectedProviderExecutableNow ? 'selected-provider-executable' : 'selected-provider-not-executable');
 
   return {
-    enabled,
-    executableNow,
-    reachableNow,
-    targetBaseUrl,
+    enabled: Boolean(fallbackCandidate?.enabled),
+    executableNow: Boolean(fallbackCandidate),
+    reachableNow: activeCandidate.reachableNow === true,
+    targetBaseUrl: activeCandidate.targetBaseUrl,
     chatPath: String(hostedConfig?.chatPath || HOSTED_COGNITION_CHAT_PATH).trim() || HOSTED_COGNITION_CHAT_PATH,
-    provider,
+    provider: activeProvider,
     selectedProvider,
-    requestedProvider: String(requestedProvider || '').trim().toLowerCase(),
+    requestedProvider: String(requestedProviderNormalized || requestedProvider || '').trim().toLowerCase(),
+    providerSelectionReason,
+    providerSwitchApplied,
+    selectedProviderExecutableNow,
+    selectedProviderReason: selectedProviderCandidate.providerEnabled ? 'provider-not-executable' : 'provider-disabled',
+    blockedReason,
+    operatorAction,
+    hostedProviderStatus: providerCandidates.map((candidate) => ({
+      provider: candidate.provider,
+      enabled: candidate.enabled,
+      providerEnabled: candidate.providerEnabled,
+      executableNow: candidate.enabled && (candidate.explicitHealthHealthy || optimisticExecutionConditions),
+      reachableNow: candidate.reachableNow === true,
+      reason: candidate.providerEnabled ? 'provider-enabled' : 'provider-disabled',
+    })),
     secretPathKind: String(routeDecision?.hostedCloudSecretPathKind || 'none'),
     authorityLevel: String(routeDecision?.hostedCloudAuthorityLevel || 'none'),
-    providerPath: String(routeDecision?.hostedCloudExecutionProvider || `${provider}-hosted-cloud`),
-    actualProviderUsed: `${provider}-hosted-cloud-direct`,
+    providerPath: String(routeDecision?.hostedCloudExecutionProvider || `${activeProvider}-hosted-cloud`),
+    actualProviderUsed: `${activeProvider}-hosted-cloud-direct`,
     executionDeferred: routeDecision?.executionDeferred === true,
     battleBridgeAuthorityAvailable: routeDecision?.battleBridgeAuthorityAvailable === true,
     routeTruthAvailable: routeDecision?.hostedCloudPathAvailable === true,
     optimisticExecutionAllowed,
-    validTarget,
+    validTarget: activeCandidate.validTarget === true,
   };
 }
 
 function shouldPreferHostedDispatch(hostedDispatch = {}, routeDecision = {}) {
   if (!hostedDispatch?.enabled) return false;
+  if (hostedDispatch?.providerSwitchApplied === true && hostedDispatch?.executableNow === true) return true;
   if (hostedDispatch?.provider === hostedDispatch?.selectedProvider && hostedDispatch?.executableNow) return true;
   if (routeDecision?.battleBridgeAuthorityAvailable === false) return true;
   if (hostedDispatch?.battleBridgeAuthorityAvailable === false) return true;
@@ -711,7 +792,12 @@ export async function getProviderHealth(payload, runtimeConfig = getApiRuntimeCo
   }
 }
 
-export { normalizeHostedCloudResponseData, shouldPreferHostedDispatch, buildHostedCloudPayload };
+export {
+  normalizeHostedCloudResponseData,
+  shouldPreferHostedDispatch,
+  buildHostedCloudPayload,
+  resolveHostedCloudDispatch,
+};
 
 export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson('/api/health', {}, runtimeConfig);
