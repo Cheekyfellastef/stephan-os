@@ -15,4 +15,5 @@ test('hosted cognition save state includes unsaved/saved/save-failed and restore
   assert.match(source, /providerProxyUrls/);
   assert.match(source, /hydrationFailure/);
   assert.match(source, /failed to hydrate executable Worker URL/);
+  assert.match(source, /hostedCloudCognition:\s*savedHostedCloudCognition/);
 });

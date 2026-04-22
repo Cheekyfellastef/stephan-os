@@ -749,6 +749,14 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   };
 }
 
+function resolveHostedProviderKey(providerLabel = '') {
+  const normalized = String(providerLabel || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'groq' || normalized.startsWith('groq-')) return 'groq';
+  if (normalized === 'gemini' || normalized.startsWith('gemini-')) return 'gemini';
+  return '';
+}
+
 function deriveExecutionStatus(executionMetadata) {
   if (!executionMetadata?.actual_provider_used) {
     return 'ok';
@@ -2106,12 +2114,13 @@ export function useAIConsole() {
       const executionSummaryForStage = buildExecutionSummary(executionMetadata);
 
       const selectedAnswerMode = String(executionMetadata.selected_answer_mode || '').trim().toLowerCase();
-      const hostedProvider = String(
+      const hostedProviderLabel = String(
         executionMetadata.actual_provider_used
         || executionMetadata.execution_selected_provider
         || executionMetadata.selected_provider
         || '',
       ).trim().toLowerCase();
+      const hostedProvider = resolveHostedProviderKey(hostedProviderLabel);
       const hostedProviderUsed = hostedProvider === 'groq' || hostedProvider === 'gemini';
       const hostedExecutionPath = selectedAnswerMode === 'fresh-cloud' || selectedAnswerMode === 'cloud-basic';
       if (data.success && hostedProviderUsed && hostedExecutionPath) {

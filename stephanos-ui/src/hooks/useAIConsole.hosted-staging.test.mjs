@@ -10,4 +10,7 @@ test('hosted cloud responses stage mission/idea candidates without direct canon 
   assert.match(source, /addHostedStagedItem\(/);
   assert.match(source, /Hosted cognition generated staged item\. Staged only, not yet canon\./);
   assert.match(source, /selectedAnswerMode === 'fresh-cloud' \|\| selectedAnswerMode === 'cloud-basic'/);
+  assert.match(source, /function resolveHostedProviderKey\(providerLabel = ''\)/);
+  assert.match(source, /normalized\.startsWith\('groq-'\)/);
+  assert.match(source, /normalized\.startsWith\('gemini-'\)/);
 });
