@@ -233,6 +233,10 @@ function getPendingRuntimeStatusModel() {
     appLaunchState: 'pending',
     blockingIssueCodes: [],
     operatorSummary: '',
+    caravanMode: null,
+    caravanModeActive: false,
+    canonCommitAllowed: false,
+    promotionDeferred: false,
   },
   });
   return pendingRuntimeStatusModelCache;
@@ -491,6 +495,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     validationState: runtimeTruth.diagnostics?.validationState || finalRouteTruth.validationState || 'launching',
     appLaunchState: runtimeTruth.diagnostics?.appLaunchState || finalRouteTruth.appLaunchState || 'pending',
     operatorSummary: runtimeTruth.diagnostics?.operatorGuidance?.[0] || finalRouteTruth.operatorAction || '',
+    caravanMode: runtimeTruth.caravanMode || null,
+    caravanModeActive: runtimeTruth.caravanMode?.isActive === true,
+    canonCommitAllowed: runtimeTruth.caravanMode?.canonCommitAllowed === true,
+    promotionDeferred: runtimeTruth.caravanMode?.promotionDeferred === true,
   };
 
   const canonicalInput = candidate.canonicalRouteRuntimeTruth && typeof candidate.canonicalRouteRuntimeTruth === 'object'
@@ -523,6 +531,10 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       appLaunchState: preferNonPlaceholderTruth(canonicalInput.appLaunchState, derivedCanonicalRouteRuntimeTruth.appLaunchState),
       operatorSummary: preferNonPlaceholderTruth(canonicalInput.operatorSummary, derivedCanonicalRouteRuntimeTruth.operatorSummary),
       blockingIssueCodes: normalizeArray(canonicalInput.blockingIssueCodes, []),
+      caravanMode: (canonicalInput.caravanMode && typeof canonicalInput.caravanMode === 'object') ? canonicalInput.caravanMode : derivedCanonicalRouteRuntimeTruth.caravanMode,
+      caravanModeActive: canonicalInput.caravanModeActive === true || canonicalInput.caravanMode?.isActive === true || derivedCanonicalRouteRuntimeTruth.caravanModeActive === true,
+      canonCommitAllowed: canonicalInput.canonCommitAllowed === true || canonicalInput.caravanMode?.canonCommitAllowed === true || derivedCanonicalRouteRuntimeTruth.canonCommitAllowed === true,
+      promotionDeferred: canonicalInput.promotionDeferred === true || canonicalInput.caravanMode?.promotionDeferred === true || derivedCanonicalRouteRuntimeTruth.promotionDeferred === true,
     }
     : derivedCanonicalRouteRuntimeTruth;
 
