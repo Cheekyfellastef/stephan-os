@@ -1,7 +1,17 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
-import { buildJourney } from './engine/journeyBuilder.js';
-import { DEFAULT_SELECTION, loadMusicTileState, saveMusicTileState, resetMusicTileState } from './state/musicTileState.js';
-import { resolveYouTubeLink } from './utils/youtubeLinkResolver.js';
+import { parseMusicCommand } from './engine/musicCommandParser.js';
+import { createDiscoveryQueries, createFlowQueue, discoverFromYouTubeApi } from './engine/musicDiscoveryEngine.js';
+import {
+  DEFAULT_SELECTION,
+  loadMusicTileState,
+  saveMusicTileState,
+  resetMusicTileState,
+  applyRatingToMemory,
+  upsertMediaItems,
+} from './state/musicTileState.js';
+
+const YOUTUBE_WATCH = 'https://www.youtube.com/watch?v=';
+const YOUTUBE_SEARCH = 'https://www.youtube.com/results?search_query=';
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -9,33 +19,52 @@ const elements = {
   energy: document.getElementById('energy-select'),
   emotion: document.getElementById('emotion-select'),
   density: document.getElementById('density-select'),
-  build: document.getElementById('build-journey-btn'),
+  artists: document.getElementById('artist-input'),
+  mode: document.getElementById('session-mode-select'),
+  includeSeen: document.getElementById('include-seen-toggle'),
+  unseenOnly: document.getElementById('unseen-only-toggle'),
+  smartRefresh: document.getElementById('smart-refresh-btn'),
+  flowMode: document.getElementById('flow-mode-btn'),
   reset: document.getElementById('reset-btn'),
-  openFirst: document.getElementById('open-first-btn'),
-  openAll: document.getElementById('open-all-btn'),
   summary: document.getElementById('summary-grid'),
-  journey: document.getElementById('journey-list'),
+  queue: document.getElementById('journey-list'),
+  commandInput: document.getElementById('command-input'),
+  commandRun: document.getElementById('command-run-btn'),
+  commandOutput: document.getElementById('command-output'),
   debugToggle: document.getElementById('debug-toggle'),
   debugPanel: document.getElementById('debug-panel'),
-  debugOutput: document.getElementById('debug-output')
+  debugOutput: document.getElementById('debug-output'),
 };
 
 const state = {
   selection: { ...DEFAULT_SELECTION },
-  lastJourney: null,
-  debugVisible: false
+  memory: null,
+  queue: [],
+  sessionMode: 'discovery',
+  includeSeen: false,
+  artists: [],
+  debugVisible: false,
 };
 
-function getSelectionFromUI() {
+function getYouTubeApiKey() {
+  return window.STEPHANOS_YOUTUBE_API_KEY || window.localStorage.getItem('stephanos.youtubeApiKey') || '';
+}
+
+function mediaItemLink(item) {
+  if (item.id && item.id.length === 11) return `${YOUTUBE_WATCH}${item.id}`;
+  return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item.title} ${item.channelName}`)}`;
+}
+
+function readSelectionFromUI() {
   return {
     era: elements.era.value,
     energyCurve: elements.energy.value,
     emotion: elements.emotion.value,
-    density: elements.density.value
+    density: elements.density.value,
   };
 }
 
-function applySelectionToUI(selection) {
+function writeSelectionToUI(selection) {
   elements.era.value = selection.era;
   elements.energy.value = selection.energyCurve;
   elements.emotion.value = selection.emotion;
@@ -43,15 +72,26 @@ function applySelectionToUI(selection) {
   elements.root.dataset.theme = selection.era;
 }
 
-function renderSummary(result) {
-  const bpm = `${result.intent.bpmRange[0]}-${result.intent.bpmRange[1]} BPM`;
+function persistState() {
+  saveMusicTileState({
+    selection: state.selection,
+    memory: state.memory,
+  });
+}
+
+function renderSummary() {
+  const unseenCount = Object.values(state.memory.mediaItems).filter((item) => !item.seen).length;
+  const ratingsCount = state.memory.ratings.length;
+  const trustedChannels = Object.values(state.memory.sourceChannels).filter((channel) => channel.trustScore >= 2).length;
+  const topArtist = Object.entries(state.memory.artistAffinity).sort((a, b) => b[1] - a[1])[0]?.[0] || 'None yet';
 
   elements.summary.innerHTML = [
-    ['Detected Vibe', result.detectedVibe],
-    ['BPM Range', bpm],
-    ['Transition Style', result.intent.transitionStyle],
-    ['Visual Theme', result.intent.visualTheme],
-    ['Recommended Tags', result.intent.recommendedTags.join(', ')]
+    ['Session Mode', state.sessionMode],
+    ['Artists', state.artists.join(', ') || 'Any'],
+    ['Unseen Library', String(unseenCount)],
+    ['Ratings Logged', String(ratingsCount)],
+    ['Trusted Sources', String(trustedChannels)],
+    ['Top Affinity', topArtist],
   ].map(([label, value]) => `
     <article class="summary-card">
       <strong>${label}</strong>
@@ -60,116 +100,234 @@ function renderSummary(result) {
   `).join('');
 }
 
-function renderJourney(result) {
-  if (!result.journey.length) {
-    elements.journey.innerHTML = '<li class="journey-item">No matching tracks found for this intent.</li>';
+function renderQueue() {
+  if (!state.queue.length) {
+    elements.queue.innerHTML = '<li class="journey-item">No discovery results yet. Run Smart Refresh.</li>';
     return;
   }
 
-  elements.journey.innerHTML = result.journey.map((track, index) => {
-    const link = resolveYouTubeLink(track);
-    return `
-    <li class="journey-item" data-link-mode="${link.mode}">
-      <div><strong>${index + 1}. ${track.title}</strong> — ${track.artist}</div>
-      <div class="track-meta">~${track.approximateBpm} BPM • ${track.notes} • Link mode: ${link.mode}</div>
-      <div class="track-actions"><a href="${link.url}" target="_blank" rel="noopener noreferrer">${link.actionLabel}</a></div>
+  elements.queue.innerHTML = state.queue.map((item, index) => `
+    <li class="journey-item">
+      <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
+      <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
+      <div class="track-actions">
+        <a href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
+        <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
+        <button data-action="rate" data-id="${item.id}" data-rating="0" class="inline-btn">0</button>
+        <button data-action="rate" data-id="${item.id}" data-rating="-3" class="inline-btn">-3</button>
+        <button data-action="trust" data-channel="${item.channelId}" class="inline-btn">Trust Channel</button>
+        <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Block Channel</button>
+      </div>
     </li>
-  `;
-  }).join('');
+  `).join('');
 }
 
 function renderDebug() {
-  if (!state.lastJourney) {
-    elements.debugOutput.textContent = 'Build a journey to inspect ranked output.';
-    return;
-  }
-
-  const rankedPreview = state.lastJourney.ranked.slice(0, 10).map((entry, index) => ({
-    rank: index + 1,
-    score: entry.score,
-    id: entry.track.id,
-    title: entry.track.title,
-    artist: entry.track.artist,
-    bpm: entry.track.approximateBpm
-  }));
-
   elements.debugOutput.textContent = JSON.stringify({
     selection: state.selection,
-    intent: state.lastJourney.intent,
-    rankedPreview,
-    finalJourneyIds: state.lastJourney.journey.map((track) => track.id)
+    sessionMode: state.sessionMode,
+    queuePreview: state.queue.slice(0, 10).map((item) => ({ id: item.id, score: item.score, title: item.title })),
+    memoryStats: {
+      mediaItems: Object.keys(state.memory.mediaItems).length,
+      seen: state.memory.seenItemIds.length,
+      saved: state.memory.savedItemIds.length,
+      ignored: state.memory.ignoredItemIds.length,
+      ratings: state.memory.ratings.length,
+    },
   }, null, 2);
 }
 
-function buildAndRenderJourney({ persistSelection = true } = {}) {
-  state.selection = getSelectionFromUI();
-  if (persistSelection) {
-    saveMusicTileState(state.selection);
+function librarySeedToMediaItem(track) {
+  return {
+    id: track.youtube?.preferredVideoId || `${track.id}-seed`,
+    title: `${track.artist} — ${track.title}`,
+    description: track.notes,
+    channelId: `seed-${track.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    channelName: `${track.artist} (seed)`,
+    duration: Math.max(180, Math.round((track.approximateBpm || 120) * 16)),
+    publishDate: '2022-01-01T00:00:00.000Z',
+    thumbnail: '',
+    detectedArtists: [track.artist],
+    detectedEvents: [],
+    detectedLabels: [],
+    type: track.notes?.toLowerCase().includes('set') ? 'set' : 'track',
+    score: 0,
+    seen: false,
+    saved: false,
+    ignored: false,
+  };
+}
+
+function rebuildFlowQueue() {
+  const mediaItems = Object.values(state.memory.mediaItems);
+  state.queue = createFlowQueue(mediaItems, {
+    includeSeen: state.includeSeen,
+    minDurationSeconds: state.sessionMode === 'flow' ? 30 * 60 : 0,
+    trustByChannel: state.memory.channelTrust,
+    affinityByArtist: state.memory.artistAffinity,
+    seenIds: new Set(state.memory.seenItemIds),
+  });
+}
+
+async function smartRefreshDiscovery() {
+  state.selection = readSelectionFromUI();
+  state.artists = elements.artists.value.split(',').map((value) => value.trim()).filter(Boolean);
+
+  const artistObjects = state.artists.map((name) => ({ id: name.toLowerCase(), name }));
+  const queries = artistObjects.flatMap((artist) => createDiscoveryQueries(artist));
+
+  const apiKey = getYouTubeApiKey();
+  const discovery = await discoverFromYouTubeApi({
+    apiKey,
+    queries: queries.slice(0, 4),
+    maxResults: 12,
+  });
+
+  const discoveredItems = discovery.items.length
+    ? discovery.items.map((item) => ({
+      ...item,
+      detectedArtists: state.artists,
+      type: /set|mix|live/i.test(item.title) ? 'set' : 'clip',
+    }))
+    : TRACK_LIBRARY.map(librarySeedToMediaItem);
+
+  state.memory = upsertMediaItems(state.memory, discoveredItems);
+  state.memory.discoveryJobs.push({
+    id: `job-${Date.now()}`,
+    artistId: artistObjects[0]?.id || 'any',
+    queries: queries.slice(0, 10),
+    timestamp: new Date().toISOString(),
+    resultsFound: discoveredItems.length,
+    newItemsCount: discoveredItems.filter((item) => !state.memory.seenItemIds.includes(item.id)).length,
+  });
+
+  rebuildFlowQueue();
+  persistState();
+  renderSummary();
+  renderQueue();
+  renderDebug();
+}
+
+function executeCommand() {
+  const parsed = parseMusicCommand(elements.commandInput.value);
+
+  if (parsed.intent === 'filter') {
+    state.includeSeen = !parsed.entities.unseen;
+    elements.includeSeen.checked = state.includeSeen;
   }
 
-  const result = buildJourney(state.selection, TRACK_LIBRARY);
-  state.lastJourney = result;
+  if (parsed.intent === 'play') {
+    state.sessionMode = parsed.entities.mode || 'flow';
+    elements.mode.value = state.sessionMode;
+  }
 
-  renderSummary(result);
-  renderJourney(result);
+  if (parsed.intent === 'discover') {
+    if (parsed.entities.unseen) {
+      state.includeSeen = false;
+      elements.includeSeen.checked = false;
+    }
+  }
+
+  rebuildFlowQueue();
+  renderSummary();
+  renderQueue();
   renderDebug();
 
-  console.info('[MusicTile] Journey built', {
-    selection: state.selection,
-    vibe: result.detectedVibe,
-    topTrack: result.journey[0]?.id || null
-  });
+  elements.commandOutput.textContent = `Intent: ${parsed.intent} • ${JSON.stringify(parsed.entities)}`;
 }
 
-function resetSelection() {
-  const resetState = resetMusicTileState();
-  state.selection = resetState.selection;
-  applySelectionToUI(state.selection);
-  buildAndRenderJourney();
-}
+function onQueueAction(event) {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
 
-function openFirstTrack() {
-  const first = state.lastJourney?.journey?.[0];
-  if (!first) {
-    return;
+  const action = button.dataset.action;
+  if (action === 'rate') {
+    state.memory = applyRatingToMemory(state.memory, button.dataset.id, Number(button.dataset.rating));
   }
 
-  const link = resolveYouTubeLink(first);
-  window.open(link.url, '_blank', 'noopener,noreferrer');
+  if (action === 'trust' || action === 'block') {
+    const channelId = button.dataset.channel;
+    const current = state.memory.channelTrust[channelId] || 0;
+    state.memory.channelTrust[channelId] = Math.max(-5, Math.min(5, current + (action === 'trust' ? 1 : -3)));
+  }
+
+  rebuildFlowQueue();
+  persistState();
+  renderSummary();
+  renderQueue();
+  renderDebug();
 }
 
-function openFullJourney() {
-  const tracks = state.lastJourney?.journey || [];
-  tracks.forEach((track, index) => {
-    window.setTimeout(() => {
-      const link = resolveYouTubeLink(track);
-      window.open(link.url, '_blank', 'noopener,noreferrer');
-    }, index * 250);
-  });
+function resetAll() {
+  const reset = resetMusicTileState();
+  state.selection = reset.selection;
+  state.memory = reset.memory;
+  state.sessionMode = 'discovery';
+  state.includeSeen = false;
+  state.artists = [];
+  elements.artists.value = '';
+  elements.mode.value = 'discovery';
+  elements.includeSeen.checked = false;
+  writeSelectionToUI(state.selection);
+  rebuildFlowQueue();
+  renderSummary();
+  renderQueue();
+  renderDebug();
 }
 
 function initialize() {
   loadMusicTileState().then((persisted) => {
     state.selection = persisted.selection;
-    applySelectionToUI(state.selection);
-    buildAndRenderJourney({ persistSelection: false });
+    state.memory = persisted.memory;
+    writeSelectionToUI(state.selection);
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+    renderDebug();
+
     console.info('[TILE DATA][music-tile] hydrate', {
       appId: 'music-tile',
       sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
-      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null
+      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null,
     });
   });
 
-  elements.build.addEventListener('click', buildAndRenderJourney);
-  elements.reset.addEventListener('click', resetSelection);
-  elements.openFirst.addEventListener('click', openFirstTrack);
-  elements.openAll.addEventListener('click', openFullJourney);
+  elements.smartRefresh.addEventListener('click', smartRefreshDiscovery);
+  elements.flowMode.addEventListener('click', () => {
+    state.sessionMode = 'flow';
+    elements.mode.value = 'flow';
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+  });
+  elements.mode.addEventListener('change', () => {
+    state.sessionMode = elements.mode.value;
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+  });
+  elements.includeSeen.addEventListener('change', () => {
+    state.includeSeen = elements.includeSeen.checked;
+    rebuildFlowQueue();
+    renderQueue();
+  });
+  elements.unseenOnly.addEventListener('change', () => {
+    if (elements.unseenOnly.checked) {
+      state.includeSeen = false;
+      elements.includeSeen.checked = false;
+      rebuildFlowQueue();
+      renderQueue();
+    }
+  });
+  elements.reset.addEventListener('click', resetAll);
+  elements.commandRun.addEventListener('click', executeCommand);
+  elements.queue.addEventListener('click', onQueueAction);
 
   [elements.era, elements.energy, elements.emotion, elements.density].forEach((control) => {
     control.addEventListener('change', () => {
-      state.selection = getSelectionFromUI();
-      elements.root.dataset.theme = state.selection.era;
-      saveMusicTileState(state.selection);
+      state.selection = readSelectionFromUI();
+      persistState();
     });
   });
 
