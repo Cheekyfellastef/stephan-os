@@ -1,6 +1,7 @@
 import { extractHostname, isLoopbackHost } from './stephanosHomeNode.mjs';
 import { buildRuntimeTruthSnapshot } from './truthContract.mjs';
 import { buildSystemWatcherModel } from './systemWatcherModel.mjs';
+import { deriveCanonicalCaravanMode } from './caravanMode.mjs';
 
 function asObject(value) {
   return value && typeof value === 'object' ? value : {};
@@ -311,6 +312,10 @@ function projectFinalRouteTruthFromCanonical(canonicalRouteRuntimeTruth, baseFin
     cloudCognitionAvailable: canonical.cloudCognitionAvailable === true,
     hostedCloudPathAvailable: canonical.hostedCloudPathAvailable === true,
     hostedCloudSecretPathKind: canonical.hostedCloudSecretPathKind || 'none',
+    caravanMode: canonical.caravanMode || null,
+    caravanModeActive: canonical.caravanModeActive === true,
+    canonCommitAllowed: canonical.canonCommitAllowed === true,
+    promotionDeferred: canonical.promotionDeferred === true,
     providerHealthState: canonical.providerHealthState || base.providerHealthState || 'unknown',
     fallbackReason: canonical.fallbackReason || provider.fallbackReason || base.fallbackReason || '',
     validationState: canonical.validationState || diagnostics.validationState || base.validationState || 'unknown',
@@ -379,6 +384,23 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     : hostedCloudConfig.backendOnlySecrets === true
       ? 'backend-only'
       : 'none';
+  const hostedWorkerHealth = hostedWorker.reachable === true
+    ? 'healthy'
+    : hostedWorker.enabled === true
+      ? 'unhealthy'
+      : 'disabled';
+  const caravanMode = deriveCanonicalCaravanMode({
+    sessionKind: session.sessionKind || 'unknown',
+    localAuthorityAvailable: battleBridgeAuthorityAvailable,
+    hostedCognitionConfigured: hostedWorker.enabled === true && Boolean(hostedWorker.workerUrl),
+    hostedCognitionAvailable: hostedCloudPathAvailable || hostedWorker.enabled === true,
+    hostedCognitionExecutable: executableViaHostedCloud || hostedWorker.usable === true,
+    hostedWorkerProvider: hostedWorker.activeProvider || selectedProviderNormalized || 'none',
+    hostedWorkerBaseUrl: hostedWorker.workerUrl || '',
+    hostedWorkerHealth,
+    routeUsable,
+    executableProvider: provider.executableProvider || '',
+  });
 
   return {
     sessionKind: session.sessionKind || 'unknown',
@@ -422,6 +444,10 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     hostedWorkerReachable: hostedWorker.reachable === true,
     hostedWorkerUsable: hostedWorker.usable === true,
     hostedWorkerLastProbeResult: hostedWorker.lastProbe || {},
+    caravanMode,
+    caravanModeActive: caravanMode.isActive === true,
+    canonCommitAllowed: caravanMode.canonCommitAllowed === true,
+    promotionDeferred: caravanMode.promotionDeferred === true,
     providerHealthState: provider.providerHealthState || 'unknown',
     fallbackActive: route.fallbackActive === true || provider.fallbackProviderUsed === true,
     fallbackReason,

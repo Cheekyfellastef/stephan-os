@@ -7,6 +7,7 @@ export const HOSTED_STAGED_ITEM_TYPES = Object.freeze([
   'memory-candidate',
   'handoff',
   'retrieval-candidate',
+  'proposal-packet',
 ]);
 
 export const HOSTED_STAGED_ITEM_STATUSES = Object.freeze([
@@ -81,7 +82,8 @@ export function normalizeHostedStagedItem(item = {}, { now = new Date().toISOStr
     content: asTrimmedString(source.content || source.body),
     sourceSurface: asTrimmedString(source.sourceSurface, 'mission-console'),
     sourceProvider: asTrimmedString(source.sourceProvider, 'unknown'),
-    sourceAuthorityLevel: asTrimmedString(source.sourceAuthorityLevel, 'hosted-observer'),
+    sourceAuthorityLevel: asTrimmedString(source.sourceAuthorityLevel || source.authorityLevel, 'hosted-cognition-only'),
+    authorityLevel: asTrimmedString(source.authorityLevel || source.sourceAuthorityLevel, 'hosted-cognition-only'),
     createdAt,
     updatedAt,
     status,
@@ -92,8 +94,10 @@ export function normalizeHostedStagedItem(item = {}, { now = new Date().toISOStr
     linkedPacketId: asTrimmedString(source.linkedPacketId),
     promotionState: asTrimmedString(source.promotionState, status === 'promoted' ? 'completed' : 'pending'),
     promotionReason: asTrimmedString(source.promotionReason),
+    promotionEligibility: asTrimmedString(source.promotionEligibility, 'requires-explicit-canon-promotion'),
     sourceMode: asTrimmedString(source.sourceMode, 'hosted-cognition'),
     canonicalEligibility: source.canonicalEligibility === true,
+    sourceProvenance: asTrimmedString(source.sourceProvenance, 'hosted-runtime-worker'),
     exportPayload: asTrimmedString(source.exportPayload),
   };
 }

@@ -316,11 +316,18 @@ async function requestHostedCloudChat({ hostedDispatch, hostedPayload, runtimeCo
       data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
     };
   } catch (error) {
+    const status = Number(error?.details?.status || 0);
     const mappedCode = error?.code === 'TIMEOUT'
       ? 'hosted-worker-timeout'
-      : (error?.code === 'INVALID_JSON'
+      : error?.code === 'INVALID_JSON'
         ? 'hosted-worker-invalid-response'
-        : 'hosted-worker-unreachable');
+        : status === 401 || status === 403
+          ? 'hosted-worker-provider-auth-failed'
+          : status === 404
+            ? 'hosted-worker-disabled'
+            : status >= 400 && status < 500
+              ? 'hosted-worker-misconfigured'
+              : 'hosted-worker-unreachable';
     throw createTransportError({
       code: mappedCode,
       message: error?.message || 'Hosted Worker request failed.',

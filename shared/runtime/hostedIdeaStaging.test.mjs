@@ -23,6 +23,8 @@ test('hosted idea staging add normalizes staged-not-canon payload', () => {
   assert.equal(item.type, 'mission');
   assert.equal(item.status, 'staged');
   assert.equal(item.canonicalEligibility, false);
+  assert.equal(item.authorityLevel, 'hosted-cognition-only');
+  assert.equal(item.promotionEligibility, 'requires-explicit-canon-promotion');
 });
 
 test('promotion stays deferred when trusted persistence is unavailable', () => {
@@ -50,4 +52,23 @@ test('normalize queue stays bounded and handoff export includes staged truth', (
   const payload = buildHostedStagingHandoffPayload(normalized.items[0]);
   assert.match(payload, /Hosted staged item:/);
   assert.match(payload, /Promotion state:/);
+});
+
+
+test('staged queue rehydrates hosted staged object fields without canon mutation', () => {
+  const added = applyHostedIdeaStagingAction(createDefaultHostedIdeaStagingQueue(), {
+    type: 'add',
+    item: { type: 'proposal-packet', title: 'Hosted proposal packet' },
+  }, { now: '2026-04-22T00:00:00.000Z' });
+
+  const rehydrated = normalizeHostedIdeaStagingQueue({
+    schemaVersion: 1,
+    items: [added.item],
+    lastUpdatedAt: '2026-04-22T00:00:00.000Z',
+  });
+
+  assert.equal(rehydrated.items.length, 1);
+  assert.equal(rehydrated.items[0].type, 'proposal-packet');
+  assert.equal(rehydrated.items[0].canonicalEligibility, false);
+  assert.equal(rehydrated.items[0].promotionState, 'pending');
 });

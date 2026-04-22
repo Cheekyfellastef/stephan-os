@@ -2135,7 +2135,7 @@ export function useAIConsole() {
           content: String(data.output_text || '').trim(),
           sourceSurface: 'mission-console',
           sourceProvider: hostedProvider,
-          sourceAuthorityLevel: 'hosted-observer',
+          sourceAuthorityLevel: 'hosted-cognition-only',
           status: 'staged',
           promotionTarget: stagedType === 'mission' ? 'mission-lineage' : 'durable-memory',
           confidence: Number(executionMetadata.intent_confidence ?? 0.6),
@@ -2146,6 +2146,8 @@ export function useAIConsole() {
           promotionReason: 'Hosted cognition generated staged item. Staged only, not yet canon.',
           sourceMode: 'hosted-cognition',
           canonicalEligibility: false,
+          promotionEligibility: 'requires-explicit-canon-promotion',
+          sourceProvenance: 'direct-hosted-worker-dispatch',
         });
       }
 

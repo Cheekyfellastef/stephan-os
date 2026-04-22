@@ -754,3 +754,83 @@ test('adjudicator allows hosted takeover to alternate provider when selected hos
   assert.equal(adjudicated.runtimeTruth.provider.providerSelectionReason, 'backend-stale-selected-provider-unusable-switched-to-hosted-alternative');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.hostedWorkerReachable, true);
 });
+
+test('backend stale + hosted worker valid promotes hosted-cloud-worker executable provider truth', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      hostedCloudConfig: {
+        enabled: true,
+        selectedProvider: 'groq',
+        providers: {
+          groq: { enabled: true, baseURL: 'https://worker.example.com', model: 'openai/gpt-oss-20b' },
+          gemini: { enabled: true, baseURL: '', model: 'gemini-2.5-flash' },
+        },
+        lastHealth: {
+          groq: { reachable: true, ok: true, status: 'healthy' },
+        },
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      routeUsable: true,
+      backendReachable: false,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      uiReachabilityState: 'reachable',
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true, reason: 'Hosted route available' },
+      dist: { available: true, usable: true },
+    },
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: '',
+    providerHealth: {},
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'hosted-cloud-worker');
+  assert.equal(adjudicated.runtimeTruth.provider.actualProviderUsed, 'groq-hosted-cloud');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.executedProvider, 'hosted-cloud-worker');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.cloudCognitionAvailable, true);
+});
+
+test('canonical caravan mode remains staged-only when local authority unavailable', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      hostedCloudConfig: {
+        enabled: true,
+        selectedProvider: 'groq',
+        providers: { groq: { enabled: true, baseURL: 'https://worker.example.com', model: 'openai/gpt-oss-20b' } },
+        lastHealth: { groq: { reachable: true, ok: true, status: 'healthy' } },
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      routeUsable: true,
+      backendReachable: false,
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      executedProvider: '',
+      uiReachabilityState: 'reachable',
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true, reason: 'Hosted route available' },
+      dist: { available: true, usable: true },
+    },
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: '',
+    providerHealth: {},
+  }));
+
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.caravanMode.isActive, true);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.caravanMode.canonCommitAllowed, false);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.caravanMode.promotionDeferred, true);
+});

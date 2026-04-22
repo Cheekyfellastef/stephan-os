@@ -275,20 +275,31 @@ export function deriveRuntimeOrchestrationSelectors({
   });
   const sessionKind = asText(finalRouteTruth?.sessionKind, 'local-dev');
   const hostedSession = sessionKind === 'hosted-web' || sessionKind === 'hosted' || sessionKind === 'hosted_web';
-  const localAuthorityAvailable = hostedSession === false && finalRouteTruth?.backendReachable === true;
+  const canonicalCaravanMode = finalRouteTruth?.caravanMode && typeof finalRouteTruth.caravanMode === 'object'
+    ? finalRouteTruth.caravanMode
+    : null;
+  const localAuthorityAvailable = canonicalCaravanMode
+    ? canonicalCaravanMode.localAuthorityAvailable === true
+    : (hostedSession === false && finalRouteTruth?.backendReachable === true);
   const routeKind = asText(finalRouteTruth?.routeKind, 'unavailable');
   const selectedProvider = asText(finalRouteTruth?.selectedProvider, 'unknown');
   const executableProvider = asText(finalRouteTruth?.executedProvider, 'unknown');
   const hostedCloudPathAvailable = finalRouteTruth?.hostedCloudPathAvailable === true;
-  const cloudCognitionAvailable = hostedCloudPathAvailable
-    || (routeKind === 'cloud' && (finalRouteTruth?.routeUsable !== false || isKnownValue(executableProvider) || isKnownValue(selectedProvider)));
+  const cloudCognitionAvailable = canonicalCaravanMode
+    ? canonicalCaravanMode.hostedCognitionAvailable === true
+    : (hostedCloudPathAvailable
+      || (routeKind === 'cloud' && (finalRouteTruth?.routeUsable !== false || isKnownValue(executableProvider) || isKnownValue(selectedProvider))));
   const hostedSafePlanningAvailable = true;
   const intentCaptureAvailable = true;
   const researchRouteAvailable = finalRouteTruth?.routeUsable !== false && routeKind !== 'unavailable';
   const continuityAvailable = continuityStrength !== 'unknown';
-  const executionAvailable = localAuthorityAvailable;
+  const executionAvailable = canonicalCaravanMode
+    ? canonicalCaravanMode.canonCommitAllowed === true
+    : localAuthorityAvailable;
   const routeRecoveryNeeded = localAuthorityAvailable === false;
-  const executionDeferred = !executionAvailable;
+  const executionDeferred = canonicalCaravanMode
+    ? canonicalCaravanMode.promotionDeferred === true
+    : !executionAvailable;
   const capabilityMode = localAuthorityAvailable
     ? 'full-local-authority'
     : cloudCognitionAvailable
@@ -298,13 +309,13 @@ export function deriveRuntimeOrchestrationSelectors({
         : routeRecoveryNeeded
           ? 'recovery-needed'
           : 'execution-deferred';
-  const operatorSummary = localAuthorityAvailable
+  const operatorSummary = canonicalCaravanMode?.operatorSummary || (localAuthorityAvailable
     ? 'Local authority available; execution, planning, and continuity are online.'
     : cloudCognitionAvailable
       ? 'Battle Bridge unavailable; hosted cloud cognition available. Hosted-safe planning and reasoning remain available. Execution deferred pending local authority.'
       : hostedSafePlanningAvailable
         ? 'Route recovery needed for local authority, but hosted orchestration can continue.'
-        : 'Recovery needed. Capture intent and continuity while route truth is restored.';
+        : 'Recovery needed. Capture intent and continuity while route truth is restored.');
 
   const capabilityPosture = {
     mode: capabilityMode,
