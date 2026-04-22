@@ -31,6 +31,40 @@ function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
   return true;
 }
 
+function resolveHostedWorkerExecution(runtimeContext = {}, providerHealth = {}, selectedProvider = '') {
+  const hostedCloudConfig = asObject(runtimeContext.hostedCloudConfig);
+  const selected = String(hostedCloudConfig.selectedProvider || selectedProvider || '').trim().toLowerCase();
+  const providerConfig = asObject(hostedCloudConfig.providers)?.[selected] || {};
+  const workerUrl = String(
+    providerConfig.baseURL
+    || asObject(hostedCloudConfig.providerProxyUrls)?.[selected]
+    || hostedCloudConfig.proxyUrl
+    || '',
+  ).trim();
+  const enabled = hostedCloudConfig.enabled === true && providerConfig.enabled !== false;
+  const lastHealth = asObject(asObject(hostedCloudConfig.lastHealth)[selected]);
+  const healthState = asObject(providerHealth)[selected];
+  const reachable = enabled
+    && Boolean(workerUrl)
+    && (
+      lastHealth.reachable === true
+      || lastHealth.ok === true
+      || lastHealth.status === 'healthy'
+      || healthState?.ok === true
+      || healthState?.reachable === true
+      || healthState?.executableNow === true
+    );
+  return {
+    selected,
+    workerUrl,
+    enabled,
+    reachable,
+    usable: reachable,
+    providerKind: reachable ? 'hosted-cloud-worker' : 'backend-provider',
+    lastProbe: Object.keys(lastHealth).length ? lastHealth : (healthState || {}),
+  };
+}
+
 function isRouteQualifiedHostedLocalOllamaExecution({
   executableProviderCandidate = '',
   selectedProvider = '',
@@ -278,6 +312,7 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     ? hostedRouteTruth.blockingIssues.map((issue) => issue?.code).filter(Boolean)
     : [];
   const hostedCloudConfig = asObject(runtimeTruth?.session?.hostedCloudConfig || runtimeTruth?.hostedCloudConfig);
+  const hostedWorker = asObject(runtimeTruth?.provider?.hostedWorker);
   const hostedSession = session.sessionKind === 'hosted-web';
   const selectedProviderNormalized = String(provider.selectedProvider || '').trim().toLowerCase();
   const cloudCognitionProvider = ['groq', 'gemini'].includes(selectedProviderNormalized);
@@ -329,6 +364,8 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     requestedProvider: provider.requestedProvider || 'unknown',
     selectedProvider: provider.selectedProvider || 'unknown',
     executedProvider: provider.executableProvider || '',
+    actualProviderUsed: provider.actualProviderUsed || provider.executableProvider || '',
+    providerKind: provider.providerKind || 'backend-provider',
     providerConfigured: provider.selectedProvider && provider.selectedProvider !== 'unknown',
     executableViaBackend,
     executableViaHostedCloud,
@@ -338,6 +375,11 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     cloudCognitionAvailable: reachabilityTruth.cloudAvailable === true || executableViaHostedCloud,
     hostedCloudPathAvailable,
     hostedCloudSecretPathKind,
+    hostedWorkerUrl: hostedWorker.workerUrl || '',
+    hostedWorkerEnabled: hostedWorker.enabled === true,
+    hostedWorkerReachable: hostedWorker.reachable === true,
+    hostedWorkerUsable: hostedWorker.usable === true,
+    hostedWorkerLastProbeResult: hostedWorker.lastProbe || {},
     providerHealthState: provider.providerHealthState || 'unknown',
     fallbackActive: route.fallbackActive === true || provider.fallbackProviderUsed === true,
     fallbackReason,
@@ -375,6 +417,7 @@ export function adjudicateRuntimeTruth({
   const selectedProviderTruth = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
   const activeProviderTruth = truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
+  const hostedWorkerExecution = resolveHostedWorkerExecution(context, providerHealth, selectedProviderTruth);
   const executableProviderCandidate = activeProviderTruth || selectedProviderTruth;
   const routeQualifiedHostedLocalOllama = isRouteQualifiedHostedLocalOllamaExecution({
     executableProviderCandidate,
@@ -386,7 +429,18 @@ export function adjudicateRuntimeTruth({
   });
   const executableProviderValidated = isSelectedProviderHealthy(executableProviderCandidate, providerHealth)
     || routeQualifiedHostedLocalOllama;
-  const executableProvider = executableProviderValidated ? executableProviderCandidate : '';
+  const hostedWorkerPromoted = hostedWorkerExecution.usable
+    && (
+      context.sessionKind === 'hosted-web'
+      || String(truth.routeKind || '').trim() === 'cloud'
+    )
+    && (
+      truth.backendReachable !== true
+      || !executableProviderValidated
+    );
+  const executableProvider = hostedWorkerPromoted
+    ? 'hosted-cloud-worker'
+    : (executableProviderValidated ? executableProviderCandidate : '');
   const fallbackProviderUsed = Boolean(
     executableProvider
     && selectedProviderTruth
@@ -453,6 +507,12 @@ export function adjudicateRuntimeTruth({
       requestedProvider,
       selectedProvider: selectedProviderTruth,
       executableProvider,
+      validatedProvider: executableProviderValidated ? executableProviderCandidate : '',
+      actualProviderUsed: hostedWorkerPromoted
+        ? 'hosted-cloud-worker'
+        : (activeProviderTruth || executableProvider || ''),
+      providerKind: hostedWorkerExecution.providerKind,
+      hostedWorker: hostedWorkerExecution,
       providerHealthState: providerHealthStateFor(selectedProviderTruth, providerHealth),
       providerReason: String(
         selectedProviderHealth?.reason

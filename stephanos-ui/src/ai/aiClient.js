@@ -305,15 +305,32 @@ async function requestHostedCloudChat({ hostedDispatch, hostedPayload, runtimeCo
     ...runtimeContext,
     baseUrl: hostedDispatch.targetBaseUrl,
   };
-  const hostedResult = await requestJson(hostedDispatch.chatPath, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(hostedPayload),
-  }, hostedRuntimeContext, timeoutPolicy);
-  return {
-    ...hostedResult,
-    data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
-  };
+  try {
+    const hostedResult = await requestJson(hostedDispatch.chatPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(hostedPayload),
+    }, hostedRuntimeContext, timeoutPolicy);
+    return {
+      ...hostedResult,
+      data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
+    };
+  } catch (error) {
+    const mappedCode = error?.code === 'TIMEOUT'
+      ? 'hosted-worker-timeout'
+      : (error?.code === 'INVALID_JSON'
+        ? 'hosted-worker-invalid-response'
+        : 'hosted-worker-unreachable');
+    throw createTransportError({
+      code: mappedCode,
+      message: error?.message || 'Hosted Worker request failed.',
+      details: {
+        ...(error?.details || {}),
+        hostedProvider: hostedDispatch.provider,
+        hostedEndpoint: hostedDispatch.targetBaseUrl,
+      },
+    });
+  }
 }
 
 export async function testHostedCloudWorkerConnection({

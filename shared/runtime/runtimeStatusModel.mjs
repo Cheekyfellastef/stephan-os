@@ -1663,7 +1663,13 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const localDesktopSession = runtimeContext.deviceContext === 'pc-local-browser'
     || runtimeContext.sessionKind === 'local-desktop'
     || localDesktopDiagnosticEligible;
-  const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web' && backendAvailable && cloudAvailable;
+  const hostedCloudConfig = runtimeContext.hostedCloudConfig && typeof runtimeContext.hostedCloudConfig === 'object'
+    ? runtimeContext.hostedCloudConfig
+    : {};
+  const hostedCloudWorkerEnabled = hostedCloudConfig.enabled === true;
+  const hostedCloudSession = runtimeContext.sessionKind === 'hosted-web'
+    && cloudAvailable
+    && (backendAvailable || hostedCloudWorkerEnabled);
   const homeNodeConfigured = Boolean(runtimeContext.homeNode?.configured);
   const homeNodeReachable = Boolean(runtimeContext.homeNode?.reachable);
   const homeNodeOverrideActive = runtimeContext.homeNodeOperatorOverrideActive === true && localDesktopSession;
@@ -1881,9 +1887,13 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       optional: false,
       target: typeof diagnostics.cloud?.target === 'string' ? diagnostics.cloud.target : '',
       actualTarget: typeof diagnostics.cloud?.actualTarget === 'string' ? diagnostics.cloud.actualTarget : '',
-      source: diagnostics.cloud?.source || (hostedCloudSession ? 'backend-cloud-session' : 'cloud-route-unavailable'),
+      source: diagnostics.cloud?.source || (hostedCloudSession
+        ? (backendAvailable ? 'backend-cloud-session' : 'hosted-cloud-worker-session')
+        : 'cloud-route-unavailable'),
       reason: hostedCloudSession
-        ? 'A cloud-backed Stephanos route is ready'
+        ? (backendAvailable
+          ? 'A cloud-backed Stephanos route is ready'
+          : 'Hosted cloud worker route is ready')
         : 'No cloud-backed Stephanos route is currently ready',
       blockedReason: hostedCloudSession ? '' : 'no cloud-backed route is currently ready',
     }, diagnostics.cloud),
@@ -2178,6 +2188,25 @@ export function buildFinalRouteTruth({
       ? 'reachable'
       : 'unreachable';
 
+  const hostedCloudConfig = runtimeContext?.hostedCloudConfig && typeof runtimeContext.hostedCloudConfig === 'object'
+    ? runtimeContext.hostedCloudConfig
+    : {};
+  const hostedWorkerSelectedProvider = String(hostedCloudConfig?.selectedProvider || routeSelectedProvider || '').trim().toLowerCase();
+  const hostedWorkerProviderType = hostedWorkerSelectedProvider || 'unknown';
+  const hostedWorkerProviderConfig = hostedCloudConfig?.providers?.[hostedWorkerSelectedProvider] || {};
+  const hostedWorkerLastProbe = hostedCloudConfig?.lastHealth?.[hostedWorkerSelectedProvider] || {};
+  const hostedWorkerUrl = String(
+    hostedWorkerProviderConfig?.baseURL
+    || hostedCloudConfig?.providerProxyUrls?.[hostedWorkerSelectedProvider]
+    || hostedCloudConfig?.proxyUrl
+    || '',
+  ).trim();
+  const hostedWorkerEnabled = hostedCloudConfig?.enabled === true && hostedWorkerProviderConfig?.enabled !== false;
+  const hostedWorkerReachable = hostedWorkerLastProbe?.reachable === true
+    || hostedWorkerLastProbe?.ok === true
+    || hostedWorkerLastProbe?.status === 'healthy';
+  const hostedWorkerUsable = hostedWorkerEnabled && Boolean(hostedWorkerUrl) && hostedWorkerReachable;
+
   return {
     sessionKind: runtimeContext.sessionKind || 'unknown',
     deviceContext: runtimeContext.deviceContext || 'unknown',
@@ -2224,6 +2253,12 @@ export function buildFinalRouteTruth({
     appLaunchState,
     operatorAction: selectedEvaluation?.blockedReason || nodeRoute?.routeSummary || '',
     persistence,
+    hostedWorkerUrl,
+    hostedWorkerEnabled,
+    hostedWorkerReachable,
+    hostedWorkerUsable,
+    hostedWorkerLastProbeResult: hostedWorkerLastProbe,
+    hostedWorkerProviderType,
   };
 }
 

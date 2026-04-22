@@ -534,6 +534,7 @@ function normalizeHostedCloudCognitionSettings(value = {}) {
     ...defaultsHosted,
     ...persistedHosted,
     enabled: persistedHosted.enabled === true,
+    updatedAt: String(persistedHosted.updatedAt || persistedHosted.timestamp || ''),
     selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(persistedHosted.selectedProvider)
       ? persistedHosted.selectedProvider
       : defaultsHosted.selectedProvider,
@@ -1209,7 +1210,7 @@ export function AIStoreProvider({ children }) {
           disableHomeNodeForLocalSession,
           fallbackOrder,
           providerConfigs: sanitizeConfigForStorage(savedProviderConfigs),
-          hostedCloudCognition: savedHostedCloudCognition,
+          hostedCloudCognition: hostedCloudCognition,
           ollamaConnection: normalizeOllamaConnection(ollamaConnection),
           surfaceOverride: normalizeSurfaceOverride(surfaceOverride),
         },
@@ -1259,7 +1260,7 @@ export function AIStoreProvider({ children }) {
     disableHomeNodeForLocalSession,
     fallbackOrder,
     savedProviderConfigs,
-    savedHostedCloudCognition,
+    hostedCloudCognition,
     ollamaConnection,
     surfaceOverride,
     bridgeTransportPreferences,
@@ -1302,8 +1303,9 @@ export function AIStoreProvider({ children }) {
       hostedCognitionRestoreSucceeded: hostedCloudCognitionSaveState.diagnostics?.restoreSucceeded === true,
       hostedCognitionLastRestoredSummary: hostedCloudCognitionSaveState.diagnostics?.lastRestoredSummary || '',
       hostedCognitionLastRestoreReason: hostedCloudCognitionSaveState.diagnostics?.lastRestoreReason || '',
+      hostedCognitionLastUpdatedAt: hostedCloudCognition?.updatedAt || '',
     }));
-  }, [hostedCloudCognitionSaveState, setUiDiagnostics]);
+  }, [hostedCloudCognitionSaveState, hostedCloudCognition, setUiDiagnostics]);
 
 
   const setMissionDashboardUiState = useCallback((nextState) => {
@@ -1390,7 +1392,7 @@ export function AIStoreProvider({ children }) {
     setSurfaceOverrideState(normalizeSurfaceOverride(nextMode));
   }, []);
   const setHostedCloudCognitionEnabled = useCallback((enabled) => {
-    setHostedCloudCognitionState((prev) => ({ ...prev, enabled: enabled === true }));
+    setHostedCloudCognitionState((prev) => ({ ...prev, enabled: enabled === true, updatedAt: new Date().toISOString() }));
     setHostedCloudCognitionSaveState((prev) => ({
       ...prev,
       state: 'unsaved',
@@ -1401,6 +1403,7 @@ export function AIStoreProvider({ children }) {
     setHostedCloudCognitionState((prev) => ({
       ...prev,
       selectedProvider: HOSTED_COGNITION_PROVIDER_KEYS.includes(providerKey) ? providerKey : prev.selectedProvider,
+      updatedAt: new Date().toISOString(),
     }));
     setHostedCloudCognitionSaveState((prev) => ({
       ...prev,
@@ -1412,6 +1415,7 @@ export function AIStoreProvider({ children }) {
     if (!HOSTED_COGNITION_PROVIDER_KEYS.includes(providerKey)) return;
     setHostedCloudCognitionState((prev) => ({
       ...prev,
+      updatedAt: new Date().toISOString(),
       providers: {
         ...(prev.providers || {}),
         [providerKey]: {
@@ -1430,6 +1434,7 @@ export function AIStoreProvider({ children }) {
     if (!HOSTED_COGNITION_PROVIDER_KEYS.includes(providerKey)) return;
     setHostedCloudCognitionState((prev) => ({
       ...prev,
+      updatedAt: new Date().toISOString(),
       lastHealth: {
         ...(prev.lastHealth || {}),
         [providerKey]: {
@@ -1443,6 +1448,8 @@ export function AIStoreProvider({ children }) {
     const attemptedAt = new Date().toISOString();
     try {
       const normalized = normalizeHostedCloudCognitionSettings(hostedCloudCognition);
+      normalized.updatedAt = attemptedAt;
+      normalized.providerType = String(normalized.selectedProvider || 'groq').trim().toLowerCase();
       const summaryProvider = normalized.selectedProvider || 'groq';
       const summaryBaseUrl = normalized.providers?.[summaryProvider]?.baseURL || '';
       setSavedHostedCloudCognition(normalized);

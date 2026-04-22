@@ -653,3 +653,51 @@ test('adjudicator projects cognitive watcher analysis with protocol-boundary kno
   assert.equal(adjudicated.cognitiveAdjudication.mode, 'observer-only');
   assert.equal(adjudicated.cognitiveAdjudication.patternMatches.some((entry) => entry.patternId === 'protocol-boundary-mismatch'), true);
 });
+
+test('adjudicator promotes hosted worker to executable provider kind when backend contract cannot validate provider execution', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      hostedCloudConfig: {
+        enabled: true,
+        selectedProvider: 'groq',
+        providers: {
+          groq: { enabled: true, baseURL: 'https://worker-groq.example.workers.dev' },
+        },
+        lastHealth: {
+          groq: { status: 'healthy', reachable: true, checkedAt: '2026-04-22T00:00:00.000Z' },
+        },
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      backendReachable: true,
+      routeUsable: true,
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      requestedProvider: 'groq',
+    },
+    routePlan: {
+      requestedRouteMode: 'cloud-first',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true },
+    },
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: {
+      groq: { ok: false, state: 'unknown' },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'hosted-cloud-worker');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.providerKind, 'hosted-cloud-worker');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.hostedWorkerReachable, true);
+});
