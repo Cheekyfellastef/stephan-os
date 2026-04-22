@@ -172,6 +172,35 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
 const BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS = 2;
 const BRIDGE_AUTO_REVALIDATION_BACKOFF_MS = 60_000;
 
+function recordAIStoreStartupStage(stage, { status = 'ok', details = null, sourceFunction = 'aiStore.startup' } = {}) {
+  recordStartupRenderStage({
+    stage,
+    status,
+    sourceModule: 'stephanos-ui/src/state/aiStore.js',
+    sourceFunction,
+    details,
+  });
+}
+
+function runStartupStage(stageName, task, { sourceFunction = 'aiStore.startup' } = {}) {
+  recordAIStoreStartupStage(`${stageName}:start`, { sourceFunction });
+  try {
+    const result = task();
+    recordAIStoreStartupStage(`${stageName}:complete`, { sourceFunction });
+    return result;
+  } catch (error) {
+    recordAIStoreStartupStage(`${stageName}:failed`, {
+      status: 'fatal',
+      sourceFunction,
+      details: {
+        message: String(error?.message || 'unknown'),
+        stack: String(error?.stack || '').split('\n').slice(0, 8).join('\n'),
+      },
+    });
+    throw error;
+  }
+}
+
 function resolveBridgeMemoryStorageKey() {
   return typeof globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY === 'string'
     ? globalThis.STEPHANOS_DURABLE_MEMORY_STORAGE_KEY
@@ -520,30 +549,39 @@ function normalizeHostedCloudCognitionSettings(value = {}) {
 }
 
 function normalizeStoredSettings(persistedSession) {
-  const defaults = createDefaultRouterSettings();
-  const persistedSettings = persistedSession?.session?.providerPreferences || {};
+  return runStartupStage('normalizeStoredSettings', () => {
+    const defaults = runStartupStage('createDefaultRouterSettings', () => createDefaultRouterSettings(), {
+      sourceFunction: 'normalizeStoredSettings',
+    });
+    const persistedSettings = persistedSession?.session?.providerPreferences || {};
+    const hostedCloudCognition = runStartupStage(
+      'hostedCloudCognition normalization',
+      () => normalizeHostedCloudCognitionSettings(persistedSettings.hostedCloudCognition),
+      { sourceFunction: 'normalizeStoredSettings' },
+    );
 
-  return {
-    ...defaults,
-    provider: normalizeProviderSelection(persistedSettings.provider),
-    routeMode: normalizeRouteMode(persistedSettings.routeMode),
-    devMode: persistedSettings.devMode !== false,
-    fallbackEnabled: persistedSettings.fallbackEnabled !== false,
-    disableHomeNodeForLocalSession: persistedSettings.disableHomeNodeForLocalSession === true,
-    fallbackOrder: Array.isArray(persistedSettings.fallbackOrder)
-      ? persistedSettings.fallbackOrder
-      : defaults.fallbackOrder,
-    providerConfigs: Object.fromEntries(
-      PROVIDER_KEYS.map((key) => [key, normalizeProviderDraft(key, {
-        ...defaults.providerConfigs[key],
-        ...(persistedSettings.providerConfigs?.[key] || {}),
-        apiKey: '',
-      })]),
-    ),
-    hostedCloudCognition: normalizeHostedCloudCognitionSettings(persistedSettings.hostedCloudCognition),
-    ollamaConnection: normalizeOllamaConnection(persistedSettings.ollamaConnection || {}),
-    surfaceOverride: normalizeSurfaceOverride(persistedSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE),
-  };
+    return {
+      ...defaults,
+      provider: normalizeProviderSelection(persistedSettings.provider),
+      routeMode: normalizeRouteMode(persistedSettings.routeMode),
+      devMode: persistedSettings.devMode !== false,
+      fallbackEnabled: persistedSettings.fallbackEnabled !== false,
+      disableHomeNodeForLocalSession: persistedSettings.disableHomeNodeForLocalSession === true,
+      fallbackOrder: Array.isArray(persistedSettings.fallbackOrder)
+        ? persistedSettings.fallbackOrder
+        : defaults.fallbackOrder,
+      providerConfigs: Object.fromEntries(
+        PROVIDER_KEYS.map((key) => [key, normalizeProviderDraft(key, {
+          ...defaults.providerConfigs[key],
+          ...(persistedSettings.providerConfigs?.[key] || {}),
+          apiKey: '',
+        })]),
+      ),
+      hostedCloudCognition,
+      ollamaConnection: normalizeOllamaConnection(persistedSettings.ollamaConnection || {}),
+      surfaceOverride: normalizeSurfaceOverride(persistedSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE),
+    };
+  }, { sourceFunction: 'normalizeStoredSettings' });
 }
 
 function buildInitialRuntimeContext(initialApiRuntimeConfig, { sessionRestoreDiagnostics, homeNodePreference, homeNodeLastKnown }) {
@@ -575,50 +613,51 @@ function buildInitialRuntimeContext(initialApiRuntimeConfig, { sessionRestoreDia
 }
 
 function createInitialMemorySnapshot() {
-  const currentOrigin = typeof window !== 'undefined' && window.location?.origin
-    ? window.location.origin
-    : '';
-  const portableHomeNodePreference = readPortableStephanosHomeNodePreference() || null;
-  const homeNodePreference = readPersistedStephanosHomeNode() || portableHomeNodePreference || null;
-  const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
-  const currentHostname = typeof window !== 'undefined' && window.location?.hostname
-    ? String(window.location.hostname || '').trim().toLowerCase()
-    : '';
-  const initialSessionKind = currentHostname === 'localhost' || currentHostname === '127.0.0.1'
-    ? 'local-desktop'
-    : 'hosted-web';
-  const homeBridgeUrl = readPersistedStephanosHomeBridgeUrl(undefined, {
-    frontendOrigin: currentOrigin,
-    requireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
-  }) || '';
-  setStephanosHomeBridgeGlobal(homeBridgeUrl);
-  const bridgeMemoryRead = readPersistedBridgeMemory();
-  const bridgeMemory = bridgeMemoryRead.bridgeMemory;
-  const restoredSession = restoreStephanosSessionMemoryForDevice({
-    currentOrigin,
-    manualNode: homeNodePreference,
-    lastKnownNode: homeNodeLastKnown,
-  });
-  const persistedSession = restoredSession.memory;
-  const defaults = createDefaultStephanosSessionMemory();
-  const initialApiRuntimeConfig = getApiRuntimeConfig();
-  const restoredVisibilityEntries = Object.entries(persistedSession?.session?.ui?.uiLayout || {})
-    .filter(([, value]) => typeof value === 'boolean');
-  console.info('[WORKSPACE] restored pane visibility state from session memory', {
-    panes: restoredVisibilityEntries.length,
-    open: restoredVisibilityEntries.filter(([, value]) => value === true).length,
-    closed: restoredVisibilityEntries.filter(([, value]) => value === false).length,
-  });
-  const surfaceOverride = normalizeSurfaceOverride(persistedSession?.session?.providerPreferences?.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
-  const surfaceAwareness = resolveSurfaceAwareness({
-    runtimeContext: initialApiRuntimeConfig || {},
-    operatorSurfaceOverrides: { mode: surfaceOverride },
-  });
-  const hasPersistedUiLayout = restoredVisibilityEntries.length > 0;
-  const normalizedUiLayout = normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT);
-  const effectiveUiLayout = hasPersistedUiLayout
-    ? normalizedUiLayout
-    : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
+  return runStartupStage('createInitialMemorySnapshot', () => {
+    const currentOrigin = typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : '';
+    const portableHomeNodePreference = readPortableStephanosHomeNodePreference() || null;
+    const homeNodePreference = readPersistedStephanosHomeNode() || portableHomeNodePreference || null;
+    const homeNodeLastKnown = readPersistedStephanosLastKnownNode() || null;
+    const currentHostname = typeof window !== 'undefined' && window.location?.hostname
+      ? String(window.location.hostname || '').trim().toLowerCase()
+      : '';
+    const initialSessionKind = currentHostname === 'localhost' || currentHostname === '127.0.0.1'
+      ? 'local-desktop'
+      : 'hosted-web';
+    const homeBridgeUrl = readPersistedStephanosHomeBridgeUrl(undefined, {
+      frontendOrigin: currentOrigin,
+      requireHttps: resolveBridgeUrlRequireHttps({ sessionKind: initialSessionKind, selectedTransport: 'manual' }),
+    }) || '';
+    setStephanosHomeBridgeGlobal(homeBridgeUrl);
+    const bridgeMemoryRead = readPersistedBridgeMemory();
+    const bridgeMemory = bridgeMemoryRead.bridgeMemory;
+    const restoredSession = restoreStephanosSessionMemoryForDevice({
+      currentOrigin,
+      manualNode: homeNodePreference,
+      lastKnownNode: homeNodeLastKnown,
+    });
+    const persistedSession = restoredSession.memory;
+    const defaults = createDefaultStephanosSessionMemory();
+    const initialApiRuntimeConfig = getApiRuntimeConfig();
+    const restoredVisibilityEntries = Object.entries(persistedSession?.session?.ui?.uiLayout || {})
+      .filter(([, value]) => typeof value === 'boolean');
+    console.info('[WORKSPACE] restored pane visibility state from session memory', {
+      panes: restoredVisibilityEntries.length,
+      open: restoredVisibilityEntries.filter(([, value]) => value === true).length,
+      closed: restoredVisibilityEntries.filter(([, value]) => value === false).length,
+    });
+    const surfaceOverride = normalizeSurfaceOverride(persistedSession?.session?.providerPreferences?.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
+    const surfaceAwareness = resolveSurfaceAwareness({
+      runtimeContext: initialApiRuntimeConfig || {},
+      operatorSurfaceOverrides: { mode: surfaceOverride },
+    });
+    const hasPersistedUiLayout = restoredVisibilityEntries.length > 0;
+    const normalizedUiLayout = normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT);
+    const effectiveUiLayout = hasPersistedUiLayout
+      ? normalizedUiLayout
+      : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
 
   const initialBridgeTransportPreferences = normalizeBridgeTransportPreferences(
     persistedSession?.session?.bridgeTransportPreferences,
@@ -677,55 +716,57 @@ function createInitialMemorySnapshot() {
     restoredAt: new Date().toISOString(),
   };
 
-  return {
-    persistedSession,
-    sessionRestoreDiagnostics: restoredSession.diagnostics,
-    initialApiRuntimeContext: buildInitialRuntimeContext(initialApiRuntimeConfig, {
+    return {
+      persistedSession,
       sessionRestoreDiagnostics: restoredSession.diagnostics,
+      initialApiRuntimeContext: buildInitialRuntimeContext(initialApiRuntimeConfig, {
+        sessionRestoreDiagnostics: restoredSession.diagnostics,
+        homeNodePreference,
+        homeNodeLastKnown,
+      }),
+      settings: normalizeStoredSettings(persistedSession),
+      hostedCloudCognitionRestoreDiagnostics,
+      uiLayout: effectiveUiLayout,
+      paneLayout: {
+        order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
+      },
+      lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
+      commandHistory: sanitizePersistedCommandHistory(
+        persistedSession?.working?.recentCommands || defaults.working.recentCommands,
+      ),
+      workingMemory: {
+        ...defaults.working,
+        ...(persistedSession?.working || {}),
+        recentCommands: sanitizePersistedCommandHistory(persistedSession?.working?.recentCommands || []),
+        surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(persistedSession?.working?.surfaceFrictionEvents || []),
+        surfaceFrictionPatterns: sanitizeObjectList(persistedSession?.working?.surfaceFrictionPatterns || [], 12),
+        surfaceProtocolRecommendations: sanitizeObjectList(persistedSession?.working?.surfaceProtocolRecommendations || [], 12),
+        acceptedSurfaceRules: sanitizeObjectList(persistedSession?.working?.acceptedSurfaceRules || [], 24),
+        missionPacketWorkflow: normalizeMissionPacketWorkflow(
+          persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
+        ),
+        missionLineage: normalizeMissionLineageStore(
+          persistedSession?.working?.missionLineage || createDefaultMissionLineageStore(),
+        ),
+      },
+      projectMemory: {
+        ...defaults.project,
+        ...(persistedSession?.project || {}),
+      },
       homeNodePreference,
       homeNodeLastKnown,
-    }),
-    settings: normalizeStoredSettings(persistedSession),
-    hostedCloudCognitionRestoreDiagnostics,
-    uiLayout: effectiveUiLayout,
-    paneLayout: {
-      order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
-    },
-    lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
-    commandHistory: sanitizePersistedCommandHistory(
-      persistedSession?.working?.recentCommands || defaults.working.recentCommands,
-    ),
-    workingMemory: {
-      ...defaults.working,
-      ...(persistedSession?.working || {}),
-      recentCommands: sanitizePersistedCommandHistory(persistedSession?.working?.recentCommands || []),
-      surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(persistedSession?.working?.surfaceFrictionEvents || []),
-      surfaceFrictionPatterns: sanitizeObjectList(persistedSession?.working?.surfaceFrictionPatterns || [], 12),
-      surfaceProtocolRecommendations: sanitizeObjectList(persistedSession?.working?.surfaceProtocolRecommendations || [], 12),
-      acceptedSurfaceRules: sanitizeObjectList(persistedSession?.working?.acceptedSurfaceRules || [], 24),
-      missionPacketWorkflow: normalizeMissionPacketWorkflow(
-        persistedSession?.working?.missionPacketWorkflow || createDefaultMissionPacketWorkflow(),
-      ),
-      missionLineage: normalizeMissionLineageStore(
-        persistedSession?.working?.missionLineage || createDefaultMissionLineageStore(),
-      ),
-    },
-    projectMemory: {
-      ...defaults.project,
-      ...(persistedSession?.project || {}),
-    },
-    homeNodePreference,
-    homeNodeLastKnown,
-    homeBridgeUrl,
-    bridgeTransportPreferences: rehydratedBridgeTransportPreferences,
-    bridgeMemory,
-    bridgeMemoryPersistence: bridgeMemoryRead.diagnostics,
-    bridgeMemoryRehydrated: bridgeMemory.transport !== 'none' && bridgeMemory.backendUrl
-      ? rehydratedBridgeTransportPreferences.transports?.[bridgeMemory.transport]?.accepted !== true
-      : false,
-    surfaceAwareness,
-    surfaceOverride,
-  };
+      homeBridgeUrl,
+      bridgeTransportPreferences: rehydratedBridgeTransportPreferences,
+      bridgeMemory,
+      bridgeMemoryPersistence: bridgeMemoryRead.diagnostics,
+      bridgeMemoryRehydrated: bridgeMemory.transport !== 'none' && bridgeMemory.backendUrl
+        ? rehydratedBridgeTransportPreferences.transports?.[bridgeMemory.transport]?.accepted !== true
+        : false,
+      surfaceAwareness,
+      surfaceOverride,
+      hasPersistedUiLayout,
+    };
+  }, { sourceFunction: 'createInitialMemorySnapshot' });
 }
 
 export function AIStoreProvider({ children }) {
@@ -906,7 +947,7 @@ export function AIStoreProvider({ children }) {
     autoRevalidation: bridgeAutoRevalidation,
     bridgeMemoryPersistence,
   }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryPersistence, bridgeMemoryRehydrated, bridgeTransportPreferences, bridgeAutoRevalidation]);
-  const runtimeStatusModel = useMemo(() => ensureRuntimeStatusModel(createRuntimeStatusModel({
+  const runtimeStatusModel = useMemo(() => runStartupStage('runtimeStatusModel initialization', () => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
     validationState: apiStatus.state === 'offline'
@@ -938,7 +979,7 @@ export function AIStoreProvider({ children }) {
       persistence: bridgeTransportTruth?.persistence || null,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
-  })), [
+  })), { sourceFunction: 'AIStoreProvider.runtimeStatusModel.useMemo' }), [
     apiStatus.backendReachable,
     apiStatus.baseUrl,
     apiStatus.frontendOrigin,
@@ -967,6 +1008,12 @@ export function AIStoreProvider({ children }) {
   const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
 
   const debugVisible = uiLayout.debugConsole === true;
+
+  useEffect(() => {
+    recordAIStoreStartupStage('AIStoreProvider first render complete', {
+      sourceFunction: 'AIStoreProvider.useEffect:first-render',
+    });
+  }, []);
 
   useEffect(() => {
     if (!devMode || typeof console?.warn !== 'function') {
