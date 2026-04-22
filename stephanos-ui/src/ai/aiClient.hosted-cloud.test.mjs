@@ -43,3 +43,9 @@ test('aiClient exposes direct hosted worker connectivity probe for operator test
   assert.match(source, /parseSuccess/);
   assert.match(source, /resolveHostedWorkerEndpoint/);
 });
+
+test('hosted worker transport failures are labeled with canonical hosted error codes', () => {
+  assert.match(source, /hosted-worker-timeout/);
+  assert.match(source, /hosted-worker-invalid-response/);
+  assert.match(source, /hosted-worker-unreachable/);
+});

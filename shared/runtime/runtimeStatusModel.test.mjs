@@ -249,6 +249,47 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
   assert.match(status.dependencySummary, /home pc node ready/i);
 });
 
+test('createRuntimeStatusModel treats hosted worker cloud route as available when backend execution is unavailable', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'cloud-first',
+    providerHealth: {
+      groq: { ok: true, reachable: true, executableNow: true },
+      gemini: { ok: false },
+      ollama: { ok: false },
+    },
+    backendAvailable: false,
+    runtimeContext: {
+      frontendOrigin: 'https://cheekyfellastef.github.io',
+      hostedCloudConfig: {
+        enabled: true,
+        selectedProvider: 'groq',
+        providers: {
+          groq: { enabled: true, baseURL: 'https://worker-groq.example.workers.dev', model: 'openai/gpt-oss-20b' },
+        },
+        lastHealth: {
+          groq: { status: 'healthy', reachable: true, checkedAt: '2026-04-22T00:00:00.000Z' },
+        },
+      },
+      routeDiagnostics: {
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'hosted-cloud-worker-session',
+          reason: 'Hosted cloud worker route is ready',
+        },
+      },
+    },
+  });
+
+  assert.equal(status.routeKind, 'cloud');
+  assert.equal(status.cloudAvailable, true);
+  assert.equal(status.finalRouteTruth.hostedWorkerEnabled, true);
+  assert.equal(status.finalRouteTruth.hostedWorkerReachable, true);
+  assert.equal(status.finalRouteTruth.hostedWorkerUsable, true);
+  assert.equal(status.finalRouteTruth.hostedWorkerProviderType, 'groq');
+});
+
 test('createRuntimeStatusModel keeps local-first provider routing for reachable LAN home-node sessions', () => {
   const status = createRuntimeStatusModel({
     selectedProvider: 'ollama',
