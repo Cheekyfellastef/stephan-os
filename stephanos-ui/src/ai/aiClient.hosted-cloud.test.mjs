@@ -15,10 +15,13 @@ test('hosted cloud branch defines canonical request contract and normalization l
   assert.match(source, /executionDeferred:\s*true/);
   assert.match(source, /function normalizeHostedCloudResponseData\(/);
   assert.match(source, /authority_level:[\s\S]*'cloud-cognition-only'/m);
+  assert.match(source, /selected_provider_truth/);
+  assert.match(source, /executable_provider_truth/);
 });
 
 test('sendPrompt can prefer hosted dispatch before backend when authority is deferred', () => {
   assert.match(source, /function shouldPreferHostedDispatch\(/);
+  assert.match(source, /hostedDispatch\?\.provider === hostedDispatch\?\.selectedProvider && hostedDispatch\?\.executableNow/);
   assert.match(source, /routeDecision\?\.battleBridgeAuthorityAvailable === false/);
   assert.match(source, /if \(shouldPreferHostedDispatch\(hostedDispatch, routeDecision\)\) \{/);
   assert.match(source, /requestHostedCloudChat\(/);
@@ -30,4 +33,11 @@ test('getProviderHealth falls back to hosted probe path when backend provider he
   assert.match(source, /const \[groqHealth, geminiHealth\] = await Promise\.all\(/);
   assert.match(source, /status:\s*207/);
   assert.match(source, /executionPath:\s*`\$\{provider\}-hosted-cloud`/);
+});
+
+test('aiClient exposes direct hosted worker connectivity probe for operator test actions', () => {
+  assert.match(source, /export async function testHostedCloudWorkerConnection\(/);
+  assert.match(source, /requestKind:\s*'hosted-cloud-cognition-health-probe'/);
+  assert.match(source, /parseSuccess/);
+  assert.match(source, /resolveHostedWorkerEndpoint/);
 });
