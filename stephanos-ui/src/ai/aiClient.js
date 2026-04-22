@@ -66,14 +66,35 @@ function resolveHostedCloudDispatch({
     || requestedProvider
     || '',
   ).trim().toLowerCase();
-  const providerProxy = String(hostedConfig?.providerProxyUrls?.[provider] || '').trim();
+  const providerProxy = String(
+    hostedConfig?.providers?.[provider]?.baseURL
+    || hostedConfig?.providerProxyUrls?.[provider]
+    || '',
+  ).trim();
   const providerEnabled = hostedConfig?.providers?.[provider]?.enabled !== false;
   const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
   const targetBaseUrl = providerProxy || sharedProxy;
-  const enabled = hostedConfig?.enabled === true && providerEnabled && Boolean(targetBaseUrl);
+  let validTarget = false;
+  try {
+    if (targetBaseUrl) {
+      const parsed = new URL(targetBaseUrl);
+      validTarget = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    }
+  } catch {
+    validTarget = false;
+  }
+  const enabled = hostedConfig?.enabled === true && providerEnabled && validTarget;
   const providerHealth = hostedConfig?.lastHealth?.[provider] || {};
   const reachableNow = providerHealth.reachable === true;
-  const executableNow = enabled && (reachableNow || providerHealth.status === 'healthy' || providerHealth.ok === true);
+  const explicitHealthHealthy = reachableNow || providerHealth.status === 'healthy' || providerHealth.ok === true;
+  const selectedAnswerMode = String(routeDecision?.selectedAnswerMode || '').trim().toLowerCase();
+  const optimisticExecutionAllowed = enabled && !explicitHealthHealthy && (
+    routeDecision?.battleBridgeAuthorityAvailable === false
+    || routeDecision?.executionDeferred === true
+    || selectedAnswerMode === 'route-unavailable'
+    || selectedAnswerMode === 'cloud-basic'
+  );
+  const executableNow = enabled && (explicitHealthHealthy || optimisticExecutionAllowed);
 
   return {
     enabled,
@@ -91,6 +112,8 @@ function resolveHostedCloudDispatch({
     executionDeferred: routeDecision?.executionDeferred === true,
     battleBridgeAuthorityAvailable: routeDecision?.battleBridgeAuthorityAvailable === true,
     routeTruthAvailable: routeDecision?.hostedCloudPathAvailable === true,
+    optimisticExecutionAllowed,
+    validTarget,
   };
 }
 

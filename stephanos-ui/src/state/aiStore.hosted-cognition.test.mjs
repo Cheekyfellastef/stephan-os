@@ -12,4 +12,7 @@ test('hosted cognition save state includes unsaved/saved/save-failed and restore
   assert.match(source, /state:\s*'save-failed'/);
   assert.match(source, /\?\s*'restored'\s*:\s*'idle'/);
   assert.match(source, /restoredFromSession/);
+  assert.match(source, /providerProxyUrls/);
+  assert.match(source, /hydrationFailure/);
+  assert.match(source, /failed to hydrate executable Worker URL/);
 });

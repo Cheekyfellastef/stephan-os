@@ -202,8 +202,9 @@ test('ProviderToggle renders Hosted Cloud Cognition pane with worker URL and mod
   assert.match(rendered, /Authority:\s*<\/strong>\s*cognition-only \(execution deferred\)/);
   assert.match(rendered, /Save state:\s*<\/strong>\s*Restored from session/);
   assert.match(rendered, /Restore:\s*<\/strong>\s*Restored from session/);
+  assert.match(rendered, /Restore diagnostics:\s*<\/strong>\s*Hydration ok/);
   assert.match(rendered, /Save Hosted Cloud Cognition/);
-  assert.match(rendered, /Test Hosted Provider/);
+  assert.match(rendered, /Test Groq Worker/);
   assert.match(rendered, /Reachable:\s*<\/strong>\s*unknown/);
   assert.match(rendered, /Executable now:\s*<\/strong>\s*unknown/);
   assert.match(rendered, /Model:\s*<\/strong>\s*gemini-2\.5-flash/);

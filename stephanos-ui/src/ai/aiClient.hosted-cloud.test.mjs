@@ -25,6 +25,8 @@ test('sendPrompt can prefer hosted dispatch before backend when authority is def
   assert.match(source, /routeDecision\?\.battleBridgeAuthorityAvailable === false/);
   assert.match(source, /if \(shouldPreferHostedDispatch\(hostedDispatch, routeDecision\)\) \{/);
   assert.match(source, /requestHostedCloudChat\(/);
+  assert.match(source, /hostedConfig\?\.providers\?\.\[provider\]\?\.baseURL/);
+  assert.match(source, /optimisticExecutionAllowed/);
 });
 
 test('getProviderHealth falls back to hosted probe path when backend provider health fails', () => {

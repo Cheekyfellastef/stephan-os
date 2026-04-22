@@ -527,6 +527,9 @@ function normalizeHostedCloudCognitionSettings(value = {}) {
   const persistedHosted = value && typeof value === 'object'
     ? value
     : {};
+  const persistedProviderProxyUrls = persistedHosted.providerProxyUrls && typeof persistedHosted.providerProxyUrls === 'object'
+    ? persistedHosted.providerProxyUrls
+    : {};
   return {
     ...defaultsHosted,
     ...persistedHosted,
@@ -537,11 +540,17 @@ function normalizeHostedCloudCognitionSettings(value = {}) {
     providers: Object.fromEntries(HOSTED_COGNITION_PROVIDER_KEYS.map((providerKey) => {
       const defaultsProvider = defaultsHosted.providers?.[providerKey] || {};
       const persistedProvider = persistedHosted.providers?.[providerKey] || {};
+      const legacyBaseURL = String(
+        persistedProvider.baseURL
+        || persistedProvider.baseUrl
+        || persistedProviderProxyUrls?.[providerKey]
+        || '',
+      );
       return [providerKey, {
         ...defaultsProvider,
         ...persistedProvider,
         enabled: persistedProvider.enabled !== false,
-        baseURL: String(persistedProvider.baseURL || ''),
+        baseURL: legacyBaseURL,
         model: String(persistedProvider.model || defaultsProvider.model || ''),
       }];
     })),
@@ -709,17 +718,25 @@ function createInitialMemorySnapshot() {
     })
     : initialBridgeTransportPreferences;
   const restoredHostedCloudCognition = persistedSession?.session?.providerPreferences?.hostedCloudCognition;
+  const hostedCloudCognitionRestoreAttempted = restoredHostedCloudCognition !== undefined;
   const hostedCloudCognitionRestored = Boolean(restoredHostedCloudCognition && typeof restoredHostedCloudCognition === 'object');
   const normalizedRestoredHostedCloudCognition = normalizeHostedCloudCognitionSettings(restoredHostedCloudCognition);
   const restoredHostedProvider = normalizedRestoredHostedCloudCognition?.selectedProvider || 'groq';
   const restoredHostedBaseUrl = normalizedRestoredHostedCloudCognition?.providers?.[restoredHostedProvider]?.baseURL || '';
+  const restoreHydrateFailed = hostedCloudCognitionRestoreAttempted
+    && hostedCloudCognitionRestored
+    && normalizedRestoredHostedCloudCognition?.enabled === true
+    && !restoredHostedBaseUrl;
   const hostedCloudCognitionRestoreDiagnostics = {
-    restoreAttempted: true,
-    restoreSucceeded: hostedCloudCognitionRestored,
-    restoredFromSession: hostedCloudCognitionRestored,
-    reason: hostedCloudCognitionRestored
-      ? 'Restored hosted cognition settings from session memory.'
-      : 'No hosted cognition payload found in session memory; defaults applied.',
+    restoreAttempted: hostedCloudCognitionRestoreAttempted,
+    restoreSucceeded: hostedCloudCognitionRestored && !restoreHydrateFailed,
+    restoredFromSession: hostedCloudCognitionRestored && !restoreHydrateFailed,
+    reason: restoreHydrateFailed
+      ? 'Save payload found but failed to hydrate executable Worker URL(s); check hosted cognition restore diagnostics.'
+      : (hostedCloudCognitionRestored
+        ? 'Restored hosted cognition settings from session memory.'
+        : 'No hosted cognition payload found in session memory; defaults applied.'),
+    hydrationFailure: restoreHydrateFailed,
     lastRestoredSummary: `${restoredHostedProvider}:${restoredHostedBaseUrl || 'no-base-url'}`,
     restoredAt: new Date().toISOString(),
   };
@@ -868,6 +885,7 @@ export function AIStoreProvider({ children }) {
       lastRestoreReason: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.reason || '',
       lastRestoredSummary: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.lastRestoredSummary || '',
       restoredFromSession: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredFromSession === true,
+      hydrationFailure: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.hydrationFailure === true,
     },
     lastSavedAt: '',
   }));
