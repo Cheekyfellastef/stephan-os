@@ -5,6 +5,7 @@ function nowIso() {
 }
 
 function sanitizePlaybackSession(value = {}) {
+  const validErrorType = ['none', 'embedBlocked', 'unavailable', 'network'];
   return {
     type: SESSION_TYPE,
     mode: value.mode === 'flow' ? 'flow' : 'single',
@@ -14,6 +15,9 @@ function sanitizePlaybackSession(value = {}) {
     queueIds: Array.isArray(value.queueIds) ? value.queueIds.filter((id) => typeof id === 'string' && id) : [],
     currentIndex: Number.isInteger(value.currentIndex) ? value.currentIndex : -1,
     currentMediaItemId: typeof value.currentMediaItemId === 'string' ? value.currentMediaItemId : '',
+    errorType: validErrorType.includes(value.errorType) ? value.errorType : 'none',
+    externallyOpened: value.externallyOpened === true,
+    resumeAvailable: value.resumeAvailable === true,
     lastExternalOpenAt: typeof value.lastExternalOpenAt === 'string' ? value.lastExternalOpenAt : '',
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : nowIso(),
   };

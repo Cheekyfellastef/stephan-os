@@ -15,6 +15,9 @@ export function createMusicTilePlaybackController({
       queueIds: snapshotQueue(queue),
       currentMediaItemId: item.id,
       currentIndex: flowController.selectById(item.id) ? flowController.getCurrentIndex() : -1,
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
     });
   }
 
@@ -35,6 +38,9 @@ export function createMusicTilePlaybackController({
       queueIds: snapshotQueue(queue),
       currentMediaItemId: item.id,
       currentIndex: flowController.getCurrentIndex(),
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
     });
 
     return item;
@@ -46,12 +52,16 @@ export function createMusicTilePlaybackController({
       flowState: 'ended',
       currentMediaItemId: '',
       currentIndex: -1,
+      externallyOpened: false,
+      resumeAvailable: false,
     });
   }
 
   function onExternalOpen() {
     return sessionStore.patch({
       flowState: 'externally-opened',
+      externallyOpened: true,
+      resumeAvailable: true,
       lastExternalOpenAt: new Date().toISOString(),
     });
   }
@@ -70,6 +80,26 @@ export function createMusicTilePlaybackController({
       currentMediaItemId: mediaItemId || current.currentMediaItemId,
       currentIndex: flowController.getCurrentIndex(),
       flowState: current.mode === 'flow' ? 'active' : current.flowState,
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
+    });
+  }
+
+  function onPlaybackError(errorType = 'none') {
+    return sessionStore.patch({
+      errorType,
+    });
+  }
+
+  function clearCurrentSelection() {
+    return sessionStore.patch({
+      mode: 'single',
+      flowState: 'idle',
+      currentMediaItemId: '',
+      currentIndex: -1,
+      resumeAvailable: false,
+      errorType: 'none',
     });
   }
 
@@ -86,6 +116,9 @@ export function createMusicTilePlaybackController({
       queueIds: snapshotQueue(queue),
       currentMediaItemId: next.id,
       currentIndex: flowController.getCurrentIndex(),
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
     });
 
     return next;
@@ -101,6 +134,9 @@ export function createMusicTilePlaybackController({
       queueIds: snapshotQueue(queue),
       currentMediaItemId: previous.id,
       currentIndex: flowController.getCurrentIndex(),
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
     });
 
     return previous;
@@ -118,6 +154,8 @@ export function createMusicTilePlaybackController({
     onExternalOpen,
     onPaused,
     onPlaying,
+    onPlaybackError,
+    clearCurrentSelection,
     nextInFlow,
     previousInFlow,
     getCurrentItem,

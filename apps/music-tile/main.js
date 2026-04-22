@@ -15,8 +15,9 @@ import {
   upsertMediaItems,
 } from './state/musicTileState.js';
 
-const YOUTUBE_WATCH = 'https://www.youtube.com/watch?v=';
 const YOUTUBE_SEARCH = 'https://www.youtube.com/results?search_query=';
+const YOUTUBE_WATCH = 'https://www.youtube.com/watch?v=';
+const EMBED_BLOCKED_ERROR_CODES = new Set([101, 150]);
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -55,6 +56,10 @@ const elements = {
   fullBtn: document.getElementById('player-fullscreen-btn'),
   exitFullBtn: document.getElementById('player-exit-fullscreen-btn'),
   resumeFlowBtn: document.getElementById('player-resume-flow-btn'),
+  fallbackActions: document.getElementById('player-fallback-actions'),
+  fallbackOpenBtn: document.getElementById('player-fallback-open-btn'),
+  fallbackNextBtn: document.getElementById('player-fallback-next-btn'),
+  fallbackBackBtn: document.getElementById('player-fallback-back-btn'),
   muteBtn: document.getElementById('player-mute-btn'),
   volume: document.getElementById('player-volume'),
   position: document.getElementById('player-position'),
@@ -75,7 +80,9 @@ const state = {
   playerState: 'idle',
   playerError: '',
   playbackIntentEstablished: false,
+  playerErrorType: 'none',
   positionTimer: null,
+  embedBlockedSkipTimer: null,
 };
 
 const sessionStore = createMusicTileSessionStore({
@@ -186,6 +193,9 @@ function renderQueue() {
 function renderPlayerPanel() {
   const current = getCurrentMediaItem();
   const session = sessionStore.read();
+  const isEmbedBlocked = state.playerErrorType === 'embedBlocked';
+  const showResume = session.flowState === 'externally-opened' && session.resumeAvailable;
+
   elements.playerStatus.textContent = `Player: ${state.playerState}`;
   elements.playerError.textContent = state.playerError || '';
   elements.playerError.hidden = !state.playerError;
@@ -194,10 +204,13 @@ function renderPlayerPanel() {
   elements.playerModeBadge.textContent = `Mode: ${session.mode === 'flow' ? 'Flow' : 'Single'}`;
   elements.playerSessionState.textContent = `State: ${session.flowState}`;
   elements.openInYoutube.disabled = !current;
-  elements.openInYoutube.dataset.href = current ? mediaItemLink(current) : '';
-  elements.resumeFlowBtn.hidden = session.mode !== 'single' && session.flowState !== 'externally-opened';
+  elements.resumeFlowBtn.hidden = !showResume;
   elements.fullBtn.disabled = !playerAdapter.isFullscreenSupported();
   elements.exitFullBtn.disabled = !playerAdapter.isFullscreenActive();
+  elements.fallbackActions.hidden = !isEmbedBlocked;
+  elements.fallbackOpenBtn.hidden = !isEmbedBlocked;
+  elements.fallbackNextBtn.hidden = !isEmbedBlocked || session.mode !== 'flow';
+  elements.fallbackBackBtn.hidden = !isEmbedBlocked || session.mode === 'flow';
 }
 
 function renderDebug() {
@@ -326,6 +339,9 @@ async function loadMediaItemIntoPlayer(item, { autoplay = false, mode = 'single'
 
   state.currentMediaItemId = item.id;
   state.playerError = '';
+  state.playerErrorType = 'none';
+  clearTimeout(state.embedBlockedSkipTimer);
+  playbackController.onPlaybackError('none');
 
   if (mode === 'single') {
     playbackController.enterSingle(item, { queue: state.queue });
@@ -354,14 +370,58 @@ async function playFlowFromCurrentQueue() {
 }
 
 async function playNextInQueue() {
-  const next = playbackController.nextInFlow(state.queue);
+  let next = playbackController.nextInFlow(state.queue);
+  while (next && state.memory?.mediaItems?.[next.id]?.embedBlocked) {
+    next = playbackController.nextInFlow(state.queue);
+  }
+
   if (!next) {
     state.playerState = 'ended';
     state.playerError = 'Flow queue complete. Refresh to continue.';
+    state.playerErrorType = 'none';
     renderPlayerPanel();
     return;
   }
+
   await loadMediaItemIntoPlayer(next, { autoplay: true, mode: 'flow' });
+}
+
+function classifyPlayerErrorType(event) {
+  if (EMBED_BLOCKED_ERROR_CODES.has(event.code)) return 'embedBlocked';
+  if (event.code === 100) return 'unavailable';
+  return 'network';
+}
+
+function markCurrentItemEmbedBlocked() {
+  const current = getCurrentMediaItem();
+  if (!current?.id) return;
+  state.memory.mediaItems[current.id] = {
+    ...state.memory.mediaItems[current.id],
+    embedBlocked: true,
+  };
+  persistState();
+}
+
+function openCurrentItemInYouTube() {
+  const current = getCurrentMediaItem();
+  if (!current?.id) return;
+  const canonicalWatchUrl = `${YOUTUBE_WATCH}${encodeURIComponent(current.id)}`;
+  playerAdapter.pause();
+  playbackController.onExternalOpen();
+  renderPlayerPanel();
+  window.open(canonicalWatchUrl, '_blank', 'noopener,noreferrer');
+}
+
+function returnToResults() {
+  playerAdapter.stop();
+  state.currentMediaItemId = '';
+  state.playerState = 'idle';
+  state.playerError = '';
+  state.playerErrorType = 'none';
+  playbackController.clearCurrentSelection();
+  renderPlayerPanel();
+  renderQueue();
+  renderDebug();
 }
 
 async function handleQueueAction(event) {
@@ -439,7 +499,23 @@ function handlePlayerEvent(event) {
   }
 
   if (event.type === 'error') {
-    state.playerError = event.message;
+    const errorType = classifyPlayerErrorType(event);
+    state.playerErrorType = errorType;
+    playbackController.onPlaybackError(errorType);
+
+    if (errorType === 'embedBlocked') {
+      markCurrentItemEmbedBlocked();
+      state.playerError = 'This video cannot be played inside the tile because embedding is disabled by the video owner.';
+      const session = sessionStore.read();
+      if (session.mode === 'flow') {
+        clearTimeout(state.embedBlockedSkipTimer);
+        state.embedBlockedSkipTimer = window.setTimeout(() => {
+          void playNextInQueue();
+        }, 1400);
+      }
+    } else {
+      state.playerError = event.message;
+    }
   }
 
   renderPlayerPanel();
@@ -457,6 +533,8 @@ function resetAll() {
   state.playerState = 'idle';
   state.playerError = '';
   state.playbackIntentEstablished = false;
+  state.playerErrorType = 'none';
+  clearTimeout(state.embedBlockedSkipTimer);
   elements.artists.value = '';
   elements.mode.value = 'discovery';
   elements.includeSeen.checked = false;
@@ -530,15 +608,12 @@ function bindControls() {
     playerAdapter.setVolume(elements.volume.value);
   });
 
-  elements.openInYoutube.addEventListener('click', () => {
-    const href = elements.openInYoutube.dataset.href;
-    if (href) {
-      playerAdapter.pause();
-      playbackController.onExternalOpen();
-      renderPlayerPanel();
-      window.open(href, '_blank', 'noopener,noreferrer');
-    }
+  elements.openInYoutube.addEventListener('click', openCurrentItemInYouTube);
+  elements.fallbackOpenBtn.addEventListener('click', openCurrentItemInYouTube);
+  elements.fallbackNextBtn.addEventListener('click', () => {
+    void playNextInQueue();
   });
+  elements.fallbackBackBtn.addEventListener('click', returnToResults);
 
   elements.mode.addEventListener('change', () => {
     state.sessionMode = elements.mode.value;
@@ -579,6 +654,7 @@ function bindControls() {
 
   window.addEventListener('beforeunload', () => {
     clearInterval(state.positionTimer);
+    clearTimeout(state.embedBlockedSkipTimer);
     playerAdapter.destroy();
   });
 }

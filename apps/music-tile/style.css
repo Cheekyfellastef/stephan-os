@@ -236,9 +236,32 @@ input {
 .player-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 12px;
   align-items: center;
+}
+
+.player-controls-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.player-controls-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #1f4366;
+  border-radius: 10px;
+  background: rgba(4, 11, 21, 0.75);
+}
+
+.player-controls-grid button,
+.player-fallback-actions button {
+  min-height: 42px;
+  padding: 10px 14px;
 }
 
 .player-controls.compact {
@@ -253,6 +276,13 @@ input {
 
 .player-controls input[type='range'] {
   width: 140px;
+}
+
+.player-fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .player-error {
@@ -314,4 +344,14 @@ input {
 
 .player-controls button[hidden] {
   display: none;
+}
+
+@media (max-width: 780px) {
+  .player-controls-group {
+    width: 100%;
+  }
+
+  .player-controls.compact {
+    justify-content: flex-start;
+  }
 }
