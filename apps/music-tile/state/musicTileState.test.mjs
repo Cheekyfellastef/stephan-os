@@ -30,16 +30,11 @@ test('music tile skips saves before hydration and saves after hydration', async 
     localStorage: storage,
     StephanosTileDataContract: {
       client: {
-        apiBaseUrl: 'http://localhost:8787',
         loadDurableState: async () => ({
           state: {
-            version: 1,
-            selection: {
-              era: 'afterlife-modern',
-              energyCurve: 'rising',
-              emotion: 'transcendent',
-              density: 'layered',
-            },
+            version: 2,
+            selection: { era: 'afterlife-modern', energyCurve: 'rising', emotion: 'transcendent', density: 'layered' },
+            memory: {},
           },
           source: 'shared-backend',
           diagnostics: null,
@@ -54,11 +49,11 @@ test('music tile skips saves before hydration and saves after hydration', async 
 
   __resetMusicTileStateTestHooks();
 
-  saveMusicTileState({ era: 'pre-hydration-write' });
+  saveMusicTileState({ selection: { era: 'pre-hydration-write' }, memory: {} });
   assert.equal(calls.length, 0);
 
   await loadMusicTileState();
-  saveMusicTileState({ era: 'post-hydration-write' });
+  saveMusicTileState({ selection: { era: 'post-hydration-write' }, memory: {} });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].selection.era, 'post-hydration-write');
 });

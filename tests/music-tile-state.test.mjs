@@ -36,18 +36,18 @@ test('music tile load prefers shared backend state and includes load diagnostics
   });
   globalThis.window.StephanosTileDataContract = {
     client: {
-      apiBaseUrl: 'http://192.168.0.198:8787',
       async loadDurableState() {
         return {
           source: 'shared-backend',
           state: {
-            version: 1,
+            version: 2,
             selection: {
               era: 'future-wave',
               energyCurve: 'descending',
               emotion: 'focused',
               density: 'minimal',
             },
+            memory: { ratings: [] },
           },
           diagnostics: { status: 200 },
         };
@@ -58,13 +58,13 @@ test('music tile load prefers shared backend state and includes load diagnostics
   const loaded = await musicStateModule.loadMusicTileState();
   assert.equal(loaded.selection.era, 'future-wave');
   assert.equal(loaded.__tileDataMeta.source, 'shared-backend');
+  assert.ok(Array.isArray(loaded.memory.ratings));
 });
 
 test('music tile save sanitizes payload and sends durable data to shared backend contract', async () => {
   let capturedPayload = null;
   globalThis.window.StephanosTileDataContract = {
     client: {
-      apiBaseUrl: 'http://192.168.0.198:8787',
       async saveDurableState(payload) {
         capturedPayload = payload;
         return { ok: true, source: 'shared-backend' };
@@ -73,13 +73,16 @@ test('music tile save sanitizes payload and sends durable data to shared backend
   };
 
   const payload = musicStateModule.saveMusicTileState({
-    era: 'night-drive',
-    energyCurve: 'rising',
-    emotion: 'hopeful',
-    density: 'layered',
+    selection: {
+      era: 'night-drive',
+      energyCurve: 'rising',
+      emotion: 'hopeful',
+      density: 'layered',
+    },
+    memory: { ratings: [] },
   });
 
-  assert.equal(payload.version, 1);
+  assert.equal(payload.version, 2);
   assert.equal(payload.selection.era, 'night-drive');
   assert.equal(capturedPayload.appId, 'music-tile');
   assert.equal(capturedPayload.state.selection.era, 'night-drive');

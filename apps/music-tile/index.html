@@ -11,13 +11,25 @@
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
   <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern">
     <header class="panel header-panel">
-      <h1>Music Tile</h1>
-      <p>Intent-driven audiovisual journey builder. Phase 1 uses curated external playback links (YouTube).</p>
+      <h1>Music Room Seed (Phase 1)</h1>
+      <p>Taste-aware discovery with persistent memory, source trust, and flow queue orchestration.</p>
     </header>
 
     <section class="panel controls-panel">
-      <h2>Control Panel</h2>
+      <h2>Discovery Controls</h2>
       <div class="control-grid">
+        <label>Artists (comma separated)
+          <input id="artist-input" placeholder="Anyma, Tale Of Us, Layla Benitez" />
+        </label>
+
+        <label>Session Mode
+          <select id="session-mode-select">
+            <option value="discovery">Discovery</option>
+            <option value="flow">Flow</option>
+            <option value="deep-dive">Deep Dive</option>
+          </select>
+        </label>
+
         <label>Origin Era
           <select id="era-select">
             <option value="cream-courtyard">Cream Courtyard</option>
@@ -53,13 +65,17 @@
         </label>
       </div>
 
+      <div class="toggle-row">
+        <label><input type="checkbox" id="include-seen-toggle" /> Include seen content</label>
+        <label><input type="checkbox" id="unseen-only-toggle" /> Unseen only</label>
+      </div>
+
       <div class="action-row">
-        <button id="build-journey-btn">Build Journey</button>
-        <button id="open-first-btn" class="ghost">Open First Track</button>
-        <button id="open-all-btn" class="ghost">Open Full Journey</button>
+        <button id="smart-refresh-btn">Smart Refresh</button>
+        <button id="flow-mode-btn">Flow Mode</button>
         <button id="reset-btn" class="ghost">Reset</button>
       </div>
-      <p class="muted">No streaming backend is implemented in Phase 1. Playback launches in external tabs.</p>
+      <p class="muted">Uses YouTube Data API when key is available. No HTML scraping, no gated content access.</p>
     </section>
 
     <section class="panel summary-panel">
@@ -67,8 +83,17 @@
       <div class="summary-grid" id="summary-grid"></div>
     </section>
 
+    <section class="panel command-panel">
+      <h2>Command Console (text-first)</h2>
+      <div class="command-row">
+        <input id="command-input" placeholder="show unseen Anyma sets" />
+        <button id="command-run-btn">Run</button>
+      </div>
+      <p class="muted" id="command-output">Intent: explain</p>
+    </section>
+
     <section class="panel journey-panel">
-      <h2>Recommended Journey</h2>
+      <h2>Flow Queue</h2>
       <ol id="journey-list" class="journey-list"></ol>
     </section>
 

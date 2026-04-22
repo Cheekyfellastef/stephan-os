@@ -203,3 +203,39 @@ button.ghost {
     grid-column: 1;
   }
 }
+
+
+input {
+  border-radius: 9px;
+  border: 1px solid #2f73b5;
+  background: #071022;
+  color: #d9ecff;
+  padding: 9px;
+}
+
+.command-panel {
+  grid-column: 2;
+}
+
+.command-row {
+  display: flex;
+  gap: 8px;
+}
+
+.command-row input {
+  flex: 1;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  color: #9ec4ef;
+}
+
+.inline-btn {
+  margin-left: 6px;
+  padding: 3px 7px;
+  font-size: 0.74rem;
+  border-radius: 7px;
+}
