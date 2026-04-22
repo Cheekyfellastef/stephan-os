@@ -208,7 +208,7 @@ function shouldPreferHostedDispatch(hostedDispatch = {}, routeDecision = {}) {
   return selectedAnswerMode === 'cloud-basic' || selectedAnswerMode === 'route-unavailable';
 }
 
-function normalizeHostedCloudResponseData(data = {}, fallbackProvider = '') {
+function normalizeHostedCloudResponseData(data = {}, fallbackProvider = '', selectedProvider = '') {
   const source = data && typeof data === 'object' ? data : {};
   const nestedData = source?.data && typeof source.data === 'object' ? source.data : {};
   const textOutput = String(
@@ -231,6 +231,7 @@ function normalizeHostedCloudResponseData(data = {}, fallbackProvider = '') {
       || `${fallbackProvider}-hosted-cloud`,
     selected_provider: source.execution_metadata?.selected_provider
       || nestedData.execution_metadata?.selected_provider
+      || selectedProvider
       || fallbackProvider,
     execution_selected_provider: source.execution_metadata?.execution_selected_provider
       || nestedData.execution_metadata?.execution_selected_provider
@@ -273,8 +274,8 @@ function buildHostedCloudPayload({
     requestKind: 'hosted-cloud-cognition-chat',
     prompt: payload.prompt,
     provider: hostedDispatch.provider || requestedProvider,
-    selectedProvider: routeDecision?.selectedProvider || requestedProvider,
-    executableProvider: hostedDispatch.providerPath || 'hosted-cloud-worker',
+    selectedProvider: hostedDispatch.selectedProvider || routeDecision?.selectedProvider || requestedProvider,
+    executableProvider: `${hostedDispatch.provider || requestedProvider}-hosted-cloud`,
     actualProviderUsed: hostedDispatch.actualProviderUsed || `${requestedProvider}-hosted-cloud`,
     authorityLevel: hostedDispatch.authorityLevel || 'cloud-cognition-only',
     executionDeferred: true,
@@ -313,7 +314,11 @@ async function requestHostedCloudChat({ hostedDispatch, hostedPayload, runtimeCo
     }, hostedRuntimeContext, timeoutPolicy);
     return {
       ...hostedResult,
-      data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
+      data: normalizeHostedCloudResponseData(
+        hostedResult.data,
+        hostedDispatch.provider,
+        hostedDispatch.selectedProvider,
+      ),
     };
   } catch (error) {
     const status = Number(error?.details?.status || 0);

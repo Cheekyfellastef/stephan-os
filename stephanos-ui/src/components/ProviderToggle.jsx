@@ -474,6 +474,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         checkedAt: result.checkedAt || new Date().toISOString(),
       },
     }));
+    onTestConnection();
   };
 
   return (

@@ -108,6 +108,16 @@ function resolveHostedWorkerExecution(runtimeContext = {}, providerHealth = {}, 
   };
 }
 
+function resolveHostedConfiguredProvider(runtimeContext = {}, fallbackProvider = '') {
+  const hostedCloudConfig = asObject(runtimeContext.hostedCloudConfig);
+  const configured = String(hostedCloudConfig.selectedProvider || '').trim().toLowerCase();
+  if (['groq', 'gemini'].includes(configured)) {
+    return configured;
+  }
+  const fallback = String(fallbackProvider || '').trim().toLowerCase();
+  return ['groq', 'gemini'].includes(fallback) ? fallback : '';
+}
+
 function isRouteQualifiedHostedLocalOllamaExecution({
   executableProviderCandidate = '',
   selectedProvider = '',
@@ -362,19 +372,33 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
   const hostedWorker = asObject(runtimeTruth?.provider?.hostedWorker);
   const hostedSession = session.sessionKind === 'hosted-web';
   const selectedProviderNormalized = String(provider.selectedProvider || '').trim().toLowerCase();
+  const activeHostedProvider = String(
+    hostedWorker.activeProvider
+    || hostedWorker.selected
+    || selectedProviderNormalized
+    || '',
+  ).trim().toLowerCase();
   const cloudCognitionProvider = ['groq', 'gemini'].includes(selectedProviderNormalized);
+  const activeHostedCloudProvider = ['groq', 'gemini'].includes(activeHostedProvider);
   const hostedCloudProxyConfigured = Boolean(
     hostedCloudConfig.proxyUrl
-    || hostedCloudConfig?.providerProxyUrls?.[selectedProviderNormalized],
+    || hostedCloudConfig?.providerProxyUrls?.[selectedProviderNormalized]
+    || hostedCloudConfig?.providerProxyUrls?.[activeHostedProvider]
+    || hostedWorker.workerUrl,
   );
-  const hostedCloudPathAvailable = hostedSession && cloudCognitionProvider && hostedCloudProxyConfigured;
-  const battleBridgeAuthorityAvailable = reachabilityTruth.backendReachable === true;
-  const executableViaHostedCloud = hostedCloudPathAvailable && cloudCognitionProvider;
-  const executableViaBackend = battleBridgeAuthorityAvailable && Boolean(provider.executableProvider);
-  const actualProviderPath = executableViaHostedCloud && !battleBridgeAuthorityAvailable
-    ? `${selectedProviderNormalized}-hosted-cloud`
-    : (provider.executableProvider || '');
-  const providerAuthorityLevel = executableViaHostedCloud && !battleBridgeAuthorityAvailable
+  const hostedCloudPathAvailable = hostedSession && (cloudCognitionProvider || activeHostedCloudProvider) && hostedCloudProxyConfigured;
+  const hostedWorkerExecuting = String(provider.executableProvider || '').trim().toLowerCase() === 'hosted-cloud-worker';
+  const battleBridgeAuthorityAvailable = hostedWorkerExecuting
+    ? false
+    : reachabilityTruth.backendReachable === true;
+  const executableViaHostedCloud = hostedCloudPathAvailable && (hostedWorker.usable === true || hostedWorkerExecuting);
+  const executableViaBackend = !hostedWorkerExecuting && battleBridgeAuthorityAvailable && Boolean(provider.executableProvider);
+  const actualProviderPath = hostedWorkerExecuting
+    ? `${activeHostedProvider || selectedProviderNormalized || 'unknown'}-hosted-cloud`
+    : executableViaHostedCloud && !battleBridgeAuthorityAvailable
+      ? `${activeHostedProvider || selectedProviderNormalized || 'unknown'}-hosted-cloud`
+      : (provider.executableProvider || '');
+  const providerAuthorityLevel = hostedWorkerExecuting || (executableViaHostedCloud && !battleBridgeAuthorityAvailable)
     ? 'cloud-cognition-only'
     : executableViaBackend
       ? 'battle-bridge-authority'
@@ -395,7 +419,7 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     hostedCognitionConfigured: hostedWorker.enabled === true && Boolean(hostedWorker.workerUrl),
     hostedCognitionAvailable: hostedCloudPathAvailable || hostedWorker.enabled === true,
     hostedCognitionExecutable: executableViaHostedCloud || hostedWorker.usable === true,
-    hostedWorkerProvider: hostedWorker.activeProvider || selectedProviderNormalized || 'none',
+    hostedWorkerProvider: hostedWorker.activeProvider || activeHostedProvider || selectedProviderNormalized || 'none',
     hostedWorkerBaseUrl: hostedWorker.workerUrl || '',
     hostedWorkerHealth,
     routeUsable,
@@ -423,7 +447,7 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     routeUsable,
     localAvailable: reachabilityTruth.localAvailable === true,
     homeNodeAvailable: reachabilityTruth.homeNodeAvailable === true,
-    cloudAvailable: reachabilityTruth.cloudAvailable === true,
+    cloudAvailable: reachabilityTruth.cloudAvailable === true || executableViaHostedCloud || hostedWorker.usable === true,
     distAvailable: reachabilityTruth.distAvailable === true,
     requestedProvider: provider.requestedProvider || 'unknown',
     selectedProvider: provider.selectedProvider || 'unknown',
@@ -436,7 +460,7 @@ function buildCanonicalRouteRuntimeTruth(runtimeTruth, issues = []) {
     actualProviderPath: actualProviderPath || 'none',
     providerAuthorityLevel,
     battleBridgeAuthorityAvailable,
-    cloudCognitionAvailable: reachabilityTruth.cloudAvailable === true || executableViaHostedCloud,
+    cloudCognitionAvailable: reachabilityTruth.cloudAvailable === true || executableViaHostedCloud || hostedWorker.usable === true,
     hostedCloudPathAvailable,
     hostedCloudSecretPathKind,
     hostedWorkerUrl: hostedWorker.workerUrl || '',
@@ -482,10 +506,17 @@ export function adjudicateRuntimeTruth({
   const selectedRouteKind = truth.routeKind || final.routeKind || 'unavailable';
   const selectedEvaluation = asObject(evaluations[selectedRouteKind]);
   const requestedProvider = truth.requestedProvider || routePlan.requestedProvider || selectedProvider || 'unknown';
-  const selectedProviderTruth = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
-  const activeProviderTruth = truth.executedProvider || activeProvider || '';
+  const selectedProviderTruthFromRoute = truth.selectedProvider || routeSelectedProvider || routePlan.selectedProvider || requestedProvider;
+  const hostedConfiguredProvider = resolveHostedConfiguredProvider(context, selectedProviderTruthFromRoute);
+  const selectedProviderTruth = context.sessionKind === 'hosted-web' && hostedConfiguredProvider
+    ? hostedConfiguredProvider
+    : selectedProviderTruthFromRoute;
+  const activeProviderTruthFromRoute = truth.executedProvider || activeProvider || '';
   const selectedProviderHealth = asObject(providerHealth)[selectedProviderTruth];
   const hostedWorkerExecution = resolveHostedWorkerExecution(context, providerHealth, selectedProviderTruth);
+  const activeProviderTruth = hostedWorkerExecution.providerSwitchApplied === true
+    ? `${hostedWorkerExecution.activeProvider || hostedWorkerExecution.selected || selectedProviderTruth}-hosted-cloud`
+    : activeProviderTruthFromRoute;
   const executableProviderCandidate = activeProviderTruth || selectedProviderTruth;
   const routeQualifiedHostedLocalOllama = isRouteQualifiedHostedLocalOllamaExecution({
     executableProviderCandidate,
