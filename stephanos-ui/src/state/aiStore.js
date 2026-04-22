@@ -836,6 +836,10 @@ export function AIStoreProvider({ children }) {
   const [hostedCloudCognition, setHostedCloudCognitionState] = useState(
     normalizeHostedCloudCognitionSettings(initialSettings.hostedCloudCognition || createDefaultHostedCloudCognitionSettings()),
   );
+  const hostedCloudCognitionDirty = useMemo(
+    () => JSON.stringify(hostedCloudCognition) !== JSON.stringify(savedHostedCloudCognition),
+    [hostedCloudCognition, savedHostedCloudCognition],
+  );
   const [hostedCloudCognitionSaveState, setHostedCloudCognitionSaveState] = useState(() => ({
     state: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.restoredFromSession ? 'restored' : 'idle',
     message: initialSnapshot.hostedCloudCognitionRestoreDiagnostics?.reason || 'Hosted cognition settings loaded.',
@@ -1342,10 +1346,6 @@ export function AIStoreProvider({ children }) {
   const setSurfaceOverride = useCallback((nextMode) => {
     setSurfaceOverrideState(normalizeSurfaceOverride(nextMode));
   }, []);
-  const hostedCloudCognitionDirty = useMemo(
-    () => JSON.stringify(hostedCloudCognition) !== JSON.stringify(savedHostedCloudCognition),
-    [hostedCloudCognition, savedHostedCloudCognition],
-  );
   const setHostedCloudCognitionEnabled = useCallback((enabled) => {
     setHostedCloudCognitionState((prev) => ({ ...prev, enabled: enabled === true }));
     setHostedCloudCognitionSaveState((prev) => ({

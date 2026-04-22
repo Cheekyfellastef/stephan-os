@@ -60,6 +60,7 @@ import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
 import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
 import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
 import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
+import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -121,6 +122,21 @@ export default function App() {
     debugData,
   } = useAIStore();
   useDebugConsole();
+  const startupStageRef = useRef(new Set());
+  const markStartupStage = (stage, details = null) => {
+    if (startupStageRef.current.has(stage)) {
+      return;
+    }
+    startupStageRef.current.add(stage);
+    recordStartupRenderStage({
+      stage,
+      status: 'ok',
+      sourceModule: 'stephanos-ui/src/App.jsx',
+      sourceFunction: 'App.render',
+      details,
+    });
+  };
+  markStartupStage('app-render-start');
 
   const safeUiLayout = uiLayout || {};
   const safePaneLayout = paneLayout && typeof paneLayout === 'object' ? paneLayout : {};
@@ -138,6 +154,10 @@ export default function App() {
   const cockpitSurfaceMode = surfaceMode === 'cockpit';
   const agentsSurfaceMode = surfaceMode === 'agents';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  markStartupStage('app-derived-route-truth-ready', {
+    routeKind: routeTruthView?.routeKind || '',
+    routeUsableState: routeTruthView?.routeUsableState || '',
+  });
   const providerSummary = buildProviderStatusSummary(
     provider,
     getActiveProviderConfig(),
@@ -252,6 +272,10 @@ export default function App() {
     missionLineage,
     finalRouteTruth,
   }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, finalRouteTruth, missionPacketWorkflow, missionLineage]);
+  markStartupStage('app-derived-orchestration-selectors-ready', {
+    executionState: orchestrationSelectors?.executionState || '',
+    continuityState: orchestrationSelectors?.continuityState || '',
+  });
   const orchestrationTruth = useMemo(() => ({
     canonicalMemoryContext,
     canonicalCurrentIntent,
@@ -339,6 +363,10 @@ export default function App() {
     finalAgentView: displayAgentView,
     surfaceMode,
   }), [displayAgentView, surfaceMode]);
+  markStartupStage('app-derived-agent-projection-ready', {
+    surfaceMode,
+    visibleAgentCount: agentSurfaceProjection?.visibleAgentCount ?? null,
+  });
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -454,46 +482,70 @@ export default function App() {
     {
       id: 'agentsPanel',
       className: 'pane-span-2',
-      render: () => (
-        <AgentsTile
-          finalAgentView={displayAgentView}
-          selectedAgentId={displayAgentView.selectedAgentId}
-          onSelectAgent={setSelectedAgentId}
-          isOpen={safeUiLayout.agentsPanel !== false}
-          onToggle={() => togglePanel('agentsPanel')}
-          debugVisibility={agentControls.debugVisibility}
-        />
-      ),
+      render: () => {
+        markStartupStage('app-agents-panel-render-start');
+        const node = (
+          <AgentsTile
+            finalAgentView={displayAgentView}
+            selectedAgentId={displayAgentView.selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+            isOpen={safeUiLayout.agentsPanel !== false}
+            onToggle={() => togglePanel('agentsPanel')}
+            debugVisibility={agentControls.debugVisibility}
+          />
+        );
+        markStartupStage('app-agents-panel-render-complete');
+        return node;
+      },
     },
     { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={orchestrationTruth} /> },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     {
       id: 'missionDashboardPanel',
       className: 'pane-span-2',
-      render: () => (
-        <MissionDashboardPanel
-          finalAgentView={displayAgentView}
-          orchestrationSelectors={orchestrationSelectors}
-          runtimeStatus={runtimeStatus}
-          finalRouteTruth={finalRouteTruth}
-        />
-      ),
+      render: () => {
+        markStartupStage('app-mission-dashboard-render-start');
+        const node = (
+          <MissionDashboardPanel
+            finalAgentView={displayAgentView}
+            orchestrationSelectors={orchestrationSelectors}
+            runtimeStatus={runtimeStatus}
+            finalRouteTruth={finalRouteTruth}
+          />
+        );
+        markStartupStage('app-mission-dashboard-render-complete');
+        return node;
+      },
     },
     {
       id: 'intentEnginePanel',
       className: 'pane-span-2',
-      render: () => (
-        <IntentEnginePanel
-          canonicalCurrentIntent={canonicalCurrentIntent}
-          canonicalMissionPacket={canonicalMissionPacket}
-          orchestrationSelectors={orchestrationSelectors}
-          runtimeStatus={runtimeStatus}
-          finalRouteTruth={finalRouteTruth}
-        />
-      ),
+      render: () => {
+        markStartupStage('app-intent-engine-panel-render-start');
+        const node = (
+          <IntentEnginePanel
+            canonicalCurrentIntent={canonicalCurrentIntent}
+            canonicalMissionPacket={canonicalMissionPacket}
+            orchestrationSelectors={orchestrationSelectors}
+            runtimeStatus={runtimeStatus}
+            finalRouteTruth={finalRouteTruth}
+          />
+        );
+        markStartupStage('app-intent-engine-panel-render-complete');
+        return node;
+      },
     },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
-    { id: 'missionPacketQueuePanel', className: 'pane-span-2', render: () => <MissionPacketQueuePanel /> },
+    {
+      id: 'missionPacketQueuePanel',
+      className: 'pane-span-2',
+      render: () => {
+        markStartupStage('app-mission-packet-queue-render-start');
+        const node = <MissionPacketQueuePanel />;
+        markStartupStage('app-mission-packet-queue-render-complete');
+        return node;
+      },
+    },
   ]), [
     aiActionState,
     commandHistory,
@@ -571,6 +623,14 @@ export default function App() {
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
+  useEffect(() => {
+    recordStartupRenderStage({
+      stage: 'app-render-complete',
+      status: 'ok',
+      sourceModule: 'stephanos-ui/src/App.jsx',
+      sourceFunction: 'App.useEffect',
+    });
+  }, []);
 
   useEffect(() => {
     console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
@@ -582,6 +642,8 @@ export default function App() {
   }, [safePaneOrder]);
 
   if (cockpitSurfaceMode) {
+    markStartupStage('app-cockpit-surface-render-start');
+    markStartupStage('app-cockpit-surface-render-complete');
     return (
       <main className="app-shell-root cockpit-surface-mode">
         <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
@@ -596,6 +658,8 @@ export default function App() {
   }
 
   if (agentsSurfaceMode) {
+    markStartupStage('app-agents-surface-render-start');
+    markStartupStage('app-agents-surface-render-complete');
     return (
       <main className="app-shell-root agents-surface-mode">
         <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
@@ -628,6 +692,8 @@ export default function App() {
       </main>
     );
   }
+  markStartupStage('app-provider-controls-render-start');
+  markStartupStage('app-provider-controls-render-complete');
 
   return (
     <main className="app-shell-root">
