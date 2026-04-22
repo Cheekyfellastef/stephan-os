@@ -1,8 +1,10 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { createMusicTileFlowController } from './flow/musicTileFlowController.js';
+import { createMusicTilePlaybackController } from './flow/musicTilePlaybackController.js';
 import { parseMusicCommand } from './engine/musicCommandParser.js';
 import { createDiscoveryQueries, discoverFromYouTubeApi } from './engine/musicDiscoveryEngine.js';
 import { createMusicTilePlayerAdapter } from './player/musicTilePlayerAdapter.js';
+import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import {
   DEFAULT_SELECTION,
   loadMusicTileState,
@@ -37,17 +39,22 @@ const elements = {
   debugToggle: document.getElementById('debug-toggle'),
   debugPanel: document.getElementById('debug-panel'),
   debugOutput: document.getElementById('debug-output'),
-  playerContainer: document.getElementById('yt-player-container'),
+  playerWrap: document.getElementById('player-frame-wrap'),
   playerStatus: document.getElementById('player-status'),
   playerError: document.getElementById('player-error'),
   playerNowPlaying: document.getElementById('player-now-playing'),
   playerChannel: document.getElementById('player-channel'),
+  playerModeBadge: document.getElementById('player-mode-badge'),
+  playerSessionState: document.getElementById('player-session-state'),
   openInYoutube: document.getElementById('open-in-youtube-btn'),
   playBtn: document.getElementById('player-play-btn'),
   pauseBtn: document.getElementById('player-pause-btn'),
   stopBtn: document.getElementById('player-stop-btn'),
   nextBtn: document.getElementById('player-next-btn'),
   prevBtn: document.getElementById('player-prev-btn'),
+  fullBtn: document.getElementById('player-fullscreen-btn'),
+  exitFullBtn: document.getElementById('player-exit-fullscreen-btn'),
+  resumeFlowBtn: document.getElementById('player-resume-flow-btn'),
   muteBtn: document.getElementById('player-mute-btn'),
   volume: document.getElementById('player-volume'),
   position: document.getElementById('player-position'),
@@ -71,8 +78,23 @@ const state = {
   positionTimer: null,
 };
 
+const sessionStore = createMusicTileSessionStore({
+  readMemory: () => state.memory,
+  writeMemory: (nextMemory) => {
+    state.memory = nextMemory;
+    persistState();
+  },
+});
+
+const playbackController = createMusicTilePlaybackController({
+  flowController,
+  sessionStore,
+  getMediaItemById: (id) => state.memory?.mediaItems?.[id] || null,
+});
+
 const playerAdapter = createMusicTilePlayerAdapter({
   containerId: 'yt-player-container',
+  mountElement: elements.playerWrap,
   width: 640,
   height: 360,
   onEvent: handlePlayerEvent,
@@ -163,13 +185,19 @@ function renderQueue() {
 
 function renderPlayerPanel() {
   const current = getCurrentMediaItem();
+  const session = sessionStore.read();
   elements.playerStatus.textContent = `Player: ${state.playerState}`;
   elements.playerError.textContent = state.playerError || '';
   elements.playerError.hidden = !state.playerError;
   elements.playerNowPlaying.textContent = current ? current.title : 'No track selected.';
   elements.playerChannel.textContent = current ? `Source: ${current.channelName}` : 'Source: —';
+  elements.playerModeBadge.textContent = `Mode: ${session.mode === 'flow' ? 'Flow' : 'Single'}`;
+  elements.playerSessionState.textContent = `State: ${session.flowState}`;
   elements.openInYoutube.disabled = !current;
   elements.openInYoutube.dataset.href = current ? mediaItemLink(current) : '';
+  elements.resumeFlowBtn.hidden = session.mode !== 'single' && session.flowState !== 'externally-opened';
+  elements.fullBtn.disabled = !playerAdapter.isFullscreenSupported();
+  elements.exitFullBtn.disabled = !playerAdapter.isFullscreenActive();
 }
 
 function renderDebug() {
@@ -184,6 +212,7 @@ function renderDebug() {
       playbackIntentEstablished: state.playbackIntentEstablished,
       error: state.playerError || null,
     },
+    playbackSession: sessionStore.read(),
     memoryStats: {
       mediaItems: Object.keys(state.memory.mediaItems).length,
       seen: state.memory.seenItemIds.length,
@@ -292,42 +321,47 @@ function executeCommand() {
   elements.commandOutput.textContent = `Intent: ${parsed.intent} • ${JSON.stringify(parsed.entities)}`;
 }
 
-async function loadMediaItemIntoPlayer(item, { autoplay = false } = {}) {
+async function loadMediaItemIntoPlayer(item, { autoplay = false, mode = 'single' } = {}) {
   if (!item?.id) return;
 
   state.currentMediaItemId = item.id;
   state.playerError = '';
+
+  if (mode === 'single') {
+    playbackController.enterSingle(item, { queue: state.queue });
+  }
+
   renderPlayerPanel();
   renderQueue();
 
   if (autoplay) {
     state.playbackIntentEstablished = true;
-    await playerAdapter.loadVideo(item.id, { autoplay: true });
+    await playerAdapter.loadVideo(item.id);
   } else {
     await playerAdapter.cueVideo(item.id);
   }
 }
 
 async function playFlowFromCurrentQueue() {
-  const first = flowController.start();
-  if (!first) {
+  const flowItem = playbackController.startOrResumeFlow(state.queue);
+  if (!flowItem) {
     state.playerError = 'Flow queue is empty. Run Smart Refresh to discover tracks.';
     renderPlayerPanel();
     return;
   }
 
-  await loadMediaItemIntoPlayer(first, { autoplay: true });
+  await loadMediaItemIntoPlayer(flowItem, { autoplay: true, mode: 'flow' });
 }
 
 async function playNextInQueue() {
-  const next = flowController.next();
+  const next = playbackController.nextInFlow(state.queue);
   if (!next) {
     state.playerState = 'ended';
     state.playerError = 'Flow queue complete. Refresh to continue.';
     renderPlayerPanel();
     return;
   }
-  await loadMediaItemIntoPlayer(next, { autoplay: true });
+  await loadMediaItemIntoPlayer(next, { autoplay: true, mode: 'flow' });
 }
 
 async function handleQueueAction(event) {
@@ -342,7 +376,7 @@ async function handleQueueAction(event) {
   if (action === 'play-now') {
     const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
     if (selected) {
-      await loadMediaItemIntoPlayer(selected, { autoplay: true });
+      await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
     }
   }
 
@@ -383,12 +417,17 @@ function handlePlayerEvent(event) {
   }
 
   if (event.type === 'playing') {
+    playbackController.onPlaying(state.currentMediaItemId);
     clearInterval(state.positionTimer);
     state.positionTimer = window.setInterval(() => {
       const current = Math.round(playerAdapter.getCurrentTime());
       const duration = Math.round(playerAdapter.getDuration());
       elements.position.textContent = `${current}s / ${duration || 0}s`;
     }, 1000);
+  }
+
+  if (event.type === 'paused') {
+    playbackController.onPaused();
   }
 
   if (event.type === 'paused' || event.type === 'ended') {
@@ -459,10 +498,24 @@ function bindControls() {
   });
   elements.prevBtn.addEventListener('click', async () => {
     state.playbackIntentEstablished = true;
-    const previous = flowController.previous();
+    const previous = playbackController.previousInFlow(state.queue);
     if (previous) {
-      await loadMediaItemIntoPlayer(previous, { autoplay: true });
+      await loadMediaItemIntoPlayer(previous, { autoplay: true, mode: 'flow' });
     }
+  });
+  elements.fullBtn.addEventListener('click', async () => {
+    const ok = await playerAdapter.enterFullscreen();
+    if (!ok) {
+      state.playerError = 'Fullscreen is unavailable in this browser context.';
+      renderPlayerPanel();
+    }
+  });
+  elements.exitFullBtn.addEventListener('click', async () => {
+    await playerAdapter.exitFullscreen();
+    renderPlayerPanel();
+  });
+  elements.resumeFlowBtn.addEventListener('click', async () => {
+    await playFlowFromCurrentQueue();
   });
   elements.muteBtn.addEventListener('click', () => {
     if (playerAdapter.isMuted()) {
@@ -480,6 +533,9 @@ function bindControls() {
   elements.openInYoutube.addEventListener('click', () => {
     const href = elements.openInYoutube.dataset.href;
     if (href) {
+      playerAdapter.pause();
+      playbackController.onExternalOpen();
+      renderPlayerPanel();
       window.open(href, '_blank', 'noopener,noreferrer');
     }
   });
