@@ -213,6 +213,71 @@ input {
   padding: 9px;
 }
 
+
+.player-panel {
+  grid-column: 2;
+}
+
+.player-frame-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.player-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+  border: 1px solid #27588e;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #01050d;
+}
+
+.player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.player-controls.compact {
+  justify-content: space-between;
+}
+
+.player-controls label {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.player-controls input[type='range'] {
+  width: 140px;
+}
+
+.player-error {
+  color: #ff9fa5;
+  font-size: 0.86rem;
+  margin-top: 8px;
+}
+
+.player-now-playing {
+  margin-top: 8px;
+  color: #d8ebff;
+  font-weight: 620;
+}
+
+.player-channel {
+  margin-top: 4px;
+  color: #9ec4ef;
+  font-size: 0.88rem;
+}
+
+.journey-item.is-current {
+  border-color: #49a3ff;
+  box-shadow: inset 0 0 0 1px rgba(73, 163, 255, 0.35);
+}
+
 .command-panel {
   grid-column: 2;
 }

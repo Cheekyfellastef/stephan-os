@@ -75,12 +75,38 @@
         <button id="flow-mode-btn">Flow Mode</button>
         <button id="reset-btn" class="ghost">Reset</button>
       </div>
-      <p class="muted">Uses YouTube Data API when key is available. No HTML scraping, no gated content access.</p>
+      <p class="muted">Uses YouTube Data API + IFrame Player API (official). No HTML scraping, no gated content access.</p>
     </section>
 
     <section class="panel summary-panel">
       <h2>Session Summary</h2>
       <div class="summary-grid" id="summary-grid"></div>
+    </section>
+
+    <section class="panel player-panel">
+      <h2>Embedded Player</h2>
+      <div class="player-frame-wrap">
+        <div class="player-frame" id="yt-player-container" aria-label="YouTube embedded player"></div>
+      </div>
+      <p id="player-status" class="muted">Player: idle</p>
+      <p id="player-error" class="player-error" hidden></p>
+      <p id="player-now-playing" class="player-now-playing">No track selected.</p>
+      <p id="player-channel" class="player-channel">Source: —</p>
+      <div class="player-controls">
+        <button id="player-play-btn">Play</button>
+        <button id="player-pause-btn" class="ghost">Pause</button>
+        <button id="player-stop-btn" class="ghost">Stop</button>
+        <button id="player-prev-btn" class="ghost">Prev</button>
+        <button id="player-next-btn">Next</button>
+        <button id="player-mute-btn" class="ghost">Mute</button>
+      </div>
+      <div class="player-controls compact">
+        <label>Volume
+          <input id="player-volume" type="range" min="0" max="100" step="1" value="50" />
+        </label>
+        <span id="player-position">0s / 0s</span>
+        <button id="open-in-youtube-btn" class="ghost" disabled>Open in YouTube</button>
+      </div>
     </section>
 
     <section class="panel command-panel">
