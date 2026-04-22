@@ -147,6 +147,10 @@ button.ghost {
 
 .track-actions {
   margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .track-actions a {
@@ -329,10 +333,14 @@ input {
 }
 
 .inline-btn {
-  margin-left: 6px;
   padding: 3px 7px;
   font-size: 0.74rem;
   border-radius: 7px;
+}
+
+.inline-btn.primary {
+  border-color: #61b4ff;
+  box-shadow: 0 0 0 1px rgba(97, 180, 255, 0.3);
 }
 
 .player-mode-badge,
