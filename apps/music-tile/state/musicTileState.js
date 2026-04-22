@@ -219,6 +219,16 @@ export function applyRatingToMemory(memory, mediaItemId, rating, note = '') {
   return next;
 }
 
+export function markMediaItemSeen(memory, mediaItemId) {
+  const next = sanitizeMemory(memory);
+  const mediaItem = next.mediaItems[mediaItemId];
+  if (!mediaItemId || !mediaItem) return next;
+
+  mediaItem.seen = true;
+  ensureUnique(next.seenItemIds, mediaItemId);
+  return next;
+}
+
 export function upsertMediaItems(memory, items) {
   const next = sanitizeMemory(memory);
   items.forEach((item) => {

@@ -1,12 +1,15 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
+import { createMusicTileFlowController } from './flow/musicTileFlowController.js';
 import { parseMusicCommand } from './engine/musicCommandParser.js';
-import { createDiscoveryQueries, createFlowQueue, discoverFromYouTubeApi } from './engine/musicDiscoveryEngine.js';
+import { createDiscoveryQueries, discoverFromYouTubeApi } from './engine/musicDiscoveryEngine.js';
+import { createMusicTilePlayerAdapter } from './player/musicTilePlayerAdapter.js';
 import {
   DEFAULT_SELECTION,
   loadMusicTileState,
   saveMusicTileState,
   resetMusicTileState,
   applyRatingToMemory,
+  markMediaItemSeen,
   upsertMediaItems,
 } from './state/musicTileState.js';
 
@@ -34,7 +37,23 @@ const elements = {
   debugToggle: document.getElementById('debug-toggle'),
   debugPanel: document.getElementById('debug-panel'),
   debugOutput: document.getElementById('debug-output'),
+  playerContainer: document.getElementById('yt-player-container'),
+  playerStatus: document.getElementById('player-status'),
+  playerError: document.getElementById('player-error'),
+  playerNowPlaying: document.getElementById('player-now-playing'),
+  playerChannel: document.getElementById('player-channel'),
+  openInYoutube: document.getElementById('open-in-youtube-btn'),
+  playBtn: document.getElementById('player-play-btn'),
+  pauseBtn: document.getElementById('player-pause-btn'),
+  stopBtn: document.getElementById('player-stop-btn'),
+  nextBtn: document.getElementById('player-next-btn'),
+  prevBtn: document.getElementById('player-prev-btn'),
+  muteBtn: document.getElementById('player-mute-btn'),
+  volume: document.getElementById('player-volume'),
+  position: document.getElementById('player-position'),
 };
+
+const flowController = createMusicTileFlowController();
 
 const state = {
   selection: { ...DEFAULT_SELECTION },
@@ -44,15 +63,28 @@ const state = {
   includeSeen: false,
   artists: [],
   debugVisible: false,
+  currentMediaItemId: '',
+  playerReady: false,
+  playerState: 'idle',
+  playerError: '',
+  playbackIntentEstablished: false,
+  positionTimer: null,
 };
+
+const playerAdapter = createMusicTilePlayerAdapter({
+  containerId: 'yt-player-container',
+  width: 640,
+  height: 360,
+  onEvent: handlePlayerEvent,
+});
 
 function getYouTubeApiKey() {
   return window.STEPHANOS_YOUTUBE_API_KEY || window.localStorage.getItem('stephanos.youtubeApiKey') || '';
 }
 
 function mediaItemLink(item) {
-  if (item.id && item.id.length === 11) return `${YOUTUBE_WATCH}${item.id}`;
-  return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item.title} ${item.channelName}`)}`;
+  if (item?.id && item.id.length === 11) return `${YOUTUBE_WATCH}${item.id}`;
+  return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item?.title || ''} ${item?.channelName || ''}`)}`;
 }
 
 function readSelectionFromUI() {
@@ -77,6 +109,11 @@ function persistState() {
     selection: state.selection,
     memory: state.memory,
   });
+}
+
+function getCurrentMediaItem() {
+  if (!state.currentMediaItemId) return null;
+  return state.memory.mediaItems[state.currentMediaItemId] || null;
 }
 
 function renderSummary() {
@@ -107,10 +144,11 @@ function renderQueue() {
   }
 
   elements.queue.innerHTML = state.queue.map((item, index) => `
-    <li class="journey-item">
+    <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
       <div class="track-actions">
+        <button data-action="play-now" data-id="${item.id}" class="inline-btn">Play In Tile</button>
         <a href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open</a>
         <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
         <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
@@ -123,11 +161,29 @@ function renderQueue() {
   `).join('');
 }
 
+function renderPlayerPanel() {
+  const current = getCurrentMediaItem();
+  elements.playerStatus.textContent = `Player: ${state.playerState}`;
+  elements.playerError.textContent = state.playerError || '';
+  elements.playerError.hidden = !state.playerError;
+  elements.playerNowPlaying.textContent = current ? current.title : 'No track selected.';
+  elements.playerChannel.textContent = current ? `Source: ${current.channelName}` : 'Source: —';
+  elements.openInYoutube.disabled = !current;
+  elements.openInYoutube.dataset.href = current ? mediaItemLink(current) : '';
+}
+
 function renderDebug() {
   elements.debugOutput.textContent = JSON.stringify({
     selection: state.selection,
     sessionMode: state.sessionMode,
     queuePreview: state.queue.slice(0, 10).map((item) => ({ id: item.id, score: item.score, title: item.title })),
+    player: {
+      ready: state.playerReady,
+      state: state.playerState,
+      currentMediaItemId: state.currentMediaItemId,
+      playbackIntentEstablished: state.playbackIntentEstablished,
+      error: state.playerError || null,
+    },
     memoryStats: {
       mediaItems: Object.keys(state.memory.mediaItems).length,
       seen: state.memory.seenItemIds.length,
@@ -160,8 +216,7 @@ function librarySeedToMediaItem(track) {
 }
 
 function rebuildFlowQueue() {
-  const mediaItems = Object.values(state.memory.mediaItems);
-  state.queue = createFlowQueue(mediaItems, {
+  state.queue = flowController.rebuild(Object.values(state.memory.mediaItems), {
     includeSeen: state.includeSeen,
     minDurationSeconds: state.sessionMode === 'flow' ? 30 * 60 : 0,
     trustByChannel: state.memory.channelTrust,
@@ -206,6 +261,7 @@ async function smartRefreshDiscovery() {
   persistState();
   renderSummary();
   renderQueue();
+  renderPlayerPanel();
   renderDebug();
 }
 
@@ -222,28 +278,72 @@ function executeCommand() {
     elements.mode.value = state.sessionMode;
   }
 
-  if (parsed.intent === 'discover') {
-    if (parsed.entities.unseen) {
-      state.includeSeen = false;
-      elements.includeSeen.checked = false;
-    }
+  if (parsed.intent === 'discover' && parsed.entities.unseen) {
+    state.includeSeen = false;
+    elements.includeSeen.checked = false;
   }
 
   rebuildFlowQueue();
   renderSummary();
   renderQueue();
+  renderPlayerPanel();
   renderDebug();
 
   elements.commandOutput.textContent = `Intent: ${parsed.intent} • ${JSON.stringify(parsed.entities)}`;
 }
 
-function onQueueAction(event) {
+async function loadMediaItemIntoPlayer(item, { autoplay = false } = {}) {
+  if (!item?.id) return;
+
+  state.currentMediaItemId = item.id;
+  state.playerError = '';
+  renderPlayerPanel();
+  renderQueue();
+
+  if (autoplay) {
+    state.playbackIntentEstablished = true;
+    await playerAdapter.loadVideo(item.id, { autoplay: true });
+  } else {
+    await playerAdapter.cueVideo(item.id);
+  }
+}
+
+async function playFlowFromCurrentQueue() {
+  const first = flowController.start();
+  if (!first) {
+    state.playerError = 'Flow queue is empty. Run Smart Refresh to discover tracks.';
+    renderPlayerPanel();
+    return;
+  }
+
+  await loadMediaItemIntoPlayer(first, { autoplay: true });
+}
+
+async function playNextInQueue() {
+  const next = flowController.next();
+  if (!next) {
+    state.playerState = 'ended';
+    state.playerError = 'Flow queue complete. Refresh to continue.';
+    renderPlayerPanel();
+    return;
+  }
+  await loadMediaItemIntoPlayer(next, { autoplay: true });
+}
+
+async function handleQueueAction(event) {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
 
   const action = button.dataset.action;
   if (action === 'rate') {
     state.memory = applyRatingToMemory(state.memory, button.dataset.id, Number(button.dataset.rating));
+  }
+
+  if (action === 'play-now') {
+    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    if (selected) {
+      await loadMediaItemIntoPlayer(selected, { autoplay: true });
+    }
   }
 
   if (action === 'trust' || action === 'block') {
@@ -256,6 +356,54 @@ function onQueueAction(event) {
   persistState();
   renderSummary();
   renderQueue();
+  renderPlayerPanel();
+  renderDebug();
+}
+
+function onPlayerEnded() {
+  const current = getCurrentMediaItem();
+  if (!current) return;
+
+  state.memory = markMediaItemSeen(state.memory, current.id);
+  persistState();
+  rebuildFlowQueue();
+  renderSummary();
+  renderQueue();
+  void playNextInQueue();
+}
+
+function handlePlayerEvent(event) {
+  if (event.type === 'ready') {
+    state.playerReady = true;
+    state.playerState = 'ready';
+  }
+
+  if (event.type === 'stateChange') {
+    state.playerState = event.state;
+  }
+
+  if (event.type === 'playing') {
+    clearInterval(state.positionTimer);
+    state.positionTimer = window.setInterval(() => {
+      const current = Math.round(playerAdapter.getCurrentTime());
+      const duration = Math.round(playerAdapter.getDuration());
+      elements.position.textContent = `${current}s / ${duration || 0}s`;
+    }, 1000);
+  }
+
+  if (event.type === 'paused' || event.type === 'ended') {
+    clearInterval(state.positionTimer);
+  }
+
+  if (event.type === 'ended') {
+    onPlayerEnded();
+  }
+
+  if (event.type === 'error') {
+    state.playerError = event.message;
+  }
+
+  renderPlayerPanel();
   renderDebug();
 }
 
@@ -266,41 +414,76 @@ function resetAll() {
   state.sessionMode = 'discovery';
   state.includeSeen = false;
   state.artists = [];
+  state.currentMediaItemId = '';
+  state.playerState = 'idle';
+  state.playerError = '';
+  state.playbackIntentEstablished = false;
   elements.artists.value = '';
   elements.mode.value = 'discovery';
   elements.includeSeen.checked = false;
+  elements.position.textContent = '0s / 0s';
   writeSelectionToUI(state.selection);
   rebuildFlowQueue();
   renderSummary();
   renderQueue();
+  renderPlayerPanel();
   renderDebug();
 }
 
-function initialize() {
-  loadMusicTileState().then((persisted) => {
-    state.selection = persisted.selection;
-    state.memory = persisted.memory;
-    writeSelectionToUI(state.selection);
-    rebuildFlowQueue();
-    renderSummary();
-    renderQueue();
-    renderDebug();
-
-    console.info('[TILE DATA][music-tile] hydrate', {
-      appId: 'music-tile',
-      sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
-      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null,
-    });
-  });
-
+function bindControls() {
   elements.smartRefresh.addEventListener('click', smartRefreshDiscovery);
-  elements.flowMode.addEventListener('click', () => {
+  elements.flowMode.addEventListener('click', async () => {
     state.sessionMode = 'flow';
     elements.mode.value = 'flow';
     rebuildFlowQueue();
     renderSummary();
     renderQueue();
+    await playFlowFromCurrentQueue();
   });
+
+  elements.playBtn.addEventListener('click', () => {
+    state.playbackIntentEstablished = true;
+    state.playerError = '';
+    if (state.currentMediaItemId) {
+      playerAdapter.play();
+    } else {
+      void playFlowFromCurrentQueue();
+    }
+    renderPlayerPanel();
+  });
+  elements.pauseBtn.addEventListener('click', () => playerAdapter.pause());
+  elements.stopBtn.addEventListener('click', () => playerAdapter.stop());
+  elements.nextBtn.addEventListener('click', () => {
+    state.playbackIntentEstablished = true;
+    void playNextInQueue();
+  });
+  elements.prevBtn.addEventListener('click', async () => {
+    state.playbackIntentEstablished = true;
+    const previous = flowController.previous();
+    if (previous) {
+      await loadMediaItemIntoPlayer(previous, { autoplay: true });
+    }
+  });
+  elements.muteBtn.addEventListener('click', () => {
+    if (playerAdapter.isMuted()) {
+      playerAdapter.unMute();
+      elements.muteBtn.textContent = 'Mute';
+      return;
+    }
+    playerAdapter.mute();
+    elements.muteBtn.textContent = 'Unmute';
+  });
+  elements.volume.addEventListener('input', () => {
+    playerAdapter.setVolume(elements.volume.value);
+  });
+
+  elements.openInYoutube.addEventListener('click', () => {
+    const href = elements.openInYoutube.dataset.href;
+    if (href) {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  });
+
   elements.mode.addEventListener('change', () => {
     state.sessionMode = elements.mode.value;
     rebuildFlowQueue();
@@ -322,7 +505,9 @@ function initialize() {
   });
   elements.reset.addEventListener('click', resetAll);
   elements.commandRun.addEventListener('click', executeCommand);
-  elements.queue.addEventListener('click', onQueueAction);
+  elements.queue.addEventListener('click', (event) => {
+    void handleQueueAction(event);
+  });
 
   [elements.era, elements.energy, elements.emotion, elements.density].forEach((control) => {
     control.addEventListener('change', () => {
@@ -335,6 +520,41 @@ function initialize() {
     state.debugVisible = !state.debugVisible;
     elements.debugPanel.hidden = !state.debugVisible;
   });
+
+  window.addEventListener('beforeunload', () => {
+    clearInterval(state.positionTimer);
+    playerAdapter.destroy();
+  });
+}
+
+function initialize() {
+  loadMusicTileState().then(async (persisted) => {
+    state.selection = persisted.selection;
+    state.memory = persisted.memory;
+    writeSelectionToUI(state.selection);
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+    renderPlayerPanel();
+    renderDebug();
+
+    console.info('[TILE DATA][music-tile] hydrate', {
+      appId: 'music-tile',
+      sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
+      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null,
+    });
+
+    try {
+      await playerAdapter.initPlayer();
+    } catch (error) {
+      state.playerError = 'YouTube player failed to load. Check network/policy and try again.';
+      renderPlayerPanel();
+      renderDebug();
+      console.warn('[music-tile] player init failed', error);
+    }
+  });
+
+  bindControls();
 }
 
 initialize();
