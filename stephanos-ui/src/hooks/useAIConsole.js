@@ -1161,10 +1161,27 @@ export function useAIConsole() {
   const runtimeConfig = useMemo(() => getApiRuntimeConfig(), [runtimeConfigKey]);
   const hostedCloudConfigOverlay = useMemo(() => ({
     enabled: hostedCloudCognition?.enabled === true,
+    selectedProvider: String(hostedCloudCognition?.selectedProvider || 'groq').trim().toLowerCase(),
     proxyUrl: '',
     providerProxyUrls: {
       groq: String(hostedCloudCognition?.providers?.groq?.baseURL || '').trim(),
       gemini: String(hostedCloudCognition?.providers?.gemini?.baseURL || '').trim(),
+    },
+    providers: {
+      groq: {
+        enabled: hostedCloudCognition?.providers?.groq?.enabled !== false,
+        baseURL: String(hostedCloudCognition?.providers?.groq?.baseURL || '').trim(),
+        model: String(hostedCloudCognition?.providers?.groq?.model || '').trim(),
+      },
+      gemini: {
+        enabled: hostedCloudCognition?.providers?.gemini?.enabled !== false,
+        baseURL: String(hostedCloudCognition?.providers?.gemini?.baseURL || '').trim(),
+        model: String(hostedCloudCognition?.providers?.gemini?.model || '').trim(),
+      },
+    },
+    lastHealth: {
+      groq: hostedCloudCognition?.lastHealth?.groq || {},
+      gemini: hostedCloudCognition?.lastHealth?.gemini || {},
     },
     chatPath: String(hostedCloudCognition?.chatPath || '/api/ai/chat').trim() || '/api/ai/chat',
     backendOnlySecrets: true,

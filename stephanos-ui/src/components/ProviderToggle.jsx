@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { clearLocalProviderSecret, getApiRuntimeConfig, setLocalProviderSecret } from '../ai/aiClient';
+import {
+  clearLocalProviderSecret,
+  getApiRuntimeConfig,
+  setLocalProviderSecret,
+  testHostedCloudWorkerConnection,
+} from '../ai/aiClient';
 import { resolveAdminAuthorityUrl } from '../ai/apiConfig';
 import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
@@ -166,6 +171,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setHostedCloudCognitionProvider,
     updateHostedCloudCognitionProviderConfig,
     saveHostedCloudCognitionSettings,
+    setHostedCloudCognitionHealth,
     providerDraftStatus,
     getDraftProviderConfig,
     updateDraftProviderConfig,
@@ -434,39 +440,40 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const hostedSaveMessage = hostedCloudCognitionSaveState?.message || (hostedCloudCognitionDirty ? 'Unsaved changes' : 'Saved');
 
   const testHostedProvider = async (providerKey) => {
-    const providerConfig = hostedCloudCognition?.providers?.[providerKey] || {};
-    const baseURL = String(providerConfig.baseURL || '').trim();
-    if (!baseURL) {
-      setHostedProviderTestStatus((prev) => ({
-        ...prev,
-        [providerKey]: { state: 'failed', message: 'Set a Worker/proxy base URL before testing.', checkedAt: new Date().toISOString() },
-      }));
-      return;
-    }
+    const providerLabel = providerKey === 'gemini' ? 'Gemini Worker' : `${providerKey} Worker`;
     setHostedProviderTestStatus((prev) => ({
       ...prev,
-      [providerKey]: { state: 'testing', message: 'Testing reachability…', checkedAt: new Date().toISOString() },
+      [providerKey]: { state: 'testing', message: `Testing ${providerLabel}…`, checkedAt: new Date().toISOString() },
     }));
-    try {
-      const response = await fetch(baseURL, { method: 'GET' });
-      setHostedProviderTestStatus((prev) => ({
-        ...prev,
-        [providerKey]: {
-          state: response.ok ? 'passed' : 'failed',
-          message: response.ok ? `Reachable (${response.status})` : `Unreachable (${response.status})`,
-          checkedAt: new Date().toISOString(),
-        },
-      }));
-    } catch (error) {
-      setHostedProviderTestStatus((prev) => ({
-        ...prev,
-        [providerKey]: {
-          state: 'failed',
-          message: `Fetch failed: ${error instanceof Error ? error.message : 'network/CORS error'}`,
-          checkedAt: new Date().toISOString(),
-        },
-      }));
-    }
+
+    const result = await testHostedCloudWorkerConnection({
+      providerKey,
+      hostedCloudConfig: hostedCloudCognition,
+      runtimeConfig,
+    });
+    const healthy = result.ok && result.reachable === true && result.parseSuccess === true;
+    setHostedCloudCognitionHealth(providerKey, {
+      ok: healthy,
+      status: healthy ? 'healthy' : 'unhealthy',
+      reachable: result.reachable === true,
+      executableNow: healthy,
+      reason: result.reason || '',
+      detail: result.detail || '',
+      checkedAt: result.checkedAt || new Date().toISOString(),
+      model: result.model || hostedCloudCognition?.providers?.[providerKey]?.model || '',
+      httpStatus: Number.isFinite(Number(result.status)) ? Number(result.status) : 0,
+      parseSuccess: result.parseSuccess === true,
+    });
+    setHostedProviderTestStatus((prev) => ({
+      ...prev,
+      [providerKey]: {
+        state: healthy ? 'passed' : 'failed',
+        message: healthy
+          ? `${providerLabel} reachable (${result.status})`
+          : `${providerLabel} test failed (${result.status || 'no status'})`,
+        checkedAt: result.checkedAt || new Date().toISOString(),
+      },
+    }));
   };
 
   return (
@@ -592,6 +599,10 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         <div className="provider-status-box">
           <p><strong>Authority:</strong> cognition-only (execution deferred)</p>
           <p><strong>Battle Bridge authority:</strong> {hostedTruth.battleBridgeAuthorityAvailable === true ? 'available' : 'unavailable'}</p>
+          <p><strong>Gemini worker configured:</strong> {String(hostedCloudCognition?.providers?.gemini?.baseURL || '').trim() ? 'yes' : 'no'}</p>
+          <p><strong>Gemini worker reachable:</strong> {hostedCloudCognition?.lastHealth?.gemini?.reachable === true ? 'yes' : (hostedCloudCognition?.lastHealth?.gemini?.reachable === false ? 'no' : 'unknown')}</p>
+          <p><strong>Hosted cognition executable:</strong> {hostedTruth.hostedCloudPathAvailable === true && hostedCloudCognition?.lastHealth?.[hostedProvider]?.reachable === true ? 'yes' : 'no'}</p>
+          <p><strong>Deferred local authority actions:</strong> {hostedTruth.executionDeferred === true ? 'yes' : 'no'}</p>
           <p><strong>Route posture:</strong> {hostedTruth.hostedCloudPathAvailable === true ? 'Worker-backed provider path active' : 'Execution deferred'}</p>
           <p><strong>Cloud cognition available:</strong> {hostedTruth.cloudCognitionAvailable === true ? 'yes' : 'no'}</p>
           <p><strong>Reason:</strong> {hostedTruth.operatorSummary || 'Battle Bridge authority unavailable'}</p>
@@ -648,9 +659,13 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                   />
                 </label>
                 <div className="provider-quick-actions">
-                  <button type="button" className="ghost-button" onClick={() => testHostedProvider(providerKey)}>Test Hosted Provider</button>
+                  <button type="button" className="ghost-button" onClick={() => testHostedProvider(providerKey)}>
+                    {providerKey === 'gemini' ? 'Test Gemini Worker' : 'Test Hosted Provider'}
+                  </button>
                 </div>
                 <p><strong>Health:</strong> {hostedProviderHealth.status || (hostedProviderHealth.ok === true ? 'healthy' : 'unknown')}</p>
+                <p><strong>HTTP status:</strong> {Number.isFinite(Number(hostedProviderHealth.httpStatus)) && Number(hostedProviderHealth.httpStatus) > 0 ? hostedProviderHealth.httpStatus : 'n/a'}</p>
+                <p><strong>Parse success:</strong> {hostedProviderHealth.parseSuccess === true ? 'yes' : (hostedProviderHealth.parseSuccess === false ? 'no' : 'unknown')}</p>
                 <p><strong>Reachable:</strong> {hostedProviderHealth.reachable === true ? 'yes' : (hostedProviderHealth.reachable === false ? 'no' : 'unknown')}</p>
                 <p><strong>Executable now:</strong> {hostedProviderHealth.executableNow === true ? 'yes' : (hostedProviderHealth.executableNow === false ? 'no' : 'unknown')}</p>
                 <p><strong>Model:</strong> {hostedProviderHealth.model || hostedProviderConfig.model || 'n/a'}</p>

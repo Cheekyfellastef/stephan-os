@@ -10,6 +10,7 @@ import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
+const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -37,14 +38,30 @@ function firstNonEmpty(...values) {
   return '';
 }
 
+function resolveHostedWorkerEndpoint(baseUrl = '', chatPath = HOSTED_COGNITION_CHAT_PATH) {
+  const normalizedBaseUrl = String(baseUrl || '').trim();
+  if (!normalizedBaseUrl) {
+    return '';
+  }
+  try {
+    const targetUrl = new URL(chatPath || HOSTED_COGNITION_CHAT_PATH, normalizedBaseUrl.endsWith('/') ? normalizedBaseUrl : `${normalizedBaseUrl}/`);
+    return targetUrl.toString();
+  } catch {
+    return '';
+  }
+}
+
 function resolveHostedCloudDispatch({
   routeDecision = {},
   runtimeConfig = {},
   requestedProvider = '',
 } = {}) {
   const hostedConfig = runtimeConfig?.hostedCloudConfig || {};
+  const configuredSelectedProvider = String(hostedConfig?.selectedProvider || '').trim().toLowerCase();
+  const selectedProvider = configuredSelectedProvider || 'groq';
   const provider = String(
-    routeDecision?.requestedProviderForRequest
+    configuredSelectedProvider
+    || routeDecision?.requestedProviderForRequest
     || routeDecision?.selectedProvider
     || requestedProvider
     || '',
@@ -53,26 +70,33 @@ function resolveHostedCloudDispatch({
   const providerEnabled = hostedConfig?.providers?.[provider]?.enabled !== false;
   const sharedProxy = String(hostedConfig?.proxyUrl || '').trim();
   const targetBaseUrl = providerProxy || sharedProxy;
-  const enabled = hostedConfig?.enabled === true
-    && providerEnabled
-    && routeDecision?.hostedCloudPathAvailable === true
-    && Boolean(targetBaseUrl);
+  const enabled = hostedConfig?.enabled === true && providerEnabled && Boolean(targetBaseUrl);
+  const providerHealth = hostedConfig?.lastHealth?.[provider] || {};
+  const reachableNow = providerHealth.reachable === true;
+  const executableNow = enabled && (reachableNow || providerHealth.status === 'healthy' || providerHealth.ok === true);
 
   return {
     enabled,
+    executableNow,
+    reachableNow,
     targetBaseUrl,
-    chatPath: String(hostedConfig?.chatPath || '/api/ai/chat').trim() || '/api/ai/chat',
+    chatPath: String(hostedConfig?.chatPath || HOSTED_COGNITION_CHAT_PATH).trim() || HOSTED_COGNITION_CHAT_PATH,
     provider,
+    selectedProvider,
+    requestedProvider: String(requestedProvider || '').trim().toLowerCase(),
     secretPathKind: String(routeDecision?.hostedCloudSecretPathKind || 'none'),
     authorityLevel: String(routeDecision?.hostedCloudAuthorityLevel || 'none'),
-    providerPath: String(routeDecision?.hostedCloudExecutionProvider || 'none'),
+    providerPath: String(routeDecision?.hostedCloudExecutionProvider || `${provider}-hosted-cloud`),
+    actualProviderUsed: `${provider}-hosted-cloud-direct`,
     executionDeferred: routeDecision?.executionDeferred === true,
     battleBridgeAuthorityAvailable: routeDecision?.battleBridgeAuthorityAvailable === true,
+    routeTruthAvailable: routeDecision?.hostedCloudPathAvailable === true,
   };
 }
 
 function shouldPreferHostedDispatch(hostedDispatch = {}, routeDecision = {}) {
   if (!hostedDispatch?.enabled) return false;
+  if (hostedDispatch?.provider === hostedDispatch?.selectedProvider && hostedDispatch?.executableNow) return true;
   if (routeDecision?.battleBridgeAuthorityAvailable === false) return true;
   if (hostedDispatch?.battleBridgeAuthorityAvailable === false) return true;
   if (routeDecision?.executionDeferred === true || hostedDispatch?.executionDeferred === true) return true;
@@ -110,6 +134,12 @@ function normalizeHostedCloudResponseData(data = {}, fallbackProvider = '') {
     authority_level: source.execution_metadata?.authority_level
       || nestedData.execution_metadata?.authority_level
       || 'cloud-cognition-only',
+    selected_provider_truth: source.execution_metadata?.selected_provider_truth
+      || nestedData.execution_metadata?.selected_provider_truth
+      || fallbackProvider,
+    executable_provider_truth: source.execution_metadata?.executable_provider_truth
+      || nestedData.execution_metadata?.executable_provider_truth
+      || `${fallbackProvider}-hosted-cloud`,
     execution_deferred: true,
   };
 
@@ -141,6 +171,7 @@ function buildHostedCloudPayload({
     provider: hostedDispatch.provider || requestedProvider,
     selectedProvider: routeDecision?.selectedProvider || requestedProvider,
     executableProvider: hostedDispatch.providerPath || `${requestedProvider}-hosted-cloud`,
+    actualProviderUsed: hostedDispatch.actualProviderUsed || `${requestedProvider}-hosted-cloud-direct`,
     authorityLevel: hostedDispatch.authorityLevel || 'cloud-cognition-only',
     executionDeferred: true,
     model: payload.providerConfigs?.[hostedDispatch.provider || requestedProvider]?.model
@@ -179,6 +210,96 @@ async function requestHostedCloudChat({ hostedDispatch, hostedPayload, runtimeCo
     ...hostedResult,
     data: normalizeHostedCloudResponseData(hostedResult.data, hostedDispatch.provider),
   };
+}
+
+export async function testHostedCloudWorkerConnection({
+  providerKey = 'gemini',
+  hostedCloudConfig = {},
+  providerConfigs = {},
+  runtimeConfig = getApiRuntimeConfig(),
+} = {}) {
+  const provider = String(providerKey || '').trim().toLowerCase();
+  const providerConfig = hostedCloudConfig?.providers?.[provider] || {};
+  const baseURL = String(providerConfig?.baseURL || hostedCloudConfig?.providerProxyUrls?.[provider] || '').trim();
+  const model = String(providerConfig?.model || providerConfigs?.[provider]?.model || '').trim();
+  const chatPath = String(hostedCloudConfig?.chatPath || HOSTED_COGNITION_CHAT_PATH).trim() || HOSTED_COGNITION_CHAT_PATH;
+  const checkedAt = new Date().toISOString();
+  const endpoint = resolveHostedWorkerEndpoint(baseURL, chatPath);
+
+  if (!baseURL || !endpoint) {
+    return {
+      ok: false,
+      provider,
+      reachable: false,
+      status: 0,
+      parseSuccess: false,
+      checkedAt,
+      reason: !baseURL ? 'missing-worker-base-url' : 'invalid-worker-url',
+      detail: !baseURL ? 'Set a Worker/proxy base URL before testing.' : 'Worker URL or chat path is invalid.',
+      model,
+    };
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Stephanos-Probe': 'health' },
+      body: JSON.stringify({
+        contractVersion: HOSTED_COGNITION_CONTRACT_VERSION,
+        requestKind: 'hosted-cloud-cognition-health-probe',
+        provider,
+        model,
+        authorityLevel: 'cloud-cognition-only',
+      }),
+    });
+    const raw = await response.text();
+    let parseSuccess = false;
+    let parsed = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+        parseSuccess = true;
+      } catch {
+        parseSuccess = false;
+      }
+    }
+    const normalized = parseSuccess ? normalizeHostedCloudResponseData(parsed, provider) : null;
+    const reachable = response.ok;
+    return {
+      ok: reachable && parseSuccess,
+      provider,
+      reachable,
+      status: response.status,
+      parseSuccess,
+      checkedAt,
+      reason: reachable
+        ? (parseSuccess ? 'probe-ok' : 'probe-parse-failed')
+        : `probe-http-${response.status}`,
+      detail: reachable
+        ? (parseSuccess ? 'Hosted Worker reachable and parseable.' : 'Hosted Worker reachable but returned non-JSON payload.')
+        : (normalized?.error || `Hosted Worker returned status ${response.status}.`),
+      model: model || normalized?.data?.model_used || null,
+      authorityLevel: 'cloud-cognition-only',
+      executionPath: `${provider}-hosted-cloud`,
+      endpoint,
+      runtimeConfig,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      provider,
+      reachable: false,
+      status: 0,
+      parseSuccess: false,
+      checkedAt,
+      reason: 'probe-transport-error',
+      detail: error?.message || 'Hosted Worker probe failed.',
+      model,
+      authorityLevel: 'cloud-cognition-only',
+      executionPath: `${provider}-hosted-cloud`,
+      endpoint,
+    };
+  }
 }
 
 async function probeHostedProviderHealth({

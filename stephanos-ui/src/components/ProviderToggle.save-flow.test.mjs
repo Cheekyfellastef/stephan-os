@@ -25,5 +25,9 @@ test('provider secret clear uses backend DELETE helper', () => {
 test('hosted cloud cognition pane includes explicit save and provider test actions', () => {
   assert.match(source, /Save Hosted Cloud Cognition/);
   assert.match(source, /Test Hosted Provider/);
+  assert.match(source, /Test Gemini Worker/);
+  assert.match(source, /setHostedCloudCognitionHealth\(providerKey/);
+  assert.match(source, /HTTP status:/);
+  assert.match(source, /Parse success:/);
   assert.match(source, /Unsaved changes/);
 });
