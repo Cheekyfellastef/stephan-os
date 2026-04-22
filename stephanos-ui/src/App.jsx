@@ -16,6 +16,7 @@ import IntentEnginePanel from './components/IntentEnginePanel.jsx';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
 import MissionPacketQueuePanel from './components/MissionPacketQueuePanel';
+import HostedIdeaStagingPanel from './components/HostedIdeaStagingPanel';
 import CockpitPanel from './components/CockpitPanel';
 import ProviderToggle from './components/ProviderToggle';
 import HomeBridgePanel from './components/HomeBridgePanel';
@@ -545,6 +546,11 @@ export default function App() {
         markStartupStage('app-mission-packet-queue-render-complete');
         return node;
       },
+    },
+    {
+      id: 'hostedIdeaStagingPanel',
+      className: 'pane-span-2',
+      render: () => <HostedIdeaStagingPanel />,
     },
   ]), [
     aiActionState,

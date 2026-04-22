@@ -1148,6 +1148,7 @@ export function useAIConsole() {
     applyMissionLineageAction,
     setWorkingMemory,
     workingMemory,
+    addHostedStagedItem,
     uiLayout,
     paneLayout,
     runtimeStatusModel,
@@ -2102,6 +2103,42 @@ export function useAIConsole() {
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
       };
+      const executionSummaryForStage = buildExecutionSummary(executionMetadata);
+
+      const selectedAnswerMode = String(executionMetadata.selected_answer_mode || '').trim().toLowerCase();
+      const hostedProvider = String(
+        executionMetadata.actual_provider_used
+        || executionMetadata.execution_selected_provider
+        || executionMetadata.selected_provider
+        || '',
+      ).trim().toLowerCase();
+      const hostedProviderUsed = hostedProvider === 'groq' || hostedProvider === 'gemini';
+      const hostedExecutionPath = selectedAnswerMode === 'fresh-cloud' || selectedAnswerMode === 'cloud-basic';
+      if (data.success && hostedProviderUsed && hostedExecutionPath) {
+        const missionPacketState = String(executionMetadata.mission_packet_state || '').trim().toLowerCase();
+        const stagedType = missionPacketState && missionPacketState !== 'inactive' ? 'mission' : 'idea';
+        addHostedStagedItem({
+          type: stagedType,
+          title: stagedType === 'mission'
+            ? (executionMetadata.mission_packet_title || `Hosted mission candidate from ${hostedProvider}`)
+            : `Hosted idea candidate from ${hostedProvider}`,
+          summary: executionSummaryForStage,
+          content: String(data.output_text || '').trim(),
+          sourceSurface: 'mission-console',
+          sourceProvider: hostedProvider,
+          sourceAuthorityLevel: 'hosted-observer',
+          status: 'staged',
+          promotionTarget: stagedType === 'mission' ? 'mission-lineage' : 'durable-memory',
+          confidence: Number(executionMetadata.intent_confidence ?? 0.6),
+          tags: ['hosted-cognition', stagedType, selectedAnswerMode],
+          linkedMissionId: effectiveRequestPayload?.missionPacket?.moveId || '',
+          linkedPacketId: effectiveRequestPayload?.missionPacket?.missionId || '',
+          promotionState: 'pending',
+          promotionReason: 'Hosted cognition generated staged item. Staged only, not yet canon.',
+          sourceMode: 'hosted-cognition',
+          canonicalEligibility: false,
+        });
+      }
 
       setWorkingMemory((prev) => ({
         ...(prev || {}),
@@ -2143,7 +2180,7 @@ export function useAIConsole() {
       const providerMessage = !data.success && provider !== 'mock'
         ? `${data.error || 'Provider failed.'} Use Mock instead if you want a zero-cost response.`
         : data.output_text;
-      const executionSummary = buildExecutionSummary(executionMetadata);
+      const executionSummary = executionSummaryForStage;
 
       setApiStatus((prev) => ({
         ...prev,
