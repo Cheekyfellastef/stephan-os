@@ -22,6 +22,10 @@ export function createMusicTileFlowController() {
     return queue;
   }
 
+  function getCurrentIndex() {
+    return currentIndex;
+  }
+
   function getCurrent() {
     if (currentIndex < 0 || currentIndex >= queue.length) return null;
     return queue[currentIndex];
@@ -67,6 +71,7 @@ export function createMusicTileFlowController() {
   return {
     rebuild,
     getQueue,
+    getCurrentIndex,
     getCurrent,
     selectById,
     start,

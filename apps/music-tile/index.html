@@ -85,19 +85,24 @@
 
     <section class="panel player-panel">
       <h2>Embedded Player</h2>
-      <div class="player-frame-wrap">
+      <div class="player-frame-wrap" id="player-frame-wrap">
         <div class="player-frame" id="yt-player-container" aria-label="YouTube embedded player"></div>
       </div>
       <p id="player-status" class="muted">Player: idle</p>
       <p id="player-error" class="player-error" hidden></p>
       <p id="player-now-playing" class="player-now-playing">No track selected.</p>
       <p id="player-channel" class="player-channel">Source: —</p>
+      <p id="player-mode-badge" class="player-mode-badge">Mode: Single</p>
+      <p id="player-session-state" class="player-session-state">State: Ready</p>
       <div class="player-controls">
         <button id="player-play-btn">Play</button>
         <button id="player-pause-btn" class="ghost">Pause</button>
         <button id="player-stop-btn" class="ghost">Stop</button>
         <button id="player-prev-btn" class="ghost">Prev</button>
         <button id="player-next-btn">Next</button>
+        <button id="player-fullscreen-btn" class="ghost">Fullscreen</button>
+        <button id="player-exit-fullscreen-btn" class="ghost">Exit Fullscreen</button>
+        <button id="player-resume-flow-btn" class="ghost">Resume Flow</button>
         <button id="player-mute-btn" class="ghost">Mute</button>
       </div>
       <div class="player-controls compact">

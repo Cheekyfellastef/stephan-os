@@ -304,3 +304,14 @@ input {
   font-size: 0.74rem;
   border-radius: 7px;
 }
+
+.player-mode-badge,
+.player-session-state {
+  margin-top: 6px;
+  color: #8bbce5;
+  font-size: 0.84rem;
+}
+
+.player-controls button[hidden] {
+  display: none;
+}

@@ -57,18 +57,63 @@ function mapPlayerErrorCode(code) {
   return lookup[code] || `Unknown player error (${code}).`;
 }
 
+function buildFullscreenApi(target) {
+  const documentRef = document;
+
+  function request() {
+    if (!target) return Promise.resolve(false);
+    const requestMethod = target.requestFullscreen
+      || target.webkitRequestFullscreen
+      || target.msRequestFullscreen;
+    if (!requestMethod) return Promise.resolve(false);
+    return Promise.resolve(requestMethod.call(target)).then(() => true).catch(() => false);
+  }
+
+  function exit() {
+    const exitMethod = documentRef.exitFullscreen
+      || documentRef.webkitExitFullscreen
+      || documentRef.msExitFullscreen;
+    if (!exitMethod) return Promise.resolve(false);
+    return Promise.resolve(exitMethod.call(documentRef)).then(() => true).catch(() => false);
+  }
+
+  function isActive() {
+    return Boolean(documentRef.fullscreenElement || documentRef.webkitFullscreenElement || documentRef.msFullscreenElement);
+  }
+
+  function isEnabled() {
+    return Boolean(
+      target?.requestFullscreen
+      || target?.webkitRequestFullscreen
+      || target?.msRequestFullscreen,
+    );
+  }
+
+  return {
+    request,
+    exit,
+    isActive,
+    isEnabled,
+  };
+}
+
 export function createMusicTilePlayerAdapter({
   containerId,
+  mountElement,
   width = 640,
   height = 360,
   onEvent = () => {},
 } = {}) {
   let player = null;
   let lastVideoId = '';
+  let fullscreenApi = null;
 
   async function initPlayer() {
     await ensureGlobalApiLoader();
     if (player) return player;
+
+    const fullscreenTarget = mountElement || document.getElementById(containerId)?.parentElement || null;
+    fullscreenApi = buildFullscreenApi(fullscreenTarget);
 
     player = new window.YT.Player(containerId, {
       width,
@@ -78,19 +123,18 @@ export function createMusicTilePlayerAdapter({
         autoplay: 0,
         controls: 1,
         enablejsapi: 1,
+        fs: 1,
         origin: window.location.origin,
         rel: 0,
         modestbranding: 1,
+        playsinline: 1,
       },
       events: {
         onReady: (event) => onEvent({ type: 'ready', event }),
         onStateChange: (event) => {
           const state = mapPlayerState(event.data);
           onEvent({ type: 'stateChange', state, event });
-          if (state === 'ended') onEvent({ type: 'ended', event });
-          if (state === 'playing') onEvent({ type: 'playing', event });
-          if (state === 'paused') onEvent({ type: 'paused', event });
-          if (state === 'buffering') onEvent({ type: 'buffering', event });
+          onEvent({ type: state, event });
         },
         onError: (event) => {
           onEvent({
@@ -103,24 +147,33 @@ export function createMusicTilePlayerAdapter({
       },
     });
 
+    document.addEventListener('fullscreenchange', () => {
+      onEvent({ type: 'fullscreenChange', isFullscreen: fullscreenApi?.isActive?.() || false });
+    });
+
     return player;
   }
 
-  async function loadVideo(videoId, { autoplay = false } = {}) {
+  async function cueVideo(videoId, opts = {}) {
     if (!videoId) return;
     const instance = await initPlayer();
     lastVideoId = videoId;
-    instance.loadVideoById({ videoId, suggestedQuality: 'large' });
-    if (!autoplay) {
-      instance.pauseVideo();
-    }
+    instance.cueVideoById({
+      videoId,
+      startSeconds: opts.startSeconds || 0,
+      suggestedQuality: opts.suggestedQuality || 'large',
+    });
   }
 
-  async function cueVideo(videoId) {
+  async function loadVideo(videoId, opts = {}) {
     if (!videoId) return;
     const instance = await initPlayer();
     lastVideoId = videoId;
-    instance.cueVideoById({ videoId, suggestedQuality: 'large' });
+    instance.loadVideoById({
+      videoId,
+      startSeconds: opts.startSeconds || 0,
+      suggestedQuality: opts.suggestedQuality || 'large',
+    });
   }
 
   function play() {
@@ -163,6 +216,22 @@ export function createMusicTilePlayerAdapter({
     return lastVideoId;
   }
 
+  function isFullscreenSupported() {
+    return Boolean(fullscreenApi?.isEnabled?.());
+  }
+
+  function isFullscreenActive() {
+    return Boolean(fullscreenApi?.isActive?.());
+  }
+
+  async function enterFullscreen() {
+    return fullscreenApi?.request?.() || false;
+  }
+
+  async function exitFullscreen() {
+    return fullscreenApi?.exit?.() || false;
+  }
+
   function destroy() {
     if (player?.destroy) {
       player.destroy();
@@ -173,8 +242,8 @@ export function createMusicTilePlayerAdapter({
 
   return {
     initPlayer,
-    loadVideo,
     cueVideo,
+    loadVideo,
     play,
     pause,
     stop,
@@ -186,5 +255,9 @@ export function createMusicTilePlayerAdapter({
     getCurrentTime,
     getDuration,
     getLastVideoId,
+    enterFullscreen,
+    exitFullscreen,
+    isFullscreenSupported,
+    isFullscreenActive,
   };
 }
