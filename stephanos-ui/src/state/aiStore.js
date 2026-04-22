@@ -88,6 +88,12 @@ import {
   shouldTreatBridgeHealthProbeAsReachable,
 } from './bridgeAutoRevalidation.mjs';
 import { recordStartupRenderStage } from '../../../shared/runtime/startupLaunchDiagnostics.mjs';
+import {
+  applyHostedIdeaStagingAction,
+  buildHostedStagingHandoffPayload,
+  createDefaultHostedIdeaStagingQueue,
+  normalizeHostedIdeaStagingQueue,
+} from '../../../shared/runtime/hostedIdeaStaging.mjs';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -113,6 +119,7 @@ const DEFAULT_UI_LAYOUT = {
   intentEnginePanel: true,
   missionFingerprintPanel: true,
   missionPacketQueuePanel: true,
+  hostedIdeaStagingPanel: true,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
@@ -135,6 +142,7 @@ const DEFAULT_OPERATOR_PANE_ORDER = [
   'intentEnginePanel',
   'missionFingerprintPanel',
   'missionPacketQueuePanel',
+  'hostedIdeaStagingPanel',
 ];
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',
@@ -748,6 +756,9 @@ function createInitialMemorySnapshot() {
         missionLineage: normalizeMissionLineageStore(
           persistedSession?.working?.missionLineage || createDefaultMissionLineageStore(),
         ),
+        hostedIdeaStagingQueue: normalizeHostedIdeaStagingQueue(
+          persistedSession?.working?.hostedIdeaStagingQueue || createDefaultHostedIdeaStagingQueue(),
+        ),
       },
       projectMemory: {
         ...defaults.project,
@@ -883,6 +894,9 @@ export function AIStoreProvider({ children }) {
   const [missionLineage, setMissionLineage] = useState(
     normalizeMissionLineageStore(initialSnapshot.workingMemory?.missionLineage || createDefaultMissionLineageStore()),
   );
+  const [hostedIdeaStagingQueue, setHostedIdeaStagingQueue] = useState(
+    normalizeHostedIdeaStagingQueue(initialSnapshot.workingMemory?.hostedIdeaStagingQueue || createDefaultHostedIdeaStagingQueue()),
+  );
   const [projectMemory] = useState(initialSnapshot.projectMemory);
   const [homeNodePreference, setHomeNodePreferenceState] = useState(initialSnapshot.homeNodePreference);
   const [homeNodeLastKnown, setHomeNodeLastKnownState] = useState(initialSnapshot.homeNodeLastKnown);
@@ -981,6 +995,14 @@ export function AIStoreProvider({ children }) {
       bridgeAutoRevalidation,
       bridgeTransportTruth,
       persistence: bridgeTransportTruth?.persistence || null,
+      hostedIdeaStaging: {
+        schemaVersion: hostedIdeaStagingQueue?.schemaVersion || 1,
+        stagedCount: Array.isArray(hostedIdeaStagingQueue?.items) ? hostedIdeaStagingQueue.items.length : 0,
+        pendingPromotionCount: Array.isArray(hostedIdeaStagingQueue?.items)
+          ? hostedIdeaStagingQueue.items.filter((entry) => entry?.promotionState !== 'completed').length
+          : 0,
+        lastUpdatedAt: hostedIdeaStagingQueue?.lastUpdatedAt || '',
+      },
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), { sourceFunction: 'AIStoreProvider.runtimeStatusModel.useMemo' }), [
@@ -1004,6 +1026,7 @@ export function AIStoreProvider({ children }) {
     surfaceProtocolRecommendations,
     acceptedSurfaceRules,
     bridgeTransportTruth,
+    hostedIdeaStagingQueue,
   ]);
   const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
     runtimeStatusModel,
@@ -1201,6 +1224,7 @@ export function AIStoreProvider({ children }) {
         ...workingMemory,
         missionPacketWorkflow,
         missionLineage,
+        hostedIdeaStagingQueue: normalizeHostedIdeaStagingQueue(hostedIdeaStagingQueue),
         surfaceFrictionEvents: sanitizeSurfaceFrictionEvents(surfaceFrictionEvents),
         surfaceFrictionPatterns: sanitizeObjectList(surfaceFrictionPatterns, 12),
         surfaceProtocolRecommendations: sanitizeObjectList(surfaceProtocolRecommendations, 12),
@@ -1230,6 +1254,7 @@ export function AIStoreProvider({ children }) {
     workingMemory,
     missionPacketWorkflow,
     missionLineage,
+    hostedIdeaStagingQueue,
     surfaceFrictionEvents,
     surfaceFrictionPatterns,
     surfaceProtocolRecommendations,
@@ -1537,6 +1562,35 @@ export function AIStoreProvider({ children }) {
     return nextConnection;
   }, [ollamaConnection]);
 
+  const applyHostedStagingAction = useCallback((action = {}) => {
+    const localAuthorityAvailable = runtimeStatusModel?.runtimeContext?.capabilityPosture?.localAuthorityAvailable === true
+      || apiStatus?.backendReachable === true;
+    let resolvedItem = null;
+    setHostedIdeaStagingQueue((prev) => {
+      const result = applyHostedIdeaStagingAction(prev, action, {
+        localAuthorityAvailable,
+        now: new Date().toISOString(),
+      });
+      resolvedItem = result.item;
+      return result.queue;
+    });
+    return resolvedItem;
+  }, [apiStatus?.backendReachable, runtimeStatusModel?.runtimeContext?.capabilityPosture?.localAuthorityAvailable]);
+
+  const addHostedStagedItem = useCallback((item = {}) => applyHostedStagingAction({ type: 'add', item }), [applyHostedStagingAction]);
+  const updateHostedStagedItem = useCallback((id, patch = {}) => applyHostedStagingAction({ type: 'update', id, patch }), [applyHostedStagingAction]);
+  const markHostedStagedItemReviewed = useCallback((id) => applyHostedStagingAction({ type: 'review', id }), [applyHostedStagingAction]);
+  const approveHostedStagedItem = useCallback((id) => applyHostedStagingAction({ type: 'approve', id }), [applyHostedStagingAction]);
+  const rejectHostedStagedItem = useCallback((id, reason = 'Rejected by operator.') => applyHostedStagingAction({ type: 'reject', id, reason }), [applyHostedStagingAction]);
+  const promoteHostedStagedItem = useCallback((id, reason = '') => applyHostedStagingAction({ type: 'promote', id, reason }), [applyHostedStagingAction]);
+  const clearHostedStagedItems = useCallback(() => applyHostedStagingAction({ type: 'clear' }), [applyHostedStagingAction]);
+  const exportHostedStagedItem = useCallback((id) => {
+    const queue = normalizeHostedIdeaStagingQueue(hostedIdeaStagingQueue);
+    const item = queue.items.find((entry) => entry.id === id);
+    if (!item) return null;
+    return buildHostedStagingHandoffPayload(item);
+  }, [hostedIdeaStagingQueue]);
+
   const resetToFreeMode = () => {
     const defaults = createDefaultRouterSettings();
     const sessionSafe = Object.fromEntries(PROVIDER_KEYS.map((key) => [key, { ...defaults.providerConfigs[key], apiKey: '' }]));
@@ -1554,6 +1608,7 @@ export function AIStoreProvider({ children }) {
     setOllamaConnectionState(DEFAULT_OLLAMA_CONNECTION);
     setWorkingMemory(nextWorkingMemory);
     setMissionPacketWorkflow(normalizeMissionPacketWorkflow(nextWorkingMemory.missionPacketWorkflow || createDefaultMissionPacketWorkflow()));
+    setHostedIdeaStagingQueue(normalizeHostedIdeaStagingQueue(nextWorkingMemory.hostedIdeaStagingQueue || createDefaultHostedIdeaStagingQueue()));
     setCommandHistory([]);
     setLastRoute(STEPHANOS_ACTIVE_SUBVIEW);
     setHomeNodePreferenceState(null);
@@ -2390,6 +2445,15 @@ export function AIStoreProvider({ children }) {
     setMissionPacketWorkflow,
     missionLineage,
     setMissionLineage,
+    hostedIdeaStagingQueue,
+    addHostedStagedItem,
+    updateHostedStagedItem,
+    markHostedStagedItemReviewed,
+    approveHostedStagedItem,
+    rejectHostedStagedItem,
+    promoteHostedStagedItem,
+    clearHostedStagedItems,
+    exportHostedStagedItem,
     projectMemory,
     homeNodePreference,
     setHomeNodePreference,
@@ -2472,6 +2536,7 @@ export function AIStoreProvider({ children }) {
     workingMemory,
     missionPacketWorkflow,
     missionLineage,
+    hostedIdeaStagingQueue,
     projectMemory,
     homeNodePreference,
     homeNodeLastKnown,
@@ -2511,6 +2576,14 @@ export function AIStoreProvider({ children }) {
     rejectSurfaceRecommendation,
     revertSurfaceRule,
     explainMemoryToOperator,
+    addHostedStagedItem,
+    updateHostedStagedItem,
+    markHostedStagedItemReviewed,
+    approveHostedStagedItem,
+    rejectHostedStagedItem,
+    promoteHostedStagedItem,
+    clearHostedStagedItems,
+    exportHostedStagedItem,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveBridgeTransportConfig,

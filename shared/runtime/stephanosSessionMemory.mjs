@@ -11,6 +11,7 @@ import {
 import { isLoopbackHost, isValidStephanosHomeNode, normalizeStephanosHomeNode } from './stephanosHomeNode.mjs';
 import { sanitizeCoreTruthInput } from './truthContract.mjs';
 import { createDefaultBridgeTransportPreferences, normalizeBridgeTransportPreferences } from './homeBridgeTransport.mjs';
+import { createDefaultHostedIdeaStagingQueue, normalizeHostedIdeaStagingQueue } from './hostedIdeaStaging.mjs';
 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
@@ -51,6 +52,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'working.lastMissionSubsystems',
   'working.lastMissionApprovalState',
   'working.missionLineage',
+  'working.hostedIdeaStagingQueue',
   'project.currentMilestone',
   'project.knownConstraints',
   'project.guardrails',
@@ -110,6 +112,7 @@ const DEFAULT_WORKING_MEMORY = Object.freeze({
     activeMissionId: '',
     missions: [],
   },
+  hostedIdeaStagingQueue: createDefaultHostedIdeaStagingQueue(),
 });
 
 const DEFAULT_PROJECT_MEMORY = Object.freeze({
@@ -244,6 +247,7 @@ function normalizeWorkingMemory(value = {}) {
   const missionLineage = source.missionLineage && typeof source.missionLineage === 'object'
     ? source.missionLineage
     : DEFAULT_WORKING_MEMORY.missionLineage;
+  const hostedIdeaStagingQueue = normalizeHostedIdeaStagingQueue(source.hostedIdeaStagingQueue);
 
   return {
     recentCommands,
@@ -273,6 +277,7 @@ function normalizeWorkingMemory(value = {}) {
       activeMissionId: normalizeString(missionLineage.activeMissionId),
       missions: Array.isArray(missionLineage.missions) ? missionLineage.missions.slice(0, 24) : [],
     },
+    hostedIdeaStagingQueue,
   };
 }
 
