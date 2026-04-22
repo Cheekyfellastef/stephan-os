@@ -608,6 +608,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
           <p><strong>Reason:</strong> {hostedTruth.operatorSummary || 'Battle Bridge authority unavailable'}</p>
           <p><strong>Save state:</strong> {hostedSaveMessage}</p>
           <p><strong>Restore:</strong> {hostedCloudCognitionSaveState?.diagnostics?.restoreSucceeded === true ? 'Restored from session' : 'Defaulted (no saved hosted session payload)'}</p>
+          <p><strong>Restore diagnostics:</strong> {hostedCloudCognitionSaveState?.diagnostics?.hydrationFailure === true ? 'Restore payload hydrate failed' : 'Hydration ok'}</p>
           <p><strong>Last restored summary:</strong> {hostedCloudCognitionSaveState?.diagnostics?.lastRestoredSummary || 'n/a'}</p>
           <p><strong>Restore reason:</strong> {hostedCloudCognitionSaveState?.diagnostics?.lastRestoreReason || 'n/a'}</p>
           <div className="provider-quick-actions">
@@ -660,7 +661,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
                 </label>
                 <div className="provider-quick-actions">
                   <button type="button" className="ghost-button" onClick={() => testHostedProvider(providerKey)}>
-                    {providerKey === 'gemini' ? 'Test Gemini Worker' : 'Test Hosted Provider'}
+                    {providerKey === 'gemini' ? 'Test Gemini Worker' : 'Test Groq Worker'}
                   </button>
                 </div>
                 <p><strong>Health:</strong> {hostedProviderHealth.status || (hostedProviderHealth.ok === true ? 'healthy' : 'unknown')}</p>
