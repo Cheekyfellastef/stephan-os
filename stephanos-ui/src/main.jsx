@@ -149,6 +149,24 @@ function StartupRenderSentinel() {
   return null;
 }
 
+function StartupAppRoot() {
+  recordStartupRenderStage({
+    stage: "app-component-render-start",
+    status: "ok",
+    sourceModule: "stephanos-ui/src/main.jsx",
+    sourceFunction: "StartupAppRoot.render",
+  });
+  React.useEffect(() => {
+    recordStartupRenderStage({
+      stage: "app-component-render-complete",
+      status: "ok",
+      sourceModule: "stephanos-ui/src/main.jsx",
+      sourceFunction: "StartupAppRoot.useEffect",
+    });
+  }, []);
+  return <App />;
+}
+
 recordStartupRenderStage({
   stage: "stephanos-root-app-mount-started",
   status: "ok",
@@ -165,7 +183,7 @@ ReactDOM.createRoot(rootNode).render(
     <StartupErrorBoundary>
       <AIStoreProvider>
         <StartupRenderSentinel />
-        <App />
+        <StartupAppRoot />
       </AIStoreProvider>
     </StartupErrorBoundary>
   </React.StrictMode>,
