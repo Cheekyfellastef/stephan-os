@@ -698,6 +698,59 @@ test('adjudicator promotes hosted worker to executable provider kind when backen
   }));
 
   assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'hosted-cloud-worker');
+  assert.equal(adjudicated.runtimeTruth.provider.actualProviderUsed, 'groq-hosted-cloud');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.providerKind, 'hosted-cloud-worker');
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.hostedWorkerReachable, true);
+});
+
+test('adjudicator allows hosted takeover to alternate provider when selected hosted worker is not executable', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      hostedCloudConfig: {
+        enabled: true,
+        selectedProvider: 'groq',
+        providers: {
+          groq: { enabled: true, baseURL: 'https://worker-groq.example.workers.dev' },
+          gemini: { enabled: true, baseURL: 'https://worker-gemini.example.workers.dev' },
+        },
+        lastHealth: {
+          groq: { status: 'unhealthy', reachable: false },
+          gemini: { status: 'healthy', reachable: true },
+        },
+      },
+    },
+    finalRouteTruth: {
+      sessionKind: 'hosted-web',
+      routeKind: 'cloud',
+      backendReachable: true,
+      routeUsable: true,
+      selectedProvider: 'groq',
+      executedProvider: 'groq',
+      requestedProvider: 'groq',
+    },
+    routePlan: {
+      requestedRouteMode: 'cloud-first',
+      effectiveRouteMode: 'cloud-first',
+      requestedProvider: 'groq',
+      selectedProvider: 'groq',
+      localAvailable: false,
+      cloudAvailable: true,
+    },
+    routeEvaluations: {
+      cloud: { available: true, usable: true },
+    },
+    selectedProvider: 'groq',
+    routeSelectedProvider: 'groq',
+    activeProvider: 'groq',
+    providerHealth: {
+      groq: { ok: false, state: 'unknown' },
+      gemini: { ok: true, state: 'healthy' },
+    },
+  }));
+
+  assert.equal(adjudicated.runtimeTruth.provider.executableProvider, 'hosted-cloud-worker');
+  assert.equal(adjudicated.runtimeTruth.provider.actualProviderUsed, 'gemini-hosted-cloud');
+  assert.equal(adjudicated.runtimeTruth.provider.providerSelectionReason, 'backend-stale-selected-provider-unusable-switched-to-hosted-alternative');
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.hostedWorkerReachable, true);
 });

@@ -33,35 +33,77 @@ function isSelectedProviderHealthy(selectedProvider, providerHealth = {}) {
 
 function resolveHostedWorkerExecution(runtimeContext = {}, providerHealth = {}, selectedProvider = '') {
   const hostedCloudConfig = asObject(runtimeContext.hostedCloudConfig);
-  const selected = String(hostedCloudConfig.selectedProvider || selectedProvider || '').trim().toLowerCase();
-  const providerConfig = asObject(hostedCloudConfig.providers)?.[selected] || {};
-  const workerUrl = String(
-    providerConfig.baseURL
-    || asObject(hostedCloudConfig.providerProxyUrls)?.[selected]
-    || hostedCloudConfig.proxyUrl
-    || '',
-  ).trim();
-  const enabled = hostedCloudConfig.enabled === true && providerConfig.enabled !== false;
-  const lastHealth = asObject(asObject(hostedCloudConfig.lastHealth)[selected]);
-  const healthState = asObject(providerHealth)[selected];
-  const reachable = enabled
-    && Boolean(workerUrl)
-    && (
-      lastHealth.reachable === true
-      || lastHealth.ok === true
-      || lastHealth.status === 'healthy'
-      || healthState?.ok === true
-      || healthState?.reachable === true
-      || healthState?.executableNow === true
-    );
+  const configuredSelected = String(hostedCloudConfig.selectedProvider || selectedProvider || '').trim().toLowerCase() || 'groq';
+  const providerOrder = [
+    configuredSelected,
+    ...['groq', 'gemini'].filter((providerKey) => providerKey !== configuredSelected),
+  ];
+  const providerCandidates = providerOrder.map((providerKey) => {
+    const providerConfig = asObject(hostedCloudConfig.providers)?.[providerKey] || {};
+    const workerUrl = String(
+      providerConfig.baseURL
+      || asObject(hostedCloudConfig.providerProxyUrls)?.[providerKey]
+      || hostedCloudConfig.proxyUrl
+      || '',
+    ).trim();
+    const enabled = hostedCloudConfig.enabled === true && providerConfig.enabled !== false;
+    const lastHealth = asObject(asObject(hostedCloudConfig.lastHealth)[providerKey]);
+    const healthState = asObject(providerHealth)[providerKey];
+    const reachable = enabled
+      && Boolean(workerUrl)
+      && (
+        lastHealth.reachable === true
+        || lastHealth.ok === true
+        || lastHealth.status === 'healthy'
+        || healthState?.ok === true
+        || healthState?.reachable === true
+        || healthState?.executableNow === true
+      );
+    return {
+      provider: providerKey,
+      workerUrl,
+      enabled,
+      reachable,
+      lastProbe: Object.keys(lastHealth).length ? lastHealth : (healthState || {}),
+      providerConfig,
+    };
+  });
+  const selectedCandidate = providerCandidates.find((candidate) => candidate.provider === configuredSelected) || providerCandidates[0];
+  const activeCandidate = selectedCandidate?.reachable
+    ? selectedCandidate
+    : providerCandidates.find((candidate) => candidate.reachable)
+    || selectedCandidate
+    || {
+      provider: configuredSelected,
+      workerUrl: '',
+      enabled: false,
+      reachable: false,
+      lastProbe: {},
+      providerConfig: {},
+    };
+  const reachable = activeCandidate.reachable === true;
+  const providerSwitchApplied = activeCandidate.provider !== configuredSelected && reachable;
+  const providerSelectionReason = providerSwitchApplied
+    ? 'backend-stale-selected-provider-unusable-switched-to-hosted-alternative'
+    : (reachable ? 'selected-hosted-provider-usable' : 'no-hosted-provider-usable');
   return {
-    selected,
-    workerUrl,
-    enabled,
+    selected: configuredSelected,
+    activeProvider: activeCandidate.provider,
+    workerUrl: activeCandidate.workerUrl,
+    enabled: activeCandidate.enabled === true,
     reachable,
     usable: reachable,
+    providerSwitchApplied,
+    providerSelectionReason,
     providerKind: reachable ? 'hosted-cloud-worker' : 'backend-provider',
-    lastProbe: Object.keys(lastHealth).length ? lastHealth : (healthState || {}),
+    lastProbe: activeCandidate.lastProbe || {},
+    providerCandidates: providerCandidates.map((candidate) => ({
+      provider: candidate.provider,
+      enabled: candidate.enabled === true,
+      reachable: candidate.reachable === true,
+      usable: candidate.reachable === true,
+      workerUrl: candidate.workerUrl,
+    })),
   };
 }
 
@@ -509,10 +551,13 @@ export function adjudicateRuntimeTruth({
       executableProvider,
       validatedProvider: executableProviderValidated ? executableProviderCandidate : '',
       actualProviderUsed: hostedWorkerPromoted
-        ? 'hosted-cloud-worker'
+        ? `${hostedWorkerExecution.activeProvider || hostedWorkerExecution.selected || 'unknown'}-hosted-cloud`
         : (activeProviderTruth || executableProvider || ''),
       providerKind: hostedWorkerExecution.providerKind,
       hostedWorker: hostedWorkerExecution,
+      providerSelectionReason: hostedWorkerPromoted
+        ? hostedWorkerExecution.providerSelectionReason
+        : '',
       providerHealthState: providerHealthStateFor(selectedProviderTruth, providerHealth),
       providerReason: String(
         selectedProviderHealth?.reason

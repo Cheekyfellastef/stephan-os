@@ -13,8 +13,8 @@ test('resolveHostedCloudDispatch switches to executable hosted alternative when 
   assert.match(source, /const fallbackCandidate = executableNow[\s\S]*providerCandidates\.find\(\(candidate\) => candidate\.enabled/m);
   assert.match(source, /providerSwitchApplied/);
   assert.match(source, /selected-provider-unavailable-switched-to-hosted-alternative/);
-  assert.match(source, /providerPath:\s*String\(routeDecision\?\.hostedCloudExecutionProvider \|\| `\$\{activeProvider\}-hosted-cloud`\)/);
-  assert.match(source, /actualProviderUsed:\s*`\$\{activeProvider\}-hosted-cloud-direct`/);
+  assert.match(source, /providerPath:\s*String\(routeDecision\?\.hostedCloudExecutionProvider \|\| 'hosted-cloud-worker'\)/);
+  assert.match(source, /actualProviderUsed:\s*`\$\{activeProvider\}-hosted-cloud`/);
   assert.match(source, /if \(hostedDispatch\?\.providerSwitchApplied === true && hostedDispatch\?\.executableNow === true\) return true;/);
 });
 
