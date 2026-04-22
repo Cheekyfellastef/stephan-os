@@ -1022,6 +1022,7 @@ export function AIStoreProvider({ children }) {
           : 0,
         lastUpdatedAt: hostedIdeaStagingQueue?.lastUpdatedAt || '',
       },
+      hostedCloudConfig: normalizeHostedCloudCognitionSettings(hostedCloudCognition),
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), { sourceFunction: 'AIStoreProvider.runtimeStatusModel.useMemo' }), [
@@ -1046,6 +1047,7 @@ export function AIStoreProvider({ children }) {
     acceptedSurfaceRules,
     bridgeTransportTruth,
     hostedIdeaStagingQueue,
+    hostedCloudCognition,
   ]);
   const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
     runtimeStatusModel,
