@@ -1,15 +1,29 @@
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
 
-const DEFAULT_RUNTIME_STATUS_MODEL = Object.freeze(createRuntimeStatusModel({
-  appId: 'stephanos',
-  appName: 'Stephanos Mission Console',
-  validationState: 'launching',
-  backendAvailable: false,
-  runtimeContext: {},
-}));
+let defaultRuntimeStatusModelCache = null;
+let pendingRuntimeStatusModelCache = null;
 
-const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
-  ...DEFAULT_RUNTIME_STATUS_MODEL,
+function getDefaultRuntimeStatusModel() {
+  if (defaultRuntimeStatusModelCache) {
+    return defaultRuntimeStatusModelCache;
+  }
+  defaultRuntimeStatusModelCache = Object.freeze(createRuntimeStatusModel({
+    appId: 'stephanos',
+    appName: 'Stephanos Mission Console',
+    validationState: 'launching',
+    backendAvailable: false,
+    runtimeContext: {},
+  }));
+  return defaultRuntimeStatusModelCache;
+}
+
+function getPendingRuntimeStatusModel() {
+  if (pendingRuntimeStatusModelCache) {
+    return pendingRuntimeStatusModelCache;
+  }
+  const defaultRuntimeStatusModel = getDefaultRuntimeStatusModel();
+  pendingRuntimeStatusModelCache = Object.freeze({
+    ...defaultRuntimeStatusModel,
   appLaunchState: 'pending',
   requestedRouteMode: 'pending',
   effectiveRouteMode: 'pending',
@@ -28,11 +42,11 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
   readyLocalProviders: [],
   attemptOrder: [],
   runtimeContext: {
-    ...DEFAULT_RUNTIME_STATUS_MODEL.runtimeContext,
+    ...defaultRuntimeStatusModel.runtimeContext,
     nodeAddressSource: 'unknown',
   },
   finalRoute: {
-    ...DEFAULT_RUNTIME_STATUS_MODEL.finalRoute,
+    ...defaultRuntimeStatusModel.finalRoute,
     source: 'unknown',
     preferredTarget: 'unavailable',
     actualTarget: 'unavailable',
@@ -220,7 +234,9 @@ const PENDING_RUNTIME_STATUS_MODEL = Object.freeze({
     blockingIssueCodes: [],
     operatorSummary: '',
   },
-});
+  });
+  return pendingRuntimeStatusModelCache;
+}
 
 function normalizeArray(value, fallback = []) {
   return Array.isArray(value) ? value : fallback;
@@ -255,7 +271,8 @@ function preferNonPlaceholderTruth(...candidates) {
 export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const hasCandidate = runtimeStatusModel && typeof runtimeStatusModel === 'object';
   const candidate = hasCandidate ? runtimeStatusModel : {};
-  const baseModel = hasCandidate ? DEFAULT_RUNTIME_STATUS_MODEL : PENDING_RUNTIME_STATUS_MODEL;
+  const baseModel = hasCandidate ? getDefaultRuntimeStatusModel() : getPendingRuntimeStatusModel();
+  const pendingRuntimeStatusModel = getPendingRuntimeStatusModel();
 
   const finalRouteCandidate = candidate.finalRoute && typeof candidate.finalRoute === 'object' ? candidate.finalRoute : {};
   const runtimeContextCandidate = candidate.runtimeContext && typeof candidate.runtimeContext === 'object' ? candidate.runtimeContext : {};
@@ -264,7 +281,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     : {};
 
   const hasFinalRouteCandidate = Object.keys(finalRouteCandidate).length > 0 || Object.keys(runtimeContextFinalRouteCandidate).length > 0;
-  const finalRouteBase = hasFinalRouteCandidate ? baseModel.finalRoute : PENDING_RUNTIME_STATUS_MODEL.finalRoute;
+  const finalRouteBase = hasFinalRouteCandidate ? baseModel.finalRoute : pendingRuntimeStatusModel.finalRoute;
 
   const finalRoute = {
     ...finalRouteBase,
@@ -294,14 +311,14 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
   const routeKind = finalRoute.routeKind ?? candidate.routeKind ?? baseModel.routeKind;
   const preferredTarget = finalRoute.preferredTarget ?? candidate.preferredTarget ?? baseModel.preferredTarget;
   const actualTargetUsed = finalRoute.actualTarget ?? candidate.actualTargetUsed ?? baseModel.actualTargetUsed;
-  const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : PENDING_RUNTIME_STATUS_MODEL.nodeAddressSource);
-  const requestedProviderProjection = candidate.requestedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.requestedProvider;
-  const selectedProviderProjection = candidate.routeSelectedProvider || PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth.selectedProvider;
+  const nodeAddressSource = finalRoute.source ?? candidate.nodeAddressSource ?? (hasFinalRouteCandidate ? baseModel.nodeAddressSource : pendingRuntimeStatusModel.nodeAddressSource);
+  const requestedProviderProjection = candidate.requestedProvider || pendingRuntimeStatusModel.finalRouteTruth.requestedProvider;
+  const selectedProviderProjection = candidate.routeSelectedProvider || pendingRuntimeStatusModel.finalRouteTruth.selectedProvider;
   const executedProviderProjection = '';
 
   const finalRouteTruth = candidate.finalRouteTruth && typeof candidate.finalRouteTruth === 'object'
     ? {
-      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      ...pendingRuntimeStatusModel.finalRouteTruth,
       ...candidate.finalRouteTruth,
       routeKind: candidate.finalRouteTruth.routeKind || routeKind,
       preferredTarget: candidate.finalRouteTruth.preferredTarget || preferredTarget,
@@ -314,7 +331,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       uiReachabilityState: normalizeUiReachabilityState(candidate.finalRouteTruth.uiReachabilityState, candidate.finalRouteTruth.uiReachable),
     }
     : {
-      ...PENDING_RUNTIME_STATUS_MODEL.finalRouteTruth,
+      ...pendingRuntimeStatusModel.finalRouteTruth,
       routeKind,
       preferredRoute: candidate.preferredRoute || routeKind,
       preferredTarget,
@@ -329,7 +346,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
 
   const runtimeTruth = candidate.runtimeTruth && typeof candidate.runtimeTruth === 'object'
     ? {
-      ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth,
+      ...pendingRuntimeStatusModel.runtimeTruth,
       ...candidate.runtimeTruth,
       selectedRoute: candidate.runtimeTruth.selectedRoute || finalRouteTruth.routeKind || routeKind,
       preferredTarget: candidate.runtimeTruth.preferredTarget || finalRouteTruth.preferredTarget || preferredTarget,
@@ -340,29 +357,29 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       executedProvider: candidate.runtimeTruth.executedProvider || finalRouteTruth.executedProvider || executedProviderProjection,
       routePreferenceOrder: normalizeArray(candidate.runtimeTruth.routePreferenceOrder, []),
       session: candidate.runtimeTruth.session && typeof candidate.runtimeTruth.session === 'object'
-        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.session, ...candidate.runtimeTruth.session }
-        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.session },
+        ? { ...pendingRuntimeStatusModel.runtimeTruth.session, ...candidate.runtimeTruth.session }
+        : { ...pendingRuntimeStatusModel.runtimeTruth.session },
       route: candidate.runtimeTruth.route && typeof candidate.runtimeTruth.route === 'object'
-        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route, ...candidate.runtimeTruth.route }
-        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route },
+        ? { ...pendingRuntimeStatusModel.runtimeTruth.route, ...candidate.runtimeTruth.route }
+        : { ...pendingRuntimeStatusModel.runtimeTruth.route },
       reachabilityTruth: candidate.runtimeTruth.reachabilityTruth && typeof candidate.runtimeTruth.reachabilityTruth === 'object'
-        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth, ...candidate.runtimeTruth.reachabilityTruth }
-        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth },
+        ? { ...pendingRuntimeStatusModel.runtimeTruth.reachabilityTruth, ...candidate.runtimeTruth.reachabilityTruth }
+        : { ...pendingRuntimeStatusModel.runtimeTruth.reachabilityTruth },
       provider: candidate.runtimeTruth.provider && typeof candidate.runtimeTruth.provider === 'object'
-        ? { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider, ...candidate.runtimeTruth.provider }
-        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider },
+        ? { ...pendingRuntimeStatusModel.runtimeTruth.provider, ...candidate.runtimeTruth.provider }
+        : { ...pendingRuntimeStatusModel.runtimeTruth.provider },
       diagnostics: candidate.runtimeTruth.diagnostics && typeof candidate.runtimeTruth.diagnostics === 'object'
         ? {
-          ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.diagnostics,
+          ...pendingRuntimeStatusModel.runtimeTruth.diagnostics,
           ...candidate.runtimeTruth.diagnostics,
           invariantWarnings: normalizeArray(candidate.runtimeTruth.diagnostics.invariantWarnings),
           blockingIssues: normalizeArray(candidate.runtimeTruth.diagnostics.blockingIssues),
           operatorGuidance: normalizeArray(candidate.runtimeTruth.diagnostics.operatorGuidance),
         }
-        : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.diagnostics },
+        : { ...pendingRuntimeStatusModel.runtimeTruth.diagnostics },
     }
     : {
-      ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth,
+      ...pendingRuntimeStatusModel.runtimeTruth,
       sessionKind: finalRouteTruth.sessionKind,
       deviceContext: finalRouteTruth.deviceContext,
       requestedRouteMode: finalRouteTruth.requestedRouteMode,
@@ -391,7 +408,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       routePreferenceOrder: normalizeArray(candidate.routePreferenceOrder, []),
       computedFromPersistence: false,
       route: {
-        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.route,
+        ...pendingRuntimeStatusModel.runtimeTruth.route,
         requestedMode: finalRouteTruth.requestedRouteMode || 'pending',
         effectiveMode: finalRouteTruth.effectiveRouteMode || 'pending',
         selectedRouteKind: finalRouteTruth.routeKind || routeKind || 'unavailable',
@@ -402,7 +419,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
         fallbackActive: finalRouteTruth.fallbackActive === true,
       },
       reachabilityTruth: {
-        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.reachabilityTruth,
+        ...pendingRuntimeStatusModel.runtimeTruth.reachabilityTruth,
         backendReachable: finalRouteTruth.backendReachable === true,
         uiReachableState: finalRouteTruth.uiReachabilityState || 'unknown',
         uiReachable: typeof finalRouteTruth.uiReachable === 'boolean'
@@ -412,7 +429,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
         selectedRouteUsable: finalRouteTruth.routeUsable === true,
       },
       provider: {
-        ...PENDING_RUNTIME_STATUS_MODEL.runtimeTruth.provider,
+        ...pendingRuntimeStatusModel.runtimeTruth.provider,
         requestedProvider: finalRouteTruth.requestedProvider || requestedProviderProjection,
         selectedProvider: finalRouteTruth.selectedProvider || selectedProviderProjection,
         executableProvider: finalRouteTruth.executedProvider || executedProviderProjection,
@@ -424,7 +441,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
       issues: normalizeArray(candidate.runtimeAdjudication.issues),
       computedFromPersistence: candidate.runtimeAdjudication.computedFromPersistence === true,
     }
-    : { ...PENDING_RUNTIME_STATUS_MODEL.runtimeAdjudication };
+    : { ...pendingRuntimeStatusModel.runtimeAdjudication };
 
   const guardrails = candidate.guardrails && typeof candidate.guardrails === 'object'
     ? {
@@ -445,7 +462,7 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
     : { ok: true, hasErrors: false, hasWarnings: false, errors: [], warnings: [], invariants: [], summary: { total: 0, errors: 0, warnings: 0 } };
 
   const derivedCanonicalRouteRuntimeTruth = {
-    ...PENDING_RUNTIME_STATUS_MODEL.canonicalRouteRuntimeTruth,
+    ...pendingRuntimeStatusModel.canonicalRouteRuntimeTruth,
     sessionKind: runtimeTruth.session?.sessionKind || finalRouteTruth.sessionKind || 'unknown',
     sessionReality: runtimeTruth.session?.nonLocalSession ? 'non-local' : 'local-desktop',
     deviceContext: runtimeTruth.session?.deviceContext || finalRouteTruth.deviceContext || 'unknown',
@@ -532,4 +549,4 @@ export function ensureRuntimeStatusModel(runtimeStatusModel) {
   };
 }
 
-export { DEFAULT_RUNTIME_STATUS_MODEL, PENDING_RUNTIME_STATUS_MODEL };
+export { getDefaultRuntimeStatusModel, getPendingRuntimeStatusModel };
