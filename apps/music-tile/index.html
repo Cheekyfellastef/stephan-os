@@ -92,8 +92,14 @@
       <p id="player-error" class="player-error" hidden></p>
       <p id="player-now-playing" class="player-now-playing">No track selected.</p>
       <p id="player-channel" class="player-channel">Source: —</p>
-      <p id="player-mode-badge" class="player-mode-badge">Mode: Single</p>
-      <p id="player-session-state" class="player-session-state">State: Ready</p>
+      <div class="player-badges">
+        <span id="player-mode-badge" class="player-mode-badge">Single</span>
+        <span id="player-rail-badge" class="player-mode-badge">Idle</span>
+        <span id="player-flow-badge" class="player-mode-badge">Flow Off</span>
+        <span id="player-resume-badge" class="player-mode-badge" hidden>Resume Available</span>
+      </div>
+      <p id="player-session-state" class="player-session-state">State: idle</p>
+      <p id="player-continuity-note" class="muted"></p>
       <div id="player-fallback-actions" class="player-fallback-actions" hidden>
         <a id="player-fallback-open-btn" class="ghost button-link" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer" aria-disabled="true">Open in YouTube</a>
         <button id="player-fallback-next-btn">Skip to Next</button>
