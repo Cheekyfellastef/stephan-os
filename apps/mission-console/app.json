@@ -1,7 +1,7 @@
 {
   "name": "Mission Console",
-  "icon": "🎛️",
-  "entry": "index.html",
+  "icon": "\ud83c\udf9b\ufe0f",
+  "entry": "../stephanos/dist/index.html?surface=mission-console&destination=mission-console",
   "type": "system",
   "packaging": "classic-static",
   "description": "Chat workspace for Stephanos, agents, and governed OpenClaw",

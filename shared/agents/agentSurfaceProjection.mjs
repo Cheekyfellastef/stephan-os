@@ -7,6 +7,7 @@ export function resolveAgentSurfaceMode(surfaceParam = '') {
   if (normalized === 'cockpit') return 'cockpit';
   if (normalized === 'agents') return 'agents';
   if (normalized === 'mission-console') return 'mission-console';
+  if (normalized === 'openclaw') return 'openclaw';
   return 'mission-control';
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "OpenClaw",
-  "icon": "🦾",
-  "entry": "index.html",
+  "icon": "\ud83e\uddbe",
+  "entry": "../stephanos/dist/index.html?surface=openclaw&destination=openclaw",
   "type": "system",
   "packaging": "classic-static",
   "description": "Proposal-only OpenClaw workspace under Stephanos control",
