@@ -26,6 +26,7 @@ import TelemetryFeed from './components/system/TelemetryFeed';
 import PromptBuilder from './components/system/PromptBuilder.jsx';
 import AgentsTile from './components/AgentsTile.jsx';
 import AgentQuickControls from './components/AgentQuickControls.jsx';
+import OpenClawTile from './components/OpenClawTile.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -552,6 +553,19 @@ export default function App() {
       className: 'pane-span-2',
       render: () => <HostedIdeaStagingPanel />,
     },
+    {
+      id: 'openClawPanel',
+      className: 'pane-span-2',
+      render: () => (
+        <OpenClawTile
+          uiLayout={safeUiLayout}
+          togglePanel={togglePanel}
+          runtimeStatusModel={runtimeStatusModel}
+          finalRouteTruth={routeTruthView}
+          branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+        />
+      ),
+    },
   ]), [
     aiActionState,
     commandHistory,
@@ -571,6 +585,8 @@ export default function App() {
     runtimeStatus,
     finalRouteTruth,
     runtimeStatus.dependencySummary,
+    runtimeStatus.runtimeContext?.repoBranch,
+    runtimeStatus.runtimeTruth?.repoBranch,
     safeApiStatus.detail,
     setInput,
     togglePanel,
