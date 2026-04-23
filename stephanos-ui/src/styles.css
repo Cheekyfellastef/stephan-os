@@ -1814,6 +1814,152 @@ pre {
   color: #b6d6ee;
 }
 
+.telemetry-trace-shell {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.telemetry-trace-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.telemetry-trace-copy-button.success {
+  background: rgba(37, 135, 86, 0.88);
+  border-color: rgba(126, 255, 189, 0.65);
+  color: #ddffe8;
+}
+
+.telemetry-trace-copy-button.failure {
+  background: rgba(113, 40, 55, 0.84);
+  border-color: rgba(255, 143, 143, 0.65);
+  color: #ffe0e0;
+}
+
+.telemetry-trace-view-toggle.active {
+  border-color: rgba(111, 194, 255, 0.75);
+  color: #d5ebff;
+}
+
+.telemetry-trace-copy-notice {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.telemetry-trace-copy-notice.ready {
+  color: #9ee9c8;
+}
+
+.telemetry-trace-copy-notice.failure {
+  color: #ffb0b0;
+}
+
+.telemetry-trace-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.telemetry-trace-entry {
+  border: 1px solid rgba(99, 146, 220, 0.35);
+  background: rgba(7, 14, 28, 0.55);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+}
+
+.telemetry-trace-entry.blocked,
+.telemetry-trace-entry.failed {
+  border-color: rgba(255, 139, 139, 0.72);
+  background: rgba(53, 18, 24, 0.6);
+}
+
+.telemetry-trace-entry.active {
+  border-color: rgba(137, 197, 255, 0.72);
+}
+
+.telemetry-trace-entry.passed {
+  border-color: rgba(132, 229, 181, 0.65);
+}
+
+.telemetry-trace-headline,
+.telemetry-trace-meta,
+.telemetry-trace-detail {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.telemetry-trace-headline {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #e0ebff;
+}
+
+.telemetry-trace-step-index {
+  color: #93bde7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.telemetry-trace-meta {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+  color: #b8d4ed;
+}
+
+.telemetry-trace-status {
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(137, 191, 248, 0.45);
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+}
+
+.telemetry-trace-status.blocked,
+.telemetry-trace-status.failed {
+  border-color: rgba(255, 148, 148, 0.75);
+  color: #ffd3d3;
+}
+
+.telemetry-trace-status.passed {
+  border-color: rgba(131, 230, 181, 0.65);
+  color: #b8ffd7;
+}
+
+.telemetry-trace-status.active {
+  border-color: rgba(133, 194, 255, 0.72);
+  color: #d2ecff;
+}
+
+.telemetry-trace-status.pending {
+  border-color: rgba(153, 176, 205, 0.52);
+  color: #c7d8ec;
+}
+
+.telemetry-trace-detail {
+  margin-top: 0.2rem;
+  color: #c2dbef;
+}
+
+.telemetry-trace-blocked {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #ffc0c0;
+}
+
+.telemetry-feed-legacy-heading {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: #9ec9f0;
+}
+
 .prompt-builder-panel .panel-body {
   display: grid;
   gap: 10px;
