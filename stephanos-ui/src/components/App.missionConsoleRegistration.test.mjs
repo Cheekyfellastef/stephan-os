@@ -10,6 +10,8 @@ test('App registers Mission Console pane and keeps OpenClaw tile present', async
   assert.equal(source.includes("import MissionConsoleTile from './components/MissionConsoleTile.jsx';"), true);
   assert.equal(source.includes("id: 'missionConsolePanel'"), true);
   assert.equal(source.includes('<MissionConsoleTile'), true);
+  assert.equal(source.includes("const missionConsoleSurfaceMode = surfaceMode === 'mission-console';"), true);
+  assert.equal(source.includes('MISSION CONSOLE SURFACE'), true);
   assert.equal(source.includes("id: 'openClawPanel'"), true);
   assert.equal(source.includes('<OpenClawTile'), true);
 });

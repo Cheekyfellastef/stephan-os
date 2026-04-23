@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mission Console Launcher Bridge</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: Inter, system-ui, sans-serif;
+        color: #dff4ff;
+        background: linear-gradient(180deg, #041226, #02060d);
+      }
+      p {
+        max-width: 36rem;
+        text-align: center;
+        padding: 1rem;
+      }
+      code {
+        color: #8dd3ff;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Opening <strong>Mission Console</strong> runtime workspace…<br />
+      If redirect does not complete, open <code>../stephanos/dist/index.html?surface=mission-console&amp;destination=mission-console</code>.</p>
+    <script>
+      (function redirectToMissionConsoleRuntime() {
+        const missionConsoleUrl = new URL('../stephanos/dist/index.html', window.location.href);
+        missionConsoleUrl.searchParams.set('surface', 'mission-console');
+        missionConsoleUrl.searchParams.set('destination', 'mission-console');
+        window.location.replace(missionConsoleUrl.href);
+      }());
+    </script>
+  </body>
+</html>

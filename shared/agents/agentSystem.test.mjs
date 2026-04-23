@@ -188,6 +188,7 @@ test('agents surface mode remains runtime projection consumer with launcher-safe
   const projection = buildAgentSurfaceProjection({ finalAgentView, surfaceMode: resolveAgentSurfaceMode('agents') });
   assert.equal(resolveAgentSurfaceMode('agents'), 'agents');
   assert.equal(resolveAgentSurfaceMode('cockpit'), 'cockpit');
+  assert.equal(resolveAgentSurfaceMode('mission-console'), 'mission-console');
   assert.equal(resolveAgentSurfaceMode('unknown'), 'mission-control');
   assert.equal(projection.surfaceMode, 'agents');
   assert.equal(projection.launcherSummary.status, 'acting');
