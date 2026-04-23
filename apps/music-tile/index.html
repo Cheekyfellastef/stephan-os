@@ -70,7 +70,6 @@
         <label><input type="checkbox" id="unseen-only-toggle" /> Unseen only</label>
         <label><input type="checkbox" id="hide-broken-toggle" checked /> Hide broken items</label>
         <label><input type="checkbox" id="show-external-only-toggle" checked /> Show external-only items</label>
-        <label><input type="checkbox" id="prefer-inline-toggle" checked /> Prefer inline playable</label>
       </div>
 
       <div class="action-row">
@@ -78,7 +77,7 @@
         <button id="flow-mode-btn">Flow Mode</button>
         <button id="reset-btn" class="ghost">Reset</button>
       </div>
-      <p class="muted">Uses YouTube Data API + IFrame Player API (official). No HTML scraping, no gated content access.</p>
+      <p class="muted">Uses YouTube Data API (official). Playback opens externally for reliability.</p>
     </section>
 
     <section class="panel summary-panel">
@@ -86,51 +85,29 @@
       <div class="summary-grid" id="summary-grid"></div>
     </section>
 
-    <section class="panel player-panel">
-      <h2>Embedded Player</h2>
-      <div class="player-frame-wrap" id="player-frame-wrap">
-        <div class="player-frame" id="yt-player-container" aria-label="YouTube embedded player"></div>
+    <section class="panel playback-panel">
+      <h2>Playback Route</h2>
+      <p id="playback-status" class="muted">Route: YouTube external open</p>
+      <p id="playback-now-playing" class="playback-now-playing">No item selected yet.</p>
+      <p id="playback-channel" class="playback-channel">Source: —</p>
+      <div class="playback-badges">
+        <span id="playback-mode-badge" class="player-mode-badge">Single Item</span>
+        <span id="playback-flow-badge" class="player-mode-badge">Flow Off</span>
+        <span id="playback-resume-badge" class="player-mode-badge" hidden>Resume Available</span>
       </div>
-      <p id="player-status" class="muted">Player: idle</p>
-      <p id="player-error" class="player-error" hidden></p>
-      <p id="player-now-playing" class="player-now-playing">No track selected.</p>
-      <p id="player-channel" class="player-channel">Source: —</p>
-      <div class="player-badges">
-        <span id="player-mode-badge" class="player-mode-badge">Single</span>
-        <span id="player-rail-badge" class="player-mode-badge">Idle</span>
-        <span id="player-flow-badge" class="player-mode-badge">Flow Off</span>
-        <span id="player-resume-badge" class="player-mode-badge" hidden>Resume Available</span>
-      </div>
-      <p id="player-session-state" class="player-session-state">State: idle</p>
-      <p id="player-continuity-note" class="muted"></p>
-      <div id="player-fallback-actions" class="player-fallback-actions" hidden>
-        <a id="player-fallback-open-btn" class="ghost button-link" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer" aria-disabled="true">Open in YouTube</a>
-        <button id="player-fallback-next-btn">Skip to Next</button>
-        <button id="player-fallback-back-btn" class="ghost">Back to Results</button>
-      </div>
-      <div class="player-controls-grid">
+      <p id="playback-session-state" class="player-session-state">State: idle</p>
+      <p id="playback-continuity-note" class="muted"></p>
+      <div class="playback-controls-grid">
         <div class="player-controls-group" aria-label="Playback controls">
-          <button id="player-play-btn">Play</button>
-          <button id="player-pause-btn" class="ghost">Pause</button>
-          <button id="player-prev-btn" class="ghost">Prev</button>
-          <button id="player-next-btn">Next</button>
-        </div>
-        <div class="player-controls-group" aria-label="View controls">
-          <button id="player-fullscreen-btn" class="ghost">Fullscreen</button>
-          <button id="player-exit-fullscreen-btn" class="ghost">Exit Fullscreen</button>
+          <button id="playback-play-btn">Play</button>
           <a id="open-in-youtube-btn" class="ghost button-link" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer" aria-disabled="true">Open in YouTube</a>
         </div>
         <div class="player-controls-group" aria-label="Flow controls">
-          <button id="player-stop-btn" class="ghost">Stop Flow</button>
+          <button id="playback-flow-btn" class="ghost">Flow</button>
+          <button id="playback-next-btn" class="ghost">Next</button>
+          <button id="playback-prev-btn" class="ghost">Prev</button>
           <button id="player-resume-flow-btn" class="ghost">Resume Flow</button>
-          <button id="player-mute-btn" class="ghost">Mute</button>
         </div>
-      </div>
-      <div class="player-controls compact">
-        <label>Volume
-          <input id="player-volume" type="range" min="0" max="100" step="1" value="50" />
-        </label>
-        <span id="player-position">0s / 0s</span>
       </div>
     </section>
 
