@@ -177,8 +177,10 @@ function renderQueue() {
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
       <div class="track-actions">
-        <button data-action="play-now" data-id="${item.id}" class="inline-btn">Play In Tile</button>
-        <a href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button data-action="play-now" data-id="${item.id}" class="inline-btn primary">Play</button>
+        <button data-action="open-youtube" data-id="${item.id}" class="inline-btn">Open in YouTube</button>
+        <button data-action="play-inline" data-id="${item.id}" class="inline-btn ghost">Play Inline</button>
+        <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
         <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
         <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
         <button data-action="rate" data-id="${item.id}" data-rating="0" class="inline-btn">0</button>
@@ -358,6 +360,14 @@ async function loadMediaItemIntoPlayer(item, { autoplay = false, mode = 'single'
   }
 }
 
+function setInlinePlaybackUnavailableMessage(message) {
+  state.playerErrorType = 'embedBlocked';
+  state.playerError = `${message} Use "Open in YouTube" for reliable playback.`;
+  playbackController.onPlaybackError('embedBlocked');
+  renderPlayerPanel();
+  renderDebug();
+}
+
 async function playFlowFromCurrentQueue() {
   const flowItem = playbackController.startOrResumeFlow(state.queue);
   if (!flowItem) {
@@ -402,14 +412,27 @@ function markCurrentItemEmbedBlocked() {
   persistState();
 }
 
+function openMediaItemInYouTube(item) {
+  if (!item?.id) return false;
+  const canonicalWatchUrl = `${YOUTUBE_WATCH}${encodeURIComponent(item.id)}`;
+  const openedWindow = window.open(canonicalWatchUrl, '_blank', 'noopener,noreferrer');
+  if (!openedWindow) {
+    state.playerErrorType = 'network';
+    state.playerError = 'Unable to open YouTube (popup blocked). Allow popups and try again.';
+    renderPlayerPanel();
+    renderDebug();
+    return false;
+  }
+  return true;
+}
+
 function openCurrentItemInYouTube() {
   const current = getCurrentMediaItem();
   if (!current?.id) return;
-  const canonicalWatchUrl = `${YOUTUBE_WATCH}${encodeURIComponent(current.id)}`;
-  playerAdapter.pause();
+  const didOpen = openMediaItemInYouTube(current);
+  if (!didOpen) return;
   playbackController.onExternalOpen();
   renderPlayerPanel();
-  window.open(canonicalWatchUrl, '_blank', 'noopener,noreferrer');
 }
 
 function returnToResults() {
@@ -436,7 +459,41 @@ async function handleQueueAction(event) {
   if (action === 'play-now') {
     const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
     if (selected) {
-      await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
+      state.currentMediaItemId = selected.id;
+      playbackController.enterSingle(selected, { queue: state.queue });
+      if (openMediaItemInYouTube(selected)) {
+        playbackController.onExternalOpen();
+      }
+    }
+  }
+
+  if (action === 'open-youtube') {
+    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    if (selected) {
+      state.currentMediaItemId = selected.id;
+      if (openMediaItemInYouTube(selected)) {
+        playbackController.onExternalOpen();
+      }
+    }
+  }
+
+  if (action === 'play-inline') {
+    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    if (selected) {
+      if (selected.embedBlocked) {
+        state.currentMediaItemId = selected.id;
+        setInlinePlaybackUnavailableMessage('Play Inline unavailable: this video disables embedding.');
+      } else {
+        await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
+      }
+    }
+  }
+
+  if (action === 'start-flow') {
+    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    if (selected) {
+      playbackController.startFlowAtItem(selected, state.queue);
+      await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'flow' });
     }
   }
 
@@ -463,7 +520,10 @@ function onPlayerEnded() {
   rebuildFlowQueue();
   renderSummary();
   renderQueue();
-  void playNextInQueue();
+  const session = sessionStore.read();
+  if (session.mode === 'flow') {
+    void playNextInQueue();
+  }
 }
 
 function handlePlayerEvent(event) {
@@ -505,7 +565,7 @@ function handlePlayerEvent(event) {
 
     if (errorType === 'embedBlocked') {
       markCurrentItemEmbedBlocked();
-      state.playerError = 'This video cannot be played inside the tile because embedding is disabled by the video owner.';
+      state.playerError = 'Play Inline unavailable: embedding is disabled by the video owner. Use Open in YouTube.';
       const session = sessionStore.read();
       if (session.mode === 'flow') {
         clearTimeout(state.embedBlockedSkipTimer);
@@ -562,7 +622,12 @@ function bindControls() {
     state.playbackIntentEstablished = true;
     state.playerError = '';
     if (state.currentMediaItemId) {
-      playerAdapter.play();
+      const current = getCurrentMediaItem();
+      if (current?.embedBlocked) {
+        openCurrentItemInYouTube();
+      } else {
+        playerAdapter.play();
+      }
     } else {
       void playFlowFromCurrentQueue();
     }

@@ -42,6 +42,11 @@ test('playback controller starts flow and advances queue while patching session'
   controller.onPlaybackError('embedBlocked');
   assert.equal(sessionStore.read().errorType, 'embedBlocked');
 
+  const resumedFromSelection = controller.startFlowAtItem(item('a'), [item('a'), item('b')]);
+  assert.equal(resumedFromSelection.id, 'a');
+  assert.equal(sessionStore.read().mode, 'flow');
+  assert.equal(sessionStore.read().currentMediaItemId, 'a');
+
   controller.clearCurrentSelection();
   assert.equal(sessionStore.read().currentMediaItemId, '');
   assert.equal(sessionStore.read().flowState, 'idle');

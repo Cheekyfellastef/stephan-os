@@ -46,6 +46,22 @@ export function createMusicTilePlaybackController({
     return item;
   }
 
+  function startFlowAtItem(item, queue = []) {
+    if (!item?.id) return null;
+    const selected = flowController.selectById(item.id) || item;
+    sessionStore.patch({
+      mode: 'flow',
+      flowState: 'active',
+      queueIds: snapshotQueue(queue),
+      currentMediaItemId: selected.id,
+      currentIndex: flowController.getCurrentIndex(),
+      externallyOpened: false,
+      resumeAvailable: false,
+      errorType: 'none',
+    });
+    return selected;
+  }
+
   function onFlowEnded() {
     return sessionStore.patch({
       mode: 'flow',
@@ -150,6 +166,7 @@ export function createMusicTilePlaybackController({
   return {
     enterSingle,
     startOrResumeFlow,
+    startFlowAtItem,
     onFlowEnded,
     onExternalOpen,
     onPaused,
