@@ -246,34 +246,11 @@ input {
 }
 
 
-.player-panel {
+.playback-panel {
   grid-column: 2;
 }
 
-.player-frame-wrap {
-  width: 100%;
-  max-width: 100%;
-}
-
-.player-frame {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  min-height: 220px;
-  border: 1px solid #27588e;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #01050d;
-}
-
-.player-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 12px;
-  align-items: center;
-}
-
-.player-controls-grid {
+.playback-controls-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -290,48 +267,26 @@ input {
   background: rgba(4, 11, 21, 0.75);
 }
 
-.player-controls-grid button,
-.player-controls-grid .button-link,
-.player-fallback-actions button,
-.player-fallback-actions .button-link {
+.playback-controls-grid button,
+.playback-controls-grid .button-link {
   min-height: 42px;
   padding: 10px 14px;
 }
 
-.player-controls.compact {
-  justify-content: space-between;
-}
-
-.player-controls label {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.player-controls input[type='range'] {
-  width: 140px;
-}
-
-.player-fallback-actions {
+.playback-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   margin-top: 10px;
 }
 
-.player-error {
-  color: #ff9fa5;
-  font-size: 0.86rem;
-  margin-top: 8px;
-}
-
-.player-now-playing {
+.playback-now-playing {
   margin-top: 8px;
   color: #d8ebff;
   font-weight: 620;
 }
 
-.player-channel {
+.playback-channel {
   margin-top: 4px;
   color: #9ec4ef;
   font-size: 0.88rem;
@@ -382,13 +337,6 @@ input {
   font-size: 0.84rem;
 }
 
-.player-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
 .player-mode-badge {
   border: 1px solid #2b5f8f;
   border-radius: 999px;
@@ -396,16 +344,8 @@ input {
   background: rgba(10, 25, 43, 0.8);
 }
 
-.player-controls button[hidden] {
-  display: none;
-}
-
 @media (max-width: 780px) {
   .player-controls-group {
     width: 100%;
-  }
-
-  .player-controls.compact {
-    justify-content: flex-start;
   }
 }
