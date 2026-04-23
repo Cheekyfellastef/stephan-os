@@ -46,7 +46,11 @@ const elements = {
   playerNowPlaying: document.getElementById('player-now-playing'),
   playerChannel: document.getElementById('player-channel'),
   playerModeBadge: document.getElementById('player-mode-badge'),
+  playerRailBadge: document.getElementById('player-rail-badge'),
+  playerFlowBadge: document.getElementById('player-flow-badge'),
+  playerResumeBadge: document.getElementById('player-resume-badge'),
   playerSessionState: document.getElementById('player-session-state'),
+  playerContinuityNote: document.getElementById('player-continuity-note'),
   openInYoutube: document.getElementById('open-in-youtube-btn'),
   playBtn: document.getElementById('player-play-btn'),
   pauseBtn: document.getElementById('player-pause-btn'),
@@ -81,6 +85,8 @@ const state = {
   playerError: '',
   playbackIntentEstablished: false,
   playerErrorType: 'none',
+  playbackMode: 'idle',
+  fullscreenActive: false,
   positionTimer: null,
   embedBlockedSkipTimer: null,
 };
@@ -177,7 +183,7 @@ function renderQueue() {
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
       <div class="track-actions">
-        <button data-action="play-now" data-id="${item.id}" class="inline-btn primary">Play</button>
+        <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Play</a>
         <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
         <button data-action="play-inline" data-id="${item.id}" class="inline-btn ghost">Play Inline</button>
         <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
@@ -185,8 +191,11 @@ function renderQueue() {
         <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
         <button data-action="rate" data-id="${item.id}" data-rating="0" class="inline-btn">0</button>
         <button data-action="rate" data-id="${item.id}" data-rating="-3" class="inline-btn">-3</button>
+        <button data-action="save" data-id="${item.id}" class="inline-btn">Save</button>
+        <button data-action="more-like" data-id="${item.id}" class="inline-btn">More like this</button>
+        <button data-action="less-like" data-id="${item.id}" class="inline-btn">Less like this</button>
         <button data-action="trust" data-channel="${item.channelId}" class="inline-btn">Trust Channel</button>
-        <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Block Channel</button>
+        <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Hide Source</button>
       </div>
     </li>
   `).join('');
@@ -203,8 +212,14 @@ function renderPlayerPanel() {
   elements.playerError.hidden = !state.playerError;
   elements.playerNowPlaying.textContent = current ? current.title : 'No track selected.';
   elements.playerChannel.textContent = current ? `Source: ${current.channelName}` : 'Source: —';
-  elements.playerModeBadge.textContent = `Mode: ${session.mode === 'flow' ? 'Flow' : 'Single'}`;
+  elements.playerModeBadge.textContent = session.mode === 'flow' ? 'Flow Active' : 'Single Item';
+  elements.playerRailBadge.textContent = state.playbackMode === 'external' ? 'YouTube Rail' : state.playbackMode === 'inline' ? 'Inline Rail' : 'Idle Rail';
+  elements.playerFlowBadge.textContent = session.mode === 'flow' ? `Flow #${Math.max(1, session.currentIndex + 1)}` : 'Flow Off';
+  elements.playerResumeBadge.hidden = !showResume;
   elements.playerSessionState.textContent = `State: ${session.flowState}`;
+  elements.playerContinuityNote.textContent = showResume
+    ? 'This item opened in YouTube. Your Flow session is still waiting here.'
+    : '';
   const currentLink = current ? mediaItemLink(current) : 'https://www.youtube.com';
   const currentDisabled = !current;
   elements.openInYoutube.href = currentLink;
@@ -215,7 +230,7 @@ function renderPlayerPanel() {
   elements.fallbackOpenBtn.tabIndex = currentDisabled ? -1 : 0;
   elements.resumeFlowBtn.hidden = !showResume;
   elements.fullBtn.disabled = !playerAdapter.isFullscreenSupported();
-  elements.exitFullBtn.disabled = !playerAdapter.isFullscreenActive();
+  elements.exitFullBtn.disabled = !state.fullscreenActive;
   elements.fallbackActions.hidden = !isEmbedBlocked;
   elements.fallbackOpenBtn.hidden = !isEmbedBlocked;
   elements.fallbackNextBtn.hidden = !isEmbedBlocked || session.mode !== 'flow';
@@ -230,6 +245,8 @@ function renderDebug() {
     player: {
       ready: state.playerReady,
       state: state.playerState,
+      mode: state.playbackMode,
+      fullscreenActive: state.fullscreenActive,
       currentMediaItemId: state.currentMediaItemId,
       playbackIntentEstablished: state.playbackIntentEstablished,
       error: state.playerError || null,
@@ -349,6 +366,7 @@ async function loadMediaItemIntoPlayer(item, { autoplay = false, mode = 'single'
   state.currentMediaItemId = item.id;
   state.playerError = '';
   state.playerErrorType = 'none';
+  state.playbackMode = 'inline';
   clearTimeout(state.embedBlockedSkipTimer);
   playbackController.onPlaybackError('none');
 
@@ -370,6 +388,7 @@ async function loadMediaItemIntoPlayer(item, { autoplay = false, mode = 'single'
 function setInlinePlaybackUnavailableMessage(message) {
   state.playerErrorType = 'embedBlocked';
   state.playerError = `${message} Use "Open in YouTube" for reliable playback.`;
+  state.playbackMode = 'external';
   playbackController.onPlaybackError('embedBlocked');
   renderPlayerPanel();
   renderDebug();
@@ -425,6 +444,7 @@ function handleExternalOpenForCurrentItem() {
   playbackController.onExternalOpen();
   state.playerError = '';
   state.playerErrorType = 'none';
+  state.playbackMode = 'external';
   renderPlayerPanel();
   renderDebug();
 }
@@ -435,6 +455,7 @@ function returnToResults() {
   state.playerState = 'idle';
   state.playerError = '';
   state.playerErrorType = 'none';
+  state.playbackMode = 'idle';
   playbackController.clearCurrentSelection();
   renderPlayerPanel();
   renderQueue();
@@ -449,11 +470,28 @@ async function handleQueueAction(event) {
   if (action === 'rate') {
     state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, Number(actionTarget.dataset.rating));
   }
+  if (action === 'save') {
+    state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, 4, 'save');
+  }
+  if (action === 'more-like') {
+    state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, 3, 'more-like-this');
+  }
+  if (action === 'less-like') {
+    state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, -3, 'less-like-this');
+  }
 
   if (action === 'play-now') {
+    event.preventDefault();
     const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
-      await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
+      if (selected.embedBlocked) {
+        state.currentMediaItemId = selected.id;
+        playbackController.enterSingle(selected, { queue: state.queue });
+        playbackController.onExternalOpen();
+        state.playbackMode = 'external';
+      } else {
+        await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
+      }
     }
   }
 
@@ -465,6 +503,7 @@ async function handleQueueAction(event) {
       playbackController.onExternalOpen();
       state.playerError = '';
       state.playerErrorType = 'none';
+      state.playbackMode = 'external';
     }
   }
 
@@ -528,6 +567,7 @@ function handlePlayerEvent(event) {
   }
 
   if (event.type === 'playing') {
+    state.playbackMode = 'inline';
     playbackController.onPlaying(state.currentMediaItemId);
     clearInterval(state.positionTimer);
     state.positionTimer = window.setInterval(() => {
@@ -555,6 +595,7 @@ function handlePlayerEvent(event) {
     playbackController.onPlaybackError(errorType);
 
     if (errorType === 'embedBlocked') {
+      state.playbackMode = 'external';
       markCurrentItemEmbedBlocked();
       state.playerError = 'Play Inline unavailable: embedding is disabled by the video owner. Use Open in YouTube.';
       const session = sessionStore.read();
@@ -567,6 +608,9 @@ function handlePlayerEvent(event) {
     } else {
       state.playerError = event.message;
     }
+  }
+  if (event.type === 'fullscreenChange') {
+    state.fullscreenActive = event.isFullscreen === true;
   }
 
   renderPlayerPanel();
@@ -585,6 +629,7 @@ function resetAll() {
   state.playerError = '';
   state.playbackIntentEstablished = false;
   state.playerErrorType = 'none';
+  state.playbackMode = 'idle';
   clearTimeout(state.embedBlockedSkipTimer);
   elements.artists.value = '';
   elements.mode.value = 'discovery';
@@ -748,6 +793,7 @@ function initialize() {
       await playerAdapter.initPlayer();
     } catch (error) {
       state.playerError = 'YouTube player failed to load. Check network/policy and try again.';
+      state.playbackMode = 'external';
       renderPlayerPanel();
       renderDebug();
       console.warn('[music-tile] player init failed', error);
