@@ -72,7 +72,8 @@ label {
 }
 
 select,
-button {
+button,
+.button-link {
   border-radius: 9px;
   border: 1px solid #2f73b5;
   background: #071022;
@@ -80,16 +81,27 @@ button {
   padding: 9px;
 }
 
-button {
+button,
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   font-weight: 650;
   background: linear-gradient(180deg, #0f56a3, #093f78);
+  text-decoration: none;
 }
 
-button.ghost {
+button.ghost,
+.button-link.ghost {
   background: #071428;
   border-color: #27517a;
   color: #a7caeb;
+}
+
+.button-link[aria-disabled='true'] {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .action-row {
@@ -263,7 +275,9 @@ input {
 }
 
 .player-controls-grid button,
-.player-fallback-actions button {
+.player-controls-grid .button-link,
+.player-fallback-actions button,
+.player-fallback-actions .button-link {
   min-height: 42px;
   padding: 10px 14px;
 }

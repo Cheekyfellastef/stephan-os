@@ -178,7 +178,7 @@ function renderQueue() {
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
       <div class="track-actions">
         <button data-action="play-now" data-id="${item.id}" class="inline-btn primary">Play</button>
-        <button data-action="open-youtube" data-id="${item.id}" class="inline-btn">Open in YouTube</button>
+        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
         <button data-action="play-inline" data-id="${item.id}" class="inline-btn ghost">Play Inline</button>
         <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
         <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
@@ -205,7 +205,14 @@ function renderPlayerPanel() {
   elements.playerChannel.textContent = current ? `Source: ${current.channelName}` : 'Source: —';
   elements.playerModeBadge.textContent = `Mode: ${session.mode === 'flow' ? 'Flow' : 'Single'}`;
   elements.playerSessionState.textContent = `State: ${session.flowState}`;
-  elements.openInYoutube.disabled = !current;
+  const currentLink = current ? mediaItemLink(current) : 'https://www.youtube.com';
+  const currentDisabled = !current;
+  elements.openInYoutube.href = currentLink;
+  elements.openInYoutube.setAttribute('aria-disabled', String(currentDisabled));
+  elements.openInYoutube.tabIndex = currentDisabled ? -1 : 0;
+  elements.fallbackOpenBtn.href = currentLink;
+  elements.fallbackOpenBtn.setAttribute('aria-disabled', String(currentDisabled));
+  elements.fallbackOpenBtn.tabIndex = currentDisabled ? -1 : 0;
   elements.resumeFlowBtn.hidden = !showResume;
   elements.fullBtn.disabled = !playerAdapter.isFullscreenSupported();
   elements.exitFullBtn.disabled = !playerAdapter.isFullscreenActive();
@@ -412,27 +419,14 @@ function markCurrentItemEmbedBlocked() {
   persistState();
 }
 
-function openMediaItemInYouTube(item) {
-  if (!item?.id) return false;
-  const canonicalWatchUrl = `${YOUTUBE_WATCH}${encodeURIComponent(item.id)}`;
-  const openedWindow = window.open(canonicalWatchUrl, '_blank', 'noopener,noreferrer');
-  if (!openedWindow) {
-    state.playerErrorType = 'network';
-    state.playerError = 'Unable to open YouTube (popup blocked). Allow popups and try again.';
-    renderPlayerPanel();
-    renderDebug();
-    return false;
-  }
-  return true;
-}
-
-function openCurrentItemInYouTube() {
+function handleExternalOpenForCurrentItem() {
   const current = getCurrentMediaItem();
   if (!current?.id) return;
-  const didOpen = openMediaItemInYouTube(current);
-  if (!didOpen) return;
   playbackController.onExternalOpen();
+  state.playerError = '';
+  state.playerErrorType = 'none';
   renderPlayerPanel();
+  renderDebug();
 }
 
 function returnToResults() {
@@ -448,37 +442,34 @@ function returnToResults() {
 }
 
 async function handleQueueAction(event) {
-  const button = event.target.closest('button[data-action]');
-  if (!button) return;
+  const actionTarget = event.target.closest('[data-action]');
+  if (!actionTarget) return;
 
-  const action = button.dataset.action;
+  const action = actionTarget.dataset.action;
   if (action === 'rate') {
-    state.memory = applyRatingToMemory(state.memory, button.dataset.id, Number(button.dataset.rating));
+    state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, Number(actionTarget.dataset.rating));
   }
 
   if (action === 'play-now') {
-    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
-      state.currentMediaItemId = selected.id;
-      playbackController.enterSingle(selected, { queue: state.queue });
-      if (openMediaItemInYouTube(selected)) {
-        playbackController.onExternalOpen();
-      }
+      await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
     }
   }
 
   if (action === 'open-youtube') {
-    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
       state.currentMediaItemId = selected.id;
-      if (openMediaItemInYouTube(selected)) {
-        playbackController.onExternalOpen();
-      }
+      playbackController.enterSingle(selected, { queue: state.queue });
+      playbackController.onExternalOpen();
+      state.playerError = '';
+      state.playerErrorType = 'none';
     }
   }
 
   if (action === 'play-inline') {
-    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
       if (selected.embedBlocked) {
         state.currentMediaItemId = selected.id;
@@ -490,7 +481,7 @@ async function handleQueueAction(event) {
   }
 
   if (action === 'start-flow') {
-    const selected = flowController.selectById(button.dataset.id) || state.memory.mediaItems[button.dataset.id];
+    const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
       playbackController.startFlowAtItem(selected, state.queue);
       await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'flow' });
@@ -498,7 +489,7 @@ async function handleQueueAction(event) {
   }
 
   if (action === 'trust' || action === 'block') {
-    const channelId = button.dataset.channel;
+    const channelId = actionTarget.dataset.channel;
     const current = state.memory.channelTrust[channelId] || 0;
     state.memory.channelTrust[channelId] = Math.max(-5, Math.min(5, current + (action === 'trust' ? 1 : -3)));
   }
@@ -624,7 +615,7 @@ function bindControls() {
     if (state.currentMediaItemId) {
       const current = getCurrentMediaItem();
       if (current?.embedBlocked) {
-        openCurrentItemInYouTube();
+        setInlinePlaybackUnavailableMessage('Play Inline unavailable: this video disables embedding.');
       } else {
         playerAdapter.play();
       }
@@ -673,8 +664,20 @@ function bindControls() {
     playerAdapter.setVolume(elements.volume.value);
   });
 
-  elements.openInYoutube.addEventListener('click', openCurrentItemInYouTube);
-  elements.fallbackOpenBtn.addEventListener('click', openCurrentItemInYouTube);
+  elements.openInYoutube.addEventListener('click', (event) => {
+    if (elements.openInYoutube.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault();
+      return;
+    }
+    handleExternalOpenForCurrentItem();
+  });
+  elements.fallbackOpenBtn.addEventListener('click', (event) => {
+    if (elements.fallbackOpenBtn.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault();
+      return;
+    }
+    handleExternalOpenForCurrentItem();
+  });
   elements.fallbackNextBtn.addEventListener('click', () => {
     void playNextInQueue();
   });
