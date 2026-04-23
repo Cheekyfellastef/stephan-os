@@ -120,6 +120,7 @@ const DEFAULT_UI_LAYOUT = {
   missionFingerprintPanel: true,
   missionPacketQueuePanel: true,
   hostedIdeaStagingPanel: true,
+  openClawPanel: true,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
@@ -143,6 +144,7 @@ const DEFAULT_OPERATOR_PANE_ORDER = [
   'missionFingerprintPanel',
   'missionPacketQueuePanel',
   'hostedIdeaStagingPanel',
+  'openClawPanel',
 ];
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',

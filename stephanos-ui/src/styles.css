@@ -2372,3 +2372,60 @@ pre {
   max-height: 180px;
   overflow: auto;
 }
+
+.openclaw-section {
+  margin-bottom: 1rem;
+}
+
+.openclaw-scan-controls {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.openclaw-findings-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.openclaw-prompt-box {
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.openclaw-approval-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.openclaw-authority-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.5rem;
+}
+
+.openclaw-authority-item {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.openclaw-authority-item.allowed {
+  border-color: rgba(82, 210, 128, 0.6);
+}
+
+.openclaw-authority-item.blocked {
+  border-color: rgba(255, 116, 116, 0.7);
+}
