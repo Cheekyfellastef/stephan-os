@@ -2429,3 +2429,51 @@ pre {
 .openclaw-authority-item.blocked {
   border-color: rgba(255, 116, 116, 0.7);
 }
+
+.mission-console-workspace .panel-body {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.mission-console-section {
+  border: 1px solid rgba(118, 154, 216, 0.25);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(6, 16, 30, 0.5);
+}
+
+.mission-console-target-controls {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.mission-console-ledger {
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.mission-console-message {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.55rem;
+}
+
+.mission-console-message-operator {
+  border-color: rgba(111, 191, 255, 0.55);
+}
+
+.mission-console-message-assistant {
+  border-color: rgba(122, 211, 156, 0.55);
+}
+
+.mission-console-pill {
+  margin-left: 0.35rem;
+  border: 1px solid rgba(255, 196, 92, 0.6);
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+}
