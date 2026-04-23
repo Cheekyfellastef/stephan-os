@@ -1,0 +1,14 @@
+{
+  "name": "Mission Console",
+  "icon": "🎛️",
+  "entry": "index.html",
+  "type": "system",
+  "packaging": "classic-static",
+  "description": "Chat workspace for Stephanos, agents, and governed OpenClaw",
+  "launcherBadges": [
+    "Chat-first",
+    "Multi-agent",
+    "Governed OpenClaw"
+  ],
+  "launcherActionLabel": "Enter Mission Console"
+}
