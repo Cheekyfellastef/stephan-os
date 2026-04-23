@@ -27,6 +27,7 @@ import PromptBuilder from './components/system/PromptBuilder.jsx';
 import AgentsTile from './components/AgentsTile.jsx';
 import AgentQuickControls from './components/AgentQuickControls.jsx';
 import OpenClawTile from './components/OpenClawTile.jsx';
+import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -571,6 +572,21 @@ export default function App() {
       id: 'hostedIdeaStagingPanel',
       className: 'pane-span-2',
       render: () => <HostedIdeaStagingPanel />,
+    },
+    {
+      id: 'missionConsolePanel',
+      className: 'pane-span-2',
+      render: () => (
+        <MissionConsoleTile
+          uiLayout={safeUiLayout}
+          togglePanel={togglePanel}
+          runtimeStatusModel={runtimeStatusModel}
+          finalRouteTruth={routeTruthView}
+          finalAgentView={displayAgentView}
+          branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+          onOpenClawIntegrationUpdate={setOpenClawIntegration}
+        />
+      ),
     },
     {
       id: 'openClawPanel',
