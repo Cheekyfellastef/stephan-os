@@ -1,0 +1,14 @@
+{
+  "name": "OpenClaw",
+  "icon": "🦾",
+  "entry": "index.html",
+  "type": "system",
+  "packaging": "classic-static",
+  "description": "Proposal-only OpenClaw workspace under Stephanos control",
+  "launcherBadges": [
+    "Governed",
+    "Proposal-only",
+    "Zero-cost posture"
+  ],
+  "launcherActionLabel": "Enter OpenClaw"
+}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stephanos OpenClaw Workspace</title>
+    <script>
+      (function redirectToOpenClawWorkspace() {
+        const destination = new URL('../stephanos/dist/index.html', window.location.href);
+        destination.searchParams.set('destination', 'openclaw');
+        const launcherShellUrl = new URL('../../index.html', window.location.href);
+        destination.searchParams.set('stephanosLauncherShellUrl', launcherShellUrl.href);
+        window.location.replace(destination.href);
+      })();
+    </script>
+  </head>
+  <body>
+    <p>Opening Stephanos OpenClaw workspace…</p>
+    <p><a href="../stephanos/dist/index.html?destination=openclaw">Continue manually</a></p>
+  </body>
+</html>

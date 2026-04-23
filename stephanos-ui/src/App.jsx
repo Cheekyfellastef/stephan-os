@@ -117,6 +117,7 @@ export default function App() {
     runtimeStatusModel,
     uiLayout,
     togglePanel,
+    setPanelState,
     setPaneOrder,
     paneLayout,
     lastExecutionMetadata,
@@ -155,9 +156,25 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return resolveAgentSurfaceMode(params.get('surface') || params.get('app'));
   }, []);
+  const launcherDestination = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    return String(params.get('destination') || '').trim().toLowerCase();
+  }, []);
   const cockpitSurfaceMode = surfaceMode === 'cockpit';
   const agentsSurfaceMode = surfaceMode === 'agents';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  useEffect(() => {
+    if (launcherDestination !== 'openclaw') {
+      return;
+    }
+
+    setPanelState('missionConsolePanel', true);
+    setPanelState('openClawPanel', true);
+  }, [launcherDestination, setPanelState]);
   markStartupStage('app-derived-route-truth-ready', {
     routeKind: routeTruthView?.routeKind || '',
     routeUsableState: routeTruthView?.routeUsableState || '',
