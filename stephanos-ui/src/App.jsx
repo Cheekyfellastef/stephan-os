@@ -63,6 +63,7 @@ import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
 import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
 import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
 import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
+import { buildOpenClawIntegrationSnapshot } from './components/openclaw/openclawIntegrationAdapter.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 
@@ -212,6 +213,12 @@ export default function App() {
     agentEnabledMap: {},
   });
   const [metricsTick, setMetricsTick] = useState(() => Date.now());
+  const [openClawIntegration, setOpenClawIntegration] = useState(() => buildOpenClawIntegrationSnapshot({
+    runtimeStatusModel,
+    finalRouteTruth: routeTruthView,
+    repoPath: '/workspace/stephan-os',
+    branchName: runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown',
+  }));
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
@@ -365,6 +372,17 @@ export default function App() {
     finalAgentView: displayAgentView,
     surfaceMode,
   }), [displayAgentView, surfaceMode]);
+
+  useEffect(() => {
+    setOpenClawIntegration((previous) => (previous && previous.currentActivity !== 'Standing by for bounded intent.'
+      ? previous
+      : buildOpenClawIntegrationSnapshot({
+        runtimeStatusModel,
+        finalRouteTruth: routeTruthView,
+        repoPath: '/workspace/stephan-os',
+        branchName: runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown',
+      })));
+  }, [routeTruthView, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel]);
   markStartupStage('app-derived-agent-projection-ready', {
     surfaceMode,
     visibleAgentCount: agentSurfaceProjection?.visibleAgentCount ?? null,
@@ -494,6 +512,7 @@ export default function App() {
             isOpen={safeUiLayout.agentsPanel !== false}
             onToggle={() => togglePanel('agentsPanel')}
             debugVisibility={agentControls.debugVisibility}
+            openClawIntegration={openClawIntegration}
           />
         );
         markStartupStage('app-agents-panel-render-complete');
@@ -563,6 +582,7 @@ export default function App() {
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+          onIntegrationUpdate={setOpenClawIntegration}
         />
       ),
     },
@@ -577,6 +597,7 @@ export default function App() {
     telemetryEntries,
     finalAgentView,
     displayAgentView,
+    openClawIntegration,
     agentControls.debugVisibility,
     actionHints,
     canonicalCurrentIntent,
@@ -708,6 +729,7 @@ export default function App() {
             isOpen
             onToggle={() => {}}
             debugVisibility={agentControls.debugVisibility}
+            openClawIntegration={openClawIntegration}
           />
         </section>
         <DebugConsole />

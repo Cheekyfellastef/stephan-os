@@ -4,7 +4,15 @@ function formatList(list = []) {
   return Array.isArray(list) && list.length > 0 ? list.join(', ') : 'none';
 }
 
-export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgentId, isOpen = true, onToggle = () => {}, debugVisibility = false } = {}) {
+export default function AgentsTile({
+  finalAgentView,
+  onSelectAgent,
+  selectedAgentId,
+  isOpen = true,
+  onToggle = () => {},
+  debugVisibility = false,
+  openClawIntegration = null,
+} = {}) {
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
   const selected = visibleAgents.find((entry) => entry.agentId === selectedAgentId) || visibleAgents[0] || null;
@@ -12,6 +20,8 @@ export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgen
   const missionView = view.finalMissionOrchestrationView || {};
   const approvalView = view.finalApprovalQueueView || {};
   const resumeView = view.finalResumeView || {};
+
+  const openClaw = openClawIntegration && typeof openClawIntegration === 'object' ? openClawIntegration : null;
 
   return (
     <CollapsiblePanel
@@ -86,6 +96,48 @@ export default function AgentsTile({ finalAgentView, onSelectAgent, selectedAgen
             <li><strong>Blockers:</strong> {formatList(selected.blockers)}</li>
           </ul>
         </section>
+      ) : null}
+
+      {openClaw ? (
+        <>
+          <section className="agents-region">
+            <h4>OpenClaw Governed Presence</h4>
+            <ul>
+              <li><strong>Agent Name:</strong> {openClaw.agentName}</li>
+              <li><strong>Role:</strong> {openClaw.role}</li>
+              <li><strong>Mode:</strong> {openClaw.mode}</li>
+              <li><strong>Authority:</strong> {openClaw.authority}</li>
+              <li><strong>Approval Required:</strong> {openClaw.approvalRequired}</li>
+              <li><strong>Workspace Path / Repo Scope:</strong> {openClaw.workspacePath} · {openClaw.repoScope}</li>
+              <li><strong>Sandbox Status:</strong> {openClaw.sandboxStatus}</li>
+              <li><strong>Skill Policy / Allowlist Status:</strong> {openClaw.skillPolicyStatus}</li>
+              <li><strong>Plugin Trust Posture:</strong> {openClaw.pluginTrustPosture}</li>
+              <li><strong>Session State:</strong> {openClaw.sessionState}</li>
+              <li><strong>Current Activity:</strong> {openClaw.currentActivity}</li>
+              <li><strong>Last Scan Type:</strong> {openClaw.lastScanType}</li>
+              <li><strong>Last Inspection Scope:</strong> {formatList(openClaw.lastInspectionScope)}</li>
+              <li><strong>Last Proposed Prompt:</strong> {openClaw.lastProposedPrompt}</li>
+              <li><strong>Blocked Capabilities:</strong> {formatList(openClaw.blockedCapabilities)}</li>
+              <li><strong>Zero-Cost Guardrails Status:</strong> {openClaw.zeroCostGuardrailsStatus}</li>
+            </ul>
+            {openClaw.warnings?.length > 0 ? (
+              <div className="mission-dashboard__banner mission-dashboard__banner--warning">
+                <strong>Unsafe trust posture detected:</strong>
+                <span>{openClaw.warnings.join(' | ')}</span>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="agents-region">
+            <h4>OpenClaw Integration Topology</h4>
+            <p>{(openClaw.topology || []).map((entry) => entry.label).join(' -> ')}</p>
+            <ul>
+              {(openClaw.topology || []).map((entry) => (
+                <li key={entry.id}><strong>{entry.label}:</strong> {entry.policyNote}</li>
+              ))}
+            </ul>
+          </section>
+        </>
       ) : null}
 
       <section className="agents-region">

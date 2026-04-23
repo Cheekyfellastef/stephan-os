@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import {
   OPENCLAW_AUTHORITY,
@@ -10,6 +10,7 @@ import {
 } from './openclaw/openclawTilePolicy.js';
 import { buildOpenClawGuardrailSnapshot, isOpenClawActionBlocked } from './openclaw/openclawGuardrails.js';
 import { runOpenClawScan } from './openclaw/openclawScanController.js';
+import { buildOpenClawIntegrationSnapshot } from './openclaw/openclawIntegrationAdapter.js';
 import { buildOpenClawCandidatePrompts } from './openclaw/openclawPromptGenerator.js';
 import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditModel.js';
 
@@ -17,11 +18,20 @@ function getTone(status = '') {
   return status === 'blocked' ? 'blocked' : 'allowed';
 }
 
-export default function OpenClawTile({ uiLayout, togglePanel, runtimeStatusModel, finalRouteTruth, repoPath = '/workspace/stephan-os', branchName = 'unknown' }) {
+export default function OpenClawTile({
+  uiLayout,
+  togglePanel,
+  runtimeStatusModel,
+  finalRouteTruth,
+  repoPath = '/workspace/stephan-os',
+  branchName = 'unknown',
+  onIntegrationUpdate = () => {},
+}) {
   const [selectedScanType, setSelectedScanType] = useState(OPENCLAW_SCAN_MODES[0].id);
   const [scanReport, setScanReport] = useState(null);
   const [candidatePrompts, setCandidatePrompts] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
+  const [sessionState, setSessionState] = useState('idle');
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
 
   const distParity = runtimeStatusModel?.runtimeTruth?.sourceDistParityOk;
@@ -32,6 +42,7 @@ export default function OpenClawTile({ uiLayout, togglePanel, runtimeStatusModel
   }
 
   function runScan() {
+    setSessionState('scanning');
     record('scan-started', { scanType: selectedScanType });
     const report = runOpenClawScan({
       scanType: selectedScanType,
@@ -52,14 +63,40 @@ export default function OpenClawTile({ uiLayout, togglePanel, runtimeStatusModel
       record('prompt-generated', { count: prompts.length });
     }
     record('scan-completed', { scanType: selectedScanType });
+    setSessionState('ready-for-review');
   }
 
   function updatePromptStatus(promptId, nextStatus) {
+    setSessionState(nextStatus === 'approved' ? 'approval-queued' : 'reviewing-prompts');
     setCandidatePrompts((previous) => previous.map((prompt) => (prompt.id === promptId
       ? { ...prompt, approvalStatus: nextStatus }
       : prompt)));
     record(`prompt-${nextStatus}`, { promptId });
   }
+
+
+  const lastProposedPrompt = candidatePrompts[0]?.candidatePrompt || 'none';
+  const integrationSnapshot = useMemo(() => buildOpenClawIntegrationSnapshot({
+    runtimeStatusModel,
+    finalRouteTruth,
+    repoPath,
+    branchName,
+    lastScanType: scanReport?.scanType || selectedScanType || 'none',
+    lastInspectionScope: scanReport?.inspected?.categories || [],
+    lastProposedPrompt,
+    sessionState,
+    currentActivity: sessionState === 'scanning'
+      ? `Running ${selectedScanType} scan in bounded mode.`
+      : sessionState === 'approval-queued'
+        ? 'Awaiting operator approval for Codex handoff.'
+        : sessionState === 'ready-for-review'
+          ? 'Scan complete; findings and proposals are ready for operator review.'
+          : 'Standing by for bounded intent.',
+  }), [branchName, candidatePrompts, finalRouteTruth, repoPath, runtimeStatusModel, scanReport, selectedScanType, sessionState]);
+
+  useEffect(() => {
+    onIntegrationUpdate(integrationSnapshot);
+  }, [integrationSnapshot, onIntegrationUpdate]);
 
   return (
     <CollapsiblePanel
@@ -77,10 +114,11 @@ export default function OpenClawTile({ uiLayout, togglePanel, runtimeStatusModel
           <li><strong>Authority:</strong> {OPENCLAW_AUTHORITY}</li>
           <li><strong>Cost posture:</strong> {OPENCLAW_COST_POSTURE}</li>
           <li><strong>Execution posture:</strong> {OPENCLAW_EXECUTION_POSTURE}</li>
-          <li><strong>Sandbox/trust posture:</strong> bounded read-focused repo inspection only</li>
-          <li><strong>Current repo path:</strong> {repoPath}</li>
-          <li><strong>Current branch:</strong> {branchName}</li>
-          <li><strong>Route source:</strong> {finalRouteTruth?.source || 'unknown'}</li>
+          <li><strong>Sandbox status:</strong> {integrationSnapshot.sandboxStatus}</li>
+          <li><strong>Workspace path:</strong> {integrationSnapshot.workspacePath}</li>
+          <li><strong>Repo scope:</strong> {integrationSnapshot.repoScope}</li>
+          <li><strong>Current branch:</strong> {integrationSnapshot.branchName}</li>
+          <li><strong>Route source:</strong> {integrationSnapshot.connectedTo.routeTruthSource}</li>
           <li><strong>Zero-cost posture active:</strong> {guardrails.zeroCostPosture === 'active' ? 'yes' : 'no'}</li>
         </ul>
         {distCautionVisible ? (
@@ -91,6 +129,25 @@ export default function OpenClawTile({ uiLayout, togglePanel, runtimeStatusModel
             </span>
           </div>
         ) : null}
+      </section>
+
+      {integrationSnapshot.warnings.length > 0 ? (
+        <section className="openclaw-section">
+          <h4>Trust Posture Warnings</h4>
+          <ul>
+            {integrationSnapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="openclaw-section">
+        <h4>Integration Topology</h4>
+        <p>{integrationSnapshot.topology.map((entry) => entry.label).join(' → ')}</p>
+        <ul>
+          {integrationSnapshot.topology.map((entry) => (
+            <li key={entry.id}><strong>{entry.label}:</strong> {entry.policyNote}</li>
+          ))}
+        </ul>
       </section>
 
       <section className="openclaw-section">
