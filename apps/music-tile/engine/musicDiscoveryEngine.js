@@ -98,14 +98,26 @@ export function rankMediaItemsForFlow(mediaItems, context = {}) {
 
 export function createFlowQueue(mediaItems, options = {}) {
   const includeSeen = Boolean(options.includeSeen);
+  const includeExternal = options.includeExternal !== false;
+  const preferInline = Boolean(options.preferInline);
   const minDurationSeconds = options.minDurationSeconds || 0;
   const ranked = rankMediaItemsForFlow(mediaItems, options);
 
-  return ranked.filter((item) => {
+  const filtered = ranked.filter((item) => {
     if (!includeSeen && item.seen) return false;
     if (item.ignored) return false;
+    if (item.playbackMode === 'suppress') return false;
+    if (!includeExternal && item.playbackMode === 'external') return false;
     if (item.duration < minDurationSeconds) return false;
     return true;
+  });
+
+  if (!preferInline) return filtered;
+  return filtered.sort((a, b) => {
+    const inlineA = a.playbackMode === 'inline' ? 1 : 0;
+    const inlineB = b.playbackMode === 'inline' ? 1 : 0;
+    if (inlineB !== inlineA) return inlineB - inlineA;
+    return 0;
   });
 }
 

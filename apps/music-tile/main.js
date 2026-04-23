@@ -2,8 +2,9 @@ import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { createMusicTileFlowController } from './flow/musicTileFlowController.js';
 import { createMusicTilePlaybackController } from './flow/musicTilePlaybackController.js';
 import { parseMusicCommand } from './engine/musicCommandParser.js';
-import { createDiscoveryQueries, discoverFromYouTubeApi } from './engine/musicDiscoveryEngine.js';
+import { createDiscoveryQueries } from './engine/musicDiscoveryEngine.js';
 import { createMusicTilePlayerAdapter } from './player/musicTilePlayerAdapter.js';
+import { createMediaProviderAdapters } from './providers/mediaProviderAdapters.js';
 import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import {
   DEFAULT_SELECTION,
@@ -13,6 +14,8 @@ import {
   applyRatingToMemory,
   markMediaItemSeen,
   upsertMediaItems,
+  buildMediaReliabilityKey,
+  upsertReliabilityRecord,
 } from './state/musicTileState.js';
 
 const YOUTUBE_SEARCH = 'https://www.youtube.com/results?search_query=';
@@ -29,6 +32,9 @@ const elements = {
   mode: document.getElementById('session-mode-select'),
   includeSeen: document.getElementById('include-seen-toggle'),
   unseenOnly: document.getElementById('unseen-only-toggle'),
+  hideBroken: document.getElementById('hide-broken-toggle'),
+  showExternalOnly: document.getElementById('show-external-only-toggle'),
+  preferInline: document.getElementById('prefer-inline-toggle'),
   smartRefresh: document.getElementById('smart-refresh-btn'),
   flowMode: document.getElementById('flow-mode-btn'),
   reset: document.getElementById('reset-btn'),
@@ -77,6 +83,9 @@ const state = {
   queue: [],
   sessionMode: 'discovery',
   includeSeen: false,
+  hideBroken: true,
+  showExternalOnly: true,
+  preferInline: true,
   artists: [],
   debugVisible: false,
   currentMediaItemId: '',
@@ -90,6 +99,11 @@ const state = {
   positionTimer: null,
   embedBlockedSkipTimer: null,
 };
+
+const providerAdapters = createMediaProviderAdapters({
+  youtubeApiKey: getYouTubeApiKey(),
+  fetchImpl: fetch,
+});
 
 const sessionStore = createMusicTileSessionStore({
   readMemory: () => state.memory,
@@ -118,8 +132,34 @@ function getYouTubeApiKey() {
 }
 
 function mediaItemLink(item) {
+  if (item?.providerUrl) return item.providerUrl;
   if (item?.id && item.id.length === 11) return `${YOUTUBE_WATCH}${item.id}`;
   return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item?.title || ''} ${item?.channelName || ''}`)}`;
+}
+
+function providerBadgeLabel(provider = '') {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (normalized === 'youtube') return 'YouTube';
+  if (normalized === 'vimeo') return 'Vimeo';
+  if (normalized === 'dailymotion') return 'Dailymotion';
+  if (normalized === 'twitch') return 'Twitch';
+  return normalized || 'Unknown';
+}
+
+function playbackBadgeLabel(playbackMode = '') {
+  if (playbackMode === 'inline') return 'Inline';
+  if (playbackMode === 'external') return 'External';
+  return 'Suppressed';
+}
+
+function getReliabilityRecord(item) {
+  if (!item) return null;
+  const key = buildMediaReliabilityKey({
+    provider: item.provider,
+    providerItemId: item.providerItemId,
+    mediaItemId: item.id,
+  });
+  return key ? state.memory?.reliabilityRecords?.[key] || null : null;
 }
 
 function readSelectionFromUI() {
@@ -182,10 +222,14 @@ function renderQueue() {
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
+      <div class="track-badges">
+        <span class="track-badge">${providerBadgeLabel(item.provider)}</span>
+        <span class="track-badge">${playbackBadgeLabel(item.playbackMode)}</span>
+      </div>
       <div class="track-actions">
         <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Play</a>
-        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
-        <button data-action="play-inline" data-id="${item.id}" class="inline-btn ghost">Play Inline</button>
+        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button data-action="play-inline" data-id="${item.id}" class="inline-btn ghost" ${item.playbackMode === 'inline' ? '' : 'disabled'}>Play Inline</button>
         <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
         <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
         <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
@@ -211,7 +255,7 @@ function renderPlayerPanel() {
   elements.playerError.textContent = state.playerError || '';
   elements.playerError.hidden = !state.playerError;
   elements.playerNowPlaying.textContent = current ? current.title : 'No track selected.';
-  elements.playerChannel.textContent = current ? `Source: ${current.channelName}` : 'Source: —';
+  elements.playerChannel.textContent = current ? `Source: ${current.channelName} • Provider: ${providerBadgeLabel(current.provider)}` : 'Source: —';
   elements.playerModeBadge.textContent = session.mode === 'flow' ? 'Flow Active' : 'Single Item';
   elements.playerRailBadge.textContent = state.playbackMode === 'external' ? 'YouTube Rail' : state.playbackMode === 'inline' ? 'Inline Rail' : 'Idle Rail';
   elements.playerFlowBadge.textContent = session.mode === 'flow' ? `Flow #${Math.max(1, session.currentIndex + 1)}` : 'Flow Off';
@@ -242,6 +286,11 @@ function renderDebug() {
     selection: state.selection,
     sessionMode: state.sessionMode,
     queuePreview: state.queue.slice(0, 10).map((item) => ({ id: item.id, score: item.score, title: item.title })),
+    suppressedPreview: Object.values(state.memory.mediaItems)
+      .filter((item) => item.playbackMode === 'suppress')
+      .slice(0, 10)
+      .map((item) => ({ id: item.id, provider: item.provider, reasons: item.validationReasons || [] })),
+    providerAdapters: providerAdapters.listProviders(),
     player: {
       ready: state.playerReady,
       state: state.playerState,
@@ -276,6 +325,24 @@ function librarySeedToMediaItem(track) {
     detectedEvents: [],
     detectedLabels: [],
     type: track.notes?.toLowerCase().includes('set') ? 'set' : 'track',
+    provider: 'youtube',
+    providerItemId: track.youtube?.preferredVideoId || '',
+    providerType: 'video',
+    providerUrl: track.youtube?.preferredVideoId ? `${YOUTUBE_WATCH}${track.youtube.preferredVideoId}` : '',
+    playbackMode: 'inline',
+    availabilityStatus: 'seeded',
+    validationStatus: 'seeded',
+    validationReasons: [],
+    capabilities: {
+      canPlayInline: true,
+      canOpenExternally: true,
+      canFlowInline: true,
+      canFlowExternal: true,
+      provider: 'youtube',
+      providerType: 'video',
+      playbackMode: 'inline',
+    },
+    lastValidationAt: new Date().toISOString(),
     score: 0,
     seen: false,
     saved: false,
@@ -286,6 +353,8 @@ function librarySeedToMediaItem(track) {
 function rebuildFlowQueue() {
   state.queue = flowController.rebuild(Object.values(state.memory.mediaItems), {
     includeSeen: state.includeSeen,
+    includeExternal: state.showExternalOnly,
+    preferInline: state.preferInline,
     minDurationSeconds: state.sessionMode === 'flow' ? 30 * 60 : 0,
     trustByChannel: state.memory.channelTrust,
     affinityByArtist: state.memory.artistAffinity,
@@ -300,29 +369,58 @@ async function smartRefreshDiscovery() {
   const artistObjects = state.artists.map((name) => ({ id: name.toLowerCase(), name }));
   const queries = artistObjects.flatMap((artist) => createDiscoveryQueries(artist));
 
-  const apiKey = getYouTubeApiKey();
-  const discovery = await discoverFromYouTubeApi({
-    apiKey,
-    queries: queries.slice(0, 4),
-    maxResults: 12,
-  });
+  const youtubeAdapter = createMediaProviderAdapters({
+    youtubeApiKey: getYouTubeApiKey(),
+    fetchImpl: fetch,
+  }).get('youtube');
 
-  const discoveredItems = discovery.items.length
-    ? discovery.items.map((item) => ({
-      ...item,
-      detectedArtists: state.artists,
-      type: /set|mix|live/i.test(item.title) ? 'set' : 'clip',
-    }))
-    : TRACK_LIBRARY.map(librarySeedToMediaItem);
+  const discoveredItems = [];
+  for (const query of queries.slice(0, 4)) {
+    const candidates = await youtubeAdapter.discoverCandidates(query, { maxResults: 12 });
+    if (!candidates.length) continue;
+    const enrichedById = await youtubeAdapter.enrichCandidates(candidates.map((candidate) => candidate.providerItemId));
+    candidates.forEach((candidate) => {
+      const reliabilityRecord = getReliabilityRecord(candidate);
+      const validated = youtubeAdapter.validateCandidate(candidate, {
+        enrichedById,
+        regionCode: 'US',
+        reliabilityRecord,
+      });
 
-  state.memory = upsertMediaItems(state.memory, discoveredItems);
+      const hydrated = {
+        ...validated,
+        detectedArtists: state.artists,
+        type: /set|mix|live/i.test(validated.title) ? 'set' : 'clip',
+      };
+
+      if (validated.playbackMode !== 'suppress' || !state.hideBroken) {
+        discoveredItems.push(hydrated);
+      }
+
+      state.memory = upsertReliabilityRecord(state.memory, {
+        mediaItemId: hydrated.id,
+        provider: hydrated.provider,
+        providerItemId: hydrated.providerItemId,
+        suppressionState: hydrated.playbackMode,
+        failureReason: (hydrated.validationReasons || [])[0] || '',
+        reliabilityClass: hydrated.suppressionClass || '',
+        incrementFailure: hydrated.playbackMode === 'suppress',
+        validatedAt: hydrated.lastValidationAt,
+      });
+    });
+  }
+
+  const fallbackItems = TRACK_LIBRARY.map(librarySeedToMediaItem);
+  const mergedDiscoveredItems = discoveredItems.length ? discoveredItems : fallbackItems;
+
+  state.memory = upsertMediaItems(state.memory, mergedDiscoveredItems);
   state.memory.discoveryJobs.push({
     id: `job-${Date.now()}`,
     artistId: artistObjects[0]?.id || 'any',
     queries: queries.slice(0, 10),
     timestamp: new Date().toISOString(),
-    resultsFound: discoveredItems.length,
-    newItemsCount: discoveredItems.filter((item) => !state.memory.seenItemIds.includes(item.id)).length,
+    resultsFound: mergedDiscoveredItems.length,
+    newItemsCount: mergedDiscoveredItems.filter((item) => !state.memory.seenItemIds.includes(item.id)).length,
   });
 
   rebuildFlowQueue();
@@ -407,7 +505,7 @@ async function playFlowFromCurrentQueue() {
 
 async function playNextInQueue() {
   let next = playbackController.nextInFlow(state.queue);
-  while (next && state.memory?.mediaItems?.[next.id]?.embedBlocked) {
+  while (next && (state.memory?.mediaItems?.[next.id]?.embedBlocked || state.memory?.mediaItems?.[next.id]?.playbackMode !== 'inline')) {
     next = playbackController.nextInFlow(state.queue);
   }
 
@@ -434,7 +532,20 @@ function markCurrentItemEmbedBlocked() {
   state.memory.mediaItems[current.id] = {
     ...state.memory.mediaItems[current.id],
     embedBlocked: true,
+    playbackMode: 'external',
+    availabilityStatus: 'external_only',
+    validationStatus: 'validated',
+    validationReasons: Array.from(new Set([...(state.memory.mediaItems[current.id]?.validationReasons || []), 'youtube.embed_blocked'])),
   };
+  state.memory = upsertReliabilityRecord(state.memory, {
+    mediaItemId: current.id,
+    provider: current.provider || 'youtube',
+    providerItemId: current.providerItemId || current.id,
+    suppressionState: 'external',
+    failureReason: 'youtube.embed_blocked',
+    reliabilityClass: 'embedBlocked',
+    incrementFailure: true,
+  });
   persistState();
 }
 
@@ -484,12 +595,12 @@ async function handleQueueAction(event) {
     event.preventDefault();
     const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
-      if (selected.embedBlocked) {
+      if (selected.playbackMode === 'external' || selected.embedBlocked) {
         state.currentMediaItemId = selected.id;
         playbackController.enterSingle(selected, { queue: state.queue });
         playbackController.onExternalOpen();
         state.playbackMode = 'external';
-      } else {
+      } else if (selected.playbackMode === 'inline') {
         await loadMediaItemIntoPlayer(selected, { autoplay: true, mode: 'single' });
       }
     }
@@ -510,7 +621,7 @@ async function handleQueueAction(event) {
   if (action === 'play-inline') {
     const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
     if (selected) {
-      if (selected.embedBlocked) {
+      if (selected.playbackMode !== 'inline' || selected.embedBlocked) {
         state.currentMediaItemId = selected.id;
         setInlinePlaybackUnavailableMessage('Play Inline unavailable: this video disables embedding.');
       } else {
@@ -605,6 +716,29 @@ function handlePlayerEvent(event) {
           void playNextInQueue();
         }, 1400);
       }
+    } else if (errorType === 'unavailable') {
+      const current = getCurrentMediaItem();
+      if (current?.id) {
+        state.memory.mediaItems[current.id] = {
+          ...state.memory.mediaItems[current.id],
+          playbackMode: 'suppress',
+          availabilityStatus: 'suppressed',
+          validationStatus: 'blocked',
+          validationReasons: Array.from(new Set([...(state.memory.mediaItems[current.id]?.validationReasons || []), 'youtube.unavailable'])),
+        };
+        state.memory = upsertReliabilityRecord(state.memory, {
+          mediaItemId: current.id,
+          provider: current.provider || 'youtube',
+          providerItemId: current.providerItemId || current.id,
+          suppressionState: 'suppress',
+          failureReason: 'youtube.unavailable',
+          reliabilityClass: 'unavailable',
+          incrementFailure: true,
+        });
+      }
+      state.playerError = 'This video is no longer available and has been suppressed from future Flow queues.';
+      rebuildFlowQueue();
+      persistState();
     } else {
       state.playerError = event.message;
     }
@@ -623,6 +757,9 @@ function resetAll() {
   state.memory = reset.memory;
   state.sessionMode = 'discovery';
   state.includeSeen = false;
+  state.hideBroken = true;
+  state.showExternalOnly = true;
+  state.preferInline = true;
   state.artists = [];
   state.currentMediaItemId = '';
   state.playerState = 'idle';
@@ -634,6 +771,9 @@ function resetAll() {
   elements.artists.value = '';
   elements.mode.value = 'discovery';
   elements.includeSeen.checked = false;
+  elements.hideBroken.checked = true;
+  elements.showExternalOnly.checked = true;
+  elements.preferInline.checked = true;
   elements.position.textContent = '0s / 0s';
   writeSelectionToUI(state.selection);
   rebuildFlowQueue();
@@ -739,6 +879,21 @@ function bindControls() {
     rebuildFlowQueue();
     renderQueue();
   });
+  elements.hideBroken.addEventListener('change', () => {
+    state.hideBroken = elements.hideBroken.checked;
+    rebuildFlowQueue();
+    renderQueue();
+  });
+  elements.showExternalOnly.addEventListener('change', () => {
+    state.showExternalOnly = elements.showExternalOnly.checked;
+    rebuildFlowQueue();
+    renderQueue();
+  });
+  elements.preferInline.addEventListener('change', () => {
+    state.preferInline = elements.preferInline.checked;
+    rebuildFlowQueue();
+    renderQueue();
+  });
   elements.unseenOnly.addEventListener('change', () => {
     if (elements.unseenOnly.checked) {
       state.includeSeen = false;
@@ -776,6 +931,9 @@ function initialize() {
   loadMusicTileState().then(async (persisted) => {
     state.selection = persisted.selection;
     state.memory = persisted.memory;
+    elements.hideBroken.checked = state.hideBroken;
+    elements.showExternalOnly.checked = state.showExternalOnly;
+    elements.preferInline.checked = state.preferInline;
     writeSelectionToUI(state.selection);
     rebuildFlowQueue();
     renderSummary();

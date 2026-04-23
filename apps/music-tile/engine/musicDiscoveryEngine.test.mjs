@@ -43,9 +43,10 @@ test('scoreMediaItem rewards long-form trusted set and penalizes seen items', ()
 
 test('createFlowQueue excludes seen and ignored by default', () => {
   const queue = createFlowQueue([
-    { id: '1', title: 'A', channelId: 'c', channelName: 'C', duration: 2400, type: 'set', seen: false, ignored: false, detectedArtists: [] },
-    { id: '2', title: 'B', channelId: 'c', channelName: 'C', duration: 2500, type: 'set', seen: true, ignored: false, detectedArtists: [] },
-    { id: '3', title: 'C', channelId: 'c', channelName: 'C', duration: 2500, type: 'set', seen: false, ignored: true, detectedArtists: [] },
+    { id: '1', title: 'A', channelId: 'c', channelName: 'C', duration: 2400, type: 'set', seen: false, ignored: false, detectedArtists: [], playbackMode: 'inline' },
+    { id: '2', title: 'B', channelId: 'c', channelName: 'C', duration: 2500, type: 'set', seen: true, ignored: false, detectedArtists: [], playbackMode: 'inline' },
+    { id: '3', title: 'C', channelId: 'c', channelName: 'C', duration: 2500, type: 'set', seen: false, ignored: true, detectedArtists: [], playbackMode: 'inline' },
+    { id: '4', title: 'D', channelId: 'c', channelName: 'C', duration: 2600, type: 'set', seen: false, ignored: false, detectedArtists: [], playbackMode: 'suppress' },
   ], {});
 
   assert.equal(queue.length, 1);
