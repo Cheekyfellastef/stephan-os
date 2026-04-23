@@ -41,6 +41,9 @@ function normaliseProject(project) {
     memoryUsage: project?.memoryUsage || 'none-declared',
     continuityParticipation: project?.continuityParticipation || 'none-declared',
     aiAddressable: project?.aiAddressable === true,
+    launcherDescription: project?.launcherDescription || '',
+    launcherBadges: Array.isArray(project?.launcherBadges) ? project.launcherBadges : [],
+    launcherActionLabel: project?.launcherActionLabel || '',
   };
 }
 
@@ -473,6 +476,13 @@ export function renderProjectRegistry(projects, context, options = {}) {
     const runtimeDetail = isStephanos
       ? stephanosTruth?.summary || compatibilityRuntimeDetail
       : compatibilityRuntimeDetail;
+    const launcherDescription = String(safeProject.launcherDescription || '').trim();
+    const badgeMarkup = safeProject.launcherBadges.length > 0
+      ? `<div class="app-tile-badges">${safeProject.launcherBadges.map((badge) => `<span class="app-tile-badge">${badge}</span>`).join('')}</div>`
+      : '';
+    const actionLabel = String(safeProject.launcherActionLabel || '').trim();
+    const actionMarkup = actionLabel ? `<div class="app-tile-action">${actionLabel} →</div>` : '';
+
     const issueLabel = safeProject.validationState === 'error' || safeProject.validationState === 'launching'
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
       : stephanosTruth?.drift
@@ -484,7 +494,10 @@ export function renderProjectRegistry(projects, context, options = {}) {
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
       <div style="margin-top:8px;">${safeProject.name}</div>
+      ${launcherDescription ? `<div class="app-tile-subtitle">${launcherDescription}</div>` : ''}
+      ${badgeMarkup}
       ${issueLabel}
+      ${actionMarkup}
     `;
 
     if (blockLaunch) {

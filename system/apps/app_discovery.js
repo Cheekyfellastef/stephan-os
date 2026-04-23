@@ -84,6 +84,9 @@ function normaliseManifestApp(folder, manifest) {
     continuityParticipation: typeof manifest.continuityParticipation === "string" ? manifest.continuityParticipation : "none-declared",
     aiAddressable: manifest.aiAddressable === true,
     participation,
+    launcherDescription: typeof manifest.description === "string" ? manifest.description : "",
+    launcherBadges: Array.isArray(manifest.launcherBadges) ? manifest.launcherBadges : [],
+    launcherActionLabel: typeof manifest.launcherActionLabel === "string" ? manifest.launcherActionLabel : "",
   };
 }
 
