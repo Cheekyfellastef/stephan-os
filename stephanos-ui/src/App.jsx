@@ -28,7 +28,6 @@ import AgentsTile from './components/AgentsTile.jsx';
 import AgentQuickControls from './components/AgentQuickControls.jsx';
 import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
-import StephanosOpeningSequence from './components/system/StephanosOpeningSequence.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -168,6 +167,7 @@ export default function App() {
   const cockpitSurfaceMode = surfaceMode === 'cockpit';
   const agentsSurfaceMode = surfaceMode === 'agents';
   const missionConsoleSurfaceMode = surfaceMode === 'mission-console';
+  const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
@@ -221,7 +221,6 @@ export default function App() {
     }),
     [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
   );
-  const [openingSequenceFinished, setOpeningSequenceFinished] = useState(false);
   const [telemetryEntries, setTelemetryEntries] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [agentControls, setAgentControls] = useState({
@@ -364,7 +363,15 @@ export default function App() {
     eventLog: agentEventLog,
     context: {
       sessionKind: runtimeStatus?.runtimeContext?.sessionKind || 'local-dev',
-      surface: missionConsoleSurfaceMode ? 'mission-console' : agentsSurfaceMode ? 'agents' : cockpitSurfaceMode ? 'cockpit' : 'mission-control',
+      surface: openClawSurfaceMode
+        ? 'openclaw'
+        : missionConsoleSurfaceMode
+          ? 'mission-console'
+          : agentsSurfaceMode
+            ? 'agents'
+            : cockpitSurfaceMode
+              ? 'cockpit'
+              : 'mission-control',
       dependencyReadyMap: {
         'runtime-truth': runtimeStatus?.appLaunchState === 'ready',
         'provider-routing': routeTruthView?.routeUsableState !== 'no',
@@ -375,7 +382,7 @@ export default function App() {
       },
     },
     operatorControls: agentControls,
-  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, missionConsoleSurfaceMode, continuitySnapshot?.sharedMemorySource, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, missionConsoleSurfaceMode, continuitySnapshot?.sharedMemorySource, openClawSurfaceMode, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
   const finalAgentView = useMemo(() => buildFinalAgentView({
     adjudicated: agentTruth,
     selectedAgentId,
@@ -720,14 +727,6 @@ export default function App() {
     console.info('[PANES] layout restored from memory', { order: safePaneOrder });
   }, [safePaneOrder]);
 
-  if (!openingSequenceFinished) {
-    return (
-      <main className="app-shell-root">
-        <StephanosOpeningSequence onComplete={() => setOpeningSequenceFinished(true)} />
-      </main>
-    );
-  }
-
   if (cockpitSurfaceMode) {
     markStartupStage('app-cockpit-surface-render-start');
     markStartupStage('app-cockpit-surface-render-complete');
@@ -812,6 +811,40 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
           />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
+  if (openClawSurfaceMode) {
+    markStartupStage('app-openclaw-surface-render-start');
+    markStartupStage('app-openclaw-surface-render-complete');
+    return (
+      <main className="app-shell-root mission-console-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          OPENCLAW SURFACE · <strong>{ignitionModeBanner.mode}</strong> · {agentSurfaceProjection.launcherSummary.summaryLabel} · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <section className="mission-console-surface-stage mission-console-workspace">
+          <OpenClawTile
+            uiLayout={{ ...safeUiLayout, openClawPanel: true }}
+            togglePanel={() => {}}
+            runtimeStatusModel={runtimeStatusModel}
+            finalRouteTruth={routeTruthView}
+            branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+            onIntegrationUpdate={setOpenClawIntegration}
+          />
+          <MissionConsoleTile
+            uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}
+            togglePanel={() => {}}
+            runtimeStatusModel={runtimeStatusModel}
+            finalRouteTruth={routeTruthView}
+            finalAgentView={displayAgentView}
+            branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+            onOpenClawIntegrationUpdate={setOpenClawIntegration}
+          />
+          <StatusPanel />
+          <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
         </section>
         <DebugConsole />
       </main>
