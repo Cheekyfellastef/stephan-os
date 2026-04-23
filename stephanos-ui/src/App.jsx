@@ -28,6 +28,7 @@ import AgentsTile from './components/AgentsTile.jsx';
 import AgentQuickControls from './components/AgentQuickControls.jsx';
 import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
+import StephanosOpeningSequence from './components/system/StephanosOpeningSequence.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -219,6 +220,7 @@ export default function App() {
     }),
     [runtimeStatus.runtimeTruth, safeUiLayout.realitySyncEnabled],
   );
+  const [openingSequenceFinished, setOpeningSequenceFinished] = useState(false);
   const [telemetryEntries, setTelemetryEntries] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [agentControls, setAgentControls] = useState({
@@ -716,6 +718,14 @@ export default function App() {
     console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
     console.info('[PANES] layout restored from memory', { order: safePaneOrder });
   }, [safePaneOrder]);
+
+  if (!openingSequenceFinished) {
+    return (
+      <main className="app-shell-root">
+        <StephanosOpeningSequence onComplete={() => setOpeningSequenceFinished(true)} />
+      </main>
+    );
+  }
 
   if (cockpitSurfaceMode) {
     markStartupStage('app-cockpit-surface-render-start');
