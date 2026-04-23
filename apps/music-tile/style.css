@@ -165,6 +165,22 @@ button.ghost,
   align-items: center;
 }
 
+.track-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.track-badge {
+  border: 1px solid #2b5f8f;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  color: #9ec8ef;
+  background: rgba(10, 25, 43, 0.8);
+}
+
 .track-actions a {
   color: #8bd0ff;
 }
@@ -341,6 +357,7 @@ input {
 
 .toggle-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 12px;
   color: #9ec4ef;

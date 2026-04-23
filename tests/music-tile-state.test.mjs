@@ -87,3 +87,22 @@ test('music tile save sanitizes payload and sends durable data to shared backend
   assert.equal(capturedPayload.appId, 'music-tile');
   assert.equal(capturedPayload.state.selection.era, 'night-drive');
 });
+
+test('music tile reliability records persist suppression memory separately from ratings', () => {
+  const updated = musicStateModule.upsertReliabilityRecord(musicStateModule.DEFAULT_MUSIC_MEMORY, {
+    mediaItemId: 'abc12345678',
+    provider: 'youtube',
+    providerItemId: 'abc12345678',
+    suppressionState: 'suppress',
+    failureReason: 'youtube.unavailable',
+    reliabilityClass: 'unavailable',
+    incrementFailure: true,
+  });
+
+  const key = musicStateModule.buildMediaReliabilityKey({
+    provider: 'youtube',
+    providerItemId: 'abc12345678',
+  });
+  assert.equal(updated.reliabilityRecords[key].failureCount, 1);
+  assert.equal(updated.ratings.length, 0);
+});

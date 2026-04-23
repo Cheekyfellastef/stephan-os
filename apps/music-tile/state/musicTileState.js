@@ -28,6 +28,7 @@ export const DEFAULT_MUSIC_MEMORY = {
   ignoredItemIds: [],
   discoveryJobs: [],
   sessions: [],
+  reliabilityRecords: {},
 };
 
 function safeParse(json) {
@@ -62,6 +63,7 @@ function sanitizeMemory(value) {
     ignoredItemIds: Array.isArray(value.ignoredItemIds) ? value.ignoredItemIds : [],
     discoveryJobs: Array.isArray(value.discoveryJobs) ? value.discoveryJobs : [],
     sessions: Array.isArray(value.sessions) ? value.sessions : [],
+    reliabilityRecords: value.reliabilityRecords && typeof value.reliabilityRecords === 'object' ? value.reliabilityRecords : {},
   };
 }
 
@@ -173,6 +175,58 @@ function clampAffinity(value) {
 
 function ensureUnique(list, value) {
   if (!list.includes(value)) list.push(value);
+}
+
+export function buildMediaReliabilityKey({ provider = '', providerItemId = '', mediaItemId = '' } = {}) {
+  const normalizedProvider = String(provider || '').trim().toLowerCase() || 'unknown';
+  const normalizedProviderItemId = String(providerItemId || mediaItemId || '').trim();
+  if (!normalizedProviderItemId) return '';
+  return `${normalizedProvider}:${normalizedProviderItemId}`;
+}
+
+export function upsertReliabilityRecord(memory, {
+  mediaItemId = '',
+  provider = '',
+  providerItemId = '',
+  suppressionState = 'none',
+  failureReason = '',
+  reliabilityClass = '',
+  incrementFailure = false,
+  validatedAt = '',
+} = {}) {
+  const next = sanitizeMemory(memory);
+  const key = buildMediaReliabilityKey({ provider, providerItemId, mediaItemId });
+  if (!key) return next;
+
+  const nowIso = validatedAt || new Date().toISOString();
+  const current = next.reliabilityRecords[key] || {
+    mediaItemId,
+    provider: String(provider || '').trim().toLowerCase() || 'unknown',
+    providerItemId: String(providerItemId || mediaItemId || '').trim(),
+    suppressionState: 'none',
+    failureReason: '',
+    reliabilityClass: '',
+    firstObservedAt: nowIso,
+    lastObservedAt: nowIso,
+    failureCount: 0,
+    lastValidatedAt: nowIso,
+  };
+
+  next.reliabilityRecords[key] = {
+    ...current,
+    mediaItemId: mediaItemId || current.mediaItemId,
+    provider: String(provider || current.provider || '').trim().toLowerCase() || 'unknown',
+    providerItemId: String(providerItemId || current.providerItemId || '').trim(),
+    suppressionState: suppressionState || current.suppressionState,
+    failureReason: failureReason || current.failureReason,
+    reliabilityClass: reliabilityClass || current.reliabilityClass,
+    firstObservedAt: current.firstObservedAt || nowIso,
+    lastObservedAt: nowIso,
+    failureCount: incrementFailure ? (Number(current.failureCount) || 0) + 1 : (Number(current.failureCount) || 0),
+    lastValidatedAt: nowIso,
+  };
+
+  return next;
 }
 
 export function applyRatingToMemory(memory, mediaItemId, rating, note = '') {
