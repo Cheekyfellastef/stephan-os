@@ -79,6 +79,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       memoryCapabilityReady: 'yes',
       memoryCapabilityCanonical: 'no',
       memoryCapabilityReason: 'Shared backend memory is unavailable; degraded local mirror remains available.',
+      latestMissionId: 'intent-build-mission-console-123',
+      missionStatus: 'draft',
+      approvalRequired: 'yes',
+      generatedPromptAvailable: 'yes',
+      verificationStatus: 'pending',
 
     },
     routeTruthView: {
@@ -250,6 +255,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Codex Handoff Available: true/);
   assert.match(snapshot, /Approval Required: true/);
   assert.match(snapshot, /Execution Eligible: false/);
+  assert.match(snapshot, /Intent-to-Build Latest Mission ID: intent-build-mission-console-123/);
+  assert.match(snapshot, /Intent-to-Build Mission Status: draft/);
+  assert.match(snapshot, /Intent-to-Build Approval Required: yes/);
+  assert.match(snapshot, /Intent-to-Build Generated Prompt Available: yes/);
+  assert.match(snapshot, /Intent-to-Build Verification Status: pending/);
   assert.match(snapshot, /Memory Elevation Active: true/);
   assert.match(snapshot, /Elevated Memory Count: 5/);
   assert.match(snapshot, /Graph Linked Memory Count: 2/);

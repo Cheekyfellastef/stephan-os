@@ -15,6 +15,9 @@ import {
   buildBlockedMissionConsoleResponse,
   createMissionConsoleMessage,
 } from '../state/missionConsoleMessageLedger.js';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { createIntentToBuildState, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -30,13 +33,37 @@ export default function MissionConsoleTile({
   finalAgentView,
   branchName = 'unknown',
   onOpenClawIntegrationUpdate = () => {},
+  onIntentToBuildUpdate = () => {},
 }) {
+  const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
+  const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
   const [selectedAgentId, setSelectedAgentId] = useState('broadcast');
   const [openClawIntentType, setOpenClawIntentType] = useState('run-scan');
   const [proposalCards, setProposalCards] = useState([]);
   const [lastScanReport, setLastScanReport] = useState(null);
+  const [intentInput, setIntentInput] = useState({
+    rawIntent: '',
+    targetArea: 'mission-console',
+    riskLevel: 'medium',
+    allowedAutomation: [...INTENT_TO_BUILD_BOUNDARIES.autoAllowed],
+    verificationCommands: [
+      'npm run stephanos:build',
+      'npm run stephanos:verify',
+      'node --test stephanos-ui/src/state/intentToBuildModel.test.mjs',
+      'git status --short',
+    ],
+    successCriteria: [
+      'Operator can generate a bounded mission spec from high-level intent.',
+      'Approval-required actions are explicitly labeled.',
+      'Codex prompt and verification checklist are copy-ready.',
+    ],
+  });
+  const [intentToBuild, setIntentToBuild] = useState(() => createIntentToBuildState({
+    rawIntent: 'Awaiting operator Intent-to-Build input.',
+    targetArea: 'mission-console',
+  }));
   const [messages, setMessages] = useState(() => [
     createMissionConsoleMessage({
       role: 'assistant',
@@ -73,6 +100,16 @@ export default function MissionConsoleTile({
   useEffect(() => {
     onOpenClawIntegrationUpdate(openClawIntegration);
   }, [onOpenClawIntegrationUpdate, openClawIntegration]);
+  useEffect(() => {
+    const missionSpec = intentToBuild?.missionSpec || {};
+    onIntentToBuildUpdate({
+      latestMissionId: missionSpec.missionId || 'n/a',
+      missionStatus: missionSpec.status || 'draft',
+      approvalRequired: intentToBuild?.approvalRequired === true ? 'yes' : 'no',
+      generatedPromptAvailable: intentToBuild?.generatedPromptAvailable === true ? 'yes' : 'no',
+      verificationStatus: intentToBuild?.verificationEvidence?.verificationStatus || 'pending',
+    });
+  }, [intentToBuild, onIntentToBuildUpdate]);
 
   function addMessage(message) {
     setMessages((previous) => appendMissionConsoleMessage(previous, message));
@@ -206,6 +243,20 @@ export default function MissionConsoleTile({
     setInput('');
   }
 
+  function handleIntentInputChange(field, value) {
+    setIntentInput((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function generateIntentToBuildSpec() {
+    const next = createIntentToBuildState(intentInput);
+    setIntentToBuild(next);
+  }
+
+  async function copyToClipboard(text, setCopyState) {
+    const result = await writeTextToClipboard(text, { navigatorObject: typeof navigator !== 'undefined' ? navigator : null });
+    setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+  }
+
   return (
     <CollapsiblePanel
       panelId="missionConsolePanel"
@@ -263,6 +314,50 @@ export default function MissionConsoleTile({
           </label>
         ) : null}
         <p><strong>Active routing target before submit:</strong> {resolvedTarget.label}</p>
+      </section>
+
+      <section className="mission-console-section">
+        <h4>Intent-to-Build Control Loop</h4>
+        <label className="paneFieldGroup">
+          Raw intent
+          <textarea
+            className="paneTextarea paneControl"
+            rows={3}
+            value={intentInput.rawIntent}
+            onChange={(event) => handleIntentInputChange('rawIntent', event.target.value)}
+            placeholder="Describe the high-level project intent for Stephanos to bound into a mission spec."
+          />
+        </label>
+        <label className="paneFieldGroup">
+          Target area
+          <input className="paneInput paneControl" value={intentInput.targetArea} onChange={(event) => handleIntentInputChange('targetArea', event.target.value)} />
+        </label>
+        <label className="paneFieldGroup">
+          Risk level
+          <select className="paneSelect paneControl" value={intentInput.riskLevel} onChange={(event) => handleIntentInputChange('riskLevel', event.target.value)}>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <button type="button" onClick={generateIntentToBuildSpec}>Generate Mission Spec</button>
+        <ul>
+          <li><strong>raw intent:</strong> {intentToBuild.missionSpec.rawIntent}</li>
+          <li><strong>generated mission spec:</strong> {intentToBuild.missionSpec.missionId}</li>
+          <li><strong>allowed actions:</strong> {intentToBuild.missionSpec.approvalBoundary.allowedActions.join(', ')}</li>
+          <li><strong>blocked actions requiring approval:</strong> {intentToBuild.missionSpec.approvalBoundary.blockedActions.join(', ')}</li>
+          <li><strong>generated Codex prompt:</strong> {intentToBuild.generatedPromptAvailable ? 'available' : 'not generated'}</li>
+          <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
+        </ul>
+        <div className="mission-console-copy-row">
+          <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>
+            {specCopyState === COPY_STATE.SUCCESS ? 'Mission Spec Copied' : 'Copy Mission Spec'}
+          </button>
+          <button type="button" onClick={() => copyToClipboard(intentToBuild.codexPrompt, setPromptCopyState)}>
+            {promptCopyState === COPY_STATE.SUCCESS ? 'Codex Prompt Copied' : 'Copy Codex Prompt'}
+          </button>
+        </div>
+        <pre className="openclaw-prompt-box">{intentToBuild.codexPrompt}</pre>
       </section>
 
       <section className="mission-console-section">
