@@ -94,6 +94,15 @@ import {
   createDefaultHostedIdeaStagingQueue,
   normalizeHostedIdeaStagingQueue,
 } from '../../../shared/runtime/hostedIdeaStaging.mjs';
+import {
+  buildMemoryCandidatesFromTaskCompletion,
+  buildMissionMemoryFromContext,
+  createDefaultMissionMemory,
+  formatDeluxeMemoryClipboard,
+  normalizeExecutionLog,
+  normalizeMemoryCandidates,
+  normalizeMissionMemory,
+} from './deluxeMemorySystem.js';
 
 const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
@@ -181,6 +190,7 @@ const DEFAULT_BRIDGE_AUTO_REVALIDATION = Object.freeze({
 });
 const BRIDGE_AUTO_REVALIDATION_MAX_ATTEMPTS = 2;
 const BRIDGE_AUTO_REVALIDATION_BACKOFF_MS = 60_000;
+const MAX_DURABLE_MEMORY_SUMMARY = 12;
 
 function recordAIStoreStartupStage(stage, { status = 'ok', details = null, sourceFunction = 'aiStore.startup' } = {}) {
   recordStartupRenderStage({
@@ -897,6 +907,19 @@ export function AIStoreProvider({ children }) {
   const [ollamaConnection, setOllamaConnectionState] = useState(initialSettings.ollamaConnection || DEFAULT_OLLAMA_CONNECTION);
   const [surfaceOverride, setSurfaceOverrideState] = useState(initialSettings.surfaceOverride || DEFAULT_SURFACE_OVERRIDE);
   const [workingMemory, setWorkingMemory] = useState(initialSnapshot.workingMemory);
+  const [missionMemory, setMissionMemory] = useState(
+    normalizeMissionMemory(initialSnapshot.workingMemory?.missionMemory || createDefaultMissionMemory()),
+  );
+  const [memoryCandidates, setMemoryCandidates] = useState(
+    normalizeMemoryCandidates(initialSnapshot.workingMemory?.memoryCandidates || []),
+  );
+  const [executionLog, setExecutionLog] = useState(
+    normalizeExecutionLog(initialSnapshot.workingMemory?.executionLog || []),
+  );
+  const [agentScratchpad, setAgentScratchpad] = useState({
+    updatedAt: '',
+    notes: '',
+  });
   const [surfaceFrictionEvents, setSurfaceFrictionEvents] = useState(
     sanitizeSurfaceFrictionEvents(initialSnapshot.workingMemory?.surfaceFrictionEvents || []),
   );
@@ -1245,6 +1268,9 @@ export function AIStoreProvider({ children }) {
       },
       working: {
         ...workingMemory,
+        missionMemory,
+        memoryCandidates,
+        executionLog,
         missionPacketWorkflow,
         missionLineage,
         hostedIdeaStagingQueue: normalizeHostedIdeaStagingQueue(hostedIdeaStagingQueue),
@@ -1275,6 +1301,9 @@ export function AIStoreProvider({ children }) {
     lastRoute,
     commandHistory,
     workingMemory,
+    missionMemory,
+    memoryCandidates,
+    executionLog,
     missionPacketWorkflow,
     missionLineage,
     hostedIdeaStagingQueue,
@@ -1619,6 +1648,101 @@ export function AIStoreProvider({ children }) {
     if (!item) return null;
     return buildHostedStagingHandoffPayload(item);
   }, [hostedIdeaStagingQueue]);
+
+  const appendExecutionLog = useCallback((entry = {}) => {
+    setExecutionLog((prev) => normalizeExecutionLog([
+      ...prev,
+      {
+        id: entry.id || `execution_log_${Date.now()}`,
+        type: entry.type || 'execution-event',
+        summary: entry.summary || 'Execution update captured.',
+        evidenceRef: entry.evidenceRef || '',
+        source: entry.source || 'system',
+        timestamp: entry.timestamp || new Date().toISOString(),
+        raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null,
+      },
+    ]));
+  }, []);
+
+  const updateMissionMemory = useCallback((packetTruth = {}, now = new Date().toISOString()) => {
+    setMissionMemory(buildMissionMemoryFromContext({
+      packetTruth,
+      workingMemory,
+      now,
+    }));
+  }, [workingMemory]);
+
+  const generateMemoryCandidates = useCallback(({ action = '', packetTruth = {}, now = new Date().toISOString() } = {}) => {
+    const generated = buildMemoryCandidatesFromTaskCompletion({
+      action,
+      packetTruth,
+      executionLog,
+      now,
+    });
+    if (generated.length > 0) {
+      setMemoryCandidates((prev) => normalizeMemoryCandidates([...prev, ...generated]));
+    }
+    return generated;
+  }, [executionLog]);
+
+  const adjudicateMemoryCandidate = useCallback((candidateId, decision = 'reject', note = '') => {
+    const now = new Date().toISOString();
+    const memoryRuntime = getStephanosMemoryRuntime();
+    let promotedRecord = null;
+    setMemoryCandidates((prev) => normalizeMemoryCandidates(prev.map((entry) => {
+      if (entry.id !== candidateId) return entry;
+      if (decision === 'approve' && memoryRuntime?.saveRecord) {
+        const normalizedId = String(entry.summary || candidateId).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 72) || candidateId;
+        const durableId = `adjudicated-${entry.memoryClass}-${normalizedId}`;
+        promotedRecord = memoryRuntime.saveRecord({
+          namespace: 'continuity',
+          id: durableId,
+          type: 'continuity.note',
+          source: `memory-adjudication:${entry.source}`,
+          scope: 'runtime',
+          summary: entry.summary,
+          payload: {
+            memoryClass: entry.memoryClass,
+            confidence: entry.confidence,
+            evidenceRef: entry.evidenceRef,
+            impactLevel: entry.impactLevel,
+            adjudicatedAt: now,
+            adjudicationDecision: 'approved',
+            reviewNote: String(note || '').trim(),
+          },
+          tags: ['deluxe-memory', `class.${entry.memoryClass}`, `impact.${entry.impactLevel}`],
+          importance: entry.impactLevel === 'high' ? 'high' : 'normal',
+        });
+      }
+      return {
+        ...entry,
+        status: decision === 'approve' ? 'approved' : decision === 'revise' ? 'revise-requested' : 'rejected',
+        reviewedAt: now,
+        reviewNote: String(note || '').trim(),
+      };
+    })));
+    return { ok: true, promotedRecord };
+  }, []);
+
+  const clearMemoryCandidate = useCallback((candidateId) => {
+    setMemoryCandidates((prev) => normalizeMemoryCandidates(prev.filter((entry) => entry.id !== candidateId)));
+  }, []);
+
+  const listDurableMemorySummary = useCallback(() => {
+    const memoryRuntime = getStephanosMemoryRuntime();
+    if (!memoryRuntime?.listRecords) return [];
+    return memoryRuntime
+      .listRecords({ namespace: 'continuity', type: 'continuity.note' })
+      .slice(-MAX_DURABLE_MEMORY_SUMMARY)
+      .reverse()
+      .map((entry) => `${entry.summary} [${entry.id}]`);
+  }, []);
+
+  const buildDeluxeMemoryClipboard = useCallback(() => formatDeluxeMemoryClipboard({
+    missionMemory,
+    memoryCandidates,
+    durableSummary: listDurableMemorySummary(),
+  }), [missionMemory, memoryCandidates, listDurableMemorySummary]);
 
   const resetToFreeMode = () => {
     const defaults = createDefaultRouterSettings();
@@ -2526,8 +2650,30 @@ export function AIStoreProvider({ children }) {
     uiDiagnostics,
     setUiDiagnostics,
     applyMissionPacketWorkflowAction: (action, packetTruth, now) => {
-      setMissionPacketWorkflow((prev) => applyMissionPacketAction(prev, { action, packetTruth, now }));
+      const eventTime = now || new Date().toISOString();
+      setMissionPacketWorkflow((prev) => applyMissionPacketAction(prev, { action, packetTruth, now: eventTime }));
+      updateMissionMemory(packetTruth, eventTime);
+      appendExecutionLog({
+        type: 'mission-workflow',
+        source: 'operator',
+        summary: `Mission packet action ${String(action || 'unknown')} applied for ${packetTruth?.moveId || packetTruth?.mode || 'mission-packet'}.`,
+        evidenceRef: `mission-packet:${packetTruth?.moveId || packetTruth?.mode || 'unknown'}`,
+        timestamp: eventTime,
+        raw: { action, packetTruth },
+      });
+      generateMemoryCandidates({ action, packetTruth, now: eventTime });
     },
+    missionMemory,
+    setMissionMemory,
+    memoryCandidates,
+    adjudicateMemoryCandidate,
+    clearMemoryCandidate,
+    executionLog,
+    appendExecutionLog,
+    agentScratchpad,
+    setAgentScratchpad,
+    listDurableMemorySummary,
+    buildDeluxeMemoryClipboard,
     applyMissionLineageAction: ({ packetTruth, selectors, envelope, now }) => {
       setMissionLineage((prev) => applyMissionLineageUpdate(prev, { packetTruth, selectors, envelope, now }));
     },
@@ -2563,6 +2709,10 @@ export function AIStoreProvider({ children }) {
     acceptedSurfaceRules,
     surfaceOverride,
     workingMemory,
+    missionMemory,
+    memoryCandidates,
+    executionLog,
+    agentScratchpad,
     missionPacketWorkflow,
     missionLineage,
     hostedIdeaStagingQueue,
@@ -2613,6 +2763,13 @@ export function AIStoreProvider({ children }) {
     promoteHostedStagedItem,
     clearHostedStagedItems,
     exportHostedStagedItem,
+    updateMissionMemory,
+    appendExecutionLog,
+    generateMemoryCandidates,
+    adjudicateMemoryCandidate,
+    clearMemoryCandidate,
+    listDurableMemorySummary,
+    buildDeluxeMemoryClipboard,
     setHomeNodePreference,
     setHomeNodeLastKnown,
     saveBridgeTransportConfig,
