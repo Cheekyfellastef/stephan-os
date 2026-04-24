@@ -32,7 +32,7 @@ import CollapsiblePanel from './CollapsiblePanel';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 
-export default function StatusPanel({ finalAgentView = null } = {}) {
+export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null } = {}) {
   const [copyNotice, setCopyNotice] = useState(null);
   const { copyState: supportSnapshotCopyState, setCopyState: setSupportSnapshotCopyState } = useClipboardButtonState();
   const { copyState: codexHandoffCopyState, setCopyState: setCodexHandoffCopyState } = useClipboardButtonState();
@@ -468,6 +468,11 @@ export default function StatusPanel({ finalAgentView = null } = {}) {
       missionPacketDecisionAt: missionPacketDecision?.decidedAt || 'n/a',
       missionPacketProposalQueueLength: String(missionPacketWorkflow?.proposalQueue?.length || 0),
       missionPacketRoadmapQueueLength: String(missionPacketWorkflow?.roadmapQueue?.length || 0),
+      latestMissionId: intentToBuildTruth?.latestMissionId || 'n/a',
+      missionStatus: intentToBuildTruth?.missionStatus || 'draft',
+      approvalRequired: intentToBuildTruth?.approvalRequired || 'no',
+      generatedPromptAvailable: intentToBuildTruth?.generatedPromptAvailable || 'no',
+      verificationStatus: intentToBuildTruth?.verificationStatus || 'pending',
       lastIntentType: lastExecutionMetadata?.intent_type || safeWorkingMemory.lastIntentType || 'unknown',
       lastIntentConfidence: String(lastExecutionMetadata?.intent_confidence ?? 0),
       lastIntentReason: lastExecutionMetadata?.intent_reason || 'n/a',

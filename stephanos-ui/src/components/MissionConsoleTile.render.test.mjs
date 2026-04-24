@@ -21,6 +21,10 @@ test('MissionConsoleTile includes governed routing, identity labels, and explici
     'Reject',
     'Integration Topology in Mission Console',
     'Guardrails',
+    'Intent-to-Build Control Loop',
+    'Generate Mission Spec',
+    'Copy Mission Spec',
+    'Copy Codex Prompt',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('responder'), true);

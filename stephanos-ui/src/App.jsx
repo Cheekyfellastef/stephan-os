@@ -239,6 +239,13 @@ export default function App() {
     repoPath: '/workspace/stephan-os',
     branchName: runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown',
   }));
+  const [intentToBuildTruth, setIntentToBuildTruth] = useState({
+    latestMissionId: 'n/a',
+    missionStatus: 'draft',
+    approvalRequired: 'no',
+    generatedPromptAvailable: 'no',
+    verificationStatus: 'pending',
+  });
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
@@ -532,7 +539,7 @@ export default function App() {
         <PowerShellMergeConsolePanel />
       </div>
     ) },
-    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} /> },
+    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} /> },
     {
       id: 'toolsPanel',
       render: () => (
@@ -637,6 +644,7 @@ export default function App() {
           finalAgentView={displayAgentView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
           onOpenClawIntegrationUpdate={setOpenClawIntegration}
+          onIntentToBuildUpdate={setIntentToBuildTruth}
         />
       ),
     },
@@ -666,6 +674,7 @@ export default function App() {
     finalAgentView,
     displayAgentView,
     openClawIntegration,
+    intentToBuildTruth,
     agentControls.debugVisibility,
     actionHints,
     canonicalCurrentIntent,
@@ -835,6 +844,7 @@ export default function App() {
             finalAgentView={displayAgentView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
+            onIntentToBuildUpdate={setIntentToBuildTruth}
           />
         </section>
         <DebugConsole />
@@ -867,8 +877,9 @@ export default function App() {
             finalAgentView={displayAgentView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
+            onIntentToBuildUpdate={setIntentToBuildTruth}
           />
-          <StatusPanel finalAgentView={displayAgentView} />
+          <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
         </section>
         <DebugConsole />

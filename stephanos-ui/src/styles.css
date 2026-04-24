@@ -2624,6 +2624,12 @@ pre {
   font-size: 0.7rem;
 }
 
+.mission-console-copy-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .stephanos-opening-sequence {
   display: flex;
   flex-direction: column;
