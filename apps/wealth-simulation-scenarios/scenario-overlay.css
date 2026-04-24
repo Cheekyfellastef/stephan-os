@@ -539,13 +539,14 @@ body.stephanos-scenario-body::before {
   width: 100% !important;
   max-width: 100%;
   min-width: 0;
-  height: auto !important;
+  min-height: clamp(280px, 48dvh, 620px);
 }
 
 .scenario-sim-app__chart-shell .recharts-responsive-container {
   width: 100% !important;
   max-width: 100%;
   min-width: 0;
+  min-height: clamp(280px, 48dvh, 620px);
 }
 
 .scenario-sim-app__chart-shell .recharts-wrapper,
@@ -667,6 +668,11 @@ body.stephanos-scenario-body::before {
   .scenario-sim-app__chart-shell {
     padding: 12px 10px 10px !important;
     border-radius: 16px;
+  }
+
+  .scenario-sim-app__chart-wrapper,
+  .scenario-sim-app__chart-shell .recharts-responsive-container {
+    min-height: clamp(240px, 44dvh, 380px);
   }
 
   .scenario-sim-app__chart-shell .recharts-cartesian-axis-tick-value,
