@@ -231,3 +231,93 @@ test('surface-aware blocking marks local-only execution tasks as blocked on host
   assert.ok(blockedResume);
   assert.match(blockedResume.blockedReason, /Session hosted-web cannot execute this task/);
 });
+
+test('memory agent is active when shared backend memory capability is canonical', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      memoryCapability: {
+        state: 'backend',
+        ready: true,
+        canonical: true,
+        reason: 'Shared backend durable memory is hydrated and ready.',
+      },
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const memoryAgent = adjudicated.agents.find((entry) => entry.agentId === 'memory-agent');
+  assert.equal(memoryAgent.active, true);
+  assert.equal(memoryAgent.ready, true);
+  assert.equal(memoryAgent.state, 'watching');
+});
+
+test('memory agent remains degraded and watching with local mirror fallback instead of hard block', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      memoryCapability: {
+        state: 'degraded-local',
+        ready: true,
+        canonical: false,
+        reason: 'Shared backend memory is unavailable; degraded local mirror remains available.',
+      },
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const memoryAgent = adjudicated.agents.find((entry) => entry.agentId === 'memory-agent');
+  assert.equal(memoryAgent.active, true);
+  assert.equal(memoryAgent.state, 'degraded');
+  assert.equal(memoryAgent.stateReason.includes('degraded local mirror'), true);
+});
+
+test('memory agent is preparing while memory capability is hydrating', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      dependencyReadyMap: { ...buildBaseContext().dependencyReadyMap, 'shared-memory': false },
+      memoryCapability: {
+        state: 'hydrating',
+        ready: false,
+        canonical: false,
+        reason: 'Shared memory hydration is still in progress; capability is preparing.',
+      },
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const memoryAgent = adjudicated.agents.find((entry) => entry.agentId === 'memory-agent');
+  assert.equal(memoryAgent.active, false);
+  assert.equal(memoryAgent.state, 'preparing');
+  assert.match(memoryAgent.stateReason, /hydration/i);
+});
+
+test('memory agent is blocked with explicit reason when memory capability is unavailable', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      dependencyReadyMap: { ...buildBaseContext().dependencyReadyMap, 'shared-memory': false },
+      memoryCapability: {
+        state: 'unavailable',
+        ready: false,
+        canonical: false,
+        reason: 'Shared durable memory is unavailable on this runtime surface.',
+      },
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const memoryAgent = adjudicated.agents.find((entry) => entry.agentId === 'memory-agent');
+  assert.equal(memoryAgent.active, false);
+  assert.equal(memoryAgent.state, 'blocked');
+  assert.match(memoryAgent.stateReason, /unavailable/i);
+});

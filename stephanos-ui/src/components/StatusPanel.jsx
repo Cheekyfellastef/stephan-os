@@ -496,6 +496,10 @@ export default function StatusPanel() {
       lastRetrievalContributionSubmitted: String(lastExecutionMetadata?.retrieval_contribution_submitted ?? 'n/a'),
       lastRetrievalIngested: String(lastExecutionMetadata?.retrieval_ingested ?? 'n/a'),
       lastRetrievalSourceRef: lastExecutionMetadata?.retrieval_source_ref || 'n/a',
+      memoryCapabilityState: continuitySnapshot.memoryCapabilityState || 'unavailable',
+      memoryCapabilityReady: continuitySnapshot.memoryCapabilityReady === true ? 'yes' : 'no',
+      memoryCapabilityCanonical: continuitySnapshot.memoryCapabilityCanonical === true ? 'yes' : 'no',
+      memoryCapabilityReason: continuitySnapshot.memoryCapabilityReason || 'Memory capability state unavailable.',
       executionTruth,
       executionStatus: isBusy ? 'busy' : status,
       route: lastRoute,
@@ -682,6 +686,10 @@ export default function StatusPanel() {
         <li>[SHARED MEMORY] Source: {continuitySnapshot.sharedMemorySource}</li>
         <li>[SHARED MEMORY] Hydration: {continuitySnapshot.sharedMemoryHydrationState}</li>
         <li>[SHARED MEMORY] Fallback Reason: {continuitySnapshot.sharedMemoryFallbackReason}</li>
+        <li>[MEMORY CAPABILITY] State: {continuitySnapshot.memoryCapabilityState}</li>
+        <li>[MEMORY CAPABILITY] Ready: {continuitySnapshot.memoryCapabilityReady ? 'yes' : 'no'}</li>
+        <li>[MEMORY CAPABILITY] Canonical Backend: {continuitySnapshot.memoryCapabilityCanonical ? 'yes' : 'no'}</li>
+        <li>[MEMORY CAPABILITY] Reason: {continuitySnapshot.memoryCapabilityReason}</li>
         <li>[TILE LINK] State: {continuitySnapshot.tileLinkState}</li>
         <li>[AI CONTINUITY] State: {continuitySnapshot.aiContinuityState}</li>
         <li>[AI CONTINUITY] Mode: {continuitySnapshot.aiContinuityMode}</li>

@@ -681,6 +681,10 @@ export function buildSupportSnapshot({
     `Source Provenance Summary: ${asText(runtimeStatus?.lastSourceProvenanceSummary)}`,
     `Top Memory Influencers: ${asText(runtimeStatus?.lastTopMemoryInfluencers)}`,
     `Memory Informed Recommendation: ${asText(runtimeStatus?.lastMemoryInformedRecommendation)}`,
+    `Memory Capability State: ${asText(runtimeStatus?.memoryCapabilityState, 'unavailable')}`,
+    `Memory Capability Ready: ${asText(runtimeStatus?.memoryCapabilityReady, 'no')}`,
+    `Memory Capability Canonical: ${asText(runtimeStatus?.memoryCapabilityCanonical, 'no')}`,
+    `Memory Capability Reason: ${asText(runtimeStatus?.memoryCapabilityReason, 'Memory capability state unavailable.')}`,
 
     `Context Assembly Used: ${asText(runtimeStatus?.lastContextAssemblyUsed)}`,
     `Context Assembly Mode: ${asText(runtimeStatus?.lastContextAssemblyMode)}`,
