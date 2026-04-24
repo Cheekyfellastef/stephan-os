@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDiscoveryQueries, createFlowQueue, scoreMediaItem } from './musicDiscoveryEngine.js';
+import { applyArtistSearchContext, createDiscoveryQueries, createFlowQueue, scoreMediaItem } from './musicDiscoveryEngine.js';
 
 test('createDiscoveryQueries expands artist into query strategy set', () => {
   const queries = createDiscoveryQueries({ name: 'Anyma', collaborators: ['Chris Avantgarde'], labels: ['Afterlife'] });
@@ -51,4 +51,45 @@ test('createFlowQueue excludes seen and ignored by default', () => {
 
   assert.equal(queue.length, 1);
   assert.equal(queue[0].id, '1');
+});
+
+test('applyArtistSearchContext tiers strong, soft, and general without starving queue', () => {
+  const context = applyArtistSearchContext([
+    {
+      id: 'strong-1',
+      title: 'Anyma Live in Tulum',
+      description: 'Official stream',
+      channelName: 'Afterlife Official',
+      detectedArtists: ['Anyma'],
+      detectedEvents: ['afterlife'],
+      detectedLabels: [],
+    },
+    {
+      id: 'soft-1',
+      title: 'Afterlife Event Highlights',
+      description: 'Scene mix featuring melodic techno',
+      channelName: 'Festival TV',
+      detectedArtists: [],
+      detectedEvents: ['afterlife'],
+      detectedLabels: [],
+      artistSearchSource: 'Anyma live',
+    },
+    {
+      id: 'general-1',
+      title: 'Melodic techno journey',
+      description: 'Discovered by algorithm',
+      channelName: 'Discovery Channel',
+      detectedArtists: [],
+      detectedEvents: [],
+      detectedLabels: [],
+    },
+  ], {
+    activeArtists: [{ name: 'Anyma' }],
+    artistSearchActive: true,
+  });
+
+  assert.equal(context.filteredItems.length, 3);
+  assert.equal(context.counts.strong, 1);
+  assert.equal(context.counts.soft, 1);
+  assert.equal(context.counts.general, 1);
 });

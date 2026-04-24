@@ -260,16 +260,6 @@ export function applyRatingToMemory(memory, mediaItemId, rating, note = '') {
     next.artistAffinity[artistName] = clampAffinity(current + numericRating * 0.2);
   });
 
-  const currentTrust = next.channelTrust[mediaItem.channelId] || 0;
-  next.channelTrust[mediaItem.channelId] = clampAffinity(currentTrust + numericRating * 0.25);
-  next.sourceChannels[mediaItem.channelId] = {
-    id: mediaItem.channelId,
-    name: mediaItem.channelName,
-    trustScore: next.channelTrust[mediaItem.channelId],
-    tags: next.sourceChannels[mediaItem.channelId]?.tags || [],
-    lastSeen: new Date().toISOString(),
-  };
-
   return next;
 }
 

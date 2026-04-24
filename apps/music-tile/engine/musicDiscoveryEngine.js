@@ -1,6 +1,11 @@
 const QUERY_SUFFIXES = ['live', 'set', 'afterlife', 'interview', 'mix', 'full set', 'festival'];
 const EVENT_KEYWORDS = ['afterlife', 'cercle', 'zamna'];
 const WORD_SPLIT_PATTERN = /[\s,|/&+-]+/;
+const ARTIST_RELEVANCE_TIERS = {
+  STRONG: 'strong',
+  SOFT: 'soft',
+  GENERAL: 'general',
+};
 
 function normalizeText(value) {
   return String(value || '')
@@ -132,20 +137,37 @@ export function scoreMediaItem(mediaItem, context = {}) {
 
 export function scoreArtistRelevance(mediaItem, activeArtists = [], context = {}) {
   if (!Array.isArray(activeArtists) || !activeArtists.length) {
-    return { score: 0, matched: false, reasons: [] };
+    return {
+      score: 0,
+      matched: false,
+      reasons: [],
+      tier: ARTIST_RELEVANCE_TIERS.GENERAL,
+    };
   }
 
   const reasons = [];
+  const softReasons = [];
+  const strongReasons = [];
   const title = normalizeText(mediaItem?.title);
   const description = normalizeText(mediaItem?.description);
   const channel = normalizeText(mediaItem?.channelName);
   const textBuckets = collectMediaSearchText(mediaItem);
   const bucketBlob = textBuckets.join(' ');
+  const detectedEvents = (mediaItem?.detectedEvents || []).map(normalizeText);
+  const detectedLabels = (mediaItem?.detectedLabels || []).map(normalizeText);
   let score = 0;
   let matched = false;
+  let strongMatch = false;
+  let softMatch = false;
 
   activeArtists.forEach((artist) => {
     const artistTerms = collectArtistTerms(artist);
+    const collaboratorTerms = Array.isArray(artist?.collaborators)
+      ? artist.collaborators.map(normalizeText).filter(Boolean)
+      : [];
+    const labelTerms = Array.isArray(artist?.labels)
+      ? artist.labels.map(normalizeText).filter(Boolean)
+      : [];
     artistTerms.forEach((term) => {
       const normalizedTerm = normalizeText(term);
       if (!normalizedTerm) return;
@@ -160,45 +182,81 @@ export function scoreArtistRelevance(mediaItem, activeArtists = [], context = {}
       if (exactTitle) {
         score += 10;
         matched = true;
-        reasons.push(`title:${normalizedTerm}`);
+        strongMatch = true;
+        strongReasons.push(`title:${normalizedTerm}`);
       }
       if (exactChannel) {
         score += 6;
         matched = true;
-        reasons.push(`channel:${normalizedTerm}`);
+        strongMatch = true;
+        strongReasons.push(`channel:${normalizedTerm}`);
       }
       if (exactDescription) {
         score += 4;
         matched = true;
-        reasons.push(`description:${normalizedTerm}`);
+        strongMatch = true;
+        strongReasons.push(`description:${normalizedTerm}`);
       }
       if (inDetectedArtists) {
         score += 5;
         matched = true;
-        reasons.push(`detected:${normalizedTerm}`);
+        strongMatch = true;
+        strongReasons.push(`detected:${normalizedTerm}`);
       }
       if (!exactTitle && !exactChannel && !exactDescription && !inDetectedArtists && fuzzyWordsMatched) {
         score += 2;
         matched = true;
-        reasons.push(`fuzzy:${normalizedTerm}`);
+        softMatch = true;
+        softReasons.push(`fuzzy:${normalizedTerm}`);
       }
     });
+
+    const collaboratorHit = collaboratorTerms.find((candidate) => candidate && bucketBlob.includes(candidate));
+    if (collaboratorHit) {
+      score += 1.5;
+      matched = true;
+      softMatch = true;
+      softReasons.push(`collaborator:${collaboratorHit}`);
+    }
+
+    const labelHit = labelTerms.find((candidate) => candidate && (detectedLabels.includes(candidate) || bucketBlob.includes(candidate)));
+    if (labelHit) {
+      score += 1.5;
+      matched = true;
+      softMatch = true;
+      softReasons.push(`label:${labelHit}`);
+    }
   });
 
   const queryAssociation = normalizeText(mediaItem.matchedArtist || mediaItem.artistSearchSource || '');
-  if (!matched && queryAssociation) {
+  if (queryAssociation) {
     score += 1;
-    reasons.push(`query-source:${queryAssociation}`);
+    matched = true;
+    softMatch = true;
+    softReasons.push(`query-source:${queryAssociation}`);
   }
 
-  if (!matched && context.artistSearchActive) {
-    score -= 12;
+  const eventHit = EVENT_KEYWORDS.find((event) => detectedEvents.includes(event) || bucketBlob.includes(event));
+  if (eventHit) {
+    score += 1;
+    matched = true;
+    softMatch = true;
+    softReasons.push(`event:${eventHit}`);
   }
+
+  reasons.push(...strongReasons, ...softReasons);
+
+  const tier = strongMatch
+    ? ARTIST_RELEVANCE_TIERS.STRONG
+    : (softMatch ? ARTIST_RELEVANCE_TIERS.SOFT : ARTIST_RELEVANCE_TIERS.GENERAL);
+
+  if (!matched && context.artistSearchActive) reasons.push('general-discovery');
 
   return {
     score: Number(score.toFixed(2)),
     matched,
     reasons: Array.from(new Set(reasons)),
+    tier,
   };
 }
 
@@ -213,27 +271,18 @@ export function applyArtistSearchContext(mediaItems, context = {}) {
       artistRelevanceScore: relevance.score,
       relevanceReasons: relevance.reasons,
       artistMatched: relevance.matched,
+      relevanceTier: relevance.tier,
     };
   });
-
-  if (!artistSearchActive) {
-    return {
-      filteredItems: scored,
-      counts: {
-        before: mediaItems.length,
-        after: scored.length,
-        matched: scored.length,
-      },
-    };
-  }
-
-  const filtered = scored.filter((item) => item.artistMatched || item.artistRelevanceScore >= 3);
   return {
-    filteredItems: filtered,
+    filteredItems: scored,
     counts: {
       before: mediaItems.length,
-      after: filtered.length,
-      matched: filtered.filter((item) => item.artistMatched).length,
+      after: scored.length,
+      matched: scored.filter((item) => item.artistMatched).length,
+      strong: scored.filter((item) => item.relevanceTier === ARTIST_RELEVANCE_TIERS.STRONG).length,
+      soft: scored.filter((item) => item.relevanceTier === ARTIST_RELEVANCE_TIERS.SOFT).length,
+      general: scored.filter((item) => item.relevanceTier === ARTIST_RELEVANCE_TIERS.GENERAL).length,
     },
   };
 }
@@ -241,14 +290,18 @@ export function applyArtistSearchContext(mediaItems, context = {}) {
 export function rankMediaItemsForFlow(mediaItems, context = {}) {
   const seenIds = new Set(context.seenIds || []);
   const artistSearchActive = Boolean(context.artistSearchActive);
-  const artistScoreWeight = artistSearchActive ? 1.75 : 0.65;
+  const artistScoreWeight = artistSearchActive ? 1.35 : 0.65;
+  const tierWeights = artistSearchActive
+    ? { strong: 8, soft: 3, general: 0 }
+    : { strong: 0, soft: 0, general: 0 };
 
   return mediaItems
     .map((item) => ({
       ...item,
       score: Number((
         scoreMediaItem(item, { ...context, seenIds }) +
-        ((item.artistRelevanceScore || 0) * artistScoreWeight)
+        ((item.artistRelevanceScore || 0) * artistScoreWeight) +
+        (tierWeights[item.relevanceTier] || 0)
       ).toFixed(2)),
     }))
     .sort((a, b) => {
