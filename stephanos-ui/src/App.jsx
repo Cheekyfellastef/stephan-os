@@ -358,6 +358,12 @@ export default function App() {
     }
     return events;
   }, [aiActionState?.isRunning, commandHistory, missionPacketWorkflow?.active]);
+  const latestCommandPrompt = useMemo(() => {
+    const latestCommand = Array.isArray(commandHistory) && commandHistory.length > 0 ? commandHistory[commandHistory.length - 1] : null;
+    return String(latestCommand?.prompt || latestCommand?.command || '').trim();
+  }, [commandHistory]);
+  const hasFreshResearchIntent = /research|fresh|latest|today|news/i.test(latestCommandPrompt);
+  const hasAssignedTaskIntent = latestCommandPrompt.length > 0;
   const agentTruth = useMemo(() => adjudicateAgents({
     registry: agentRegistry,
     eventLog: agentEventLog,
@@ -386,9 +392,22 @@ export default function App() {
         canonical: continuitySnapshot?.memoryCapabilityCanonical === true,
         reason: continuitySnapshot?.memoryCapabilityReason || 'Memory capability state unavailable.',
       },
+      providerRouteTruth: {
+        passed: routeTruthView?.routeUsableState === 'yes' && (routeTruthView?.backendReachableState === 'yes' || routeTruthView?.routeKind === 'local'),
+        reason: routeTruthView?.routeUsableState !== 'yes'
+          ? routeTruthView?.routeStatusReason || 'Route is not currently usable.'
+          : routeTruthView?.backendReachableState !== 'yes' && routeTruthView?.routeKind !== 'local'
+            ? routeTruthView?.backendStatusReason || 'Waiting for route/provider viability.'
+            : 'Route/provider viability is healthy.',
+      },
+      currentIntentState: hasAssignedTaskIntent ? 'classified' : 'none',
+      currentIntentReason: hasAssignedTaskIntent ? 'Command intent parsed from latest operator request.' : 'Waiting for intent classification.',
+      hasFreshIntent: hasFreshResearchIntent,
+      hasAssignedTask: hasAssignedTaskIntent,
+      hasTaskIntent: hasAssignedTaskIntent,
     },
     operatorControls: agentControls,
-  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, missionConsoleSurfaceMode, continuitySnapshot?.memoryCapabilityCanonical, continuitySnapshot?.memoryCapabilityReady, continuitySnapshot?.memoryCapabilityReason, continuitySnapshot?.memoryCapabilityState, openClawSurfaceMode, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, hasAssignedTaskIntent, hasFreshResearchIntent, missionConsoleSurfaceMode, continuitySnapshot?.memoryCapabilityCanonical, continuitySnapshot?.memoryCapabilityReady, continuitySnapshot?.memoryCapabilityReason, continuitySnapshot?.memoryCapabilityState, openClawSurfaceMode, routeTruthView?.backendReachableState, routeTruthView?.backendStatusReason, routeTruthView?.routeKind, routeTruthView?.routeStatusReason, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
   const finalAgentView = useMemo(() => buildFinalAgentView({
     adjudicated: agentTruth,
     selectedAgentId,
@@ -513,7 +532,7 @@ export default function App() {
         <PowerShellMergeConsolePanel />
       </div>
     ) },
-    { id: 'statusPanel', render: () => <StatusPanel /> },
+    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} /> },
     {
       id: 'toolsPanel',
       render: () => (
@@ -849,7 +868,7 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
           />
-          <StatusPanel />
+          <StatusPanel finalAgentView={displayAgentView} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
         </section>
         <DebugConsole />
