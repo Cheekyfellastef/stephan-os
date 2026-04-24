@@ -19,6 +19,16 @@ import {
 
 const YOUTUBE_SEARCH = 'https://www.youtube.com/results?search_query=';
 const YOUTUBE_WATCH = 'https://www.youtube.com/watch?v=';
+const SMART_REFRESH_TARGET_RESULTS = 20;
+const SMART_REFRESH_MIN_RESULTS = 12;
+const DEEP_DIVE_MIN_DURATION_SECONDS = 30 * 60;
+const RATING_OPTIONS = [
+  { value: -5, label: '👎👎 Strong Down', compact: '👎👎', title: 'Show me much less like this' },
+  { value: -3, label: '👎 Down', compact: '👎', title: 'Show me less like this' },
+  { value: 0, label: 'Neutral', compact: '0', title: 'No strong taste signal' },
+  { value: 3, label: '👍 Up', compact: '👍', title: 'Show me more like this' },
+  { value: 5, label: '👍👍 Strong Up', compact: '👍👍', title: 'This is my territory' },
+];
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -76,7 +86,18 @@ const state = {
   queueDebug: {
     artistSearchActive: false,
     activeArtists: [],
-    counts: { before: 0, availability: 0, afterArtistFilter: 0, artistMatched: 0 },
+    counts: {
+      before: 0,
+      discoveredThisRefresh: 0,
+      suppressed: 0,
+      availability: 0,
+      strongMatches: 0,
+      softMatches: 0,
+      generalMatches: 0,
+      backfilled: 0,
+      finalQueue: 0,
+    },
+    currentModeMinDuration: 0,
   },
 };
 
@@ -190,22 +211,38 @@ function renderQueue() {
     return;
   }
 
+  const currentRatingsByMediaId = state.memory.ratings.reduce((acc, entry) => {
+    if (!entry?.mediaItemId) return acc;
+    if (!acc[entry.mediaItemId] || new Date(entry.timestamp).getTime() >= new Date(acc[entry.mediaItemId].timestamp).getTime()) {
+      acc[entry.mediaItemId] = entry;
+    }
+    return acc;
+  }, {});
+
   elements.queue.innerHTML = state.queue.map((item, index) => `
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
+      <div class="track-meta">Taste: ${RATING_OPTIONS.find((option) => option.value === Number(currentRatingsByMediaId[item.id]?.rating))?.compact || 'unrated'}</div>
       <div class="track-badges">
         <span class="track-badge">${providerBadgeLabel(item.provider)}</span>
         <span class="track-badge">${playbackBadgeLabel(item.playbackMode)}</span>
+        ${item.relevanceTier ? `<span class="track-badge">Tier: ${item.relevanceTier}</span>` : ''}
       </div>
       <div class="track-actions">
         <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Play</a>
         <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
         <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
-        <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn">+5</button>
-        <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn">+3</button>
-        <button data-action="rate" data-id="${item.id}" data-rating="0" class="inline-btn">0</button>
-        <button data-action="rate" data-id="${item.id}" data-rating="-3" class="inline-btn">-3</button>
+        ${RATING_OPTIONS.map((option) => `
+          <button
+            data-action="rate"
+            data-id="${item.id}"
+            data-rating="${option.value}"
+            class="inline-btn rating-btn ${Number(currentRatingsByMediaId[item.id]?.rating) === option.value ? 'is-selected' : ''}"
+            title="${option.title}"
+            aria-label="${option.label}"
+          >${option.compact}</button>
+        `).join('')}
         <button data-action="save" data-id="${item.id}" class="inline-btn">Save</button>
         <button data-action="more-like" data-id="${item.id}" class="inline-btn">More like this</button>
         <button data-action="less-like" data-id="${item.id}" class="inline-btn">Less like this</button>
@@ -255,8 +292,10 @@ function renderDebug() {
       id: item.id,
       score: item.score,
       artistRelevanceScore: item.artistRelevanceScore || 0,
+      relevanceTier: item.relevanceTier || 'general',
       relevanceReasons: item.relevanceReasons || [],
       title: item.title,
+      finalScore: item.score,
     })),
     suppressedPreview: Object.values(state.memory.mediaItems)
       .filter((item) => item.playbackMode === 'suppress')
@@ -332,27 +371,74 @@ function rebuildFlowQueue() {
     artistSearchActive,
   });
 
+  const strongMatches = artistContextResult.filteredItems.filter((item) => item.relevanceTier === 'strong');
+  const softMatches = artistContextResult.filteredItems.filter((item) => item.relevanceTier === 'soft');
+  const generalMatches = artistContextResult.filteredItems.filter((item) => item.relevanceTier === 'general');
+  const recentDiscoveries = generalMatches.filter((item) => item.artistSearchSource);
+  const seededLibraryFallback = generalMatches.filter((item) => item.validationStatus === 'seeded' || item.availabilityStatus === 'seeded');
+
+  const prioritizedCandidates = [];
+  const pushUnique = (items) => {
+    items.forEach((item) => {
+      if (prioritizedCandidates.some((candidate) => candidate.id === item.id)) return;
+      prioritizedCandidates.push(item);
+    });
+  };
+
+  pushUnique(strongMatches);
+  pushUnique(softMatches);
+  pushUnique(recentDiscoveries);
+  pushUnique(generalMatches);
+  pushUnique(seededLibraryFallback);
+
+  const targetResultCount = artistSearchActive ? SMART_REFRESH_TARGET_RESULTS : Math.max(SMART_REFRESH_MIN_RESULTS, Math.min(SMART_REFRESH_TARGET_RESULTS, prioritizedCandidates.length));
+  const candidatesForQueue = prioritizedCandidates.slice(0, Math.max(targetResultCount, SMART_REFRESH_MIN_RESULTS));
+  const backfilledCount = Math.max(0, candidatesForQueue.length - strongMatches.length);
+  const modeMinDuration = state.sessionMode === 'deep-dive' ? DEEP_DIVE_MIN_DURATION_SECONDS : 0;
+
   state.queueDebug = {
     artistSearchActive,
     activeArtists: [...state.artists],
     counts: {
       before: allItems.length,
+      discoveredThisRefresh: (state.memory.discoveryJobs[state.memory.discoveryJobs.length - 1] || {}).resultsFound || 0,
+      suppressed: allItems.filter((item) => item.playbackMode === 'suppress').length,
       availability: availableItems.length,
-      afterArtistFilter: artistContextResult.counts.after,
-      artistMatched: artistContextResult.counts.matched,
+      strongMatches: artistContextResult.counts.strong || 0,
+      softMatches: artistContextResult.counts.soft || 0,
+      generalMatches: artistContextResult.counts.general || 0,
+      backfilled: backfilledCount,
+      finalQueue: 0,
     },
+    currentModeMinDuration: modeMinDuration,
   };
 
-  state.queue = flowController.rebuild(artistContextResult.filteredItems, {
+  state.queue = flowController.rebuild(candidatesForQueue, {
     includeSeen: state.includeSeen,
     includeExternal: state.showExternalOnly,
     preferInline: false,
-    minDurationSeconds: state.sessionMode === 'flow' ? 30 * 60 : 0,
+    minDurationSeconds: modeMinDuration,
     trustByChannel: state.memory.channelTrust,
     affinityByArtist: state.memory.artistAffinity,
     artistSearchActive,
     seenIds: new Set(state.memory.seenItemIds),
   });
+
+  if (state.queue.length < SMART_REFRESH_MIN_RESULTS) {
+    const fallbackPool = prioritizedCandidates.filter((item) => !candidatesForQueue.some((candidate) => candidate.id === item.id));
+    const expandedCandidates = [...candidatesForQueue, ...fallbackPool].slice(0, Math.max(SMART_REFRESH_TARGET_RESULTS, SMART_REFRESH_MIN_RESULTS));
+    state.queue = flowController.rebuild(expandedCandidates, {
+      includeSeen: state.includeSeen,
+      includeExternal: state.showExternalOnly,
+      preferInline: false,
+      minDurationSeconds: modeMinDuration,
+      trustByChannel: state.memory.channelTrust,
+      affinityByArtist: state.memory.artistAffinity,
+      artistSearchActive,
+      seenIds: new Set(state.memory.seenItemIds),
+    });
+  }
+  state.queueDebug.counts.finalQueue = state.queue.length;
 }
 
 async function smartRefreshDiscovery() {

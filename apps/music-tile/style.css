@@ -185,6 +185,16 @@ button.ghost,
   color: #8bd0ff;
 }
 
+.rating-btn {
+  min-width: 40px;
+}
+
+.rating-btn.is-selected {
+  border-color: #7fd6ff;
+  box-shadow: 0 0 0 1px rgba(127, 214, 255, 0.6);
+  background: linear-gradient(180deg, #1172d8, #0b4d93);
+}
+
 .debug-panel {
   max-height: 360px;
   overflow: auto;
