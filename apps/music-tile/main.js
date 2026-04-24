@@ -5,6 +5,7 @@ import { parseMusicCommand } from './engine/musicCommandParser.js';
 import { applyArtistSearchContext, createDiscoveryQueries } from './engine/musicDiscoveryEngine.js';
 import { createMediaProviderAdapters } from './providers/mediaProviderAdapters.js';
 import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
+import { getMediaPlaybackLinkState, sanitizeVideoId } from './utils/youtubeLinkResolver.js';
 import {
   DEFAULT_SELECTION,
   loadMusicTileState,
@@ -17,7 +18,6 @@ import {
   upsertReliabilityRecord,
 } from './state/musicTileState.js';
 
-const YOUTUBE_SEARCH = 'https://www.youtube.com/results?search_query=';
 const YOUTUBE_WATCH = 'https://www.youtube.com/watch?v=';
 const SMART_REFRESH_TARGET_RESULTS = 20;
 const SMART_REFRESH_MIN_RESULTS = 12;
@@ -125,10 +125,7 @@ function getYouTubeApiKey() {
 }
 
 function mediaItemLink(item) {
-  if (item?.providerItemId) return `${YOUTUBE_WATCH}${item.providerItemId}`;
-  if (item?.providerUrl) return item.providerUrl;
-  if (item?.id && item.id.length === 11) return `${YOUTUBE_WATCH}${item.id}`;
-  return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item?.title || ''} ${item?.channelName || ''}`)}`;
+  return getMediaPlaybackLinkState(item).url;
 }
 
 function resolveItemRankScore(item) {
@@ -239,6 +236,11 @@ function renderQueue() {
     const latestRating = currentRatingsByMediaId[item.id]?.rating;
     const persistedRating = Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : latestRating;
     const rankScore = resolveItemRankScore(item);
+    const playbackLinkState = getMediaPlaybackLinkState(item);
+    const isExactPlayable = playbackLinkState.hasExactVideo;
+    const unresolvedBadge = isExactPlayable
+      ? ''
+      : `<span class="track-badge">${item.availabilityStatus === 'unresolved_seed' ? 'Needs video match' : 'Search-only'}</span>`;
     return `
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
@@ -247,11 +249,12 @@ function renderQueue() {
       <div class="track-badges">
         <span class="track-badge">${providerBadgeLabel(item.provider)}</span>
         <span class="track-badge">${playbackBadgeLabel(item.playbackMode)}</span>
+        ${unresolvedBadge}
         ${item.relevanceTier ? `<span class="track-badge">Tier: ${item.relevanceTier}</span>` : ''}
       </div>
       <div class="track-actions">
-        <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Play</a>
-        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${mediaItemLink(item)}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
+        <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">${isExactPlayable ? 'Play' : playbackLinkState.label}</a>
+        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">${isExactPlayable ? 'Open in YouTube' : 'Search YouTube'}</a>
         <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
         ${RATING_OPTIONS.map((option) => `
           <button
@@ -317,6 +320,7 @@ function renderDebug() {
       relevanceReasons: item.relevanceReasons || [],
       title: item.title,
       finalScore: resolveItemRankScore(item),
+      playbackLinkState: getMediaPlaybackLinkState(item),
       userRating: Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : null,
     })),
     suppressedPreview: Object.values(state.memory.mediaItems)
@@ -341,8 +345,10 @@ function renderDebug() {
 }
 
 function librarySeedToMediaItem(track) {
+  const preferredVideoId = sanitizeVideoId(track.youtube?.preferredVideoId);
+  const hasExactVideo = Boolean(preferredVideoId);
   return {
-    id: track.youtube?.preferredVideoId || `${track.id}-seed`,
+    id: hasExactVideo ? preferredVideoId : `${track.id}-seed`,
     title: `${track.artist} — ${track.title}`,
     description: track.notes,
     channelId: `seed-${track.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
@@ -355,22 +361,29 @@ function librarySeedToMediaItem(track) {
     detectedLabels: [],
     type: track.notes?.toLowerCase().includes('set') ? 'set' : 'track',
     provider: 'youtube',
-    providerItemId: track.youtube?.preferredVideoId || '',
+    providerItemId: preferredVideoId,
     providerType: 'video',
-    providerUrl: track.youtube?.preferredVideoId ? `${YOUTUBE_WATCH}${track.youtube.preferredVideoId}` : '',
+    providerUrl: hasExactVideo ? `${YOUTUBE_WATCH}${preferredVideoId}` : '',
+    canonicalQuery: track.youtube?.canonicalQuery || '',
+    fallbackQuery: track.youtube?.fallbackQuery || '',
+    originalTrackId: track.id,
+    seedArtist: track.artist,
+    seedTitle: track.title,
     playbackMode: 'external',
-    availabilityStatus: 'seeded',
-    validationStatus: 'seeded',
+    availabilityStatus: hasExactVideo ? 'seeded' : 'unresolved_seed',
+    validationStatus: hasExactVideo ? 'seeded' : 'needs_resolution',
     validationReasons: [],
     capabilities: {
       canPlayInline: false,
       canOpenExternally: true,
       canFlowInline: false,
       canFlowExternal: true,
+      canPlayExact: hasExactVideo,
       provider: 'youtube',
       providerType: 'video',
       playbackMode: 'external',
     },
+    playbackTarget: hasExactVideo ? 'exact-video' : 'search-only',
     lastValidationAt: new Date().toISOString(),
     discoveryScore: 0,
     finalRankScore: 0,
@@ -378,6 +391,69 @@ function librarySeedToMediaItem(track) {
     seen: false,
     saved: false,
     ignored: false,
+  };
+}
+
+function selectStrongSeedMatch(candidates = [], track) {
+  const artist = String(track.artist || '').toLowerCase();
+  const title = String(track.title || '').toLowerCase();
+  return candidates.find((candidate) => {
+    const haystack = `${candidate.title || ''} ${candidate.description || ''} ${candidate.channelName || ''}`.toLowerCase();
+    const artistMatch = artist ? haystack.includes(artist) : true;
+    const titleMatch = title ? haystack.includes(title) : true;
+    return artistMatch && titleMatch;
+  }) || null;
+}
+
+async function resolveSeededTrack(youtubeAdapter, track) {
+  const canonicalQuery = track.youtube?.canonicalQuery?.trim();
+  const fallbackQuery = track.youtube?.fallbackQuery?.trim();
+  const query = canonicalQuery || fallbackQuery;
+  if (!query) return null;
+
+  const candidates = await youtubeAdapter.discoverCandidates(query, { maxResults: 8 });
+  if (!candidates.length) return null;
+  const strongMatch = selectStrongSeedMatch(candidates, track);
+  if (!strongMatch) return null;
+
+  const enrichedById = await youtubeAdapter.enrichCandidates([strongMatch.providerItemId]);
+  const validated = youtubeAdapter.validateCandidate(strongMatch, {
+    enrichedById,
+    regionCode: 'US',
+    reliabilityRecord: getReliabilityRecord(strongMatch),
+  });
+  if (validated.playbackMode === 'suppress') return null;
+
+  return {
+    ...librarySeedToMediaItem(track),
+    id: `${track.id}-seed`,
+    providerItemId: validated.providerItemId,
+    providerUrl: validated.providerUrl,
+    title: validated.title,
+    description: validated.description,
+    channelId: validated.channelId,
+    channelName: validated.channelName,
+    duration: validated.duration || Math.max(180, Math.round((track.approximateBpm || 120) * 16)),
+    publishDate: validated.publishDate || '2022-01-01T00:00:00.000Z',
+    thumbnail: validated.thumbnail || '',
+    playbackMode: validated.playbackMode,
+    availabilityStatus: 'resolved_seed',
+    validationStatus: 'validated',
+    validationReasons: validated.validationReasons || [],
+    suppressionClass: validated.suppressionClass,
+    capabilities: {
+      ...validated.capabilities,
+      canPlayExact: true,
+    },
+    playbackTarget: 'exact-video',
+    artistSearchSource: query,
+    matchedQuery: query,
+    matchedArtist: track.artist,
+    candidateArtists: Array.from(new Set([...(validated.candidateArtists || []), track.artist])),
+    type: /set|mix|live/i.test(validated.title || '') ? 'set' : 'track',
+    seedResolutionStatus: 'resolved',
+    seedResolvedAt: new Date().toISOString(),
+    seedMatchReason: 'artist_title_strong_match',
   };
 }
 
@@ -520,7 +596,19 @@ async function smartRefreshDiscovery() {
   }
 
   const fallbackItems = TRACK_LIBRARY.map(librarySeedToMediaItem);
-  const mergedDiscoveredItems = discoveredItems.length ? discoveredItems : fallbackItems;
+  const unresolvedSeeds = TRACK_LIBRARY.filter((track) => !sanitizeVideoId(track.youtube?.preferredVideoId));
+  const seedResolutionItems = [];
+  for (const track of unresolvedSeeds.slice(0, 6)) {
+    const resolvedItem = await resolveSeededTrack(youtubeAdapter, track);
+    if (resolvedItem) seedResolutionItems.push(resolvedItem);
+  }
+
+  const mergedDiscoveredItems = discoveredItems.length
+    ? [...discoveredItems, ...seedResolutionItems]
+    : [
+      ...seedResolutionItems,
+      ...fallbackItems.filter((item) => !seedResolutionItems.some((resolved) => resolved.id === item.id)),
+    ];
 
   state.memory = upsertMediaItems(state.memory, mergedDiscoveredItems);
   state.memory.discoveryJobs.push({
