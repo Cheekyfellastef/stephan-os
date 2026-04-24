@@ -106,3 +106,22 @@ test('music tile reliability records persist suppression memory separately from 
   assert.equal(updated.reliabilityRecords[key].failureCount, 1);
   assert.equal(updated.ratings.length, 0);
 });
+
+test('music tile ratings persist user taste without overwriting discovery score', () => {
+  const withMedia = musicStateModule.upsertMediaItems(musicStateModule.DEFAULT_MUSIC_MEMORY, [{
+    id: 'ranked-track-1',
+    title: 'Ranked Track',
+    channelId: 'channel-1',
+    channelName: 'Channel 1',
+    score: 28.5,
+    provider: 'youtube',
+    providerItemId: 'ranked-track-1',
+  }]);
+
+  const rated = musicStateModule.applyRatingToMemory(withMedia, 'ranked-track-1', 3, 'liked');
+  assert.equal(rated.mediaItems['ranked-track-1'].score, 28.5);
+  assert.equal(rated.mediaItems['ranked-track-1'].discoveryScore, 28.5);
+  assert.equal(rated.mediaItems['ranked-track-1'].finalRankScore, 28.5);
+  assert.equal(rated.mediaItems['ranked-track-1'].userRating, 3);
+  assert.equal(rated.ratings.at(-1).rating, 3);
+});

@@ -25,7 +25,7 @@ const DEEP_DIVE_MIN_DURATION_SECONDS = 30 * 60;
 const RATING_OPTIONS = [
   { value: -5, label: '👎👎 Strong Down', compact: '👎👎', title: 'Show me much less like this' },
   { value: -3, label: '👎 Down', compact: '👎', title: 'Show me less like this' },
-  { value: 0, label: 'Neutral', compact: '0', title: 'No strong taste signal' },
+  { value: 0, label: 'Neutral', compact: 'Neutral', title: 'No strong taste signal' },
   { value: 3, label: '👍 Up', compact: '👍', title: 'Show me more like this' },
   { value: 5, label: '👍👍 Strong Up', compact: '👍👍', title: 'This is my territory' },
 ];
@@ -131,6 +131,22 @@ function mediaItemLink(item) {
   return `${YOUTUBE_SEARCH}${encodeURIComponent(`${item?.title || ''} ${item?.channelName || ''}`)}`;
 }
 
+function resolveItemRankScore(item) {
+  if (!item) return 0;
+  const finalRankScore = Number(item.finalRankScore);
+  if (Number.isFinite(finalRankScore)) return finalRankScore;
+  const discoveryScore = Number(item.discoveryScore);
+  if (Number.isFinite(discoveryScore)) return discoveryScore;
+  const legacyScore = Number(item.score);
+  return Number.isFinite(legacyScore) ? legacyScore : 0;
+}
+
+function formatTaste(rating) {
+  const numericRating = Number(rating);
+  if (!Number.isFinite(numericRating)) return 'unrated';
+  return RATING_OPTIONS.find((option) => option.value === numericRating)?.compact || `Rated ${numericRating}`;
+}
+
 function providerBadgeLabel(provider = '') {
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'youtube') return 'YouTube';
@@ -219,11 +235,15 @@ function renderQueue() {
     return acc;
   }, {});
 
-  elements.queue.innerHTML = state.queue.map((item, index) => `
+  elements.queue.innerHTML = state.queue.map((item, index) => {
+    const latestRating = currentRatingsByMediaId[item.id]?.rating;
+    const persistedRating = Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : latestRating;
+    const rankScore = resolveItemRankScore(item);
+    return `
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
-      <div class="track-meta">Score: ${item.score} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
-      <div class="track-meta">Taste: ${RATING_OPTIONS.find((option) => option.value === Number(currentRatingsByMediaId[item.id]?.rating))?.compact || 'unrated'}</div>
+      <div class="track-meta">Rank: ${rankScore.toFixed(2)} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
+      <div class="track-meta">Taste: ${formatTaste(persistedRating)}</div>
       <div class="track-badges">
         <span class="track-badge">${providerBadgeLabel(item.provider)}</span>
         <span class="track-badge">${playbackBadgeLabel(item.playbackMode)}</span>
@@ -238,7 +258,7 @@ function renderQueue() {
             data-action="rate"
             data-id="${item.id}"
             data-rating="${option.value}"
-            class="inline-btn rating-btn ${Number(currentRatingsByMediaId[item.id]?.rating) === option.value ? 'is-selected' : ''}"
+            class="inline-btn rating-btn ${Number(persistedRating) === option.value ? 'is-selected' : ''}"
             title="${option.title}"
             aria-label="${option.label}"
           >${option.compact}</button>
@@ -250,7 +270,8 @@ function renderQueue() {
         <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Hide Source</button>
       </div>
     </li>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderPlaybackPanel() {
@@ -290,12 +311,13 @@ function renderDebug() {
     },
     queuePreview: state.queue.slice(0, 10).map((item) => ({
       id: item.id,
-      score: item.score,
+      score: resolveItemRankScore(item),
       artistRelevanceScore: item.artistRelevanceScore || 0,
       relevanceTier: item.relevanceTier || 'general',
       relevanceReasons: item.relevanceReasons || [],
       title: item.title,
-      finalScore: item.score,
+      finalScore: resolveItemRankScore(item),
+      userRating: Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : null,
     })),
     suppressedPreview: Object.values(state.memory.mediaItems)
       .filter((item) => item.playbackMode === 'suppress')
@@ -350,6 +372,8 @@ function librarySeedToMediaItem(track) {
       playbackMode: 'external',
     },
     lastValidationAt: new Date().toISOString(),
+    discoveryScore: 0,
+    finalRankScore: 0,
     score: 0,
     seen: false,
     saved: false,

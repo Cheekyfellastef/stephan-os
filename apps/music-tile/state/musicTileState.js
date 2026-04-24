@@ -235,7 +235,7 @@ export function applyRatingToMemory(memory, mediaItemId, rating, note = '') {
   const mediaItem = next.mediaItems[mediaItemId];
   if (!mediaItem) return next;
 
-  mediaItem.score = numericRating;
+  mediaItem.userRating = numericRating;
   mediaItem.saved = numericRating >= 3;
   mediaItem.ignored = numericRating <= -3;
 
@@ -278,9 +278,20 @@ export function upsertMediaItems(memory, items) {
   items.forEach((item) => {
     const current = next.mediaItems[item.id] || {};
     const seen = next.seenItemIds.includes(item.id);
+    const discoveryScore = Number.isFinite(Number(item.discoveryScore))
+      ? Number(item.discoveryScore)
+      : Number.isFinite(Number(item.score))
+        ? Number(item.score)
+        : Number(current.discoveryScore || current.score || 0);
+    const finalRankScore = Number.isFinite(Number(item.finalRankScore))
+      ? Number(item.finalRankScore)
+      : discoveryScore;
     next.mediaItems[item.id] = {
       ...current,
       ...item,
+      discoveryScore,
+      finalRankScore,
+      score: finalRankScore,
       seen,
       saved: next.savedItemIds.includes(item.id),
       ignored: next.ignoredItemIds.includes(item.id),
