@@ -2,7 +2,7 @@ import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { createMusicTileFlowController } from './flow/musicTileFlowController.js';
 import { createMusicTilePlaybackController } from './flow/musicTilePlaybackController.js';
 import { parseMusicCommand } from './engine/musicCommandParser.js';
-import { createDiscoveryQueries } from './engine/musicDiscoveryEngine.js';
+import { applyArtistSearchContext, createDiscoveryQueries } from './engine/musicDiscoveryEngine.js';
 import { createMediaProviderAdapters } from './providers/mediaProviderAdapters.js';
 import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import {
@@ -73,6 +73,11 @@ const state = {
   debugVisible: false,
   currentMediaItemId: '',
   playbackError: '',
+  queueDebug: {
+    artistSearchActive: false,
+    activeArtists: [],
+    counts: { before: 0, availability: 0, afterArtistFilter: 0, artistMatched: 0 },
+  },
 };
 
 const providerAdapters = createMediaProviderAdapters({
@@ -241,7 +246,18 @@ function renderDebug() {
   elements.debugOutput.textContent = JSON.stringify({
     selection: state.selection,
     sessionMode: state.sessionMode,
-    queuePreview: state.queue.slice(0, 10).map((item) => ({ id: item.id, score: item.score, title: item.title })),
+    searchContext: {
+      artists: state.artists,
+      artistSearchActive: state.queueDebug.artistSearchActive,
+      queueCounts: state.queueDebug.counts,
+    },
+    queuePreview: state.queue.slice(0, 10).map((item) => ({
+      id: item.id,
+      score: item.score,
+      artistRelevanceScore: item.artistRelevanceScore || 0,
+      relevanceReasons: item.relevanceReasons || [],
+      title: item.title,
+    })),
     suppressedPreview: Object.values(state.memory.mediaItems)
       .filter((item) => item.playbackMode === 'suppress')
       .slice(0, 10)
@@ -303,13 +319,38 @@ function librarySeedToMediaItem(track) {
 }
 
 function rebuildFlowQueue() {
-  state.queue = flowController.rebuild(Object.values(state.memory.mediaItems), {
+  const allItems = Object.values(state.memory.mediaItems);
+  const availableItems = allItems.filter((item) => {
+    if (item.ignored) return false;
+    if (item.playbackMode === 'suppress' && state.hideBroken) return false;
+    if (state.showExternalOnly && item.playbackMode !== 'external') return false;
+    return true;
+  });
+  const artistSearchActive = state.artists.length > 0;
+  const artistContextResult = applyArtistSearchContext(availableItems, {
+    activeArtists: state.artists.map((name) => ({ name })),
+    artistSearchActive,
+  });
+
+  state.queueDebug = {
+    artistSearchActive,
+    activeArtists: [...state.artists],
+    counts: {
+      before: allItems.length,
+      availability: availableItems.length,
+      afterArtistFilter: artistContextResult.counts.after,
+      artistMatched: artistContextResult.counts.matched,
+    },
+  };
+
+  state.queue = flowController.rebuild(artistContextResult.filteredItems, {
     includeSeen: state.includeSeen,
     includeExternal: state.showExternalOnly,
     preferInline: false,
     minDurationSeconds: state.sessionMode === 'flow' ? 30 * 60 : 0,
     trustByChannel: state.memory.channelTrust,
     affinityByArtist: state.memory.artistAffinity,
+    artistSearchActive,
     seenIds: new Set(state.memory.seenItemIds),
   });
 }
@@ -341,7 +382,13 @@ async function smartRefreshDiscovery() {
 
       const hydrated = {
         ...validated,
-        detectedArtists: state.artists,
+        artistSearchSource: query,
+        matchedQuery: query,
+        matchedArtist: state.artists.find((artistName) => {
+          const haystack = `${validated.title || ''} ${validated.description || ''} ${validated.channelName || ''}`.toLowerCase();
+          return haystack.includes(artistName.toLowerCase());
+        }) || '',
+        candidateArtists: Array.from(new Set([...(validated.candidateArtists || []), ...state.artists])),
         type: /set|mix|live/i.test(validated.title) ? 'set' : 'clip',
       };
 
@@ -586,6 +633,13 @@ function bindControls() {
     rebuildFlowQueue();
     renderSummary();
     renderQueue();
+  });
+  elements.artists.addEventListener('input', () => {
+    state.artists = elements.artists.value.split(',').map((value) => value.trim()).filter(Boolean);
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+    renderDebug();
   });
   elements.includeSeen.addEventListener('change', () => {
     state.includeSeen = elements.includeSeen.checked;
