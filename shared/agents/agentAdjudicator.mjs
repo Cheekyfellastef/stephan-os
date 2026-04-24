@@ -14,6 +14,13 @@ function toText(value = '') {
   return String(value || '').trim();
 }
 
+function buildGate({ passed = false, reason = '' } = {}) {
+  return {
+    passed: passed === true,
+    reason: toText(reason || 'Not reported.') || 'Not reported.',
+  };
+}
+
 function modeAllowsAgent({ effectiveAutonomy = 'manual', safeMode = false, agentAutonomyLevel = 'manual' } = {}) {
   const normalizedAutonomy = toText(agentAutonomyLevel).toLowerCase() || 'manual';
   const globalAutonomy = toText(effectiveAutonomy).toLowerCase() || 'manual';
@@ -48,6 +55,14 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
   const effectiveAutonomy = masterEnabled ? toText(operatorControls.globalAutonomy || 'assisted') : 'manual';
   const memoryCapabilityState = toText(memoryCapability.state || 'unavailable');
   const memoryCapabilityReason = toText(memoryCapability.reason || 'Memory capability state unavailable.');
+  const providerRouteTruth = context.providerRouteTruth && typeof context.providerRouteTruth === 'object'
+    ? context.providerRouteTruth
+    : null;
+  const currentIntentState = toText(context.currentIntentState || '');
+  const currentIntentReason = toText(context.currentIntentReason || '');
+  const hasFreshIntent = context.hasFreshIntent === true;
+  const hasAssignedTask = context.hasAssignedTask === true;
+  const hasTaskIntent = context.hasTaskIntent === true;
 
   const missionModel = buildAgentMissionModel({ orchestrationState });
   const taskGraph = buildAgentTaskGraph({ missionModel });
@@ -90,6 +105,60 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
     const ready = isMemoryAgent ? (readyBase && memoryReady) : readyBase;
     const active = enabled && ready && blockers.length === 0;
     const acting = active && runtimeEntry.state === 'acting';
+    const providerRouteGate = providerRouteTruth
+      ? buildGate({
+        passed: providerRouteTruth.passed === true,
+        reason: providerRouteTruth.reason || 'Provider/route viability not reported.',
+      })
+      : buildGate({
+        passed: true,
+        reason: 'Provider/route viability not reported.',
+      });
+    const taskIntentReady = hasTaskIntent || hasAssignedTask || hasFreshIntent;
+    const taskIntentReason = hasAssignedTask
+      ? 'Task assignment is present.'
+      : hasFreshIntent
+        ? 'Fresh intent classification is available.'
+        : currentIntentState
+          ? `Waiting for intent/task adjudication (${currentIntentState}).`
+          : 'No current task assigned.';
+    const adjudicationGates = {
+      surfaceGate: buildGate({
+        passed: surfaceAllowed,
+        reason: surfaceAllowed ? `Surface ${surface} allowed.` : `Surface ${surface} is not allowed.`,
+      }),
+      sessionGate: buildGate({
+        passed: sessionAllowed,
+        reason: sessionAllowed ? `Session kind ${sessionKind} allowed.` : `Session kind ${sessionKind} is not allowed.`,
+      }),
+      dependencyGate: buildGate({
+        passed: unmetDependencies.length === 0,
+        reason: unmetDependencies.length === 0
+          ? 'Dependencies are satisfied.'
+          : `Dependencies blocked: ${unmetDependencies.join(', ')}.`,
+      }),
+      autonomyGate: buildGate({
+        passed: autonomyGate.allowed,
+        reason: autonomyGate.reason,
+      }),
+      operatorEnableGate: buildGate({
+        passed: enabled,
+        reason: enabled ? 'Agent is enabled by operator control.' : 'Disabled by operator control.',
+      }),
+      masterToggleGate: buildGate({
+        passed: masterEnabled,
+        reason: masterEnabled ? 'Autonomy master toggle is on.' : 'Autonomy master toggle is off.',
+      }),
+      safeModeGate: buildGate({
+        passed: !(safeMode && AUTO_LEVELS.has(toText(registryEntry.autonomyLevel).toLowerCase())),
+        reason: safeMode ? 'Safe mode is active.' : 'Safe mode is not active.',
+      }),
+      taskIntentGate: buildGate({
+        passed: taskIntentReady,
+        reason: taskIntentReason,
+      }),
+      providerRouteGate,
+    };
 
     let stateReason = blockers[0]
       || runtimeEntry.stateReason
@@ -115,6 +184,21 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
         stateReason = memoryReason || 'Shared durable memory unavailable.';
       }
     }
+    if (runtimeEntry.agentId === 'research-agent' && active && !acting && !hasFreshIntent && !runtimeEntry.currentTaskSummary) {
+      nextState = 'waiting';
+      stateReason = currentIntentReason || 'Waiting for intent classification.';
+    }
+    if (runtimeEntry.state === 'waiting') {
+      if (!taskIntentReady) {
+        stateReason = currentIntentState === 'classifying'
+          ? 'Waiting for intent classification.'
+          : 'No current task assigned.';
+      } else if (providerRouteGate.passed !== true) {
+        stateReason = 'Waiting for route/provider viability.';
+      } else if (enabled !== true) {
+        stateReason = 'Waiting for operator approval.';
+      }
+    }
 
     const ownedTaskIds = Array.from(taskGraph.taskById?.keys?.() || [])
       .filter((taskId) => taskGraph.taskById.get(taskId)?.assignedAgentId === runtimeEntry.agentId);
@@ -137,6 +221,7 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
       state: nextState,
       stateReason,
       blockers: Array.from(new Set([...(runtimeEntry.blockers || []), ...blockers])),
+      adjudicationGates,
       adjudicatedAt: nowIso,
       autonomyLevel: registryEntry.autonomyLevel,
       displayName: registryEntry.displayName,

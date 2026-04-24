@@ -281,6 +281,7 @@ export function buildSupportSnapshot({
   origin,
   href,
   orchestrationTruth = null,
+  finalAgentView = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const sourceDistAlignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
@@ -371,6 +372,25 @@ export function buildSupportSnapshot({
     orchestrationTruth,
     latestResponseEnvelope: orchestrationTruth?.latestResponseEnvelope || null,
   });
+  const agentView = finalAgentView && typeof finalAgentView === 'object' ? finalAgentView : {};
+  const selectedAgentId = asText(agentView?.selectedAgentId, 'none');
+  const selectedAgent = Array.isArray(agentView.visibleAgents)
+    ? agentView.visibleAgents.find((entry) => entry.agentId === selectedAgentId) || null
+    : null;
+  const selectedAgentGates = selectedAgent?.adjudicationGates && typeof selectedAgent.adjudicationGates === 'object'
+    ? selectedAgent.adjudicationGates
+    : {};
+  const selectedAgentGateSummary = [
+    `surface:${selectedAgentGates.surfaceGate?.passed === true ? 'pass' : selectedAgentGates.surfaceGate?.passed === false ? 'block' : 'unknown'}`,
+    `session:${selectedAgentGates.sessionGate?.passed === true ? 'pass' : selectedAgentGates.sessionGate?.passed === false ? 'block' : 'unknown'}`,
+    `dependency:${selectedAgentGates.dependencyGate?.passed === true ? 'pass' : selectedAgentGates.dependencyGate?.passed === false ? 'block' : 'unknown'}`,
+    `autonomy:${selectedAgentGates.autonomyGate?.passed === true ? 'pass' : selectedAgentGates.autonomyGate?.passed === false ? 'block' : 'unknown'}`,
+    `operator-enable:${selectedAgentGates.operatorEnableGate?.passed === true ? 'pass' : selectedAgentGates.operatorEnableGate?.passed === false ? 'block' : 'unknown'}`,
+    `master-toggle:${selectedAgentGates.masterToggleGate?.passed === true ? 'pass' : selectedAgentGates.masterToggleGate?.passed === false ? 'block' : 'unknown'}`,
+    `safe-mode:${selectedAgentGates.safeModeGate?.passed === true ? 'pass' : selectedAgentGates.safeModeGate?.passed === false ? 'block' : 'unknown'}`,
+    `task-intent:${selectedAgentGates.taskIntentGate?.passed === true ? 'pass' : selectedAgentGates.taskIntentGate?.passed === false ? 'block' : 'unknown'}`,
+    `provider-route:${selectedAgentGates.providerRouteGate?.passed === true ? 'pass' : selectedAgentGates.providerRouteGate?.passed === false ? 'block' : 'unknown'}`,
+  ].join(' | ');
 
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   if (hostedBackendTargetGuidance?.blockingIssue) {
@@ -759,6 +779,16 @@ export function buildSupportSnapshot({
     `Agent Orchestration Blocked Tasks: ${asText(runtimeStatus?.agentBlockedTaskCount, '0')}`,
     `Agent Orchestration Resumable Tasks: ${asText(runtimeStatus?.agentResumableTaskCount, '0')}`,
     `Agent Orchestration Acting Agent: ${asText(runtimeStatus?.agentActingAgentId, 'none')}`,
+    `Selected Agent ID: ${selectedAgentId}`,
+    `Selected Agent State: ${asText(selectedAgent?.state, 'not reported')}`,
+    `Selected Agent State Reason: ${asText(selectedAgent?.stateReason, 'not reported')}`,
+    `Selected Agent Blockers: ${asText(selectedAgent?.blockers?.join(' | '), 'not reported')}`,
+    `Selected Agent Dependencies: ${asText(selectedAgent?.dependencies?.join(', '), 'not reported')}`,
+    `Selected Agent Adjudication Gates: ${selectedAgentGateSummary}`,
+    `Agent Active IDs: ${asText(agentView?.activeAgentIds?.join(', '), 'none')}`,
+    `Agent Acting ID: ${asText(agentView?.actingAgentId, 'none')}`,
+    `Agent Waiting IDs: ${asText(agentView?.waitingAgentIds?.join(', '), 'none')}`,
+    `Agent Blocked IDs: ${asText(agentView?.blockedAgentIds?.join(', '), 'none')}`,
     `Operator Caution Inferred Intent: ${asText(operatorGuidance.operatorCautionSummary?.inferredIntentCaution, 'none')}`,
     `Operator Caution Sparse Continuity: ${asText(operatorGuidance.operatorCautionSummary?.sparseContinuityCaution, 'none')}`,
     `Operator Route Warnings: ${asText(operatorGuidance.operatorCautionSummary?.routeWarnings?.join(' | '), 'none')}`,

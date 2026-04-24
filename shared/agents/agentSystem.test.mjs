@@ -170,6 +170,8 @@ test('final projection yields handoff chain and suppression visibility', () => {
   assert.equal(view.actingAgentId, 'intent-engine');
   assert.ok(view.visibleHandoffChain[0].includes('intent-engine'));
   assert.ok(view.suppressionReasons.some((entry) => entry.includes('Research Agent')));
+  assert.ok(Array.isArray(view.waitingAgentIds));
+  assert.ok(Array.isArray(view.blockedAgentIds));
 });
 
 test('agents surface mode remains runtime projection consumer with launcher-safe summary', () => {
@@ -320,4 +322,73 @@ test('memory agent is blocked with explicit reason when memory capability is una
   assert.equal(memoryAgent.active, false);
   assert.equal(memoryAgent.state, 'blocked');
   assert.match(memoryAgent.stateReason, /unavailable/i);
+});
+
+test('research agent remains waiting adjudication with no fresh intent/task', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      hasFreshIntent: false,
+      hasAssignedTask: false,
+      hasTaskIntent: false,
+      currentIntentState: 'classifying',
+      currentIntentReason: 'Waiting for intent classification.',
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [{ agentId: 'research-agent', type: 'state', state: 'waiting', reason: 'Awaiting adjudication.', at: new Date().toISOString() }],
+  });
+  const researchAgent = adjudicated.agents.find((entry) => entry.agentId === 'research-agent');
+  assert.equal(researchAgent.state, 'waiting');
+  assert.match(researchAgent.stateReason, /intent classification|No current task assigned/i);
+  assert.equal(researchAgent.adjudicationGates.taskIntentGate.passed, false);
+});
+
+test('research agent acts when fresh intent/task is adjudicated', () => {
+  const registry = buildAgentRegistry();
+  const now = new Date().toISOString();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: {
+      ...buildBaseContext(),
+      hasFreshIntent: true,
+      hasAssignedTask: true,
+      hasTaskIntent: true,
+      providerRouteTruth: { passed: true, reason: 'Route/provider viability is healthy.' },
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [{ agentId: 'research-agent', type: 'state', state: 'acting', reason: 'Fresh-world evidence required.', at: now }],
+  });
+  const researchAgent = adjudicated.agents.find((entry) => entry.agentId === 'research-agent');
+  assert.equal(researchAgent.state, 'acting');
+  assert.equal(researchAgent.acting, true);
+  assert.equal(researchAgent.adjudicationGates.taskIntentGate.passed, true);
+});
+
+test('execution agent shows blocked session gate in hosted-web for local-only execution', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: { ...buildBaseContext(), sessionKind: 'hosted-web', surface: 'agents' },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const executionAgent = adjudicated.agents.find((entry) => entry.agentId === 'execution-agent');
+  assert.equal(executionAgent.state, 'blocked');
+  assert.equal(executionAgent.adjudicationGates.sessionGate.passed, false);
+});
+
+test('operator disabled gate is explicit when agent is toggled off', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    context: buildBaseContext(),
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: { 'research-agent': false } },
+    eventLog: [],
+  });
+  const researchAgent = adjudicated.agents.find((entry) => entry.agentId === 'research-agent');
+  assert.equal(researchAgent.enabled, false);
+  assert.equal(researchAgent.adjudicationGates.operatorEnableGate.passed, false);
+  assert.match(researchAgent.adjudicationGates.operatorEnableGate.reason, /Disabled by operator control/i);
 });

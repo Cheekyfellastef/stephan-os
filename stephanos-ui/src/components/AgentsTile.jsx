@@ -4,6 +4,17 @@ function formatList(list = []) {
   return Array.isArray(list) && list.length > 0 ? list.join(', ') : 'none';
 }
 
+function formatTruth(value, fallback = 'unknown') {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  const text = String(value).trim();
+  return text.length > 0 ? text : fallback;
+}
+
+function formatReportedList(value, fallback = 'not reported') {
+  return Array.isArray(value) && value.length > 0 ? value.join(', ') : fallback;
+}
+
 export default function AgentsTile({
   finalAgentView,
   onSelectAgent,
@@ -23,6 +34,23 @@ export default function AgentsTile({
   const memoryCapability = view.memoryCapability || {};
 
   const openClaw = openClawIntegration && typeof openClawIntegration === 'object' ? openClawIntegration : null;
+  const selectedGates = selected?.adjudicationGates && typeof selected.adjudicationGates === 'object'
+    ? selected.adjudicationGates
+    : {};
+  const gateRows = [
+    ['surface gate', selectedGates.surfaceGate],
+    ['session gate', selectedGates.sessionGate],
+    ['dependency gate', selectedGates.dependencyGate],
+    ['autonomy gate', selectedGates.autonomyGate],
+    ['operator enable gate', selectedGates.operatorEnableGate],
+    ['master toggle gate', selectedGates.masterToggleGate],
+    ['safe mode gate', selectedGates.safeModeGate],
+    ['task/intent gate', selectedGates.taskIntentGate],
+    ['provider/route gate', selectedGates.providerRouteGate],
+  ];
+  const selectedSummary = selected
+    ? `${formatTruth(selected.displayName, 'Agent')} is ${selected.eligible === true ? 'eligible' : 'not eligible'} and ${selected.enabled === true ? 'enabled' : 'disabled'}, but ${formatTruth(selected.stateReason, 'state reason not reported')}`
+    : 'No selected agent.';
 
   return (
     <CollapsiblePanel
@@ -86,15 +114,23 @@ export default function AgentsTile({
       {selected ? (
         <section className="agents-region">
           <h4>Agent Detail</h4>
+          <p><strong>Operator Summary:</strong> {selectedSummary}</p>
           <ul>
+            <li><strong>Agent ID:</strong> {formatTruth(selected.agentId, 'not reported')}</li>
+            <li><strong>Display Name:</strong> {formatTruth(selected.displayName, 'not reported')}</li>
             <li><strong>Role:</strong> {selected.kind}</li>
             <li><strong>Description:</strong> {selected.description}</li>
             <li><strong>State:</strong> {selected.state} · {selected.stateReason}</li>
+            <li><strong>Enabled:</strong> {formatTruth(selected.enabled, 'not reported')}</li>
+            <li><strong>Eligible:</strong> {formatTruth(selected.eligible, 'not reported')}</li>
+            <li><strong>Ready:</strong> {formatTruth(selected.ready, 'not reported')}</li>
+            <li><strong>Active:</strong> {formatTruth(selected.active, 'not reported')}</li>
+            <li><strong>Acting:</strong> {formatTruth(selected.acting, 'not reported')}</li>
             <li><strong>Capabilities:</strong> {formatList(selected.capabilities)}</li>
-            <li><strong>Dependencies:</strong> {formatList(selected.dependencies)}</li>
-            <li><strong>Autonomy:</strong> {selected.autonomyLevel}</li>
-            <li><strong>Allowed surfaces:</strong> {formatList(selected.allowedSurfaces)}</li>
-            <li><strong>Allowed sessions:</strong> {formatList(selected.allowedSessionKinds)}</li>
+            <li><strong>Dependencies:</strong> {formatReportedList(selected.dependencies)}</li>
+            <li><strong>Autonomy:</strong> {formatTruth(selected.autonomyLevel, 'not reported')}</li>
+            <li><strong>Allowed surfaces:</strong> {formatReportedList(selected.allowedSurfaces)}</li>
+            <li><strong>Allowed sessions:</strong> {formatReportedList(selected.allowedSessionKinds)}</li>
             <li><strong>Current task:</strong> {selected.currentTaskSummary || 'none'}</li>
             <li><strong>Owned tasks:</strong> {(selected.ownedTaskIds || []).length}</li>
             <li><strong>Delegated tasks:</strong> {(selected.delegatedTaskIds || []).length}</li>
@@ -104,7 +140,21 @@ export default function AgentsTile({
             <li><strong>Last action:</strong> {selected.actionAgeLabel}</li>
             <li><strong>Last success:</strong> {selected.successAgeLabel}</li>
             <li><strong>Last failure:</strong> {selected.failureAgeLabel}</li>
-            <li><strong>Blockers:</strong> {formatList(selected.blockers)}</li>
+            <li><strong>Blockers:</strong> {formatReportedList(selected.blockers)}</li>
+            <li><strong>State reason:</strong> {formatTruth(selected.stateReason, 'not reported')}</li>
+          </ul>
+        </section>
+      ) : null}
+
+      {selected ? (
+        <section className="agents-region">
+          <h4>Adjudication Gates</h4>
+          <ul>
+            {gateRows.map(([label, gate]) => (
+              <li key={label}>
+                <strong>{label}:</strong> {gate?.passed === true ? 'pass' : gate?.passed === false ? 'block' : 'unknown'} · {formatTruth(gate?.reason, 'not reported')}
+              </li>
+            ))}
           </ul>
         </section>
       ) : null}

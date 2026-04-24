@@ -173,6 +173,33 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
     },
     now: { toISOString: () => '2026-03-25T00:00:01.000Z' },
     href: 'https://console.stephanos.example/status',
+    finalAgentView: {
+      selectedAgentId: 'research-agent',
+      activeAgentIds: ['intent-engine'],
+      actingAgentId: 'intent-engine',
+      waitingAgentIds: ['research-agent'],
+      blockedAgentIds: ['execution-agent'],
+      visibleAgents: [
+        {
+          agentId: 'research-agent',
+          state: 'waiting',
+          stateReason: 'No current task assigned.',
+          blockers: ['waiting for intent classification'],
+          dependencies: ['intent-engine', 'provider-routing'],
+          adjudicationGates: {
+            surfaceGate: { passed: true },
+            sessionGate: { passed: true },
+            dependencyGate: { passed: true },
+            autonomyGate: { passed: true },
+            operatorEnableGate: { passed: true },
+            masterToggleGate: { passed: true },
+            safeModeGate: { passed: true },
+            taskIntentGate: { passed: false },
+            providerRouteGate: { passed: true },
+          },
+        },
+      ],
+    },
   });
 
   assert.match(snapshot, /Stephanos Support Snapshot/);
@@ -231,6 +258,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Route Winner Transport Kind: tailscale/);
   assert.match(snapshot, /Route Auto Selection Source: runtime-truth-adjudication/);
   assert.match(snapshot, /Route Auto Switch Active: yes/);
+  assert.match(snapshot, /Selected Agent ID: research-agent/);
+  assert.match(snapshot, /Selected Agent State: waiting/);
+  assert.match(snapshot, /Selected Agent State Reason: No current task assigned\./);
+  assert.match(snapshot, /Selected Agent Adjudication Gates: .*task-intent:block/);
+  assert.match(snapshot, /Agent Waiting IDs: research-agent/);
+  assert.match(snapshot, /Agent Blocked IDs: execution-agent/);
   assert.match(snapshot, /Route Candidates:\n- home-node-tailscale \[home-node\/tailscale\]/);
 
   assert.match(snapshot, /Last Freshness Need: high/);

@@ -18,6 +18,8 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
   const agents = asArray(adjudicated.agents);
   const visibleAgents = agents.filter((entry) => entry.visibility !== 'hidden');
   const activeAgentIds = visibleAgents.filter((entry) => entry.active).map((entry) => entry.agentId);
+  const waitingAgentIds = visibleAgents.filter((entry) => entry.state === 'waiting').map((entry) => entry.agentId);
+  const blockedAgentIds = visibleAgents.filter((entry) => entry.state === 'blocked').map((entry) => entry.agentId);
   const actingAgent = visibleAgents.find((entry) => entry.acting) || null;
   const actingAgentId = actingAgent?.agentId || '';
   const focusAgentId = selectedAgentId && visibleAgents.some((entry) => entry.agentId === selectedAgentId)
@@ -97,6 +99,8 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
       failureAgeLabel: toAgeLabel(entry.lastFailureAt),
     })),
     activeAgentIds,
+    waitingAgentIds,
+    blockedAgentIds,
     actingAgentId,
     selectedAgentId: focusAgentId,
     recentTransitions,
