@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { createMemoryItem, listMemoryItems, searchMemoryItems } from '../ai/aiClient';
 import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 
 const CATEGORY_OPTIONS = ['project', 'preference', 'troubleshooting', 'architecture', 'workflow'];
 const EMPTY_FORM = {
@@ -18,7 +20,17 @@ function formatTags(tags = []) {
 }
 
 export default function MemoryPanel() {
-  const { uiLayout, togglePanel } = useAIStore();
+  const {
+    uiLayout,
+    togglePanel,
+    missionMemory,
+    memoryCandidates,
+    adjudicateMemoryCandidate,
+    clearMemoryCandidate,
+    listDurableMemorySummary,
+    buildDeluxeMemoryClipboard,
+  } = useAIStore();
+  const { copyState, setCopyState } = useClipboardButtonState();
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(EMPTY_FORM);
@@ -48,6 +60,11 @@ export default function MemoryPanel() {
   }, []);
 
   const visibleItems = useMemo(() => items.slice(0, 8), [items]);
+  const durableMemorySummary = useMemo(() => listDurableMemorySummary(), [listDurableMemorySummary]);
+  const pendingCandidates = useMemo(
+    () => (Array.isArray(memoryCandidates) ? memoryCandidates.filter((entry) => entry.status === 'pending') : []),
+    [memoryCandidates],
+  );
 
   async function handleSearchSubmit(event) {
     event.preventDefault();
@@ -76,6 +93,20 @@ export default function MemoryPanel() {
     }
   }
 
+  async function handleCopyDeluxeMemory() {
+    const payload = buildDeluxeMemoryClipboard();
+    if (!String(payload || '').trim()) {
+      setCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+    try {
+      const result = await writeTextToClipboard(payload);
+      setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    } catch {
+      setCopyState(COPY_STATE.FAILURE);
+    }
+  }
+
   return (
     <CollapsiblePanel
       panelId="memoryPanel"
@@ -91,6 +122,9 @@ export default function MemoryPanel() {
       )}
     >
       <form className="memory-search-form" onSubmit={handleSearchSubmit}>
+        <button type="button" className={`status-panel-copy-button ${copyState}`} onClick={handleCopyDeluxeMemory}>
+          {copyState === COPY_STATE.SUCCESS ? 'Copied' : copyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy Deluxe Memory'}
+        </button>
         <input
           type="search"
           value={search}
@@ -100,6 +134,45 @@ export default function MemoryPanel() {
         />
         <button type="submit" disabled={isLoading}>Search</button>
       </form>
+      <section className="memory-deluxe-section">
+        <h4>Active Mission Memory</h4>
+        <p><strong>Objective:</strong> {missionMemory?.objective || 'none'}</p>
+        <p><strong>Brief:</strong> {missionMemory?.structuredBrief || 'none'}</p>
+        <p><strong>Approval:</strong> {missionMemory?.approvalState || 'analysis-only'} · <strong>Execution:</strong> {missionMemory?.executionStatus || 'inactive'}</p>
+      </section>
+
+      <section className="memory-deluxe-section">
+        <h4>Memory Candidates (Adjudication Required)</h4>
+        {pendingCandidates.length === 0 ? <p className="muted">No pending memory candidates.</p> : (
+          <ul className="compact-list memory-list">
+            {pendingCandidates.map((candidate) => (
+              <li key={candidate.id} className="memory-list-item">
+                <p><strong>{candidate.memoryClass}</strong> · {candidate.summary}</p>
+                <div className="memory-meta">
+                  <span>impact: {candidate.impactLevel}</span>
+                  <span>confidence: {candidate.confidence.toFixed(2)}</span>
+                  <span>evidence: {candidate.evidenceRef || 'n/a'}</span>
+                </div>
+                <div className="memory-grid">
+                  <button type="button" onClick={() => adjudicateMemoryCandidate(candidate.id, 'approve', 'Approved from Memory Panel.')}>Approve</button>
+                  <button type="button" className="ghost-button" onClick={() => adjudicateMemoryCandidate(candidate.id, 'revise', 'Need revision before promotion.')}>Revise</button>
+                  <button type="button" className="ghost-button" onClick={() => adjudicateMemoryCandidate(candidate.id, 'reject', 'Rejected by operator.')}>Reject</button>
+                  <button type="button" className="ghost-button" onClick={() => clearMemoryCandidate(candidate.id)}>Dismiss</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="memory-deluxe-section">
+        <h4>Durable Memory Summary (Read-only)</h4>
+        {durableMemorySummary.length === 0 ? <p className="muted">No durable memory records yet.</p> : (
+          <ul className="compact-list memory-list">
+            {durableMemorySummary.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        )}
+      </section>
 
       <form className="memory-entry-form" onSubmit={handleAddMemory}>
         <div className="memory-grid">

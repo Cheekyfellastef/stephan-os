@@ -113,6 +113,18 @@ const DEFAULT_WORKING_MEMORY = Object.freeze({
     missions: [],
   },
   hostedIdeaStagingQueue: createDefaultHostedIdeaStagingQueue(),
+  missionMemory: {
+    schemaVersion: 1,
+    objective: '',
+    structuredBrief: '',
+    agentPlan: [],
+    approvalState: 'analysis-only',
+    executionStatus: 'inactive',
+    blockers: [],
+    updatedAt: '',
+  },
+  memoryCandidates: [],
+  executionLog: [],
 });
 
 const DEFAULT_PROJECT_MEMORY = Object.freeze({
@@ -248,6 +260,11 @@ function normalizeWorkingMemory(value = {}) {
     ? source.missionLineage
     : DEFAULT_WORKING_MEMORY.missionLineage;
   const hostedIdeaStagingQueue = normalizeHostedIdeaStagingQueue(source.hostedIdeaStagingQueue);
+  const missionMemory = source.missionMemory && typeof source.missionMemory === 'object'
+    ? source.missionMemory
+    : DEFAULT_WORKING_MEMORY.missionMemory;
+  const memoryCandidates = Array.isArray(source.memoryCandidates) ? source.memoryCandidates : [];
+  const executionLog = Array.isArray(source.executionLog) ? source.executionLog : [];
 
   return {
     recentCommands,
@@ -278,6 +295,48 @@ function normalizeWorkingMemory(value = {}) {
       missions: Array.isArray(missionLineage.missions) ? missionLineage.missions.slice(0, 24) : [],
     },
     hostedIdeaStagingQueue,
+    missionMemory: {
+      schemaVersion: Number.isFinite(Number(missionMemory.schemaVersion))
+        ? Number(missionMemory.schemaVersion)
+        : 1,
+      objective: normalizeString(missionMemory.objective),
+      structuredBrief: normalizeString(missionMemory.structuredBrief),
+      agentPlan: normalizeStringList(missionMemory.agentPlan).slice(0, 12),
+      approvalState: normalizeString(missionMemory.approvalState, 'analysis-only'),
+      executionStatus: normalizeString(missionMemory.executionStatus, 'inactive'),
+      blockers: normalizeStringList(missionMemory.blockers).slice(0, 12),
+      updatedAt: normalizeString(missionMemory.updatedAt),
+    },
+    memoryCandidates: memoryCandidates
+      .filter((entry) => entry && typeof entry === 'object')
+      .map((entry, index) => ({
+        id: normalizeString(entry.id, `memory_candidate_${index + 1}`),
+        status: normalizeString(entry.status, 'pending'),
+        memoryClass: normalizeString(entry.memoryClass, 'pattern'),
+        summary: normalizeString(entry.summary),
+        source: normalizeString(entry.source, 'system'),
+        confidence: Number.isFinite(Number(entry.confidence)) ? Number(entry.confidence) : 0.6,
+        evidenceRef: normalizeString(entry.evidenceRef),
+        impactLevel: normalizeString(entry.impactLevel, 'low'),
+        createdAt: normalizeString(entry.createdAt),
+        reviewedAt: normalizeString(entry.reviewedAt),
+        reviewNote: normalizeString(entry.reviewNote),
+      }))
+      .filter((entry) => entry.summary)
+      .slice(0, 30),
+    executionLog: executionLog
+      .filter((entry) => entry && typeof entry === 'object')
+      .map((entry, index) => ({
+        id: normalizeString(entry.id, `exec_${index + 1}`),
+        type: normalizeString(entry.type, 'execution-event'),
+        summary: normalizeString(entry.summary),
+        evidenceRef: normalizeString(entry.evidenceRef),
+        source: normalizeString(entry.source, 'system'),
+        timestamp: normalizeString(entry.timestamp),
+        raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null,
+      }))
+      .filter((entry) => entry.summary)
+      .slice(-120),
   };
 }
 
