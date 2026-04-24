@@ -375,14 +375,20 @@ export default function App() {
       dependencyReadyMap: {
         'runtime-truth': runtimeStatus?.appLaunchState === 'ready',
         'provider-routing': routeTruthView?.routeUsableState !== 'no',
-        'shared-memory': continuitySnapshot?.sharedMemorySource !== 'unavailable',
+        'shared-memory': continuitySnapshot?.memoryCapabilityReady === true,
         'operator-policy': true,
         'intent-engine': true,
         'memory-agent': true,
       },
+      memoryCapability: {
+        state: continuitySnapshot?.memoryCapabilityState || 'unavailable',
+        ready: continuitySnapshot?.memoryCapabilityReady === true,
+        canonical: continuitySnapshot?.memoryCapabilityCanonical === true,
+        reason: continuitySnapshot?.memoryCapabilityReason || 'Memory capability state unavailable.',
+      },
     },
     operatorControls: agentControls,
-  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, missionConsoleSurfaceMode, continuitySnapshot?.sharedMemorySource, openClawSurfaceMode, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, missionConsoleSurfaceMode, continuitySnapshot?.memoryCapabilityCanonical, continuitySnapshot?.memoryCapabilityReady, continuitySnapshot?.memoryCapabilityReason, continuitySnapshot?.memoryCapabilityState, openClawSurfaceMode, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
   const finalAgentView = useMemo(() => buildFinalAgentView({
     adjudicated: agentTruth,
     selectedAgentId,

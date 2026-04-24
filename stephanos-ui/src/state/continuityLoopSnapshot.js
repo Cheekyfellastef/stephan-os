@@ -46,6 +46,37 @@ function classifyHydrationState(memoryTruth = {}) {
   return 'ready';
 }
 
+export function deriveMemoryCapability(memoryTruth = {}) {
+  const sharedMemorySource = classifySharedMemorySource(memoryTruth);
+  const hydrationCompleted = memoryTruth?.hydrationCompleted === true;
+
+  let memoryCapabilityState = 'unavailable';
+  if (!hydrationCompleted) {
+    memoryCapabilityState = 'hydrating';
+  } else if (sharedMemorySource === 'backend') {
+    memoryCapabilityState = 'backend';
+  } else if (sharedMemorySource === 'degraded-local') {
+    memoryCapabilityState = 'degraded-local';
+  }
+
+  const memoryCapabilityReady = memoryCapabilityState === 'backend' || memoryCapabilityState === 'degraded-local';
+  const memoryCapabilityCanonical = memoryCapabilityState === 'backend';
+  const memoryCapabilityReason = memoryCapabilityState === 'backend'
+    ? 'Shared backend durable memory is hydrated and ready.'
+    : memoryCapabilityState === 'degraded-local'
+      ? `Shared backend memory is unavailable; degraded local mirror remains available${memoryTruth?.fallbackReason ? ` (${normalizeText(memoryTruth.fallbackReason)})` : ''}.`
+      : memoryCapabilityState === 'hydrating'
+        ? 'Shared memory hydration is still in progress; capability is preparing.'
+        : 'Shared durable memory is unavailable on this runtime surface.';
+
+  return {
+    memoryCapabilityState,
+    memoryCapabilityReady,
+    memoryCapabilityCanonical,
+    memoryCapabilityReason,
+  };
+}
+
 function deriveAiContinuityMode(commandHistory = []) {
   const entries = asArray(commandHistory);
   const hasSuccessfulAiExecution = entries.some((entry) => {
@@ -118,6 +149,7 @@ export function deriveContinuityLoopSnapshot({
   const tileTruth = runtimeTruth.tile || {};
   const sharedMemorySource = classifySharedMemorySource(memoryTruth);
   const sharedMemoryHydrationState = classifyHydrationState(memoryTruth);
+  const memoryCapability = deriveMemoryCapability(memoryTruth);
   const tileLinkState = tileTruth.ready === true ? 'linked' : (tileTruth.reason ? 'partial' : 'isolated');
   const aiContinuityMode = deriveAiContinuityMode(commandHistory);
   const aiContinuityState = aiContinuityMode === 'unavailable'
@@ -146,6 +178,7 @@ export function deriveContinuityLoopSnapshot({
     sharedMemoryHydrationState,
     sharedMemoryFallbackReason: normalizeText(memoryTruth.fallbackReason, 'none'),
     sharedMemoryRecordCount: Number.isFinite(Number(memoryTruth.recordCount)) ? Number(memoryTruth.recordCount) : -1,
+    ...memoryCapability,
     tileLinkState,
     executionLoopState: tileTruth.ready === true ? 'linked' : 'degraded',
     aiContinuityState,

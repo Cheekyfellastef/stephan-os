@@ -49,6 +49,15 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
   const missionModel = adjudicated.missionModel || {};
   const approvalQueue = asArray(adjudicated.approvalQueue);
   const continuityProjection = adjudicated.continuityProjection || {};
+  const memoryCapability = adjudicated.memoryCapability || {
+    state: 'unavailable',
+    ready: false,
+    canonical: false,
+    reason: 'Memory capability state unavailable.',
+  };
+  if (memoryCapability.state !== 'backend') {
+    suppressionReasons.push(`Memory capability (${memoryCapability.state}): ${memoryCapability.reason}`);
+  }
 
   const finalMissionOrchestrationView = {
     activeGoals: asArray(missionModel.goals).filter((goal) => ['active', 'waiting', 'blocked'].includes(goal.status)),
@@ -93,6 +102,7 @@ export function buildFinalAgentView({ adjudicated = {}, selectedAgentId = '' } =
     recentTransitions,
     visibleHandoffChain,
     suppressionReasons,
+    memoryCapability,
     finalMissionOrchestrationView,
     finalApprovalQueueView,
     finalResumeView,

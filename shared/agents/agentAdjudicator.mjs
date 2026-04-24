@@ -40,9 +40,14 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
   const dependencyReadyMap = context.dependencyReadyMap && typeof context.dependencyReadyMap === 'object'
     ? context.dependencyReadyMap
     : {};
+  const memoryCapability = context.memoryCapability && typeof context.memoryCapability === 'object'
+    ? context.memoryCapability
+    : {};
   const masterEnabled = operatorControls.autonomyMasterToggle !== false;
   const safeMode = operatorControls.safeMode === true;
   const effectiveAutonomy = masterEnabled ? toText(operatorControls.globalAutonomy || 'assisted') : 'manual';
+  const memoryCapabilityState = toText(memoryCapability.state || 'unavailable');
+  const memoryCapabilityReason = toText(memoryCapability.reason || 'Memory capability state unavailable.');
 
   const missionModel = buildAgentMissionModel({ orchestrationState });
   const taskGraph = buildAgentTaskGraph({ missionModel });
@@ -76,20 +81,40 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
     if (!enabled) blockers.push('Disabled by operator control.');
     if (!masterEnabled) blockers.push('Autonomy master toggle is off.');
 
+    const isMemoryAgent = runtimeEntry.agentId === 'memory-agent';
+    const memoryState = memoryCapabilityState;
+    const memoryReason = memoryCapabilityReason;
+    const memoryReady = memoryCapability.ready === true;
     const eligible = surfaceAllowed && sessionAllowed;
-    const ready = eligible && unmetDependencies.length === 0;
+    const readyBase = eligible && unmetDependencies.length === 0;
+    const ready = isMemoryAgent ? (readyBase && memoryReady) : readyBase;
     const active = enabled && ready && blockers.length === 0;
     const acting = active && runtimeEntry.state === 'acting';
 
-    const stateReason = blockers[0]
+    let stateReason = blockers[0]
       || runtimeEntry.stateReason
       || (acting ? 'Acting on current task.' : active ? 'Active and waiting for work.' : 'Not active.');
 
-    const nextState = blockers.length > 0
+    let nextState = blockers.length > 0
       ? 'blocked'
       : runtimeEntry.state === 'offline'
         ? 'watching'
         : runtimeEntry.state;
+    if (isMemoryAgent) {
+      if (memoryState === 'backend') {
+        nextState = runtimeEntry.state === 'acting' ? 'acting' : 'watching';
+        stateReason = memoryReason || 'Shared backend durable memory is hydrated and ready.';
+      } else if (memoryState === 'degraded-local') {
+        nextState = 'degraded';
+        stateReason = memoryReason || 'Watching continuity with degraded local memory fallback.';
+      } else if (memoryState === 'hydrating') {
+        nextState = 'preparing';
+        stateReason = memoryReason || 'Memory hydration is still in progress.';
+      } else {
+        nextState = 'blocked';
+        stateReason = memoryReason || 'Shared durable memory unavailable.';
+      }
+    }
 
     const ownedTaskIds = Array.from(taskGraph.taskById?.keys?.() || [])
       .filter((taskId) => taskGraph.taskById.get(taskId)?.assignedAgentId === runtimeEntry.agentId);
@@ -149,6 +174,12 @@ export function adjudicateAgents({ registry = [], eventLog = [], orchestrationSt
       surface,
       sessionKind,
       adjudicatedAt: nowIso,
+    },
+    memoryCapability: {
+      state: memoryCapabilityState || 'unavailable',
+      ready: memoryCapability.ready === true,
+      canonical: memoryCapability.canonical === true,
+      reason: memoryCapabilityReason,
     },
     agents: entries,
   };

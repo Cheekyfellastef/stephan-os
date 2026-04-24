@@ -75,6 +75,10 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       lastSourceProvenanceSummary: 'durable-memory:evt-1',
       lastTopMemoryInfluencers: 'mission-critical-continuity-memory:operator control:operator-state',
       lastMemoryInformedRecommendation: 'Prioritize mission-critical continuity memory first.',
+      memoryCapabilityState: 'degraded-local',
+      memoryCapabilityReady: 'yes',
+      memoryCapabilityCanonical: 'no',
+      memoryCapabilityReason: 'Shared backend memory is unavailable; degraded local mirror remains available.',
 
     },
     routeTruthView: {
@@ -191,6 +195,10 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Paid Fresh Routes Enabled: false/);
   assert.match(snapshot, /Fresh Capability Mode: zero-cost-only/);
   assert.match(snapshot, /Last Groq Fresh Candidate Model: compound-beta-mini/);
+  assert.match(snapshot, /Memory Capability State: degraded-local/);
+  assert.match(snapshot, /Memory Capability Ready: yes/);
+  assert.match(snapshot, /Memory Capability Canonical: no/);
+  assert.match(snapshot, /Memory Capability Reason: Shared backend memory is unavailable; degraded local mirror remains available\./);
   assert.match(snapshot, /Last Zero Cost Policy: true/);
   assert.match(snapshot, /Last Paid Fresh Routes Enabled: false/);
   assert.match(snapshot, /Last Fresh Capability Mode: zero-cost-only/);

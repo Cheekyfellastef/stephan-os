@@ -43,6 +43,9 @@ test('continuity snapshot resolves live state for shared backend with ready tile
   assert.equal(snapshot.tileLinkState, 'linked');
   assert.equal(snapshot.aiContinuityMode, 'context-ready');
   assert.equal(snapshot.continuityLoopState, 'live');
+  assert.equal(snapshot.memoryCapabilityState, 'backend');
+  assert.equal(snapshot.memoryCapabilityReady, true);
+  assert.equal(snapshot.memoryCapabilityCanonical, true);
 });
 
 test('continuity snapshot resolves degraded state for local fallback and recording-only ai mode', () => {
@@ -78,6 +81,27 @@ test('continuity snapshot resolves degraded state for local fallback and recordi
   assert.equal(snapshot.aiContinuityMode, 'recording-only');
   assert.equal(snapshot.continuityLoopState, 'degraded');
   assert.equal(snapshot.recentActivityActive, false);
+  assert.equal(snapshot.memoryCapabilityState, 'degraded-local');
+  assert.equal(snapshot.memoryCapabilityReady, true);
+  assert.equal(snapshot.memoryCapabilityCanonical, false);
+});
+
+test('continuity snapshot exposes hydrating memory capability while hydration is incomplete', () => {
+  const snapshot = deriveContinuityLoopSnapshot({
+    runtimeStatus: runtimeStatusWithTruth({
+      memory: {
+        sourceUsedOnLoad: 'shared-backend',
+        hydrationCompleted: false,
+      },
+    }),
+    commandHistory: [],
+    now: Date.parse('2026-04-03T01:03:00.000Z'),
+  });
+
+  assert.equal(snapshot.memoryCapabilityState, 'hydrating');
+  assert.equal(snapshot.memoryCapabilityReady, false);
+  assert.equal(snapshot.memoryCapabilityCanonical, false);
+  assert.match(snapshot.memoryCapabilityReason, /hydration/i);
 });
 
 test('continuity snapshot keeps recent continuity activity bounded and meaningful', () => {

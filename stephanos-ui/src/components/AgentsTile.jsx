@@ -20,6 +20,7 @@ export default function AgentsTile({
   const missionView = view.finalMissionOrchestrationView || {};
   const approvalView = view.finalApprovalQueueView || {};
   const resumeView = view.finalResumeView || {};
+  const memoryCapability = view.memoryCapability || {};
 
   const openClaw = openClawIntegration && typeof openClawIntegration === 'object' ? openClawIntegration : null;
 
@@ -70,6 +71,16 @@ export default function AgentsTile({
       <section className="agents-region">
         <h4>Resumable Work</h4>
         <p>{resumeView.operatorResumeSummary || 'No resumable items.'}</p>
+      </section>
+
+      <section className="agents-region">
+        <h4>Memory Capability</h4>
+        <ul>
+          <li><strong>State:</strong> {memoryCapability.state || 'unavailable'}</li>
+          <li><strong>Ready:</strong> {memoryCapability.ready === true ? 'yes' : 'no'}</li>
+          <li><strong>Canonical shared backend:</strong> {memoryCapability.canonical === true ? 'yes' : 'no'}</li>
+          <li><strong>Reason:</strong> {memoryCapability.reason || 'Memory capability state unavailable.'}</li>
+        </ul>
       </section>
 
       {selected ? (
