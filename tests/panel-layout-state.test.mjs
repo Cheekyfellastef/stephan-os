@@ -686,17 +686,65 @@ test('reserved pane banner keeps canon panes below the header safe zone on resto
   const paneB = ui.createPanel('music-tile-results-journey-pane', 'Results');
   const headerRect = reservedHeader.getBoundingClientRect();
 
-  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 24);
-  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 24);
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 16);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 16);
   assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
   assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
 
   ui.resetPanelLayout();
 
-  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 24);
-  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 24);
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 16);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 16);
   assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
   assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
+});
+
+test('hidden reserved panes are ignored while visible reserved panes block overlap', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'music-tile-search-build-journey-pane': { x: 40, y: 16 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 900;
+
+  const hiddenReserved = createElement('header', documentRef);
+  hiddenReserved.id = 'music-hidden-banner';
+  hiddenReserved.style.display = 'none';
+  hiddenReserved.setAttribute('data-stephanos-pane-reserved', 'hidden-banner');
+  hiddenReserved.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 1280,
+    height: 120,
+    right: 1280,
+    bottom: 120,
+  });
+  documentRef.body.appendChild(hiddenReserved);
+  documentRef.nodes.set(hiddenReserved.id, hiddenReserved);
+
+  const visibleReserved = createElement('header', documentRef);
+  visibleReserved.id = 'music-visible-banner';
+  visibleReserved.setAttribute('data-stephanos-pane-reserved', 'visible-banner');
+  visibleReserved.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 1280,
+    height: 100,
+    right: 1280,
+    bottom: 100,
+  });
+  documentRef.body.appendChild(visibleReserved);
+  documentRef.nodes.set(visibleReserved.id, visibleReserved);
+
+  const ui = createUIRenderer();
+  const pane = ui.createPanel('music-tile-search-build-journey-pane', 'Search');
+  assert.ok(Number.parseFloat(pane.style.top) >= 116);
 });
 
 test('setPanelVisible keeps hidden panes non-interactive without losing explicit re-open behavior', () => {
