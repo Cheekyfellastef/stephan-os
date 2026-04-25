@@ -6,6 +6,8 @@ import { createUIRenderer } from '../../system/ui_renderer.js';
 
 const PANEL_POSITION_KEY = 'panelPositions';
 const PANEL_COLLAPSE_KEY = 'panelCollapsed';
+const CANON_MOUNTED_ATTR = 'data-canon-pane-mounted';
+const CANON_MOUNT_HOST_ATTR = 'data-canon-pane-host';
 
 function slugifySegment(value = '') {
   return String(value || '')
@@ -69,6 +71,7 @@ export function createCanonTilePaneManager({
   }
 
   const registeredPanes = new Map();
+  const sectionToPaneId = new WeakMap();
 
   function mountPane({ paneId, title, contentNode, panelClassName = '' } = {}) {
     const domId = toCanonTilePaneDomId(normalizedAppId, paneId);
@@ -82,7 +85,18 @@ export function createCanonTilePaneManager({
 
     if (contentNode) {
       contentNode.classList.add('canon-tile-pane-content');
+      contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
+      contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
       panel.appendChild(contentNode);
+      const isOwnedByPanel = contentNode.closest?.('.stephanos-panel')?.id === domId;
+      if (!isOwnedByPanel && globalThis.window?.isDeveloperModeEnabled?.() === true) {
+        console.warn('[CANON TILE PANES] mounted pane content is not owned by expected panel host', {
+          appId: normalizedAppId,
+          paneId: slugifySegment(paneId),
+          domId,
+          contentNodeId: contentNode.id || null,
+        });
+      }
     }
 
     registeredPanes.set(slugifySegment(paneId), {
@@ -101,11 +115,39 @@ export function createCanonTilePaneManager({
       throw new Error('mountPaneFromSection requires a section element.');
     }
 
+    const normalizedPaneId = slugifySegment(paneId);
+    const existingPaneId = sectionToPaneId.get(section);
+    if (existingPaneId) {
+      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
+        console.warn('[CANON TILE PANES] duplicate section mount prevented', {
+          appId: normalizedAppId,
+          existingPaneId,
+          requestedPaneId: normalizedPaneId,
+          sectionId: section.id || null,
+        });
+      }
+      return globalThis.document?.getElementById(toCanonTilePaneDomId(normalizedAppId, existingPaneId)) || null;
+    }
+    if (registeredPanes.has(normalizedPaneId)) {
+      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
+        console.warn('[CANON TILE PANES] duplicate pane id mount prevented', {
+          appId: normalizedAppId,
+          paneId: normalizedPaneId,
+          sectionId: section.id || null,
+        });
+      }
+      return globalThis.document?.getElementById(toCanonTilePaneDomId(normalizedAppId, normalizedPaneId)) || null;
+    }
+
     section.hidden = false;
     section.classList.add('canon-tile-pane-section');
+    section.setAttribute(CANON_MOUNTED_ATTR, 'true');
+    section.setAttribute(CANON_MOUNT_HOST_ATTR, toCanonTilePaneDomId(normalizedAppId, normalizedPaneId));
     const heading = section.querySelector('h2');
     const resolvedTitle = title || heading?.textContent?.trim() || 'Pane';
-    return mountPane({ paneId, title: resolvedTitle, contentNode: section, panelClassName });
+    const panel = mountPane({ paneId: normalizedPaneId, title: resolvedTitle, contentNode: section, panelClassName });
+    sectionToPaneId.set(section, normalizedPaneId);
+    return panel;
   }
 
   function resetLayout() {

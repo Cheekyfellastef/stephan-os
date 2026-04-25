@@ -107,3 +107,126 @@ test('canon tile pane manager resolves app-scoped pane IDs', () => {
 
   assert.equal(manager.toPaneDomId('debug-pane'), 'music-tile-debug-pane');
 });
+
+function createClassList() {
+  const values = new Set();
+  return {
+    add(...entries) {
+      entries.forEach((entry) => values.add(entry));
+    },
+    contains(entry) {
+      return values.has(entry);
+    },
+  };
+}
+
+function createMockSection(id) {
+  const attributes = {};
+  return {
+    id,
+    hidden: true,
+    dataset: {},
+    classList: createClassList(),
+    setAttribute(name, value) {
+      attributes[name] = String(value);
+    },
+    getAttribute(name) {
+      return attributes[name];
+    },
+    querySelector(selector) {
+      if (selector === 'h2') {
+        return { textContent: 'Mock Pane' };
+      }
+      return null;
+    },
+    closest() {
+      return null;
+    },
+  };
+}
+
+test('mountPaneFromSection marks section as canon-mounted with host ownership', () => {
+  const panelById = new Map();
+  const section = createMockSection('music-controls-pane');
+  const manager = createCanonTilePaneManager({
+    appId: 'music-tile',
+    uiRenderer: {
+      createPanel(id) {
+        const contentNodes = [];
+        const panel = {
+          id,
+          dataset: {},
+          classList: createClassList(),
+          appendChild(node) {
+            contentNodes.push(node);
+            node.closest = () => ({ id });
+          },
+          contentNodes,
+        };
+        panelById.set(id, panel);
+        return panel;
+      },
+      removePanel() {},
+    },
+    storage: createStorage(),
+  });
+
+  const panel = manager.mountPaneFromSection({
+    paneId: 'search-build-journey-pane',
+    section,
+  });
+
+  assert.ok(panel);
+  assert.equal(section.hidden, false);
+  assert.equal(section.classList.contains('canon-tile-pane-section'), true);
+  assert.equal(section.getAttribute('data-canon-pane-mounted'), 'true');
+  assert.equal(section.getAttribute('data-canon-pane-host'), 'music-tile-search-build-journey-pane');
+  assert.equal(panelById.get('music-tile-search-build-journey-pane').contentNodes.length, 1);
+});
+
+test('mountPaneFromSection prevents duplicate mounting for same section and pane id', () => {
+  const panelById = new Map();
+  const section = createMockSection('music-results-pane');
+  const manager = createCanonTilePaneManager({
+    appId: 'music-tile',
+    uiRenderer: {
+      createPanel(id) {
+        const panel = {
+          id,
+          dataset: {},
+          classList: createClassList(),
+          appendChild() {},
+        };
+        panelById.set(id, panel);
+        return panel;
+      },
+      removePanel() {},
+    },
+    storage: createStorage(),
+  });
+
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    getElementById(id) {
+      return panelById.get(id) || null;
+    },
+  };
+
+  const first = manager.mountPaneFromSection({
+    paneId: 'results-journey-pane',
+    section,
+  });
+  const duplicateBySection = manager.mountPaneFromSection({
+    paneId: 'results-journey-pane-dup',
+    section,
+  });
+  const duplicateByPaneId = manager.mountPaneFromSection({
+    paneId: 'results-journey-pane',
+    section: createMockSection('music-results-pane-2'),
+  });
+
+  assert.ok(first);
+  assert.equal(duplicateBySection?.id, 'music-tile-results-journey-pane');
+  assert.equal(duplicateByPaneId?.id, 'music-tile-results-journey-pane');
+  globalThis.document = originalDocument;
+});

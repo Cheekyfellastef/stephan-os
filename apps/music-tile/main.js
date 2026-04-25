@@ -56,9 +56,12 @@ const elements = {
   controlsPane: document.getElementById('music-controls-pane'),
   flowPane: document.getElementById('music-flow-pane'),
   resultsPane: document.getElementById('music-results-pane'),
+  summaryPane: document.getElementById('music-summary-pane'),
+  commandPane: document.getElementById('music-command-pane'),
   smartRefresh: document.getElementById('smart-refresh-btn'),
   flowMode: document.getElementById('flow-mode-btn'),
   reset: document.getElementById('reset-btn'),
+  resetLayout: document.getElementById('reset-layout-btn'),
   summary: document.getElementById('summary-grid'),
   queue: document.getElementById('journey-list'),
   commandInput: document.getElementById('command-input'),
@@ -967,6 +970,7 @@ function resetAll() {
 }
 
 function initializePaneLayout() {
+  elements.root.classList.add('music-tile--canon-panes');
   tilePaneManager.mountPaneFromSection({
     paneId: 'search-build-journey-pane',
     title: 'Search / Build Journey',
@@ -974,9 +978,21 @@ function initializePaneLayout() {
     panelClassName: 'music-tile-pane',
   });
   tilePaneManager.mountPaneFromSection({
+    paneId: 'session-summary-pane',
+    title: 'Session Summary',
+    section: elements.summaryPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
     paneId: 'flow-now-playing-pane',
     title: 'Flow / Now Playing',
     section: elements.flowPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'command-console-pane',
+    title: 'Command Console',
+    section: elements.commandPane,
     panelClassName: 'music-tile-pane',
   });
   tilePaneManager.mountPaneFromSection({
@@ -1069,6 +1085,10 @@ function bindControls() {
     }
   });
   elements.reset.addEventListener('click', resetAll);
+  elements.resetLayout.addEventListener('click', () => {
+    tilePaneManager.resetLayout();
+    tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+  });
   elements.commandRun.addEventListener('click', executeCommand);
   elements.queue.addEventListener('click', (event) => {
     void handleQueueAction(event);
