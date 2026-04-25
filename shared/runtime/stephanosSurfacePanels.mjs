@@ -84,6 +84,11 @@ function createStephanosCanonRotatingChevronButton({ documentRef = globalThis?.d
   const button = documentRef.createElement('button');
   button.type = 'button';
   button.className = STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS;
+  if (typeof button.setAttribute === 'function') {
+    button.setAttribute('data-no-drag', 'true');
+  } else {
+    button['data-no-drag'] = 'true';
+  }
   button.innerHTML = '<span class="chevron" aria-hidden="true">⌄</span>';
   return button;
 }

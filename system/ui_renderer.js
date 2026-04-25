@@ -6,6 +6,10 @@ import {
   getSystemPanelRestorablePanelIds,
   isSystemPanelDefaultEnabled,
 } from "../shared/runtime/systemPanelToggleRegistry.mjs";
+import {
+  createStephanosCanonRotatingChevronButton,
+  STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS,
+} from "../shared/runtime/stephanosSurfacePanels.mjs";
 import { attachPointerDrag } from "./pointer_drag.js";
 
 const PANEL_POSITION_KEY = "panelPositions";
@@ -536,7 +540,7 @@ export function createUIRenderer() {
       panelId: panel.id,
       preferViewportSpace: true,
       debug: globalThis.window?.isDeveloperModeEnabled?.() === true,
-      interactiveSelector: ".stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]",
+      interactiveSelector: `.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}, .stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]`,
       onDragStart() {
         container.classList.add("stephanos-panel-drag-active");
         panel.parentNode?.appendChild?.(panel);
@@ -557,7 +561,12 @@ export function createUIRenderer() {
       panel.classList.toggle("stephanos-panel-collapsed", collapsed === true);
       content.style.display = collapsed === true ? "none" : "block";
       knobButton.setAttribute("aria-expanded", collapsed === true ? "false" : "true");
-      knobButton.textContent = collapsed === true ? "◎" : "◉";
+      knobButton.setAttribute("aria-label", collapsed === true ? "Expand panel" : "Collapse panel");
+      knobButton.setAttribute("title", collapsed === true ? "Expand panel" : "Collapse panel");
+      const chevron = knobButton.querySelector(".chevron");
+      if (chevron) {
+        chevron.classList.toggle("open", collapsed !== true);
+      }
       writePanelCollapsed(panel.id, collapsed === true, storage);
       applyPanelPosition(panel, {
         x: Number.parseFloat(panel.style.left) || 0,
@@ -655,12 +664,12 @@ export function createUIRenderer() {
         header.className = "stephanos-panel-header";
         header.setAttribute("role", "group");
         header.setAttribute("aria-label", `${title} panel controls`);
-        const knobButton = document.createElement("button");
-        knobButton.className = "stephanos-panel-knob";
-        knobButton.type = "button";
-        knobButton.textContent = "◉";
+        const knobButton = createStephanosCanonRotatingChevronButton({ documentRef: document });
+        knobButton.classList.add("stephanos-panel-knob");
         knobButton.setAttribute("aria-expanded", "true");
         knobButton.setAttribute("aria-label", `Collapse ${title} panel`);
+        knobButton.setAttribute("title", `Collapse ${title} panel`);
+        knobButton.setAttribute("data-no-drag", "true");
         const titleNode = document.createElement("span");
         titleNode.className = "stephanos-panel-title";
         titleNode.textContent = title;
@@ -732,8 +741,10 @@ export function createUIRenderer() {
         }
         const knob = panel.querySelector(".stephanos-panel-knob");
         if (knob) {
-          knob.textContent = "◉";
           knob.setAttribute("aria-expanded", "true");
+          knob.setAttribute("aria-label", "Collapse panel");
+          knob.setAttribute("title", "Collapse panel");
+          knob.querySelector(".chevron")?.classList?.add("open");
         }
         const minY = getReservedTopClearance(readReservedPaneRects());
         const defaultPosition = {

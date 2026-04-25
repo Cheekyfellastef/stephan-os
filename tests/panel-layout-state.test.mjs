@@ -272,7 +272,7 @@ test('resetPanelLayout clears collapsed state and rewrites default positions', (
 
   const ui = createUIRenderer();
   const panel = ui.createPanel('command-console-panel', 'Debug Console');
-  const knob = panel.querySelector('.stephanos-panel-knob');
+  const knob = panel.querySelector('.stephanos-canon-rotating-chevron-button');
   knob.dispatch('click', {});
 
   ui.resetPanelLayout();
@@ -298,7 +298,7 @@ test('build-proof panel participates in draggable persistent layout lifecycle', 
   const ui = createUIRenderer();
   const panel = ui.createPanel('stephanos-build-panel', 'Build Proof');
   const header = panel.querySelector('.stephanos-panel-header');
-  const knob = panel.querySelector('.stephanos-panel-knob');
+  const knob = panel.querySelector('.stephanos-canon-rotating-chevron-button');
 
   header.dispatch('pointerdown', { button: 0, clientX: 180, clientY: 180, preventDefault() {}, target: { closest() { return null; } } });
   header.dispatch('pointermove', { clientX: 420, clientY: 360 });

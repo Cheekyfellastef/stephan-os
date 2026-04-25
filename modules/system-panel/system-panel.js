@@ -2,6 +2,10 @@ import {
   persistStephanosSessionMemory,
   readPersistedStephanosSessionMemory,
 } from '../../shared/runtime/stephanosSessionMemory.mjs';
+import {
+  createStephanosCanonRotatingChevronButton,
+  STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS,
+} from '../../shared/runtime/stephanosSurfacePanels.mjs';
 import { getSystemPanelToggleDefinitions } from '../../shared/runtime/systemPanelToggleRegistry.mjs';
 import { attachPointerDrag } from '../../system/pointer_drag.js';
 
@@ -240,7 +244,7 @@ export function installDraggablePanel(
     panelId: panel.id || 'stephanos-system-panel',
     preferViewportSpace: true,
     debug: globalThis.window?.isDeveloperModeEnabled?.() === true,
-    interactiveSelector: '.stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]',
+    interactiveSelector: `.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}, .stephanos-panel-knob, [data-no-drag], [data-stephanos-no-drag]`,
     onDragStart() {
       panel.parentNode?.appendChild?.(panel);
     },
@@ -280,7 +284,7 @@ export function init() {
 
   panel.innerHTML = `
     <header class="stephanos-system-panel-header">
-      <button class="stephanos-panel-knob system-panel-knob" type="button" aria-expanded="true" aria-label="Collapse system panel">◉</button>
+      <button class="stephanos-panel-knob system-panel-knob" type="button" aria-expanded="true" aria-label="Collapse system panel" title="Collapse system panel" data-no-drag="true"></button>
       <div>
         <h3>Stephanos System</h3>
         <p class="system-panel-subtitle">Operational controls</p>
@@ -309,6 +313,11 @@ export function init() {
 
   const content = panel.querySelector('.stephanos-system-panel-content');
   const knobButton = panel.querySelector('.system-panel-knob');
+  if (knobButton) {
+    const canonKnob = createStephanosCanonRotatingChevronButton({ documentRef: document });
+    knobButton.className = `${canonKnob.className} stephanos-panel-knob system-panel-knob`;
+    knobButton.innerHTML = canonKnob.innerHTML;
+  }
   const syncStatusNode = panel.querySelector('[data-system-sync-status]');
   const refreshMirrorStatus = () => {
     const mirrorStatus = window.getStephanosMirrorStatus?.();
@@ -328,8 +337,10 @@ export function init() {
     const collapsed = panel.dataset.collapsed !== 'true';
     panel.dataset.collapsed = collapsed ? 'true' : 'false';
     content.style.display = collapsed ? 'none' : 'block';
-    knobButton.textContent = collapsed ? '◎' : '◉';
     knobButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    knobButton.setAttribute('aria-label', collapsed ? 'Expand system panel' : 'Collapse system panel');
+    knobButton.setAttribute('title', collapsed ? 'Expand system panel' : 'Collapse system panel');
+    knobButton.querySelector('.chevron')?.classList.toggle('open', collapsed !== true);
     writeSystemPanelPopupState({ collapsed });
   });
 
@@ -367,8 +378,10 @@ export function init() {
     panel.style.transform = 'none';
   }
   content.style.display = popupState.collapsed ? 'none' : 'block';
-  knobButton.textContent = popupState.collapsed ? '◎' : '◉';
   knobButton.setAttribute('aria-expanded', popupState.collapsed ? 'false' : 'true');
+  knobButton.setAttribute('aria-label', popupState.collapsed ? 'Expand system panel' : 'Collapse system panel');
+  knobButton.setAttribute('title', popupState.collapsed ? 'Expand system panel' : 'Collapse system panel');
+  knobButton.querySelector('.chevron')?.classList.toggle('open', popupState.collapsed !== true);
   installDraggablePanel(panel, '.stephanos-system-panel-header', {
     onPositionCommit(position) {
       writeSystemPanelPopupState({ position });
