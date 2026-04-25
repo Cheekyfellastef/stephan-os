@@ -74,6 +74,12 @@ body {
   flex-direction: column;
   max-height: calc(100vh - 32px);
   overflow: hidden;
+  pointer-events: auto;
+}
+
+.stephanos-panel-header {
+  flex: 0 0 auto;
+  touch-action: none;
 }
 
 .stephanos-panel-content {
@@ -83,6 +89,11 @@ body {
   overflow-x: hidden;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.stephanos-panel-content,
+.stephanos-panel-content * {
+  touch-action: auto;
 }
 
 .stephanos-canon-rotating-chevron-button,
@@ -398,8 +409,8 @@ button.ghost,
 }
 
 .debug-panel {
-  max-height: 360px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .debug-panel pre {
@@ -542,7 +553,7 @@ input {
 
 #music-title-pane {
   max-width: calc(100vw - 44px);
-  overflow: hidden;
+  overflow: visible;
 }
 
 #music-title-pane p,
