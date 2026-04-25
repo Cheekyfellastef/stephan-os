@@ -88,6 +88,9 @@ function createElement(tagName = 'div', ownerDocument = null) {
     setAttribute(name, value) {
       this[name] = String(value);
     },
+    getAttribute(name) {
+      return this[name] ?? null;
+    },
     querySelector(selector) {
       const targetClass = selector.startsWith('.') ? selector.slice(1) : null;
       if (!targetClass) {
@@ -631,4 +634,37 @@ test('music tile pane IDs participate in shared collision plane', () => {
   assert.equal(rectsOverlap(getPaneRect(searchPane), getPaneRect(flowPane), 12), false);
   assert.equal(rectsOverlap(getPaneRect(flowPane), getPaneRect(resultsPane), 12), false);
   assert.equal(rectsOverlap(getPaneRect(resultsPane), getPaneRect(debugPane), 12), false);
+});
+
+test('setPanelVisible keeps hidden panes non-interactive without losing explicit re-open behavior', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const paneA = ui.createPanel('visibility-a', 'Visibility A');
+  const paneB = ui.createPanel('visibility-b', 'Visibility B');
+  ui.setPanelVisible('visibility-a', true);
+  ui.setPanelVisible('visibility-b', true);
+
+  const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
+  assert.ok(panelStack);
+
+  ui.setPanelVisible('visibility-a', false);
+  assert.equal(paneA.style.pointerEvents, 'none');
+  assert.equal(paneA.getAttribute('aria-hidden'), 'true');
+  ui.setPanelVisible('visibility-b', true);
+
+  ui.setPanelVisible('visibility-b', false);
+  assert.equal(paneB.style.pointerEvents, 'none');
+  assert.equal(paneB.getAttribute('aria-hidden'), 'true');
+
+  ui.setPanelVisible('visibility-a', true);
+  assert.equal(paneA.style.pointerEvents, 'auto');
+  assert.equal(paneA.getAttribute('aria-hidden'), 'false');
 });

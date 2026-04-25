@@ -279,3 +279,41 @@ test('mountPaneFromSection prevents section from mounting into multiple pane hos
   assert.equal(panelById.size, 0);
   globalThis.document = originalDocument;
 });
+
+test('setPaneVisible delegates to shared panel visibility API for one-layer interaction rules', () => {
+  const calls = [];
+  const manager = createCanonTilePaneManager({
+    appId: 'music-tile',
+    uiRenderer: {
+      createPanel(id) {
+        return {
+          id,
+          dataset: {},
+          classList: { add() {} },
+          appendChild() {},
+        };
+      },
+      removePanel() {},
+      setPanelVisible(id, isVisible, options = {}) {
+        calls.push({ id, isVisible, options });
+      },
+    },
+    storage: createStorage(),
+  });
+
+  manager.setPaneVisible('debug-pane', false);
+  manager.setPaneVisible('debug-pane', true);
+
+  assert.deepEqual(calls, [
+    {
+      id: 'music-tile-debug-pane',
+      isVisible: false,
+      options: { resolveCollisions: false, reason: 'canon-pane-visibility' },
+    },
+    {
+      id: 'music-tile-debug-pane',
+      isVisible: true,
+      options: { resolveCollisions: true, reason: 'canon-pane-visibility' },
+    },
+  ]);
+});
