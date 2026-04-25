@@ -16,7 +16,7 @@ const DEFAULT_PANEL_SIZE = Object.freeze({
 });
 const COLLISION_MARGIN_PX = 12;
 const COLLAPSED_PANEL_HEIGHT = 52;
-const RESERVED_ZONE_CLEARANCE_PX = 24;
+const RESERVED_ZONE_PADDING_PX = 16;
 const RESERVED_ZONE_SELECTOR = "[data-stephanos-pane-reserved]";
 const SYSTEM_RESTORABLE_PANEL_IDS = new Set(getSystemPanelRestorablePanelIds());
 
@@ -133,16 +133,43 @@ function toRect(value) {
   };
 }
 
+function isVisibleReservedNode(node) {
+  if (!node) return false;
+  if (node.hidden === true) return false;
+  if (String(node.getAttribute?.("aria-hidden") || "").toLowerCase() === "true") return false;
+  const inlineDisplay = String(node.style?.display || "").toLowerCase();
+  if (inlineDisplay === "none") return false;
+  const inlineVisibility = String(node.style?.visibility || "").toLowerCase();
+  if (inlineVisibility === "hidden") return false;
+  return true;
+}
+
+function expandRectByPadding(rect, padding = RESERVED_ZONE_PADDING_PX) {
+  const sizePadding = Number.isFinite(padding) ? Math.max(0, padding) : RESERVED_ZONE_PADDING_PX;
+  return {
+    left: rect.left - sizePadding,
+    top: rect.top - sizePadding,
+    right: rect.right + sizePadding,
+    bottom: rect.bottom + sizePadding,
+    width: rect.width + (sizePadding * 2),
+    height: rect.height + (sizePadding * 2),
+  };
+}
+
 function readReservedPaneRects(documentRef = globalThis.document) {
   const reservedNodes = Array.from(documentRef?.querySelectorAll?.(RESERVED_ZONE_SELECTOR) || []);
   return reservedNodes
     .map((node) => {
-      const rect = toRect(node?.getBoundingClientRect?.());
-      if (!rect) {
+      if (!isVisibleReservedNode(node)) {
         return null;
       }
+      const rect = toRect(node?.getBoundingClientRect?.());
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const paddedRect = expandRectByPadding(rect, RESERVED_ZONE_PADDING_PX);
       return {
-        ...rect,
+        ...paddedRect,
         id: node.id || node.getAttribute?.("data-stephanos-pane-reserved") || "reserved-zone",
       };
     })
@@ -158,7 +185,7 @@ function getReservedTopClearance(reservedRects = []) {
       && rect.right > 0
       && rect.left < viewport.width
       && Number.isFinite(rect?.bottom)) {
-      clearance = Math.max(clearance, rect.bottom + RESERVED_ZONE_CLEARANCE_PX);
+      clearance = Math.max(clearance, rect.bottom);
     }
   });
   return clearance;
