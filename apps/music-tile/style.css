@@ -226,8 +226,16 @@ button.ghost,
   max-width: 100%;
 }
 
+.music-tile.music-tile--canon-panes .canon-tile-pane-section[data-canon-pane-mounted='true'] {
+  display: none;
+}
+
 .stephanos-panel-content > .canon-tile-pane-section {
   display: block;
+}
+
+.stephanos-panel-content > .canon-tile-pane-section.panel {
+  grid-column: auto !important;
 }
 
 .music-tile-pane {

@@ -114,6 +114,9 @@ function createClassList() {
     add(...entries) {
       entries.forEach((entry) => values.add(entry));
     },
+    remove(...entries) {
+      entries.forEach((entry) => values.delete(entry));
+    },
     contains(entry) {
       return values.has(entry);
     },
@@ -139,6 +142,7 @@ function createMockSection(id) {
       }
       return null;
     },
+    parentNode: null,
     closest() {
       return null;
     },
@@ -159,6 +163,7 @@ test('mountPaneFromSection marks section as canon-mounted with host ownership', 
           classList: createClassList(),
           appendChild(node) {
             contentNodes.push(node);
+            node.parentNode = panel;
             node.closest = () => ({ id });
           },
           contentNodes,
@@ -178,6 +183,7 @@ test('mountPaneFromSection marks section as canon-mounted with host ownership', 
 
   assert.ok(panel);
   assert.equal(section.hidden, false);
+  assert.equal(section.classList.contains('panel'), false);
   assert.equal(section.classList.contains('canon-tile-pane-section'), true);
   assert.equal(section.getAttribute('data-canon-pane-mounted'), 'true');
   assert.equal(section.getAttribute('data-canon-pane-host'), 'music-tile-search-build-journey-pane');
@@ -228,5 +234,48 @@ test('mountPaneFromSection prevents duplicate mounting for same section and pane
   assert.ok(first);
   assert.equal(duplicateBySection?.id, 'music-tile-results-journey-pane');
   assert.equal(duplicateByPaneId?.id, 'music-tile-results-journey-pane');
+  globalThis.document = originalDocument;
+});
+
+test('mountPaneFromSection prevents section from mounting into multiple pane hosts', () => {
+  const panelById = new Map();
+  const section = createMockSection('music-command-pane');
+  section.setAttribute('data-canon-pane-mounted', 'true');
+  section.setAttribute('data-canon-pane-host', 'music-tile-flow-now-playing-pane');
+
+  const manager = createCanonTilePaneManager({
+    appId: 'music-tile',
+    uiRenderer: {
+      createPanel(id) {
+        const panel = {
+          id,
+          dataset: {},
+          classList: createClassList(),
+          appendChild() {},
+        };
+        panelById.set(id, panel);
+        return panel;
+      },
+      removePanel() {},
+    },
+    storage: createStorage(),
+  });
+
+  const existingHostPanel = { id: 'music-tile-flow-now-playing-pane' };
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    getElementById(id) {
+      if (id === 'music-tile-flow-now-playing-pane') return existingHostPanel;
+      return panelById.get(id) || null;
+    },
+  };
+
+  const duplicateHostAttempt = manager.mountPaneFromSection({
+    paneId: 'command-console-pane',
+    section,
+  });
+
+  assert.equal(duplicateHostAttempt, existingHostPanel);
+  assert.equal(panelById.size, 0);
   globalThis.document = originalDocument;
 });

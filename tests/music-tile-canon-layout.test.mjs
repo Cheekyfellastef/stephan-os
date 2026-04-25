@@ -25,5 +25,7 @@ test('music tile includes canon layout reset action that does not re-enable old 
 test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is active', () => {
   assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes\s*\{\s*display:\s*block;/);
   assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes > \.panel:not\(\.music-shell-static\)\s*\{\s*display:\s*none;/);
+  assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes \.canon-tile-pane-section\[data-canon-pane-mounted='true'\]\s*\{\s*display:\s*none;/);
   assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\s*\{\s*display:\s*block;/);
+  assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\.panel\s*\{\s*grid-column:\s*auto !important;/);
 });
