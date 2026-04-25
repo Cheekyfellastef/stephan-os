@@ -59,6 +59,21 @@ body {
   padding: 14px;
 }
 
+.stephanos-panel,
+.music-tile-pane {
+  overflow: hidden;
+}
+
+.stephanos-panel-content {
+  overflow: auto;
+  max-height: calc(100vh - 140px);
+}
+
+.stephanos-panel-content *,
+.canon-tile-pane-section * {
+  max-width: 100%;
+}
+
 .header-panel,
 .controls-panel,
 .journey-panel {
@@ -241,6 +256,8 @@ button.ghost,
   margin: 0;
   grid-column: auto;
   max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .stephanos-panel-content > .canon-tile-pane-section {
@@ -273,6 +290,7 @@ button.ghost,
 
 .track-main {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .track-meta {
@@ -391,6 +409,8 @@ input {
 
 .playback-panel {
   grid-column: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .playback-controls-grid {
@@ -442,15 +462,40 @@ input {
 
 .command-panel {
   grid-column: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .command-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .command-row input {
   flex: 1;
+  min-width: 0;
+}
+
+.command-row button {
+  flex: 0 0 auto;
+}
+
+#command-output {
+  overflow-wrap: anywhere;
+}
+
+#music-tile-header-banner {
+  position: relative;
+  z-index: 1;
+  max-width: calc(100vw - 44px);
+  overflow: hidden;
+}
+
+#music-tile-header-banner p,
+#music-tile-header-banner h1 {
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 .toggle-row {

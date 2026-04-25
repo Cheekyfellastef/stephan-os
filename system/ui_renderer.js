@@ -16,7 +16,7 @@ const DEFAULT_PANEL_SIZE = Object.freeze({
 });
 const COLLISION_MARGIN_PX = 12;
 const COLLAPSED_PANEL_HEIGHT = 52;
-const RESERVED_ZONE_PADDING_PX = 16;
+const RESERVED_ZONE_PADDING_PX = 20;
 const RESERVED_ZONE_SELECTOR = "[data-stephanos-pane-reserved]";
 const SYSTEM_RESTORABLE_PANEL_IDS = new Set(getSystemPanelRestorablePanelIds());
 
@@ -144,15 +144,41 @@ function isVisibleReservedNode(node) {
   return true;
 }
 
-function expandRectByPadding(rect, padding = RESERVED_ZONE_PADDING_PX) {
-  const sizePadding = Number.isFinite(padding) ? Math.max(0, padding) : RESERVED_ZONE_PADDING_PX;
+function readNodeMargins(node) {
+  const style = globalThis.getComputedStyle?.(node);
+  if (!style) {
+    return {
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+    };
+  }
+  const marginLeft = Number.parseFloat(style.marginLeft);
+  const marginRight = Number.parseFloat(style.marginRight);
+  const marginTop = Number.parseFloat(style.marginTop);
+  const marginBottom = Number.parseFloat(style.marginBottom);
   return {
-    left: rect.left - sizePadding,
-    top: rect.top - sizePadding,
-    right: rect.right + sizePadding,
-    bottom: rect.bottom + sizePadding,
-    width: rect.width + (sizePadding * 2),
-    height: rect.height + (sizePadding * 2),
+    left: Number.isFinite(marginLeft) ? Math.max(0, marginLeft) : 0,
+    right: Number.isFinite(marginRight) ? Math.max(0, marginRight) : 0,
+    top: Number.isFinite(marginTop) ? Math.max(0, marginTop) : 0,
+    bottom: Number.isFinite(marginBottom) ? Math.max(0, marginBottom) : 0,
+  };
+}
+
+function expandRectByPadding(rect, padding = RESERVED_ZONE_PADDING_PX, margin = {}) {
+  const sizePadding = Number.isFinite(padding) ? Math.max(0, padding) : RESERVED_ZONE_PADDING_PX;
+  const marginLeft = Number.isFinite(margin.left) ? Math.max(0, margin.left) : 0;
+  const marginRight = Number.isFinite(margin.right) ? Math.max(0, margin.right) : 0;
+  const marginTop = Number.isFinite(margin.top) ? Math.max(0, margin.top) : 0;
+  const marginBottom = Number.isFinite(margin.bottom) ? Math.max(0, margin.bottom) : 0;
+  return {
+    left: rect.left - sizePadding - marginLeft,
+    top: rect.top - sizePadding - marginTop,
+    right: rect.right + sizePadding + marginRight,
+    bottom: rect.bottom + sizePadding + marginBottom,
+    width: rect.width + (sizePadding * 2) + marginLeft + marginRight,
+    height: rect.height + (sizePadding * 2) + marginTop + marginBottom,
   };
 }
 
@@ -167,7 +193,7 @@ function readReservedPaneRects(documentRef = globalThis.document) {
       if (!rect || rect.width <= 0 || rect.height <= 0) {
         return null;
       }
-      const paddedRect = expandRectByPadding(rect, RESERVED_ZONE_PADDING_PX);
+      const paddedRect = expandRectByPadding(rect, RESERVED_ZONE_PADDING_PX, readNodeMargins(node));
       return {
         ...paddedRect,
         id: node.id || node.getAttribute?.("data-stephanos-pane-reserved") || "reserved-zone",
