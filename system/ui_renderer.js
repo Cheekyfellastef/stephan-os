@@ -559,7 +559,7 @@ export function createUIRenderer() {
     const applyCollapseState = (collapsed, options = {}) => {
       const shouldSyncPlane = options.syncPlane !== false;
       panel.classList.toggle("stephanos-panel-collapsed", collapsed === true);
-      content.style.display = collapsed === true ? "none" : "block";
+      content.style.display = collapsed === true ? "none" : "";
       knobButton.setAttribute("aria-expanded", collapsed === true ? "false" : "true");
       knobButton.setAttribute("aria-label", collapsed === true ? "Expand panel" : "Collapse panel");
       knobButton.setAttribute("title", collapsed === true ? "Expand panel" : "Collapse panel");
@@ -737,7 +737,7 @@ export function createUIRenderer() {
         panel.classList.remove("stephanos-panel-collapsed");
         const content = panel.querySelector(".stephanos-panel-content");
         if (content) {
-          content.style.display = "block";
+          content.style.display = "";
         }
         const knob = panel.querySelector(".stephanos-panel-knob");
         if (knob) {
