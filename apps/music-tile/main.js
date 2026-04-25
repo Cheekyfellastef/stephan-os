@@ -969,6 +969,12 @@ function resetAll() {
   renderDebug();
 }
 
+function setDebugPaneVisibility(isVisible) {
+  state.debugVisible = Boolean(isVisible);
+  elements.debugToggle.setAttribute('aria-pressed', state.debugVisible ? 'true' : 'false');
+  tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+}
+
 function initializePaneLayout() {
   elements.root.classList.add('music-tile--canon-panes');
   tilePaneManager.mountPaneFromSection({
@@ -1008,7 +1014,8 @@ function initializePaneLayout() {
     panelClassName: 'music-tile-pane music-tile-pane-debug',
   });
 
-  tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+  elements.debugPanel.hidden = false;
+  setDebugPaneVisibility(state.debugVisible);
 }
 
 function bindControls() {
@@ -1087,7 +1094,7 @@ function bindControls() {
   elements.reset.addEventListener('click', resetAll);
   elements.resetLayout.addEventListener('click', () => {
     tilePaneManager.resetLayout();
-    tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+    setDebugPaneVisibility(state.debugVisible);
   });
   elements.commandRun.addEventListener('click', executeCommand);
   elements.queue.addEventListener('click', (event) => {
@@ -1102,8 +1109,7 @@ function bindControls() {
   });
 
   elements.debugToggle.addEventListener('click', () => {
-    state.debugVisible = !state.debugVisible;
-    tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+    setDebugPaneVisibility(!state.debugVisible);
   });
 }
 
