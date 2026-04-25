@@ -9,6 +9,8 @@ const musicHtmlSource = readFileSync(new URL('../apps/music-tile/index.html', im
 test('music tile enters canon pane mode and mounts one pane plane for major sections', () => {
   assert.match(musicMainSource, /elements\.root\.classList\.add\('music-tile--canon-panes'\)/);
   assert.match(musicMainSource, /const tilePaneManager = createCanonTilePaneManager\(\{ appId: 'music-tile' \}\)/);
+  assert.match(musicHtmlSource, /id="music-tile-header-banner"/);
+  assert.match(musicHtmlSource, /data-stephanos-pane-reserved="music-title-banner"/);
   assert.equal((musicMainSource.match(/paneId:\s*'search-build-journey-pane'/g) || []).length, 1);
   assert.equal((musicMainSource.match(/paneId:\s*'session-summary-pane'/g) || []).length, 1);
   assert.equal((musicMainSource.match(/paneId:\s*'flow-now-playing-pane'/g) || []).length, 1);
