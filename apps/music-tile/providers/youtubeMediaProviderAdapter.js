@@ -23,6 +23,8 @@ function toSearchCandidate(video = {}) {
     channelId: snippet.channelId || '',
     channelName: snippet.channelTitle || 'Unknown channel',
     publishDate: snippet.publishedAt || null,
+    duration: 0,
+    durationSource: 'unknown',
     thumbnail: snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
   };
 }
@@ -132,9 +134,11 @@ export function createYouTubeMediaProviderAdapter({ apiKey = '', fetchImpl = fet
     }
 
     const duration = parseIso8601Duration(contentDetails.duration);
+    const durationSource = duration > 0 ? 'youtube-contentDetails' : 'unknown';
     return {
       ...candidate,
       duration,
+      durationSource,
       providerUrl: `https://www.youtube.com/watch?v=${candidate.providerItemId}`,
       playbackMode,
       availabilityStatus,
