@@ -345,6 +345,7 @@ export function toYouTubeMediaItem(video) {
     channelId: snippet.channelId || '',
     channelName: snippet.channelTitle || 'Unknown channel',
     duration: 0,
+    durationSource: 'unknown',
     publishDate: snippet.publishedAt || null,
     thumbnail: snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
     detectedArtists: [],

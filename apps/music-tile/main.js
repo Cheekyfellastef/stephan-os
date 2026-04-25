@@ -37,6 +37,21 @@ const RATING_TEXT = {
   '3': '👍',
   '5': '👍👍',
 };
+const TRUSTED_DURATION_SOURCES = new Set(['youtube-contentDetails', 'provider-metadata', 'manual']);
+const DURATION_UNKNOWN_TEXT = 'Duration unknown';
+const THUMBNAIL_PLACEHOLDER_SVG = encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#0f2a4a"/>
+        <stop offset="1" stop-color="#081322"/>
+      </linearGradient>
+    </defs>
+    <rect width="1280" height="720" fill="url(#bg)"/>
+    <circle cx="640" cy="360" r="138" fill="#0f3b66"/>
+    <polygon points="600,290 760,360 600,430" fill="#8bcfff"/>
+  </svg>
+`);
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -152,6 +167,31 @@ function formatTaste(rating) {
   return RATING_TEXT[String(numericRating)] || `Rated ${numericRating}`;
 }
 
+function hasTrustedDuration(item = {}) {
+  const durationSource = String(item?.durationSource || '').trim().toLowerCase() || 'unknown';
+  const duration = Number(item?.duration);
+  return TRUSTED_DURATION_SOURCES.has(durationSource) && Number.isFinite(duration) && duration > 0;
+}
+
+function formatDuration(seconds, durationSource = 'unknown') {
+  const normalizedSource = String(durationSource || '').trim().toLowerCase() || 'unknown';
+  const duration = Math.floor(Number(seconds));
+  if (!TRUSTED_DURATION_SOURCES.has(normalizedSource)) return DURATION_UNKNOWN_TEXT;
+  if (!Number.isFinite(duration) || duration <= 0) return DURATION_UNKNOWN_TEXT;
+  const totalSeconds = Math.max(0, duration);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function getThumbnailUrl(item = {}) {
+  const thumbnail = String(item?.thumbnail || item?.providerMetadata?.thumbnail || '').trim();
+  if (thumbnail) return thumbnail;
+  return `data:image/svg+xml;charset=UTF-8,${THUMBNAIL_PLACEHOLDER_SVG}`;
+}
+
 function getJourneySection(item) {
   const duration = Number(item?.duration) || 0;
   const isLongSet = duration >= DEEP_DIVE_MIN_DURATION_SECONDS;
@@ -178,7 +218,7 @@ function buildWhyThis(item) {
   if (trustScore >= 2) reasons.push('trusted source');
   if (item?.validationStatus === 'validated') reasons.push('validated');
   if (item?.availabilityStatus === 'unresolved_seed' || item?.playbackTarget === 'search-only') reasons.push('search-only lead from seeded library');
-  if ((Number(item?.duration) || 0) >= DEEP_DIVE_MIN_DURATION_SECONDS) reasons.push('long set');
+  if (hasTrustedDuration(item) && (Number(item?.duration) || 0) >= DEEP_DIVE_MIN_DURATION_SECONDS) reasons.push('long set');
   if (Array.isArray(item?.relevanceReasons)) {
     if (item.relevanceReasons.some((reason) => String(reason).startsWith('event:'))) reasons.push('related orbit');
   }
@@ -287,10 +327,18 @@ function renderQueue() {
     lastSection = section;
     const primaryActionLabel = isExactPlayable ? 'Play' : 'Find on YouTube';
     const reasonText = buildWhyThis(item);
+    const durationText = formatDuration(item.duration, item.durationSource);
+    const showDurationBadge = hasTrustedDuration(item);
     return `${sectionLabel}
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
-      <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
-      <div class="track-meta">Rank: ${rankScore.toFixed(2)} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
+      <article class="track-card">
+        <div class="track-thumb-wrap">
+          <img class="track-thumb" src="${getThumbnailUrl(item)}" alt="" loading="lazy" />
+          ${showDurationBadge ? `<span class="track-duration-chip">${durationText}</span>` : ''}
+        </div>
+        <div class="track-main">
+          <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
+          <div class="track-meta">Rank: ${rankScore.toFixed(2)} • ${durationText} • ${item.type}</div>
       <div class="track-meta">Taste: ${formatTaste(persistedRating)}</div>
       <div class="track-why">Why this? ${reasonText}</div>
       <div class="track-badges">
@@ -318,6 +366,8 @@ function renderQueue() {
           </div>
         </details>
       </div>
+        </div>
+      </article>
     </li>
   `;
   }).join('');
@@ -379,6 +429,11 @@ function renderDebug() {
       relevanceTier: item.relevanceTier || 'general',
       relevanceReasons: item.relevanceReasons || [],
       title: item.title,
+      duration: Number(item.duration) || 0,
+      durationSource: item.durationSource || 'unknown',
+      thumbnailPresent: Boolean(item.thumbnail),
+      provider: item.provider,
+      playbackState: item.playbackTarget || 'unknown',
       finalScore: resolveItemRankScore(item),
       playbackLinkState: getMediaPlaybackLinkState(item),
       userRating: Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : null,
@@ -395,6 +450,11 @@ function renderDebug() {
     currentItem: current ? {
       id: current.id,
       title: current.title,
+      duration: Number(current.duration) || 0,
+      durationSource: current.durationSource || 'unknown',
+      thumbnailPresent: Boolean(current.thumbnail),
+      provider: current.provider,
+      playbackState: current.playbackTarget || 'unknown',
       currentTasteRating: formatTaste(current.userRating),
       sourceTrust: Number(state.memory.channelTrust[current.channelId] || 0),
     } : null,
@@ -422,13 +482,16 @@ function renderDebug() {
 function librarySeedToMediaItem(track) {
   const preferredVideoId = sanitizeVideoId(track.youtube?.preferredVideoId);
   const hasExactVideo = Boolean(preferredVideoId);
+  const trustedDuration = Number(track.durationSeconds ?? track.trustedDurationSeconds ?? track.duration ?? 0);
+  const hasManualDuration = Number.isFinite(trustedDuration) && trustedDuration > 0;
   return {
     id: hasExactVideo ? preferredVideoId : `${track.id}-seed`,
     title: `${track.artist} — ${track.title}`,
     description: track.notes,
     channelId: `seed-${track.artist.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     channelName: `${track.artist} (seed)`,
-    duration: Math.max(180, Math.round((track.approximateBpm || 120) * 16)),
+    duration: hasManualDuration ? Math.floor(trustedDuration) : 0,
+    durationSource: hasManualDuration ? 'manual' : 'unknown',
     publishDate: '2022-01-01T00:00:00.000Z',
     thumbnail: '',
     detectedArtists: [track.artist],
@@ -508,7 +571,8 @@ async function resolveSeededTrack(youtubeAdapter, track) {
     description: validated.description,
     channelId: validated.channelId,
     channelName: validated.channelName,
-    duration: validated.duration || Math.max(180, Math.round((track.approximateBpm || 120) * 16)),
+    duration: Number(validated.duration) || 0,
+    durationSource: validated.durationSource || 'unknown',
     publishDate: validated.publishDate || '2022-01-01T00:00:00.000Z',
     thumbnail: validated.thumbnail || '',
     playbackMode: validated.playbackMode,
