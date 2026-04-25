@@ -8,6 +8,7 @@ function safeString(value = '') {
 }
 
 const SURFACE_PANEL_STYLE_ID = 'stephanos-surface-panel-shared-styles';
+const STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS = 'stephanos-canon-rotating-chevron-button';
 const SURFACE_PANEL_SHARED_STYLES = `
 .stephanos-surface-panel {
   padding: 12px;
@@ -22,7 +23,7 @@ const SURFACE_PANEL_SHARED_STYLES = `
 .stephanos-surface-panel-header .title {
   margin: 0;
 }
-.stephanos-surface-panel-knob {
+.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} {
   border-radius: 999px;
   width: 38px;
   height: 38px;
@@ -37,25 +38,25 @@ const SURFACE_PANEL_SHARED_STYLES = `
   color: #daf3ff;
   cursor: pointer;
 }
-.stephanos-surface-panel-knob .dial {
+.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .dial {
   display: inline-block;
   transition: transform 180ms ease;
 }
-.stephanos-surface-panel-knob .chevron {
+.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .chevron {
   display: inline-block;
   font-size: 0.78rem;
   opacity: 0.9;
   transition: transform 180ms ease;
 }
-.stephanos-surface-panel-knob:hover,
-.stephanos-surface-panel-knob:focus-visible {
+.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}:hover,
+.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}:focus-visible {
   border-color: #8ec9ff;
   background: rgba(15, 34, 54, 0.97);
 }
-.stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .dial {
+.stephanos-surface-panel-collapsed .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .dial {
   transform: rotate(-90deg);
 }
-.stephanos-surface-panel-collapsed .stephanos-surface-panel-knob .chevron {
+.stephanos-surface-panel-collapsed .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .chevron {
   transform: rotate(-90deg);
 }
 `;
@@ -83,6 +84,18 @@ function ensureSurfacePanelStyles(documentRef = globalThis?.document) {
   documentRef.head.appendChild(style);
 }
 
+function createStephanosCanonRotatingChevronButton({ documentRef = globalThis?.document } = {}) {
+  if (!documentRef || typeof documentRef.createElement !== 'function') {
+    throw new Error('createStephanosCanonRotatingChevronButton requires a document-like object.');
+  }
+
+  const button = documentRef.createElement('button');
+  button.type = 'button';
+  button.className = STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS;
+  button.innerHTML = '<span class="dial">◉</span><span class="chevron" aria-hidden="true">⌄</span>';
+  return button;
+}
+
 function writeSurfacePanelState(surfaceId, panelId, collapsed, storage = globalThis?.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);
   const currentPanels = memory?.session?.ui?.uiLayout?.surfacePanels;
@@ -106,12 +119,12 @@ function writeSurfacePanelState(surfaceId, panelId, collapsed, storage = globalT
   }, storage);
 }
 
-function applyCollapsedState({ panel, body, knob, collapsed }) {
+function applyCollapsedState({ panel, body, button, collapsed }) {
   panel.classList.toggle('stephanos-surface-panel-collapsed', collapsed === true);
   body.hidden = collapsed === true;
-  knob.setAttribute('aria-expanded', collapsed === true ? 'false' : 'true');
-  knob.setAttribute('aria-label', collapsed === true ? 'Expand panel' : 'Collapse panel');
-  knob.setAttribute('title', collapsed === true ? 'Expand panel' : 'Collapse panel');
+  button.setAttribute('aria-expanded', collapsed === true ? 'false' : 'true');
+  button.setAttribute('aria-label', collapsed === true ? 'Expand panel' : 'Collapse panel');
+  button.setAttribute('title', collapsed === true ? 'Expand panel' : 'Collapse panel');
 }
 
 function createPanelShell({ panel, titleNode }) {
@@ -127,12 +140,9 @@ function createPanelShell({ panel, titleNode }) {
   heading.className = titleNode?.className || 'title';
   heading.textContent = headingText;
 
-  const knob = document.createElement('button');
-  knob.type = 'button';
-  knob.className = 'stephanos-surface-panel-knob';
-  knob.innerHTML = '<span class="dial">◉</span><span class="chevron" aria-hidden="true">⌄</span>';
+  const button = createStephanosCanonRotatingChevronButton({ documentRef: document });
 
-  header.append(heading, knob);
+  header.append(heading, button);
 
   const body = document.createElement('div');
   body.className = 'stephanos-surface-panel-body';
@@ -141,7 +151,7 @@ function createPanelShell({ panel, titleNode }) {
     .forEach((node) => body.appendChild(node));
 
   panel.append(header, body);
-  return { knob, body };
+  return { button, body };
 }
 
 export function initStephanosSurfacePanels({
@@ -166,19 +176,21 @@ export function initStephanosSurfacePanels({
     }
 
     const titleNode = panel.querySelector('h2.title');
-    const { knob, body } = createPanelShell({ panel, titleNode });
+    const { button, body } = createPanelShell({ panel, titleNode });
     const collapsed = persistedState[panelId] === true;
-    applyCollapsedState({ panel, body, knob, collapsed });
+    applyCollapsedState({ panel, body, button, collapsed });
 
-    knob.addEventListener('click', () => {
+    button.addEventListener('click', () => {
       const nextCollapsed = !panel.classList.contains('stephanos-surface-panel-collapsed');
-      applyCollapsedState({ panel, body, knob, collapsed: nextCollapsed });
+      applyCollapsedState({ panel, body, button, collapsed: nextCollapsed });
       writeSurfacePanelState(normalizedSurfaceId, panelId, nextCollapsed, storage);
     });
   });
 }
 
 export {
+  createStephanosCanonRotatingChevronButton,
   readSurfacePanelState,
+  STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS,
   writeSurfacePanelState,
 };
