@@ -8,6 +8,7 @@ const musicHtmlSource = readFileSync(new URL('../apps/music-tile/index.html', im
 
 test('music tile enters canon pane mode and mounts one pane plane for major sections', () => {
   assert.match(musicMainSource, /elements\.root\.classList\.add\('music-tile--canon-panes'\)/);
+  assert.match(musicMainSource, /const tilePaneManager = createCanonTilePaneManager\(\{ appId: 'music-tile' \}\)/);
   assert.match(musicMainSource, /paneId: 'search-build-journey-pane'/);
   assert.match(musicMainSource, /paneId: 'session-summary-pane'/);
   assert.match(musicMainSource, /paneId: 'flow-now-playing-pane'/);
@@ -23,9 +24,9 @@ test('music tile includes canon layout reset action that does not re-enable old 
 });
 
 test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is active', () => {
-  assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes\s*\{\s*display:\s*block;/);
+  assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes\s*\{\s*display:\s*block;\s*min-height:\s*100vh;/);
   assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes > \.panel:not\(\.music-shell-static\)\s*\{\s*display:\s*none;/);
-  assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes \.canon-tile-pane-section\[data-canon-pane-mounted='true'\]\s*\{\s*display:\s*none;/);
+  assert.match(musicCssSource, /\.music-tile\.music-tile--canon-panes > \.panel\[data-canon-pane-mounted='true'\]\s*\{\s*display:\s*none;/);
   assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\s*\{\s*display:\s*block;/);
   assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\.panel\s*\{\s*grid-column:\s*auto !important;/);
 });

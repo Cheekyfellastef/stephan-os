@@ -24,9 +24,14 @@ body {
 
 .music-tile.music-tile--canon-panes {
   display: block;
+  min-height: 100vh;
 }
 
 .music-tile.music-tile--canon-panes > .panel:not(.music-shell-static) {
+  display: none;
+}
+
+.music-tile.music-tile--canon-panes > .panel[data-canon-pane-mounted='true'] {
   display: none;
 }
 
@@ -224,10 +229,6 @@ button.ghost,
   margin: 0;
   grid-column: auto;
   max-width: 100%;
-}
-
-.music-tile.music-tile--canon-panes .canon-tile-pane-section[data-canon-pane-mounted='true'] {
-  display: none;
 }
 
 .stephanos-panel-content > .canon-tile-pane-section {
