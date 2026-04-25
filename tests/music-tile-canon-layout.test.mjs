@@ -33,6 +33,20 @@ test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is
   assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\.panel\s*\{\s*grid-column:\s*auto !important;/);
 });
 
+test('music tile canon CSS enforces pane content containment and command console wrapping', () => {
+  assert.match(musicCssSource, /\.stephanos-panel,\s*\.music-tile-pane\s*\{\s*overflow:\s*hidden;/);
+  assert.match(musicCssSource, /\.stephanos-panel-content\s*\{\s*overflow:\s*auto;[\s\S]*max-height:\s*calc\(100vh - 140px\);/);
+  assert.match(musicCssSource, /\.stephanos-panel-content \*,\s*\.canon-tile-pane-section \*\s*\{\s*max-width:\s*100%;/);
+  assert.match(musicCssSource, /\.canon-tile-pane-section\s*\{[\s\S]*min-width:\s*0;[\s\S]*overflow-wrap:\s*anywhere;/);
+  assert.match(musicCssSource, /\.command-row\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(musicCssSource, /#command-output\s*\{\s*overflow-wrap:\s*anywhere;/);
+});
+
+test('music tile header banner reserves full text block and wraps safely', () => {
+  assert.match(musicCssSource, /#music-tile-header-banner\s*\{[\s\S]*position:\s*relative;[\s\S]*z-index:\s*1;[\s\S]*max-width:\s*calc\(100vw - 44px\);[\s\S]*overflow:\s*hidden;/);
+  assert.match(musicCssSource, /#music-tile-header-banner p,\s*#music-tile-header-banner h1\s*\{[\s\S]*overflow-wrap:\s*anywhere;[\s\S]*max-width:\s*100%;/);
+});
+
 test('music tile debug pane is canon-mounted and hidden by default until explicitly toggled', () => {
   assert.match(musicHtmlSource, /<section class=\"panel debug-panel\" id=\"debug-panel\" hidden>/);
   assert.match(musicMainSource, /tilePaneManager\.mountPaneFromSection\(\{\s*paneId:\s*'debug-pane'[\s\S]*section:\s*elements\.debugPanel,/);

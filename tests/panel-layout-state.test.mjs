@@ -9,6 +9,7 @@ test.afterEach(() => {
   delete globalThis.localStorage;
   delete globalThis.innerWidth;
   delete globalThis.innerHeight;
+  delete globalThis.getComputedStyle;
   delete globalThis.addEventListener;
   delete globalThis.removeEventListener;
 });
@@ -686,15 +687,15 @@ test('reserved pane banner keeps canon panes below the header safe zone on resto
   const paneB = ui.createPanel('music-tile-results-journey-pane', 'Results');
   const headerRect = reservedHeader.getBoundingClientRect();
 
-  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 16);
-  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 16);
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 20);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 20);
   assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
   assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
 
   ui.resetPanelLayout();
 
-  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 16);
-  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 16);
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 20);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 20);
   assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
   assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
 });
@@ -744,7 +745,52 @@ test('hidden reserved panes are ignored while visible reserved panes block overl
 
   const ui = createUIRenderer();
   const pane = ui.createPanel('music-tile-search-build-journey-pane', 'Search');
-  assert.ok(Number.parseFloat(pane.style.top) >= 116);
+  assert.ok(Number.parseFloat(pane.style.top) >= 120);
+});
+
+test('reserved pane margins are part of protected geometry and persisted bad positions are corrected', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'music-tile-command-console-pane': { x: 32, y: 8 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 900;
+  globalThis.getComputedStyle = () => ({
+    marginLeft: '10px',
+    marginRight: '10px',
+    marginTop: '14px',
+    marginBottom: '26px',
+  });
+
+  const reservedHeader = createElement('header', documentRef);
+  reservedHeader.id = 'music-tile-header-banner';
+  reservedHeader.setAttribute('data-stephanos-pane-reserved', 'music-title-banner');
+  reservedHeader.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 1280,
+    height: 92,
+    right: 1280,
+    bottom: 92,
+  });
+  documentRef.body.appendChild(reservedHeader);
+  documentRef.nodes.set(reservedHeader.id, reservedHeader);
+
+  const ui = createUIRenderer();
+  const commandPane = ui.createPanel('music-tile-command-console-pane', 'Command Console');
+  const persisted = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  const persistedPosition = persisted.session.ui.uiLayout.panelPositions['music-tile-command-console-pane'];
+
+  assert.ok(Number.parseFloat(commandPane.style.top) >= (92 + 20 + 26));
+  assert.equal(Number.isFinite(persistedPosition.x), true);
+  assert.equal(Number.isFinite(persistedPosition.y), true);
+  assert.equal(persistedPosition.y, Number.parseFloat(commandPane.style.top));
 });
 
 test('setPanelVisible keeps hidden panes non-interactive without losing explicit re-open behavior', () => {
