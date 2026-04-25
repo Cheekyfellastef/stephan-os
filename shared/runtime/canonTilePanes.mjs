@@ -225,9 +225,18 @@ export function createCanonTilePaneManager({
     resetLayout,
     setPaneVisible(paneId, isVisible = true) {
       const domId = toCanonTilePaneDomId(normalizedAppId, paneId);
+      if (typeof uiRenderer?.setPanelVisible === 'function') {
+        uiRenderer.setPanelVisible(domId, isVisible, {
+          resolveCollisions: isVisible === true,
+          reason: 'canon-pane-visibility',
+        });
+        return;
+      }
       const panel = globalThis.document?.getElementById(domId);
       if (!panel) return;
       panel.style.display = isVisible ? 'block' : 'none';
+      panel.style.pointerEvents = isVisible ? 'auto' : 'none';
+      panel.setAttribute('aria-hidden', isVisible ? 'false' : 'true');
     },
   };
 }

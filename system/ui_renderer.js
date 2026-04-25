@@ -456,6 +456,30 @@ export function createUIRenderer() {
     resolveSharedPlaneCollisions(panelRegistry.values(), "viewport-resize");
   }
 
+  function syncPanelStackVisibility(container = ensurePanelContainer()) {
+    const anyVisible = Array.from(container.children).some((entry) => entry.style.display !== "none");
+    container.style.display = anyVisible ? "block" : "none";
+  }
+
+  function setPanelVisible(panelOrId, isVisible = true, options = {}) {
+    const panel = typeof panelOrId === "string"
+      ? (document.getElementById(panelOrId) || panelRegistry.get(panelOrId) || null)
+      : panelOrId;
+    if (!panel) {
+      return null;
+    }
+    const visible = isVisible === true;
+    panel.style.display = visible ? "block" : "none";
+    panel.style.pointerEvents = visible ? "auto" : "none";
+    panel.setAttribute("aria-hidden", visible ? "false" : "true");
+
+    if (visible && options.resolveCollisions !== false) {
+      resolveSharedPlaneCollisions(panelRegistry.values(), options.reason || "visibility-change");
+    }
+    syncPanelStackVisibility();
+    return panel;
+  }
+
   globalThis.addEventListener?.("resize", () => {
     normalizePanelPositions();
   });
@@ -544,10 +568,10 @@ export function createUIRenderer() {
         panel.dataset.contentProxyInstalled = "true";
       }
 
-      panel.style.display = visibility.isOpen ? "block" : "none";
-      resolveSharedPlaneCollisions(panelRegistry.values(), "restore-load");
-      const anyVisible = Array.from(container.children).some((entry) => entry.style.display !== "none");
-      container.style.display = anyVisible ? "block" : "none";
+      setPanelVisible(panel, visibility.isOpen, {
+        resolveCollisions: visibility.isOpen === true,
+        reason: "restore-load",
+      });
 
       return panel;
     },
@@ -558,8 +582,11 @@ export function createUIRenderer() {
       if (panel) {
         panelRegistry.delete(id);
         panel.remove();
+        syncPanelStackVisibility();
       }
     },
+
+    setPanelVisible,
 
     resetPanelLayout() {
       writeUiLayout({
