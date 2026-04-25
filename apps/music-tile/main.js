@@ -6,6 +6,7 @@ import { applyArtistSearchContext, createDiscoveryQueries } from './engine/music
 import { createMediaProviderAdapters } from './providers/mediaProviderAdapters.js';
 import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import { getMediaPlaybackLinkState, sanitizeVideoId } from './utils/youtubeLinkResolver.js';
+import { createCanonTilePaneManager } from '../../shared/runtime/canonTilePanes.mjs';
 import {
   DEFAULT_SELECTION,
   loadMusicTileState,
@@ -39,19 +40,6 @@ const RATING_TEXT = {
 };
 const TRUSTED_DURATION_SOURCES = new Set(['youtube-contentDetails', 'provider-metadata', 'manual']);
 const DURATION_UNKNOWN_TEXT = 'Duration unknown';
-const THUMBNAIL_PLACEHOLDER_SVG = encodeURIComponent(`
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#0f2a4a"/>
-        <stop offset="1" stop-color="#081322"/>
-      </linearGradient>
-    </defs>
-    <rect width="1280" height="720" fill="url(#bg)"/>
-    <circle cx="640" cy="360" r="138" fill="#0f3b66"/>
-    <polygon points="600,290 760,360 600,430" fill="#8bcfff"/>
-  </svg>
-`);
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -65,6 +53,9 @@ const elements = {
   unseenOnly: document.getElementById('unseen-only-toggle'),
   hideBroken: document.getElementById('hide-broken-toggle'),
   showExternalOnly: document.getElementById('show-external-only-toggle'),
+  controlsPane: document.getElementById('music-controls-pane'),
+  flowPane: document.getElementById('music-flow-pane'),
+  resultsPane: document.getElementById('music-results-pane'),
   smartRefresh: document.getElementById('smart-refresh-btn'),
   flowMode: document.getElementById('flow-mode-btn'),
   reset: document.getElementById('reset-btn'),
@@ -137,6 +128,8 @@ const sessionStore = createMusicTileSessionStore({
   },
 });
 
+const tilePaneManager = createCanonTilePaneManager({ appId: 'music-tile' });
+
 const playbackController = createMusicTilePlaybackController({
   flowController,
   sessionStore,
@@ -186,10 +179,26 @@ function formatDuration(seconds, durationSource = 'unknown') {
   return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
+function selectBestThumbnail(thumbnails = {}) {
+  if (!thumbnails || typeof thumbnails !== 'object') return '';
+  return String(
+    thumbnails.maxres?.url
+    || thumbnails.standard?.url
+    || thumbnails.high?.url
+    || thumbnails.medium?.url
+    || thumbnails.default?.url
+    || '',
+  ).trim();
+}
+
 function getThumbnailUrl(item = {}) {
-  const thumbnail = String(item?.thumbnail || item?.providerMetadata?.thumbnail || '').trim();
-  if (thumbnail) return thumbnail;
-  return `data:image/svg+xml;charset=UTF-8,${THUMBNAIL_PLACEHOLDER_SVG}`;
+  return String(
+    item?.thumbnail
+    || item?.providerMetadata?.thumbnail
+    || selectBestThumbnail(item?.providerMetadata?.thumbnails)
+    || selectBestThumbnail(item?.thumbnails)
+    || '',
+  ).trim();
 }
 
 function getJourneySection(item) {
@@ -329,11 +338,13 @@ function renderQueue() {
     const reasonText = buildWhyThis(item);
     const durationText = formatDuration(item.duration, item.durationSource);
     const showDurationBadge = hasTrustedDuration(item);
+    const thumbnailUrl = getThumbnailUrl(item);
     return `${sectionLabel}
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <article class="track-card">
-        <div class="track-thumb-wrap">
-          <img class="track-thumb" src="${getThumbnailUrl(item)}" alt="" loading="lazy" />
+        <div class="track-thumb-wrap ${thumbnailUrl ? 'has-image' : 'is-fallback'}" data-thumb-wrap>
+          ${thumbnailUrl ? `<img class="track-thumb" src="${thumbnailUrl}" alt="${item.title || 'Track thumbnail'}" loading="lazy" data-thumb-image />` : ''}
+          <div class="track-thumb-placeholder" aria-hidden="true">▶</div>
           ${showDurationBadge ? `<span class="track-duration-chip">${durationText}</span>` : ''}
         </div>
         <div class="track-main">
@@ -371,6 +382,15 @@ function renderQueue() {
     </li>
   `;
   }).join('');
+
+  elements.queue.querySelectorAll('[data-thumb-image]').forEach((img) => {
+    if (img.dataset.thumbErrorBound === 'true') return;
+    img.dataset.thumbErrorBound = 'true';
+    img.addEventListener('error', () => {
+      img.hidden = true;
+      img.closest('[data-thumb-wrap]')?.classList.add('is-fallback');
+    });
+  });
 }
 
 function renderPlaybackPanel() {
@@ -431,7 +451,9 @@ function renderDebug() {
       title: item.title,
       duration: Number(item.duration) || 0,
       durationSource: item.durationSource || 'unknown',
-      thumbnailPresent: Boolean(item.thumbnail),
+      thumbnailPresent: Boolean(getThumbnailUrl(item)),
+      thumbnailUrl: getThumbnailUrl(item),
+      thumbnailSource: item.thumbnailSource || (item.thumbnail ? 'item.thumbnail' : 'none'),
       provider: item.provider,
       playbackState: item.playbackTarget || 'unknown',
       finalScore: resolveItemRankScore(item),
@@ -452,7 +474,9 @@ function renderDebug() {
       title: current.title,
       duration: Number(current.duration) || 0,
       durationSource: current.durationSource || 'unknown',
-      thumbnailPresent: Boolean(current.thumbnail),
+      thumbnailPresent: Boolean(getThumbnailUrl(current)),
+      thumbnailUrl: getThumbnailUrl(current),
+      thumbnailSource: current.thumbnailSource || (current.thumbnail ? 'item.thumbnail' : 'none'),
       provider: current.provider,
       playbackState: current.playbackTarget || 'unknown',
       currentTasteRating: formatTaste(current.userRating),
@@ -942,6 +966,35 @@ function resetAll() {
   renderDebug();
 }
 
+function initializePaneLayout() {
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'search-build-journey-pane',
+    title: 'Search / Build Journey',
+    section: elements.controlsPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'flow-now-playing-pane',
+    title: 'Flow / Now Playing',
+    section: elements.flowPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'results-journey-pane',
+    title: 'Results / Journey',
+    section: elements.resultsPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'debug-pane',
+    title: 'Debug',
+    section: elements.debugPanel,
+    panelClassName: 'music-tile-pane music-tile-pane-debug',
+  });
+
+  tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
+}
+
 function bindControls() {
   elements.smartRefresh.addEventListener('click', smartRefreshDiscovery);
   elements.flowMode.addEventListener('click', () => {
@@ -1030,7 +1083,7 @@ function bindControls() {
 
   elements.debugToggle.addEventListener('click', () => {
     state.debugVisible = !state.debugVisible;
-    elements.debugPanel.hidden = !state.debugVisible;
+    tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
   });
 }
 
@@ -1055,6 +1108,7 @@ function initialize() {
   });
 
   bindControls();
+  initializePaneLayout();
 }
 
 initialize();
