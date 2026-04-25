@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createUIRenderer } from '../system/ui_renderer.js';
+import { createUIRenderer, getPaneRect, rectsOverlap } from '../system/ui_renderer.js';
 import { STEPHANOS_SESSION_MEMORY_STORAGE_KEY } from '../shared/runtime/stephanosSessionMemory.mjs';
 
 test.afterEach(() => {
@@ -9,6 +9,8 @@ test.afterEach(() => {
   delete globalThis.localStorage;
   delete globalThis.innerWidth;
   delete globalThis.innerHeight;
+  delete globalThis.addEventListener;
+  delete globalThis.removeEventListener;
 });
 
 function createStorage(seed = {}) {
@@ -200,7 +202,7 @@ test('panel drag saves persisted coordinates in session memory', () => {
   globalThis.innerHeight = 800;
 
   const ui = createUIRenderer();
-  const panel = ui.createPanel('agent-console-panel', 'Agents Console');
+  const panel = ui.createPanel('drag-save-panel', 'Drag Save');
   const header = panel.querySelector('.stephanos-panel-header');
 
   header.dispatch('pointerdown', { button: 0, clientX: 120, clientY: 120, preventDefault() {}, target: { closest() { return null; } } });
@@ -208,7 +210,7 @@ test('panel drag saves persisted coordinates in session memory', () => {
   header.dispatch('pointerup', {});
 
   const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
-  const savedPosition = memory.session.ui.uiLayout.panelPositions['agent-console-panel'];
+  const savedPosition = memory.session.ui.uiLayout.panelPositions['drag-save-panel'];
   assert.equal(Number.isFinite(savedPosition.x), true);
   assert.equal(Number.isFinite(savedPosition.y), true);
 });
@@ -398,7 +400,7 @@ test('createPanel preserves persisted closed visibility state for late panel reg
 });
 
 
-test('createPanel applies default open visibility for Build Proof and Laws when no persisted state exists', () => {
+test('createPanel applies default closed visibility for Build Proof and Laws when no persisted state exists', () => {
   const storage = createStorage({
     [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
   });
@@ -413,9 +415,9 @@ test('createPanel applies default open visibility for Build Proof and Laws when 
   const buildPanel = ui.createPanel('stephanos-build-panel', 'Build Proof');
   const panelStack = documentRef.body.children.find((child) => child.id === 'stephanos-panel-stack');
 
-  assert.equal(lawsPanel.style.display, 'block');
-  assert.equal(buildPanel.style.display, 'block');
-  assert.equal(panelStack.style.display, 'block');
+  assert.equal(lawsPanel.style.display, 'none');
+  assert.equal(buildPanel.style.display, 'none');
+  assert.equal(panelStack.style.display, 'none');
 });
 
 test('createPanel preserves persisted false for Build Proof and Laws and does not reopen by default', () => {
@@ -474,4 +476,159 @@ test('createPanel recovers malformed persisted visibility using safe default', (
   const ui = createUIRenderer();
   const panel = ui.createPanel('task-monitor-panel', 'Task Monitor');
   assert.equal(panel.style.display, 'none');
+});
+
+test('two panes restored to same position resolve to non-overlapping layout', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'panel-a': { x: 100, y: 120 },
+        'panel-b': { x: 100, y: 120 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panelA = ui.createPanel('panel-a', 'Panel A');
+  const panelB = ui.createPanel('panel-b', 'Panel B');
+
+  assert.equal(rectsOverlap(getPaneRect(panelA), getPaneRect(panelB), 12), false);
+});
+
+test('dragging pane over another resolves collision before persistence', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const panelA = ui.createPanel('panel-collision-a', 'Panel A');
+  const panelB = ui.createPanel('panel-collision-b', 'Panel B');
+  const headerB = panelB.querySelector('.stephanos-panel-header');
+
+  headerB.dispatch('pointerdown', { button: 0, clientX: 220, clientY: 220, preventDefault() {}, target: { closest() { return null; } } });
+  headerB.dispatch('pointermove', { clientX: 40, clientY: 80 });
+  headerB.dispatch('pointerup', {});
+
+  const memory = JSON.parse(storage.dump()[STEPHANOS_SESSION_MEMORY_STORAGE_KEY]);
+  assert.equal(rectsOverlap(getPaneRect(panelA), getPaneRect(panelB), 12), false);
+  assert.deepEqual(memory.session.ui.uiLayout.panelPositions['panel-collision-b'], {
+    x: Number.parseFloat(panelB.style.left),
+    y: Number.parseFloat(panelB.style.top),
+  });
+});
+
+test('collapsed panes still resolve to non-overlapping header footprints', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'collapsed-a': { x: 80, y: 80 },
+        'collapsed-b': { x: 80, y: 80 },
+      },
+      panelCollapsed: {
+        'collapsed-a': true,
+        'collapsed-b': true,
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 900;
+  globalThis.innerHeight = 640;
+
+  const ui = createUIRenderer();
+  const panelA = ui.createPanel('collapsed-a', 'Collapsed A');
+  const panelB = ui.createPanel('collapsed-b', 'Collapsed B');
+
+  assert.equal(panelA.classList.contains('stephanos-panel-collapsed'), true);
+  assert.equal(panelB.classList.contains('stephanos-panel-collapsed'), true);
+  assert.equal(rectsOverlap(getPaneRect(panelA), getPaneRect(panelB), 12), false);
+});
+
+test('viewport resize clamps and resolves new collisions', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'resize-a': { x: 760, y: 460 },
+        'resize-b': { x: 760, y: 460 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1200;
+  globalThis.innerHeight = 900;
+  const listeners = {};
+  globalThis.addEventListener = (event, handler) => { listeners[event] = handler; };
+  globalThis.removeEventListener = () => {};
+
+  const ui = createUIRenderer();
+  const panelA = ui.createPanel('resize-a', 'Resize A');
+  const panelB = ui.createPanel('resize-b', 'Resize B');
+  globalThis.innerWidth = 900;
+  globalThis.innerHeight = 700;
+  listeners.resize?.();
+
+  assert.equal(rectsOverlap(getPaneRect(panelA), getPaneRect(panelB), 12), false);
+  assert.ok(Number.parseFloat(panelA.style.left) <= 900);
+  assert.ok(Number.parseFloat(panelB.style.left) <= 900);
+});
+
+test('resetPanelLayout creates non-overlapping defaults for multiple panes', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed(),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 960;
+
+  const ui = createUIRenderer();
+  const panelA = ui.createPanel('reset-a', 'Reset A');
+  const panelB = ui.createPanel('reset-b', 'Reset B');
+  const panelC = ui.createPanel('reset-c', 'Reset C');
+  ui.resetPanelLayout();
+
+  assert.equal(rectsOverlap(getPaneRect(panelA), getPaneRect(panelB), 12), false);
+  assert.equal(rectsOverlap(getPaneRect(panelB), getPaneRect(panelC), 12), false);
+});
+
+test('music tile pane IDs participate in shared collision plane', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'music-tile-search-build-journey-pane': { x: 120, y: 120 },
+        'music-tile-flow-now-playing-pane': { x: 120, y: 120 },
+        'music-tile-results-journey-pane': { x: 120, y: 120 },
+        'music-tile-debug-pane': { x: 120, y: 120 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 900;
+
+  const ui = createUIRenderer();
+  const searchPane = ui.createPanel('music-tile-search-build-journey-pane', 'Search');
+  const flowPane = ui.createPanel('music-tile-flow-now-playing-pane', 'Flow');
+  const resultsPane = ui.createPanel('music-tile-results-journey-pane', 'Results');
+  const debugPane = ui.createPanel('music-tile-debug-pane', 'Debug');
+
+  assert.equal(rectsOverlap(getPaneRect(searchPane), getPaneRect(flowPane), 12), false);
+  assert.equal(rectsOverlap(getPaneRect(flowPane), getPaneRect(resultsPane), 12), false);
+  assert.equal(rectsOverlap(getPaneRect(resultsPane), getPaneRect(debugPane), 12), false);
 });

@@ -13,7 +13,7 @@ const REQUIRED_LAW_FIELDS = Object.freeze([
   'status',
 ]);
 
-export const STEPHANOS_LAWS_VERSION = '2026-03-27.guardrails-v4';
+export const STEPHANOS_LAWS_VERSION = '2026-04-25.guardrails-v5';
 
 export const STEPHANOS_LAW_IDS = Object.freeze({
   UNIVERSAL_ENTRY: 'law-universal-entry-not-system-brain',
@@ -29,6 +29,7 @@ export const STEPHANOS_LAW_IDS = Object.freeze({
   SHARED_STATE_LAYER: 'law-shared-runtime-state-holds-cross-device-truth',
   DEVICE_EMBODIMENT: 'law-runtime-embodiment-can-vary-by-device',
   REALITY_SYNC: 'law-reality-sync-keeps-displayed-truth-current',
+  SHARED_PANE_PLANE: 'law-shared-pane-plane-requires-non-overlap',
 });
 
 export const stephanosLaws = Object.freeze([
@@ -197,6 +198,20 @@ export const stephanosLaws = Object.freeze([
     engineeringImplication: 'Keep reality-sync polling, stale detection, refresh loop guards, and operator toggles wired through shared runtime/session memory paths.',
     relatedFiles: ['shared/runtime/realitySync.mjs', 'shared/runtime/truthEngine.mjs', 'shared/runtime/renderTruthPanel.mjs', 'main.js', 'modules/system-panel/system-panel.js'],
     testCoverageHint: 'tests/reality-sync.test.mjs, tests/truth-engine.test.mjs, tests/system-panel-toggle-state.test.mjs',
+    severity: 'high',
+    status: 'active',
+  },
+  {
+    id: STEPHANOS_LAW_IDS.SHARED_PANE_PLANE,
+    title: 'Movable panes share one layout plane and resolve overlap',
+    shortStatement: 'Draggable panes stay in one collision-aware plane and persisted layouts must resolve to reachable non-overlapping positions.',
+    fullDescription: 'Stephanos panes participate in a shared layout plane across canon/system tile panes unless explicitly opted out. Restore/load, drag-end, resize, and reset layout flows must clamp panes to viewport bounds and resolve overlaps, including collapsed-header footprints, before persisting position truth.',
+    category: 'ui-layout-truth',
+    invariantType: 'hard',
+    operatorImplication: 'If panes appear stacked or unreachable after drag/load/resize, treat it as layout-truth regression and re-run pane layout guardrail tests.',
+    engineeringImplication: 'Keep collision detection and non-overlap resolution in shared pane infrastructure (not tile-local hacks), and persist only resolved in-bounds positions.',
+    relatedFiles: ['system/ui_renderer.js', 'shared/runtime/canonTilePanes.mjs', 'tests/panel-layout-state.test.mjs', 'tests/canon-tile-panes.test.mjs'],
+    testCoverageHint: 'tests/panel-layout-state.test.mjs, tests/canon-tile-panes.test.mjs',
     severity: 'high',
     status: 'active',
   },
