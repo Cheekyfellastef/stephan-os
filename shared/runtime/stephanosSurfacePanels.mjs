@@ -30,31 +30,23 @@ const SURFACE_PANEL_SHARED_STYLES = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  font-size: 1.05rem;
   line-height: 1;
   border: 1px solid #4b6f94;
   background: rgba(8, 21, 35, 0.95);
   color: #daf3ff;
   cursor: pointer;
 }
-.${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .dial {
-  display: inline-block;
-  transition: transform 180ms ease;
-}
 .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .chevron {
   display: inline-block;
-  font-size: 0.78rem;
+  font-size: 0.92rem;
   opacity: 0.9;
+  transform: rotate(0deg);
   transition: transform 180ms ease;
 }
 .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}:hover,
 .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS}:focus-visible {
   border-color: #8ec9ff;
   background: rgba(15, 34, 54, 0.97);
-}
-.stephanos-surface-panel-collapsed .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .dial {
-  transform: rotate(-90deg);
 }
 .stephanos-surface-panel-collapsed .${STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS} .chevron {
   transform: rotate(-90deg);
@@ -92,7 +84,7 @@ function createStephanosCanonRotatingChevronButton({ documentRef = globalThis?.d
   const button = documentRef.createElement('button');
   button.type = 'button';
   button.className = STEPHANOS_CANON_ROTATING_CHEVRON_BUTTON_CLASS;
-  button.innerHTML = '<span class="dial">◉</span><span class="chevron" aria-hidden="true">⌄</span>';
+  button.innerHTML = '<span class="chevron" aria-hidden="true">⌄</span>';
   return button;
 }
 
