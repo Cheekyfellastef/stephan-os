@@ -62,3 +62,40 @@ test('youtube adapter classifies embed blocked as external and private as suppre
   assert.equal(suppressed.playbackMode, 'suppress');
   assert.ok(suppressed.validationReasons.includes('youtube.private'));
 });
+
+
+test('youtube adapter selects enriched thumbnail from videos snippet', () => {
+  const adapter = createYouTubeMediaProviderAdapter({ apiKey: 'key', fetchImpl: async () => ({ ok: false }) });
+  const validated = adapter.validateCandidate({
+    id: 'thumb1234567',
+    provider: 'youtube',
+    providerItemId: 'thumb1234567',
+    title: 'Thumbnail test',
+    thumbnail: 'https://example.com/search-medium.jpg',
+    thumbnailSource: 'youtube-search-snippet',
+  }, {
+    enrichedById: {
+      thumb1234567: {
+        snippet: {
+          thumbnails: {
+            high: { url: 'https://example.com/high.jpg' },
+            maxres: { url: 'https://example.com/maxres.jpg' },
+          },
+        },
+        status: { embeddable: true, privacyStatus: 'public', uploadStatus: 'processed' },
+        contentDetails: { duration: 'PT5M' },
+      },
+    },
+    regionCode: 'US',
+  });
+
+  assert.equal(validated.thumbnail, 'https://example.com/maxres.jpg');
+  assert.equal(validated.thumbnailSource, 'youtube-snippet');
+});
+
+test('youtube adapter thumbnail selector falls back across known sizes', () => {
+  const adapter = createYouTubeMediaProviderAdapter({ apiKey: 'key', fetchImpl: async () => ({ ok: false }) });
+  assert.equal(adapter.selectBestThumbnail({ medium: { url: 'https://example.com/med.jpg' } }), 'https://example.com/med.jpg');
+  assert.equal(adapter.selectBestThumbnail({ default: { url: 'https://example.com/default.jpg' } }), 'https://example.com/default.jpg');
+  assert.equal(adapter.selectBestThumbnail({}), '');
+});

@@ -1,3 +1,15 @@
+function selectBestThumbnail(thumbnails = {}) {
+  if (!thumbnails || typeof thumbnails !== 'object') return '';
+  return String(
+    thumbnails.maxres?.url
+    || thumbnails.standard?.url
+    || thumbnails.high?.url
+    || thumbnails.medium?.url
+    || thumbnails.default?.url
+    || '',
+  ).trim();
+}
+
 function parseIso8601Duration(duration = '') {
   const normalized = String(duration || '').trim();
   if (!normalized) return 0;
@@ -25,7 +37,8 @@ function toSearchCandidate(video = {}) {
     publishDate: snippet.publishedAt || null,
     duration: 0,
     durationSource: 'unknown',
-    thumbnail: snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
+    thumbnail: selectBestThumbnail(snippet.thumbnails),
+    thumbnailSource: selectBestThumbnail(snippet.thumbnails) ? 'youtube-search-snippet' : 'unknown',
   };
 }
 
@@ -135,10 +148,19 @@ export function createYouTubeMediaProviderAdapter({ apiKey = '', fetchImpl = fet
 
     const duration = parseIso8601Duration(contentDetails.duration);
     const durationSource = duration > 0 ? 'youtube-contentDetails' : 'unknown';
+    const enrichedThumbnail = selectBestThumbnail(metadata?.snippet?.thumbnails);
+    const fallbackThumbnail = String(candidate?.thumbnail || '').trim();
+    const thumbnail = enrichedThumbnail || fallbackThumbnail;
+    const thumbnailSource = enrichedThumbnail
+      ? 'youtube-snippet'
+      : (fallbackThumbnail ? (candidate.thumbnailSource || 'youtube-search-snippet') : 'unknown');
+
     return {
       ...candidate,
       duration,
       durationSource,
+      thumbnail,
+      thumbnailSource,
       providerUrl: `https://www.youtube.com/watch?v=${candidate.providerItemId}`,
       playbackMode,
       availabilityStatus,
@@ -173,6 +195,7 @@ export function createYouTubeMediaProviderAdapter({ apiKey = '', fetchImpl = fet
 
   return {
     provider: 'youtube',
+    selectBestThumbnail,
     discoverCandidates,
     enrichCandidates,
     validateCandidate,

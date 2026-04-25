@@ -184,6 +184,41 @@ button.ghost,
   display: block;
 }
 
+
+.track-thumb-placeholder {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  color: #86bde9;
+  background: linear-gradient(135deg, #0a1d34, #081322);
+}
+
+.track-thumb-wrap.is-fallback .track-thumb-placeholder {
+  display: flex;
+}
+
+.track-thumb-wrap.has-image .track-thumb-placeholder {
+  display: none;
+}
+
+.canon-tile-pane-section {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
+.music-tile-pane {
+  min-width: 360px;
+  max-width: min(720px, calc(100vw - 32px));
+}
+
+.music-tile-pane-debug {
+  min-width: 420px;
+}
 .track-duration-chip {
   position: absolute;
   right: 8px;
