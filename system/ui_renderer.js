@@ -14,6 +14,8 @@ const DEFAULT_PANEL_SIZE = Object.freeze({
   width: 320,
   height: 280,
 });
+const COLLISION_MARGIN_PX = 12;
+const COLLAPSED_PANEL_HEIGHT = 52;
 const SYSTEM_RESTORABLE_PANEL_IDS = new Set(getSystemPanelRestorablePanelIds());
 
 function readUiLayout(storage = globalThis.localStorage) {
@@ -110,6 +112,13 @@ function getViewportRect() {
 }
 
 function getPanelDimensions(panel) {
+  if (panel?.classList?.contains("stephanos-panel-collapsed")) {
+    const collapsedWidth = panel?.getBoundingClientRect?.()?.width;
+    return {
+      width: Number.isFinite(collapsedWidth) && collapsedWidth > 0 ? collapsedWidth : DEFAULT_PANEL_SIZE.width,
+      height: COLLAPSED_PANEL_HEIGHT,
+    };
+  }
   const bounds = panel?.getBoundingClientRect?.();
   if (bounds?.width && bounds?.height) {
     return { width: bounds.width, height: bounds.height };
@@ -126,6 +135,175 @@ function computeBoundedPosition({ x = 0, y = 0 } = {}, panel) {
     x: clamp(Number(x) || 0, 8, maxX),
     y: clamp(Number(y) || 0, 8, maxY),
   };
+}
+
+export function getPaneRect(panel) {
+  const dimensions = getPanelDimensions(panel);
+  const left = Number.parseFloat(panel?.style?.left) || 0;
+  const top = Number.parseFloat(panel?.style?.top) || 0;
+  return {
+    left,
+    top,
+    right: left + dimensions.width,
+    bottom: top + dimensions.height,
+    width: dimensions.width,
+    height: dimensions.height,
+  };
+}
+
+export function rectsOverlap(a, b, margin = COLLISION_MARGIN_PX) {
+  const buffer = Number.isFinite(margin) ? Math.max(0, margin) : COLLISION_MARGIN_PX;
+  return !(
+    (a.right + buffer) <= b.left
+    || (a.left >= (b.right + buffer))
+    || (a.bottom + buffer) <= b.top
+    || (a.top >= (b.bottom + buffer))
+  );
+}
+
+function candidateOffsets(step = 24) {
+  return [
+    { x: 0, y: 0 },
+    { x: step, y: 0 },
+    { x: 0, y: step },
+    { x: step * 2, y: 0 },
+    { x: 0, y: step * 2 },
+    { x: -step, y: 0 },
+    { x: 0, y: -step },
+    { x: -step * 2, y: 0 },
+    { x: 0, y: -step * 2 },
+    { x: step, y: step },
+    { x: step * 2, y: step },
+    { x: step, y: step * 2 },
+    { x: -step, y: step },
+    { x: step, y: -step },
+  ];
+}
+
+export function findNearestNonOverlappingPosition(
+  panel,
+  desiredPosition,
+  otherPanels = [],
+  viewport = getViewportRect(),
+  options = {},
+) {
+  const collisionMargin = Number.isFinite(options.collisionMargin)
+    ? Math.max(0, options.collisionMargin)
+    : COLLISION_MARGIN_PX;
+  const boundedDesired = computeBoundedPosition(desiredPosition, panel);
+  const collidesAt = (position) => {
+    const bounded = computeBoundedPosition(position, panel);
+    const thisRect = {
+      left: bounded.x,
+      top: bounded.y,
+      right: bounded.x + getPanelDimensions(panel).width,
+      bottom: bounded.y + getPanelDimensions(panel).height,
+    };
+    for (const otherPanel of otherPanels) {
+      const otherRect = getPaneRect(otherPanel);
+      if (rectsOverlap(thisRect, otherRect, collisionMargin)) {
+        return otherPanel;
+      }
+    }
+    return null;
+  };
+
+  if (!collidesAt(boundedDesired)) {
+    return {
+      position: boundedDesired,
+      collisionDetected: false,
+      collisionTargetPaneId: null,
+      strategy: "desired",
+    };
+  }
+
+  const offsetCandidates = candidateOffsets(options.step || 24);
+  for (const offset of offsetCandidates) {
+    const candidate = {
+      x: boundedDesired.x + offset.x,
+      y: boundedDesired.y + offset.y,
+    };
+    const collisionTarget = collidesAt(candidate);
+    if (!collisionTarget) {
+      return {
+        position: computeBoundedPosition(candidate, panel),
+        collisionDetected: true,
+        collisionTargetPaneId: null,
+        strategy: "offset-scan",
+      };
+    }
+  }
+
+  const gridStep = Math.max(24, options.gridStep || 36);
+  const maxX = Math.max(24, viewport.width - getPanelDimensions(panel).width - 12);
+  const maxY = Math.max(24, viewport.height - getPanelDimensions(panel).height - 12);
+  for (let y = 24; y <= maxY; y += gridStep) {
+    for (let x = 24; x <= maxX; x += gridStep) {
+      const collisionTarget = collidesAt({ x, y });
+      if (!collisionTarget) {
+        return {
+          position: computeBoundedPosition({ x, y }, panel),
+          collisionDetected: true,
+          collisionTargetPaneId: null,
+          strategy: "grid-scan",
+        };
+      }
+    }
+  }
+
+  for (let index = 0; index < 32; index += 1) {
+    const cascadeCandidate = {
+      x: 24 + (index * 36),
+      y: 60 + (index * 36),
+    };
+    const collisionTarget = collidesAt(cascadeCandidate);
+    if (!collisionTarget) {
+      return {
+        position: computeBoundedPosition(cascadeCandidate, panel),
+        collisionDetected: true,
+        collisionTargetPaneId: null,
+        strategy: "cascade",
+      };
+    }
+  }
+
+  return {
+    position: boundedDesired,
+    collisionDetected: true,
+    collisionTargetPaneId: collidesAt(boundedDesired)?.id || null,
+    strategy: "bounded-fallback",
+  };
+}
+
+export function resolvePaneLayoutCollisions(panels, options = {}) {
+  const visiblePanels = Array.from(panels || []).filter((panel) => panel?.style?.display !== "none");
+  const sortedPanels = visiblePanels.slice().sort((a, b) => {
+    const orderA = Number(a?.dataset?.panelOrder || 0);
+    const orderB = Number(b?.dataset?.panelOrder || 0);
+    return orderA - orderB;
+  });
+  const results = [];
+
+  sortedPanels.forEach((panel, index) => {
+    const desired = {
+      x: Number.parseFloat(panel.style.left) || 0,
+      y: Number.parseFloat(panel.style.top) || 0,
+    };
+    const otherPanels = sortedPanels.slice(0, index);
+    const resolved = findNearestNonOverlappingPosition(panel, desired, otherPanels, getViewportRect(), options);
+    panel.style.left = `${resolved.position.x}px`;
+    panel.style.top = `${resolved.position.y}px`;
+    results.push({
+      paneId: panel.id,
+      desiredPosition: desired,
+      resolvedPosition: resolved.position,
+      collisionDetected: resolved.collisionDetected,
+      collisionTargetPaneId: resolved.collisionTargetPaneId,
+      strategy: resolved.strategy,
+    });
+  });
+
+  return results;
 }
 
 function readPanelPosition(panelId, storage = globalThis.localStorage) {
@@ -155,6 +333,7 @@ export function createUIRenderer() {
   const panelRegistry = new Map();
   const storage = globalThis.localStorage;
   let defaultPanelOffset = 0;
+  let panelCreationOrder = 0;
 
   function normalizePanelContainerStyles(container) {
     if (!container?.style) {
@@ -189,6 +368,36 @@ export function createUIRenderer() {
     return applyPanelPosition(panel, persisted || getDefaultPosition());
   }
 
+  function resolveSharedPlaneCollisions(panels, reason = "unknown") {
+    const debugEnabled = globalThis.window?.isDeveloperModeEnabled?.() === true;
+    const panelList = Array.from(panels || []);
+    panelList.forEach((panel) => {
+      applyPanelPosition(panel, {
+        x: Number.parseFloat(panel.style.left) || 0,
+        y: Number.parseFloat(panel.style.top) || 0,
+      });
+    });
+    const results = resolvePaneLayoutCollisions(panelList, { collisionMargin: COLLISION_MARGIN_PX });
+    results.forEach((entry) => {
+      const hasPersistedPosition = readPanelPosition(entry.paneId, storage) != null;
+      const shouldPersist = reason !== "restore-load" || hasPersistedPosition || entry.collisionDetected;
+      if (shouldPersist) {
+        writePanelPosition(entry.paneId, entry.resolvedPosition, storage);
+      }
+      if (debugEnabled && entry.collisionDetected) {
+        console.info("[PANEL LAYOUT]", {
+          reason,
+          paneId: entry.paneId,
+          desiredPosition: entry.desiredPosition,
+          resolvedPosition: entry.resolvedPosition,
+          collisionDetected: entry.collisionDetected,
+          collisionTargetPaneId: entry.collisionTargetPaneId,
+          strategy: entry.strategy,
+        });
+      }
+    });
+  }
+
   function installPanelDragBehavior(panel, handle) {
     const container = ensurePanelContainer();
     attachPointerDrag({
@@ -206,15 +415,15 @@ export function createUIRenderer() {
         container.classList.remove("stephanos-panel-drag-active");
       },
       onPositionCommit(position) {
-        const bounded = computeBoundedPosition(position, panel);
-        applyPanelPosition(panel, bounded);
-        writePanelPosition(panel.id, bounded, storage);
+        applyPanelPosition(panel, position);
+        resolveSharedPlaneCollisions(panelRegistry.values(), "drag-end");
       },
     });
   }
 
   function installPanelKnobBehavior(panel, knobButton, content) {
-    const applyCollapseState = (collapsed) => {
+    const applyCollapseState = (collapsed, options = {}) => {
+      const shouldSyncPlane = options.syncPlane !== false;
       panel.classList.toggle("stephanos-panel-collapsed", collapsed === true);
       content.style.display = collapsed === true ? "none" : "block";
       knobButton.setAttribute("aria-expanded", collapsed === true ? "false" : "true");
@@ -224,6 +433,9 @@ export function createUIRenderer() {
         x: Number.parseFloat(panel.style.left) || 0,
         y: Number.parseFloat(panel.style.top) || 0,
       });
+      if (shouldSyncPlane) {
+        resolveSharedPlaneCollisions(panelRegistry.values(), "collapse-toggle");
+      }
     };
 
     knobButton.addEventListener("click", () => {
@@ -231,17 +443,17 @@ export function createUIRenderer() {
       applyCollapseState(collapsed);
     });
 
-    applyCollapseState(readPanelCollapsedState(panel.id, storage));
+    applyCollapseState(readPanelCollapsedState(panel.id, storage), { syncPlane: false });
   }
 
   function normalizePanelPositions() {
     panelRegistry.forEach((panel) => {
-      const bounded = applyPanelPosition(panel, {
+      applyPanelPosition(panel, {
         x: Number.parseFloat(panel.style.left) || 0,
         y: Number.parseFloat(panel.style.top) || 0,
       });
-      writePanelPosition(panel.id, bounded, storage);
     });
+    resolveSharedPlaneCollisions(panelRegistry.values(), "viewport-resize");
   }
 
   globalThis.addEventListener?.("resize", () => {
@@ -308,6 +520,8 @@ export function createUIRenderer() {
         panel.appendChild(content);
 
         container.appendChild(panel);
+        panel.dataset.panelOrder = String(panelCreationOrder);
+        panelCreationOrder += 1;
         panelRegistry.set(id, panel);
 
         installPanelDragBehavior(panel, header);
@@ -331,6 +545,7 @@ export function createUIRenderer() {
       }
 
       panel.style.display = visibility.isOpen ? "block" : "none";
+      resolveSharedPlaneCollisions(panelRegistry.values(), "restore-load");
       const anyVisible = Array.from(container.children).some((entry) => entry.style.display !== "none");
       container.style.display = anyVisible ? "block" : "none";
 
@@ -363,11 +578,12 @@ export function createUIRenderer() {
           knob.textContent = "◉";
           knob.setAttribute("aria-expanded", "true");
         }
-        const defaultPosition = { x: 24 + stackOffset * 30, y: 60 + stackOffset * 30 };
+        const defaultPosition = { x: 24 + stackOffset * 36, y: 60 + stackOffset * 36 };
         stackOffset = (stackOffset + 1) % 8;
         const bounded = applyPanelPosition(panel, defaultPosition);
         writePanelPosition(panel.id, bounded, storage);
       });
+      resolveSharedPlaneCollisions(panelRegistry.values(), "reset-layout");
     },
   };
 }
