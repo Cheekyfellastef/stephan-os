@@ -140,9 +140,18 @@ button.ghost,
 
 .journey-list {
   margin: 0;
-  padding-left: 22px;
+  padding-left: 0;
+  list-style: none;
   display: grid;
   gap: 8px;
+}
+
+.journey-section-label {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #86b8e6;
 }
 
 .journey-item {
@@ -155,6 +164,12 @@ button.ghost,
 .track-meta {
   color: #95b6d6;
   font-size: 0.85rem;
+}
+
+.track-why {
+  margin-top: 4px;
+  color: #a8c8e7;
+  font-size: 0.8rem;
 }
 
 .track-actions {
@@ -186,7 +201,7 @@ button.ghost,
 }
 
 .rating-btn {
-  min-width: 40px;
+  min-width: 50px;
 }
 
 .rating-btn.is-selected {
@@ -338,6 +353,29 @@ input {
 .inline-btn.primary {
   border-color: #61b4ff;
   box-shadow: 0 0 0 1px rgba(97, 180, 255, 0.3);
+}
+
+.track-more {
+  display: inline-block;
+}
+
+.track-more summary {
+  list-style: none;
+}
+
+.track-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.track-more-actions {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #254b73;
+  border-radius: 8px;
+  background: rgba(5, 16, 30, 0.9);
 }
 
 .player-mode-badge,

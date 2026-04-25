@@ -29,6 +29,7 @@ export const DEFAULT_MUSIC_MEMORY = {
   discoveryJobs: [],
   sessions: [],
   reliabilityRecords: {},
+  feedbackSignals: [],
 };
 
 function safeParse(json) {
@@ -64,6 +65,7 @@ function sanitizeMemory(value) {
     discoveryJobs: Array.isArray(value.discoveryJobs) ? value.discoveryJobs : [],
     sessions: Array.isArray(value.sessions) ? value.sessions : [],
     reliabilityRecords: value.reliabilityRecords && typeof value.reliabilityRecords === 'object' ? value.reliabilityRecords : {},
+    feedbackSignals: Array.isArray(value.feedbackSignals) ? value.feedbackSignals : [],
   };
 }
 
@@ -306,6 +308,41 @@ export function upsertMediaItems(memory, items) {
         lastSeen: new Date().toISOString(),
       };
     }
+  });
+
+  return next;
+}
+
+export function applyInteractionSignal(memory, mediaItemId, signalType, {
+  artistDelta = 0,
+  channelDelta = 0,
+  markSeen = false,
+} = {}) {
+  const next = sanitizeMemory(memory);
+  const mediaItem = next.mediaItems[mediaItemId];
+  if (!mediaItemId || !mediaItem) return next;
+
+  if (markSeen) {
+    mediaItem.seen = true;
+    ensureUnique(next.seenItemIds, mediaItemId);
+  }
+
+  (mediaItem.detectedArtists || []).forEach((artistName) => {
+    const current = next.artistAffinity[artistName] || 0;
+    next.artistAffinity[artistName] = clampAffinity(current + Number(artistDelta || 0));
+  });
+
+  if (mediaItem.channelId) {
+    const currentTrust = Number(next.channelTrust[mediaItem.channelId] || 0);
+    next.channelTrust[mediaItem.channelId] = clampAffinity(currentTrust + Number(channelDelta || 0));
+  }
+
+  next.feedbackSignals.push({
+    mediaItemId,
+    signalType: String(signalType || 'unknown'),
+    artistDelta: Number(artistDelta || 0),
+    channelDelta: Number(channelDelta || 0),
+    timestamp: new Date().toISOString(),
   });
 
   return next;

@@ -12,6 +12,7 @@ import {
   saveMusicTileState,
   resetMusicTileState,
   applyRatingToMemory,
+  applyInteractionSignal,
   markMediaItemSeen,
   upsertMediaItems,
   buildMediaReliabilityKey,
@@ -29,6 +30,13 @@ const RATING_OPTIONS = [
   { value: 3, label: '👍 Up', compact: '👍', title: 'Show me more like this' },
   { value: 5, label: '👍👍 Strong Up', compact: '👍👍', title: 'This is my territory' },
 ];
+const RATING_TEXT = {
+  '-5': '👎👎',
+  '-3': '👎',
+  '0': 'Neutral',
+  '3': '👍',
+  '5': '👍👍',
+};
 
 const elements = {
   root: document.getElementById('music-tile-root'),
@@ -141,7 +149,40 @@ function resolveItemRankScore(item) {
 function formatTaste(rating) {
   const numericRating = Number(rating);
   if (!Number.isFinite(numericRating)) return 'unrated';
-  return RATING_OPTIONS.find((option) => option.value === numericRating)?.compact || `Rated ${numericRating}`;
+  return RATING_TEXT[String(numericRating)] || `Rated ${numericRating}`;
+}
+
+function getJourneySection(item) {
+  const duration = Number(item?.duration) || 0;
+  const isLongSet = duration >= DEEP_DIVE_MIN_DURATION_SECONDS;
+  const isSearchOnly = item?.playbackTarget === 'search-only' || item?.availabilityStatus === 'unresolved_seed';
+  const relevanceReasons = Array.isArray(item?.relevanceReasons) ? item.relevanceReasons : [];
+  const isInterview = /interview|clip|talk/i.test(`${item?.type || ''} ${item?.title || ''}`);
+
+  if (isSearchOnly) return 'Search-only Leads';
+  if (item?.relevanceTier === 'strong') return 'Best Matches';
+  if (isLongSet) return 'Long Sets';
+  if (isInterview) return 'Interviews / Clips';
+  if (relevanceReasons.some((reason) => String(reason).startsWith('event:') || String(reason).startsWith('collaborator:'))) return 'Related Orbit';
+  return 'Fresh Finds';
+}
+
+function buildWhyThis(item) {
+  const reasons = [];
+  if ((item?.relevanceTier || '') === 'strong') reasons.push('Strong title match');
+  if ((item?.relevanceTier || '') === 'soft') reasons.push('Artist in description');
+  if (!item?.seen) reasons.push('unseen');
+  if (item?.seen) reasons.push('seen');
+  if (item?.saved) reasons.push('saved');
+  const trustScore = Number(state.memory.channelTrust[item?.channelId] || 0);
+  if (trustScore >= 2) reasons.push('trusted source');
+  if (item?.validationStatus === 'validated') reasons.push('validated');
+  if (item?.availabilityStatus === 'unresolved_seed' || item?.playbackTarget === 'search-only') reasons.push('search-only lead from seeded library');
+  if ((Number(item?.duration) || 0) >= DEEP_DIVE_MIN_DURATION_SECONDS) reasons.push('long set');
+  if (Array.isArray(item?.relevanceReasons)) {
+    if (item.relevanceReasons.some((reason) => String(reason).startsWith('event:'))) reasons.push('related orbit');
+  }
+  return reasons.slice(0, 3).join(' • ') || 'General discovery fit';
 }
 
 function providerBadgeLabel(provider = '') {
@@ -220,7 +261,7 @@ function renderSummary() {
 
 function renderQueue() {
   if (!state.queue.length) {
-    elements.queue.innerHTML = '<li class="journey-item">No discovery results yet. Run Smart Refresh.</li>';
+    elements.queue.innerHTML = '<li class="journey-item">No discovery results yet. Press Build Journey.</li>';
     return;
   }
 
@@ -232,45 +273,50 @@ function renderQueue() {
     return acc;
   }, {});
 
+  let lastSection = '';
   elements.queue.innerHTML = state.queue.map((item, index) => {
     const latestRating = currentRatingsByMediaId[item.id]?.rating;
     const persistedRating = Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : latestRating;
     const rankScore = resolveItemRankScore(item);
     const playbackLinkState = getMediaPlaybackLinkState(item);
     const isExactPlayable = playbackLinkState.hasExactVideo;
-    const unresolvedBadge = isExactPlayable
-      ? ''
-      : `<span class="track-badge">${item.availabilityStatus === 'unresolved_seed' ? 'Needs video match' : 'Search-only'}</span>`;
-    return `
+    const section = getJourneySection(item);
+    const sectionLabel = section !== lastSection
+      ? `<li class="journey-section-label">${section}</li>`
+      : '';
+    lastSection = section;
+    const primaryActionLabel = isExactPlayable ? 'Play' : 'Find on YouTube';
+    const reasonText = buildWhyThis(item);
+    return `${sectionLabel}
     <li class="journey-item ${item.id === state.currentMediaItemId ? 'is-current' : ''}">
       <div><strong>${index + 1}. ${item.title}</strong> — ${item.channelName}</div>
       <div class="track-meta">Rank: ${rankScore.toFixed(2)} • ${Math.round((item.duration || 0) / 60)} min • ${item.type}</div>
       <div class="track-meta">Taste: ${formatTaste(persistedRating)}</div>
+      <div class="track-why">Why this? ${reasonText}</div>
       <div class="track-badges">
         <span class="track-badge">${providerBadgeLabel(item.provider)}</span>
-        <span class="track-badge">${playbackBadgeLabel(item.playbackMode)}</span>
-        ${unresolvedBadge}
+        <span class="track-badge">${isExactPlayable ? 'Exact' : 'Search-only'}</span>
+        <span class="track-badge">${item.seen ? 'Seen' : 'Unseen'}</span>
+        ${item.saved ? '<span class="track-badge">Saved</span>' : ''}
         ${item.relevanceTier ? `<span class="track-badge">Tier: ${item.relevanceTier}</span>` : ''}
       </div>
       <div class="track-actions">
-        <a data-action="play-now" data-id="${item.id}" class="inline-btn button-link primary" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">${isExactPlayable ? 'Play' : playbackLinkState.label}</a>
-        <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">${isExactPlayable ? 'Open in YouTube' : 'Search YouTube'}</a>
-        <button data-action="start-flow" data-id="${item.id}" class="inline-btn ghost">Start Flow</button>
-        ${RATING_OPTIONS.map((option) => `
-          <button
-            data-action="rate"
-            data-id="${item.id}"
-            data-rating="${option.value}"
-            class="inline-btn rating-btn ${Number(persistedRating) === option.value ? 'is-selected' : ''}"
-            title="${option.title}"
-            aria-label="${option.label}"
-          >${option.compact}</button>
-        `).join('')}
+        <a data-action="${isExactPlayable ? 'play-now' : 'find-youtube'}" data-id="${item.id}" class="inline-btn button-link primary" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">${primaryActionLabel}</a>
+        <button data-action="rate" data-id="${item.id}" data-rating="3" class="inline-btn rating-btn ${Number(persistedRating) === 3 ? 'is-selected' : ''}" title="Show me more like this">👍</button>
+        <button data-action="rate" data-id="${item.id}" data-rating="-3" class="inline-btn rating-btn ${Number(persistedRating) === -3 ? 'is-selected' : ''}" title="Show me less like this">👎</button>
         <button data-action="save" data-id="${item.id}" class="inline-btn">Save</button>
-        <button data-action="more-like" data-id="${item.id}" class="inline-btn">More like this</button>
-        <button data-action="less-like" data-id="${item.id}" class="inline-btn">Less like this</button>
-        <button data-action="trust" data-channel="${item.channelId}" class="inline-btn">Trust Channel</button>
-        <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Hide Source</button>
+        <details class="track-more">
+          <summary class="inline-btn ghost">More</summary>
+          <div class="track-more-actions">
+            <button data-action="rate" data-id="${item.id}" data-rating="5" class="inline-btn rating-btn ${Number(persistedRating) === 5 ? 'is-selected' : ''}" title="Major positive taste signal">👍👍</button>
+            <button data-action="rate" data-id="${item.id}" data-rating="0" class="inline-btn rating-btn ${Number(persistedRating) === 0 ? 'is-selected' : ''}" title="No strong taste signal">Neutral</button>
+            <button data-action="rate" data-id="${item.id}" data-rating="-5" class="inline-btn rating-btn ${Number(persistedRating) === -5 ? 'is-selected' : ''}" title="Strong suppression signal">👎👎</button>
+            <button data-action="trust" data-channel="${item.channelId}" class="inline-btn">Trust Source</button>
+            <button data-action="block" data-channel="${item.channelId}" class="inline-btn">Hide Source</button>
+            <a data-action="open-youtube" data-id="${item.id}" class="inline-btn button-link" href="${playbackLinkState.url}" target="_blank" rel="noopener noreferrer">Open in YouTube</a>
+            <button data-action="mark-seen" data-id="${item.id}" class="inline-btn">Mark Seen</button>
+          </div>
+        </details>
       </div>
     </li>
   `;
@@ -279,18 +325,23 @@ function renderQueue() {
 
 function renderPlaybackPanel() {
   const current = getCurrentMediaItem();
+  const next = state.queue.find((item) => item.id !== current?.id && !item.seen) || state.queue.find((item) => item.id !== current?.id) || null;
   const session = sessionStore.read();
   const showResume = session.flowState === 'externally-opened' && session.resumeAvailable;
 
   elements.playbackStatus.textContent = state.playbackError
     ? `Route: YouTube external open • ${state.playbackError}`
     : 'Route: YouTube external open';
-  elements.playbackNowPlaying.textContent = current ? current.title : 'No item selected yet.';
+  elements.playbackNowPlaying.textContent = current
+    ? `${current.title} ${current.playbackTarget === 'search-only' ? '• Search-only lead' : '• Exact playable'}`
+    : 'No item selected yet.';
   elements.playbackChannel.textContent = current ? `Source: ${current.channelName} • Provider: ${providerBadgeLabel(current.provider)}` : 'Source: —';
   elements.playbackModeBadge.textContent = session.mode === 'flow' ? 'Flow Active' : 'Single Item';
   elements.playbackFlowBadge.textContent = session.mode === 'flow' ? `Flow #${Math.max(1, session.currentIndex + 1)}` : 'Flow Off';
   elements.playbackResumeBadge.hidden = !showResume;
-  elements.playbackSessionState.textContent = `State: ${session.flowState}`;
+  elements.playbackSessionState.textContent = current
+    ? `State: ${session.flowState} • Next up: ${next ? next.title : 'Queue complete'} • Why: ${buildWhyThis(current)}`
+    : `State: ${session.flowState}`;
   elements.playbackContinuityNote.textContent = showResume
     ? 'Opened externally. Flow session is paused and ready to resume.'
     : '';
@@ -304,6 +355,9 @@ function renderPlaybackPanel() {
 }
 
 function renderDebug() {
+  const exactPlayableCount = state.queue.filter((item) => getMediaPlaybackLinkState(item).hasExactVideo).length;
+  const searchOnlyCount = state.queue.length - exactPlayableCount;
+  const current = getCurrentMediaItem();
   elements.debugOutput.textContent = JSON.stringify({
     selection: state.selection,
     sessionMode: state.sessionMode,
@@ -311,6 +365,12 @@ function renderDebug() {
       artists: state.artists,
       artistSearchActive: state.queueDebug.artistSearchActive,
       queueCounts: state.queueDebug.counts,
+      activeArtist: state.artists[0] || 'any',
+      discoveredCount: state.queueDebug.counts.discoveredThisRefresh || 0,
+      exactPlayableCount,
+      searchOnlyCount,
+      suppressedCount: state.queueDebug.counts.suppressed || 0,
+      finalJourneyCount: state.queue.length,
     },
     queuePreview: state.queue.slice(0, 10).map((item) => ({
       id: item.id,
@@ -322,7 +382,22 @@ function renderDebug() {
       finalScore: resolveItemRankScore(item),
       playbackLinkState: getMediaPlaybackLinkState(item),
       userRating: Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : null,
+      tasteRating: formatTaste(item.userRating),
+      sourceTrust: Number(state.memory.channelTrust[item.channelId] || 0),
+      whyChosen: buildWhyThis(item),
     })),
+    topRankReasons: state.queue.slice(0, 5).map((item) => ({
+      id: item.id,
+      title: item.title,
+      finalRankScore: resolveItemRankScore(item),
+      reasons: item.relevanceReasons || [],
+    })),
+    currentItem: current ? {
+      id: current.id,
+      title: current.title,
+      currentTasteRating: formatTaste(current.userRating),
+      sourceTrust: Number(state.memory.channelTrust[current.channelId] || 0),
+    } : null,
     suppressedPreview: Object.values(state.memory.mediaItems)
       .filter((item) => item.playbackMode === 'suppress')
       .slice(0, 10)
@@ -674,7 +749,11 @@ function openMediaItemExternally(item, { flow = false, markSeen = false } = {}) 
   }
 
   if (markSeen) {
-    state.memory = markMediaItemSeen(state.memory, item.id);
+    state.memory = applyInteractionSignal(state.memory, item.id, 'play-open', {
+      artistDelta: 0.1,
+      channelDelta: 0.05,
+      markSeen: true,
+    });
     persistState();
     rebuildFlowQueue();
     renderSummary();
@@ -731,7 +810,14 @@ async function handleQueueAction(event) {
     state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, Number(actionTarget.dataset.rating));
   }
   if (action === 'save') {
-    state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, 4, 'save');
+    const mediaItemId = actionTarget.dataset.id;
+    if (mediaItemId && !state.memory.savedItemIds.includes(mediaItemId)) state.memory.savedItemIds.push(mediaItemId);
+    if (state.memory.mediaItems[mediaItemId]) state.memory.mediaItems[mediaItemId].saved = true;
+    state.memory = applyInteractionSignal(state.memory, actionTarget.dataset.id, 'save', {
+      artistDelta: 0.35,
+      channelDelta: 0.2,
+      markSeen: false,
+    });
   }
   if (action === 'more-like') {
     state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, 3, 'more-like-this');
@@ -740,10 +826,10 @@ async function handleQueueAction(event) {
     state.memory = applyRatingToMemory(state.memory, actionTarget.dataset.id, -3, 'less-like-this');
   }
 
-  if (action === 'play-now' || action === 'open-youtube') {
+  if (action === 'play-now' || action === 'open-youtube' || action === 'find-youtube') {
     event.preventDefault();
     const selected = flowController.selectById(actionTarget.dataset.id) || state.memory.mediaItems[actionTarget.dataset.id];
-    if (selected) openMediaItemExternally(selected, { flow: false, markSeen: action === 'play-now' });
+    if (selected) openMediaItemExternally(selected, { flow: false, markSeen: true });
   }
 
   if (action === 'start-flow') {
@@ -755,6 +841,9 @@ async function handleQueueAction(event) {
     const channelId = actionTarget.dataset.channel;
     const current = state.memory.channelTrust[channelId] || 0;
     state.memory.channelTrust[channelId] = Math.max(-5, Math.min(5, current + (action === 'trust' ? 1 : -3)));
+  }
+  if (action === 'mark-seen') {
+    state.memory = markMediaItemSeen(state.memory, actionTarget.dataset.id);
   }
 
   rebuildFlowQueue();
