@@ -17,6 +17,17 @@ function slugifySegment(value = '') {
     .replace(/^-+|-+$/g, '') || 'pane';
 }
 
+function appendContentToPanelContainer(panel, contentNode) {
+  if (!panel || !contentNode) return;
+  const panelContent = typeof panel.querySelector === 'function'
+    ? panel.querySelector('.stephanos-panel-content')
+    : null;
+  const mountTarget = panelContent || panel;
+  if (contentNode.parentNode !== mountTarget) {
+    mountTarget.appendChild(contentNode);
+  }
+}
+
 export function toCanonTilePaneDomId(appId, paneId) {
   const app = slugifySegment(appId);
   const pane = slugifySegment(paneId);
@@ -94,9 +105,7 @@ export function createCanonTilePaneManager({
           contentNode.classList.add('canon-tile-pane-content');
           contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
           contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
-          if (contentNode.parentNode !== existingPanel) {
-            existingPanel.appendChild(contentNode);
-          }
+          appendContentToPanelContainer(existingPanel, contentNode);
         }
       }
       return existingPanel;
@@ -113,7 +122,7 @@ export function createCanonTilePaneManager({
       contentNode.classList.add('canon-tile-pane-content');
       contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
       contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
-      panel.appendChild(contentNode);
+      appendContentToPanelContainer(panel, contentNode);
       const isOwnedByPanel = contentNode.closest?.('.stephanos-panel')?.id === domId;
       if (!isOwnedByPanel && globalThis.window?.isDeveloperModeEnabled?.() === true) {
         console.warn('[CANON TILE PANES] mounted pane content is not owned by expected panel host', {
