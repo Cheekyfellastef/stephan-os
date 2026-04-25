@@ -65,6 +65,45 @@ body {
   max-height: calc(100vh - 140px);
 }
 
+.stephanos-canon-rotating-chevron-button,
+.stephanos-panel-knob {
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: 1px solid #4b6f94;
+  background: rgba(8, 21, 35, 0.95);
+  color: #daf3ff;
+  cursor: pointer;
+}
+
+.stephanos-canon-rotating-chevron-button:hover,
+.stephanos-canon-rotating-chevron-button:focus-visible,
+.stephanos-panel-knob:hover,
+.stephanos-panel-knob:focus-visible {
+  border-color: #8ec9ff;
+  background: rgba(15, 34, 54, 0.97);
+}
+
+.stephanos-canon-rotating-chevron-button .chevron,
+.stephanos-panel-knob .chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+  opacity: 0.9;
+  transform: rotate(-90deg);
+  transition: transform 180ms ease;
+}
+
+.stephanos-canon-rotating-chevron-button .chevron.open,
+.stephanos-panel-knob .chevron.open {
+  transform: rotate(0deg);
+}
+
 .stephanos-panel-content *,
 .canon-tile-pane-section * {
   max-width: 100%;

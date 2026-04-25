@@ -142,26 +142,40 @@ body {
 }
 
 .panel-collapse-toggle {
-  width: 100%;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.75rem;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  text-align: left;
+  width: 100%;
 }
 
-.panel-collapse-toggle:hover {
-  background: transparent;
-  border-color: transparent;
+.panel-collapse-button {
+  flex: 0 0 auto;
 }
 
-.panel-collapse-toggle:focus-visible {
+.stephanos-canon-rotating-chevron-button {
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: 1px solid #4b6f94;
+  background: rgba(8, 21, 35, 0.95);
+  color: #daf3ff;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.stephanos-canon-rotating-chevron-button:hover,
+.stephanos-canon-rotating-chevron-button:focus-visible {
+  border-color: #8ec9ff;
+  background: rgba(15, 34, 54, 0.97);
+}
+
+.stephanos-canon-rotating-chevron-button:focus-visible {
   outline: 2px solid rgba(136, 210, 255, 0.78);
-  outline-offset: 4px;
-  border-radius: 10px;
+  outline-offset: 2px;
 }
 
 .panel-heading-copy {
@@ -188,21 +202,21 @@ body {
 }
 
 .pane-collapse-dial,
+.chevron-dial,
 .panel-chevron {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  min-width: 2rem;
-  min-height: 2rem;
-  border-radius: 999px;
-  border: 1px solid rgba(92, 176, 255, 0.35);
-  color: #97d6ff;
-  transition: background 160ms ease, border-color 160ms ease;
+  width: 1rem;
+  height: 1rem;
+  min-width: 1rem;
+  min-height: 1rem;
+  border: 0;
+  color: inherit;
 }
 
+.chevron,
 .pane-collapse-chevron,
 .panel-chevron {
   display: inline-flex;
@@ -211,22 +225,17 @@ body {
   width: 1rem;
   height: 1rem;
   transform: rotate(-90deg);
-  transition: transform 160ms ease;
+  transition: transform 180ms ease;
 }
 
+.chevron.open,
 .pane-collapse-chevron.open,
 .panel-chevron.open {
   transform: rotate(0deg);
 }
 
-.panel-collapse-toggle:hover .pane-collapse-dial,
-.panel-collapse-toggle:hover .panel-chevron {
-  background: rgba(14, 38, 70, 0.65);
-  border-color: rgba(150, 214, 255, 0.62);
-}
-
 .panel-collapse-toggle:hover .panel-heading-copy,
-.panel-collapse-toggle:focus-visible .panel-heading-copy {
+.panel-collapse-toggle:focus-within .panel-heading-copy {
   color: #eef9ff;
 }
 

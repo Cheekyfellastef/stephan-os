@@ -25,22 +25,24 @@ export default function CollapsiblePanel({
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
       <div className="panel-header-row">
         <div className="panel-heading-wrap">
-          <button
-            type="button"
-            className="panel-collapse-toggle"
-            onClick={onToggle}
-            data-no-drag="true"
-            aria-expanded={isOpen}
-            aria-controls={bodyId}
-            aria-label={toggleLabel}
-            title={toggleLabel}
-          >
-            <PaneCollapseDial isOpen={isOpen} />
+          <div className="panel-collapse-toggle">
+            <button
+              type="button"
+              className="stephanos-canon-rotating-chevron-button panel-collapse-button"
+              onClick={onToggle}
+              data-no-drag="true"
+              aria-expanded={isOpen}
+              aria-controls={bodyId}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+            >
+              <PaneCollapseDial isOpen={isOpen} />
+            </button>
             <span className="panel-heading-copy">
               <TitleTag>{title}</TitleTag>
               {description ? <span className="panel-description">{description}</span> : null}
             </span>
-          </button>
+          </div>
         </div>
         {actions ? <div className="panel-header-actions">{actions}</div> : null}
       </div>
