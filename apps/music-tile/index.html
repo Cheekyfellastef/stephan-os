@@ -10,7 +10,7 @@
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
   <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern">
-    <header class="panel header-panel">
+    <header class="panel header-panel music-shell-static">
       <h1>Stephanos Music Journey</h1>
       <p>YouTube provides content. Stephanos builds memory, taste, trust, and guided discovery.</p>
     </header>
@@ -76,11 +76,12 @@
         <button id="smart-refresh-btn">Build Journey</button>
         <button id="flow-mode-btn">Start Journey</button>
         <button id="reset-btn" class="ghost">Reset</button>
+        <button id="reset-layout-btn" class="ghost">Reset Layout</button>
       </div>
       <p class="muted">Uses YouTube Data API (official). Playback opens externally for reliability.</p>
     </section>
 
-    <section class="panel summary-panel">
+    <section class="panel summary-panel" id="music-summary-pane">
       <h2>Session Summary</h2>
       <div class="summary-grid" id="summary-grid"></div>
     </section>
@@ -111,7 +112,7 @@
       </div>
     </section>
 
-    <section class="panel command-panel">
+    <section class="panel command-panel" id="music-command-pane">
       <h2>Command Console (text-first)</h2>
       <div class="command-row">
         <input id="command-input" placeholder="show unseen Anyma sets" />
