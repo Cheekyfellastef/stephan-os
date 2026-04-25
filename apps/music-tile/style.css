@@ -27,16 +27,12 @@ body {
   min-height: 100vh;
 }
 
-.music-tile.music-tile--canon-panes > .panel:not(.music-shell-static) {
+.music-tile.music-tile--canon-panes > .panel {
   display: none;
 }
 
 .music-tile.music-tile--canon-panes > .panel[data-canon-pane-mounted='true'] {
   display: none;
-}
-
-.music-tile.music-tile--canon-panes > .music-shell-static {
-  margin-bottom: 12px;
 }
 
 .music-tile.music-tile--canon-panes > .debug-panel {
@@ -485,15 +481,13 @@ input {
   overflow-wrap: anywhere;
 }
 
-#music-tile-header-banner {
-  position: relative;
-  z-index: 1;
+#music-title-pane {
   max-width: calc(100vw - 44px);
   overflow: hidden;
 }
 
-#music-tile-header-banner p,
-#music-tile-header-banner h1 {
+#music-title-pane p,
+#music-title-pane h1 {
   overflow-wrap: anywhere;
   max-width: 100%;
 }
