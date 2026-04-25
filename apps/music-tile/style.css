@@ -2,6 +2,12 @@
   color-scheme: dark;
 }
 
+html,
+body {
+  min-height: 100%;
+  overflow-y: auto;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -15,6 +21,7 @@ body {
 
 .music-tile {
   min-height: 100vh;
+  overflow-y: auto;
   padding: 22px;
   display: grid;
   gap: 14px;
@@ -25,6 +32,12 @@ body {
 .music-tile.music-tile--canon-panes {
   display: block;
   min-height: 100vh;
+  overflow-y: auto;
+}
+
+#music-tile-root {
+  min-height: 100vh;
+  overflow-y: auto;
 }
 
 .music-tile.music-tile--canon-panes > .panel {
@@ -57,12 +70,19 @@ body {
 
 .stephanos-panel,
 .music-tile-pane {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
   overflow: hidden;
 }
 
 .stephanos-panel-content {
-  overflow: auto;
-  max-height: calc(100vh - 140px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .stephanos-canon-rotating-chevron-button,
