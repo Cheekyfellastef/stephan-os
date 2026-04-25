@@ -53,6 +53,7 @@ const elements = {
   unseenOnly: document.getElementById('unseen-only-toggle'),
   hideBroken: document.getElementById('hide-broken-toggle'),
   showExternalOnly: document.getElementById('show-external-only-toggle'),
+  titlePane: document.getElementById('music-title-pane'),
   controlsPane: document.getElementById('music-controls-pane'),
   flowPane: document.getElementById('music-flow-pane'),
   resultsPane: document.getElementById('music-results-pane'),
@@ -977,6 +978,12 @@ function setDebugPaneVisibility(isVisible) {
 
 function initializePaneLayout() {
   elements.root.classList.add('music-tile--canon-panes');
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'music-title-pane',
+    title: 'Stephanos Music Journey',
+    section: elements.titlePane,
+    panelClassName: 'music-tile-pane',
+  });
   tilePaneManager.mountPaneFromSection({
     paneId: 'search-build-journey-pane',
     title: 'Search / Build Journey',
