@@ -73,12 +73,38 @@ export function createCanonTilePaneManager({
   const registeredPanes = new Map();
   const sectionToPaneId = new WeakMap();
 
+  function getMountedHostId(node) {
+    return String(node?.getAttribute?.(CANON_MOUNT_HOST_ATTR) || '').trim();
+  }
+
+  function getMountedPanelForNode(node) {
+    const mountedHostId = getMountedHostId(node);
+    if (!mountedHostId) return null;
+    return globalThis.document?.getElementById?.(mountedHostId) || null;
+  }
+
   function mountPane({ paneId, title, contentNode, panelClassName = '' } = {}) {
-    const domId = toCanonTilePaneDomId(normalizedAppId, paneId);
+    const normalizedPaneId = slugifySegment(paneId);
+    const domId = toCanonTilePaneDomId(normalizedAppId, normalizedPaneId);
+    const existingPanel = globalThis.document?.getElementById?.(domId) || null;
+    if (existingPanel) {
+      if (contentNode) {
+        const existingHost = getMountedHostId(contentNode);
+        if (!existingHost || existingHost === domId) {
+          contentNode.classList.add('canon-tile-pane-content');
+          contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
+          contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
+          if (contentNode.parentNode !== existingPanel) {
+            existingPanel.appendChild(contentNode);
+          }
+        }
+      }
+      return existingPanel;
+    }
     const panel = uiRenderer.createPanel(domId, title || 'Pane');
     panel.dataset.canonTilePane = 'true';
     panel.dataset.canonTilePaneAppId = normalizedAppId;
-    panel.dataset.canonTilePaneId = slugifySegment(paneId);
+    panel.dataset.canonTilePaneId = normalizedPaneId;
     if (panelClassName) {
       panel.classList.add(panelClassName);
     }
@@ -99,8 +125,8 @@ export function createCanonTilePaneManager({
       }
     }
 
-    registeredPanes.set(slugifySegment(paneId), {
-      paneId: slugifySegment(paneId),
+    registeredPanes.set(normalizedPaneId, {
+      paneId: normalizedPaneId,
       domId,
       title,
       contentNode,
@@ -116,6 +142,19 @@ export function createCanonTilePaneManager({
     }
 
     const normalizedPaneId = slugifySegment(paneId);
+    const mountedElsewhere = section.getAttribute(CANON_MOUNTED_ATTR) === 'true';
+    const mountedHostId = getMountedHostId(section);
+    if (mountedElsewhere && mountedHostId && mountedHostId !== toCanonTilePaneDomId(normalizedAppId, normalizedPaneId)) {
+      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
+        console.warn('[CANON TILE PANES] section already mounted to different pane host', {
+          appId: normalizedAppId,
+          existingHost: mountedHostId,
+          requestedPaneId: normalizedPaneId,
+          sectionId: section.id || null,
+        });
+      }
+      return getMountedPanelForNode(section);
+    }
     const existingPaneId = sectionToPaneId.get(section);
     if (existingPaneId) {
       if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
@@ -140,6 +179,7 @@ export function createCanonTilePaneManager({
     }
 
     section.hidden = false;
+    section.classList.remove('panel');
     section.classList.add('canon-tile-pane-section');
     section.setAttribute(CANON_MOUNTED_ATTR, 'true');
     section.setAttribute(CANON_MOUNT_HOST_ATTR, toCanonTilePaneDomId(normalizedAppId, normalizedPaneId));
