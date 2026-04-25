@@ -144,6 +144,22 @@ function createDocumentFixture() {
     getElementById(id) {
       return this.nodes.get(id) || null;
     },
+    querySelectorAll(selector) {
+      if (selector !== '[data-stephanos-pane-reserved]') {
+        return [];
+      }
+      const matches = [];
+      const queue = [this.body];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) continue;
+        if (current['data-stephanos-pane-reserved']) {
+          matches.push(current);
+        }
+        queue.push(...(current.children || []));
+      }
+      return matches;
+    },
   };
 
   const body = createElement('body', documentRef);
@@ -634,6 +650,53 @@ test('music tile pane IDs participate in shared collision plane', () => {
   assert.equal(rectsOverlap(getPaneRect(searchPane), getPaneRect(flowPane), 12), false);
   assert.equal(rectsOverlap(getPaneRect(flowPane), getPaneRect(resultsPane), 12), false);
   assert.equal(rectsOverlap(getPaneRect(resultsPane), getPaneRect(debugPane), 12), false);
+});
+
+test('reserved pane banner keeps canon panes below the header safe zone on restore and reset', () => {
+  const storage = createStorage({
+    [STEPHANOS_SESSION_MEMORY_STORAGE_KEY]: createSessionMemorySeed({
+      panelPositions: {
+        'music-tile-search-build-journey-pane': { x: 40, y: 16 },
+        'music-tile-results-journey-pane': { x: 40, y: 16 },
+      },
+    }),
+  });
+  const documentRef = createDocumentFixture();
+  globalThis.document = documentRef;
+  globalThis.localStorage = storage;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 900;
+
+  const reservedHeader = createElement('header', documentRef);
+  reservedHeader.id = 'music-tile-header-banner';
+  reservedHeader.setAttribute('data-stephanos-pane-reserved', 'music-title-banner');
+  reservedHeader.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 1280,
+    height: 120,
+    right: 1280,
+    bottom: 120,
+  });
+  documentRef.body.appendChild(reservedHeader);
+  documentRef.nodes.set(reservedHeader.id, reservedHeader);
+
+  const ui = createUIRenderer();
+  const paneA = ui.createPanel('music-tile-search-build-journey-pane', 'Search');
+  const paneB = ui.createPanel('music-tile-results-journey-pane', 'Results');
+  const headerRect = reservedHeader.getBoundingClientRect();
+
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 24);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 24);
+  assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
+  assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
+
+  ui.resetPanelLayout();
+
+  assert.ok(Number.parseFloat(paneA.style.top) >= headerRect.bottom + 24);
+  assert.ok(Number.parseFloat(paneB.style.top) >= headerRect.bottom + 24);
+  assert.equal(rectsOverlap(getPaneRect(paneA), headerRect, 12), false);
+  assert.equal(rectsOverlap(getPaneRect(paneB), headerRect, 12), false);
 });
 
 test('setPanelVisible keeps hidden panes non-interactive without losing explicit re-open behavior', () => {

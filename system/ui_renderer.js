@@ -16,6 +16,8 @@ const DEFAULT_PANEL_SIZE = Object.freeze({
 });
 const COLLISION_MARGIN_PX = 12;
 const COLLAPSED_PANEL_HEIGHT = 52;
+const RESERVED_ZONE_CLEARANCE_PX = 24;
+const RESERVED_ZONE_SELECTOR = "[data-stephanos-pane-reserved]";
 const SYSTEM_RESTORABLE_PANEL_IDS = new Set(getSystemPanelRestorablePanelIds());
 
 function readUiLayout(storage = globalThis.localStorage) {
@@ -105,6 +107,63 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function toRect(value) {
+  if (!value || typeof value !== "object") return null;
+  const left = Number(value.left);
+  const top = Number(value.top);
+  const width = Number(value.width);
+  const height = Number(value.height);
+  const right = Number.isFinite(value.right) ? Number(value.right) : left + width;
+  const bottom = Number.isFinite(value.bottom) ? Number(value.bottom) : top + height;
+  if (
+    !Number.isFinite(left)
+    || !Number.isFinite(top)
+    || !Number.isFinite(right)
+    || !Number.isFinite(bottom)
+  ) {
+    return null;
+  }
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: Number.isFinite(width) ? width : Math.max(0, right - left),
+    height: Number.isFinite(height) ? height : Math.max(0, bottom - top),
+  };
+}
+
+function readReservedPaneRects(documentRef = globalThis.document) {
+  const reservedNodes = Array.from(documentRef?.querySelectorAll?.(RESERVED_ZONE_SELECTOR) || []);
+  return reservedNodes
+    .map((node) => {
+      const rect = toRect(node?.getBoundingClientRect?.());
+      if (!rect) {
+        return null;
+      }
+      return {
+        ...rect,
+        id: node.id || node.getAttribute?.("data-stephanos-pane-reserved") || "reserved-zone",
+      };
+    })
+    .filter(Boolean);
+}
+
+function getReservedTopClearance(reservedRects = []) {
+  let clearance = 8;
+  const viewport = getViewportRect();
+  reservedRects.forEach((rect) => {
+    if (Number.isFinite(rect?.left)
+      && Number.isFinite(rect?.right)
+      && rect.right > 0
+      && rect.left < viewport.width
+      && Number.isFinite(rect?.bottom)) {
+      clearance = Math.max(clearance, rect.bottom + RESERVED_ZONE_CLEARANCE_PX);
+    }
+  });
+  return clearance;
+}
+
 function getViewportRect() {
   const width = Math.max(320, globalThis.innerWidth || document.documentElement?.clientWidth || 1280);
   const height = Math.max(240, globalThis.innerHeight || document.documentElement?.clientHeight || 720);
@@ -126,14 +185,16 @@ function getPanelDimensions(panel) {
   return { ...DEFAULT_PANEL_SIZE };
 }
 
-function computeBoundedPosition({ x = 0, y = 0 } = {}, panel) {
+function computeBoundedPosition({ x = 0, y = 0 } = {}, panel, options = {}) {
   const viewport = getViewportRect();
   const panelSize = getPanelDimensions(panel);
   const maxX = Math.max(0, viewport.width - panelSize.width - 12);
   const maxY = Math.max(0, viewport.height - panelSize.height - 12);
+  const minY = Number.isFinite(options.minY) ? Math.max(8, options.minY) : 8;
+  const boundedMinY = Math.min(minY, maxY);
   return {
     x: clamp(Number(x) || 0, 8, maxX),
-    y: clamp(Number(y) || 0, 8, maxY),
+    y: clamp(Number(y) || 0, boundedMinY, maxY),
   };
 }
 
@@ -187,12 +248,16 @@ export function findNearestNonOverlappingPosition(
   viewport = getViewportRect(),
   options = {},
 ) {
+  const reservedRects = Array.isArray(options.reservedRects)
+    ? options.reservedRects.map((rect) => toRect(rect)).filter(Boolean)
+    : [];
+  const minY = getReservedTopClearance(reservedRects);
   const collisionMargin = Number.isFinite(options.collisionMargin)
     ? Math.max(0, options.collisionMargin)
     : COLLISION_MARGIN_PX;
-  const boundedDesired = computeBoundedPosition(desiredPosition, panel);
+  const boundedDesired = computeBoundedPosition(desiredPosition, panel, { minY });
   const collidesAt = (position) => {
-    const bounded = computeBoundedPosition(position, panel);
+    const bounded = computeBoundedPosition(position, panel, { minY });
     const thisRect = {
       left: bounded.x,
       top: bounded.y,
@@ -203,6 +268,13 @@ export function findNearestNonOverlappingPosition(
       const otherRect = getPaneRect(otherPanel);
       if (rectsOverlap(thisRect, otherRect, collisionMargin)) {
         return otherPanel;
+      }
+    }
+    for (const reservedRect of reservedRects) {
+      if (rectsOverlap(thisRect, reservedRect, collisionMargin)) {
+        return {
+          id: `reserved:${reservedRect.id || "zone"}`,
+        };
       }
     }
     return null;
@@ -226,7 +298,7 @@ export function findNearestNonOverlappingPosition(
     const collisionTarget = collidesAt(candidate);
     if (!collisionTarget) {
       return {
-        position: computeBoundedPosition(candidate, panel),
+        position: computeBoundedPosition(candidate, panel, { minY }),
         collisionDetected: true,
         collisionTargetPaneId: null,
         strategy: "offset-scan",
@@ -242,7 +314,7 @@ export function findNearestNonOverlappingPosition(
       const collisionTarget = collidesAt({ x, y });
       if (!collisionTarget) {
         return {
-          position: computeBoundedPosition({ x, y }, panel),
+          position: computeBoundedPosition({ x, y }, panel, { minY }),
           collisionDetected: true,
           collisionTargetPaneId: null,
           strategy: "grid-scan",
@@ -259,7 +331,7 @@ export function findNearestNonOverlappingPosition(
     const collisionTarget = collidesAt(cascadeCandidate);
     if (!collisionTarget) {
       return {
-        position: computeBoundedPosition(cascadeCandidate, panel),
+        position: computeBoundedPosition(cascadeCandidate, panel, { minY }),
         collisionDetected: true,
         collisionTargetPaneId: null,
         strategy: "cascade",
@@ -351,7 +423,8 @@ export function createUIRenderer() {
   }
 
   function applyPanelPosition(panel, position = { x: 0, y: 0 }) {
-    const bounded = computeBoundedPosition(position, panel);
+    const minY = getReservedTopClearance(readReservedPaneRects());
+    const bounded = computeBoundedPosition(position, panel, { minY });
     panel.style.left = `${bounded.x}px`;
     panel.style.top = `${bounded.y}px`;
     return bounded;
@@ -359,8 +432,9 @@ export function createUIRenderer() {
 
   function getDefaultPosition() {
     const base = 24 + (defaultPanelOffset * 30);
+    const minY = getReservedTopClearance(readReservedPaneRects());
     defaultPanelOffset = (defaultPanelOffset + 1) % 8;
-    return { x: base, y: base + 36 };
+    return { x: base, y: Math.max(minY, base + 36) };
   }
 
   function ensurePanelPosition(panel) {
@@ -377,7 +451,10 @@ export function createUIRenderer() {
         y: Number.parseFloat(panel.style.top) || 0,
       });
     });
-    const results = resolvePaneLayoutCollisions(panelList, { collisionMargin: COLLISION_MARGIN_PX });
+    const results = resolvePaneLayoutCollisions(panelList, {
+      collisionMargin: COLLISION_MARGIN_PX,
+      reservedRects: readReservedPaneRects(),
+    });
     results.forEach((entry) => {
       const hasPersistedPosition = readPanelPosition(entry.paneId, storage) != null;
       const shouldPersist = reason !== "restore-load" || hasPersistedPosition || entry.collisionDetected;
@@ -605,7 +682,11 @@ export function createUIRenderer() {
           knob.textContent = "◉";
           knob.setAttribute("aria-expanded", "true");
         }
-        const defaultPosition = { x: 24 + stackOffset * 36, y: 60 + stackOffset * 36 };
+        const minY = getReservedTopClearance(readReservedPaneRects());
+        const defaultPosition = {
+          x: 24 + stackOffset * 36,
+          y: Math.max(minY, 60 + stackOffset * 36),
+        };
         stackOffset = (stackOffset + 1) % 8;
         const bounded = applyPanelPosition(panel, defaultPosition);
         writePanelPosition(panel.id, bounded, storage);
