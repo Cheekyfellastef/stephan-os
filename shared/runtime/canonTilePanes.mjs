@@ -144,37 +144,39 @@ export function createCanonTilePaneManager({
     const normalizedPaneId = slugifySegment(paneId);
     const mountedElsewhere = section.getAttribute(CANON_MOUNTED_ATTR) === 'true';
     const mountedHostId = getMountedHostId(section);
+    if (mountedElsewhere) {
+      console.warn('[CANON TILE PANES] duplicate section mount prevented', {
+        appId: normalizedAppId,
+        existingHost: mountedHostId || null,
+        requestedPaneId: normalizedPaneId,
+        sectionId: section.id || null,
+      });
+    }
     if (mountedElsewhere && mountedHostId && mountedHostId !== toCanonTilePaneDomId(normalizedAppId, normalizedPaneId)) {
-      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
-        console.warn('[CANON TILE PANES] section already mounted to different pane host', {
-          appId: normalizedAppId,
-          existingHost: mountedHostId,
-          requestedPaneId: normalizedPaneId,
-          sectionId: section.id || null,
-        });
-      }
+      console.warn('[CANON TILE PANES] section already mounted to different pane host', {
+        appId: normalizedAppId,
+        existingHost: mountedHostId,
+        requestedPaneId: normalizedPaneId,
+        sectionId: section.id || null,
+      });
       return getMountedPanelForNode(section);
     }
     const existingPaneId = sectionToPaneId.get(section);
     if (existingPaneId) {
-      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
-        console.warn('[CANON TILE PANES] duplicate section mount prevented', {
-          appId: normalizedAppId,
-          existingPaneId,
-          requestedPaneId: normalizedPaneId,
-          sectionId: section.id || null,
-        });
-      }
+      console.warn('[CANON TILE PANES] duplicate section mount prevented', {
+        appId: normalizedAppId,
+        existingPaneId,
+        requestedPaneId: normalizedPaneId,
+        sectionId: section.id || null,
+      });
       return globalThis.document?.getElementById(toCanonTilePaneDomId(normalizedAppId, existingPaneId)) || null;
     }
     if (registeredPanes.has(normalizedPaneId)) {
-      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
-        console.warn('[CANON TILE PANES] duplicate pane id mount prevented', {
-          appId: normalizedAppId,
-          paneId: normalizedPaneId,
-          sectionId: section.id || null,
-        });
-      }
+      console.warn('[CANON TILE PANES] duplicate pane id mount prevented', {
+        appId: normalizedAppId,
+        paneId: normalizedPaneId,
+        sectionId: section.id || null,
+      });
       return globalThis.document?.getElementById(toCanonTilePaneDomId(normalizedAppId, normalizedPaneId)) || null;
     }
 
