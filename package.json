@@ -24,7 +24,10 @@
     "stephanos:precommit": "npm run stephanos:build && npm run stephanos:verify",
     "predeploy": "npm run stephanos:build && npm run stephanos:verify",
     "deploy": "npm run predeploy && echo \"Stephanos dist is verified and ready to publish from apps/stephanos/dist\"",
-    "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs"
+    "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs",
+    "stephanos:battle-bridge:autostart:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-backend-autostart.ps1",
+    "stephanos:battle-bridge:autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-backend-autostart.ps1",
+    "stephanos:battle-bridge:autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
