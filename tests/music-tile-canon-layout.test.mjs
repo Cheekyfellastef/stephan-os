@@ -10,6 +10,13 @@ test('music tile enters canon pane mode and mounts one pane plane for major sect
   assert.match(musicMainSource, /elements\.root\.classList\.add\('music-tile--canon-panes'\)/);
   assert.match(musicMainSource, /const tilePaneManager = createCanonTilePaneManager\(\{ appId: 'music-tile' \}\)/);
   assert.match(musicHtmlSource, /id="music-title-pane"/);
+  assert.match(musicMainSource, /title:\s*'Stephanos Music Journey'/);
+  assert.match(musicMainSource, /title:\s*'Discovery Controls'/);
+  assert.match(musicMainSource, /title:\s*'Session Summary'/);
+  assert.match(musicMainSource, /title:\s*'Playback Route'/);
+  assert.match(musicMainSource, /title:\s*'Command Console'/);
+  assert.match(musicMainSource, /title:\s*'Journey Queue'/);
+  assert.match(musicMainSource, /title:\s*'Debug'/);
   assert.equal((musicMainSource.match(/paneId:\s*'search-build-journey-pane'/g) || []).length, 1);
   assert.equal((musicMainSource.match(/paneId:\s*'session-summary-pane'/g) || []).length, 1);
   assert.equal((musicMainSource.match(/paneId:\s*'flow-now-playing-pane'/g) || []).length, 1);
@@ -35,12 +42,17 @@ test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is
 });
 
 test('music tile canon CSS enforces pane content containment and command console wrapping', () => {
-  assert.match(musicCssSource, /\.stephanos-panel,\s*\.music-tile-pane\s*\{\s*display:\s*flex;[\s\S]*max-height:\s*calc\(100vh - 32px\);[\s\S]*overflow:\s*hidden;/);
-  assert.match(musicCssSource, /\.stephanos-panel-content\s*\{\s*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*-webkit-overflow-scrolling:\s*touch;/);
   assert.match(musicCssSource, /\.stephanos-panel-content \*,\s*\.canon-tile-pane-section \*\s*\{\s*max-width:\s*100%;/);
   assert.match(musicCssSource, /\.canon-tile-pane-section\s*\{[\s\S]*min-width:\s*0;[\s\S]*overflow-wrap:\s*anywhere;/);
   assert.match(musicCssSource, /\.command-row\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;/);
   assert.match(musicCssSource, /#command-output\s*\{\s*overflow-wrap:\s*anywhere;/);
+});
+
+test('music tile relies on shared stephanos pane shell and does not redefine canon drag or collapse mechanics', () => {
+  assert.doesNotMatch(musicCssSource, /\.stephanos-panel-header\s*\{/);
+  assert.doesNotMatch(musicCssSource, /\.stephanos-panel-content\s*\{/);
+  assert.doesNotMatch(musicCssSource, /\.stephanos-panel-knob\s*\{/);
+  assert.doesNotMatch(musicCssSource, /\.stephanos-canon-rotating-chevron-button\s*\{/);
 });
 
 test('music tile header banner reserves full text block and wraps safely', () => {
