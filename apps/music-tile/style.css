@@ -1,3 +1,5 @@
+@import url('../../shared/styles/stephanos-panels.css');
+
 :root {
   color-scheme: dark;
 }
@@ -66,73 +68,6 @@ body {
   background: linear-gradient(180deg, rgba(8, 18, 36, 0.95), rgba(3, 9, 19, 0.95));
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
   padding: 14px;
-}
-
-.stephanos-panel,
-.music-tile-pane {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - 32px);
-  overflow: hidden;
-  pointer-events: auto;
-}
-
-.stephanos-panel-header {
-  flex: 0 0 auto;
-  touch-action: none;
-}
-
-.stephanos-panel-content {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.stephanos-panel-content,
-.stephanos-panel-content * {
-  touch-action: auto;
-}
-
-.stephanos-canon-rotating-chevron-button,
-.stephanos-panel-knob {
-  border-radius: 999px;
-  width: 38px;
-  height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  border: 1px solid #4b6f94;
-  background: rgba(8, 21, 35, 0.95);
-  color: #daf3ff;
-  cursor: pointer;
-}
-
-.stephanos-canon-rotating-chevron-button:hover,
-.stephanos-canon-rotating-chevron-button:focus-visible,
-.stephanos-panel-knob:hover,
-.stephanos-panel-knob:focus-visible {
-  border-color: #8ec9ff;
-  background: rgba(15, 34, 54, 0.97);
-}
-
-.stephanos-canon-rotating-chevron-button .chevron,
-.stephanos-panel-knob .chevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.92rem;
-  opacity: 0.9;
-  transform: rotate(-90deg);
-  transition: transform 180ms ease;
-}
-
-.stephanos-canon-rotating-chevron-button .chevron.open,
-.stephanos-panel-knob .chevron.open {
-  transform: rotate(0deg);
 }
 
 .stephanos-panel-content *,

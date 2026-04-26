@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const musicMainSource = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 const musicCssSource = readFileSync(new URL('../apps/music-tile/style.css', import.meta.url), 'utf8');
+const sharedPaneCssSource = readFileSync(new URL('../shared/styles/stephanos-panels.css', import.meta.url), 'utf8');
 const musicHtmlSource = readFileSync(new URL('../apps/music-tile/index.html', import.meta.url), 'utf8');
 
 test('music tile enters canon pane mode and mounts one pane plane for major sections', () => {
@@ -42,10 +43,11 @@ test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is
 });
 
 test('music tile canon CSS enforces pane content containment and command console wrapping', () => {
-  assert.match(musicCssSource, /\.stephanos-panel,\s*\.music-tile-pane\s*\{\s*display:\s*flex;[\s\S]*max-height:\s*calc\(100vh - 32px\);[\s\S]*overflow:\s*hidden;/);
-  assert.match(musicCssSource, /\.stephanos-panel-header\s*\{[\s\S]*flex:\s*0 0 auto;[\s\S]*touch-action:\s*none;/);
-  assert.match(musicCssSource, /\.stephanos-panel-content\s*\{\s*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*-webkit-overflow-scrolling:\s*touch;/);
-  assert.match(musicCssSource, /\.stephanos-panel-content,\s*\.stephanos-panel-content \*\s*\{\s*touch-action:\s*auto;/);
+  assert.match(musicCssSource, /@import\s+url\('\.\.\/\.\.\/shared\/styles\/stephanos-panels\.css'\);/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*max-height:\s*calc\(100vh - 32px\);[\s\S]*overflow:\s*hidden;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-header\s*\{[\s\S]*flex:\s*0 0 auto;[\s\S]*touch-action:\s*none;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-content\s*\{\s*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*-webkit-overflow-scrolling:\s*touch;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-content,\s*\.stephanos-panel-content \*\s*\{\s*touch-action:\s*auto;/);
   assert.match(musicCssSource, /\.stephanos-panel-content \*,\s*\.canon-tile-pane-section \*\s*\{\s*max-width:\s*100%;/);
   assert.match(musicCssSource, /\.canon-tile-pane-section\s*\{[\s\S]*min-width:\s*0;[\s\S]*overflow-wrap:\s*anywhere;/);
   assert.match(musicCssSource, /\.stephanos-panel-content > \.canon-tile-pane-section\s*\{\s*display:\s*block;/);
@@ -55,10 +57,10 @@ test('music tile canon CSS enforces pane content containment and command console
 });
 
 test('music tile pane scroll contract preserves header drag and scrollable body boundaries', () => {
-  assert.match(musicCssSource, /\.stephanos-panel,\s*\.music-tile-pane\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*overflow:\s*hidden;/);
-  assert.match(musicCssSource, /\.stephanos-panel-header\s*\{[\s\S]*touch-action:\s*none;/);
-  assert.match(musicCssSource, /\.stephanos-panel-content\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
-  assert.match(musicCssSource, /\.stephanos-panel-content,\s*\.stephanos-panel-content \*\s*\{\s*touch-action:\s*auto;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*overflow:\s*hidden;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-header\s*\{[\s\S]*touch-action:\s*none;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-content\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-content,\s*\.stephanos-panel-content \*\s*\{\s*touch-action:\s*auto;/);
   assert.match(musicMainSource, /tilePaneManager\.mountPaneFromSection\(\{\s*paneId:\s*'results-journey-pane'[\s\S]*section:\s*elements\.resultsPane,\s*panelClassName:\s*'music-tile-pane',\s*\}\);/);
   assert.match(musicMainSource, /tilePaneManager\.mountPaneFromSection\(\{\s*paneId:\s*'debug-pane'[\s\S]*section:\s*elements\.debugPanel,\s*panelClassName:\s*'music-tile-pane music-tile-pane-debug',\s*\}\);/);
 });
