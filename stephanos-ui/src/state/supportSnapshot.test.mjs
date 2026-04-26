@@ -1474,3 +1474,33 @@ test('buildSupportSnapshot reports hosted mixed-scheme execution incompatibility
   assert.match(snapshot, /Bridge Probe Target: http:\/\/desktop-9flonkj\.taild6f215\.ts\.net:8787/);
   assert.match(snapshot, /Tailscale Bridge Reason: Remembered Tailscale bridge preserved, but hosted execution is blocked by mixed-scheme browser policy\./);
 });
+
+test('buildSupportSnapshot reports mission bridge diagnostics fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    missionBridgeTruth: {
+      state: 'awaiting-approval',
+      lastAiRouterRequestSource: 'mission-bridge',
+      lastAiResponseRoutedToMissionConsole: true,
+      localDesktopAgentGatePassed: true,
+      missionPacketGeneratedFromOperatorIntent: true,
+      events: [{ type: 'mission-created' }, { type: 'ai-response-received' }],
+    },
+  });
+
+  assert.match(snapshot, /Mission Bridge State: awaiting-approval/);
+  assert.match(snapshot, /Mission Bridge Last Event: ai-response-received/);
+  assert.match(snapshot, /Mission Bridge Last AI Router Request Source: mission-bridge/);
+  assert.match(snapshot, /Mission Bridge Last AI Response Routed To Mission Console: yes/);
+  assert.match(snapshot, /Mission Bridge Local Desktop Agent Gate Passed: yes/);
+  assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);
+});

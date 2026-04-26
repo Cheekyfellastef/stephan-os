@@ -33,7 +33,7 @@ export function classifyTaskApproval({ task = {}, context = {} } = {}) {
 
   const sessionKind = asText(context.sessionKind || context.runtimeSessionKind).toLowerCase();
   const internalOnly = task.internalOnly === true;
-  if (internalOnly && ['local-dev', 'local-network'].includes(sessionKind)) {
+  if (internalOnly && ['local-dev', 'local-desktop', 'local-network'].includes(sessionKind)) {
     return {
       classification: APPROVAL_CLASSES.INTERNAL_LOW_RISK,
       approvalState: 'not-required',
