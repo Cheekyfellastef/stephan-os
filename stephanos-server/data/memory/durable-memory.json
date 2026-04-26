@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-12T23:08:27.172Z",
+  "updatedAt": "2026-04-26T20:00:26.645Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -2200,6 +2200,106 @@
       "retentionHint": "default",
       "createdAt": "2026-04-12T23:08:27.171Z",
       "updatedAt": "2026-04-12T23:08:27.171Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777232843616-mje9t-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what memory systems are online",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-26T19:47:23.616Z",
+      "updatedAt": "2026-04-26T19:47:23.616Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777232843616-mje9t-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "**Online memory systems (local‑first)**  \n\n| System | URL / Port | Purpose |\n|--------|------------|---------|\n| **Backend API** | `http://localhost:8787` | Handles mission‑console data, proposals, simulations, activity logs, etc. |\n| **Ollama LLM** | `http://localhost:11434` | Local large‑language‑model inference for assistant responses. |\n| **Launcher UI** | `http://localhost:5173` | Vite dev UI for the Stephanos l",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": true,
+        "fallbackReason": "ollama: Cannot connect to Ollama: it took too long to respond. Model warmup for qwen:14b may require more than 75000ms on first load. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=105000]",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-26T19:47:23.616Z",
+      "updatedAt": "2026-04-26T19:47:23.616Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777233626644-b9nkq-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "what memory systems are connected",
+        "route": "assistant",
+        "requestedProvider": "ollama",
+        "selectedProvider": "ollama"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-26T20:00:26.644Z",
+      "updatedAt": "2026-04-26T20:00:26.644Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777233626644-b9nkq-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (groq).",
+      "payload": {
+        "outputPreview": "**Memory systems currently linked to Stephanos OS**\n\n| Layer | What it holds | Where it lives | Key tags |\n|-------|---------------|----------------|----------|\n| **Project memory** | Source‑code, docs, reports, snapshots | Local repo (`docs/`, `src/`, `apps/`) | `project`, `docs`, `snapshot` |\n| **Structured‑handoff** | Parsed API routes, proposal lifecycle, simulation history, activity log | `structured-handoff/` f",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "fallbackUsed": true,
+        "fallbackReason": "ollama: Cannot connect to Ollama: it took too long to respond. Model warmup for qwen:14b may require more than 75000ms on first load. [connect_timeout,provider,connect-timeout,model-warmup-likely; timeoutMs=105000]",
+        "memoryHitCount": 4,
+        "tileLinked": false
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-unlinked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-26T20:00:26.644Z",
+      "updatedAt": "2026-04-26T20:00:26.644Z",
       "surface": "shared"
     }
   }
