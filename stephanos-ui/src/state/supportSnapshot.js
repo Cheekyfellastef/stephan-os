@@ -282,6 +282,7 @@ export function buildSupportSnapshot({
   href,
   orchestrationTruth = null,
   finalAgentView = null,
+  missionBridgeTruth = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const sourceDistAlignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
@@ -391,6 +392,10 @@ export function buildSupportSnapshot({
     `task-intent:${selectedAgentGates.taskIntentGate?.passed === true ? 'pass' : selectedAgentGates.taskIntentGate?.passed === false ? 'block' : 'unknown'}`,
     `provider-route:${selectedAgentGates.providerRouteGate?.passed === true ? 'pass' : selectedAgentGates.providerRouteGate?.passed === false ? 'block' : 'unknown'}`,
   ].join(' | ');
+  const missionBridge = missionBridgeTruth && typeof missionBridgeTruth === 'object' ? missionBridgeTruth : {};
+  const missionBridgeLastEvent = Array.isArray(missionBridge.events) && missionBridge.events.length > 0
+    ? missionBridge.events[missionBridge.events.length - 1]
+    : null;
 
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   if (hostedBackendTargetGuidance?.blockingIssue) {
@@ -784,6 +789,12 @@ export function buildSupportSnapshot({
     `Agent Orchestration Blocked Tasks: ${asText(runtimeStatus?.agentBlockedTaskCount, '0')}`,
     `Agent Orchestration Resumable Tasks: ${asText(runtimeStatus?.agentResumableTaskCount, '0')}`,
     `Agent Orchestration Acting Agent: ${asText(runtimeStatus?.agentActingAgentId, 'none')}`,
+    `Mission Bridge State: ${asText(missionBridge.state, 'idle')}`,
+    `Mission Bridge Last Event: ${asText(missionBridgeLastEvent?.type, 'none')}`,
+    `Mission Bridge Last AI Router Request Source: ${asText(missionBridge.lastAiRouterRequestSource, 'none')}`,
+    `Mission Bridge Last AI Response Routed To Mission Console: ${missionBridge.lastAiResponseRoutedToMissionConsole === true ? 'yes' : 'no'}`,
+    `Mission Bridge Local Desktop Agent Gate Passed: ${missionBridge.localDesktopAgentGatePassed === true ? 'yes' : 'no'}`,
+    `Mission Bridge Mission Packet From Operator Intent: ${missionBridge.missionPacketGeneratedFromOperatorIntent === true ? 'yes' : 'no'}`,
     `Selected Agent ID: ${selectedAgentId}`,
     `Selected Agent State: ${asText(selectedAgent?.state, 'not reported')}`,
     `Selected Agent State Reason: ${asText(selectedAgent?.stateReason, 'not reported')}`,

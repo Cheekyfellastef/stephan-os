@@ -32,7 +32,7 @@ import CollapsiblePanel from './CollapsiblePanel';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 
-export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null } = {}) {
+export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null, missionBridgeTruth = null } = {}) {
   const [copyNotice, setCopyNotice] = useState(null);
   const { copyState: supportSnapshotCopyState, setCopyState: setSupportSnapshotCopyState } = useClipboardButtonState();
   const { copyState: codexHandoffCopyState, setCopyState: setCodexHandoffCopyState } = useClipboardButtonState();
@@ -540,6 +540,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
     },
     finalAgentView,
+    missionBridgeTruth,
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,
   });

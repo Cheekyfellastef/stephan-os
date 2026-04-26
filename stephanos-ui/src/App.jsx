@@ -246,6 +246,7 @@ export default function App() {
     generatedPromptAvailable: 'no',
     verificationStatus: 'pending',
   });
+  const [missionBridgeTruth, setMissionBridgeTruth] = useState(null);
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
@@ -539,7 +540,7 @@ export default function App() {
         <PowerShellMergeConsolePanel />
       </div>
     ) },
-    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} /> },
+    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} /> },
     {
       id: 'toolsPanel',
       render: () => (
@@ -645,6 +646,9 @@ export default function App() {
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
           onOpenClawIntegrationUpdate={setOpenClawIntegration}
           onIntentToBuildUpdate={setIntentToBuildTruth}
+          onMissionBridgeUpdate={setMissionBridgeTruth}
+          submitPrompt={submitPrompt}
+          orchestrationTruth={orchestrationTruth}
         />
       ),
     },
@@ -690,6 +694,7 @@ export default function App() {
     togglePanel,
     startupDiagnosticsVisible,
     submitPrompt,
+    missionBridgeTruth,
   ]);
 
   const safePaneOrder = useMemo(() => {
@@ -845,6 +850,9 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
             onIntentToBuildUpdate={setIntentToBuildTruth}
+            onMissionBridgeUpdate={setMissionBridgeTruth}
+            submitPrompt={submitPrompt}
+            orchestrationTruth={orchestrationTruth}
           />
         </section>
         <DebugConsole />
@@ -878,8 +886,11 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={setOpenClawIntegration}
             onIntentToBuildUpdate={setIntentToBuildTruth}
+            onMissionBridgeUpdate={setMissionBridgeTruth}
+            submitPrompt={submitPrompt}
+            orchestrationTruth={orchestrationTruth}
           />
-          <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} />
+          <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
         </section>
         <DebugConsole />

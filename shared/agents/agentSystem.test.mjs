@@ -392,3 +392,43 @@ test('operator disabled gate is explicit when agent is toggled off', () => {
   assert.equal(researchAgent.adjudicationGates.operatorEnableGate.passed, false);
   assert.match(researchAgent.adjudicationGates.operatorEnableGate.reason, /Disabled by operator control/i);
 });
+
+test('local-desktop healthy route/provider truth allows agent reasoning gate', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    orchestrationState: buildV3OrchestrationState(),
+    context: {
+      ...buildBaseContext(),
+      sessionKind: 'local-desktop',
+      surface: 'mission-control',
+      providerRouteTruth: { passed: true, reason: 'Route layer healthy, backend validated, provider gate open.' },
+      hasFreshIntent: true,
+      currentIntentState: 'classified',
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const intent = adjudicated.agents.find((entry) => entry.agentId === 'intent-engine');
+  assert.equal(intent.adjudicationGates.sessionGate.passed, true);
+  assert.equal(intent.adjudicationGates.providerRouteGate.passed, true);
+  assert.doesNotMatch(intent.stateReason, /Session kind local-desktop is not allowed/);
+});
+
+test('local-desktop keeps write/build execution approval-gated', () => {
+  const registry = buildAgentRegistry();
+  const adjudicated = adjudicateAgents({
+    registry,
+    orchestrationState: buildV3OrchestrationState(),
+    context: {
+      ...buildBaseContext(),
+      sessionKind: 'local-desktop',
+      surface: 'mission-control',
+    },
+    operatorControls: { autonomyMasterToggle: true, safeMode: false, globalAutonomy: 'assisted', agentEnabledMap: {} },
+    eventLog: [],
+  });
+  const executionEntry = adjudicated.approvalQueue.find((entry) => entry.taskId === 'task-execute');
+  assert.equal(executionEntry.approvalState, 'pending');
+  assert.equal(executionEntry.classification, 'approval-required-action');
+});

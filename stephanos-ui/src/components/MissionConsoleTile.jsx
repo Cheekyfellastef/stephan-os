@@ -18,6 +18,7 @@ import {
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { createIntentToBuildState, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
+import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -34,6 +35,9 @@ export default function MissionConsoleTile({
   branchName = 'unknown',
   onOpenClawIntegrationUpdate = () => {},
   onIntentToBuildUpdate = () => {},
+  onMissionBridgeUpdate = () => {},
+  submitPrompt = null,
+  orchestrationTruth = null,
 }) {
   const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
@@ -73,6 +77,7 @@ export default function MissionConsoleTile({
       status: 'ready',
     }),
   ]);
+  const [missionBridgeState, setMissionBridgeState] = useState(() => createMissionBridgeState());
 
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
   const resolvedTarget = resolveMissionConsoleTarget(targetId);
@@ -110,6 +115,9 @@ export default function MissionConsoleTile({
       verificationStatus: intentToBuild?.verificationEvidence?.verificationStatus || 'pending',
     });
   }, [intentToBuild, onIntentToBuildUpdate]);
+  useEffect(() => {
+    onMissionBridgeUpdate(missionBridgeState);
+  }, [missionBridgeState, onMissionBridgeUpdate]);
 
   function addMessage(message) {
     setMessages((previous) => appendMissionConsoleMessage(previous, message));
@@ -252,6 +260,47 @@ export default function MissionConsoleTile({
     setIntentToBuild(next);
   }
 
+  function submitOperatorIntentToBridge() {
+    const bridgeResult = processMissionBridgeIntent({
+      operatorIntent: intentInput.rawIntent,
+      finalRouteTruth,
+      finalAgentView,
+      missionWorkflow: orchestrationTruth?.missionPacketWorkflow || {},
+      backendExecutionContractStatus: finalRouteTruth?.backendExecutionContractStatus,
+      providerExecutionGateStatus: finalRouteTruth?.providerExecutionGateStatus,
+    });
+    setMissionBridgeState((previous) => ({
+      ...bridgeResult,
+      events: [...(previous?.events || []), ...(bridgeResult.events || [])].slice(-40),
+    }));
+    addMessage(createMissionConsoleMessage({
+      role: 'assistant',
+      responder: 'mission-bridge',
+      target: 'agents',
+      content: `Mission packet ${bridgeResult.missionPacket?.missionId || 'n/a'} generated. State: ${bridgeResult.state}.`,
+      status: bridgeResult.pendingApproval ? 'approval-needed' : 'ready',
+      approvalNeeded: bridgeResult.pendingApproval,
+    }));
+  }
+
+  async function requestBridgeAiReasoning() {
+    const updated = await requestMissionBridgeAI({
+      bridgeState: missionBridgeState,
+      prompt: intentInput.rawIntent,
+      invokeAi: typeof submitPrompt === 'function'
+        ? async (prompt) => submitPrompt(prompt, { orchestrationTruth })
+        : null,
+    });
+    setMissionBridgeState(updated);
+    addMessage(createMissionConsoleMessage({
+      role: 'assistant',
+      responder: 'ai-router',
+      target: 'agents',
+      content: updated.latestAiResponse || 'AI request routed through backend/provider router.',
+      status: 'ready',
+    }));
+  }
+
   async function copyToClipboard(text, setCopyState) {
     const result = await writeTextToClipboard(text, { navigatorObject: typeof navigator !== 'undefined' ? navigator : null });
     setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
@@ -341,6 +390,10 @@ export default function MissionConsoleTile({
           </select>
         </label>
         <button type="button" onClick={generateIntentToBuildSpec}>Generate Mission Spec</button>
+        <div className="mission-console-copy-row">
+          <button type="button" onClick={submitOperatorIntentToBridge}>Submit Operator Intent to Mission Bridge</button>
+          <button type="button" onClick={requestBridgeAiReasoning}>Request AI via Router</button>
+        </div>
         <ul>
           <li><strong>raw intent:</strong> {intentToBuild.missionSpec.rawIntent}</li>
           <li><strong>generated mission spec:</strong> {intentToBuild.missionSpec.missionId}</li>
@@ -348,6 +401,15 @@ export default function MissionConsoleTile({
           <li><strong>blocked actions requiring approval:</strong> {intentToBuild.missionSpec.approvalBoundary.blockedActions.join(', ')}</li>
           <li><strong>generated Codex prompt:</strong> {intentToBuild.generatedPromptAvailable ? 'available' : 'not generated'}</li>
           <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
+          <li><strong>mission bridge state:</strong> {missionBridgeState.state}</li>
+          <li><strong>mission bridge packet generated:</strong> {missionBridgeState.missionPacketGeneratedFromOperatorIntent ? 'yes' : 'no'}</li>
+          <li><strong>mission bridge current mission title:</strong> {missionBridgeState.missionPacket?.missionTitle || 'n/a'}</li>
+          <li><strong>mission bridge acting agent:</strong> {missionBridgeState.orchestration?.actingAgent || 'none'}</li>
+          <li><strong>mission bridge pending approval:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>
+          <li><strong>mission bridge latest ai response:</strong> {missionBridgeState.latestAiResponse || 'n/a'}</li>
+          <li><strong>mission bridge next action:</strong> {missionBridgeState.nextRecommendedAction}</li>
+          <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
+          <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>
