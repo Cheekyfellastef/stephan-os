@@ -986,7 +986,7 @@ function initializePaneLayout() {
   });
   tilePaneManager.mountPaneFromSection({
     paneId: 'search-build-journey-pane',
-    title: 'Discovery Controls',
+    title: 'Search / Build Journey',
     section: elements.controlsPane,
     panelClassName: 'music-tile-pane',
   });
@@ -998,7 +998,7 @@ function initializePaneLayout() {
   });
   tilePaneManager.mountPaneFromSection({
     paneId: 'flow-now-playing-pane',
-    title: 'Playback Route',
+    title: 'Flow / Now Playing',
     section: elements.flowPane,
     panelClassName: 'music-tile-pane',
   });
@@ -1010,7 +1010,7 @@ function initializePaneLayout() {
   });
   tilePaneManager.mountPaneFromSection({
     paneId: 'results-journey-pane',
-    title: 'Journey Queue',
+    title: 'Results / Journey',
     section: elements.resultsPane,
     panelClassName: 'music-tile-pane',
   });
