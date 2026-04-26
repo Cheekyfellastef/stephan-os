@@ -11,6 +11,7 @@
     "stephanos:vite-dev": "npm run stephanos:ignite:vite-dev",
     "stephanos:ignite:launcher-root": "npm run stephanos:serve",
     "stephanos:ignite:vite-dev": "npm run stephanos:dev",
+    "stephanos:ignite:battle-bridge:repair": "npm run stephanos:battle-bridge:repair",
     "stephanos:dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "stephanos:build": "node scripts/build-stephanos-ui.mjs",
     "stephanos:guard:imports": "node scripts/guard-import-structure.mjs",
@@ -25,6 +26,8 @@
     "predeploy": "npm run stephanos:build && npm run stephanos:verify",
     "deploy": "npm run predeploy && echo \"Stephanos dist is verified and ready to publish from apps/stephanos/dist\"",
     "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs",
+    "stephanos:battle-bridge:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-backend-autostart.ps1",
+    "stephanos:battle-bridge:repair": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/repair-stephanos-battle-bridge.ps1",
     "stephanos:battle-bridge:autostart:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-backend-autostart.ps1",
     "stephanos:battle-bridge:autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-backend-autostart.ps1",
     "stephanos:battle-bridge:autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1"

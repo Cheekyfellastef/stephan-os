@@ -1,78 +1,108 @@
-# Battle Bridge backend autostart (Windows)
+# Battle Bridge backend autostart + stack repair (Windows)
 
-## Why this exists
+## Canonical Battle Bridge route
 
-Stephanos Battle Bridge is exposed over a **tailnet-only** HTTPS bridge at:
+Stephanos Battle Bridge is exposed over a **tailnet-only** HTTPS route at:
 
 - `https://desktop-9flonkj.taild6f215.ts.net`
 
-Tailscale Serve can persist the HTTPS proxy mapping across restarts, but it still proxies to the local backend target (`http://127.0.0.1:8787`). If the Stephanos backend is not running after Windows logon/reboot, the bridge has no active upstream process to reach.
+Expected Serve mapping:
 
-## Backend vs Tailscale Serve
+- `https://desktop-9flonkj.taild6f215.ts.net/` → `http://127.0.0.1:8787`
 
-- **Tailscale Serve**: persistent HTTPS-to-local proxy configuration.
-- **Stephanos backend**: local process that must be running to satisfy `/api/health` and other runtime requests.
+Funnel must remain disabled.
 
-This kit adds a Windows Scheduled Task that starts the backend at user logon. It does **not** change or reconfigure Tailscale Serve, and it does **not** enable public Funnel.
+## Operational model: backend lifecycle vs Tailscale lifecycle
 
-## One-time install
+These are intentionally separate concerns:
 
-Run this from the repository root on the Battle Bridge machine:
+- **Backend lifecycle (local process)**
+  - Managed by `start-stephanos-backend.ps1` and the scheduled task.
+  - Ensures local API health (`http://127.0.0.1:8787/api/health`).
+- **Tailscale transport lifecycle**
+  - Managed by Tailscale session + Serve configuration.
+  - Provides tailnet HTTPS transport to the local backend.
+
+The autostart installer only configures backend startup at logon. It does not make browser/runtime/provider assumptions and does not merge backend health with transport truth.
+
+## One-time autostart install (backend only)
+
+Run this on the Battle Bridge machine from repo root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-backend-autostart.ps1
+npm run stephanos:battle-bridge:autostart:install
 ```
 
-What the installer does:
+Installer behavior:
 
 - Creates/updates scheduled task: `Stephanos Battle Bridge Backend`
-- Trigger: at current user logon
-- Action: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/start-stephanos-backend.ps1`
-- Uses current user + interactive token (no stored password requirement in normal cases)
+- Trigger: current user logon
+- Action: `powershell.exe ... scripts/windows/start-stephanos-backend.ps1`
+- Does not modify Tailscale Serve mapping
+- Does not enable Funnel
 
-## Status check
+## Full stack status (backend + transport + hosted health)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-backend-autostart.ps1
+npm run stephanos:battle-bridge:status
 ```
 
-This reports:
+This reports explicit field-style status for:
 
 - Scheduled task presence/state/last result
-- Local backend health (`http://127.0.0.1:8787/api/health`)
-- `tailscale serve status` (if `tailscale` CLI is available)
-- Hosted bridge health (`https://desktop-9flonkj.taild6f215.ts.net/api/health`)
+- Local backend health: `http://127.0.0.1:8787/api/health`
+- Tailscale CLI presence
+- `tailscale status` summary and DNS/health warning lines
+- `tailscale serve status`
+- Expected Serve mapping presence for canonical host + `/` proxy target
+- Hosted bridge health: `https://desktop-9flonkj.taild6f215.ts.net/api/health`
 
-## Uninstall
+### DNS warnings policy
+
+Tailscale DNS/health warnings are surfaced as warnings. They are not treated as fatal by themselves when hosted bridge health is HTTP 200.
+
+## Full stack repair (safe, operator-invoked)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1
+npm run stephanos:battle-bridge:repair
 ```
 
-Safe behavior: if task is already absent, uninstall exits cleanly.
+Repair script (`scripts/windows/repair-stephanos-battle-bridge.ps1`) behavior:
 
-## Logs and runtime behavior
+1. Resolves repo root from script location and runs in repo root.
+2. Ensures `logs/battle-bridge/` exists.
+3. Checks local backend health.
+4. If backend unhealthy, invokes `start-stephanos-backend.ps1` and re-checks health.
+5. Verifies `tailscale.exe` is available.
+6. Reads `tailscale status` and `tailscale serve status`.
+7. If expected Serve mapping is missing, restores only:
+   - `/` proxy to `http://127.0.0.1:8787` via `tailscale serve --bg http://127.0.0.1:8787`
+8. Never enables Funnel and never exposes publicly.
+9. Polls hosted bridge health.
+10. Exits `0` only when both local and hosted health checks are healthy.
 
-`start-stephanos-backend.ps1`:
+This script is a visible repair/check layer, not hidden autonomous mutation.
 
-- Resolves repository root from script path
-- Uses repository root as working directory
-- Writes logs under `logs/battle-bridge/`
-- Checks local `/api/health` first
-  - If already healthy: logs and exits (no duplicate backend start)
-  - If unhealthy: runs canonical project start command (`npm run stephanos:serve`), then polls `/api/health` for bounded startup confirmation
+## Autostart status + uninstall
+
+```powershell
+npm run stephanos:battle-bridge:autostart:status
+npm run stephanos:battle-bridge:autostart:uninstall
+```
+
+Autostart uninstall is safe if already absent.
 
 ## Troubleshooting
 
-1. **Task exists but backend is down**
-   - Run status script and inspect `LastTaskResult`.
-   - Run starter manually to observe logging:
-     ```powershell
-     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/start-stephanos-backend.ps1
-     ```
-2. **`npm` not found**
-   - Ensure Node.js/npm is installed for the account running the task and available on PATH.
-3. **Tailscale bridge unhealthy while local is healthy**
-   - Verify `tailscale serve status` and that session is tailnet-authenticated.
-4. **Bridge config exists but route still fails**
-   - Confirm local backend responds on `http://127.0.0.1:8787/api/health`; bridge persistence alone is insufficient.
+1. **Backend healthy locally, hosted route unhealthy**
+   - Run:
+     - `npm run stephanos:battle-bridge:status`
+     - `npm run stephanos:battle-bridge:repair`
+   - Inspect `tailscale status`/`tailscale serve status` sections for auth/session/mapping drift.
+2. **`tailscale.exe` missing**
+   - Repair exits clearly non-zero after backend recovery checks, without masking backend result.
+3. **Task present but backend did not start after logon**
+   - Check scheduled task `LastTaskResult` and logs under `logs/battle-bridge/`.
+4. **DNS warnings shown**
+   - Treat as warning if hosted health returns HTTP 200.
+   - Treat as actionable if hosted health fails.
