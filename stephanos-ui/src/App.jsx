@@ -68,6 +68,7 @@ import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiag
 import { buildOpenClawIntegrationSnapshot } from './components/openclaw/openclawIntegrationAdapter.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
 
 const PANE_DRAG_BLOCK_SELECTOR = [
   'button',
@@ -190,6 +191,8 @@ export default function App() {
     safeApiStatus.baseUrl,
     safeProviderHealth[provider],
   );
+  const activeProviderModel = String(getActiveProviderConfig()?.model || '').trim().toLowerCase();
+  const heavyOllamaModelActive = provider === 'ollama' && HEAVY_OLLAMA_MODELS.has(activeProviderModel);
   const startupDiagnosticsVisible = runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking';
   const showCloudFallbackAction = provider === 'ollama' && runtimeStatus.cloudAvailable && !runtimeStatus.localAvailable;
   const runtimeFingerprint = useMemo(() => {
@@ -969,6 +972,11 @@ export default function App() {
         <p className="provider-dock-status">
           Backend API: <strong>{providerSummary.apiBaseUrl}</strong> · Runtime: <strong>{runtimeStatus.runtimeModeLabel}</strong> · Active Route: <strong>{routeTruthView.executedProvider}</strong> · Provider Target: <strong>{providerSummary.providerTarget}</strong>
         </p>
+        {heavyOllamaModelActive ? (
+          <p className="provider-dock-status provider-dock-status-warning">
+            <strong>Heavy local model may increase PC load.</strong>
+          </p>
+        ) : null}
         <ProviderToggle
           onTestConnection={refreshHealth}
           onSendTestPrompt={() => submitPrompt('Run a quick Stephanos provider self-test and explain what route is active right now.')}

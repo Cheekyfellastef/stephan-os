@@ -402,6 +402,10 @@ body {
   font-size: 0.86rem;
 }
 
+.provider-dock-status-warning {
+  color: #bfe0ff;
+}
+
 .output-panel {
   min-height: 360px;
   max-height: 540px;
@@ -465,6 +469,15 @@ body {
   z-index: 1;
   padding-top: 0.2rem;
   background: linear-gradient(180deg, rgba(2, 8, 18, 0), rgba(2, 8, 18, 0.96) 36%);
+}
+
+@media (min-width: 1200px) and (hover: hover) and (pointer: fine) {
+  .mission-console .panel-body,
+  .mission-console-surface-mode .mission-console .panel-body,
+  .cockpit-surface-mode .mission-console .panel-body {
+    height: min(88vh, 1520px);
+    max-height: min(88vh, 1520px);
+  }
 }
 
 .command-form {
