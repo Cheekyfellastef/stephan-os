@@ -834,3 +834,24 @@ test('canonical caravan mode remains staged-only when local authority unavailabl
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.caravanMode.canonCommitAllowed, false);
   assert.equal(adjudicated.canonicalRouteRuntimeTruth.caravanMode.promotionDeferred, true);
 });
+
+test('adjudicator projects fast response lane truth from provider execution intent', () => {
+  const adjudicated = adjudicateRuntimeTruth(buildBaseInput({
+    runtimeContext: {
+      sessionKind: 'hosted-web',
+      deviceContext: 'off-network',
+      providerExecutionIntent: {
+        fastResponseLaneEligible: true,
+        fastResponseLaneActive: true,
+        fastResponseLaneReason: 'short-local-private-prompt',
+        fastResponseModel: 'llama3.2:3b',
+        escalationModel: 'qwen:14b',
+        escalationReason: 'fast-lane-not-selected',
+      },
+    },
+  }));
+
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.fastResponseLaneEligible, true);
+  assert.equal(adjudicated.canonicalRouteRuntimeTruth.fastResponseModel, 'llama3.2:3b');
+  assert.equal(adjudicated.finalRouteTruth.fastResponseLaneActive, true);
+});

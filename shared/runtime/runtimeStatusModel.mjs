@@ -71,6 +71,42 @@ function normalizeProviderExecutionIntent(runtimeContext = {}) {
       || metadata.execution_selected_provider
       || metadata.selected_provider,
     ),
+    fastResponseLaneEligible: Boolean(
+      source.fastResponseLaneEligible
+      ?? runtimeContext.fastResponseLaneEligible
+      ?? metadata.fast_response_lane_eligible
+      ?? false,
+    ),
+    fastResponseLaneActive: Boolean(
+      source.fastResponseLaneActive
+      ?? runtimeContext.fastResponseLaneActive
+      ?? metadata.fast_response_lane_active
+      ?? false,
+    ),
+    fastResponseLaneReason: String(
+      source.fastResponseLaneReason
+      || runtimeContext.fastResponseLaneReason
+      || metadata.fast_response_lane_reason
+      || '',
+    ).trim(),
+    fastResponseModel: String(
+      source.fastResponseModel
+      || runtimeContext.fastResponseModel
+      || metadata.fast_response_model
+      || '',
+    ).trim(),
+    escalationModel: String(
+      source.escalationModel
+      || runtimeContext.escalationModel
+      || metadata.escalation_model
+      || '',
+    ).trim(),
+    escalationReason: String(
+      source.escalationReason
+      || runtimeContext.escalationReason
+      || metadata.escalation_reason
+      || '',
+    ).trim(),
   };
 }
 

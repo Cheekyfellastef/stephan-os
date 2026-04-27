@@ -101,6 +101,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       selectedProvider: 'groq',
       executedProvider: 'groq',
       operatorReason: 'No blocking route invariants detected.',
+      fastResponseLaneEligible: true,
+      fastResponseLaneActive: true,
+      fastResponseLaneReason: 'short-local-private-prompt',
+      fastResponseModel: 'llama3.2:3b',
+      escalationModel: 'qwen:14b',
+      escalationReason: 'fast-lane-not-selected',
     },
     runtimeSessionTruth: {
       sessionKind: 'hosted-web',
@@ -218,6 +224,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Surface Friction Pattern Latest: panel-dragging strength=emerging recurrence=3/);
   assert.match(snapshot, /Surface Active Recommendations: 1/);
   assert.match(snapshot, /Surface Accepted Rules: 1/);
+  assert.match(snapshot, /Fast Response Lane Active: true/);
+  assert.match(snapshot, /Fast Response Model: llama3.2:3b/);
   assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);

@@ -202,3 +202,22 @@ test('buildFinalRouteTruthView marks backend execution contract stale when route
   assert.equal(view.backendExecutionContractStatus, 'stale-or-incomplete');
   assert.equal(view.providerExecutionGateStatus, 'blocked');
 });
+
+test('buildFinalRouteTruthView projects fast response lane truth fields', () => {
+  const view = buildFinalRouteTruthView({
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'home-node',
+      fastResponseLaneEligible: true,
+      fastResponseLaneActive: true,
+      fastResponseLaneReason: 'short-local-private-prompt',
+      fastResponseModel: 'llama3.2:3b',
+      escalationModel: 'qwen:14b',
+      escalationReason: 'fast-lane-not-selected',
+    },
+  });
+
+  assert.equal(view.fastResponseLaneEligible, true);
+  assert.equal(view.fastResponseLaneActive, true);
+  assert.equal(view.fastResponseModel, 'llama3.2:3b');
+  assert.equal(view.escalationModel, 'qwen:14b');
+});
