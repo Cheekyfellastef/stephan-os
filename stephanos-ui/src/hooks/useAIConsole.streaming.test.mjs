@@ -26,3 +26,11 @@ test('useAIConsole preserves successful streamed token answers when metadata fin
   assert.match(source, /executionMetadata\.streaming_finalized !== true/);
   assert.match(source, /\[Streaming warning\] Final metadata was incomplete/);
 });
+
+test('useAIConsole tracks streaming request truth metadata and cancellation truth', () => {
+  assert.match(source, /streaming_mode_preference/);
+  assert.match(source, /streaming_request_source/);
+  assert.match(source, /execution_cancelled/);
+  assert.match(source, /provider_cancelled/);
+  assert.match(source, /ollama_abort_sent/);
+});

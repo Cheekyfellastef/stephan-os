@@ -393,6 +393,39 @@ test('runOllamaProvider does not apply warmup retry when disabled by policy flag
   }
 });
 
+test('runOllamaProvider forwards external AbortSignal into Ollama fetch execution', async () => {
+  const seenSignals = [];
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'qwen:14b' }] }) };
+    }
+    seenSignals.push(Boolean(options?.signal));
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          return {
+            async read() {
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    };
+  };
+  const controller = new AbortController();
+  try {
+    await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'ping' }] },
+      { baseURL: 'http://localhost:11434', model: 'qwen:14b', signal: controller.signal },
+    );
+    assert.equal(seenSignals.some(Boolean), true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('checkOllamaHealth returns misconfigured result for malformed URL', async () => {
   const health = await checkOllamaHealth({ baseURL: 'not-a-url' });
 

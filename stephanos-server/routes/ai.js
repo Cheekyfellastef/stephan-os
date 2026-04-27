@@ -276,9 +276,25 @@ router.post('/chat', async (req, res) => {
     freshnessContext = null,
     routeDecision = null,
     staleFallbackPermitted = undefined,
+    streaming_mode_preference: streamingModePreference = 'off',
+    streaming_requested: clientStreamingRequested = false,
+    streaming_request_source: clientStreamingRequestSource = 'off',
   } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const streamingEnabled = wantsStreaming(req);
+  const requestAbortController = new AbortController();
+  let cancellationSource = null;
+  const markCancelled = (source) => {
+    if (cancellationSource) return;
+    cancellationSource = source;
+    requestAbortController.abort();
+  };
+  req.on('aborted', () => markCancelled('client-disconnect'));
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      markCancelled('client-disconnect');
+    }
+  });
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
   const mergedProviderConfigs = buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
   const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
@@ -381,6 +397,11 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.flushHeaders?.();
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          markCancelled('client-disconnect');
+        }
+      });
     }
 
     const llmResult = await routeLLMRequest({
@@ -415,6 +436,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           });
         }
         : null,
+      abortSignal: requestAbortController.signal,
     });
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
@@ -557,7 +579,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       fast_response_model: fastLaneActiveTruth ? (fastLaneModelTruth || 'llama3.2:3b') : (fastResponseLaneTruth.model || null),
       escalation_model: fastResponseLaneTruth.escalationModel || llmResult.diagnostics?.ollama?.escalationModel || null,
       escalation_reason: fastResponseLaneTruth.escalationReason || llmResult.diagnostics?.ollama?.escalationReason || 'fast-lane-not-selected',
-      streaming_requested: Boolean(streamingEnabled),
+      streaming_mode_preference: String(streamingModePreference || 'off').trim().toLowerCase(),
+      streaming_requested: Boolean(streamingEnabled || clientStreamingRequested === true),
+      streaming_request_source: String(clientStreamingRequestSource || (streamingEnabled ? 'operator-on' : 'off')).trim().toLowerCase(),
       streaming_supported: actualProviderUsed === 'ollama',
       streaming_used: Boolean(streamingEnabled && actualProviderUsed === 'ollama'),
       streaming_provider: actualProviderUsed === 'ollama' ? 'ollama' : null,
@@ -636,6 +660,11 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       execution_blocked_reason: intentProposalEnvelope.execution.executionBlockedReason,
       execution_result_summary: intentProposalEnvelope.execution.executionResultSummary,
       provider_answered: Boolean(llmResult.ok && llmResult.outputText),
+      execution_cancelled: cancellationSource != null,
+      cancellation_source: cancellationSource,
+      provider_cancelled: cancellationSource != null,
+      provider_cancel_reason: cancellationSource ? `provider request aborted (${cancellationSource})` : null,
+      ollama_abort_sent: cancellationSource != null && String(canonicalProviderResolution.executedProvider || '').trim().toLowerCase() === 'ollama',
     };
     executionMetadata.executable_provider = providerHealthSnapshot?.[executionMetadata.selected_provider]?.ok
       ? executionMetadata.selected_provider
@@ -742,12 +771,19 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       escalation_model: executionMetadata.escalation_model,
       escalation_reason: executionMetadata.escalation_reason,
       streaming_requested: executionMetadata.streaming_requested,
+      streaming_mode_preference: executionMetadata.streaming_mode_preference,
+      streaming_request_source: executionMetadata.streaming_request_source,
       streaming_supported: executionMetadata.streaming_supported,
       streaming_used: executionMetadata.streaming_used,
       streaming_provider: executionMetadata.streaming_provider,
       streaming_model: executionMetadata.streaming_model,
       streaming_finalized: executionMetadata.streaming_finalized,
       streaming_fallback_reason: executionMetadata.streaming_fallback_reason,
+      execution_cancelled: executionMetadata.execution_cancelled,
+      cancellation_source: executionMetadata.cancellation_source,
+      provider_cancelled: executionMetadata.provider_cancelled,
+      provider_cancel_reason: executionMetadata.provider_cancel_reason,
+      ollama_abort_sent: executionMetadata.ollama_abort_sent,
       ollama_fallback_model: executionMetadata.ollama_fallback_model,
       ollama_fallback_model_used: executionMetadata.ollama_fallback_model_used,
       ollama_fallback_reason: executionMetadata.ollama_fallback_reason,
@@ -1033,6 +1069,29 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     }
     return res.json(successPayload);
   } catch (error) {
+    if (requestAbortController.signal.aborted || error?.name === 'AbortError') {
+      logger.info('Client disconnected; AI execution cancelled.', {
+        requestId,
+        cancellationSource: cancellationSource || 'client-disconnect',
+      });
+      if (!res.headersSent) {
+        return res.status(499).json({
+          success: false,
+          error: 'Request cancelled by client disconnect.',
+          error_code: 'REQUEST_CANCELLED',
+          data: {
+            execution_metadata: {
+              execution_cancelled: true,
+              cancellation_source: cancellationSource || 'client-disconnect',
+              provider_cancelled: true,
+              provider_cancel_reason: 'client disconnected before completion',
+              ollama_abort_sent: true,
+            },
+          },
+        });
+      }
+      return res.end();
+    }
     const appError = normalizeError(error);
     logger.error('Failed to process /api/ai/chat', {
       message: appError.message,

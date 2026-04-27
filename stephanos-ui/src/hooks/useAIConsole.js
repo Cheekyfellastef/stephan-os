@@ -307,7 +307,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     fast_response_lane_reason: effectiveFastLaneReason,
     fast_response_model: effectiveFastLaneModel,
     fast_response_streaming: Boolean(executionMetadata.fast_response_streaming ?? requestTrace.fast_response_streaming ?? false),
+    streaming_mode_preference: executionMetadata.streaming_mode_preference
+      || requestTrace.streaming_mode_preference
+      || requestPayload.streaming_mode_preference
+      || requestPayload.streamingMode
+      || 'off',
     streaming_requested: Boolean(executionMetadata.streaming_requested ?? requestTrace.streaming_requested ?? false),
+    streaming_request_source: executionMetadata.streaming_request_source
+      || requestTrace.streaming_request_source
+      || requestPayload.streaming_request_source
+      || 'off',
     streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
     streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
     streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
@@ -362,6 +371,11 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ),
     timeout_failure_layer: executionMetadata.timeout_failure_layer || requestTrace.timeout_failure_layer || null,
     timeout_failure_label: executionMetadata.timeout_failure_label || requestTrace.timeout_failure_label || null,
+    execution_cancelled: Boolean(executionMetadata.execution_cancelled ?? requestTrace.execution_cancelled ?? false),
+    cancellation_source: executionMetadata.cancellation_source || requestTrace.cancellation_source || null,
+    provider_cancelled: Boolean(executionMetadata.provider_cancelled ?? requestTrace.provider_cancelled ?? false),
+    provider_cancel_reason: executionMetadata.provider_cancel_reason || requestTrace.provider_cancel_reason || null,
+    ollama_abort_sent: Boolean(executionMetadata.ollama_abort_sent ?? requestTrace.ollama_abort_sent ?? false),
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
     selected_provider_health_ok: Boolean(executionMetadata.selected_provider_health_ok ?? requestTrace.selected_provider_health_ok ?? false),
@@ -1037,6 +1051,15 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
       timeoutOverrideApplied: Boolean(error?.details?.timeoutOverrideApplied),
     };
   }
+  if (error.code === 'CANCELLED') {
+    const cancellationSource = String(error?.details?.cancellationSource || 'user-cancel').trim();
+    return {
+      error: 'Request cancelled.',
+      errorCode: 'CANCELLED',
+      output: `Request cancelled before completion. Source: ${cancellationSource}.`,
+      cancellationSource,
+    };
+  }
   if (error.code === 'NETWORK_TRANSPORT_UNREACHABLE') {
     return { error: error.message, errorCode: error.code, output: 'Network transport failed before backend response. Check browser-to-backend reachability and CORS/published client route truth.' };
   }
@@ -1078,6 +1101,8 @@ function buildTimeoutFailureExecutionMetadata({
     providerConfigs: safeProviderConfigs,
     requestedModel,
   });
+  const cancellationSource = String(timeoutDetails.cancellationSource || '').trim() || null;
+  const cancelled = timeoutDetails.errorCode === 'CANCELLED' || Boolean(cancellationSource);
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
@@ -1115,6 +1140,14 @@ function buildTimeoutFailureExecutionMetadata({
     ),
     timeout_failure_layer: timeoutDetails.timeoutFailureLayer || null,
     timeout_failure_label: timeoutDetails.timeoutLabel || null,
+    streaming_mode_preference: requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'off',
+    streaming_requested: Boolean(requestPayload?.streaming_requested ?? false),
+    streaming_request_source: requestPayload?.streaming_request_source || 'off',
+    execution_cancelled: cancelled,
+    cancellation_source: cancellationSource,
+    provider_cancelled: cancelled,
+    provider_cancel_reason: cancelled ? `frontend abort propagated (${cancellationSource || 'unknown'})` : null,
+    ollama_abort_sent: cancelled && selectedProvider === 'ollama',
     fallback_used: false,
     fallback_reason: null,
     freshness_need: requestPayload?.freshnessContext?.freshnessNeed || 'low',
@@ -1270,6 +1303,7 @@ export function useAIConsole() {
     backendOnlySecrets: true,
   }), [hostedCloudCognition]);
   const startupOllamaSyncAttemptedRef = useRef(false);
+  const activePromptRequestRef = useRef(null);
   const providerHealthRef = useRef(providerHealth);
   const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
   const ollamaDraftConfig = effectiveProviderConfigs.ollama || {};
@@ -1929,6 +1963,8 @@ export function useAIConsole() {
     let activeRouteDecision = null;
     let inFlightRequestPayload = null;
     let inFlightRuntimeContext = null;
+    const requestAbortController = new AbortController();
+    activePromptRequestRef.current = requestAbortController;
 
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
@@ -2072,6 +2108,10 @@ export function useAIConsole() {
       const requestPayload = {
         provider: requestedProvider,
         routeMode: routeModeForRequest,
+        streamingMode,
+        streaming_mode_preference: streamingMode,
+        streaming_requested: false,
+        streaming_request_source: streamingMode === 'off' ? 'off' : 'pending',
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssemblyMetadata: contextAssembly.truthMetadata,
@@ -2168,6 +2208,7 @@ export function useAIConsole() {
         routeDecision: freshnessRouteDecision,
         contextAssembly,
         streamingMode,
+        abortSignal: activePromptRequestRef.current?.signal || null,
         onStreamEvent: (event) => {
           if (!event || event.type !== 'token') return;
           streamBuffer += String(event.content || '');
@@ -2400,33 +2441,68 @@ export function useAIConsole() {
       const uiError = transportErrorToUi(error, {
         routeDecision: activeRouteDecision,
       });
-      setStatus('error');
+      setStatus(uiError.errorCode === 'CANCELLED' ? 'cancelled' : 'error');
       const timeoutDetails = error?.details && typeof error.details === 'object' ? error.details : {};
       const timeoutFailureMetadata = buildTimeoutFailureExecutionMetadata({
         requestPayload: inFlightRequestPayload,
         runtimeContext: inFlightRuntimeContext,
         providerConfigs: effectiveProviderConfigs,
         fallbackProvider: provider,
-        timeoutDetails,
+        timeoutDetails: {
+          ...timeoutDetails,
+          errorCode: uiError.errorCode,
+          cancellationSource: uiError.cancellationSource || timeoutDetails.cancellationSource || null,
+        },
       });
       setLastExecutionMetadata(timeoutFailureMetadata);
-      setApiStatus((prev) => ({ ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() }));
+      setApiStatus((prev) => {
+        if (uiError.errorCode === 'TIMEOUT' || uiError.errorCode === 'CANCELLED') {
+          return {
+            ...prev,
+            state: 'online',
+            label: 'Backend reachable; execution interrupted',
+            detail: uiError.output,
+            backendReachable: prev.backendReachable !== false,
+            lastCheckedAt: new Date().toISOString(),
+          };
+        }
+        return { ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() };
+      });
 
-      setCommandHistory((prev) => appendCommandHistory(prev, {
-        id: `cmd_${Date.now()}`,
-        raw_input: prompt,
-        parsed_command: parsed,
-        route: 'assistant',
-        tool_used: null,
-        success: false,
-        output_text: uiError.output,
-        data_payload: null,
-        timing_ms: Math.round(performance.now() - startedAt),
-        timestamp: new Date().toISOString(),
-        error: uiError.error,
-        error_code: uiError.errorCode,
-        response: { type: 'assistant_response', route: 'assistant', success: false, output_text: uiError.output, error: uiError.error, error_code: uiError.errorCode },
-      }));
+      setCommandHistory((prev) => {
+        if (uiError.errorCode === 'CANCELLED') {
+          let updated = false;
+          const next = [...prev].reverse().map((entry) => {
+            if (updated || entry?.route !== 'assistant' || entry?.stream_finalized === true) return entry;
+            updated = true;
+            const partial = String(entry?.stream_buffer_text || '').trim();
+            return {
+              ...entry,
+              success: false,
+              output_text: partial || uiError.output,
+              stream_finalized: true,
+              error: uiError.error,
+              error_code: uiError.errorCode,
+            };
+          }).reverse();
+          if (updated) return next;
+        }
+        return appendCommandHistory(prev, {
+          id: `cmd_${Date.now()}`,
+          raw_input: prompt,
+          parsed_command: parsed,
+          route: 'assistant',
+          tool_used: null,
+          success: false,
+          output_text: uiError.output,
+          data_payload: null,
+          timing_ms: Math.round(performance.now() - startedAt),
+          timestamp: new Date().toISOString(),
+          error: uiError.error,
+          error_code: uiError.errorCode,
+          response: { type: 'assistant_response', route: 'assistant', success: false, output_text: uiError.output, error: uiError.error, error_code: uiError.errorCode },
+        });
+      });
       setDebugData({
         parsed_command: parsed,
         request_payload: inFlightRequestPayload,
@@ -2446,9 +2522,16 @@ export function useAIConsole() {
         execution_metadata: timeoutFailureMetadata,
       });
     } finally {
+      activePromptRequestRef.current = null;
       setIsBusy(false);
     }
   }
+
+  const cancelActivePrompt = useCallback(() => {
+    if (!activePromptRequestRef.current) return false;
+    activePromptRequestRef.current.abort('user-cancel');
+    return true;
+  }, []);
 
   function clearConsole() {
     setCommandHistory([]);
@@ -2599,6 +2682,7 @@ export function useAIConsole() {
     setInput,
     commandHistory,
     submitPrompt,
+    cancelActivePrompt,
     clearConsole,
     refreshHealth,
     runAiButlerAction,

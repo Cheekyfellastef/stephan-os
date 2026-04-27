@@ -12,6 +12,7 @@ import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
 const HOSTED_COGNITION_PROVIDER_ORDER = ['groq', 'gemini'];
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -37,6 +38,24 @@ function firstNonEmpty(...values) {
     if (normalized) return normalized;
   }
   return '';
+}
+
+function resolveStreamingRequestPolicy({
+  streamingMode = 'off',
+  provider = '',
+  providerConfigs = {},
+} = {}) {
+  const normalizedMode = String(streamingMode || 'off').trim().toLowerCase();
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+  const configuredModel = String(providerConfigs?.[normalizedProvider]?.model || '').trim().toLowerCase();
+  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(configuredModel);
+  if (normalizedMode === 'on' && normalizedProvider === 'ollama') {
+    return { normalizedMode, streamingRequested: true, streamingRequestSource: 'operator-on' };
+  }
+  if (normalizedMode === 'auto' && heavyOllamaModel) {
+    return { normalizedMode, streamingRequested: true, streamingRequestSource: 'auto-heavy-ollama' };
+  }
+  return { normalizedMode, streamingRequested: false, streamingRequestSource: 'off' };
 }
 
 function resolveHostedWorkerEndpoint(baseUrl = '', chatPath = HOSTED_COGNITION_CHAT_PATH) {
@@ -564,13 +583,29 @@ export function resolveTimeoutExecutionTruth({
   };
 }
 
-async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null) {
+async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null, requestControl = {}) {
   const apiConfig = getApiConfig();
   const resolvedTimeoutMs = Number(timeoutPolicy?.uiRequestTimeoutMs) || Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
   const timeoutMs = Number.isFinite(resolvedTimeoutMs) && resolvedTimeoutMs > 0 ? resolvedTimeoutMs : apiConfig.timeoutMs;
   const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let abortSource = '';
+  const externalSignal = requestControl?.abortSignal;
+  const timeoutAbort = setTimeout(() => {
+    abortSource = 'ui-timeout';
+    controller.abort();
+  }, timeoutMs);
+  if (externalSignal && typeof externalSignal.addEventListener === 'function') {
+    if (externalSignal.aborted) {
+      abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', () => {
+        abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+        controller.abort();
+      }, { once: true });
+    }
+  }
 
   try {
     const response = await fetch(buildApiUrl(path, baseUrl), { ...options, signal: controller.signal });
@@ -587,6 +622,15 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
   } catch (error) {
     if (error?.isTransportError) throw error;
     if (error?.name === 'AbortError') {
+      if (abortSource && abortSource !== 'ui-timeout') {
+        throw createTransportError({
+          code: 'CANCELLED',
+          message: 'Request cancelled before completion.',
+          details: {
+            cancellationSource: abortSource,
+          },
+        });
+      }
       throw createTransportError({
         code: 'TIMEOUT',
         message: `Request timed out after ${timeoutMs}ms.`,
@@ -615,17 +659,33 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
       details: { reason: error?.message },
     });
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutAbort);
   }
 }
 
-async function requestEventStream(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null, { onEvent } = {}) {
+async function requestEventStream(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null, { onEvent, requestControl = {} } = {}) {
   const apiConfig = getApiConfig();
   const resolvedTimeoutMs = Number(timeoutPolicy?.uiRequestTimeoutMs) || Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
   const timeoutMs = Number.isFinite(resolvedTimeoutMs) && resolvedTimeoutMs > 0 ? resolvedTimeoutMs : apiConfig.timeoutMs;
   const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let abortSource = '';
+  const externalSignal = requestControl?.abortSignal;
+  const timeout = setTimeout(() => {
+    abortSource = 'ui-timeout';
+    controller.abort();
+  }, timeoutMs);
+  if (externalSignal && typeof externalSignal.addEventListener === 'function') {
+    if (externalSignal.aborted) {
+      abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', () => {
+        abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+        controller.abort();
+      }, { once: true });
+    }
+  }
   try {
     const response = await fetch(buildApiUrl(path, baseUrl), {
       ...options,
@@ -733,6 +793,13 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
+      if (abortSource && abortSource !== 'ui-timeout') {
+        throw createTransportError({
+          code: 'CANCELLED',
+          message: 'Request cancelled before completion.',
+          details: { cancellationSource: abortSource },
+        });
+      }
       throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
     }
     throw error;
@@ -768,6 +835,7 @@ export async function sendPrompt({
   contextAssembly = null,
   streamingMode = 'off',
   onStreamEvent = null,
+  abortSignal = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const timeoutExecutionTruth = resolveTimeoutExecutionTruth({
@@ -829,6 +897,15 @@ export async function sendPrompt({
       ? { contextAssemblyMetadata: contextAssembly.truthMetadata }
       : {}),
   };
+  const streamingPolicy = resolveStreamingRequestPolicy({
+    streamingMode,
+    provider,
+    providerConfigs: safeProviderConfigs,
+  });
+  payload.streamingMode = streamingPolicy.normalizedMode;
+  payload.streaming_mode_preference = streamingPolicy.normalizedMode;
+  payload.streaming_requested = streamingPolicy.streamingRequested;
+  payload.streaming_request_source = streamingPolicy.streamingRequestSource;
 
   const hostedDispatch = resolveHostedCloudDispatch({
     routeDecision,
@@ -864,13 +941,9 @@ export async function sendPrompt({
   });
 
   let result;
-  const normalizedStreamingMode = String(streamingMode || 'off').trim().toLowerCase();
-  const streamingRequestedByMode = normalizedStreamingMode === 'on'
-    || (normalizedStreamingMode === 'auto' && String(payload.provider || '').toLowerCase() === 'ollama');
-  const explicitStreamingRequest = streamingRequestedByMode
+  const explicitStreamingRequest = streamingPolicy.streamingRequested
     && typeof onStreamEvent === 'function'
     && String(payload.provider || '').toLowerCase() === 'ollama';
-  payload.streamingMode = normalizedStreamingMode;
   try {
     if (explicitStreamingRequest) {
       result = await requestEventStream('/api/ai/chat?stream=1', {
@@ -885,20 +958,23 @@ export async function sendPrompt({
             ...eventData,
           });
         },
+        requestControl: {
+          abortSignal,
+        },
       });
       if (!result?.data?.success) {
         result = await requestJson('/api/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-        }, runtimeContext, timeoutPolicyWithExecution);
+        }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
       }
     } else {
       result = await requestJson('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      }, runtimeContext, timeoutPolicyWithExecution);
+      }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
     }
   } catch (error) {
     if (explicitStreamingRequest) {
@@ -906,7 +982,7 @@ export async function sendPrompt({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      }, runtimeContext, timeoutPolicyWithExecution);
+      }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
     } else if (!hostedDispatch.enabled) {
       throw error;
     } else {

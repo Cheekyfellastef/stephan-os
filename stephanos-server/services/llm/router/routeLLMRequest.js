@@ -130,7 +130,10 @@ async function executeProvider(provider, request, routerConfig, providerConfigOv
     selectedProviderHealthOkAtSelection: routeSelectionHealth.ok === true,
   });
   const health = await PROVIDER_HEALTH_CHECKS[provider](config);
-  const result = await PROVIDER_RUNNERS[provider](request, config);
+  const result = await PROVIDER_RUNNERS[provider](request, {
+    ...config,
+    signal: routerConfig?.abortSignal || null,
+  });
 
   return {
     provider,
@@ -317,9 +320,11 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     const attempt = await executeProvider(provider, request, {
       ...routerConfig,
       providerHealthSnapshot,
+      abortSignal: configInput?.abortSignal || null,
     }, {
       ...(provider === 'ollama' && fastLaneModel ? { model: fastLaneModel } : {}),
       ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
+      ...(configInput?.abortSignal ? { signal: configInput.abortSignal } : {}),
     });
     const failureReason = summarizeAttemptFailure(provider, attempt);
 
@@ -332,9 +337,11 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       const escalationAttempt = await executeProvider(provider, request, {
         ...routerConfig,
         providerHealthSnapshot,
+        abortSignal: configInput?.abortSignal || null,
       }, {
         model: initialEscalationModel,
         ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
+        ...(configInput?.abortSignal ? { signal: configInput.abortSignal } : {}),
       });
       const escalationFailureReason = summarizeAttemptFailure(provider, escalationAttempt);
       attempts.push({

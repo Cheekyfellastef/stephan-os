@@ -12,6 +12,7 @@ export default function AIConsole({
   input,
   setInput,
   submitPrompt,
+  cancelActivePrompt,
   commandHistory,
 }) {
   const containerRef = useRef(null);
@@ -175,6 +176,11 @@ export default function AIConsole({
             disabled={isBusy}
           />
           <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
+          {isBusy ? (
+            <button type="button" className="ghost-button" onClick={() => cancelActivePrompt?.()}>
+              Stop generating
+            </button>
+          ) : null}
         </form>
       </div>
     </CollapsiblePanel>

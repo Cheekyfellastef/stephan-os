@@ -24,5 +24,15 @@ test('/api/ai/chat SSE emits final, metadata, and completion marker events', () 
 
 test('/api/ai/chat execution metadata tracks streaming_used only when SSE is active', () => {
   assert.match(source, /streaming_used:\s*Boolean\(streamingEnabled && actualProviderUsed === 'ollama'\)/);
-  assert.match(source, /fast_response_streaming:\s*Boolean\(streamingEnabled && fastResponseLaneTruth\.active && actualProviderUsed === 'ollama'\)/);
+  assert.match(source, /fast_response_streaming:\s*Boolean\(streamingEnabled && fastLaneActiveTruth && actualProviderUsed === 'ollama'\)/);
+  assert.match(source, /streaming_mode_preference:/);
+  assert.match(source, /streaming_request_source:/);
+});
+
+test('/api/ai/chat propagates client disconnect cancellation into provider execution', () => {
+  assert.match(source, /req\.on\('aborted'/);
+  assert.match(source, /req\.on\('close'/);
+  assert.match(source, /abortSignal:\s*requestAbortController\.signal/);
+  assert.match(source, /execution_cancelled:/);
+  assert.match(source, /ollama_abort_sent:/);
 });
