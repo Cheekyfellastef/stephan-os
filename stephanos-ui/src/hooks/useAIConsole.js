@@ -311,12 +311,40 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.streaming_mode_preference
       || requestPayload.streaming_mode_preference
       || requestPayload.streamingMode
-      || 'off',
+      || 'auto',
+    streaming_mode_preference_input: executionMetadata.streaming_mode_preference_input
+      || requestTrace.streaming_mode_preference_input
+      || requestPayload.streaming_mode_preference_input
+      || requestPayload.streaming_mode_preference
+      || requestPayload.streamingMode
+      || 'auto',
+    streaming_mode_preference_rehydrated: Boolean(
+      executionMetadata.streaming_mode_preference_rehydrated
+      ?? requestTrace.streaming_mode_preference_rehydrated
+      ?? requestPayload.streaming_mode_preference_rehydrated
+      ?? false,
+    ),
+    streaming_persistence_source: executionMetadata.streaming_persistence_source
+      || requestTrace.streaming_persistence_source
+      || requestPayload.streaming_persistence_source
+      || 'default/auto',
+    streaming_persistence_updated_at: executionMetadata.streaming_persistence_updated_at
+      || requestTrace.streaming_persistence_updated_at
+      || requestPayload.streaming_persistence_updated_at
+      || null,
     streaming_requested: Boolean(executionMetadata.streaming_requested ?? requestTrace.streaming_requested ?? false),
     streaming_request_source: executionMetadata.streaming_request_source
       || requestTrace.streaming_request_source
       || requestPayload.streaming_request_source
-      || 'off',
+      || 'auto-default-off',
+    streaming_policy_decision: executionMetadata.streaming_policy_decision
+      || requestTrace.streaming_policy_decision
+      || requestPayload.streaming_policy_decision
+      || null,
+    streaming_policy_reason: executionMetadata.streaming_policy_reason
+      || requestTrace.streaming_policy_reason
+      || requestPayload.streaming_policy_reason
+      || null,
     streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
     streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
     streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
@@ -1140,9 +1168,15 @@ function buildTimeoutFailureExecutionMetadata({
     ),
     timeout_failure_layer: timeoutDetails.timeoutFailureLayer || null,
     timeout_failure_label: timeoutDetails.timeoutLabel || null,
-    streaming_mode_preference: requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'off',
+    streaming_mode_preference: requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto',
+    streaming_mode_preference_input: requestPayload?.streaming_mode_preference_input || requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto',
+    streaming_mode_preference_rehydrated: Boolean(requestPayload?.streaming_mode_preference_rehydrated ?? false),
+    streaming_persistence_source: requestPayload?.streaming_persistence_source || 'default/auto',
+    streaming_persistence_updated_at: requestPayload?.streaming_persistence_updated_at || null,
     streaming_requested: Boolean(requestPayload?.streaming_requested ?? false),
-    streaming_request_source: requestPayload?.streaming_request_source || 'off',
+    streaming_request_source: requestPayload?.streaming_request_source || 'auto-default-off',
+    streaming_policy_decision: requestPayload?.streaming_policy_decision || null,
+    streaming_policy_reason: requestPayload?.streaming_policy_reason || null,
     execution_cancelled: cancelled,
     cancellation_source: cancellationSource,
     provider_cancelled: cancelled,
@@ -1235,6 +1269,9 @@ export function useAIConsole() {
     provider,
     routeMode,
     streamingMode,
+    streamingModePreferenceRehydrated,
+    streamingPersistenceSource,
+    streamingPersistenceUpdatedAt,
     devMode,
     fallbackEnabled,
     fallbackOrder,
@@ -2114,9 +2151,15 @@ export function useAIConsole() {
         provider: requestedProvider,
         routeMode: routeModeForRequest,
         streamingMode,
+        streaming_mode_preference_input: streamingPolicy.streamingModePreferenceInput,
         streaming_mode_preference: streamingPolicy.normalizedMode,
+        streaming_mode_preference_rehydrated: streamingModePreferenceRehydrated === true,
+        streaming_persistence_source: streamingPersistenceSource || 'default/auto',
+        streaming_persistence_updated_at: streamingPersistenceUpdatedAt || null,
         streaming_requested: streamingPolicy.streamingRequested,
         streaming_request_source: streamingPolicy.streamingRequestSource,
+        streaming_policy_decision: streamingPolicy.streamingPolicyDecision,
+        streaming_policy_reason: streamingPolicy.streamingPolicyReason,
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssemblyMetadata: contextAssembly.truthMetadata,

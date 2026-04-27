@@ -591,12 +591,27 @@ function normalizeStoredSettings(persistedSession) {
       () => normalizeHostedCloudCognitionSettings(persistedSettings.hostedCloudCognition),
       { sourceFunction: 'normalizeStoredSettings' },
     );
+    const savedStreamingMode = String(
+      persistedSettings.streamingMode
+      ?? persistedSettings.streamingModePreference
+      ?? persistedSettings.streaming_mode_preference
+      ?? '',
+    ).trim().toLowerCase();
+    const hasSavedStreamingMode = savedStreamingMode.length > 0;
+    const normalizedStreamingMode = normalizeStreamingMode(hasSavedStreamingMode ? savedStreamingMode : defaults.streamingMode);
 
     return {
       ...defaults,
       provider: normalizeProviderSelection(persistedSettings.provider),
       routeMode: normalizeRouteMode(persistedSettings.routeMode),
-      streamingMode: normalizeStreamingMode(persistedSettings.streamingMode),
+      streamingMode: normalizedStreamingMode,
+      streamingModePreferenceRehydrated: hasSavedStreamingMode,
+      streamingPersistenceSource: hasSavedStreamingMode ? 'saved/operator' : 'default/auto',
+      streamingPersistenceUpdatedAt: String(
+        persistedSettings.streaming_persistence_updated_at
+        || persistedSettings.streamingPersistenceUpdatedAt
+        || '',
+      ),
       devMode: persistedSettings.devMode !== false,
       fallbackEnabled: persistedSettings.fallbackEnabled !== false,
       disableHomeNodeForLocalSession: persistedSettings.disableHomeNodeForLocalSession === true,
@@ -869,6 +884,9 @@ export function AIStoreProvider({ children }) {
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
   const [routeMode, setRouteModeState] = useState(initialSettings.routeMode || DEFAULT_ROUTE_MODE);
   const [streamingMode, setStreamingModeState] = useState(initialSettings.streamingMode || DEFAULT_STREAMING_MODE);
+  const [streamingModePreferenceRehydrated, setStreamingModePreferenceRehydrated] = useState(initialSettings.streamingModePreferenceRehydrated === true);
+  const [streamingPersistenceSource, setStreamingPersistenceSource] = useState(initialSettings.streamingPersistenceSource || 'default/auto');
+  const [streamingPersistenceUpdatedAt, setStreamingPersistenceUpdatedAt] = useState(initialSettings.streamingPersistenceUpdatedAt || '');
   const [devMode, setDevModeState] = useState(initialSettings.devMode);
   const [fallbackEnabled, setFallbackEnabledState] = useState(initialSettings.fallbackEnabled);
   const [disableHomeNodeForLocalSession, setDisableHomeNodeForLocalSessionState] = useState(initialSettings.disableHomeNodeForLocalSession === true);
@@ -1237,6 +1255,9 @@ export function AIStoreProvider({ children }) {
           provider,
           routeMode,
           streamingMode,
+          streamingModePreference: streamingMode,
+          streaming_mode_preference: streamingMode,
+          streaming_persistence_updated_at: streamingPersistenceUpdatedAt || '',
           devMode,
           fallbackEnabled,
           disableHomeNodeForLocalSession,
@@ -1291,6 +1312,7 @@ export function AIStoreProvider({ children }) {
     provider,
     routeMode,
     streamingMode,
+    streamingPersistenceUpdatedAt,
     devMode,
     fallbackEnabled,
     disableHomeNodeForLocalSession,
@@ -1410,7 +1432,11 @@ export function AIStoreProvider({ children }) {
   }, []);
 
   const setStreamingMode = useCallback((nextStreamingMode) => {
-    setStreamingModeState(normalizeStreamingMode(nextStreamingMode));
+    const normalized = normalizeStreamingMode(nextStreamingMode);
+    setStreamingModeState(normalized);
+    setStreamingModePreferenceRehydrated(true);
+    setStreamingPersistenceSource('saved/operator');
+    setStreamingPersistenceUpdatedAt(new Date().toISOString());
   }, []);
 
   const setDevMode = useCallback((next) => {
@@ -1762,6 +1788,9 @@ export function AIStoreProvider({ children }) {
     setProviderState(defaults.provider);
     setRouteModeState(defaults.routeMode);
     setStreamingModeState(defaults.streamingMode || DEFAULT_STREAMING_MODE);
+    setStreamingModePreferenceRehydrated(false);
+    setStreamingPersistenceSource('default/auto');
+    setStreamingPersistenceUpdatedAt('');
     setDevModeState(defaults.devMode);
     setFallbackEnabledState(defaults.fallbackEnabled);
     setDisableHomeNodeForLocalSessionState(defaults.disableHomeNodeForLocalSession === true);
@@ -2568,6 +2597,9 @@ export function AIStoreProvider({ children }) {
     routeMode,
     setRouteMode,
     streamingMode,
+    streamingModePreferenceRehydrated,
+    streamingPersistenceSource,
+    streamingPersistenceUpdatedAt,
     setStreamingMode,
     devMode,
     setDevMode,
@@ -2704,6 +2736,9 @@ export function AIStoreProvider({ children }) {
     providerSelectionSource,
     routeMode,
     streamingMode,
+    streamingModePreferenceRehydrated,
+    streamingPersistenceSource,
+    streamingPersistenceUpdatedAt,
     devMode,
     fallbackEnabled,
     disableHomeNodeForLocalSession,

@@ -41,21 +41,53 @@ function firstNonEmpty(...values) {
 }
 
 export function resolveStreamingRequestPolicy({
-  streamingMode = 'off',
+  streamingMode = 'auto',
   provider = '',
   providerConfigs = {},
 } = {}) {
-  const normalizedMode = String(streamingMode || 'off').trim().toLowerCase();
+  const streamingModePreferenceInput = String(streamingMode || 'auto').trim().toLowerCase();
+  const normalizedMode = ['off', 'auto', 'on'].includes(streamingModePreferenceInput) ? streamingModePreferenceInput : 'auto';
   const normalizedProvider = String(provider || '').trim().toLowerCase();
   const configuredModel = String(providerConfigs?.[normalizedProvider]?.model || '').trim().toLowerCase();
   const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(configuredModel);
-  if (normalizedMode === 'on' && normalizedProvider === 'ollama') {
-    return { normalizedMode, streamingRequested: true, streamingRequestSource: 'operator-on' };
+  if (normalizedMode === 'on') {
+    return {
+      normalizedMode,
+      streamingModePreferenceInput,
+      streamingRequested: true,
+      streamingRequestSource: 'operator-on',
+      streamingPolicyDecision: 'stream-enabled',
+      streamingPolicyReason: 'Operator selected Streaming Mode = on.',
+    };
+  }
+  if (normalizedMode === 'off') {
+    return {
+      normalizedMode,
+      streamingModePreferenceInput,
+      streamingRequested: false,
+      streamingRequestSource: 'operator-off',
+      streamingPolicyDecision: 'stream-disabled',
+      streamingPolicyReason: 'Operator selected Streaming Mode = off.',
+    };
   }
   if (normalizedMode === 'auto' && heavyOllamaModel) {
-    return { normalizedMode, streamingRequested: true, streamingRequestSource: 'auto-heavy-ollama' };
+    return {
+      normalizedMode,
+      streamingModePreferenceInput,
+      streamingRequested: true,
+      streamingRequestSource: 'auto-heavy-ollama',
+      streamingPolicyDecision: 'stream-enabled',
+      streamingPolicyReason: 'Auto mode enabled streaming for heavy Ollama model.',
+    };
   }
-  return { normalizedMode, streamingRequested: false, streamingRequestSource: 'off' };
+  return {
+    normalizedMode,
+    streamingModePreferenceInput,
+    streamingRequested: false,
+    streamingRequestSource: 'auto-default-off',
+    streamingPolicyDecision: 'stream-disabled',
+    streamingPolicyReason: 'Auto mode kept JSON request path for this provider/model.',
+  };
 }
 
 function resolveHostedWorkerEndpoint(baseUrl = '', chatPath = HOSTED_COGNITION_CHAT_PATH) {
@@ -833,7 +865,7 @@ export async function sendPrompt({
   freshnessContext = null,
   routeDecision = null,
   contextAssembly = null,
-  streamingMode = 'off',
+  streamingMode = 'auto',
   onStreamEvent = null,
   abortSignal = null,
 }) {
@@ -904,8 +936,12 @@ export async function sendPrompt({
   });
   payload.streamingMode = streamingPolicy.normalizedMode;
   payload.streaming_mode_preference = streamingPolicy.normalizedMode;
+  payload.streaming_mode_preference_input = streamingPolicy.streamingModePreferenceInput;
   payload.streaming_requested = streamingPolicy.streamingRequested;
   payload.streaming_request_source = streamingPolicy.streamingRequestSource;
+  payload.streaming_policy_decision = streamingPolicy.streamingPolicyDecision;
+  payload.streaming_policy_reason = streamingPolicy.streamingPolicyReason;
+  payload.stream = streamingPolicy.streamingRequested;
 
   const hostedDispatch = resolveHostedCloudDispatch({
     routeDecision,

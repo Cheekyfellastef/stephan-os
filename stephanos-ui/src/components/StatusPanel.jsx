@@ -302,7 +302,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastFastResponseStreaming: String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a'),
       lastStreamingRequested: String(lastExecutionMetadata?.streaming_requested ?? 'n/a'),
       lastStreamingModePreference: lastExecutionMetadata?.streaming_mode_preference || 'n/a',
+      lastStreamingPreferenceRehydrated: lastExecutionMetadata?.streaming_mode_preference_rehydrated === true ? 'yes' : 'no',
+      lastStreamingPersistenceSource: lastExecutionMetadata?.streaming_persistence_source || 'n/a',
+      lastStreamingPersistenceUpdatedAt: lastExecutionMetadata?.streaming_persistence_updated_at || 'n/a',
       lastStreamingRequestSource: lastExecutionMetadata?.streaming_request_source || 'n/a',
+      lastStreamingPolicyDecision: lastExecutionMetadata?.streaming_policy_decision || 'n/a',
+      lastStreamingPolicyReason: lastExecutionMetadata?.streaming_policy_reason || 'n/a',
       lastStreamingSupported: String(lastExecutionMetadata?.streaming_supported ?? 'n/a'),
       lastStreamingUsed: String(lastExecutionMetadata?.streaming_used ?? 'n/a'),
       lastStreamingProvider: lastExecutionMetadata?.streaming_provider || 'n/a',
@@ -666,7 +671,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Fast Response Streaming: {String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a')}</li>
         <li>Streaming Requested: {String(lastExecutionMetadata?.streaming_requested ?? 'n/a')}</li>
         <li>Streaming Mode Preference: {lastExecutionMetadata?.streaming_mode_preference || 'n/a'}</li>
+        <li>Streaming Preference Rehydrated: {lastExecutionMetadata?.streaming_mode_preference_rehydrated === true ? 'yes' : 'no'}</li>
+        <li>Streaming Persistence Source: {lastExecutionMetadata?.streaming_persistence_source || 'n/a'}</li>
+        <li>Streaming Persistence Updated At: {lastExecutionMetadata?.streaming_persistence_updated_at || 'n/a'}</li>
         <li>Streaming Request Source: {lastExecutionMetadata?.streaming_request_source || 'n/a'}</li>
+        <li>Streaming Policy Decision: {lastExecutionMetadata?.streaming_policy_decision || 'n/a'}</li>
+        <li>Streaming Policy Reason: {lastExecutionMetadata?.streaming_policy_reason || 'n/a'}</li>
         <li>Streaming Supported: {String(lastExecutionMetadata?.streaming_supported ?? 'n/a')}</li>
         <li>Streaming Used: {String(lastExecutionMetadata?.streaming_used ?? 'n/a')}</li>
         <li>Streaming Provider: {lastExecutionMetadata?.streaming_provider || 'n/a'}</li>
