@@ -73,7 +73,7 @@ export default function MissionConsoleTile({
       role: 'assistant',
       responder: 'Stephanos',
       target: 'stephanos',
-      content: 'Mission Console online. Operator authority active. Route and proposal guardrails are enforced.',
+      content: 'Agent Mission Console (Mission Router) online. Operator authority active. Route and proposal guardrails are enforced.',
       status: 'ready',
     }),
   ]);
@@ -99,7 +99,7 @@ export default function MissionConsoleTile({
     lastInspectionScope: lastScanReport?.inspected?.categories || [],
     lastProposedPrompt: proposalCards[0]?.candidatePrompt || 'none',
     sessionState: proposalCards.some((card) => card.approvalStatus === 'approved') ? 'approval-queued' : 'ready-for-review',
-    currentActivity: `Mission Console target: ${resolvedTarget.label}`,
+    currentActivity: `Agent Mission Console target: ${resolvedTarget.label}`,
   }), [branchName, finalRouteTruth, openClawIntentType, proposalCards, resolvedTarget.label, runtimeStatusModel, lastScanReport]);
 
   useEffect(() => {
@@ -292,7 +292,7 @@ export default function MissionConsoleTile({
       bridgeState: missionBridgeState,
       prompt: intentInput.rawIntent,
       invokeAi: typeof submitPrompt === 'function'
-        ? async (prompt) => submitPrompt(prompt, { orchestrationTruth })
+        ? async (prompt) => submitPrompt(prompt, { orchestrationTruth, submissionSource: 'agent-mission-console', submissionRoute: 'mission-bridge' })
         : null,
     });
     setMissionBridgeState(updated);
@@ -313,8 +313,8 @@ export default function MissionConsoleTile({
   return (
     <CollapsiblePanel
       panelId="missionConsolePanel"
-      title="Mission Console"
-      description="Primary governed operator workspace for Stephanos, agents, and bounded OpenClaw interaction."
+      title="Agent Mission Console"
+      description="Mission Router workspace for agent mission packets, target routing, and bounded OpenClaw interaction."
       className="pane-span-2 mission-console-workspace"
       isOpen={uiLayout.missionConsolePanel !== false}
       onToggle={() => togglePanel('missionConsolePanel')}
@@ -322,7 +322,7 @@ export default function MissionConsoleTile({
       <section className="mission-console-section">
         <h4>Workspace Header / Command Authority</h4>
         <ul>
-          <li><strong>Current Workspace:</strong> Mission Console</li>
+          <li><strong>Current Workspace:</strong> Agent Mission Console (Mission Router)</li>
           <li><strong>Operator Authority:</strong> Active</li>
           <li><strong>Runtime Truth Source:</strong> {openClawIntegration.connectedTo.routeTruthSource}</li>
           <li><strong>Route Status Summary:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} / {finalRouteTruth?.routeKind || 'unknown'}</li>
@@ -367,6 +367,8 @@ export default function MissionConsoleTile({
           </label>
         ) : null}
         <p><strong>Active routing target before submit:</strong> {resolvedTarget.label}</p>
+        <p><strong>Target: Agents → Mission Bridge</strong></p>
+        <p><strong>Target: Stephanos → Assistant Router</strong></p>
       </section>
 
       <section className="mission-console-section">
@@ -405,6 +407,10 @@ export default function MissionConsoleTile({
           <li><strong>blocked actions requiring approval:</strong> {intentToBuild.missionSpec.approvalBoundary.blockedActions.join(', ')}</li>
           <li><strong>generated Codex prompt:</strong> {intentToBuild.generatedPromptAvailable ? 'available' : 'not generated'}</li>
           <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
+          <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
+          <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
+          <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>
+          <li><strong>mission bridge current packet state:</strong> {missionBridgeState.missionPacket?.lifecycleState || missionBridgeState.state}</li>
           <li><strong>mission bridge state:</strong> {missionBridgeState.state}</li>
           <li><strong>mission bridge packet generated:</strong> {missionBridgeState.missionPacketGeneratedFromOperatorIntent ? 'yes' : 'no'}</li>
           <li><strong>mission bridge current mission title:</strong> {missionBridgeState.missionPacket?.missionTitle || 'n/a'}</li>
@@ -514,7 +520,7 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section">
-        <h4>Integration Topology in Mission Console</h4>
+        <h4>Integration Topology in Agent Mission Console</h4>
         <p>{openClawIntegration.topology.map((node) => node.label).join(' -> ')}</p>
         <ul>
           {openClawIntegration.topology.map((node) => <li key={node.id}><strong>{node.label}:</strong> {node.policyNote}</li>)}
@@ -529,7 +535,7 @@ export default function MissionConsoleTile({
           <li><strong>catastrophic-safety blocks active:</strong> {guardrails.blockedActionCount}</li>
           <li><strong>no direct destructive execution:</strong> blocked</li>
           <li><strong>no secret discovery/export:</strong> blocked</li>
-          <li><strong>no plugin installation from Mission Console:</strong> blocked</li>
+          <li><strong>no plugin installation from Agent Mission Console:</strong> blocked</li>
           <li><strong>no GitHub destructive operations:</strong> blocked</li>
           <li><strong>no filesystem destructive operations:</strong> blocked</li>
           <li><strong>no hidden background tasks:</strong> blocked</li>

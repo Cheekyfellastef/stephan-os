@@ -55,6 +55,8 @@ export function createMissionBridgeState() {
     lastAiRouterRequestSource: 'none',
     lastAiResponseRoutedToMissionConsole: false,
     localDesktopAgentGatePassed: false,
+    latestSubmissionConsole: 'none',
+    latestSubmissionRoute: 'mission-bridge',
     events: [],
   };
 }
@@ -112,6 +114,8 @@ export function processMissionBridgeIntent({
         : 'Mission packet ready for supervised agent reasoning.',
     lastAiRouterRequestSource: 'none',
     lastAiResponseRoutedToMissionConsole: false,
+    latestSubmissionConsole: 'agent-mission-console',
+    latestSubmissionRoute: 'mission-bridge',
     events,
   };
 }
@@ -126,6 +130,8 @@ export async function requestMissionBridgeAI({ bridgeState = createMissionBridge
       ...bridgeState,
       lastAiRouterRequestSource: 'mission-bridge',
       lastAiResponseRoutedToMissionConsole: false,
+      latestSubmissionConsole: 'agent-mission-console',
+      latestSubmissionRoute: 'mission-bridge',
       events: [...asArray(bridgeState.events), ...events],
     };
   }
@@ -142,6 +148,8 @@ export async function requestMissionBridgeAI({ bridgeState = createMissionBridge
     latestAiResponse: output,
     lastAiRouterRequestSource: 'mission-bridge',
     lastAiResponseRoutedToMissionConsole: true,
+    latestSubmissionConsole: 'agent-mission-console',
+    latestSubmissionRoute: 'mission-bridge',
     events: [...asArray(bridgeState.events), ...events],
   };
 }

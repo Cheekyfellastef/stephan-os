@@ -223,6 +223,8 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestPayload.routeDecision?.defaultProvider
       || requestPayload.provider,
     ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
+    submission_console: executionMetadata.submission_console || requestTrace.submission_console || requestPayload.submissionSource || 'stephanos-mission-console',
+    submission_route: executionMetadata.submission_route || requestTrace.submission_route || requestPayload.submissionRoute || 'assistant-router',
     requested_provider_intent: requestedProviderIntent,
     requested_provider_for_request: requestedProviderForRequest,
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
@@ -1700,7 +1702,7 @@ export function useAIConsole() {
     routeMode,
   ]);
 
-  async function submitPrompt(rawPrompt, { telemetryEntries = [], orchestrationTruth = null } = {}) {
+  async function submitPrompt(rawPrompt, { telemetryEntries = [], orchestrationTruth = null, submissionSource = 'stephanos-mission-console', submissionRoute = 'assistant-router' } = {}) {
     const prompt = rawPrompt.trim();
     if (!prompt) return;
     if (prompt === '/clear') {
@@ -2003,6 +2005,8 @@ export function useAIConsole() {
         contextAssemblyMetadata: contextAssembly.truthMetadata,
         intentResult,
         missionPacket,
+        submissionSource,
+        submissionRoute,
       };
       inFlightRequestPayload = requestPayload;
       const requestDispatchGate = evaluateRequestDispatchGate({

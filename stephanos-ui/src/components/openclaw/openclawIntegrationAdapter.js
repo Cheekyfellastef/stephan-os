@@ -102,7 +102,7 @@ export function buildOpenClawIntegrationSnapshot({
       codexHandoff: 'approved-only',
     },
     topology: [
-      { id: 'mission-console', label: 'Mission Console', policyNote: 'Operator-visible orchestration surface.' },
+      { id: 'mission-console', label: 'Agent Mission Console', policyNote: 'Operator-visible mission router surface.' },
       { id: 'openclaw-adapter', label: 'OpenClaw Adapter', policyNote: 'Accepts bounded intents only; enforces proposal-only + zero-cost posture.' },
       { id: 'openclaw-agent', label: 'OpenClaw Bounded Agent', policyNote: 'Inspects repo-scoped evidence and drafts prompt proposals.' },
       { id: 'findings', label: 'Findings / Prompt Generation', policyNote: 'Produces audit-friendly findings, uncertainty, and candidate prompts.' },
