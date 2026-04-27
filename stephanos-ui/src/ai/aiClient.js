@@ -40,7 +40,7 @@ function firstNonEmpty(...values) {
   return '';
 }
 
-function resolveStreamingRequestPolicy({
+export function resolveStreamingRequestPolicy({
   streamingMode = 'off',
   provider = '',
   providerConfigs = {},
@@ -942,7 +942,6 @@ export async function sendPrompt({
 
   let result;
   const explicitStreamingRequest = streamingPolicy.streamingRequested
-    && typeof onStreamEvent === 'function'
     && String(payload.provider || '').toLowerCase() === 'ollama';
   try {
     if (explicitStreamingRequest) {

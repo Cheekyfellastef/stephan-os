@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { wantsStreaming } from '../routes/ai.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +14,25 @@ test('/api/ai/chat defaults to JSON unless explicit SSE request signals streamin
   assert.match(source, /queryStream === '1'/);
   assert.match(source, /queryStream === 'true'/);
   assert.match(source, /bodyStream === true/);
+});
+
+test('/api/ai/chat enables streaming when request body stream=true even without Accept header', () => {
+  assert.equal(
+    wantsStreaming({
+      headers: {},
+      query: {},
+      body: { stream: true },
+    }),
+    true,
+  );
+  assert.equal(
+    wantsStreaming({
+      headers: { accept: 'application/json' },
+      query: {},
+      body: { stream: false },
+    }),
+    false,
+  );
 });
 
 test('/api/ai/chat SSE emits final, metadata, and completion marker events', () => {

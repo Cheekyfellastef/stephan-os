@@ -1587,3 +1587,26 @@ test('support snapshot reflects mission packet generation from submitted operato
   assert.match(snapshot, /Mission Bridge Last Event: /);
   assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);
 });
+
+test('buildSupportSnapshot snapshot: streaming preference on reports requested true via operator-on source', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastStreamingModePreference: 'on',
+      lastStreamingRequested: true,
+      lastStreamingRequestSource: 'operator-on',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /Streaming Mode Preference: on/);
+  assert.match(snapshot, /Streaming Requested: true/);
+  assert.match(snapshot, /Streaming Request Source: operator-on/);
+});
