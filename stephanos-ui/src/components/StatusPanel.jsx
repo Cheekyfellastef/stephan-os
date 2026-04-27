@@ -301,6 +301,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastFastResponseModel: lastExecutionMetadata?.fast_response_model || 'n/a',
       lastFastResponseStreaming: String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a'),
       lastStreamingRequested: String(lastExecutionMetadata?.streaming_requested ?? 'n/a'),
+      lastStreamingModePreference: lastExecutionMetadata?.streaming_mode_preference || 'n/a',
+      lastStreamingRequestSource: lastExecutionMetadata?.streaming_request_source || 'n/a',
       lastStreamingSupported: String(lastExecutionMetadata?.streaming_supported ?? 'n/a'),
       lastStreamingUsed: String(lastExecutionMetadata?.streaming_used ?? 'n/a'),
       lastStreamingProvider: lastExecutionMetadata?.streaming_provider || 'n/a',
@@ -325,6 +327,11 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastTimeoutOverrideApplied: String(lastExecutionMetadata?.timeout_override_applied ?? 'n/a'),
       lastTimeoutFailureLayer: lastExecutionMetadata?.timeout_failure_layer || 'n/a',
       lastTimeoutFailureLabel: lastExecutionMetadata?.timeout_failure_label || 'n/a',
+      lastExecutionCancelled: String(lastExecutionMetadata?.execution_cancelled ?? 'n/a'),
+      lastCancellationSource: lastExecutionMetadata?.cancellation_source || 'n/a',
+      lastProviderCancelled: String(lastExecutionMetadata?.provider_cancelled ?? 'n/a'),
+      lastProviderCancelReason: lastExecutionMetadata?.provider_cancel_reason || 'n/a',
+      lastOllamaAbortSent: String(lastExecutionMetadata?.ollama_abort_sent ?? 'n/a'),
       lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
       lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
       lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
@@ -658,6 +665,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Fast Response Model: {routeTruthView.fastResponseModel || 'n/a'}</li>
         <li>Fast Response Streaming: {String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a')}</li>
         <li>Streaming Requested: {String(lastExecutionMetadata?.streaming_requested ?? 'n/a')}</li>
+        <li>Streaming Mode Preference: {lastExecutionMetadata?.streaming_mode_preference || 'n/a'}</li>
+        <li>Streaming Request Source: {lastExecutionMetadata?.streaming_request_source || 'n/a'}</li>
         <li>Streaming Supported: {String(lastExecutionMetadata?.streaming_supported ?? 'n/a')}</li>
         <li>Streaming Used: {String(lastExecutionMetadata?.streaming_used ?? 'n/a')}</li>
         <li>Streaming Provider: {lastExecutionMetadata?.streaming_provider || 'n/a'}</li>
@@ -903,6 +912,11 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Last Timeout Override Applied: {String(lastExecutionMetadata?.timeout_override_applied ?? 'n/a')}</li>
         <li>Last Timeout Failure Layer: {lastExecutionMetadata?.timeout_failure_layer || 'n/a'}</li>
         <li>Last Timeout Failure Label: {lastExecutionMetadata?.timeout_failure_label || 'n/a'}</li>
+        <li>Last Execution Cancelled: {String(lastExecutionMetadata?.execution_cancelled ?? 'n/a')}</li>
+        <li>Last Cancellation Source: {lastExecutionMetadata?.cancellation_source || 'n/a'}</li>
+        <li>Provider Cancelled: {String(lastExecutionMetadata?.provider_cancelled ?? 'n/a')}</li>
+        <li>Provider Cancel Reason: {lastExecutionMetadata?.provider_cancel_reason || 'n/a'}</li>
+        <li>Ollama Abort Sent: {String(lastExecutionMetadata?.ollama_abort_sent ?? 'n/a')}</li>
         <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
         <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
         <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>

@@ -227,6 +227,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Fast Response Lane Active: true/);
   assert.match(snapshot, /Fast Response Model: llama3.2:3b/);
   assert.match(snapshot, /Streaming Requested: false/);
+  assert.match(snapshot, /Streaming Mode Preference: off/);
+  assert.match(snapshot, /Streaming Request Source: off/);
   assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
   assert.match(snapshot, /Winning Reason: cloud route won by adjudicator/);
   assert.match(snapshot, /Selected Provider State: healthy/);

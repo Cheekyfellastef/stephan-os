@@ -686,6 +686,7 @@ async function runOllamaChatAttempt({
   timeoutMs,
   attempt = 1,
   streamObserver = null,
+  signal = null,
 } = {}) {
   const startedAtMs = Date.now();
   let phase = 'awaiting-response-headers';
@@ -694,6 +695,7 @@ async function runOllamaChatAttempt({
     const { response, abortedBy } = await fetchWithTimeout(resolved.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      ...(signal ? { signal } : {}),
       body: JSON.stringify({
         model: modelToUse,
         stream: true,
@@ -939,6 +941,7 @@ export async function runOllamaProvider(request, config = {}) {
       timeoutMs: timeoutPolicy.timeoutMs,
       attempt: 1,
       streamObserver: config?.streamObserver,
+      signal: config?.signal || null,
     });
     const warmupRetryEligible = shouldApplyWarmupRetry({
       provider: 'ollama',
@@ -963,6 +966,7 @@ export async function runOllamaProvider(request, config = {}) {
         timeoutMs: warmupRetryTimeoutMs,
         attempt: 2,
         streamObserver: config?.streamObserver,
+        signal: config?.signal || null,
       })
       : firstAttempt;
 
