@@ -365,6 +365,9 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestPayload.runtimeContext?.timeoutPolicy?.uiRequestTimeoutMs
       || requestPayload.runtimeContext?.timeoutMs
       || null,
+    ui_stream_inactivity_timeout_ms: executionMetadata.ui_stream_inactivity_timeout_ms
+      || requestTrace.ui_stream_inactivity_timeout_ms
+      || null,
     backend_route_timeout_ms: executionMetadata.backend_route_timeout_ms
       || requestTrace.backend_route_timeout_ms
       || requestPayload.runtimeContext?.timeoutPolicy?.backendRouteTimeoutMs
@@ -1107,6 +1110,14 @@ function transportErrorToUi(error, { routeDecision = null } = {}) {
   if (error.code === 'INVALID_JSON') {
     return { error: error.message, errorCode: error.code, output: 'Backend responded with invalid JSON. Check server logs for serialization issues.' };
   }
+  if (error.code === 'STREAM_FINALIZATION_MISSING') {
+    const reason = String(error?.details?.streamingFallbackReason || 'stream-ended-before-final-metadata').trim();
+    return {
+      error: error.message,
+      errorCode: error.code,
+      output: `Streaming ended before final metadata. Partial stream output is preserved when available. Reason: ${reason}.`,
+    };
+  }
   return { error: error.message, errorCode: error.code, output: error.message };
 }
 
@@ -1147,6 +1158,7 @@ function buildTimeoutFailureExecutionMetadata({
   const uiTimeoutTriggered = timeoutDetails.timeoutFailureLayer === 'ui';
   const streamingRequested = Boolean(requestPayload?.streaming_requested ?? false);
   const streamingSupported = selectedProvider === 'ollama';
+  const inactivityTimeoutTriggered = timeoutDetails.timeoutLabel === 'ui_stream_inactivity_timeout_ms';
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
@@ -1170,7 +1182,10 @@ function buildTimeoutFailureExecutionMetadata({
     ollama_timeout_model: selectedProvider === 'ollama'
       ? (timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null)
       : null,
-    ui_request_timeout_ms: timeoutDetails.timeoutMs ?? timeoutDetails.uiRequestTimeoutMs ?? canonicalTimeoutPolicy.uiRequestTimeoutMs ?? null,
+    ui_request_timeout_ms: inactivityTimeoutTriggered
+      ? null
+      : (timeoutDetails.timeoutMs ?? timeoutDetails.uiRequestTimeoutMs ?? canonicalTimeoutPolicy.uiRequestTimeoutMs ?? null),
+    ui_stream_inactivity_timeout_ms: inactivityTimeoutTriggered ? (timeoutDetails.timeoutMs ?? null) : null,
     backend_route_timeout_ms: timeoutDetails.backendRouteTimeoutMs ?? canonicalTimeoutPolicy.backendRouteTimeoutMs ?? null,
     provider_timeout_ms: timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null,
     model_timeout_ms: timeoutDetails.modelTimeoutMs ?? canonicalTimeoutPolicy.modelTimeoutMs ?? null,
@@ -1194,11 +1209,12 @@ function buildTimeoutFailureExecutionMetadata({
     streaming_policy_decision: requestPayload?.streaming_policy_decision || null,
     streaming_policy_reason: requestPayload?.streaming_policy_reason || null,
     streaming_supported: streamingSupported,
-    streaming_used: false,
+    streaming_used: Boolean(timeoutDetails.streamingUsed ?? false),
     streaming_provider: streamingSupported ? 'ollama' : null,
     streaming_model: streamingSupported ? (requestedModel || null) : null,
     streaming_finalized: false,
-    streaming_fallback_reason: streamingRequested && !streamingSupported ? 'provider-streaming-not-enabled' : null,
+    streaming_fallback_reason: timeoutDetails.streamingFallbackReason
+      || (streamingRequested && !streamingSupported ? 'provider-streaming-not-enabled' : null),
     execution_cancelled: cancelled,
     cancellation_source: cancellationSource,
     provider_cancelled: cancelled,
@@ -1213,7 +1229,8 @@ function buildTimeoutFailureExecutionMetadata({
     abort_forwarded_to_ollama_fetch: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
     ollama_fetch_aborted: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
     ollama_reader_cancelled: selectedProvider === 'ollama' && Boolean(timeoutDetails.ollamaReaderCancelled ?? cancelled),
-    provider_generation_still_running_unknown: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
+    provider_generation_still_running_unknown: selectedProvider === 'ollama'
+      && (cancelled || uiTimeoutTriggered || timeoutDetails.errorCode === 'STREAM_FINALIZATION_MISSING'),
     provider_generation_confirmed_stopped: false,
     cancellation_effectiveness: selectedProvider === 'ollama'
       ? ((cancelled || uiTimeoutTriggered) ? 'attempted-unknown' : 'not-attempted')
@@ -2569,7 +2586,7 @@ export function useAIConsole() {
       });
       setLastExecutionMetadata(timeoutFailureMetadata);
       setApiStatus((prev) => {
-        if (uiError.errorCode === 'TIMEOUT' || uiError.errorCode === 'CANCELLED') {
+        if (uiError.errorCode === 'TIMEOUT' || uiError.errorCode === 'CANCELLED' || uiError.errorCode === 'STREAM_FINALIZATION_MISSING') {
           return {
             ...prev,
             state: 'online',
@@ -2583,7 +2600,7 @@ export function useAIConsole() {
       });
 
       setCommandHistory((prev) => {
-        if (uiError.errorCode === 'CANCELLED') {
+        if (uiError.errorCode === 'CANCELLED' || uiError.errorCode === 'TIMEOUT' || uiError.errorCode === 'STREAM_FINALIZATION_MISSING') {
           let updated = false;
           const next = [...prev].reverse().map((entry) => {
             if (updated || entry?.route !== 'assistant' || entry?.stream_finalized === true) return entry;
@@ -2593,7 +2610,7 @@ export function useAIConsole() {
               ...entry,
               success: false,
               output_text: partial || uiError.output,
-              stream_finalized: true,
+              stream_finalized: partial ? false : true,
               error: uiError.error,
               error_code: uiError.errorCode,
             };
@@ -2624,7 +2641,10 @@ export function useAIConsole() {
         error_code: uiError.errorCode,
         timeout_failure_layer: uiError.timeoutFailureLayer || timeoutFailureMetadata.timeout_failure_layer || null,
         timeout_failure_label: uiError.timeoutFailureLabel || timeoutFailureMetadata.timeout_failure_label || null,
-        ui_request_timeout_ms: uiError.timeoutMs || timeoutFailureMetadata.ui_request_timeout_ms || null,
+        ui_request_timeout_ms: uiError.timeoutFailureLabel === 'ui_stream_inactivity_timeout_ms'
+          ? null
+          : (uiError.timeoutMs || timeoutFailureMetadata.ui_request_timeout_ms || null),
+        ui_stream_inactivity_timeout_ms: timeoutFailureMetadata.ui_stream_inactivity_timeout_ms || null,
         backend_route_timeout_ms: timeoutFailureMetadata.backend_route_timeout_ms || null,
         provider_timeout_ms: timeoutFailureMetadata.provider_timeout_ms || null,
         model_timeout_ms: timeoutFailureMetadata.model_timeout_ms || null,

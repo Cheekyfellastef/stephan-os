@@ -45,7 +45,7 @@ test('sendPrompt resolves timeout policy from effective execution provider truth
 
 test('sendPrompt supports hosted cloud cognition fallback path when backend transport fails', () => {
   assert.match(clientSource, /const hostedDispatch = resolveHostedCloudDispatch\(/);
-  assert.match(clientSource, /if \(!hostedDispatch\.enabled\) \{\s*throw error;\s*\}/m);
+  assert.match(clientSource, /if \(!explicitStreamingRequest && !hostedDispatch\.enabled\) \{\s*throw error;\s*\}/m);
   assert.match(clientSource, /hostedCloudExecutionPath:\s*\{/);
   assert.match(clientSource, /authorityLevel:\s*hostedDispatch\.authorityLevel/);
   assert.match(clientSource, /hostedConfig\?\.enabled === true/);
@@ -97,8 +97,10 @@ test('transport cancellation uses explicit CANCELLED code with cancellationSourc
   assert.match(clientSource, /ollamaFetchAborted:\s*true/);
 });
 
-test('sendPrompt falls back to non-stream JSON when explicit SSE dispatch fails', () => {
-  assert.match(clientSource, /if \(explicitStreamingRequest\) \{[\s\S]*requestJson\('\/api\/ai\/chat'/m);
+test('sendPrompt keeps explicit streaming requests on SSE path and reports fallback reason when SSE is not entered', () => {
+  assert.doesNotMatch(clientSource, /if \(!result\?\.data\?\.success\)/);
+  assert.match(clientSource, /streaming_fallback_reason:\s*!response\.ok \? 'sse-http-non-ok' : 'sse-reader-unavailable'/);
+  assert.match(clientSource, /streaming_fallback_reason = 'stream-not-entered'/);
   assert.match(clientSource, /code:\s*'STREAM_FINALIZATION_MISSING'/);
 });
 
@@ -129,6 +131,11 @@ test('streaming transport uses inactivity timeout and does not classify active s
   assert.match(clientSource, /abortSource = 'ui-stream-inactivity-timeout'/);
   assert.match(clientSource, /armInactivityTimeout\(\);[\s\S]*const \{ done, value \} = await reader\.read\(\);[\s\S]*armInactivityTimeout\(\);/m);
   assert.match(clientSource, /timeoutLabel:\s*'ui_stream_inactivity_timeout_ms'/);
+  assert.match(clientSource, /streamingUsed:\s*true/);
+});
+
+test('streaming finalization truth requires completion plus final or metadata event', () => {
+  assert.match(clientSource, /const streamFinalized = sawCompletion === true && \(sawMetadataEvent \|\| sawFinalEvent\)/);
 });
 
 test('releaseLocalOllamaLoad calls POST /api/ai/ollama/release', () => {

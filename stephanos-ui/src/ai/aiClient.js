@@ -770,7 +770,45 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     });
     if (!response.ok || !response.body?.getReader) {
       const fallback = await response.text();
-      return { ok: response.ok, status: response.status, data: fallback ? JSON.parse(fallback) : {} };
+      let parsedFallback = {};
+      if (fallback) {
+        try {
+          parsedFallback = JSON.parse(fallback);
+        } catch {
+          parsedFallback = {};
+        }
+      }
+      const fallbackMetadata = {
+        streaming_requested: true,
+        streaming_supported: true,
+        streaming_used: false,
+        streaming_finalized: false,
+        streaming_fallback_reason: !response.ok ? 'sse-http-non-ok' : 'sse-reader-unavailable',
+      };
+      return {
+        ok: response.ok,
+        status: response.status,
+        data: {
+          ...(parsedFallback && typeof parsedFallback === 'object' ? parsedFallback : {}),
+          data: {
+            ...((parsedFallback && typeof parsedFallback === 'object' ? parsedFallback.data : {}) || {}),
+            execution_metadata: {
+              ...(((parsedFallback && typeof parsedFallback === 'object' ? parsedFallback.data?.execution_metadata : {}) || {})),
+              ...fallbackMetadata,
+            },
+            request_trace: {
+              ...(((parsedFallback && typeof parsedFallback === 'object' ? parsedFallback.data?.request_trace : {}) || {})),
+              ...fallbackMetadata,
+            },
+          },
+          __stream: {
+            used: false,
+            finalized: false,
+            metadataReceived: false,
+            fallbackReason: fallbackMetadata.streaming_fallback_reason,
+          },
+        },
+      };
     }
     reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -779,6 +817,9 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     let finalPayload = null;
     let finalText = '';
     let sawToken = false;
+    let sawValidEvent = false;
+    let sawFinalEvent = false;
+    let sawMetadataEvent = false;
     let sawCompletion = false;
     while (true) {
       const { done, value } = await reader.read();
@@ -802,6 +843,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         } catch {
           return;
         }
+        sawValidEvent = true;
         onEvent?.(eventName || parsed?.type || 'message', parsed);
         armInactivityTimeout();
         if ((eventName === 'token' || parsed.type === 'token') && typeof parsed.content === 'string') {
@@ -809,9 +851,11 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           finalText += parsed.content;
         }
         if ((eventName === 'final' || parsed.type === 'final') && typeof parsed.content === 'string') {
+          sawFinalEvent = true;
           finalText = parsed.content;
         }
         if ((eventName === 'metadata' || parsed.type === 'metadata') && parsed?.data) {
+          sawMetadataEvent = true;
           finalPayload = parsed.data;
         }
         if (eventName === 'complete' || parsed.type === 'complete') {
@@ -820,6 +864,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
       });
     }
     if (finalPayload && typeof finalPayload === 'object') {
+      const streamFinalized = sawCompletion === true && (sawMetadataEvent || sawFinalEvent);
       return {
         ok: true,
         status: response.status,
@@ -827,7 +872,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           ...finalPayload,
           __stream: {
             used: true,
-            finalized: sawCompletion === true,
+            finalized: streamFinalized,
             metadataReceived: true,
           },
         },
@@ -864,7 +909,15 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     throw createTransportError({
       code: 'STREAM_FINALIZATION_MISSING',
       message: 'Streaming response ended without final metadata.',
-      details: { sawToken, sawCompletion },
+      details: {
+        sawToken,
+        sawCompletion,
+        streamingRequested: true,
+        streamingSupported: true,
+        streamingUsed: true,
+        streamingFinalized: false,
+        streamingFallbackReason: sawValidEvent ? 'stream-ended-before-final-metadata' : 'sse-opened-no-valid-events',
+      },
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
@@ -907,6 +960,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           abortForwardedToOllamaFetch: true,
           ollamaFetchAborted: true,
           ollamaReaderCancelled: true,
+          streamingRequested: true,
+          streamingSupported: true,
+          streamingUsed: true,
+          streamingFinalized: false,
         },
       });
     }
@@ -1075,12 +1132,20 @@ export async function sendPrompt({
           abortSignal,
         },
       });
-      if (!result?.data?.success) {
-        result = await requestJson('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
+      if (result?.data && typeof result.data === 'object') {
+        result.data.data = result.data.data && typeof result.data.data === 'object' ? result.data.data : {};
+        result.data.data.execution_metadata = result.data.data.execution_metadata && typeof result.data.data.execution_metadata === 'object'
+          ? result.data.data.execution_metadata
+          : {};
+        result.data.data.request_trace = result.data.data.request_trace && typeof result.data.data.request_trace === 'object'
+          ? result.data.data.request_trace
+          : {};
+        if (result.data.data.execution_metadata.streaming_fallback_reason == null && result?.data?.__stream?.used !== true) {
+          result.data.data.execution_metadata.streaming_fallback_reason = 'stream-not-entered';
+        }
+        if (result.data.data.request_trace.streaming_fallback_reason == null && result?.data?.__stream?.used !== true) {
+          result.data.data.request_trace.streaming_fallback_reason = 'stream-not-entered';
+        }
       }
     } else {
       result = await requestJson('/api/ai/chat', {
@@ -1090,21 +1155,17 @@ export async function sendPrompt({
       }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
     }
   } catch (error) {
-    if (explicitStreamingRequest) {
-      result = await requestJson('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }, runtimeContext, timeoutPolicyWithExecution, { abortSignal });
-    } else if (!hostedDispatch.enabled) {
+    if (!explicitStreamingRequest && !hostedDispatch.enabled) {
       throw error;
-    } else {
+    } else if (!explicitStreamingRequest) {
       result = await requestHostedCloudChat({
         hostedDispatch,
         hostedPayload,
         runtimeContext,
         timeoutPolicy: timeoutPolicyWithExecution,
       });
+    } else {
+      throw error;
     }
   }
 
