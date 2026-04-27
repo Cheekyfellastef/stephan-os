@@ -619,6 +619,69 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
   }
 }
 
+async function requestEventStream(path, options = {}, runtimeConfig = getApiRuntimeConfig(), timeoutPolicy = null, { onEvent } = {}) {
+  const apiConfig = getApiConfig();
+  const resolvedTimeoutMs = Number(timeoutPolicy?.uiRequestTimeoutMs) || Number(runtimeConfig?.timeoutMs) || apiConfig.timeoutMs;
+  const timeoutMs = Number.isFinite(resolvedTimeoutMs) && resolvedTimeoutMs > 0 ? resolvedTimeoutMs : apiConfig.timeoutMs;
+  const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(buildApiUrl(path, baseUrl), {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        Accept: 'text/event-stream',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body?.getReader) {
+      const fallback = await response.text();
+      return { ok: response.ok, status: response.status, data: fallback ? JSON.parse(fallback) : {} };
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventName = '';
+    let finalPayload = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() || '';
+      chunks.forEach((chunk) => {
+        const lines = chunk.split('\n');
+        let dataLine = '';
+        eventName = '';
+        lines.forEach((line) => {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+        });
+        if (!dataLine) return;
+        let parsed = {};
+        try {
+          parsed = JSON.parse(dataLine);
+        } catch {
+          return;
+        }
+        onEvent?.(eventName || parsed?.type || 'message', parsed);
+        if ((eventName === 'metadata' || parsed.type === 'metadata') && parsed?.data) {
+          finalPayload = parsed.data;
+        }
+      });
+    }
+    return { ok: true, status: response.status, data: finalPayload || {} };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson(path, options, runtimeConfig);
   if (!result.ok) {
@@ -644,6 +707,7 @@ export async function sendPrompt({
   freshnessContext = null,
   routeDecision = null,
   contextAssembly = null,
+  onStreamEvent = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
   const timeoutExecutionTruth = resolveTimeoutExecutionTruth({
@@ -741,11 +805,19 @@ export async function sendPrompt({
 
   let result;
   try {
-    result = await requestJson('/api/ai/chat', {
+    result = await requestEventStream('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    }, runtimeContext, timeoutPolicyWithExecution);
+    }, runtimeContext, timeoutPolicyWithExecution, {
+      onEvent: (eventName, eventData) => {
+        if (typeof onStreamEvent !== 'function') return;
+        onStreamEvent({
+          event: eventName,
+          ...eventData,
+        });
+      },
+    });
   } catch (error) {
     if (!hostedDispatch.enabled) {
       throw error;

@@ -305,7 +305,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     const attempt = await executeProvider(provider, request, {
       ...routerConfig,
       providerHealthSnapshot,
-    }, provider === 'ollama' && fastLaneModel ? { model: fastLaneModel } : {});
+    }, {
+      ...(provider === 'ollama' && fastLaneModel ? { model: fastLaneModel } : {}),
+      ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
+    });
     const failureReason = summarizeAttemptFailure(provider, attempt);
 
     if (
@@ -317,7 +320,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       const escalationAttempt = await executeProvider(provider, request, {
         ...routerConfig,
         providerHealthSnapshot,
-      }, { model: initialEscalationModel });
+      }, {
+        model: initialEscalationModel,
+        ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
+      });
       const escalationFailureReason = summarizeAttemptFailure(provider, escalationAttempt);
       attempts.push({
         provider,
