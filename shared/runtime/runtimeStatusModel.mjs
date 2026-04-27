@@ -26,6 +26,8 @@ import { normalizeBridgeTransportPreferences, normalizeBridgeTransportSelection,
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
 
+const FAST_RESPONSE_MODEL = 'llama3.2:3b';
+
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
 }
@@ -45,6 +47,39 @@ function normalizeProviderExecutionIntent(runtimeContext = {}) {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized || fallback;
   };
+  const explicitFastLaneEligible = source.fastResponseLaneEligible
+    ?? runtimeContext.fastResponseLaneEligible
+    ?? metadata.fast_response_lane_eligible;
+  const explicitFastLaneActive = source.fastResponseLaneActive
+    ?? runtimeContext.fastResponseLaneActive
+    ?? metadata.fast_response_lane_active;
+  const providerForFastLaneInference = normalizeProviderSelection(
+    metadata.actual_provider_used
+      || metadata.execution_selected_provider
+      || metadata.selected_provider
+      || source.selectedProvider
+      || runtimeContext.executionSelectedProvider
+      || '',
+  );
+  const modelForFastLaneInference = String(
+    metadata.model_used
+    || source.fastResponseModel
+    || runtimeContext.fastResponseModel
+    || metadata.fast_response_model
+    || '',
+  ).trim().toLowerCase();
+  const promptEligibleForFastLane = (
+    String(metadata.fast_response_lane_reason || '').trim().toLowerCase() === 'short-local-private-prompt'
+    || String(metadata.selected_answer_mode || '').trim().toLowerCase() === 'local-private'
+  ) && String(
+    source.freshnessNeed
+      || runtimeContext.freshnessNeed
+      || metadata.freshness_need
+      || 'low',
+  ).trim().toLowerCase() === 'low';
+  const inferredFastLaneActive = providerForFastLaneInference === 'ollama'
+    && modelForFastLaneInference === FAST_RESPONSE_MODEL
+    && promptEligibleForFastLane;
 
   return {
     freshnessNeed: normalizeText(
@@ -71,18 +106,12 @@ function normalizeProviderExecutionIntent(runtimeContext = {}) {
       || metadata.execution_selected_provider
       || metadata.selected_provider,
     ),
-    fastResponseLaneEligible: Boolean(
-      source.fastResponseLaneEligible
-      ?? runtimeContext.fastResponseLaneEligible
-      ?? metadata.fast_response_lane_eligible
-      ?? false,
-    ),
-    fastResponseLaneActive: Boolean(
-      source.fastResponseLaneActive
-      ?? runtimeContext.fastResponseLaneActive
-      ?? metadata.fast_response_lane_active
-      ?? false,
-    ),
+    fastResponseLaneEligible: typeof explicitFastLaneEligible === 'boolean'
+      ? explicitFastLaneEligible
+      : inferredFastLaneActive,
+    fastResponseLaneActive: typeof explicitFastLaneActive === 'boolean'
+      ? explicitFastLaneActive
+      : inferredFastLaneActive,
     fastResponseLaneReason: String(
       source.fastResponseLaneReason
       || runtimeContext.fastResponseLaneReason
@@ -93,6 +122,7 @@ function normalizeProviderExecutionIntent(runtimeContext = {}) {
       source.fastResponseModel
       || runtimeContext.fastResponseModel
       || metadata.fast_response_model
+      || (inferredFastLaneActive ? metadata.model_used : '')
       || '',
     ).trim(),
     escalationModel: String(

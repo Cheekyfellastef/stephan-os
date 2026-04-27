@@ -1351,3 +1351,41 @@ test('createRuntimeStatusModel consumes surface routing bias as hint without cor
   assert.equal(status.finalRouteTruth.selectedRouteKind, 'unavailable');
   assert.equal(status.runtimeContext.surfaceRoutingBiasHint, 'cloud-first');
 });
+
+test('createRuntimeStatusModel defensively projects fast lane truth from executed ollama llama3.2:3b identity prompt metadata', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'ollama',
+    routeMode: 'local-first',
+    providerHealth: {
+      ollama: { ok: true, state: 'READY' },
+      groq: { ok: false },
+      gemini: { ok: false },
+    },
+    backendAvailable: true,
+    runtimeContext: {
+      frontendOrigin: 'http://localhost:5173',
+      apiBaseUrl: 'http://localhost:8787',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: true,
+          usable: true,
+          reason: 'Local desktop route available',
+        },
+      },
+      lastExecutionMetadata: {
+        actual_provider_used: 'ollama',
+        model_used: 'llama3.2:3b',
+        freshness_need: 'low',
+        selected_answer_mode: 'local-private',
+      },
+    },
+    activeProviderHint: 'ollama',
+  });
+
+  assert.equal(status.canonicalRouteRuntimeTruth.fastResponseLaneEligible, true);
+  assert.equal(status.canonicalRouteRuntimeTruth.fastResponseLaneActive, true);
+  assert.equal(status.canonicalRouteRuntimeTruth.fastResponseModel, 'llama3.2:3b');
+  assert.equal(status.finalRouteTruth.fastResponseLaneActive, true);
+  assert.equal(status.finalRouteTruth.fastResponseModel, 'llama3.2:3b');
+});
