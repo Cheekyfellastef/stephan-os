@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
-import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, sendPrompt } from '../ai/aiClient';
+import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, resolveStreamingRequestPolicy, sendPrompt } from '../ai/aiClient';
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import { resolveUiRequestTimeoutPolicy } from '../ai/timeoutPolicy';
@@ -2105,13 +2105,18 @@ export function useAIConsole() {
         graphState: contextAssembly?.contextBundle?.knowledgeGraph || {},
       });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;
+      const streamingPolicy = resolveStreamingRequestPolicy({
+        streamingMode,
+        provider: requestedProvider,
+        providerConfigs: effectiveProviderConfigs,
+      });
       const requestPayload = {
         provider: requestedProvider,
         routeMode: routeModeForRequest,
         streamingMode,
-        streaming_mode_preference: streamingMode,
-        streaming_requested: false,
-        streaming_request_source: streamingMode === 'off' ? 'off' : 'pending',
+        streaming_mode_preference: streamingPolicy.normalizedMode,
+        streaming_requested: streamingPolicy.streamingRequested,
+        streaming_request_source: streamingPolicy.streamingRequestSource,
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssemblyMetadata: contextAssembly.truthMetadata,

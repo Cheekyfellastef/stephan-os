@@ -26,7 +26,7 @@ const logger = createLogger('ai-route');
 const router = express.Router();
 const STREAMING_MEDIA_TYPE = 'text/event-stream';
 
-function wantsStreaming(req) {
+export function wantsStreaming(req) {
   const accept = String(req.headers?.accept || '').toLowerCase();
   const queryStream = String(req.query?.stream ?? '').toLowerCase();
   const bodyStream = req.body?.stream;

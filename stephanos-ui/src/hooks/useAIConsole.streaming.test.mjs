@@ -28,8 +28,11 @@ test('useAIConsole preserves successful streamed token answers when metadata fin
 });
 
 test('useAIConsole tracks streaming request truth metadata and cancellation truth', () => {
+  assert.match(source, /const streamingPolicy = resolveStreamingRequestPolicy\(/);
+  assert.match(source, /streaming_requested:\s*streamingPolicy\.streamingRequested/);
+  assert.match(source, /streaming_request_source:\s*streamingPolicy\.streamingRequestSource/);
   assert.match(source, /streaming_mode_preference/);
-  assert.match(source, /streaming_request_source/);
+  assert.doesNotMatch(source, /streaming_request_source:\s*streamingMode === 'off' \? 'off' : 'pending'/);
   assert.match(source, /execution_cancelled/);
   assert.match(source, /provider_cancelled/);
   assert.match(source, /ollama_abort_sent/);
