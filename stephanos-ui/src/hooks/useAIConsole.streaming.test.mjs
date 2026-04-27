@@ -16,6 +16,13 @@ test('useAIConsole appends streaming token chunks into a separate stream buffer 
 });
 
 test('useAIConsole finalizes streamed answer entry with immutable final output_text', () => {
-  assert.match(source, /stream_finalized:\s*true/);
-  assert.match(source, /output_text:\s*data\.output_text/);
+  assert.match(source, /stream_finalized:\s*streamFinalizationMissing \? false : true/);
+  assert.match(source, /output_text:\s*effectiveOutputText/);
+});
+
+test('useAIConsole preserves successful streamed token answers when metadata finalization is missing', () => {
+  assert.match(source, /streamFinalizationMissing/);
+  assert.match(source, /executionMetadata\.streaming_used/);
+  assert.match(source, /executionMetadata\.streaming_finalized !== true/);
+  assert.match(source, /\[Streaming warning\] Final metadata was incomplete/);
 });

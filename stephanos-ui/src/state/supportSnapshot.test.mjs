@@ -423,6 +423,42 @@ test('buildSupportSnapshot classifies hosted healthy-route stale-contract bounda
   assert.match(snapshot, /operatorGuidance:\n- Route healthy; backend execution contract appears stale\./);
 });
 
+test('buildSupportSnapshot keeps execution status healthy when streamed answer succeeded but stream finalization is missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      sessionKind: 'local-desktop',
+      executionTruth: 'ok:ollama',
+      executionStatus: 'ok:ollama',
+      lastActualProviderUsed: 'ollama',
+      lastModelUsed: 'llama3.2:3b',
+      lastExecutionMetadata: {
+        streaming_used: true,
+        streaming_finalized: false,
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local',
+      backendReachableState: 'yes',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /Execution Truth: ok:ollama/);
+  assert.match(snapshot, /Execution Status: ok:ollama/);
+  assert.match(snapshot, /Route Layer Status: healthy/);
+});
+
 test('buildSupportSnapshot prefers last request provider truth over stale route truth provider', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
