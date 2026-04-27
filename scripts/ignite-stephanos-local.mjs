@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
@@ -295,6 +296,7 @@ const APPROVED_LOCAL_DIR_PREFIXES = [
 const APPROVED_TRACKED_GENERATED_DIR_PREFIXES = [
   'apps/stephanos/dist/',
 ];
+const RUNTIME_STATE_DIR_PREFIX = 'stephanos-server/data/';
 
 const APPROVED_LOCAL_FILE_PATHS = new Set([
   'package-lock.json',
@@ -322,6 +324,10 @@ function isApprovedTrackedGeneratedPath(path) {
   return APPROVED_TRACKED_GENERATED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
+function isRuntimeStatePath(path) {
+  return path.startsWith(RUNTIME_STATE_DIR_PREFIX);
+}
+
 function parsePorcelainStatusLine(line) {
   const status = line.slice(0, 2);
   const pathSegment = line.slice(3).trim();
@@ -338,9 +344,16 @@ export function evaluateGitStatusForIgnition(statusOutput) {
 
   const entries = lines.map(parsePorcelainStatusLine);
   const approvedEntries = [];
+  const runtimeStateEntries = [];
   const meaningfulEntries = [];
 
   for (const entry of entries) {
+    const runtimeState = entry.paths.every((path) => isRuntimeStatePath(path));
+    if (runtimeState) {
+      runtimeStateEntries.push(entry);
+      continue;
+    }
+
     const approved = entry.paths.every((path) => isApprovedLocalDirtPath(path));
     if (approved) {
       approvedEntries.push(entry);
@@ -353,6 +366,7 @@ export function evaluateGitStatusForIgnition(statusOutput) {
   return {
     entries,
     approvedEntries,
+    runtimeStateEntries,
     meaningfulEntries,
   };
 }
@@ -381,20 +395,134 @@ export function collectApprovedTrackedGeneratedRestorePaths(statusAssessment) {
   return Array.from(restorePaths).sort();
 }
 
+export function collectRuntimeStatePaths(statusAssessment) {
+  const runtimePaths = new Set();
+  for (const entry of statusAssessment.runtimeStateEntries || []) {
+    for (const path of entry.paths) {
+      runtimePaths.add(path);
+    }
+  }
+  return Array.from(runtimePaths).sort();
+}
+
+export function createRuntimeStateCheckpoint(runtimePaths, options = {}) {
+  const {
+    checkpointRoot = '.stephanos/local-state-checkpoints',
+    now = () => new Date(),
+    pathExists = (filePath) => existsSync(filePath),
+    makeDir = (dirPath) => mkdirSync(dirPath, { recursive: true }),
+    copyFile = (fromPath, toPath) => copyFileSync(fromPath, toPath),
+    writeFile = (filePath, data) => writeFileSync(filePath, data, 'utf8'),
+  } = options;
+
+  if (!Array.isArray(runtimePaths) || runtimePaths.length === 0) {
+    return null;
+  }
+
+  const isoStamp = now().toISOString().replace(/[:.]/g, '-');
+  const checkpointDir = `${checkpointRoot}/${isoStamp}`;
+  makeDir(checkpointDir);
+
+  const manifest = {
+    createdAt: now().toISOString(),
+    checkpointDir,
+    paths: [],
+  };
+
+  for (const runtimePath of runtimePaths) {
+    const sourceExists = pathExists(runtimePath);
+    const checkpointPath = `${checkpointDir}/${runtimePath}`;
+    if (sourceExists) {
+      makeDir(checkpointPath.slice(0, checkpointPath.lastIndexOf('/')));
+      copyFile(runtimePath, checkpointPath);
+    }
+    manifest.paths.push({
+      path: runtimePath,
+      exists: sourceExists,
+    });
+  }
+
+  writeFile(`${checkpointDir}/manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+  const latestPointerContent = `${checkpointDir}\n`;
+  writeFile(`${checkpointRoot}/latest.txt`, latestPointerContent);
+
+  return {
+    checkpointDir,
+    manifest,
+    checkpointRoot,
+    latestPointer: `${checkpointRoot}/latest.txt`,
+  };
+}
+
+export function restoreRuntimeStateCheckpoint(checkpointState, options = {}) {
+  if (!checkpointState?.manifest?.paths?.length) {
+    return;
+  }
+
+  const {
+    pathExists = (filePath) => existsSync(filePath),
+    makeDir = (dirPath) => mkdirSync(dirPath, { recursive: true }),
+    copyFile = (fromPath, toPath) => copyFileSync(fromPath, toPath),
+    removePath = (targetPath) => rmSync(targetPath, { force: true }),
+  } = options;
+
+  for (const entry of checkpointState.manifest.paths) {
+    const sourcePath = `${checkpointState.checkpointDir}/${entry.path}`;
+    if (entry.exists) {
+      if (!pathExists(sourcePath)) {
+        throw new Error(`runtime checkpoint missing file: ${entry.path}`);
+      }
+      makeDir(entry.path.slice(0, entry.path.lastIndexOf('/')));
+      copyFile(sourcePath, entry.path);
+      continue;
+    }
+
+    if (pathExists(entry.path)) {
+      removePath(entry.path);
+    }
+  }
+}
+
 export function runGitPullPreflightWithDeps({
   captureStep = runStepCapture,
   runStepFn = runStep,
+  createCheckpoint = createRuntimeStateCheckpoint,
+  restoreCheckpoint = restoreRuntimeStateCheckpoint,
   argvArgs = args,
 } = {}) {
   console.log('[IGNITION] git status check starting');
   const statusResult = captureStep('git-status', 'git', ['status', '--porcelain']);
   const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
   const approvedTrackedGeneratedRestorePaths = collectApprovedTrackedGeneratedRestorePaths(statusAssessment);
+  const runtimeStatePaths = collectRuntimeStatePaths(statusAssessment);
+  let runtimeCheckpointState = null;
 
   if (statusAssessment.approvedEntries.length > 0) {
     console.log(`[IGNITION] approved local dirt ignored (${statusAssessment.approvedEntries.length} entries)`);
     for (const entry of statusAssessment.approvedEntries) {
       console.log(`[IGNITION] approved local dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
+    }
+  }
+
+  if (statusAssessment.runtimeStateEntries.length > 0) {
+    console.log(`[IGNITION] runtime state dirt detected (${statusAssessment.runtimeStateEntries.length} entries)`);
+    for (const entry of statusAssessment.runtimeStateEntries) {
+      console.log(`[IGNITION] runtime state dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
+    }
+
+    try {
+      runtimeCheckpointState = createCheckpoint(runtimeStatePaths);
+    }
+    catch (error) {
+      console.error('[IGNITION] checkpoint failure blocks launch');
+      throw new Error(`blocked for safety: runtime state checkpoint failed (${error.message}).`);
+    }
+
+    if (runtimeCheckpointState?.checkpointDir) {
+      console.log(`[IGNITION] checkpoint created: ${runtimeCheckpointState.checkpointDir}`);
+    }
+    else {
+      console.log('[IGNITION] checkpoint created');
     }
   }
 
@@ -414,6 +542,16 @@ export function runGitPullPreflightWithDeps({
     console.log(`[IGNITION] restoring approved tracked generated dirt: ${approvedTrackedGeneratedRestorePaths.join(', ')}`);
     runStepFn('git-restore-approved-tracked-generated-dirt', 'git', ['restore', '--worktree', '--staged', '--', ...approvedTrackedGeneratedRestorePaths]);
     console.log('[IGNITION] approved tracked generated dirt restored');
+  }
+
+  const runtimeTrackedRestorePaths = runtimeStatePaths.filter((path) => {
+    const matchingEntry = statusAssessment.runtimeStateEntries.find((entry) => entry.paths.includes(path));
+    return matchingEntry ? isTrackedStatus(matchingEntry.status) : false;
+  });
+
+  if (runtimeTrackedRestorePaths.length > 0) {
+    console.log(`[IGNITION] restoring runtime state paths before pull: ${runtimeTrackedRestorePaths.join(', ')}`);
+    runStepFn('git-restore-runtime-state-before-pull', 'git', ['restore', '--worktree', '--staged', '--', ...runtimeTrackedRestorePaths]);
   }
 
   console.log('[IGNITION] git status clean');
@@ -446,6 +584,17 @@ export function runGitPullPreflightWithDeps({
   catch (error) {
     console.error('[IGNITION] git pull blocked');
     throw new Error(`blocked for safety: remote pull requires manual merge/rebase or has another fast-forward-only conflict (${error.message}).`);
+  }
+
+  if (runtimeCheckpointState) {
+    try {
+      restoreCheckpoint(runtimeCheckpointState);
+    }
+    catch (error) {
+      console.error('[IGNITION] checkpoint failure blocks launch');
+      throw new Error(`blocked for safety: runtime state restore failed (${error.message}).`);
+    }
+    console.log('[IGNITION] launch may continue');
   }
 
   console.log('[IGNITION] git pull passed');
