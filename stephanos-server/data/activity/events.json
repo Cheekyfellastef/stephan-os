@@ -1115,7 +1115,19 @@
         "tileLinked": false
       },
       "timestamp": "2026-04-26T20:00:26.663Z"
+    },
+    {
+      "id": "evt_1777235077984_1of6li",
+      "type": "ai.continuity.persisted",
+      "subsystem": "ai",
+      "summary": "Stored AI continuity artifacts for assistant route.",
+      "payload": {
+        "provider": "gemini",
+        "fallbackUsed": false,
+        "tileLinked": true
+      },
+      "timestamp": "2026-04-26T20:24:37.984Z"
     }
   ],
-  "updated_at": "2026-04-26T20:00:26.663Z"
+  "updated_at": "2026-04-26T20:24:37.984Z"
 }
