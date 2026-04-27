@@ -38,6 +38,7 @@ test('useAIConsole keeps streaming request and provider\/model truth sticky on p
   assert.match(source, /streaming_provider:\s*streamingProvider/);
   assert.match(source, /streaming_model:\s*streamingModel/);
   assert.match(source, /final_metadata_missing:\s*finalMetadataMissing/);
+  assert.match(source, /streaming_completion_quality:\s*streamingCompletionQuality/);
   assert.match(source, /stream-ended-before-final-metadata/);
 });
 

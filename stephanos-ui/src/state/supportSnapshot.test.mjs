@@ -1669,6 +1669,8 @@ test('buildSupportSnapshot snapshot: partial-success SSE metadata keeps requeste
       lastStreamingProvider: 'ollama',
       lastStreamingModel: 'gpt-oss:20b',
       lastStreamingFinalized: false,
+      lastStreamingCompletionQuality: 'partial-success',
+      lastFinalMetadataMissing: true,
       lastStreamingFallbackReason: 'stream-ended-before-final-metadata',
     },
     routeTruthView: {},
@@ -1692,7 +1694,49 @@ test('buildSupportSnapshot snapshot: partial-success SSE metadata keeps requeste
   assert.match(snapshot, /Streaming Provider: ollama/);
   assert.match(snapshot, /Streaming Model: gpt-oss:20b/);
   assert.match(snapshot, /Streaming Finalized: false/);
+  assert.match(snapshot, /Streaming Completion Quality: partial-success/);
+  assert.match(snapshot, /Final Metadata Missing: true/);
+  assert.match(snapshot, /Streaming Completion State: partial-success/);
   assert.match(snapshot, /Streaming Fallback Reason: stream-ended-before-final-metadata/);
   assert.match(snapshot, /Last Actual Provider Used: ollama/);
   assert.match(snapshot, /Last Model Used: gpt-oss:20b/);
+});
+
+test('buildSupportSnapshot snapshot: streaming completion state distinguishes failed and fully-finalized paths', () => {
+  const failedSnapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastStreamingUsed: true,
+      lastStreamingFinalized: false,
+      lastStreamingFallbackReason: 'sse-opened-no-valid-events',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+  assert.match(failedSnapshot, /Streaming Completion State: failed/);
+
+  const finalizedSnapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastStreamingUsed: true,
+      lastStreamingFinalized: true,
+      lastStreamingCompletionQuality: 'fully-finalized',
+      lastStreamingFallbackReason: 'n/a',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+  assert.match(finalizedSnapshot, /Streaming Completion State: fully-finalized/);
 });

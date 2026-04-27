@@ -881,6 +881,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         }
       });
     }
+    const sawExplicitFinalizationSignal = sawCompletion === true || sawFinalEvent === true;
     if (finalPayload && typeof finalPayload === 'object') {
       const streamFinalized = sawCompletion === true && (sawMetadataEvent || sawFinalEvent);
       finalPayload.data = finalPayload.data && typeof finalPayload.data === 'object' ? finalPayload.data : {};
@@ -891,6 +892,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         ? finalPayload.data.request_trace
         : {};
       const streamSnapshot = {
+        streaming_used: true,
+        streaming_finalized: streamFinalized,
+        final_metadata_missing: false,
+        streaming_completion_quality: streamFinalized ? 'fully-finalized' : 'stream-ended',
         streaming_client_opened: streamOpened,
         streaming_first_event_received: firstEventReceived || sawValidEvent,
         streaming_last_event_at: streamLastEventAt,
@@ -912,6 +917,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
       };
     }
     if (sawToken && finalText) {
+      const streamFinalized = sawExplicitFinalizationSignal;
       return {
         ok: true,
         status: response.status,
@@ -923,22 +929,27 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           data: {
             execution_metadata: {
               streaming_used: true,
-              streaming_finalized: false,
+              streaming_finalized: streamFinalized,
+              final_metadata_missing: true,
+              streaming_completion_quality: 'partial-success',
             },
             request_trace: {
               streaming_used: true,
-              streaming_finalized: false,
+              streaming_finalized: streamFinalized,
+              final_metadata_missing: true,
+              streaming_completion_quality: 'partial-success',
               streaming_client_opened: streamOpened,
               streaming_first_event_received: firstEventReceived || sawValidEvent,
               streaming_last_event_at: streamLastEventAt,
-              streaming_failure_phase: 'stream-finalization',
+              streaming_failure_phase: streamFinalized ? null : 'stream-finalization',
             },
           },
           __stream: {
             used: true,
-            finalized: false,
+            finalized: streamFinalized,
             metadataReceived: false,
             warning: 'stream-metadata-missing',
+            completionQuality: 'partial-success',
           },
         },
       };

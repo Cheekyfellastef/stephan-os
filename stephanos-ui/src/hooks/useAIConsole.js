@@ -323,7 +323,21 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ?? data?.data?.__stream?.finalized
     ?? false,
   );
-  const finalMetadataMissing = Boolean(data?.success && streamingUsed && !streamingFinalized);
+  const explicitFinalMetadataMissing = executionMetadata.final_metadata_missing
+    ?? requestTrace.final_metadata_missing
+    ?? data?.data?.__stream?.metadataReceived === false;
+  const finalMetadataMissing = Boolean(
+    explicitFinalMetadataMissing
+    ?? (data?.success && streamingUsed && !streamingFinalized),
+  );
+  const streamingCompletionQuality = executionMetadata.streaming_completion_quality
+    || requestTrace.streaming_completion_quality
+    || data?.data?.__stream?.completionQuality
+    || (streamingUsed
+      ? (streamingFinalized
+        ? (finalMetadataMissing ? 'partial-success' : 'fully-finalized')
+        : (finalMetadataMissing ? 'partial-success' : 'stream-ended'))
+      : 'not-used');
   const policyProviderModel = selectedProvider === 'ollama'
     ? (requestPayload?.providerConfigs?.ollama?.model || requestPayload?.providerConfig?.model || null)
     : null;
@@ -433,6 +447,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.streaming_fallback_reason
       || (finalMetadataMissing ? 'stream-ended-before-final-metadata' : null),
     final_metadata_missing: finalMetadataMissing,
+    streaming_completion_quality: streamingCompletionQuality,
     escalation_model: executionMetadata.escalation_model || requestTrace.escalation_model || null,
     escalation_reason: executionMetadata.escalation_reason || requestTrace.escalation_reason || null,
     ollama_fallback_model: executionMetadata.ollama_fallback_model || requestTrace.ollama_fallback_model || null,
@@ -2486,6 +2501,7 @@ export function useAIConsole() {
       );
       if (streamFinalizationMissing) {
         executionMetadata.streaming_diagnostics_warning = 'Final metadata was incomplete; streamed partial answer preserved.';
+        executionMetadata.streaming_completion_quality = executionMetadata.streaming_completion_quality || 'partial-success';
       }
       const effectiveOutputText = streamFinalizationMissing
         ? String(data.output_text || streamBuffer || '').trim()
