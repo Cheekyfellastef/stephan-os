@@ -24,7 +24,21 @@ test('useAIConsole preserves successful streamed token answers when metadata fin
   assert.match(source, /streamFinalizationMissing/);
   assert.match(source, /executionMetadata\.streaming_used/);
   assert.match(source, /executionMetadata\.streaming_finalized !== true/);
-  assert.match(source, /\[Streaming warning\] Final metadata was incomplete/);
+  assert.match(source, /streaming_diagnostics_warning/);
+  assert.doesNotMatch(source, /\[Streaming warning\] Final metadata was incomplete/);
+});
+
+test('useAIConsole keeps streaming request and provider\/model truth sticky on partial-success SSE responses', () => {
+  assert.match(source, /streamPolicyDecision === 'stream-enabled'/);
+  assert.match(source, /streamRequestSource === 'auto-heavy-ollama'/);
+  assert.match(source, /streamRequestSource === 'operator-on'/);
+  assert.match(source, /streamOpenedOrEventsObserved/);
+  assert.match(source, /streaming_requested:\s*streamingRequested/);
+  assert.match(source, /streaming_used:\s*streamingUsed/);
+  assert.match(source, /streaming_provider:\s*streamingProvider/);
+  assert.match(source, /streaming_model:\s*streamingModel/);
+  assert.match(source, /final_metadata_missing:\s*finalMetadataMissing/);
+  assert.match(source, /stream-ended-before-final-metadata/);
 });
 
 test('useAIConsole tracks streaming request truth metadata and cancellation truth', () => {

@@ -221,7 +221,13 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestTrace.timeout_provider
     || requestPayload.runtimeContext?.timeoutPolicy?.timeoutProvider
     || selectedProvider;
-  const modelUsed = executionMetadata.model_used || data.data?.model_used || data.data?.provider_model || null;
+  const modelUsed = executionMetadata.model_used
+    || data.data?.model_used
+    || data.data?.provider_model
+    || requestTrace.model_used
+    || requestPayload?.providerConfigs?.ollama?.model
+    || requestPayload?.providerConfig?.model
+    || null;
   const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
   const freshnessRequiredForTruth = Boolean(
     executionMetadata.freshness_required_for_truth
@@ -274,6 +280,66 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const effectiveFastLaneReason = executionMetadata.fast_response_lane_reason
     || requestTrace.fast_response_lane_reason
     || (effectiveFastLaneActive ? 'short-local-private-prompt' : null);
+  const streamPolicyDecision = String(
+    executionMetadata.streaming_policy_decision
+    || requestTrace.streaming_policy_decision
+    || requestPayload.streaming_policy_decision
+    || '',
+  ).trim().toLowerCase();
+  const streamRequestSource = String(
+    executionMetadata.streaming_request_source
+    || requestTrace.streaming_request_source
+    || requestPayload.streaming_request_source
+    || '',
+  ).trim().toLowerCase();
+  const streamOpenedOrEventsObserved = Boolean(
+    executionMetadata.streaming_client_opened
+    ?? requestTrace.streaming_client_opened
+    ?? executionMetadata.streaming_first_event_received
+    ?? requestTrace.streaming_first_event_received
+    ?? executionMetadata.streaming_used
+    ?? requestTrace.streaming_used
+    ?? data?.data?.__stream?.used
+    ?? false,
+  );
+  const streamingRequested = Boolean(
+    executionMetadata.streaming_requested
+    ?? requestTrace.streaming_requested
+    ?? requestPayload.streaming_requested
+    ?? false,
+  ) || streamPolicyDecision === 'stream-enabled'
+    || streamRequestSource === 'auto-heavy-ollama'
+    || streamRequestSource === 'operator-on'
+    || streamOpenedOrEventsObserved;
+  const streamingUsed = Boolean(
+    executionMetadata.streaming_used
+    ?? requestTrace.streaming_used
+    ?? data?.data?.__stream?.used
+    ?? false,
+  ) || streamOpenedOrEventsObserved;
+  const streamingFinalized = Boolean(
+    executionMetadata.streaming_finalized
+    ?? requestTrace.streaming_finalized
+    ?? data?.data?.__stream?.finalized
+    ?? false,
+  );
+  const finalMetadataMissing = Boolean(data?.success && streamingUsed && !streamingFinalized);
+  const policyProviderModel = selectedProvider === 'ollama'
+    ? (requestPayload?.providerConfigs?.ollama?.model || requestPayload?.providerConfig?.model || null)
+    : null;
+  const streamingProvider = executionMetadata.streaming_provider
+    || requestTrace.streaming_provider
+    || (streamingRequested || streamingUsed ? 'ollama' : null);
+  const streamingModel = executionMetadata.streaming_model
+    || requestTrace.streaming_model
+    || modelUsed
+    || policyProviderModel
+    || null;
+  const streamingSupported = Boolean(
+    executionMetadata.streaming_supported
+    ?? requestTrace.streaming_supported
+    ?? false,
+  ) || Boolean((streamingRequested || streamingUsed) && streamingProvider === 'ollama');
 
   return {
     ui_default_provider: executionMetadata.ui_default_provider
@@ -294,7 +360,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestedProviderForRequest,
     selected_provider: selectedProvider,
     execution_selected_provider: executionSelectedProvider || timeoutEffectiveProvider || selectedProvider,
-    actual_provider_used: actualProviderUsed,
+    actual_provider_used: actualProviderUsed || (streamingUsed ? streamingProvider : null),
     model_used: modelUsed,
     ollama_model_default: executionMetadata.ollama_model_default || requestTrace.ollama_model_default || null,
     ollama_model_preferred: executionMetadata.ollama_model_preferred || requestTrace.ollama_model_preferred || null,
@@ -333,7 +399,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.streaming_persistence_updated_at
       || requestPayload.streaming_persistence_updated_at
       || null,
-    streaming_requested: Boolean(executionMetadata.streaming_requested ?? requestTrace.streaming_requested ?? false),
+    streaming_requested: streamingRequested,
     streaming_request_source: executionMetadata.streaming_request_source
       || requestTrace.streaming_request_source
       || requestPayload.streaming_request_source
@@ -346,8 +412,8 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.streaming_policy_reason
       || requestPayload.streaming_policy_reason
       || null,
-    streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
-    streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
+    streaming_supported: streamingSupported,
+    streaming_used: streamingUsed,
     streaming_entered_backend: Boolean(executionMetadata.streaming_entered_backend ?? requestTrace.streaming_entered_backend ?? false),
     streaming_client_opened: Boolean(executionMetadata.streaming_client_opened ?? requestTrace.streaming_client_opened ?? false),
     streaming_first_event_received: Boolean(executionMetadata.streaming_first_event_received ?? requestTrace.streaming_first_event_received ?? false),
@@ -360,10 +426,13 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     streaming_failure_phase: executionMetadata.streaming_failure_phase
       || requestTrace.streaming_failure_phase
       || null,
-    streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
-    streaming_model: executionMetadata.streaming_model || requestTrace.streaming_model || null,
-    streaming_finalized: Boolean(executionMetadata.streaming_finalized ?? requestTrace.streaming_finalized ?? false),
-    streaming_fallback_reason: executionMetadata.streaming_fallback_reason || requestTrace.streaming_fallback_reason || null,
+    streaming_provider: streamingProvider,
+    streaming_model: streamingModel,
+    streaming_finalized: streamingFinalized,
+    streaming_fallback_reason: executionMetadata.streaming_fallback_reason
+      || requestTrace.streaming_fallback_reason
+      || (finalMetadataMissing ? 'stream-ended-before-final-metadata' : null),
+    final_metadata_missing: finalMetadataMissing,
     escalation_model: executionMetadata.escalation_model || requestTrace.escalation_model || null,
     escalation_reason: executionMetadata.escalation_reason || requestTrace.escalation_reason || null,
     ollama_fallback_model: executionMetadata.ollama_fallback_model || requestTrace.ollama_fallback_model || null,
@@ -2415,8 +2484,11 @@ export function useAIConsole() {
         && executionMetadata.streaming_used
         && executionMetadata.streaming_finalized !== true,
       );
+      if (streamFinalizationMissing) {
+        executionMetadata.streaming_diagnostics_warning = 'Final metadata was incomplete; streamed partial answer preserved.';
+      }
       const effectiveOutputText = streamFinalizationMissing
-        ? `[Streaming warning] Final metadata was incomplete; showing streamed partial answer.\n\n${String(data.output_text || streamBuffer || '').trim()}`
+        ? String(data.output_text || streamBuffer || '').trim()
         : data.output_text;
       const executionSummaryForStage = buildExecutionSummary(executionMetadata);
 

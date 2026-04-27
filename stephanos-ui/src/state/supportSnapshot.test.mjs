@@ -1653,3 +1653,46 @@ test('buildSupportSnapshot snapshot: heavy ollama auto-stream truth surfaces can
   assert.match(snapshot, /Streaming Fallback Reason: n\/a/);
   assert.match(snapshot, /Last Timeout Failure Layer: n\/a/);
 });
+
+test('buildSupportSnapshot snapshot: partial-success SSE metadata keeps requested and provider/model truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      executionTruth: 'ok:ollama',
+      executionStatus: 'ok:ollama',
+      lastActualProviderUsed: 'ollama',
+      lastModelUsed: 'gpt-oss:20b',
+      lastStreamingRequested: true,
+      lastStreamingRequestSource: 'auto-heavy-ollama',
+      lastStreamingPolicyDecision: 'stream-enabled',
+      lastStreamingSupported: true,
+      lastStreamingUsed: true,
+      lastStreamingProvider: 'ollama',
+      lastStreamingModel: 'gpt-oss:20b',
+      lastStreamingFinalized: false,
+      lastStreamingFallbackReason: 'stream-ended-before-final-metadata',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /Execution Truth: ok:ollama/);
+  assert.match(snapshot, /Execution Status: ok:ollama/);
+  assert.match(snapshot, /Streaming Requested: true/);
+  assert.match(snapshot, /Streaming Request Source: auto-heavy-ollama/);
+  assert.match(snapshot, /Streaming Policy Decision: stream-enabled/);
+  assert.match(snapshot, /Streaming Supported: true/);
+  assert.match(snapshot, /Streaming Used: true/);
+  assert.match(snapshot, /Streaming Provider: ollama/);
+  assert.match(snapshot, /Streaming Model: gpt-oss:20b/);
+  assert.match(snapshot, /Streaming Finalized: false/);
+  assert.match(snapshot, /Streaming Fallback Reason: stream-ended-before-final-metadata/);
+  assert.match(snapshot, /Last Actual Provider Used: ollama/);
+  assert.match(snapshot, /Last Model Used: gpt-oss:20b/);
+});
