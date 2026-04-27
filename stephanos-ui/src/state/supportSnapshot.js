@@ -138,6 +138,23 @@ function summarizeRouteCandidates(candidates = []) {
   });
 }
 
+function deriveStreamingCompletionState(runtimeStatus = {}) {
+  const streamingUsed = String(runtimeStatus?.lastStreamingUsed || '').trim().toLowerCase() === 'true';
+  const streamingFinalized = String(runtimeStatus?.lastStreamingFinalized || '').trim().toLowerCase() === 'true';
+  const finalMetadataMissing = String(runtimeStatus?.lastFinalMetadataMissing || '').trim().toLowerCase() === 'true';
+  const executionCancelled = String(runtimeStatus?.lastExecutionCancelled || '').trim().toLowerCase() === 'true';
+  const fallbackReason = String(runtimeStatus?.lastStreamingFallbackReason || '').trim().toLowerCase();
+  const completionQuality = String(runtimeStatus?.lastStreamingCompletionQuality || '').trim().toLowerCase();
+
+  if (!streamingUsed) return 'not-used';
+  if (executionCancelled || completionQuality === 'cancelled') return 'cancelled';
+  if (completionQuality === 'fully-finalized') return 'fully-finalized';
+  if (completionQuality === 'partial-success' || finalMetadataMissing) return 'partial-success';
+  if (streamingFinalized) return 'fully-finalized';
+  if (fallbackReason && fallbackReason !== 'n/a' && fallbackReason !== 'none') return 'failed';
+  return 'stream-ended';
+}
+
 function buildOperatorBoundaryDiagnostics({
   routeTruthView = {},
   runtimeStatus = {},
@@ -686,6 +703,9 @@ export function buildSupportSnapshot({
     `Streaming Provider: ${asText(runtimeStatus?.lastStreamingProvider)}`,
     `Streaming Model: ${asText(runtimeStatus?.lastStreamingModel)}`,
     `Streaming Finalized: ${asText(runtimeStatus?.lastStreamingFinalized, 'false')}`,
+    `Streaming Completion Quality: ${asText(runtimeStatus?.lastStreamingCompletionQuality, 'n/a')}`,
+    `Final Metadata Missing: ${asText(runtimeStatus?.lastFinalMetadataMissing, 'false')}`,
+    `Streaming Completion State: ${deriveStreamingCompletionState(runtimeStatus)}`,
     `Streaming Fallback Reason: ${asText(runtimeStatus?.lastStreamingFallbackReason)}`,
     `Last Execution Cancelled: ${asText(runtimeStatus?.lastExecutionCancelled, 'false')}`,
     `Last Cancellation Source: ${asText(runtimeStatus?.lastCancellationSource)}`,

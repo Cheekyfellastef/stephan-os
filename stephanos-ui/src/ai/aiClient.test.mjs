@@ -145,6 +145,14 @@ test('streaming finalization truth requires completion plus final or metadata ev
   assert.match(clientSource, /const streamFinalized = sawCompletion === true && \(sawMetadataEvent \|\| sawFinalEvent\)/);
 });
 
+test('streaming metadata-missing responses are preserved as partial-success diagnostics instead of transport errors when output exists', () => {
+  assert.match(clientSource, /if \(sawToken && finalText\) \{/);
+  assert.match(clientSource, /final_metadata_missing:\s*true/);
+  assert.match(clientSource, /streaming_completion_quality:\s*'partial-success'/);
+  assert.match(clientSource, /streaming_finalized:\s*streamFinalized/);
+  assert.match(clientSource, /throw createTransportError\(\{[\s\S]*STREAM_FINALIZATION_MISSING/m);
+});
+
 test('releaseLocalOllamaLoad calls POST /api/ai/ollama/release', () => {
   assert.match(clientSource, /requestJson\('\/api\/ai\/ollama\/release'/);
   assert.match(clientSource, /method:\s*'POST'/);

@@ -313,6 +313,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastStreamingProvider: lastExecutionMetadata?.streaming_provider || 'n/a',
       lastStreamingModel: lastExecutionMetadata?.streaming_model || 'n/a',
       lastStreamingFinalized: String(lastExecutionMetadata?.streaming_finalized ?? 'n/a'),
+      lastStreamingCompletionQuality: lastExecutionMetadata?.streaming_completion_quality || 'n/a',
+      lastFinalMetadataMissing: String(lastExecutionMetadata?.final_metadata_missing ?? 'n/a'),
       lastStreamingFallbackReason: lastExecutionMetadata?.streaming_fallback_reason || 'n/a',
       lastEscalationModel: lastExecutionMetadata?.escalation_model || 'n/a',
       lastEscalationReason: lastExecutionMetadata?.escalation_reason || 'n/a',
