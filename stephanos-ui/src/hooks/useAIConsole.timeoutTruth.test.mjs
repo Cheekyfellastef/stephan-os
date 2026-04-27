@@ -41,5 +41,21 @@ test('timeout failure metadata keeps requested provider separate from effective 
   assert.match(source, /const selectedProvider = String\(/);
   assert.match(source, /runtimeContext\?\.finalRouteTruth\?\.executedProvider[\s\S]*requestPayload\?\.routeDecision\?\.selectedProvider/m);
   assert.match(source, /requested_provider:\s*requestedProvider\s*\|\|\s*fallbackProvider\s*\|\|\s*'unknown'/);
+  assert.match(source, /request_side_selected_provider:\s*requestPayload\?\.request_side_selected_provider/);
+  assert.match(source, /router_selected_provider:\s*requestPayload\?\.routeDecision\?\.selectedProvider/);
+  assert.match(source, /executable_provider:\s*selectedProvider/);
+  assert.match(source, /actual_provider_used:\s*selectedProvider/);
+  assert.match(source, /actual_model_used:\s*postGovernorModel/);
   assert.match(source, /ollama_timeout_model:\s*selectedProvider === 'ollama'/);
+});
+
+test('request envelope records ui/request/router provider ladder and explicit override reason', () => {
+  assert.match(source, /const normalizedUiRequestedProvider = normalizeProviderKey\(provider\)/);
+  assert.match(source, /const providerOverrideReason = normalizedRequestProvider !== normalizedUiRequestedProvider/);
+  assert.match(source, /provider:\s*requestedProvider,/);
+  assert.match(source, /ui_requested_provider:\s*normalizedUiRequestedProvider/);
+  assert.match(source, /request_side_selected_provider:\s*normalizedRequestProvider/);
+  assert.match(source, /router_selected_provider:\s*normalizeProviderKey\(freshnessRouteDecision\.selectedProvider/);
+  assert.match(source, /provider_override_reason:\s*providerOverrideReason/);
+  assert.match(source, /ollama_load_mode:\s*normalizeProviderKey\(requestedProvider\) === 'ollama'/);
 });

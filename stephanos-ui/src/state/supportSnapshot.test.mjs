@@ -624,6 +624,40 @@ test('buildSupportSnapshot regression: healthy route + ollama execution keeps in
   assert.match(snapshot, /Timeout Truth Degraded By Route Usability: no/);
 });
 
+test('buildSupportSnapshot flags impossible provider/model combinations and timeout provider drift without override reason', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRequestedProviderForRequest: 'ollama',
+      lastSelectedProvider: 'ollama',
+      lastActualProviderUsed: 'ollama',
+      lastActualModelUsed: 'gemini-2.5-flash',
+      lastTimeoutEffectiveProvider: 'gemini',
+      lastProviderOverrideReason: 'n/a',
+      lastOllamaLoadMode: 'n/a',
+      lastOllamaModelBeforeLoadPolicy: 'n/a',
+      lastOllamaModelAfterLoadPolicy: 'n/a',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:05.000Z' },
+  });
+
+  assert.match(snapshot, /Last Actual Model Used: gemini-2.5-flash/);
+  assert.match(snapshot, /invariantWarnings:\n[\s\S]*actual_provider_used=ollama with model containing "gemini"/m);
+  assert.match(snapshot, /invariantWarnings:\n[\s\S]*timeout effective provider differs from actual provider without explicit override reason/m);
+  assert.match(snapshot, /invariantWarnings:\n[\s\S]*Ollama selected\/actual but load governor fields are n\/a/m);
+});
+
 test('buildSupportSnapshot separates provider health readiness from execution viability during fallback', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
