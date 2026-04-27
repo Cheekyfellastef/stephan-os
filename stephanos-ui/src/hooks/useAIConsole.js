@@ -1144,6 +1144,9 @@ function buildTimeoutFailureExecutionMetadata({
   });
   const cancellationSource = String(timeoutDetails.cancellationSource || '').trim() || null;
   const cancelled = timeoutDetails.errorCode === 'CANCELLED' || Boolean(cancellationSource);
+  const uiTimeoutTriggered = timeoutDetails.timeoutFailureLayer === 'ui';
+  const streamingRequested = Boolean(requestPayload?.streaming_requested ?? false);
+  const streamingSupported = selectedProvider === 'ollama';
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
@@ -1186,28 +1189,34 @@ function buildTimeoutFailureExecutionMetadata({
     streaming_mode_preference_rehydrated: Boolean(requestPayload?.streaming_mode_preference_rehydrated ?? false),
     streaming_persistence_source: requestPayload?.streaming_persistence_source || 'default/auto',
     streaming_persistence_updated_at: requestPayload?.streaming_persistence_updated_at || null,
-    streaming_requested: Boolean(requestPayload?.streaming_requested ?? false),
+    streaming_requested: streamingRequested,
     streaming_request_source: requestPayload?.streaming_request_source || 'auto-default-off',
     streaming_policy_decision: requestPayload?.streaming_policy_decision || null,
     streaming_policy_reason: requestPayload?.streaming_policy_reason || null,
+    streaming_supported: streamingSupported,
+    streaming_used: false,
+    streaming_provider: streamingSupported ? 'ollama' : null,
+    streaming_model: streamingSupported ? (requestedModel || null) : null,
+    streaming_finalized: false,
+    streaming_fallback_reason: streamingRequested && !streamingSupported ? 'provider-streaming-not-enabled' : null,
     execution_cancelled: cancelled,
     cancellation_source: cancellationSource,
     provider_cancelled: cancelled,
     provider_cancel_reason: cancelled ? `frontend abort propagated (${cancellationSource || 'unknown'})` : null,
     ollama_abort_sent: cancelled && selectedProvider === 'ollama',
-    ui_timeout_triggered: timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
+    ui_timeout_triggered: uiTimeoutTriggered,
     backend_timeout_triggered: timeoutDetails.timeoutFailureLayer === 'backend' || timeoutDetails.timeoutFailureLayer === 'provider',
     abort_signal_created: true,
-    abort_signal_fired: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
-    abort_forwarded_to_router: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
-    abort_forwarded_to_provider: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
-    abort_forwarded_to_ollama_fetch: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
-    ollama_fetch_aborted: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
+    abort_signal_fired: cancelled || uiTimeoutTriggered,
+    abort_forwarded_to_router: cancelled || uiTimeoutTriggered,
+    abort_forwarded_to_provider: cancelled || uiTimeoutTriggered,
+    abort_forwarded_to_ollama_fetch: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
+    ollama_fetch_aborted: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
     ollama_reader_cancelled: selectedProvider === 'ollama' && Boolean(timeoutDetails.ollamaReaderCancelled ?? cancelled),
-    provider_generation_still_running_unknown: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
+    provider_generation_still_running_unknown: selectedProvider === 'ollama' && (cancelled || uiTimeoutTriggered),
     provider_generation_confirmed_stopped: false,
     cancellation_effectiveness: selectedProvider === 'ollama'
-      ? ((cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms') ? 'attempted-unknown' : 'not-attempted')
+      ? ((cancelled || uiTimeoutTriggered) ? 'attempted-unknown' : 'not-attempted')
       : (cancelled ? 'attempted-confirmed' : 'not-attempted'),
     fallback_used: false,
     fallback_reason: null,
@@ -2191,9 +2200,17 @@ export function useAIConsole() {
         graphState: contextAssembly?.contextBundle?.knowledgeGraph || {},
       });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;
+      const timeoutExecutionEnvelope = buildPreArmTimeoutExecutionEnvelope({
+        routeDecision: freshnessRouteDecision,
+        runtimeStatus: requestRuntimeStatus,
+        requestedProvider,
+        providerConfigs: effectiveProviderConfigs,
+      });
       const streamingPolicy = resolveStreamingRequestPolicy({
         streamingMode,
         provider: requestedProvider,
+        executionProvider: timeoutExecutionEnvelope.effectiveProvider || freshnessRouteDecision.selectedProvider || requestedProvider,
+        executionModel: timeoutExecutionEnvelope.effectiveModel || '',
         providerConfigs: effectiveProviderConfigs,
       });
       const requestPayload = {
@@ -2224,12 +2241,6 @@ export function useAIConsole() {
         runtimeStatus: requestRuntimeStatus,
       });
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
-      const timeoutExecutionEnvelope = buildPreArmTimeoutExecutionEnvelope({
-        routeDecision: freshnessRouteDecision,
-        runtimeStatus: requestRuntimeStatus,
-        requestedProvider,
-        providerConfigs: effectiveProviderConfigs,
-      });
       const runtimeConfigWithExecutionTruth = {
         ...finalizedRequestContext,
         finalRouteTruth: requestRuntimeStatus?.finalRouteTruth || finalizedRequestContext?.finalRouteTruth || {},

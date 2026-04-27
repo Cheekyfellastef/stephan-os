@@ -47,6 +47,8 @@ test('/api/ai/chat execution metadata tracks streaming_used only when SSE is act
   assert.match(source, /fast_response_streaming:\s*Boolean\(streamingEnabled && fastLaneActiveTruth && actualProviderUsed === 'ollama'\)/);
   assert.match(source, /streaming_mode_preference:/);
   assert.match(source, /streaming_request_source:/);
+  assert.match(source, /streaming_policy_decision:/);
+  assert.match(source, /streaming_policy_reason:/);
 });
 
 test('/api/ai/chat propagates client disconnect cancellation into provider execution', () => {

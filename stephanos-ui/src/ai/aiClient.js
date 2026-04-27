@@ -43,13 +43,20 @@ function firstNonEmpty(...values) {
 export function resolveStreamingRequestPolicy({
   streamingMode = 'auto',
   provider = '',
+  executionProvider = '',
+  executionModel = '',
   providerConfigs = {},
 } = {}) {
   const streamingModePreferenceInput = String(streamingMode || 'auto').trim().toLowerCase();
   const normalizedMode = ['off', 'auto', 'on'].includes(streamingModePreferenceInput) ? streamingModePreferenceInput : 'auto';
-  const normalizedProvider = String(provider || '').trim().toLowerCase();
-  const configuredModel = String(providerConfigs?.[normalizedProvider]?.model || '').trim().toLowerCase();
-  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(configuredModel);
+  const normalizedProvider = String(executionProvider || provider || '').trim().toLowerCase();
+  const requestedProvider = String(provider || '').trim().toLowerCase();
+  const resolvedModel = firstNonEmpty(
+    executionModel,
+    providerConfigs?.[normalizedProvider]?.model,
+    providerConfigs?.[requestedProvider]?.model,
+  ).toLowerCase();
+  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(resolvedModel);
   if (normalizedMode === 'on') {
     return {
       normalizedMode,
@@ -77,7 +84,7 @@ export function resolveStreamingRequestPolicy({
       streamingRequested: true,
       streamingRequestSource: 'auto-heavy-ollama',
       streamingPolicyDecision: 'stream-enabled',
-      streamingPolicyReason: 'Auto mode enabled streaming for heavy Ollama model.',
+      streamingPolicyReason: 'Auto mode enabled streaming for heavy Ollama model to prevent UI request timeout false failures.',
     };
   }
   return {
@@ -723,11 +730,16 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
   let abortSignalFired = false;
   const externalSignal = requestControl?.abortSignal;
   let reader = null;
-  const timeout = setTimeout(() => {
-    abortSource = 'ui-timeout';
-    abortSignalFired = true;
-    controller.abort();
-  }, timeoutMs);
+  let inactivityTimeout = null;
+  const armInactivityTimeout = () => {
+    clearTimeout(inactivityTimeout);
+    inactivityTimeout = setTimeout(() => {
+      abortSource = 'ui-stream-inactivity-timeout';
+      abortSignalFired = true;
+      controller.abort();
+    }, timeoutMs);
+  };
+  armInactivityTimeout();
   controller.signal.addEventListener('abort', () => {
     abortSignalFired = true;
     if (reader && typeof reader.cancel === 'function') {
@@ -771,6 +783,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      armInactivityTimeout();
       buffer += decoder.decode(value, { stream: true });
       const chunks = buffer.split('\n\n');
       buffer = chunks.pop() || '';
@@ -790,6 +803,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           return;
         }
         onEvent?.(eventName || parsed?.type || 'message', parsed);
+        armInactivityTimeout();
         if ((eventName === 'token' || parsed.type === 'token') && typeof parsed.content === 'string') {
           sawToken = true;
           finalText += parsed.content;
@@ -872,10 +886,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
       }
       throw createTransportError({
         code: 'TIMEOUT',
-        message: `Request timed out after ${timeoutMs}ms.`,
+        message: `Stream became inactive after ${timeoutMs}ms.`,
         details: {
           timeoutFailureLayer: 'ui',
-          timeoutLabel: 'ui_request_timeout_ms',
+          timeoutLabel: 'ui_stream_inactivity_timeout_ms',
           timeoutMs,
           timeoutPolicySource: timeoutPolicy?.timeoutPolicySource || runtimeConfig?.timeoutSource || apiConfig.timeoutSource || 'frontend:api-runtime',
           uiRequestTimeoutMs: timeoutPolicy?.uiRequestTimeoutMs || timeoutMs,
@@ -898,7 +912,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(inactivityTimeout);
   }
 }
 
@@ -994,6 +1008,8 @@ export async function sendPrompt({
   const streamingPolicy = resolveStreamingRequestPolicy({
     streamingMode,
     provider,
+    executionProvider: timeoutExecutionTruth.effectiveProvider || provider,
+    executionModel: timeoutExecutionTruth.effectiveModel || '',
     providerConfigs: safeProviderConfigs,
   });
   payload.streamingMode = streamingPolicy.normalizedMode;
