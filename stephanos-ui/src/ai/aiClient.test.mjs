@@ -27,7 +27,7 @@ test('sendPrompt strips provider secrets from chat payloads', () => {
 test('sendPrompt derives timeout from shared timeout policy before request dispatch', () => {
   assert.match(clientSource, /resolveUiRequestTimeoutPolicy\(/);
   assert.match(clientSource, /timeoutPolicy:\s*\{/);
-  assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat'[\s\S]*timeoutPolicyWithExecution/m);
+  assert.match(clientSource, /requestJson\('\/api\/ai\/chat'[\s\S]*timeoutPolicyWithExecution/m);
 });
 
 test('getProviderHealth uses canonical timeout policy instead of hidden defaults', () => {
@@ -54,8 +54,14 @@ test('sendPrompt supports hosted cloud cognition fallback path when backend tran
 
 test('sendPrompt streams token events through onStreamEvent callback', () => {
   assert.match(clientSource, /onStreamEvent\s*=\s*null/);
-  assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat'[\s\S]*onEvent:/m);
+  assert.match(clientSource, /const explicitStreamingRequest = typeof onStreamEvent === 'function'[\s\S]*provider.*'ollama'/m);
+  assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat\?stream=1'[\s\S]*onEvent:/m);
   assert.match(clientSource, /onStreamEvent\(\{\s*event:\s*eventName,/m);
+});
+
+test('sendPrompt falls back to non-stream JSON when explicit SSE dispatch fails', () => {
+  assert.match(clientSource, /if \(explicitStreamingRequest\) \{[\s\S]*requestJson\('\/api\/ai\/chat'/m);
+  assert.match(clientSource, /code:\s*'STREAM_FINALIZATION_MISSING'/);
 });
 
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {

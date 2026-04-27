@@ -28,12 +28,27 @@ const STREAMING_MEDIA_TYPE = 'text/event-stream';
 
 function wantsStreaming(req) {
   const accept = String(req.headers?.accept || '').toLowerCase();
-  return accept.includes(STREAMING_MEDIA_TYPE) || req.query?.stream === '1';
+  const queryStream = String(req.query?.stream ?? '').toLowerCase();
+  const bodyStream = req.body?.stream;
+  return accept.includes(STREAMING_MEDIA_TYPE)
+    || queryStream === '1'
+    || queryStream === 'true'
+    || bodyStream === true
+    || bodyStream === 1
+    || String(bodyStream || '').toLowerCase() === 'true';
 }
 
 function writeSseEvent(res, event, payload = {}) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function writeSseCompletion(res, success = true) {
+  writeSseEvent(res, 'complete', {
+    type: 'complete',
+    done: true,
+    success: success === true,
+  });
 }
 
 function stripRawSecretsFromConfig(config = {}) {
@@ -520,12 +535,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       escalation_model: fastResponseLaneTruth.escalationModel || llmResult.diagnostics?.ollama?.escalationModel || null,
       escalation_reason: fastResponseLaneTruth.escalationReason || llmResult.diagnostics?.ollama?.escalationReason || 'fast-lane-not-selected',
       streaming_supported: actualProviderUsed === 'ollama',
-      streaming_used: actualProviderUsed === 'ollama',
+      streaming_used: Boolean(streamingEnabled && actualProviderUsed === 'ollama'),
       streaming_provider: actualProviderUsed === 'ollama' ? 'ollama' : null,
       streaming_model: actualProviderUsed === 'ollama' ? (canonicalModelTruth.executedModel || null) : null,
-      streaming_finalized: Boolean(actualProviderUsed === 'ollama' && llmResult.ok && llmResult.outputText),
-      streaming_fallback_reason: actualProviderUsed === 'ollama' ? null : 'provider-streaming-not-enabled',
-      fast_response_streaming: Boolean(fastResponseLaneTruth.active && actualProviderUsed === 'ollama'),
+      streaming_finalized: Boolean(
+        streamingEnabled
+        ? (actualProviderUsed === 'ollama' && llmResult.ok && llmResult.outputText)
+        : true
+      ),
+      streaming_fallback_reason: streamingEnabled && actualProviderUsed !== 'ollama'
+        ? 'provider-streaming-not-enabled'
+        : null,
+      fast_response_streaming: Boolean(streamingEnabled && fastResponseLaneTruth.active && actualProviderUsed === 'ollama'),
       ollama_fallback_model: llmResult.diagnostics?.ollama?.fallbackModel || null,
       ollama_fallback_model_used: Boolean(llmResult.diagnostics?.ollama?.fallbackModelUsed),
       ollama_fallback_reason: llmResult.diagnostics?.ollama?.fallbackReason || null,
@@ -902,14 +923,15 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           content: failurePayload.output_text || '',
           done: true,
         });
-        writeSseEvent(res, 'metadata', {
-          type: 'metadata',
-          done: true,
-          success: false,
-          data: failurePayload,
-        });
-        return res.end();
-      }
+      writeSseEvent(res, 'metadata', {
+        type: 'metadata',
+        done: true,
+        success: false,
+        data: failurePayload,
+      });
+      writeSseCompletion(res, false);
+      return res.end();
+    }
       return res.status(502).json(failurePayload);
     }
 
@@ -980,6 +1002,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         success: true,
         data: successPayload,
       });
+      writeSseCompletion(res, true);
       return res.end();
     }
     return res.json(successPayload);

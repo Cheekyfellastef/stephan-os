@@ -644,6 +644,9 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     let buffer = '';
     let eventName = '';
     let finalPayload = null;
+    let finalText = '';
+    let sawToken = false;
+    let sawCompletion = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -666,12 +669,68 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           return;
         }
         onEvent?.(eventName || parsed?.type || 'message', parsed);
+        if ((eventName === 'token' || parsed.type === 'token') && typeof parsed.content === 'string') {
+          sawToken = true;
+          finalText += parsed.content;
+        }
+        if ((eventName === 'final' || parsed.type === 'final') && typeof parsed.content === 'string') {
+          finalText = parsed.content;
+        }
         if ((eventName === 'metadata' || parsed.type === 'metadata') && parsed?.data) {
           finalPayload = parsed.data;
         }
+        if (eventName === 'complete' || parsed.type === 'complete') {
+          sawCompletion = true;
+        }
       });
     }
-    return { ok: true, status: response.status, data: finalPayload || {} };
+    if (finalPayload && typeof finalPayload === 'object') {
+      return {
+        ok: true,
+        status: response.status,
+        data: {
+          ...finalPayload,
+          __stream: {
+            used: true,
+            finalized: sawCompletion === true,
+            metadataReceived: true,
+          },
+        },
+      };
+    }
+    if (sawToken && finalText) {
+      return {
+        ok: true,
+        status: response.status,
+        data: {
+          success: true,
+          type: 'assistant_response',
+          route: 'assistant',
+          output_text: finalText,
+          data: {
+            execution_metadata: {
+              streaming_used: true,
+              streaming_finalized: false,
+            },
+            request_trace: {
+              streaming_used: true,
+              streaming_finalized: false,
+            },
+          },
+          __stream: {
+            used: true,
+            finalized: false,
+            metadataReceived: false,
+            warning: 'stream-metadata-missing',
+          },
+        },
+      };
+    }
+    throw createTransportError({
+      code: 'STREAM_FINALIZATION_MISSING',
+      message: 'Streaming response ended without final metadata.',
+      details: { sawToken, sawCompletion },
+    });
   } catch (error) {
     if (error?.name === 'AbortError') {
       throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
@@ -804,30 +863,53 @@ export async function sendPrompt({
   });
 
   let result;
+  const explicitStreamingRequest = typeof onStreamEvent === 'function' && String(payload.provider || '').toLowerCase() === 'ollama';
   try {
-    result = await requestEventStream('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }, runtimeContext, timeoutPolicyWithExecution, {
-      onEvent: (eventName, eventData) => {
-        if (typeof onStreamEvent !== 'function') return;
-        onStreamEvent({
-          event: eventName,
-          ...eventData,
-        });
-      },
-    });
-  } catch (error) {
-    if (!hostedDispatch.enabled) {
-      throw error;
+    if (explicitStreamingRequest) {
+      result = await requestEventStream('/api/ai/chat?stream=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, stream: true }),
+      }, runtimeContext, timeoutPolicyWithExecution, {
+        onEvent: (eventName, eventData) => {
+          if (typeof onStreamEvent !== 'function') return;
+          onStreamEvent({
+            event: eventName,
+            ...eventData,
+          });
+        },
+      });
+      if (!result?.data?.success) {
+        result = await requestJson('/api/ai/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }, runtimeContext, timeoutPolicyWithExecution);
+      }
+    } else {
+      result = await requestJson('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }, runtimeContext, timeoutPolicyWithExecution);
     }
-    result = await requestHostedCloudChat({
-      hostedDispatch,
-      hostedPayload,
-      runtimeContext,
-      timeoutPolicy: timeoutPolicyWithExecution,
-    });
+  } catch (error) {
+    if (explicitStreamingRequest) {
+      result = await requestJson('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }, runtimeContext, timeoutPolicyWithExecution);
+    } else if (!hostedDispatch.enabled) {
+      throw error;
+    } else {
+      result = await requestHostedCloudChat({
+        hostedDispatch,
+        hostedPayload,
+        runtimeContext,
+        timeoutPolicy: timeoutPolicyWithExecution,
+      });
+    }
   }
 
   return {

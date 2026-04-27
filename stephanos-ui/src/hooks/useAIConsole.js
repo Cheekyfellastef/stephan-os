@@ -2159,6 +2159,14 @@ export function useAIConsole() {
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
       };
+      const streamFinalizationMissing = Boolean(
+        data.success
+        && executionMetadata.streaming_used
+        && executionMetadata.streaming_finalized !== true,
+      );
+      const effectiveOutputText = streamFinalizationMissing
+        ? `[Streaming warning] Final metadata was incomplete; showing streamed partial answer.\n\n${String(data.output_text || streamBuffer || '').trim()}`
+        : data.output_text;
       const executionSummaryForStage = buildExecutionSummary(executionMetadata);
 
       const selectedAnswerMode = String(executionMetadata.selected_answer_mode || '').trim().toLowerCase();
@@ -2219,9 +2227,9 @@ export function useAIConsole() {
         route: data.route,
         tool_used: data.tools_used?.[0] ?? null,
         success: data.success,
-        output_text: data.output_text,
+        output_text: effectiveOutputText,
         stream_buffer_text: streamBuffer,
-        stream_finalized: true,
+        stream_finalized: streamFinalizationMissing ? false : true,
         data_payload: data.data,
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
         timestamp: new Date().toISOString(),
