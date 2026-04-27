@@ -35,6 +35,18 @@ test('determineFastLaneEligibility enables fast lane for short low-freshness pro
   assert.equal(result.eligible, true);
 });
 
+test('determineFastLaneEligibility keeps identity/control prompt eligible when system-awareness context is appended', () => {
+  const result = determineFastLaneEligibility('', {
+    freshnessContext: { freshnessNeed: 'low' },
+    messages: [{
+      role: 'user',
+      content: 'who am i talking to\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{"recentRecords":[]}',
+    }],
+  }, {});
+  assert.equal(result.eligible, true);
+  assert.match(result.reason || '', /quick|short/i);
+});
+
 test('determineFastLaneEligibility disables fast lane for high freshness prompts', () => {
   const result = determineFastLaneEligibility('What happened today in markets?', {
     freshnessContext: { freshnessNeed: 'high' },
@@ -133,6 +145,67 @@ test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable',
     assert.equal(result.diagnostics.ollama.selectedModel, 'gpt-oss:20b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, true);
     assert.match(result.diagnostics.ollama.fallbackReason, /unavailable/i);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider honors explicit fast-lane model override for identity prompt', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'llama3.2:3b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'llama3.2:3b', message: { content: 'You are talking to Stephanos.' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      model: 'llama3.2:3b',
+      messages: [{ role: 'user', content: 'who am i talking to' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.model, 'llama3.2:3b');
+    assert.equal(result.diagnostics.ollama.requestedModel, 'llama3.2:3b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'llama3.2:3b');
+    assert.match(result.diagnostics.ollama.policyReason || '', /explicit request model llama3.2:3b honored/i);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider keeps qwen/gpt-oss policy for complex prompts', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'gpt-oss:20b' }, { name: 'llama3.2:3b' }] }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:14b', message: { content: 'complex ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Generate a system architecture refactor and build pipeline execution plan with debugging steps.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.selectedModel, result.model);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }

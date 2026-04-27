@@ -14,16 +14,43 @@ const FAST_LANE_POSITIVE_PATTERNS = [
 ];
 
 function getPromptText(prompt = '', context = {}) {
-  if (typeof prompt === 'string' && prompt.trim()) {
-    return prompt.trim();
+  const explicitPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+  if (explicitPrompt) {
+    return explicitPrompt;
   }
   const messages = Array.isArray(context?.messages) ? context.messages : [];
   const latestUser = [...messages].reverse().find((entry) => String(entry?.role || '').toLowerCase() === 'user');
   return String(latestUser?.content || '').trim();
 }
 
+function normalizePromptForFastLane(promptText = '') {
+  const text = String(promptText || '').trim();
+  if (!text) return '';
+
+  const boundaryPatterns = [
+    /\n+\[system awareness context:/i,
+    /\n+##\s*memory\b/i,
+    /\n+##\s*conversation\b/i,
+    /\n+##\s*runtime\b/i,
+  ];
+  let normalized = text;
+  for (const pattern of boundaryPatterns) {
+    const match = normalized.match(pattern);
+    if (match?.index > 0) {
+      normalized = normalized.slice(0, match.index).trim();
+      break;
+    }
+  }
+
+  const firstMeaningfulLine = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstMeaningfulLine || normalized;
+}
+
 export function determineFastLaneEligibility(prompt = '', context = {}, routeTruth = {}) {
-  const promptText = getPromptText(prompt, context);
+  const promptText = normalizePromptForFastLane(getPromptText(prompt, context));
   const promptWordCount = promptText ? promptText.split(/\s+/).filter(Boolean).length : 0;
   const freshnessNeed = String(
     context?.freshnessContext?.freshnessNeed
@@ -70,4 +97,3 @@ export function determineFastLaneEligibility(prompt = '', context = {}, routeTru
 
   return { eligible: false, reason: 'default-standard-lane' };
 }
-
