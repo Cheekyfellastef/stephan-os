@@ -878,7 +878,7 @@ button:active,
   cursor: text;
   white-space: pre-wrap;
   min-height: clamp(12rem, 34vh, 22rem);
-  max-height: clamp(14rem, 42vh, 30rem);
+  max-height: 50vh;
   overflow-y: auto;
   padding-right: 0.25rem;
 }
