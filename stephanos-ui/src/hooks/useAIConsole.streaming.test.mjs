@@ -44,9 +44,18 @@ test('useAIConsole tracks streaming request truth metadata and cancellation trut
 
 test('useAIConsole timeout metadata preserves stream truth and uses UI timeout layer instead of fixed label checks', () => {
   assert.match(source, /const uiTimeoutTriggered = timeoutDetails\.timeoutFailureLayer === 'ui'/);
+  assert.match(source, /const inactivityTimeoutTriggered = timeoutDetails\.timeoutLabel === 'ui_stream_inactivity_timeout_ms'/);
+  assert.match(source, /ui_stream_inactivity_timeout_ms:\s*inactivityTimeoutTriggered \? \(timeoutDetails\.timeoutMs \?\? null\) : null/);
   assert.match(source, /streaming_supported:\s*streamingSupported/);
+  assert.match(source, /streaming_used:\s*Boolean\(timeoutDetails\.streamingUsed \?\? false\)/);
   assert.match(source, /streaming_provider:\s*streamingSupported \? 'ollama' : null/);
   assert.match(source, /abort_signal_fired:\s*cancelled \|\| uiTimeoutTriggered/);
+});
+
+test('useAIConsole keeps route health online and preserves partial output during stream interruption-class errors', () => {
+  assert.match(source, /uiError\.errorCode === 'TIMEOUT' \|\| uiError\.errorCode === 'CANCELLED' \|\| uiError\.errorCode === 'STREAM_FINALIZATION_MISSING'/);
+  assert.match(source, /stream_finalized:\s*partial \? false : true/);
+  assert.match(source, /output_text:\s*partial \|\| uiError\.output/);
 });
 
 test('useAIConsole blocks heavy ollama requests when previous cancellation may still be running', () => {
