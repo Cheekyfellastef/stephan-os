@@ -892,6 +892,19 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const resolved = resolveOllamaConfig(config);
+  const configuredLoadMode = String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase();
+  const requestedModelForFallback = String(request?.model || resolved.model || '').trim();
+  const fallbackLoadGovernor = resolveOllamaLoadGovernorPolicy({
+    ollamaLoadMode: configuredLoadMode,
+    requestedModel: requestedModelForFallback,
+    prompt: String(
+      [...(Array.isArray(request?.messages) ? request.messages : [])]
+        .reverse()
+        .find((message) => String(message?.role || '').toLowerCase() === 'user')?.content || '',
+    ),
+    forceHeavyModel: config?.forceHeavyModel === true,
+    availableModels: [],
+  });
   if (!resolved.routeDecision?.usable) {
     return {
       ok: false,
@@ -905,6 +918,13 @@ export async function runOllamaProvider(request, config = {}) {
       },
       diagnostics: {
         ollama: {
+          loadMode: fallbackLoadGovernor?.ollamaLoadMode || configuredLoadMode || 'balanced',
+          loadPolicyApplied: fallbackLoadGovernor?.policyApplied === true,
+          loadPolicyReason: fallbackLoadGovernor?.policyReason || null,
+          heavyModelRequested: fallbackLoadGovernor?.heavyModelRequested === true,
+          heavyModelAllowed: fallbackLoadGovernor?.heavyModelAllowed === true,
+          modelBeforeLoadPolicy: fallbackLoadGovernor?.modelBeforePolicy || requestedModelForFallback || resolved.model || null,
+          modelAfterLoadPolicy: fallbackLoadGovernor?.modelAfterPolicy || requestedModelForFallback || resolved.model || null,
           routeClass: resolved.routeDecision.routeClass,
           configuredBaseURL: resolved.configuredBaseURL,
           effectiveBaseURL: resolved.effectiveBaseURL,
@@ -924,11 +944,39 @@ export async function runOllamaProvider(request, config = {}) {
         message: 'Ollama base URL is missing or invalid.',
         retryable: false,
       },
+      diagnostics: {
+        ollama: {
+          loadMode: fallbackLoadGovernor?.ollamaLoadMode || configuredLoadMode || 'balanced',
+          loadPolicyApplied: fallbackLoadGovernor?.policyApplied === true,
+          loadPolicyReason: fallbackLoadGovernor?.policyReason || null,
+          heavyModelRequested: fallbackLoadGovernor?.heavyModelRequested === true,
+          heavyModelAllowed: fallbackLoadGovernor?.heavyModelAllowed === true,
+          modelBeforeLoadPolicy: fallbackLoadGovernor?.modelBeforePolicy || requestedModelForFallback || resolved.model || null,
+          modelAfterLoadPolicy: fallbackLoadGovernor?.modelAfterPolicy || requestedModelForFallback || resolved.model || null,
+        },
+      },
     };
   }
 
   if (!resolved.model) {
-    return { ok: false, provider: 'ollama', model: '', outputText: '', error: { code: ERROR_CODES.LLM_OLLAMA_MODEL_MISSING, message: 'Ollama model is required.', retryable: false } };
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: '',
+      outputText: '',
+      error: { code: ERROR_CODES.LLM_OLLAMA_MODEL_MISSING, message: 'Ollama model is required.', retryable: false },
+      diagnostics: {
+        ollama: {
+          loadMode: fallbackLoadGovernor?.ollamaLoadMode || configuredLoadMode || 'balanced',
+          loadPolicyApplied: fallbackLoadGovernor?.policyApplied === true,
+          loadPolicyReason: fallbackLoadGovernor?.policyReason || null,
+          heavyModelRequested: fallbackLoadGovernor?.heavyModelRequested === true,
+          heavyModelAllowed: fallbackLoadGovernor?.heavyModelAllowed === true,
+          modelBeforeLoadPolicy: fallbackLoadGovernor?.modelBeforePolicy || requestedModelForFallback || null,
+          modelAfterLoadPolicy: fallbackLoadGovernor?.modelAfterPolicy || requestedModelForFallback || null,
+        },
+      },
+    };
   }
 
   try {
@@ -1243,6 +1291,19 @@ export async function runOllamaProvider(request, config = {}) {
         message,
         retryable: true,
         details: failure,
+      },
+      diagnostics: {
+        ollama: {
+          loadMode: fallbackLoadGovernor?.ollamaLoadMode || configuredLoadMode || 'balanced',
+          loadPolicyApplied: fallbackLoadGovernor?.policyApplied === true,
+          loadPolicyReason: fallbackLoadGovernor?.policyReason || null,
+          heavyModelRequested: fallbackLoadGovernor?.heavyModelRequested === true,
+          heavyModelAllowed: fallbackLoadGovernor?.heavyModelAllowed === true,
+          modelBeforeLoadPolicy: fallbackLoadGovernor?.modelBeforePolicy || requestedModelForFallback || resolved.model || null,
+          modelAfterLoadPolicy: fallbackLoadGovernor?.modelAfterPolicy || requestedModelForFallback || resolved.model || null,
+          requestedModel: requestedModelForFallback || null,
+          selectedModel: fallbackLoadGovernor?.modelAfterPolicy || requestedModelForFallback || resolved.model || null,
+        },
       },
     };
   }

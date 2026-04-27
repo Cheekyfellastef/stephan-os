@@ -464,6 +464,55 @@ test('runOllamaProvider reports execution timeout viability diagnostics when hea
   }
 });
 
+test('runOllamaProvider timeout diagnostics preserve load governor model truth in cool mode', async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }),
+      };
+    }
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+    throw abortError;
+  };
+
+  try {
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'quick summary' }] },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000, ollamaLoadMode: 'cool', selectedProviderHealthOkAtSelection: true },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.diagnostics.ollama.loadMode, 'cool');
+    assert.equal(result.diagnostics.ollama.loadPolicyApplied, true);
+    assert.equal(result.diagnostics.ollama.modelBeforeLoadPolicy, 'gpt-oss:20b');
+    assert.equal(result.diagnostics.ollama.modelAfterLoadPolicy, 'llama3.2:3b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'llama3.2:3b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider catch-path failures still expose non-n/a load governor truth', async () => {
+  globalThis.fetch = async () => {
+    throw new TypeError('network unreachable');
+  };
+
+  try {
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'quick summary' }] },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', ollamaLoadMode: 'cool' },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.diagnostics.ollama.loadMode, 'cool');
+    assert.equal(result.diagnostics.ollama.modelBeforeLoadPolicy, 'gpt-oss:20b');
+    assert.equal(result.diagnostics.ollama.modelAfterLoadPolicy, 'llama3.2:3b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('runOllamaProvider does not apply warmup retry when disabled by policy flag', async () => {
   globalThis.fetch = async (url) => {
     if (String(url).endsWith('/api/tags')) {
