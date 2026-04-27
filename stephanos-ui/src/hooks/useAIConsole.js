@@ -35,6 +35,37 @@ import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandInten
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
+const FAST_RESPONSE_MODEL = 'llama3.2:3b';
+
+function normalizeFastLanePrompt(prompt = '') {
+  const text = String(prompt || '').trim();
+  if (!text) return '';
+  const boundaryPatterns = [
+    /\n+\[system awareness context:/i,
+    /\n+##\s*memory\b/i,
+    /\n+##\s*conversation\b/i,
+    /\n+##\s*runtime\b/i,
+  ];
+  let normalized = text;
+  for (const pattern of boundaryPatterns) {
+    const match = normalized.match(pattern);
+    if (match?.index > 0) {
+      normalized = normalized.slice(0, match.index).trim();
+      break;
+    }
+  }
+  return normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean) || normalized;
+}
+
+function isFastLanePromptEligible(prompt = '') {
+  const normalized = normalizeFastLanePrompt(prompt);
+  if (!normalized) return true;
+  if (/\bwho am i talking to\b/i.test(normalized)) return true;
+  return normalized.split(/\s+/).filter(Boolean).length <= 18;
+}
 
 function summarizeDiscoveryAttempts(attempts = []) {
   if (!Array.isArray(attempts) || !attempts.length) {
@@ -216,6 +247,32 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     && defaultPolicyReason === 'Local-private default for low-freshness or private/system reasoning.'
     ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
     : defaultPolicyReason;
+  const latestUserPrompt = Array.isArray(requestPayload?.messages)
+    ? [...requestPayload.messages]
+      .reverse()
+      .find((entry) => String(entry?.role || '').toLowerCase() === 'user')?.content
+    : '';
+  const promptForFastLaneInference = latestUserPrompt || requestPayload?.raw_input || '';
+  const promptFastLaneEligible = isFastLanePromptEligible(promptForFastLaneInference);
+  const providerForFastLaneInference = String(actualProviderUsed || executionSelectedProvider || selectedProvider || '').trim().toLowerCase();
+  const modelForFastLaneInference = String(modelUsed || '').trim().toLowerCase();
+  const explicitFastLaneEligible = executionMetadata.fast_response_lane_eligible ?? requestTrace.fast_response_lane_eligible;
+  const explicitFastLaneActive = executionMetadata.fast_response_lane_active ?? requestTrace.fast_response_lane_active;
+  const inferredFastLaneActive = providerForFastLaneInference === 'ollama'
+    && modelForFastLaneInference === FAST_RESPONSE_MODEL
+    && promptFastLaneEligible;
+  const effectiveFastLaneEligible = typeof explicitFastLaneEligible === 'boolean'
+    ? explicitFastLaneEligible
+    : inferredFastLaneActive;
+  const effectiveFastLaneActive = typeof explicitFastLaneActive === 'boolean'
+    ? explicitFastLaneActive
+    : inferredFastLaneActive;
+  const effectiveFastLaneModel = executionMetadata.fast_response_model
+    || requestTrace.fast_response_model
+    || (effectiveFastLaneActive ? modelUsed : null);
+  const effectiveFastLaneReason = executionMetadata.fast_response_lane_reason
+    || requestTrace.fast_response_lane_reason
+    || (effectiveFastLaneActive ? 'short-local-private-prompt' : null);
 
   return {
     ui_default_provider: executionMetadata.ui_default_provider
@@ -245,10 +302,10 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ollama_reasoning_mode: executionMetadata.ollama_reasoning_mode || requestTrace.ollama_reasoning_mode || null,
     ollama_escalation_active: Boolean(executionMetadata.ollama_escalation_active ?? requestTrace.ollama_escalation_active ?? false),
     ollama_escalation_reason: executionMetadata.ollama_escalation_reason || requestTrace.ollama_escalation_reason || null,
-    fast_response_lane_eligible: Boolean(executionMetadata.fast_response_lane_eligible ?? requestTrace.fast_response_lane_eligible ?? false),
-    fast_response_lane_active: Boolean(executionMetadata.fast_response_lane_active ?? requestTrace.fast_response_lane_active ?? false),
-    fast_response_lane_reason: executionMetadata.fast_response_lane_reason || requestTrace.fast_response_lane_reason || null,
-    fast_response_model: executionMetadata.fast_response_model || requestTrace.fast_response_model || null,
+    fast_response_lane_eligible: effectiveFastLaneEligible,
+    fast_response_lane_active: effectiveFastLaneActive,
+    fast_response_lane_reason: effectiveFastLaneReason,
+    fast_response_model: effectiveFastLaneModel,
     fast_response_streaming: Boolean(executionMetadata.fast_response_streaming ?? requestTrace.fast_response_streaming ?? false),
     streaming_requested: Boolean(executionMetadata.streaming_requested ?? requestTrace.streaming_requested ?? false),
     streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
