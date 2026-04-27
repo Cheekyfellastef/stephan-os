@@ -393,6 +393,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       actualProviderUsed,
     });
     const freshnessTruth = llmResult.diagnostics?.freshnessTruth || {};
+    const fastResponseLaneTruth = llmResult.diagnostics?.fastResponseLane || {};
     const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
     const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
       || routeDecision?.freshnessNeed === 'high'
@@ -482,13 +483,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ollama_escalation_model: llmResult.diagnostics?.ollama?.escalationModel || null,
       ollama_escalation_active: Boolean(llmResult.diagnostics?.ollama?.escalationActive),
       ollama_escalation_reason: llmResult.diagnostics?.ollama?.escalationReason || null,
-      fast_response_lane_active: Boolean(llmResult.diagnostics?.ollama?.localReasoningMode === 'lightweight'),
-      fast_response_lane_reason: llmResult.diagnostics?.ollama?.policyReason || null,
-      fast_response_model: llmResult.diagnostics?.ollama?.localReasoningMode === 'lightweight'
-        ? (llmResult.diagnostics?.ollama?.selectedModel || null)
-        : null,
-      escalation_model: llmResult.diagnostics?.ollama?.escalationModel || null,
-      escalation_reason: llmResult.diagnostics?.ollama?.escalationReason || null,
+      fast_response_lane_eligible: Boolean(fastResponseLaneTruth.eligible),
+      fast_response_lane_active: Boolean(fastResponseLaneTruth.active),
+      fast_response_lane_reason: fastResponseLaneTruth.reason || llmResult.diagnostics?.ollama?.policyReason || null,
+      fast_response_model: fastResponseLaneTruth.model || null,
+      escalation_model: fastResponseLaneTruth.escalationModel || llmResult.diagnostics?.ollama?.escalationModel || null,
+      escalation_reason: fastResponseLaneTruth.escalationReason || llmResult.diagnostics?.ollama?.escalationReason || 'fast-lane-not-selected',
       streaming_supported: false,
       streaming_used: false,
       streaming_provider: null,

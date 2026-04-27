@@ -9,6 +9,7 @@ import {
   resolveRoutingPlan,
   sanitizeProviderConfig,
 } from '../utils/providerUtils.js';
+import { determineFastLaneEligibility } from './fastResponseLane.js';
 
 const logger = createLogger('llm-router');
 
@@ -120,10 +121,11 @@ export function resolveFallbackTelemetry({
   };
 }
 
-async function executeProvider(provider, request, routerConfig) {
+async function executeProvider(provider, request, routerConfig, providerConfigOverrides = {}) {
   const routeSelectionHealth = routerConfig?.providerHealthSnapshot?.[provider] || {};
   const config = sanitizeProviderConfig(provider, {
     ...(routerConfig.providerConfigs?.[provider] || {}),
+    ...(providerConfigOverrides || {}),
     runtimeContext: routerConfig.runtimeContext,
     selectedProviderHealthOkAtSelection: routeSelectionHealth.ok === true,
   });
@@ -219,6 +221,25 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const requestedProvider = routing.requestedProviderForRequest || routing.selectedProvider || savedPreferredProvider;
   const requestedRouteMode = routing.requestedRouteMode;
   const selectedProvider = routing.selectedProvider;
+  const initialFastLaneEligibility = determineFastLaneEligibility(
+    '',
+    {
+      ...request,
+      freshnessContext: configInput?.freshnessContext || request?.freshnessContext || null,
+      routeDecision: request?.routeDecision || requestInput?.routeDecision || null,
+    },
+    routing,
+  );
+  const fastLaneModel = selectedProvider === 'ollama' && initialFastLaneEligibility.eligible
+    ? 'llama3.2:3b'
+    : '';
+  const initialEscalationModel = selectedProvider === 'ollama' && fastLaneModel
+    ? (
+      String(configInput?.providerConfigs?.ollama?.model || '').trim().toLowerCase() === 'llama3.2:3b'
+        ? 'qwen:14b'
+        : String(configInput?.providerConfigs?.ollama?.model || '').trim() || 'qwen:14b'
+    )
+    : '';
   const freshnessNeed = String(routing.freshnessNeed || request?.freshnessContext?.freshnessNeed || '').trim().toLowerCase();
   const freshnessRequiredForTruth = freshnessNeed === 'high';
   const staleFallbackPermitted = Boolean(
@@ -284,8 +305,67 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     const attempt = await executeProvider(provider, request, {
       ...routerConfig,
       providerHealthSnapshot,
-    });
+    }, provider === 'ollama' && fastLaneModel ? { model: fastLaneModel } : {});
     const failureReason = summarizeAttemptFailure(provider, attempt);
+
+    if (
+      provider === 'ollama'
+      && fastLaneModel
+      && (!attempt.result?.ok || !attempt.result?.outputText)
+      && initialEscalationModel
+    ) {
+      const escalationAttempt = await executeProvider(provider, request, {
+        ...routerConfig,
+        providerHealthSnapshot,
+      }, { model: initialEscalationModel });
+      const escalationFailureReason = summarizeAttemptFailure(provider, escalationAttempt);
+      attempts.push({
+        provider,
+        health: escalationAttempt.health,
+        failureReason: escalationFailureReason,
+        result: escalationAttempt.result.ok ? { ...escalationAttempt.result, raw: undefined } : escalationAttempt.result,
+      });
+      if (escalationAttempt.result?.ok && escalationAttempt.result?.outputText) {
+        const failedAttempts = attempts.slice(0, -1);
+        const { fallbackUsed, fallbackReason } = resolveFallbackTelemetry({
+          requestedProvider,
+          selectedProvider,
+          actualProvider: provider,
+          failedAttempts,
+        });
+        return {
+          ...escalationAttempt.result,
+          requestedProvider,
+          actualProviderUsed: provider,
+          modelUsed: escalationAttempt.result.model || '',
+          fallbackUsed: true,
+          fallbackReason: fallbackReason || 'fast-lane-escalation',
+          diagnostics: {
+            ...(escalationAttempt.result.diagnostics || {}),
+            requestedProvider,
+            selectedProvider,
+            resolvedProvider: provider,
+            actualProviderUsed: provider,
+            modelUsed: escalationAttempt.result.model || '',
+            fallbackUsed: true,
+            fallbackReason: fallbackReason || 'fast-lane-escalation',
+            attemptOrder,
+            attempts,
+            runtimeContext: routing.runtimeContext,
+            fastResponseLane: {
+              eligible: true,
+              active: true,
+              reason: initialFastLaneEligibility.reason,
+              model: fastLaneModel,
+              escalationModel: initialEscalationModel,
+              escalationReason: 'fast-lane-initial-attempt-failed',
+            },
+            routing,
+            routerConfig: redactSecrets(routerConfig),
+          },
+        };
+      }
+    }
 
     attempts.push({
       provider,
@@ -388,6 +468,14 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
               ? []
               : ['retry-fresh-provider', 'switch-provider'],
           },
+          fastResponseLane: {
+            eligible: initialFastLaneEligibility.eligible,
+            active: Boolean(provider === 'ollama' && fastLaneModel),
+            reason: initialFastLaneEligibility.reason,
+            model: provider === 'ollama' && fastLaneModel ? (attempt.result.model || fastLaneModel) : '',
+            escalationModel: provider === 'ollama' && fastLaneModel ? initialEscalationModel : '',
+            escalationReason: provider === 'ollama' && fastLaneModel ? '' : 'fast-lane-not-selected',
+          },
           routing,
           routerConfig: redactSecrets(routerConfig),
         },
@@ -474,6 +562,14 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         nextActions: degradedFreshnessUnavailable
           ? ['retry-fresh-provider', 'allow-degraded-stale-fallback', 'switch-provider']
           : ['retry-request', 'switch-provider'],
+      },
+      fastResponseLane: {
+        eligible: initialFastLaneEligibility.eligible,
+        active: false,
+        reason: initialFastLaneEligibility.reason,
+        model: fastLaneModel,
+        escalationModel: initialEscalationModel,
+        escalationReason: fastLaneModel ? 'fast-lane-exhausted-or-failed' : 'fast-lane-not-selected',
       },
       routing,
       routerConfig: redactSecrets(routerConfig),

@@ -295,6 +295,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastOllamaReasoningMode: lastExecutionMetadata?.ollama_reasoning_mode || 'n/a',
       lastOllamaEscalationActive: String(lastExecutionMetadata?.ollama_escalation_active ?? 'n/a'),
       lastOllamaEscalationReason: lastExecutionMetadata?.ollama_escalation_reason || 'n/a',
+      lastFastResponseLaneEligible: String(lastExecutionMetadata?.fast_response_lane_eligible ?? 'n/a'),
+      lastFastResponseLaneActive: String(lastExecutionMetadata?.fast_response_lane_active ?? 'n/a'),
+      lastFastResponseLaneReason: lastExecutionMetadata?.fast_response_lane_reason || 'n/a',
+      lastFastResponseModel: lastExecutionMetadata?.fast_response_model || 'n/a',
+      lastEscalationModel: lastExecutionMetadata?.escalation_model || 'n/a',
+      lastEscalationReason: lastExecutionMetadata?.escalation_reason || 'n/a',
       lastOllamaFallbackModel: lastExecutionMetadata?.ollama_fallback_model || 'n/a',
       lastOllamaFallbackModelUsed: String(lastExecutionMetadata?.ollama_fallback_model_used ?? 'n/a'),
       lastOllamaFallbackReason: lastExecutionMetadata?.ollama_fallback_reason || 'n/a',
@@ -638,6 +644,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Requested Provider: {routeTruthView.requestedProvider}</li>
         <li>Route Selected Provider: {routeTruthView.selectedProvider}</li>
         <li>Active Provider: {routeTruthView.executedProvider}</li>
+        <li>Fast Response Lane: {routeTruthView.fastResponseLaneActive ? '⚡ active' : 'inactive'}</li>
+        <li>Fast Response Eligible: {routeTruthView.fastResponseLaneEligible ? 'yes' : 'no'}</li>
+        <li>Fast Response Reason: {routeTruthView.fastResponseLaneReason || 'n/a'}</li>
+        <li>Fast Response Model: {routeTruthView.fastResponseModel || 'n/a'}</li>
+        <li>Escalation Model: {routeTruthView.escalationModel || 'n/a'}</li>
+        <li>Escalation Reason: {routeTruthView.escalationReason || 'n/a'}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>
         <li>Fallback Active: {routeTruthView.fallbackActive ? 'yes' : 'no'}</li>
         <li>Backend: {safeApiStatus.label || 'Checking backend...'}</li>

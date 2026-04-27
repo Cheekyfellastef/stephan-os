@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { getProviderHealthSnapshot } from '../services/llm/router/routeLLMRequest.js';
 import { checkOllamaHealth, resolveOllamaConfig, runOllamaProvider } from '../services/llm/providers/ollamaProvider.js';
+import { determineFastLaneEligibility } from '../services/llm/router/fastResponseLane.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -25,6 +26,28 @@ test('resolveOllamaConfig migrates legacy timeoutMs into default Ollama timeout 
   assert.equal(resolved.defaultOllamaTimeoutMs, 15500);
   assert.equal(resolved.timeoutMs, 15500);
   assert.deepEqual(resolved.perModelTimeoutOverrides, {});
+});
+
+test('determineFastLaneEligibility enables fast lane for short low-freshness prompts', () => {
+  const result = determineFastLaneEligibility('Who am I talking to?', {
+    freshnessContext: { freshnessNeed: 'low' },
+  }, {});
+  assert.equal(result.eligible, true);
+});
+
+test('determineFastLaneEligibility disables fast lane for high freshness prompts', () => {
+  const result = determineFastLaneEligibility('What happened today in markets?', {
+    freshnessContext: { freshnessNeed: 'high' },
+  }, {});
+  assert.equal(result.eligible, false);
+  assert.equal(result.reason, 'high-freshness-request');
+});
+
+test('determineFastLaneEligibility disables fast lane for mission packet generation prompts', () => {
+  const result = determineFastLaneEligibility('Generate a mission packet and codex handoff for implementation.', {
+    freshnessContext: { freshnessNeed: 'low' },
+  }, {});
+  assert.equal(result.eligible, false);
 });
 
 test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available', async () => {

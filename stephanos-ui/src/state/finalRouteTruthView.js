@@ -198,6 +198,12 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     backendExecutionContractStatus,
     providerExecutionGateStatus,
     providerState,
+    fastResponseLaneEligible: canonicalTruth.fastResponseLaneEligible === true,
+    fastResponseLaneActive: canonicalTruth.fastResponseLaneActive === true,
+    fastResponseLaneReason: pickTruth(canonicalTruth.fastResponseLaneReason) || 'n/a',
+    fastResponseModel: pickTruth(canonicalTruth.fastResponseModel) || 'n/a',
+    escalationModel: pickTruth(canonicalTruth.escalationModel) || 'n/a',
+    escalationReason: pickTruth(canonicalTruth.escalationReason) || 'n/a',
     effectiveLaunchState,
     persistence,
   };
