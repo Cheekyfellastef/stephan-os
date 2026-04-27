@@ -54,13 +54,17 @@ test('sendPrompt supports hosted cloud cognition fallback path when backend tran
 
 test('sendPrompt streams token events through onStreamEvent callback', () => {
   assert.match(clientSource, /onStreamEvent\s*=\s*null/);
-  assert.match(clientSource, /streamingMode\s*=\s*'off'/);
+  assert.match(clientSource, /streamingMode\s*=\s*'auto'/);
   assert.match(clientSource, /const streamingPolicy = resolveStreamingRequestPolicy\(/);
   assert.match(clientSource, /const explicitStreamingRequest = streamingPolicy\.streamingRequested[\s\S]*provider.*'ollama'/m);
   assert.match(clientSource, /payload\.streamingMode = streamingPolicy\.normalizedMode/);
+  assert.match(clientSource, /payload\.streaming_mode_preference_input = streamingPolicy\.streamingModePreferenceInput/);
   assert.match(clientSource, /payload\.streaming_mode_preference = streamingPolicy\.normalizedMode/);
   assert.match(clientSource, /payload\.streaming_requested = streamingPolicy\.streamingRequested/);
   assert.match(clientSource, /payload\.streaming_request_source = streamingPolicy\.streamingRequestSource/);
+  assert.match(clientSource, /payload\.streaming_policy_decision = streamingPolicy\.streamingPolicyDecision/);
+  assert.match(clientSource, /payload\.streaming_policy_reason = streamingPolicy\.streamingPolicyReason/);
+  assert.match(clientSource, /payload\.stream = streamingPolicy\.streamingRequested/);
   assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat\?stream=1'[\s\S]*onEvent:/m);
   assert.match(clientSource, /onStreamEvent\(\{\s*event:\s*eventName,/m);
   assert.match(clientSource, /body:\s*JSON\.stringify\(\{\s*\.\.\.payload,\s*stream:\s*true\s*\}\)/m);
@@ -69,6 +73,10 @@ test('sendPrompt streams token events through onStreamEvent callback', () => {
 
 test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
   assert.match(clientSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen:32b'\]\)/);
+  assert.match(clientSource, /if \(normalizedMode === 'on'\)/);
+  assert.match(clientSource, /streamingRequestSource:\s*'operator-on'/);
+  assert.match(clientSource, /if \(normalizedMode === 'off'\)/);
+  assert.match(clientSource, /streamingRequestSource:\s*'operator-off'/);
   assert.match(clientSource, /normalizedMode === 'auto' && heavyOllamaModel/);
   assert.match(clientSource, /streamingRequestSource: 'auto-heavy-ollama'/);
 });
