@@ -10,16 +10,17 @@ const source = fs.readFileSync(path.join(__dirname, 'AnswerPaneCopyButton.jsx'),
 
 test('AnswerPaneCopyButton blocks empty payload copy attempts and reports failure truthfully', () => {
   assert.match(source, /if \(!String\(payload \|\| ''\)\.trim\(\)\) \{/);
-  assert.match(source, /setCopyState\(COPY_STATE\.FAILURE\)/);
+  assert.match(source, /setAnswerCopyState\(COPY_STATE\.FAILURE\)/);
 });
 
 test('AnswerPaneCopyButton only enters success state after confirmed clipboard success', () => {
   assert.match(source, /const result = await writeTextToClipboard\(payload\)/);
-  assert.match(source, /setCopyState\(result\.ok \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
-  assert.match(source, /catch \{\s*setCopyState\(COPY_STATE\.FAILURE\);\s*\}/);
+  assert.match(source, /setAnswerCopyState\(result\.ok \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
+  assert.match(source, /setDebugCopyState\(result\.ok \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
 });
 
-test('AnswerPaneCopyButton keeps success state visible long enough for user feedback', () => {
+test('AnswerPaneCopyButton exposes separate answer and debug copy actions', () => {
   assert.match(source, /useClipboardButtonState/);
-  assert.match(source, /import \{ COPY_STATE, useClipboardButtonState \} from '\.\.\/hooks\/useClipboardButtonState'/);
+  assert.match(source, /Copy Answer/);
+  assert.match(source, /Copy Debug Payload/);
 });

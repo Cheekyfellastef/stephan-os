@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAssistantMessageClipboardPayload } from './assistantMessageClipboard.js';
+import {
+  buildAssistantAnswerClipboardPayload,
+  buildAssistantDebugClipboardPayload,
+  buildAssistantMessageClipboardPayload,
+} from './assistantMessageClipboard.js';
 
 test('buildAssistantMessageClipboardPayload copies assistant output text only when structured data is absent', () => {
   const payload = buildAssistantMessageClipboardPayload({
@@ -10,8 +14,8 @@ test('buildAssistantMessageClipboardPayload copies assistant output text only wh
   assert.equal(payload, 'Mission response complete.');
 });
 
-test('buildAssistantMessageClipboardPayload includes message-scoped structured data when present', () => {
-  const payload = buildAssistantMessageClipboardPayload({
+test('buildAssistantDebugClipboardPayload includes message-scoped structured data when present', () => {
+  const payload = buildAssistantDebugClipboardPayload({
     output_text: 'Truth report ready.',
     data_payload: {
       timeout_truth: { source: 'per-message', value: 120 },
@@ -24,14 +28,14 @@ test('buildAssistantMessageClipboardPayload includes message-scoped structured d
   });
 
   assert.match(payload, /^\[Assistant Answer\]\nTruth report ready\./);
-  assert.match(payload, /\[Structured Data\]/);
+  assert.match(payload, /\[Debug Payload - may be large\]/);
   assert.match(payload, /"timeout_truth"/);
   assert.match(payload, /"selected_subsystem"/);
 });
 
 test('buildAssistantMessageClipboardPayload does not leak unrelated global state', () => {
   globalThis.__STEPHANOS_GLOBAL_TRUTH__ = { latest: 'should-not-appear' };
-  const payload = buildAssistantMessageClipboardPayload({
+  const payload = buildAssistantDebugClipboardPayload({
     output_text: 'Historical answer snapshot.',
     data_payload: {
       retrieval_truth: { id: 'message-a' },
@@ -58,8 +62,8 @@ test('buildAssistantMessageClipboardPayload keeps historical message metadata sc
     },
   };
 
-  const olderPayload = buildAssistantMessageClipboardPayload(olderMessage);
-  const newerPayload = buildAssistantMessageClipboardPayload(newerMessage);
+  const olderPayload = buildAssistantDebugClipboardPayload(olderMessage);
+  const newerPayload = buildAssistantDebugClipboardPayload(newerMessage);
 
   assert.match(olderPayload, /old-1/);
   assert.doesNotMatch(olderPayload, /new-2/);
@@ -77,6 +81,14 @@ test('buildAssistantMessageClipboardPayload reads camelCase response output when
 });
 
 test('buildAssistantMessageClipboardPayload returns empty payload when message has no answer text or structured data', () => {
-  const payload = buildAssistantMessageClipboardPayload({});
+  const payload = buildAssistantAnswerClipboardPayload({});
   assert.equal(payload, '');
+});
+
+test('buildAssistantAnswerClipboardPayload excludes telemetry payload by default', () => {
+  const payload = buildAssistantAnswerClipboardPayload({
+    output_text: 'Only answer.',
+    data_payload: { huge_blob: 'x'.repeat(2000) },
+  });
+  assert.equal(payload, 'Only answer.');
 });

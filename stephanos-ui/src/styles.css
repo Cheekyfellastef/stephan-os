@@ -824,6 +824,8 @@ button:active,
   position: absolute;
   right: 0.75rem;
   bottom: 0.75rem;
+  display: flex;
+  gap: 0.4rem;
 }
 
 .answer-pane-copy-button {
@@ -851,6 +853,17 @@ button:active,
 .answer-pane-copy-button:focus-visible {
   outline: 2px solid rgba(152, 203, 255, 0.95);
   outline-offset: 2px;
+}
+
+.answer-pane-copy-button-debug {
+  border-color: rgba(255, 206, 142, 0.55);
+}
+
+.assistant-answer-text {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  white-space: pre-wrap;
 }
 
 .sr-only {

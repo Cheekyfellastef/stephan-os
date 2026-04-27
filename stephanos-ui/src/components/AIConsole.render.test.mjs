@@ -57,6 +57,12 @@ test('Mission console collapsed panel body does not keep reserved height when hi
   assert.match(stylesSource, /\.mission-console \.panel-body\[hidden\][\s\S]*height:\s*0;/m);
 });
 
+test('assistant answer pane keeps text selection enabled for drag-copy operations', async () => {
+  const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
+  assert.match(stylesSource, /\.assistant-answer-text\s*\{/);
+  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*user-select:\s*text;/m);
+});
+
 
 test('AIConsole renders copy buttons for historical and new assistant answer panes', async () => {
   const { renderAIConsole } = await importBundledModule(
@@ -96,7 +102,10 @@ test('AIConsole renders copy buttons for historical and new assistant answer pan
     ],
   });
 
-  const copyMatches = rendered.match(/aria-label="Copy answer"/g) || [];
-  assert.equal(copyMatches.length, 2);
+  const answerCopyMatches = rendered.match(/aria-label="Copy answer"/g) || [];
+  const debugCopyMatches = rendered.match(/aria-label="Copy debug payload"/g) || [];
+  assert.equal(answerCopyMatches.length, 2);
+  assert.equal(debugCopyMatches.length, 2);
   assert.match(rendered, /answer-pane-copy-button/);
+  assert.match(rendered, /assistant-answer-text/);
 });
