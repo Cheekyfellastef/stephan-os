@@ -8,6 +8,7 @@ import {
 } from './apiConfig';
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
+import { resolveOllamaLoadGovernorPolicy } from '../../../shared/ai/ollamaLoadGovernor.mjs';
 
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
@@ -46,6 +47,8 @@ export function resolveStreamingRequestPolicy({
   executionProvider = '',
   executionModel = '',
   providerConfigs = {},
+  ollamaLoadMode = 'balanced',
+  prompt = '',
 } = {}) {
   const streamingModePreferenceInput = String(streamingMode || 'auto').trim().toLowerCase();
   const normalizedMode = ['off', 'auto', 'on'].includes(streamingModePreferenceInput) ? streamingModePreferenceInput : 'auto';
@@ -56,7 +59,17 @@ export function resolveStreamingRequestPolicy({
     providerConfigs?.[normalizedProvider]?.model,
     providerConfigs?.[requestedProvider]?.model,
   ).toLowerCase();
-  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(resolvedModel);
+  const loadGovernorPreview = normalizedProvider === 'ollama'
+    ? resolveOllamaLoadGovernorPolicy({
+      ollamaLoadMode,
+      requestedModel: resolvedModel,
+      prompt,
+    })
+    : null;
+  const streamingPolicyModel = normalizedProvider === 'ollama'
+    ? String(loadGovernorPreview?.modelAfterPolicy || resolvedModel || '').trim().toLowerCase()
+    : resolvedModel;
+  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(streamingPolicyModel);
   if (normalizedMode === 'on') {
     return {
       normalizedMode,
@@ -1066,6 +1079,7 @@ export async function sendPrompt({
   routeDecision = null,
   contextAssembly = null,
   streamingMode = 'auto',
+  ollamaLoadMode = 'balanced',
   onStreamEvent = null,
   abortSignal = null,
 }) {
@@ -1075,6 +1089,7 @@ export async function sendPrompt({
     routeDecision,
     runtimeConfig,
     providerConfigs: safeProviderConfigs,
+    ollama_load_mode: String(ollamaLoadMode || 'balanced').trim().toLowerCase(),
     timeoutExecutionEnvelope: runtimeConfig?.timeoutExecutionEnvelope || null,
   });
   const timeoutPolicy = resolveUiRequestTimeoutPolicy({
@@ -1135,6 +1150,8 @@ export async function sendPrompt({
     executionProvider: timeoutExecutionTruth.effectiveProvider || provider,
     executionModel: timeoutExecutionTruth.effectiveModel || '',
     providerConfigs: safeProviderConfigs,
+    ollamaLoadMode,
+    prompt,
   });
   payload.streamingMode = streamingPolicy.normalizedMode;
   payload.streaming_mode_preference = streamingPolicy.normalizedMode;

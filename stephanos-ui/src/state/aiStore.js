@@ -5,6 +5,7 @@ import {
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
   DEFAULT_STREAMING_MODE,
+  DEFAULT_OLLAMA_LOAD_MODE,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   HOSTED_COGNITION_PROVIDER_KEYS,
@@ -14,6 +15,7 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
   normalizeStreamingMode,
+  normalizeOllamaLoadMode,
   sanitizeConfigForStorage,
   validateProviderDraft,
 } from '../ai/providerConfig';
@@ -599,12 +601,19 @@ function normalizeStoredSettings(persistedSession) {
     ).trim().toLowerCase();
     const hasSavedStreamingMode = savedStreamingMode.length > 0;
     const normalizedStreamingMode = normalizeStreamingMode(hasSavedStreamingMode ? savedStreamingMode : defaults.streamingMode);
+    const savedOllamaLoadMode = String(
+      persistedSettings.ollamaLoadMode
+      ?? persistedSettings.ollama_load_mode
+      ?? '',
+    ).trim().toLowerCase();
+    const normalizedOllamaLoadMode = normalizeOllamaLoadMode(savedOllamaLoadMode || defaults.ollamaLoadMode);
 
     return {
       ...defaults,
       provider: normalizeProviderSelection(persistedSettings.provider),
       routeMode: normalizeRouteMode(persistedSettings.routeMode),
       streamingMode: normalizedStreamingMode,
+      ollamaLoadMode: normalizedOllamaLoadMode,
       streamingModePreferenceRehydrated: hasSavedStreamingMode,
       streamingPersistenceSource: hasSavedStreamingMode ? 'saved/operator' : 'default/auto',
       streamingPersistenceUpdatedAt: String(
@@ -884,6 +893,7 @@ export function AIStoreProvider({ children }) {
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
   const [routeMode, setRouteModeState] = useState(initialSettings.routeMode || DEFAULT_ROUTE_MODE);
   const [streamingMode, setStreamingModeState] = useState(initialSettings.streamingMode || DEFAULT_STREAMING_MODE);
+  const [ollamaLoadMode, setOllamaLoadModeState] = useState(initialSettings.ollamaLoadMode || DEFAULT_OLLAMA_LOAD_MODE);
   const [streamingModePreferenceRehydrated, setStreamingModePreferenceRehydrated] = useState(initialSettings.streamingModePreferenceRehydrated === true);
   const [streamingPersistenceSource, setStreamingPersistenceSource] = useState(initialSettings.streamingPersistenceSource || 'default/auto');
   const [streamingPersistenceUpdatedAt, setStreamingPersistenceUpdatedAt] = useState(initialSettings.streamingPersistenceUpdatedAt || '');
@@ -1255,6 +1265,8 @@ export function AIStoreProvider({ children }) {
           provider,
           routeMode,
           streamingMode,
+          ollamaLoadMode,
+          ollama_load_mode: ollamaLoadMode,
           streamingModePreference: streamingMode,
           streaming_mode_preference: streamingMode,
           streaming_persistence_updated_at: streamingPersistenceUpdatedAt || '',
@@ -1312,6 +1324,7 @@ export function AIStoreProvider({ children }) {
     provider,
     routeMode,
     streamingMode,
+    ollamaLoadMode,
     streamingPersistenceUpdatedAt,
     devMode,
     fallbackEnabled,
@@ -1437,6 +1450,10 @@ export function AIStoreProvider({ children }) {
     setStreamingModePreferenceRehydrated(true);
     setStreamingPersistenceSource('saved/operator');
     setStreamingPersistenceUpdatedAt(new Date().toISOString());
+  }, []);
+
+  const setOllamaLoadMode = useCallback((nextOllamaLoadMode) => {
+    setOllamaLoadModeState(normalizeOllamaLoadMode(nextOllamaLoadMode));
   }, []);
 
   const setDevMode = useCallback((next) => {
@@ -1788,6 +1805,7 @@ export function AIStoreProvider({ children }) {
     setProviderState(defaults.provider);
     setRouteModeState(defaults.routeMode);
     setStreamingModeState(defaults.streamingMode || DEFAULT_STREAMING_MODE);
+    setOllamaLoadModeState(defaults.ollamaLoadMode || DEFAULT_OLLAMA_LOAD_MODE);
     setStreamingModePreferenceRehydrated(false);
     setStreamingPersistenceSource('default/auto');
     setStreamingPersistenceUpdatedAt('');
@@ -2597,10 +2615,12 @@ export function AIStoreProvider({ children }) {
     routeMode,
     setRouteMode,
     streamingMode,
+    ollamaLoadMode,
     streamingModePreferenceRehydrated,
     streamingPersistenceSource,
     streamingPersistenceUpdatedAt,
     setStreamingMode,
+    setOllamaLoadMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -2736,6 +2756,7 @@ export function AIStoreProvider({ children }) {
     providerSelectionSource,
     routeMode,
     streamingMode,
+    ollamaLoadMode,
     streamingModePreferenceRehydrated,
     streamingPersistenceSource,
     streamingPersistenceUpdatedAt,
@@ -2789,6 +2810,7 @@ export function AIStoreProvider({ children }) {
     setProvider,
     setRouteMode,
     setStreamingMode,
+    setOllamaLoadMode,
     setDevMode,
     setFallbackEnabled,
     setDisableHomeNodeForLocalSession,

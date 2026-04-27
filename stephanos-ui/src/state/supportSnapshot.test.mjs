@@ -501,6 +501,13 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
       lastOllamaModelPreferred: 'qwen:32b',
       lastOllamaModelRequested: 'qwen:14b',
       lastOllamaModelSelected: 'qwen:32b',
+      lastOllamaLoadMode: 'cool',
+      lastOllamaLoadPolicyApplied: 'true',
+      lastOllamaLoadPolicyReason: 'cool-heavy-avoided-for-load-policy',
+      lastOllamaHeavyModelRequested: 'true',
+      lastOllamaHeavyModelAllowed: 'false',
+      lastOllamaModelBeforeLoadPolicy: 'qwen:14b',
+      lastOllamaModelAfterLoadPolicy: 'llama3.2:3b',
       lastOllamaReasoningMode: 'deep',
       lastOllamaEscalationActive: 'true',
       lastOllamaEscalationReason: 'operator-or-prompt requested deep reasoning',
@@ -533,6 +540,9 @@ test('buildSupportSnapshot includes Ollama model ladder execution truth fields',
 
   assert.match(snapshot, /Last Ollama Default Model: qwen:14b/);
   assert.match(snapshot, /Last Ollama Selected Model: qwen:32b/);
+  assert.match(snapshot, /Last Ollama Load Mode: cool/);
+  assert.match(snapshot, /Last Ollama Load Policy Applied: true/);
+  assert.match(snapshot, /Last Ollama Model After Load Policy: llama3.2:3b/);
   assert.match(snapshot, /Last Ollama Escalation Active: true/);
   assert.match(snapshot, /Last Ollama Fallback Model: gpt-oss:20b/);
   assert.match(snapshot, /Last Ollama Timeout \(ms\): 22000/);

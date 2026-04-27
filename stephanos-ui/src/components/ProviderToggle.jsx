@@ -10,7 +10,7 @@ import { normalizeOllamaBaseUrl } from '../ai/ollamaDiscovery';
 import { applyDetectedOllamaConnection, runOllamaDiscovery } from '../ai/ollamaRuntimeSync';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { resolveProviderSecretSaveFeedback } from '../ai/providerSecretFeedback';
-import { PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
+import { OLLAMA_LOAD_MODE_KEYS, PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
 import { extractHostname, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { useAIStore } from '../state/aiStore';
 
@@ -159,6 +159,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setRouteMode,
     streamingMode,
     setStreamingMode,
+    ollamaLoadMode,
+    setOllamaLoadMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -256,6 +258,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     }
     return savedModels;
   }, [availableOllamaModels, getDraftProviderConfig]);
+  const heavyModelSelected = ['gpt-oss:20b', 'qwen:14b', 'qwen:32b']
+    .includes(String(getDraftProviderConfig('ollama')?.model || '').trim().toLowerCase());
 
   const handleDetectedOllamaConnection = (result) => applyDetectedOllamaConnection({
     result,
@@ -601,7 +605,18 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
             <option value="on">On</option>
           </select>
         </label>
+        <label className="toggle-chip">
+          <span>Ollama Load</span>
+          <select value={ollamaLoadMode} onChange={(event) => setOllamaLoadMode(event.target.value)}>
+            {OLLAMA_LOAD_MODE_KEYS.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+          </select>
+        </label>
       </div>
+      {provider === 'ollama' && heavyModelSelected && ollamaLoadMode !== 'performance' ? (
+        <p className="provider-dock-status provider-dock-status-warning">
+          Heavy Ollama model selected while Load Governor is <strong>{ollamaLoadMode}</strong>; Stephanos may auto-shift to lightweight local execution for short prompts.
+        </p>
+      ) : null}
       <section className="provider-hint-box hosted-cloud-cognition-pane">
         <div className="provider-help-panel">
           <strong>Hosted Cloud Cognition</strong>

@@ -272,6 +272,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   let staleFallbackUsed = false;
   let staleFallbackBlocked = false;
   let staleAnswerWarning = null;
+  const ollamaForceHeavy = request?.routeDecision?.operatorForceHeavyLocal === true
+    || requestInput?.routeDecision?.operatorForceHeavyLocal === true;
 
   logger.info('Routing LLM request', {
     requestedProvider,
@@ -323,6 +325,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
       abortSignal: configInput?.abortSignal || null,
     }, {
       ...(provider === 'ollama' && fastLaneModel ? { model: fastLaneModel } : {}),
+      ...(provider === 'ollama' ? { ollamaLoadMode: configInput?.ollamaLoadMode || 'balanced', forceHeavyModel: ollamaForceHeavy } : {}),
       ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
       ...(configInput?.abortSignal ? { signal: configInput.abortSignal } : {}),
     });
@@ -340,6 +343,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         abortSignal: configInput?.abortSignal || null,
       }, {
         model: initialEscalationModel,
+        ollamaLoadMode: configInput?.ollamaLoadMode || 'balanced',
+        forceHeavyModel: ollamaForceHeavy,
         ...(typeof configInput?.streamObserver === 'function' ? { streamObserver: configInput.streamObserver } : {}),
         ...(configInput?.abortSignal ? { signal: configInput.abortSignal } : {}),
       });

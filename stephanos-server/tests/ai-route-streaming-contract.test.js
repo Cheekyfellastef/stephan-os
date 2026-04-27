@@ -58,6 +58,16 @@ test('/api/ai/chat execution metadata tracks streaming_used only when SSE is act
   assert.match(source, /streaming_policy_reason:/);
 });
 
+test('/api/ai/chat execution metadata exposes ollama load governor truth fields', () => {
+  assert.match(source, /ollama_load_mode:/);
+  assert.match(source, /ollama_load_policy_applied:/);
+  assert.match(source, /ollama_load_policy_reason:/);
+  assert.match(source, /ollama_heavy_model_requested:/);
+  assert.match(source, /ollama_heavy_model_allowed:/);
+  assert.match(source, /ollama_model_before_load_policy:/);
+  assert.match(source, /ollama_model_after_load_policy:/);
+});
+
 test('/api/ai/chat propagates client disconnect cancellation into provider execution', () => {
   assert.match(source, /req\.on\('aborted'/);
   assert.match(source, /req\.on\('close'/);
