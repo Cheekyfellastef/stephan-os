@@ -54,7 +54,10 @@ test('sendPrompt supports hosted cloud cognition fallback path when backend tran
 
 test('sendPrompt streams token events through onStreamEvent callback', () => {
   assert.match(clientSource, /onStreamEvent\s*=\s*null/);
-  assert.match(clientSource, /const explicitStreamingRequest = typeof onStreamEvent === 'function'[\s\S]*provider.*'ollama'/m);
+  assert.match(clientSource, /streamingMode\s*=\s*'off'/);
+  assert.match(clientSource, /const normalizedStreamingMode = String\(streamingMode \|\| 'off'\)\.trim\(\)\.toLowerCase\(\)/);
+  assert.match(clientSource, /const explicitStreamingRequest = streamingRequestedByMode[\s\S]*typeof onStreamEvent === 'function'[\s\S]*provider.*'ollama'/m);
+  assert.match(clientSource, /payload\.streamingMode = normalizedStreamingMode/);
   assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat\?stream=1'[\s\S]*onEvent:/m);
   assert.match(clientSource, /onStreamEvent\(\{\s*event:\s*eventName,/m);
 });

@@ -250,11 +250,13 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     fast_response_lane_reason: executionMetadata.fast_response_lane_reason || requestTrace.fast_response_lane_reason || null,
     fast_response_model: executionMetadata.fast_response_model || requestTrace.fast_response_model || null,
     fast_response_streaming: Boolean(executionMetadata.fast_response_streaming ?? requestTrace.fast_response_streaming ?? false),
+    streaming_requested: Boolean(executionMetadata.streaming_requested ?? requestTrace.streaming_requested ?? false),
     streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
     streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
     streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
     streaming_model: executionMetadata.streaming_model || requestTrace.streaming_model || null,
     streaming_finalized: Boolean(executionMetadata.streaming_finalized ?? requestTrace.streaming_finalized ?? false),
+    streaming_fallback_reason: executionMetadata.streaming_fallback_reason || requestTrace.streaming_fallback_reason || null,
     escalation_model: executionMetadata.escalation_model || requestTrace.escalation_model || null,
     escalation_reason: executionMetadata.escalation_reason || requestTrace.escalation_reason || null,
     ollama_fallback_model: executionMetadata.ollama_fallback_model || requestTrace.ollama_fallback_model || null,
@@ -1142,6 +1144,7 @@ export function useAIConsole() {
     setApiStatus,
     provider,
     routeMode,
+    streamingMode,
     devMode,
     fallbackEnabled,
     fallbackOrder,
@@ -2107,6 +2110,7 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssembly,
+        streamingMode,
         onStreamEvent: (event) => {
           if (!event || event.type !== 'token') return;
           streamBuffer += String(event.content || '');
@@ -2470,6 +2474,7 @@ export function useAIConsole() {
         devMode,
         runtimeConfig: finalizedRequestContext,
         tileContext: assembledTileContext,
+        streamingMode,
       });
       const actionExecution = normalizeExecutionMetadata({
         data,

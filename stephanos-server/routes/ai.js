@@ -439,6 +439,29 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     });
     const freshnessTruth = llmResult.diagnostics?.freshnessTruth || {};
     const fastResponseLaneTruth = llmResult.diagnostics?.fastResponseLane || {};
+    const fastLaneModelTruth = String(
+      fastResponseLaneTruth.model
+      || llmResult.diagnostics?.ollama?.requestedModel
+      || llmResult.diagnostics?.ollama?.selectedModel
+      || llmResult.modelUsed
+      || llmResult.model
+      || '',
+    ).trim();
+    const fastLaneEligibleTruth = Boolean(
+      fastResponseLaneTruth.eligible
+      || (
+        actualProviderUsed === 'ollama'
+        && fastLaneModelTruth.toLowerCase() === 'llama3.2:3b'
+      ),
+    );
+    const fastLaneActiveTruth = Boolean(
+      fastResponseLaneTruth.active
+      || (
+        fastLaneEligibleTruth
+        && actualProviderUsed === 'ollama'
+        && fastLaneModelTruth.toLowerCase() === 'llama3.2:3b'
+      ),
+    );
     const fallbackProviderUsed = llmResult.fallbackUsed ? actualProviderUsed : null;
     const freshProviderAttempted = freshnessContext?.freshnessNeed === 'high'
       || routeDecision?.freshnessNeed === 'high'
@@ -528,12 +551,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ollama_escalation_model: llmResult.diagnostics?.ollama?.escalationModel || null,
       ollama_escalation_active: Boolean(llmResult.diagnostics?.ollama?.escalationActive),
       ollama_escalation_reason: llmResult.diagnostics?.ollama?.escalationReason || null,
-      fast_response_lane_eligible: Boolean(fastResponseLaneTruth.eligible),
-      fast_response_lane_active: Boolean(fastResponseLaneTruth.active),
+      fast_response_lane_eligible: fastLaneEligibleTruth,
+      fast_response_lane_active: fastLaneActiveTruth,
       fast_response_lane_reason: fastResponseLaneTruth.reason || llmResult.diagnostics?.ollama?.policyReason || null,
-      fast_response_model: fastResponseLaneTruth.model || null,
+      fast_response_model: fastLaneActiveTruth ? (fastLaneModelTruth || 'llama3.2:3b') : (fastResponseLaneTruth.model || null),
       escalation_model: fastResponseLaneTruth.escalationModel || llmResult.diagnostics?.ollama?.escalationModel || null,
       escalation_reason: fastResponseLaneTruth.escalationReason || llmResult.diagnostics?.ollama?.escalationReason || 'fast-lane-not-selected',
+      streaming_requested: Boolean(streamingEnabled),
       streaming_supported: actualProviderUsed === 'ollama',
       streaming_used: Boolean(streamingEnabled && actualProviderUsed === 'ollama'),
       streaming_provider: actualProviderUsed === 'ollama' ? 'ollama' : null,
@@ -546,7 +570,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       streaming_fallback_reason: streamingEnabled && actualProviderUsed !== 'ollama'
         ? 'provider-streaming-not-enabled'
         : null,
-      fast_response_streaming: Boolean(streamingEnabled && fastResponseLaneTruth.active && actualProviderUsed === 'ollama'),
+      fast_response_streaming: Boolean(streamingEnabled && fastLaneActiveTruth && actualProviderUsed === 'ollama'),
       ollama_fallback_model: llmResult.diagnostics?.ollama?.fallbackModel || null,
       ollama_fallback_model_used: Boolean(llmResult.diagnostics?.ollama?.fallbackModelUsed),
       ollama_fallback_reason: llmResult.diagnostics?.ollama?.fallbackReason || null,
@@ -710,12 +734,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ollama_reasoning_mode: executionMetadata.ollama_reasoning_mode,
       ollama_escalation_active: executionMetadata.ollama_escalation_active,
       ollama_escalation_reason: executionMetadata.ollama_escalation_reason,
+      fast_response_lane_eligible: executionMetadata.fast_response_lane_eligible,
       fast_response_lane_active: executionMetadata.fast_response_lane_active,
       fast_response_lane_reason: executionMetadata.fast_response_lane_reason,
       fast_response_model: executionMetadata.fast_response_model,
       fast_response_streaming: executionMetadata.fast_response_streaming,
       escalation_model: executionMetadata.escalation_model,
       escalation_reason: executionMetadata.escalation_reason,
+      streaming_requested: executionMetadata.streaming_requested,
       streaming_supported: executionMetadata.streaming_supported,
       streaming_used: executionMetadata.streaming_used,
       streaming_provider: executionMetadata.streaming_provider,

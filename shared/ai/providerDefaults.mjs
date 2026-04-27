@@ -5,6 +5,8 @@ export const LOCAL_PROVIDER_KEYS = ['ollama'];
 export const CLOUD_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter'];
 export const ROUTE_MODE_KEYS = ['auto', 'local-first', 'cloud-first', 'explicit'];
 export const DEFAULT_ROUTE_MODE = 'auto';
+export const STREAMING_MODE_KEYS = ['off', 'auto', 'on'];
+export const DEFAULT_STREAMING_MODE = 'off';
 export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
 export const LOCAL_FIRST_PROVIDER_KEYS = ['ollama', 'groq', 'gemini', 'mock'];
 export const CLOUD_FIRST_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter', 'mock', 'ollama'];
@@ -203,6 +205,7 @@ export function createDefaultRouterSettings() {
   return {
     provider: DEFAULT_PROVIDER_KEY,
     routeMode: DEFAULT_ROUTE_MODE,
+    streamingMode: DEFAULT_STREAMING_MODE,
     devMode: true,
     fallbackEnabled: true,
     disableHomeNodeForLocalSession: false,
@@ -218,6 +221,10 @@ export function normalizeProviderSelection(providerKey) {
 
 export function normalizeRouteMode(routeMode) {
   return ROUTE_MODE_KEYS.includes(routeMode) ? routeMode : DEFAULT_ROUTE_MODE;
+}
+
+export function normalizeStreamingMode(streamingMode) {
+  return STREAMING_MODE_KEYS.includes(streamingMode) ? streamingMode : DEFAULT_STREAMING_MODE;
 }
 
 export function normalizeFallbackOrder(order = []) {
