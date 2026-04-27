@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const source = fs.readFileSync(path.join(__dirname, 'useAIConsole.js'), 'utf8');
+
+test('useAIConsole appends streaming token chunks into a separate stream buffer field', () => {
+  assert.match(source, /stream_buffer_text/);
+  assert.match(source, /onStreamEvent:\s*\(event\)\s*=>\s*\{/);
+  assert.match(source, /event\.type !== 'token'/);
+  assert.match(source, /streamBuffer \+= String\(event\.content \|\| ''\)/);
+});
+
+test('useAIConsole finalizes streamed answer entry with immutable final output_text', () => {
+  assert.match(source, /stream_finalized:\s*true/);
+  assert.match(source, /output_text:\s*data\.output_text/);
+});

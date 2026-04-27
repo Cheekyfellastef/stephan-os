@@ -685,6 +685,7 @@ async function runOllamaChatAttempt({
   timeoutPolicy,
   timeoutMs,
   attempt = 1,
+  streamObserver = null,
 } = {}) {
   const startedAtMs = Date.now();
   let phase = 'awaiting-response-headers';
@@ -695,7 +696,7 @@ async function runOllamaChatAttempt({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: modelToUse,
-        stream: false,
+        stream: true,
         messages: [
           ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
           ...request.messages,
@@ -703,7 +704,62 @@ async function runOllamaChatAttempt({
       }),
     }, timeoutMs);
     phase = 'reading-response-body';
-    const raw = await response.json().catch(() => ({}));
+    const raw = {};
+    const chunks = [];
+    let fullText = '';
+    let usage = null;
+    const reader = response.body?.getReader ? response.body.getReader() : null;
+    if (reader) {
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = String(line || '').trim();
+          if (!trimmed) continue;
+          let parsed = {};
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+          chunks.push(parsed);
+          const token = String(parsed?.message?.content || '');
+          if (token) {
+            fullText += token;
+            if (typeof streamObserver === 'function') {
+              streamObserver({
+                type: 'token',
+                content: token,
+                done: false,
+                provider: 'ollama',
+                model: parsed?.model || modelToUse,
+              });
+            }
+          }
+          if (parsed?.done) {
+            usage = parsed?.prompt_eval_count
+              ? { prompt_eval_count: parsed.prompt_eval_count, eval_count: parsed.eval_count }
+              : usage;
+            Object.assign(raw, parsed);
+          }
+        }
+      }
+    } else {
+      const parsed = await response.json().catch(() => ({}));
+      chunks.push(parsed);
+      fullText = String(parsed?.message?.content || '');
+      usage = parsed?.prompt_eval_count ? { prompt_eval_count: parsed.prompt_eval_count, eval_count: parsed.eval_count } : null;
+      Object.assign(raw, parsed);
+    }
+    raw.message = { ...(raw.message || {}), content: fullText };
+    raw.chunks = chunks;
+    raw.usage = usage;
+    raw.done = true;
 
     return {
       ok: response.ok,
@@ -882,6 +938,7 @@ export async function runOllamaProvider(request, config = {}) {
       timeoutPolicy,
       timeoutMs: timeoutPolicy.timeoutMs,
       attempt: 1,
+      streamObserver: config?.streamObserver,
     });
     const warmupRetryEligible = shouldApplyWarmupRetry({
       provider: 'ollama',
@@ -905,6 +962,7 @@ export async function runOllamaProvider(request, config = {}) {
         timeoutPolicy,
         timeoutMs: warmupRetryTimeoutMs,
         attempt: 2,
+        streamObserver: config?.streamObserver,
       })
       : firstAttempt;
 
@@ -1051,7 +1109,7 @@ export async function runOllamaProvider(request, config = {}) {
       provider: 'ollama',
       model: raw?.model || modelToUse,
       outputText: raw?.message?.content?.trim() || '',
-      usage: raw?.prompt_eval_count ? { prompt_eval_count: raw.prompt_eval_count, eval_count: raw.eval_count } : undefined,
+      usage: raw?.usage || (raw?.prompt_eval_count ? { prompt_eval_count: raw.prompt_eval_count, eval_count: raw.eval_count } : undefined),
       raw,
       diagnostics: {
         ollama: {
@@ -1101,6 +1159,9 @@ export async function runOllamaProvider(request, config = {}) {
           fallbackAfterWarmupRetry: false,
           retriesAttempted: shouldRetryWarmup ? 1 : 0,
           elapsedMs: finalAttempt.elapsedMs,
+          streamingSupported: true,
+          streamingUsed: true,
+          streamingFinalized: true,
         },
       },
     };

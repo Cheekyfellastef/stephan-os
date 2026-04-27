@@ -24,6 +24,17 @@ import {
 
 const logger = createLogger('ai-route');
 const router = express.Router();
+const STREAMING_MEDIA_TYPE = 'text/event-stream';
+
+function wantsStreaming(req) {
+  const accept = String(req.headers?.accept || '').toLowerCase();
+  return accept.includes(STREAMING_MEDIA_TYPE) || req.query?.stream === '1';
+}
+
+function writeSseEvent(res, event, payload = {}) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
 
 function stripRawSecretsFromConfig(config = {}) {
   const source = config && typeof config === 'object' ? config : {};
@@ -252,6 +263,7 @@ router.post('/chat', async (req, res) => {
     staleFallbackPermitted = undefined,
   } = req.body || {};
   const requestId = req.headers['x-request-id'];
+  const streamingEnabled = wantsStreaming(req);
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
   const mergedProviderConfigs = buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
   const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
@@ -348,6 +360,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         : '',
     ].filter(Boolean).join('\n\n');
 
+    if (streamingEnabled) {
+      res.status(200);
+      res.setHeader('Content-Type', STREAMING_MEDIA_TYPE);
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+    }
+
     const llmResult = await routeLLMRequest({
       messages: [{ role: 'user', content: prompt }],
       systemPrompt: memoryAwareSystemPrompt,
@@ -370,6 +390,16 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
+      streamObserver: streamingEnabled
+        ? (event) => {
+          if (!event || event.type !== 'token' || !event.content) return;
+          writeSseEvent(res, 'token', {
+            type: 'token',
+            content: String(event.content || ''),
+            done: false,
+          });
+        }
+        : null,
     });
 
     const providerHealthSnapshot = await getProviderHealthSnapshot({ provider, routeMode, providerConfigs: mergedProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
@@ -489,12 +519,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       fast_response_model: fastResponseLaneTruth.model || null,
       escalation_model: fastResponseLaneTruth.escalationModel || llmResult.diagnostics?.ollama?.escalationModel || null,
       escalation_reason: fastResponseLaneTruth.escalationReason || llmResult.diagnostics?.ollama?.escalationReason || 'fast-lane-not-selected',
-      streaming_supported: false,
-      streaming_used: false,
-      streaming_provider: null,
-      streaming_model: null,
-      streaming_finalized: false,
-      streaming_fallback_reason: 'provider-streaming-not-enabled',
+      streaming_supported: actualProviderUsed === 'ollama',
+      streaming_used: actualProviderUsed === 'ollama',
+      streaming_provider: actualProviderUsed === 'ollama' ? 'ollama' : null,
+      streaming_model: actualProviderUsed === 'ollama' ? (canonicalModelTruth.executedModel || null) : null,
+      streaming_finalized: Boolean(actualProviderUsed === 'ollama' && llmResult.ok && llmResult.outputText),
+      streaming_fallback_reason: actualProviderUsed === 'ollama' ? null : 'provider-streaming-not-enabled',
+      fast_response_streaming: Boolean(fastResponseLaneTruth.active && actualProviderUsed === 'ollama'),
       ollama_fallback_model: llmResult.diagnostics?.ollama?.fallbackModel || null,
       ollama_fallback_model_used: Boolean(llmResult.diagnostics?.ollama?.fallbackModelUsed),
       ollama_fallback_reason: llmResult.diagnostics?.ollama?.fallbackReason || null,
@@ -661,6 +692,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       fast_response_lane_active: executionMetadata.fast_response_lane_active,
       fast_response_lane_reason: executionMetadata.fast_response_lane_reason,
       fast_response_model: executionMetadata.fast_response_model,
+      fast_response_streaming: executionMetadata.fast_response_streaming,
       escalation_model: executionMetadata.escalation_model,
       escalation_reason: executionMetadata.escalation_reason,
       streaming_supported: executionMetadata.streaming_supported,
@@ -818,7 +850,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         memoryHits,
         tileContext: assembledTileContext,
       });
-      return res.status(502).json(buildErrorResponse({
+      const failurePayload = buildErrorResponse({
         route: decision.route,
         command: parsedCommand.isSlash ? parsedCommand.raw : null,
         output_text: llmResult.error?.message || 'AI provider failed.',
@@ -859,7 +891,26 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           execution_metadata: executionMetadata,
           request_trace: requestTrace,
         },
-      }));
+      });
+      if (streamingEnabled) {
+        res.status(200);
+        res.setHeader('Content-Type', STREAMING_MEDIA_TYPE);
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        writeSseEvent(res, 'final', {
+          type: 'final',
+          content: failurePayload.output_text || '',
+          done: true,
+        });
+        writeSseEvent(res, 'metadata', {
+          type: 'metadata',
+          done: true,
+          success: false,
+          data: failurePayload,
+        });
+        return res.end();
+      }
+      return res.status(502).json(failurePayload);
     }
 
     persistAiContinuityArtifacts({
@@ -871,7 +922,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       tileContext: assembledTileContext,
     });
 
-    return res.json(buildSuccessResponse({
+    const successPayload = buildSuccessResponse({
       type: 'assistant_response',
       route: decision.route,
       command: parsedCommand.isSlash ? parsedCommand.raw : null,
@@ -912,7 +963,26 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         execution_metadata: executionMetadata,
         request_trace: requestTrace,
       },
-    }));
+    });
+    if (streamingEnabled) {
+      res.status(200);
+      res.setHeader('Content-Type', STREAMING_MEDIA_TYPE);
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      writeSseEvent(res, 'final', {
+        type: 'final',
+        content: llmResult.outputText,
+        done: true,
+      });
+      writeSseEvent(res, 'metadata', {
+        type: 'metadata',
+        done: true,
+        success: true,
+        data: successPayload,
+      });
+      return res.end();
+    }
+    return res.json(successPayload);
   } catch (error) {
     const appError = normalizeError(error);
     logger.error('Failed to process /api/ai/chat', {

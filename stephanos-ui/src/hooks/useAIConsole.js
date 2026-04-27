@@ -249,6 +249,12 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     fast_response_lane_active: Boolean(executionMetadata.fast_response_lane_active ?? requestTrace.fast_response_lane_active ?? false),
     fast_response_lane_reason: executionMetadata.fast_response_lane_reason || requestTrace.fast_response_lane_reason || null,
     fast_response_model: executionMetadata.fast_response_model || requestTrace.fast_response_model || null,
+    fast_response_streaming: Boolean(executionMetadata.fast_response_streaming ?? requestTrace.fast_response_streaming ?? false),
+    streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
+    streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
+    streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
+    streaming_model: executionMetadata.streaming_model || requestTrace.streaming_model || null,
+    streaming_finalized: Boolean(executionMetadata.streaming_finalized ?? requestTrace.streaming_finalized ?? false),
     escalation_model: executionMetadata.escalation_model || requestTrace.escalation_model || null,
     escalation_reason: executionMetadata.escalation_reason || requestTrace.escalation_reason || null,
     ollama_fallback_model: executionMetadata.ollama_fallback_model || requestTrace.ollama_fallback_model || null,
@@ -2061,6 +2067,31 @@ export function useAIConsole() {
           requestPayload,
         })
         : null;
+      const streamEntryId = `cmd_${Date.now()}_stream`;
+      let streamBuffer = '';
+      if (!routeUnavailableResult) {
+        setCommandHistory((prev) => appendCommandHistory(prev, {
+          id: streamEntryId,
+          raw_input: prompt,
+          parsed_command: parsed,
+          route: 'assistant',
+          tool_used: null,
+          success: true,
+          output_text: '',
+          stream_buffer_text: '',
+          stream_finalized: false,
+          data_payload: {},
+          timing_ms: 0,
+          timestamp: new Date().toISOString(),
+          error: null,
+          error_code: null,
+          response: { type: 'assistant_response', route: 'assistant', success: true, output_text: '' },
+          continuity_mode: continuityMode,
+          continuity_context: continuityContext,
+          continuity_retrieval_state: continuityLookup.retrievalState,
+          continuity_retrieval_reason: continuityLookup.reason,
+        }));
+      }
       const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
@@ -2076,6 +2107,13 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssembly,
+        onStreamEvent: (event) => {
+          if (!event || event.type !== 'token') return;
+          streamBuffer += String(event.content || '');
+          setCommandHistory((prev) => prev.map((entry) => entry.id === streamEntryId
+            ? { ...entry, stream_buffer_text: streamBuffer, stream_finalized: false }
+            : entry));
+        },
       });
 
       if (
@@ -2175,13 +2213,15 @@ export function useAIConsole() {
       console.debug('[Stephanos UI] Received AI response', executionMetadata);
 
       const entry = {
-        id: `cmd_${Date.now()}`,
+        id: routeUnavailableResult ? `cmd_${Date.now()}` : streamEntryId,
         raw_input: prompt,
         parsed_command: parsed,
         route: data.route,
         tool_used: data.tools_used?.[0] ?? null,
         success: data.success,
         output_text: data.output_text,
+        stream_buffer_text: streamBuffer,
+        stream_finalized: true,
         data_payload: data.data,
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
         timestamp: new Date().toISOString(),
@@ -2194,7 +2234,10 @@ export function useAIConsole() {
         continuity_retrieval_reason: continuityLookup.reason,
       };
 
-      setCommandHistory((prev) => appendCommandHistory(prev, entry));
+      setCommandHistory((prev) => {
+        if (routeUnavailableResult) return appendCommandHistory(prev, entry);
+        return prev.map((existing) => existing.id === streamEntryId ? entry : existing);
+      });
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 

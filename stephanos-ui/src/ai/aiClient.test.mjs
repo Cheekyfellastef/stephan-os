@@ -27,7 +27,7 @@ test('sendPrompt strips provider secrets from chat payloads', () => {
 test('sendPrompt derives timeout from shared timeout policy before request dispatch', () => {
   assert.match(clientSource, /resolveUiRequestTimeoutPolicy\(/);
   assert.match(clientSource, /timeoutPolicy:\s*\{/);
-  assert.match(clientSource, /requestJson\('\/api\/ai\/chat'[\s\S]*timeoutPolicy\)/m);
+  assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat'[\s\S]*timeoutPolicyWithExecution/m);
 });
 
 test('getProviderHealth uses canonical timeout policy instead of hidden defaults', () => {
@@ -50,6 +50,12 @@ test('sendPrompt supports hosted cloud cognition fallback path when backend tran
   assert.match(clientSource, /authorityLevel:\s*hostedDispatch\.authorityLevel/);
   assert.match(clientSource, /hostedConfig\?\.enabled === true/);
   assert.match(clientSource, /providerEnabled/);
+});
+
+test('sendPrompt streams token events through onStreamEvent callback', () => {
+  assert.match(clientSource, /onStreamEvent\s*=\s*null/);
+  assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat'[\s\S]*onEvent:/m);
+  assert.match(clientSource, /onStreamEvent\(\{\s*event:\s*eventName,/m);
 });
 
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {

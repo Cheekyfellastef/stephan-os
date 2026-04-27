@@ -182,6 +182,47 @@ test('runOllamaProvider honors explicit fast-lane model override for identity pr
   }
 });
 
+test('runOllamaProvider emits token stream chunks and finalizes full text', async () => {
+  const streamed = [];
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }] }),
+      };
+    }
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"model":"llama3.2:3b","message":{"content":"Hello"},"done":false}\n'));
+        controller.enqueue(encoder.encode('{"model":"llama3.2:3b","message":{"content":" world"},"done":false}\n'));
+        controller.enqueue(encoder.encode('{"model":"llama3.2:3b","done":true,"prompt_eval_count":1,"eval_count":2}\n'));
+        controller.close();
+      },
+    });
+    return { ok: true, status: 200, body };
+  };
+  try {
+    const result = await runOllamaProvider({
+      model: 'llama3.2:3b',
+      messages: [{ role: 'user', content: 'short answer' }],
+    }, {
+      baseURL: 'http://localhost:11434',
+      model: 'llama3.2:3b',
+      streamObserver: (event) => streamed.push(event),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.outputText, 'Hello world');
+    assert.equal(streamed.length, 2);
+    assert.equal(streamed[0].type, 'token');
+    assert.equal(result.diagnostics.ollama.streamingUsed, true);
+    assert.equal(result.diagnostics.ollama.streamingFinalized, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('runOllamaProvider keeps qwen/gpt-oss policy for complex prompts', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {
