@@ -72,7 +72,7 @@ export default function CommandResultCard({ entry }) {
           </span>
         </div>
       ) : null}
-      <p>{entry.output_text}</p>
+      <p className="assistant-answer-text" data-no-drag>{entry.output_text}</p>
       {providerExecutionTruth?.narration ? <p className="muted">{providerExecutionTruth.narration}</p> : null}
       {entry.error && <p className="error-text">Error [{entry.error_code ?? 'N/A'}]: {entry.error}</p>}
       <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>

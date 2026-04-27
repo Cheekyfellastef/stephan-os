@@ -11,6 +11,14 @@ function normalizeAnswerText(message) {
   return String(outputText).trim();
 }
 
+function normalizeDebugPayload(message) {
+  const payload = {
+    ...(message?.data_payload && typeof message.data_payload === 'object' ? { data_payload: message.data_payload } : {}),
+    ...(message?.response?.debug && typeof message.response.debug === 'object' ? { response_debug: message.response.debug } : {}),
+  };
+  return Object.keys(payload).length > 0 ? payload : null;
+}
+
 function appendStructuredValue(target, key, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return;
   if (Object.keys(value).length === 0) return;
@@ -26,22 +34,24 @@ export function getAssistantMessageStructuredData(message) {
 }
 
 export function buildAssistantMessageClipboardPayload(message) {
+  return buildAssistantAnswerClipboardPayload(message);
+}
+
+export function buildAssistantAnswerClipboardPayload(message) {
   const answerText = normalizeAnswerText(message);
-  const structured = getAssistantMessageStructuredData(message);
+  return answerText;
+}
 
-  if (!answerText && !structured) {
-    return '';
-  }
-
-  if (!structured) {
-    return answerText;
-  }
-
+export function buildAssistantDebugClipboardPayload(message) {
+  const answerText = normalizeAnswerText(message);
+  const debugPayload = normalizeDebugPayload(message);
+  if (!answerText && !debugPayload) return '';
+  if (!debugPayload) return answerText;
   return [
     '[Assistant Answer]',
     answerText,
     '',
-    '[Structured Data]',
-    JSON.stringify(structured, null, 2),
+    '[Debug Payload - may be large]',
+    JSON.stringify(debugPayload, null, 2),
   ].join('\n');
 }
