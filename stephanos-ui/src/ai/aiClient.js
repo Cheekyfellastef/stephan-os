@@ -730,6 +730,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
   let abortSignalFired = false;
   const externalSignal = requestControl?.abortSignal;
   let reader = null;
+  let streamOpened = false;
+  let firstEventReceived = false;
+  let streamLastEventAt = null;
+  let streamFailurePhase = null;
   let inactivityTimeout = null;
   const armInactivityTimeout = () => {
     clearTimeout(inactivityTimeout);
@@ -769,6 +773,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
       signal: controller.signal,
     });
     if (!response.ok || !response.body?.getReader) {
+      streamFailurePhase = 'stream-open';
       const fallback = await response.text();
       let parsedFallback = {};
       if (fallback) {
@@ -799,6 +804,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
             request_trace: {
               ...(((parsedFallback && typeof parsedFallback === 'object' ? parsedFallback.data?.request_trace : {}) || {})),
               ...fallbackMetadata,
+              streaming_client_opened: false,
+              streaming_first_event_received: false,
+              streaming_last_event_at: null,
+              streaming_failure_phase: streamFailurePhase,
             },
           },
           __stream: {
@@ -810,6 +819,13 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         },
       };
     }
+    streamOpened = true;
+    streamLastEventAt = Date.now();
+    onEvent?.('stream-open', {
+      type: 'stream-open',
+      opened: true,
+      timestamp_ms: streamLastEventAt,
+    });
     reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -844,6 +860,8 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           return;
         }
         sawValidEvent = true;
+        if (!firstEventReceived) firstEventReceived = true;
+        streamLastEventAt = Date.now();
         onEvent?.(eventName || parsed?.type || 'message', parsed);
         armInactivityTimeout();
         if ((eventName === 'token' || parsed.type === 'token') && typeof parsed.content === 'string') {
@@ -865,6 +883,21 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
     }
     if (finalPayload && typeof finalPayload === 'object') {
       const streamFinalized = sawCompletion === true && (sawMetadataEvent || sawFinalEvent);
+      finalPayload.data = finalPayload.data && typeof finalPayload.data === 'object' ? finalPayload.data : {};
+      finalPayload.data.execution_metadata = finalPayload.data.execution_metadata && typeof finalPayload.data.execution_metadata === 'object'
+        ? finalPayload.data.execution_metadata
+        : {};
+      finalPayload.data.request_trace = finalPayload.data.request_trace && typeof finalPayload.data.request_trace === 'object'
+        ? finalPayload.data.request_trace
+        : {};
+      const streamSnapshot = {
+        streaming_client_opened: streamOpened,
+        streaming_first_event_received: firstEventReceived || sawValidEvent,
+        streaming_last_event_at: streamLastEventAt,
+        streaming_failure_phase: null,
+      };
+      Object.assign(finalPayload.data.execution_metadata, streamSnapshot);
+      Object.assign(finalPayload.data.request_trace, streamSnapshot);
       return {
         ok: true,
         status: response.status,
@@ -895,6 +928,10 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
             request_trace: {
               streaming_used: true,
               streaming_finalized: false,
+              streaming_client_opened: streamOpened,
+              streaming_first_event_received: firstEventReceived || sawValidEvent,
+              streaming_last_event_at: streamLastEventAt,
+              streaming_failure_phase: 'stream-finalization',
             },
           },
           __stream: {
@@ -917,11 +954,17 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         streamingUsed: true,
         streamingFinalized: false,
         streamingFallbackReason: sawValidEvent ? 'stream-ended-before-final-metadata' : 'sse-opened-no-valid-events',
+        streamingEnteredBackend: true,
+        streamingClientOpened: streamOpened,
+        streamingFirstEventReceived: firstEventReceived || sawValidEvent,
+        streamingLastEventAt: streamLastEventAt,
+        streamingFailurePhase: 'stream-finalization',
       },
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
       if (abortSource && abortSource !== 'ui-timeout') {
+        streamFailurePhase = 'client-cancel';
         throw createTransportError({
           code: 'CANCELLED',
           message: 'Request cancelled before completion.',
@@ -934,9 +977,15 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
             abortForwardedToOllamaFetch: true,
             ollamaFetchAborted: true,
             ollamaReaderCancelled: true,
+            streamingEnteredBackend: true,
+            streamingClientOpened: streamOpened,
+            streamingFirstEventReceived: firstEventReceived,
+            streamingLastEventAt: streamLastEventAt,
+            streamingFailurePhase: streamFailurePhase,
           },
         });
       }
+      streamFailurePhase = 'stream-inactivity-timeout';
       throw createTransportError({
         code: 'TIMEOUT',
         message: `Stream became inactive after ${timeoutMs}ms.`,
@@ -964,9 +1013,16 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
           streamingSupported: true,
           streamingUsed: true,
           streamingFinalized: false,
+          streamingEnteredBackend: true,
+          streamingClientOpened: streamOpened,
+          streamingFirstEventReceived: firstEventReceived,
+          streamingInactivityTimeoutMs: timeoutMs,
+          streamingLastEventAt: streamLastEventAt,
+          streamingFailurePhase: streamFailurePhase,
         },
       });
     }
+    streamFailurePhase = streamOpened ? 'stream-read' : 'stream-open';
     throw error;
   } finally {
     clearTimeout(inactivityTimeout);
@@ -1113,7 +1169,7 @@ export async function sendPrompt({
 
   let result;
   const explicitStreamingRequest = streamingPolicy.streamingRequested
-    && String(payload.provider || '').toLowerCase() === 'ollama';
+    && String(timeoutExecutionTruth.effectiveProvider || payload.provider || '').toLowerCase() === 'ollama';
   try {
     if (explicitStreamingRequest) {
       result = await requestEventStream('/api/ai/chat?stream=1', {

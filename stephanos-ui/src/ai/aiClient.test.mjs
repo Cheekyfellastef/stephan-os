@@ -57,6 +57,7 @@ test('sendPrompt streams token events through onStreamEvent callback', () => {
   assert.match(clientSource, /streamingMode\s*=\s*'auto'/);
   assert.match(clientSource, /const streamingPolicy = resolveStreamingRequestPolicy\(/);
   assert.match(clientSource, /const explicitStreamingRequest = streamingPolicy\.streamingRequested[\s\S]*provider.*'ollama'/m);
+  assert.match(clientSource, /explicitStreamingRequest = streamingPolicy\.streamingRequested[\s\S]*timeoutExecutionTruth\.effectiveProvider/m);
   assert.match(clientSource, /payload\.streamingMode = streamingPolicy\.normalizedMode/);
   assert.match(clientSource, /payload\.streaming_mode_preference_input = streamingPolicy\.streamingModePreferenceInput/);
   assert.match(clientSource, /payload\.streaming_mode_preference = streamingPolicy\.normalizedMode/);
@@ -66,6 +67,7 @@ test('sendPrompt streams token events through onStreamEvent callback', () => {
   assert.match(clientSource, /payload\.streaming_policy_reason = streamingPolicy\.streamingPolicyReason/);
   assert.match(clientSource, /payload\.stream = streamingPolicy\.streamingRequested/);
   assert.match(clientSource, /requestEventStream\('\/api\/ai\/chat\?stream=1'[\s\S]*onEvent:/m);
+  assert.match(clientSource, /onEvent\?\.\('stream-open'/);
   assert.match(clientSource, /onStreamEvent\(\{\s*event:\s*eventName,/m);
   assert.match(clientSource, /body:\s*JSON\.stringify\(\{\s*\.\.\.payload,\s*stream:\s*true\s*\}\)/m);
   assert.match(clientSource, /Accept:\s*'text\/event-stream'/);
@@ -101,6 +103,8 @@ test('sendPrompt keeps explicit streaming requests on SSE path and reports fallb
   assert.doesNotMatch(clientSource, /if \(!result\?\.data\?\.success\)/);
   assert.match(clientSource, /streaming_fallback_reason:\s*!response\.ok \? 'sse-http-non-ok' : 'sse-reader-unavailable'/);
   assert.match(clientSource, /streaming_fallback_reason = 'stream-not-entered'/);
+  assert.match(clientSource, /streaming_client_opened:\s*false/);
+  assert.match(clientSource, /streaming_failure_phase:\s*streamFailurePhase/);
   assert.match(clientSource, /code:\s*'STREAM_FINALIZATION_MISSING'/);
 });
 
@@ -131,6 +135,9 @@ test('streaming transport uses inactivity timeout and does not classify active s
   assert.match(clientSource, /abortSource = 'ui-stream-inactivity-timeout'/);
   assert.match(clientSource, /armInactivityTimeout\(\);[\s\S]*const \{ done, value \} = await reader\.read\(\);[\s\S]*armInactivityTimeout\(\);/m);
   assert.match(clientSource, /timeoutLabel:\s*'ui_stream_inactivity_timeout_ms'/);
+  assert.match(clientSource, /streamingEnteredBackend:\s*true/);
+  assert.match(clientSource, /streamingClientOpened:\s*streamOpened/);
+  assert.match(clientSource, /streamingInactivityTimeoutMs:\s*timeoutMs/);
   assert.match(clientSource, /streamingUsed:\s*true/);
 });
 

@@ -48,6 +48,12 @@ test('useAIConsole timeout metadata preserves stream truth and uses UI timeout l
   assert.match(source, /ui_stream_inactivity_timeout_ms:\s*inactivityTimeoutTriggered \? \(timeoutDetails\.timeoutMs \?\? null\) : null/);
   assert.match(source, /streaming_supported:\s*streamingSupported/);
   assert.match(source, /streaming_used:\s*Boolean\(timeoutDetails\.streamingUsed \?\? false\)/);
+  assert.match(source, /streaming_entered_backend:\s*Boolean\(timeoutDetails\.streamingEnteredBackend \?\? streamingRequested\)/);
+  assert.match(source, /streaming_client_opened:\s*Boolean\(timeoutDetails\.streamingClientOpened \?\? false\)/);
+  assert.match(source, /streaming_first_event_received:\s*Boolean\(timeoutDetails\.streamingFirstEventReceived \?\? false\)/);
+  assert.match(source, /streaming_inactivity_timeout_ms:\s*timeoutDetails\.streamingInactivityTimeoutMs/);
+  assert.match(source, /streaming_last_event_at:\s*timeoutDetails\.streamingLastEventAt/);
+  assert.match(source, /streaming_failure_phase:\s*timeoutDetails\.streamingFailurePhase/);
   assert.match(source, /streaming_provider:\s*streamingSupported \? 'ollama' : null/);
   assert.match(source, /abort_signal_fired:\s*cancelled \|\| uiTimeoutTriggered/);
 });

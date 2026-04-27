@@ -35,7 +35,8 @@ test('/api/ai/chat enables streaming when request body stream=true even without 
   );
 });
 
-test('/api/ai/chat SSE emits final, metadata, and completion marker events', () => {
+test('/api/ai/chat SSE emits stream-open, final, metadata, and completion marker events', () => {
+  assert.match(source, /writeSseEvent\(res,\s*'stream-open'/);
   assert.match(source, /writeSseEvent\(res,\s*'final'/);
   assert.match(source, /writeSseEvent\(res,\s*'metadata'/);
   assert.match(source, /writeSseCompletion\(res,\s*true\)/);
@@ -44,6 +45,12 @@ test('/api/ai/chat SSE emits final, metadata, and completion marker events', () 
 
 test('/api/ai/chat execution metadata tracks streaming_used only when SSE is active', () => {
   assert.match(source, /streaming_used:\s*Boolean\(streamingEnabled && actualProviderUsed === 'ollama'\)/);
+  assert.match(source, /streaming_entered_backend:\s*streamingEnteredBackend/);
+  assert.match(source, /streaming_client_opened:\s*streamingClientOpened/);
+  assert.match(source, /streaming_first_event_received:\s*streamingFirstEventReceived/);
+  assert.match(source, /streaming_inactivity_timeout_ms:\s*streamingInactivityTimeoutMs/);
+  assert.match(source, /streaming_last_event_at:\s*streamingLastEventAt/);
+  assert.match(source, /streaming_failure_phase:\s*null/);
   assert.match(source, /fast_response_streaming:\s*Boolean\(streamingEnabled && fastLaneActiveTruth && actualProviderUsed === 'ollama'\)/);
   assert.match(source, /streaming_mode_preference:/);
   assert.match(source, /streaming_request_source:/);

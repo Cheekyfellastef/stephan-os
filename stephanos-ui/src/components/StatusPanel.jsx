@@ -691,6 +691,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Streaming Policy Reason: {lastExecutionMetadata?.streaming_policy_reason || 'n/a'}</li>
         <li>Streaming Supported: {String(lastExecutionMetadata?.streaming_supported ?? 'n/a')}</li>
         <li>Streaming Used: {String(lastExecutionMetadata?.streaming_used ?? 'n/a')}</li>
+        <li>Streaming Entered Backend: {String(lastExecutionMetadata?.streaming_entered_backend ?? 'n/a')}</li>
+        <li>Streaming Client Opened: {String(lastExecutionMetadata?.streaming_client_opened ?? 'n/a')}</li>
+        <li>Streaming First Event Received: {String(lastExecutionMetadata?.streaming_first_event_received ?? 'n/a')}</li>
+        <li>Streaming Inactivity Timeout Ms: {String(lastExecutionMetadata?.streaming_inactivity_timeout_ms ?? 'n/a')}</li>
+        <li>Streaming Last Event At: {String(lastExecutionMetadata?.streaming_last_event_at ?? 'n/a')}</li>
+        <li>Streaming Failure Phase: {lastExecutionMetadata?.streaming_failure_phase || 'n/a'}</li>
         <li>Streaming Provider: {lastExecutionMetadata?.streaming_provider || 'n/a'}</li>
         <li>Streaming Model: {lastExecutionMetadata?.streaming_model || 'n/a'}</li>
         <li>Streaming Finalized: {String(lastExecutionMetadata?.streaming_finalized ?? 'n/a')}</li>

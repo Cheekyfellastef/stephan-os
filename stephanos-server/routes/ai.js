@@ -318,6 +318,12 @@ router.post('/chat', async (req, res) => {
   } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const streamingEnabled = wantsStreaming(req);
+  const streamingEnteredBackend = streamingEnabled;
+  const streamingClientOpened = streamingEnabled;
+  let streamingFirstEventReceived = false;
+  const streamingInactivityTimeoutMs = Number(runtimeContext?.timeoutPolicy?.uiRequestTimeoutMs) || null;
+  let streamingLastEventAt = null;
+  let streamingFailurePhase = null;
   const requestAbortController = new AbortController();
   let cancellationSource = null;
   const markCancelled = (source) => {
@@ -433,6 +439,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.flushHeaders?.();
+      streamingLastEventAt = Date.now();
+      writeSseEvent(res, 'stream-open', {
+        type: 'stream-open',
+        opened: true,
+        timestamp_ms: streamingLastEventAt,
+        request_id: requestId || null,
+      });
+      streamingFirstEventReceived = true;
       res.on('close', () => {
         if (!res.writableEnded) {
           markCancelled('client-disconnect');
@@ -465,6 +479,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       streamObserver: streamingEnabled
         ? (event) => {
           if (!event || event.type !== 'token' || !event.content) return;
+          streamingLastEventAt = Date.now();
+          streamingFirstEventReceived = true;
           writeSseEvent(res, 'token', {
             type: 'token',
             content: String(event.content || ''),
@@ -625,6 +641,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       streaming_used: Boolean(streamingEnabled && actualProviderUsed === 'ollama'),
       streaming_provider: actualProviderUsed === 'ollama' ? 'ollama' : null,
       streaming_model: actualProviderUsed === 'ollama' ? (canonicalModelTruth.executedModel || null) : null,
+      streaming_entered_backend: streamingEnteredBackend,
+      streaming_client_opened: streamingClientOpened,
+      streaming_first_event_received: streamingFirstEventReceived,
+      streaming_inactivity_timeout_ms: streamingInactivityTimeoutMs,
+      streaming_last_event_at: streamingLastEventAt,
+      streaming_failure_phase: null,
       streaming_finalized: Boolean(
         streamingEnabled
         ? (actualProviderUsed === 'ollama' && llmResult.ok && llmResult.outputText)
@@ -814,6 +836,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       selectedProviderFailureDetails.ollamaReaderCancelled
       || selectedProviderOllamaDiagnostics.ollamaReaderCancelled,
     );
+    if (executionMetadata.timeout_failure_layer || executionMetadata.execution_cancelled) {
+      streamingFailurePhase = executionMetadata.execution_cancelled
+        ? 'provider-cancelled'
+        : (executionMetadata.timeout_failure_label === 'ui_stream_inactivity_timeout_ms' ? 'stream-inactivity-timeout' : 'provider-execution');
+      executionMetadata.streaming_failure_phase = streamingFailurePhase;
+    }
     executionMetadata.provider_generation_still_running_unknown = Boolean(
       executionMetadata.ollama_abort_sent
       && executionMetadata.actual_provider_used === 'ollama'
@@ -860,6 +888,12 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       streaming_policy_reason: executionMetadata.streaming_policy_reason,
       streaming_supported: executionMetadata.streaming_supported,
       streaming_used: executionMetadata.streaming_used,
+      streaming_entered_backend: executionMetadata.streaming_entered_backend,
+      streaming_client_opened: executionMetadata.streaming_client_opened,
+      streaming_first_event_received: executionMetadata.streaming_first_event_received,
+      streaming_inactivity_timeout_ms: executionMetadata.streaming_inactivity_timeout_ms,
+      streaming_last_event_at: executionMetadata.streaming_last_event_at,
+      streaming_failure_phase: executionMetadata.streaming_failure_phase,
       streaming_provider: executionMetadata.streaming_provider,
       streaming_model: executionMetadata.streaming_model,
       streaming_finalized: executionMetadata.streaming_finalized,
