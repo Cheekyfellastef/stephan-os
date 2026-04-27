@@ -31,3 +31,12 @@ test('MissionConsoleTile includes governed routing, identity labels, and explici
   assert.equal(source.includes('approvalNeeded'), true);
   assert.equal(source.includes('linkedProposalId'), true);
 });
+
+test('MissionConsoleTile routes agent-targeted submit through mission bridge while preserving normal Stephanos assistant routing', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.equal(source.includes("if (request.target.id === 'agents')"), true);
+  assert.equal(source.includes('const bridgeResult = processMissionBridgeIntent({'), true);
+  assert.equal(source.includes('applyMissionBridgeResult(bridgeResult);'), true);
+  assert.equal(source.includes("if (request.target.id === 'stephanos')"), true);
+  assert.equal(source.includes("responder: 'Stephanos'"), true);
+});

@@ -123,6 +123,22 @@ export default function MissionConsoleTile({
     setMessages((previous) => appendMissionConsoleMessage(previous, message));
   }
 
+  function applyMissionBridgeResult(bridgeResult, { includeLedgerMessage = true } = {}) {
+    setMissionBridgeState((previous) => ({
+      ...bridgeResult,
+      events: [...(previous?.events || []), ...(bridgeResult.events || [])].slice(-40),
+    }));
+    if (!includeLedgerMessage) return;
+    addMessage(createMissionConsoleMessage({
+      role: 'assistant',
+      responder: 'mission-bridge',
+      target: 'agents',
+      content: `Mission packet ${bridgeResult.missionPacket?.missionId || 'n/a'} generated. State: ${bridgeResult.state}.`,
+      status: bridgeResult.pendingApproval ? 'approval-needed' : 'ready',
+      approvalNeeded: bridgeResult.pendingApproval,
+    }));
+  }
+
   function handleProposalStatusChange(proposalId, status) {
     setProposalCards((previous) => previous.map((entry) => (entry.id === proposalId
       ? { ...entry, approvalStatus: status }
@@ -183,16 +199,15 @@ export default function MissionConsoleTile({
     }
 
     if (request.target.id === 'agents') {
-      const responder = selectedAgentId === 'broadcast' ? 'intent-engine' : selectedAgentId;
-      addMessage(createMissionConsoleMessage({
-        role: 'assistant',
-        responder,
-        target: 'agents',
-        content: selectedAgentId === 'broadcast'
-          ? 'Agent broadcast query accepted. Active agents will respond under Stephanos adjudication.'
-          : `Agent ${selectedAgentId} received a scoped request under Stephanos routing control.`,
-        status: 'ready',
-      }));
+      const bridgeResult = processMissionBridgeIntent({
+        operatorIntent: content,
+        finalRouteTruth,
+        finalAgentView,
+        missionWorkflow: orchestrationTruth?.missionPacketWorkflow || {},
+        backendExecutionContractStatus: finalRouteTruth?.backendExecutionContractStatus,
+        providerExecutionGateStatus: finalRouteTruth?.providerExecutionGateStatus,
+      });
+      applyMissionBridgeResult(bridgeResult);
       setInput('');
       return;
     }
@@ -269,18 +284,7 @@ export default function MissionConsoleTile({
       backendExecutionContractStatus: finalRouteTruth?.backendExecutionContractStatus,
       providerExecutionGateStatus: finalRouteTruth?.providerExecutionGateStatus,
     });
-    setMissionBridgeState((previous) => ({
-      ...bridgeResult,
-      events: [...(previous?.events || []), ...(bridgeResult.events || [])].slice(-40),
-    }));
-    addMessage(createMissionConsoleMessage({
-      role: 'assistant',
-      responder: 'mission-bridge',
-      target: 'agents',
-      content: `Mission packet ${bridgeResult.missionPacket?.missionId || 'n/a'} generated. State: ${bridgeResult.state}.`,
-      status: bridgeResult.pendingApproval ? 'approval-needed' : 'ready',
-      approvalNeeded: bridgeResult.pendingApproval,
-    }));
+    applyMissionBridgeResult(bridgeResult);
   }
 
   async function requestBridgeAiReasoning() {
