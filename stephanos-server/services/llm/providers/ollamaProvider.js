@@ -73,6 +73,7 @@ function chooseOllamaModel({
 } = {}) {
   const available = uniqueModels(availableModels);
   const requestedModel = String(request?.model || resolvedModel || '').trim();
+  const explicitRequestModel = String(request?.model || '').trim();
   const profile = inferOllamaReasoningProfile(request);
   const preferredModelByTier = profile.preferredTier === 'lightweight'
     ? OLLAMA_MODEL_POLICY.lightweight
@@ -80,24 +81,42 @@ function chooseOllamaModel({
       ? OLLAMA_MODEL_POLICY.deepReasoning
       : OLLAMA_MODEL_POLICY.defaultReasoning;
 
-  const policyCandidates = uniqueModels([
-    preferredModelByTier,
-    OLLAMA_MODEL_POLICY.defaultReasoning,
-    OLLAMA_MODEL_POLICY.fallback,
-    OLLAMA_MODEL_POLICY.lightweight,
-    requestedModel,
-    resolvedModel,
-    ...available,
-  ]);
+  const explicitFastLaneOverride = !explicitRequestModel
+    && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
+  const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
+  const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
+  const policyCandidates = explicitOverrideAvailable
+    ? uniqueModels([
+      explicitOverrideModel,
+      preferredModelByTier,
+      OLLAMA_MODEL_POLICY.defaultReasoning,
+      OLLAMA_MODEL_POLICY.fallback,
+      OLLAMA_MODEL_POLICY.lightweight,
+      requestedModel,
+      resolvedModel,
+      ...available,
+    ])
+    : uniqueModels([
+      preferredModelByTier,
+      OLLAMA_MODEL_POLICY.defaultReasoning,
+      OLLAMA_MODEL_POLICY.fallback,
+      OLLAMA_MODEL_POLICY.lightweight,
+      requestedModel,
+      resolvedModel,
+      ...available,
+    ]);
 
   const selectedModel = policyCandidates.find((candidate) => available.includes(candidate))
+    || explicitOverrideModel
     || requestedModel
     || resolvedModel
     || available[0]
     || OLLAMA_MODEL_POLICY.fallback;
   const fallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.fallback && selectedModel !== preferredModelByTier;
   const escalatedToDeepModel = selectedModel === OLLAMA_MODEL_POLICY.deepReasoning && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
-  const policyReason = available.includes(preferredModelByTier)
+  const policyReason = explicitOverrideAvailable
+    ? `Explicit request model ${explicitOverrideModel} honored.`
+    : available.includes(preferredModelByTier)
     ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
     : available.includes(OLLAMA_MODEL_POLICY.defaultReasoning)
       ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`

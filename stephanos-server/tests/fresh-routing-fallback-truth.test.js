@@ -260,6 +260,99 @@ test('local-first falls back to Groq with explicit ollama timeout labels when Ol
   }
 });
 
+test('local-first fast lane keeps llama3.2:3b as requested, selected, and executed model for short identity prompt', async () => {
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'llama3.2:3b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+    if (target.includes('localhost:11434/api/chat')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'llama3.2:3b', message: { content: 'You are talking to Stephanos.' } }),
+      };
+    }
+    throw new Error(`Unexpected URL in test fetch mock: ${target}`);
+  };
+
+  try {
+    const result = await routeLLMRequest({
+      messages: [{
+        role: 'user',
+        content: 'who am i talking to\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{"recentRecords":[]}',
+      }],
+      freshnessContext: { freshnessNeed: 'low' },
+    }, {
+      provider: 'ollama',
+      routeMode: 'local-first',
+      fallbackEnabled: false,
+      providerConfigs: {
+        ollama: { baseURL: 'http://localhost:11434', model: 'qwen:14b' },
+      },
+      runtimeContext: {},
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.fastResponseLane.eligible, true);
+    assert.equal(result.diagnostics.fastResponseLane.active, true);
+    assert.equal(result.diagnostics.ollama.requestedModel, 'llama3.2:3b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'llama3.2:3b');
+    assert.equal(result.modelUsed, 'llama3.2:3b');
+    assert.equal(result.model, 'llama3.2:3b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('local-first complex build/system prompt stays on qwen/gpt-oss path instead of fast lane', async () => {
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'gpt-oss:20b' }, { name: 'llama3.2:3b' }] }),
+      };
+    }
+    if (target.includes('localhost:11434/api/chat')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'qwen:14b', message: { content: 'Complex task handled.' } }),
+      };
+    }
+    throw new Error(`Unexpected URL in test fetch mock: ${target}`);
+  };
+
+  try {
+    const result = await routeLLMRequest({
+      messages: [{ role: 'user', content: 'Generate a system architecture and build pipeline implementation plan with debugging steps and execution sequencing.' }],
+      freshnessContext: { freshnessNeed: 'low' },
+    }, {
+      provider: 'ollama',
+      routeMode: 'local-first',
+      fallbackEnabled: false,
+      providerConfigs: {
+        ollama: { baseURL: 'http://localhost:11434', model: 'qwen:14b' },
+      },
+      runtimeContext: {},
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.fastResponseLane.eligible, false);
+    assert.equal(result.diagnostics.fastResponseLane.active, false);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.equal(result.modelUsed, 'qwen:14b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('non-ollama provider path does not expose warmup retry metadata', async () => {
   globalThis.fetch = async (url) => {
     if (String(url).includes('api.groq.com') && String(url).includes('/chat/completions')) {
