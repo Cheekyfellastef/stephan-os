@@ -292,6 +292,13 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastOllamaModelPreferred: lastExecutionMetadata?.ollama_model_preferred || 'n/a',
       lastOllamaModelRequested: lastExecutionMetadata?.ollama_model_requested || 'n/a',
       lastOllamaModelSelected: lastExecutionMetadata?.ollama_model_selected || 'n/a',
+      lastOllamaLoadMode: lastExecutionMetadata?.ollama_load_mode || 'n/a',
+      lastOllamaLoadPolicyApplied: String(lastExecutionMetadata?.ollama_load_policy_applied ?? 'n/a'),
+      lastOllamaLoadPolicyReason: lastExecutionMetadata?.ollama_load_policy_reason || 'n/a',
+      lastOllamaHeavyModelRequested: String(lastExecutionMetadata?.ollama_heavy_model_requested ?? 'n/a'),
+      lastOllamaHeavyModelAllowed: String(lastExecutionMetadata?.ollama_heavy_model_allowed ?? 'n/a'),
+      lastOllamaModelBeforeLoadPolicy: lastExecutionMetadata?.ollama_model_before_load_policy || 'n/a',
+      lastOllamaModelAfterLoadPolicy: lastExecutionMetadata?.ollama_model_after_load_policy || 'n/a',
       lastOllamaReasoningMode: lastExecutionMetadata?.ollama_reasoning_mode || 'n/a',
       lastOllamaEscalationActive: String(lastExecutionMetadata?.ollama_escalation_active ?? 'n/a'),
       lastOllamaEscalationReason: lastExecutionMetadata?.ollama_escalation_reason || 'n/a',
@@ -925,6 +932,13 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Last Ollama Preferred Model: {lastExecutionMetadata?.ollama_model_preferred || 'n/a'}</li>
         <li>Last Ollama Requested Model: {lastExecutionMetadata?.ollama_model_requested || 'n/a'}</li>
         <li>Last Ollama Selected Model: {lastExecutionMetadata?.ollama_model_selected || 'n/a'}</li>
+        <li>Last Ollama Load Mode: {lastExecutionMetadata?.ollama_load_mode || 'n/a'}</li>
+        <li>Last Ollama Load Policy Applied: {String(lastExecutionMetadata?.ollama_load_policy_applied ?? 'n/a')}</li>
+        <li>Last Ollama Load Policy Reason: {lastExecutionMetadata?.ollama_load_policy_reason || 'n/a'}</li>
+        <li>Last Ollama Heavy Model Requested: {String(lastExecutionMetadata?.ollama_heavy_model_requested ?? 'n/a')}</li>
+        <li>Last Ollama Heavy Model Allowed: {String(lastExecutionMetadata?.ollama_heavy_model_allowed ?? 'n/a')}</li>
+        <li>Last Ollama Model Before Load Policy: {lastExecutionMetadata?.ollama_model_before_load_policy || 'n/a'}</li>
+        <li>Last Ollama Model After Load Policy: {lastExecutionMetadata?.ollama_model_after_load_policy || 'n/a'}</li>
         <li>Last Ollama Reasoning Mode: {lastExecutionMetadata?.ollama_reasoning_mode || 'n/a'}</li>
         <li>Last Ollama Escalation Active: {String(lastExecutionMetadata?.ollama_escalation_active ?? 'n/a')}</li>
         <li>Last Ollama Escalation Reason: {lastExecutionMetadata?.ollama_escalation_reason || 'n/a'}</li>

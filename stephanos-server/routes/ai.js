@@ -315,6 +315,7 @@ router.post('/chat', async (req, res) => {
     streaming_request_source: clientStreamingRequestSource = 'off',
     streaming_policy_decision: clientStreamingPolicyDecision = null,
     streaming_policy_reason: clientStreamingPolicyReason = null,
+    ollama_load_mode: ollamaLoadMode = 'balanced',
   } = req.body || {};
   const requestId = req.headers['x-request-id'];
   const streamingEnabled = wantsStreaming(req);
@@ -476,6 +477,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
+      ollamaLoadMode,
       streamObserver: streamingEnabled
         ? (event) => {
           if (!event || event.type !== 'token' || !event.content) return;
@@ -621,6 +623,13 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       ollama_model_selected: llmResult.diagnostics?.ollama?.selectedModel || null,
       ollama_model_default: llmResult.diagnostics?.ollama?.defaultModel || mergedProviderConfigs?.ollama?.model || null,
       ollama_model_preferred: llmResult.diagnostics?.ollama?.preferredModel || mergedProviderConfigs?.ollama?.model || null,
+      ollama_load_mode: llmResult.diagnostics?.ollama?.loadMode || String(ollamaLoadMode || 'balanced').trim().toLowerCase(),
+      ollama_load_policy_applied: Boolean(llmResult.diagnostics?.ollama?.loadPolicyApplied),
+      ollama_load_policy_reason: llmResult.diagnostics?.ollama?.loadPolicyReason || null,
+      ollama_heavy_model_requested: Boolean(llmResult.diagnostics?.ollama?.heavyModelRequested),
+      ollama_heavy_model_allowed: llmResult.diagnostics?.ollama?.heavyModelAllowed ?? null,
+      ollama_model_before_load_policy: llmResult.diagnostics?.ollama?.modelBeforeLoadPolicy || null,
+      ollama_model_after_load_policy: llmResult.diagnostics?.ollama?.modelAfterLoadPolicy || null,
       ollama_reasoning_mode: llmResult.diagnostics?.ollama?.localReasoningMode || null,
       ollama_escalation_model: llmResult.diagnostics?.ollama?.escalationModel || null,
       ollama_escalation_active: Boolean(llmResult.diagnostics?.ollama?.escalationActive),

@@ -89,7 +89,8 @@ test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
 test('streaming auto policy resolves heavy Ollama models from effective execution truth', () => {
   assert.match(clientSource, /const normalizedProvider = String\(executionProvider \|\| provider \|\| ''\)/);
   assert.match(clientSource, /const resolvedModel = firstNonEmpty\(\s*executionModel,/);
-  assert.match(clientSource, /HEAVY_OLLAMA_MODELS\.has\(resolvedModel\)/);
+  assert.match(clientSource, /resolveOllamaLoadGovernorPolicy/);
+  assert.match(clientSource, /HEAVY_OLLAMA_MODELS\.has\(streamingPolicyModel\)/);
 });
 
 test('transport cancellation uses explicit CANCELLED code with cancellationSource', () => {

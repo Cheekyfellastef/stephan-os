@@ -1,5 +1,6 @@
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
+import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
@@ -70,6 +71,7 @@ function chooseOllamaModel({
   request = {},
   resolvedModel = '',
   availableModels = [],
+  config = {},
 } = {}) {
   const available = uniqueModels(availableModels);
   const requestedModel = String(request?.model || resolvedModel || '').trim();
@@ -123,9 +125,19 @@ function chooseOllamaModel({
       : available.includes(OLLAMA_MODEL_POLICY.fallback)
         ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
         : `Policy model unavailable; used first reachable model ${selectedModel}.`;
+  const latestUserMessage = [...(Array.isArray(request?.messages) ? request.messages : [])]
+    .reverse()
+    .find((message) => String(message?.role || '').toLowerCase() === 'user');
+  const loadGovernor = resolveOllamaLoadGovernorPolicy({
+    ollamaLoadMode: String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase(),
+    requestedModel: selectedModel,
+    prompt: String(latestUserMessage?.content || ''),
+    forceHeavyModel: config?.forceHeavyModel === true,
+    availableModels: available,
+  });
 
   return {
-    selectedModel,
+    selectedModel: loadGovernor.modelAfterPolicy || selectedModel,
     requestedModel,
     availableModels: available,
     preferredModel: preferredModelByTier,
@@ -139,6 +151,7 @@ function chooseOllamaModel({
     profile,
     policyReason,
     autoSelectedModel: selectedModel !== requestedModel,
+    loadGovernor,
   };
 }
 
@@ -924,6 +937,7 @@ export async function runOllamaProvider(request, config = {}) {
       request,
       resolvedModel: resolved.model,
       availableModels: tags.models,
+      config,
     });
     const availableModels = modelSelection.availableModels;
     const requestedModel = modelSelection.requestedModel;
@@ -1057,6 +1071,13 @@ export async function runOllamaProvider(request, config = {}) {
             localReasoningMode: modelSelection.profile.localReasoningMode,
             localReasoningProfile: modelSelection.profile,
             policyReason: modelSelection.policyReason,
+            loadMode: modelSelection.loadGovernor?.ollamaLoadMode || 'balanced',
+            loadPolicyApplied: modelSelection.loadGovernor?.policyApplied === true,
+            loadPolicyReason: modelSelection.loadGovernor?.policyReason || null,
+            heavyModelRequested: modelSelection.loadGovernor?.heavyModelRequested === true,
+            heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
+            modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
+            modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
             fallbackModel: modelSelection.fallbackModel,
             fallbackModelUsed: modelSelection.fallbackModelUsed,
             fallbackReason: modelSelection.fallbackReason,
@@ -1150,6 +1171,13 @@ export async function runOllamaProvider(request, config = {}) {
           localReasoningMode: modelSelection.profile.localReasoningMode,
           localReasoningProfile: modelSelection.profile,
           policyReason: modelSelection.policyReason,
+          loadMode: modelSelection.loadGovernor?.ollamaLoadMode || 'balanced',
+          loadPolicyApplied: modelSelection.loadGovernor?.policyApplied === true,
+          loadPolicyReason: modelSelection.loadGovernor?.policyReason || null,
+          heavyModelRequested: modelSelection.loadGovernor?.heavyModelRequested === true,
+          heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
+          modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
+          modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
           fallbackModel: modelSelection.fallbackModel,
           fallbackModelUsed: modelSelection.fallbackModelUsed,
           fallbackReason: modelSelection.fallbackReason,

@@ -18,6 +18,13 @@ test('aiStore persists streaming mode and metadata to providerPreferences', () =
   assert.match(source, /streamingModePreference:\s*streamingMode/);
   assert.match(source, /streaming_mode_preference:\s*streamingMode/);
   assert.match(source, /streaming_persistence_updated_at:\s*streamingPersistenceUpdatedAt/);
+  assert.match(source, /ollamaLoadMode,\s*\n\s*ollama_load_mode:\s*ollamaLoadMode/);
+});
+
+test('aiStore restores and normalizes ollama load mode from providerPreferences', () => {
+  assert.match(source, /persistedSettings\.ollamaLoadMode\s*\?\?/);
+  assert.match(source, /persistedSettings\.ollama_load_mode\s*\?\?/);
+  assert.match(source, /normalizeOllamaLoadMode/);
 });
 
 test('aiStore setStreamingMode marks saved\/operator persistence metadata', () => {

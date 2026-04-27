@@ -29,3 +29,9 @@ test('streaming request policy resolves heavy model from execution model before 
   assert.match(source, /executionModel = ''/);
   assert.match(source, /const resolvedModel = firstNonEmpty\(\s*executionModel,/);
 });
+
+test('streaming request policy evaluates auto-heavy using post-load-governor model', () => {
+  assert.match(source, /resolveOllamaLoadGovernorPolicy/);
+  assert.match(source, /const streamingPolicyModel = normalizedProvider === 'ollama'/);
+  assert.match(source, /HEAVY_OLLAMA_MODELS\.has\(streamingPolicyModel\)/);
+});

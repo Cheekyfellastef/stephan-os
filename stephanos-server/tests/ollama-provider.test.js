@@ -62,7 +62,7 @@ test('determineFastLaneEligibility disables fast lane for mission packet generat
   assert.equal(result.eligible, false);
 });
 
-test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available', async () => {
+test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available in performance mode', async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options });
@@ -82,12 +82,106 @@ test('runOllamaProvider defaults to qwen:14b for normal local reasoning when ava
   };
 
   try {
-    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Summarize this local module.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Summarize this local module.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'performance' });
     assert.equal(result.ok, true);
     assert.equal(result.model, 'qwen:14b');
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
     assert.equal(result.diagnostics.ollama.defaultModel, 'qwen:14b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider balanced mode allows heavy model path for clearly complex prompts', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }, { name: 'qwen:32b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'balanced complex prompt ok' } }),
+    };
+  };
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Provide a deep multi-step architecture and root cause debugging plan for this system and include several implementation phases and verification checkpoints.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
+    assert.equal(result.diagnostics.ollama.heavyModelAllowed, true);
+    assert.equal(result.diagnostics.ollama.loadPolicyApplied, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider balanced mode keeps short prompt on lightweight fast lane model', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }, { name: 'qwen:32b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'balanced short prompt ok' } }),
+    };
+  };
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'who am i talking to' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'llama3.2:3b');
+    assert.equal(result.diagnostics.ollama.loadPolicyApplied, true);
+    assert.equal(result.diagnostics.ollama.loadPolicyReason, 'balanced-short-prompt-prefer-lightweight');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider cool mode avoids heavy model unless explicitly forced', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'cool mode ok' } }),
+    };
+  };
+  try {
+    const avoided = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Summarize quickly.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'cool' });
+    assert.equal(avoided.ok, true);
+    assert.equal(avoided.diagnostics.ollama.selectedModel, 'llama3.2:3b');
+    assert.equal(avoided.diagnostics.ollama.heavyModelAllowed, false);
+    assert.equal(avoided.diagnostics.ollama.executionHealthState, 'reachable-and-viable');
+
+    const forced = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Summarize quickly.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'cool', forceHeavyModel: true });
+    assert.equal(forced.ok, true);
+    assert.equal(forced.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.equal(forced.diagnostics.ollama.heavyModelAllowed, true);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }
@@ -122,7 +216,7 @@ test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async
   }
 });
 
-test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable', async () => {
+test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable in performance mode', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {
       return {
@@ -140,7 +234,7 @@ test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable',
   };
 
   try {
-    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Explain this local bug.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Explain this local bug.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'performance' });
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'gpt-oss:20b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, true);
@@ -288,7 +382,7 @@ test('runOllamaProvider uses per-model timeout override for qwen:32b', async () 
   }
 });
 
-test('runOllamaProvider uses default timeout when selected model has no override', async () => {
+test('runOllamaProvider uses default timeout when selected model has no override in performance mode', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {
       return {
@@ -311,6 +405,7 @@ test('runOllamaProvider uses default timeout when selected model has no override
     }, {
       baseURL: 'http://localhost:11434',
       model: 'qwen:14b',
+      ollamaLoadMode: 'performance',
       defaultOllamaTimeoutMs: 9000,
       perModelTimeoutOverrides: { 'qwen:32b': 22000 },
     });
@@ -325,7 +420,7 @@ test('runOllamaProvider uses default timeout when selected model has no override
   }
 });
 
-test('runOllamaProvider reports execution timeout viability diagnostics when health is ready but generation times out', async () => {
+test('runOllamaProvider reports execution timeout viability diagnostics when health is ready but generation times out in performance mode', async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push(String(url));
@@ -348,7 +443,7 @@ test('runOllamaProvider reports execution timeout viability diagnostics when hea
 
     const result = await runOllamaProvider(
       { messages: [{ role: 'user', content: 'Analyze this in depth.' }] },
-      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000, selectedProviderHealthOkAtSelection: true },
+      { baseURL: 'http://localhost:11434', model: 'gpt-oss:20b', defaultOllamaTimeoutMs: 60000, selectedProviderHealthOkAtSelection: true, ollamaLoadMode: 'performance' },
     );
 
     assert.equal(result.ok, false);

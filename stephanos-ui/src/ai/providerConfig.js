@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
   DEFAULT_STREAMING_MODE,
+  DEFAULT_OLLAMA_LOAD_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -17,7 +18,9 @@ import {
   normalizeRouteMode,
   ROUTE_MODE_KEYS,
   STREAMING_MODE_KEYS,
+  OLLAMA_LOAD_MODE_KEYS,
   normalizeStreamingMode,
+  normalizeOllamaLoadMode,
 } from '../../../shared/ai/providerDefaults.mjs';
 
 export {
@@ -25,6 +28,7 @@ export {
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
   DEFAULT_STREAMING_MODE,
+  DEFAULT_OLLAMA_LOAD_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -39,7 +43,9 @@ export {
   normalizeRouteMode,
   ROUTE_MODE_KEYS,
   STREAMING_MODE_KEYS,
+  OLLAMA_LOAD_MODE_KEYS,
   normalizeStreamingMode,
+  normalizeOllamaLoadMode,
 };
 
 export const NON_SECRET_PROVIDER_FIELDS = {

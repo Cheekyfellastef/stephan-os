@@ -7,6 +7,8 @@ export const ROUTE_MODE_KEYS = ['auto', 'local-first', 'cloud-first', 'explicit'
 export const DEFAULT_ROUTE_MODE = 'auto';
 export const STREAMING_MODE_KEYS = ['off', 'auto', 'on'];
 export const DEFAULT_STREAMING_MODE = 'auto';
+export const OLLAMA_LOAD_MODE_KEYS = ['performance', 'balanced', 'cool'];
+export const DEFAULT_OLLAMA_LOAD_MODE = 'balanced';
 export const FALLBACK_PROVIDER_KEYS = ['groq', 'gemini', 'mock', 'ollama'];
 export const LOCAL_FIRST_PROVIDER_KEYS = ['ollama', 'groq', 'gemini', 'mock'];
 export const CLOUD_FIRST_PROVIDER_KEYS = ['groq', 'gemini', 'openrouter', 'mock', 'ollama'];
@@ -206,6 +208,7 @@ export function createDefaultRouterSettings() {
     provider: DEFAULT_PROVIDER_KEY,
     routeMode: DEFAULT_ROUTE_MODE,
     streamingMode: DEFAULT_STREAMING_MODE,
+    ollamaLoadMode: DEFAULT_OLLAMA_LOAD_MODE,
     devMode: true,
     fallbackEnabled: true,
     disableHomeNodeForLocalSession: false,
@@ -225,6 +228,10 @@ export function normalizeRouteMode(routeMode) {
 
 export function normalizeStreamingMode(streamingMode) {
   return STREAMING_MODE_KEYS.includes(streamingMode) ? streamingMode : DEFAULT_STREAMING_MODE;
+}
+
+export function normalizeOllamaLoadMode(ollamaLoadMode) {
+  return OLLAMA_LOAD_MODE_KEYS.includes(ollamaLoadMode) ? ollamaLoadMode : DEFAULT_OLLAMA_LOAD_MODE;
 }
 
 export function normalizeFallbackOrder(order = []) {
