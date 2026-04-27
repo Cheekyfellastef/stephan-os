@@ -13,6 +13,46 @@ function asList(value) {
   return value.map((item) => `- ${asText(item, 'n/a')}`);
 }
 
+function normalizeTruthText(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'n/a' || normalized === 'unknown' || normalized === 'none') return '';
+  return normalized;
+}
+
+function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
+  const warnings = [];
+  const selectedProvider = normalizeTruthText(runtimeStatus?.lastSelectedProvider);
+  const requestedProviderForRequest = normalizeTruthText(runtimeStatus?.lastRequestedProviderForRequest);
+  const actualProvider = normalizeTruthText(runtimeStatus?.lastActualProviderUsed);
+  const actualModel = normalizeTruthText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed);
+  const timeoutProvider = normalizeTruthText(runtimeStatus?.lastTimeoutEffectiveProvider);
+  const overrideReason = normalizeTruthText(runtimeStatus?.lastProviderOverrideReason);
+  const fallbackProvider = normalizeTruthText(runtimeStatus?.lastFallbackProviderUsed);
+  const loadMode = normalizeTruthText(runtimeStatus?.lastOllamaLoadMode);
+  const loadBefore = normalizeTruthText(runtimeStatus?.lastOllamaModelBeforeLoadPolicy);
+  const loadAfter = normalizeTruthText(runtimeStatus?.lastOllamaModelAfterLoadPolicy);
+  if (actualProvider === 'ollama' && actualModel.includes('gemini')) {
+    warnings.push('Invariant warning: actual_provider_used=ollama with model containing "gemini".');
+  }
+  if (actualProvider === 'gemini' && /(qwen|llama|gpt-oss)/.test(actualModel)) {
+    warnings.push('Invariant warning: actual_provider_used=gemini with model containing "qwen", "llama", or "gpt-oss".');
+  }
+  if (timeoutProvider && actualProvider && timeoutProvider !== actualProvider && !overrideReason) {
+    warnings.push('Invariant warning: timeout effective provider differs from actual provider without explicit override reason.');
+  }
+  const providersMismatch = selectedProvider && requestedProviderForRequest && actualProvider
+    && (selectedProvider !== requestedProviderForRequest || selectedProvider !== actualProvider);
+  const fallbackOrOverrideDocumented = Boolean(overrideReason || (fallbackProvider && fallbackProvider !== 'n/a' && fallbackProvider !== 'none'));
+  if (providersMismatch && !fallbackOrOverrideDocumented) {
+    warnings.push('Invariant warning: selected/requested/actual provider mismatch without fallback/override reason.');
+  }
+  if ((selectedProvider === 'ollama' || actualProvider === 'ollama')
+    && (!loadMode || loadMode === 'n/a' || !loadBefore || loadBefore === 'n/a' || !loadAfter || loadAfter === 'n/a')) {
+    warnings.push('Invariant warning: Ollama selected/actual but load governor fields are n/a.');
+  }
+  return warnings;
+}
+
 function summarizeRouteDiagnostics(routeDiagnostics, { selectedRouteKind = '' } = {}) {
   if (!routeDiagnostics || typeof routeDiagnostics !== 'object') {
     return ['- n/a'];
@@ -428,6 +468,7 @@ export function buildSupportSnapshot({
   const invariantWarnings = (runtimeDiagnosticsTruth?.invariantWarnings || [])
     .map((warning) => warning?.detail || warning?.message || warning?.code || warning?.id || 'unknown')
     .filter((warning) => !(hostedCloudCanonicalReady && isTileReadinessContradictionWarning(warning)));
+  invariantWarnings.push(...deriveExecutionTruthInvariantWarnings(runtimeStatus));
 
   const guidanceItems = [];
   const operatorBoundary = buildOperatorBoundaryDiagnostics({
@@ -602,9 +643,13 @@ export function buildSupportSnapshot({
     `Last Backend Default Provider: ${asText(runtimeStatus?.lastBackendDefaultProvider || safeApiStatus?.backendDefaultProvider)}`,
     `Last Requested Provider: ${asText(runtimeStatus?.lastRequestedProvider || routeTruthView?.requestedProvider)}`,
     `Last Request-Side Selected Provider: ${asText(runtimeStatus?.lastRequestSelectedProvider)}`,
+    `Last Router Selected Provider: ${asText(runtimeStatus?.lastRouterSelectedProvider)}`,
     `Last Selected Provider: ${asText(runtimeStatus?.lastSelectedProvider || routeTruthView?.executedProvider || routeTruthView?.selectedProvider)}`,
+    `Last Executable Provider: ${asText(runtimeStatus?.lastExecutableProvider)}`,
     `Last Actual Provider Used: ${asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider)}`,
+    `Last Actual Model Used: ${asText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed)}`,
     `Last Model Used: ${asText(runtimeStatus?.lastModelUsed)}`,
+    `Last Provider Override Reason: ${asText(runtimeStatus?.lastProviderOverrideReason)}`,
     `Last Ollama Default Model: ${asText(runtimeStatus?.lastOllamaModelDefault)}`,
     `Last Ollama Preferred Model: ${asText(runtimeStatus?.lastOllamaModelPreferred)}`,
     `Last Ollama Requested Model: ${asText(runtimeStatus?.lastOllamaModelRequested)}`,

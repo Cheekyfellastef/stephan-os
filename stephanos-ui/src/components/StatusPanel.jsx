@@ -280,14 +280,18 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         || lastExecutionMetadata?.requested_provider_for_request
         || routeTruthView.requestedProvider,
       lastRequestSelectedProvider: lastExecutionMetadata?.selected_provider || 'n/a',
+      lastRouterSelectedProvider: lastExecutionMetadata?.router_selected_provider || 'n/a',
       lastSelectedProvider: lastExecutionMetadata?.execution_selected_provider
         || lastExecutionMetadata?.actual_provider_used
         || lastExecutionMetadata?.timeout_effective_provider
         || routeTruthView?.executedProvider
         || routeTruthView?.selectedProvider
         || 'n/a',
+      lastExecutableProvider: lastExecutionMetadata?.executable_provider || 'n/a',
       lastActualProviderUsed: lastExecutionMetadata?.actual_provider_used,
+      lastActualModelUsed: lastExecutionMetadata?.actual_model_used || 'n/a',
       lastModelUsed: lastExecutionMetadata?.model_used,
+      lastProviderOverrideReason: lastExecutionMetadata?.provider_override_reason || 'n/a',
       lastOllamaModelDefault: lastExecutionMetadata?.ollama_model_default || 'n/a',
       lastOllamaModelPreferred: lastExecutionMetadata?.ollama_model_preferred || 'n/a',
       lastOllamaModelRequested: lastExecutionMetadata?.ollama_model_requested || 'n/a',

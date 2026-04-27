@@ -38,6 +38,24 @@ import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../sta
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const OLLAMA_MODEL_MATCHERS = ['llama', 'qwen', 'gpt-oss'];
+
+function normalizeProviderKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function modelMatchesProviderFamily(provider = '', model = '') {
+  const normalizedProvider = normalizeProviderKey(provider);
+  const normalizedModel = String(model || '').trim().toLowerCase();
+  if (!normalizedProvider || !normalizedModel) return true;
+  if (normalizedProvider === 'ollama') {
+    return !normalizedModel.includes('gemini');
+  }
+  if (normalizedProvider === 'gemini') {
+    return !OLLAMA_MODEL_MATCHERS.some((token) => normalizedModel.includes(token));
+  }
+  return true;
+}
 
 function normalizeFastLanePrompt(prompt = '') {
   const text = String(prompt || '').trim();
@@ -195,7 +213,43 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
   const contextAssemblyMetadata = requestPayload?.contextAssemblyMetadata || {};
-  const actualProviderUsed = executionMetadata.actual_provider_used || data.data?.actual_provider_used || data.data?.provider || null;
+  const uiRequestedProvider = normalizeProviderKey(
+    executionMetadata.ui_requested_provider
+    || requestTrace.ui_requested_provider
+    || requestPayload.ui_requested_provider
+    || requestPayload.provider,
+  );
+  const requestSideSelectedProvider = normalizeProviderKey(
+    executionMetadata.request_side_selected_provider
+    || requestTrace.request_side_selected_provider
+    || requestPayload.request_side_selected_provider
+    || requestPayload.provider,
+  );
+  const routerSelectedProvider = normalizeProviderKey(
+    executionMetadata.router_selected_provider
+    || requestTrace.router_selected_provider
+    || requestPayload.routeDecision?.selectedProvider
+    || requestSideSelectedProvider
+    || requestPayload.provider,
+  );
+  const executableProvider = normalizeProviderKey(
+    executionMetadata.executable_provider
+    || requestTrace.executable_provider
+    || requestPayload.runtimeContext?.finalRouteTruth?.executedProvider
+    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
+    || requestPayload.runtimeContext?.finalRouteTruth?.selectedProvider
+    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
+    || routerSelectedProvider
+    || requestSideSelectedProvider
+    || uiRequestedProvider,
+  );
+  const actualProviderUsed = normalizeProviderKey(
+    executionMetadata.actual_provider_used
+    || data.data?.actual_provider_used
+    || data.data?.provider
+    || executableProvider
+    || null,
+  );
   const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
     || requestTrace.ui_default_provider
     || executionMetadata.ui_default_provider
@@ -222,13 +276,23 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestTrace.timeout_provider
     || requestPayload.runtimeContext?.timeoutPolicy?.timeoutProvider
     || selectedProvider;
-  const modelUsed = executionMetadata.model_used
+  const rawModelUsed = executionMetadata.model_used
     || data.data?.model_used
     || data.data?.provider_model
     || requestTrace.model_used
     || requestPayload?.providerConfigs?.ollama?.model
     || requestPayload?.providerConfig?.model
     || null;
+  const modelUsed = modelMatchesProviderFamily(actualProviderUsed, rawModelUsed)
+    ? rawModelUsed
+    : (
+      executionMetadata.ollama_model_after_load_policy
+      || requestTrace.ollama_model_after_load_policy
+      || executionMetadata.ollama_model_selected
+      || requestTrace.ollama_model_selected
+      || requestPayload?.providerConfigs?.[actualProviderUsed]?.model
+      || rawModelUsed
+    );
   const freshnessNeed = executionMetadata.freshness_need || requestTrace.freshness_need || requestPayload.freshnessContext?.freshnessNeed || 'low';
   const freshnessRequiredForTruth = Boolean(
     executionMetadata.freshness_required_for_truth
@@ -361,7 +425,9 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestTrace.ui_default_provider
       || requestPayload.routeDecision?.defaultProvider
       || requestPayload.provider,
-    ui_requested_provider: executionMetadata.ui_requested_provider || requestTrace.ui_requested_provider || requestPayload.provider,
+    ui_requested_provider: uiRequestedProvider || requestPayload.provider,
+    request_side_selected_provider: requestSideSelectedProvider || requestPayload.provider,
+    router_selected_provider: routerSelectedProvider || selectedProvider,
     submission_console: executionMetadata.submission_console || requestTrace.submission_console || requestPayload.submissionSource || 'stephanos-mission-console',
     submission_route: executionMetadata.submission_route || requestTrace.submission_route || requestPayload.submissionRoute || 'assistant-router',
     requested_provider_intent: requestedProviderIntent,
@@ -375,8 +441,15 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestedProviderForRequest,
     selected_provider: selectedProvider,
     execution_selected_provider: executionSelectedProvider || timeoutEffectiveProvider || selectedProvider,
+    executable_provider: executableProvider || executionSelectedProvider || selectedProvider,
     actual_provider_used: actualProviderUsed || (streamingUsed ? streamingProvider : null),
+    actual_model_used: modelUsed,
     model_used: modelUsed,
+    fallback_provider_used: executionMetadata.fallback_provider_used || requestTrace.fallback_provider_used || null,
+    provider_override_reason: executionMetadata.provider_override_reason
+      || requestTrace.provider_override_reason
+      || requestPayload.provider_override_reason
+      || null,
     ollama_model_default: executionMetadata.ollama_model_default || requestTrace.ollama_model_default || null,
     ollama_model_preferred: executionMetadata.ollama_model_preferred || requestTrace.ollama_model_preferred || null,
     ollama_model_requested: executionMetadata.ollama_model_requested || requestTrace.ollama_model_requested || null,
@@ -1283,6 +1356,9 @@ function buildTimeoutFailureExecutionMetadata({
   const ollamaModelAfterLoadPolicy = selectedProvider === 'ollama'
     ? String(ollamaLoadGovernor?.modelAfterPolicy || requestedModel || '').trim() || null
     : null;
+  const postGovernorModel = selectedProvider === 'ollama'
+    ? (ollamaModelAfterLoadPolicy || requestedModel || null)
+    : (requestedModel || null);
   const effectiveStreamingPolicyModel = selectedProvider === 'ollama'
     ? String(ollamaModelAfterLoadPolicy || requestedModel || '').trim().toLowerCase()
     : String(requestedModel || '').trim().toLowerCase();
@@ -1312,7 +1388,9 @@ function buildTimeoutFailureExecutionMetadata({
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
-    ui_requested_provider: requestedProvider || fallbackProvider || 'unknown',
+    ui_requested_provider: requestPayload?.ui_requested_provider || requestedProvider || fallbackProvider || 'unknown',
+    request_side_selected_provider: requestPayload?.request_side_selected_provider || requestedProvider || fallbackProvider || 'unknown',
+    router_selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
     requested_provider_intent: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
     requested_provider_for_request: requestedProvider || fallbackProvider || 'unknown',
     backend_default_provider: 'unknown',
@@ -1321,8 +1399,12 @@ function buildTimeoutFailureExecutionMetadata({
     requested_provider: requestedProvider || fallbackProvider || 'unknown',
     selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
     execution_selected_provider: selectedProvider || fallbackProvider || 'unknown',
-    actual_provider_used: '',
-    model_used: requestedModel || null,
+    executable_provider: selectedProvider || fallbackProvider || 'unknown',
+    actual_provider_used: selectedProvider || fallbackProvider || 'unknown',
+    actual_model_used: postGovernorModel,
+    model_used: postGovernorModel,
+    fallback_provider_used: null,
+    provider_override_reason: requestPayload?.provider_override_reason || null,
     ollama_load_mode: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.ollamaLoadMode || ollamaLoadMode || 'balanced') : null,
     ollama_load_policy_applied: selectedProvider === 'ollama' ? Boolean(ollamaLoadGovernor?.policyApplied) : false,
     ollama_load_policy_reason: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.policyReason || null) : null,
@@ -1348,7 +1430,7 @@ function buildTimeoutFailureExecutionMetadata({
     model_timeout_ms: timeoutDetails.modelTimeoutMs ?? canonicalTimeoutPolicy.modelTimeoutMs ?? null,
     timeout_policy_source: timeoutDetails.timeoutPolicySource || canonicalTimeoutPolicy.timeoutPolicySource || null,
     timeout_effective_provider: timeoutDetails.timeoutProvider || selectedProvider || null,
-    timeout_effective_model: timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || requestedModel || null,
+    timeout_effective_model: timeoutDetails.timeoutModel || canonicalTimeoutPolicy.timeoutModel || postGovernorModel || null,
     timeout_override_applied: Boolean(
       timeoutDetails.timeoutOverrideApplied
       ?? canonicalTimeoutPolicy.timeoutOverrideApplied
@@ -1375,7 +1457,7 @@ function buildTimeoutFailureExecutionMetadata({
     streaming_last_event_at: timeoutDetails.streamingLastEventAt ?? null,
     streaming_failure_phase: timeoutDetails.streamingFailurePhase || null,
     streaming_provider: streamingSupported ? 'ollama' : null,
-    streaming_model: streamingSupported ? (requestedModel || null) : null,
+    streaming_model: streamingSupported ? (postGovernorModel || null) : null,
     streaming_finalized: false,
     streaming_fallback_reason: timeoutDetails.streamingFallbackReason
       || (streamingRequested && !streamingSupported ? 'provider-streaming-not-enabled' : null),
@@ -1419,6 +1501,8 @@ function buildPreArmTimeoutExecutionEnvelope({
   runtimeStatus = {},
   requestedProvider = '',
   providerConfigs = {},
+  ollamaLoadMode = 'balanced',
+  prompt = '',
 } = {}) {
   const canonicalRouteTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const finalRouteTruth = runtimeStatus?.finalRouteTruth || {};
@@ -1451,12 +1535,25 @@ function buildPreArmTimeoutExecutionEnvelope({
     || modeReconciledProvider
     || String(routeDecision?.requestedProviderForRequest || '').trim().toLowerCase()
     || requestedProviderNormalized;
-  const effectiveModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
+  const requestedExecutionModel = String(providerConfigs?.[effectiveProvider]?.model || '').trim();
+  const ollamaLoadPreview = effectiveProvider === 'ollama'
+    ? resolveOllamaLoadGovernorPolicy({
+      ollamaLoadMode,
+      requestedModel: requestedExecutionModel,
+      prompt,
+      forceHeavyModel: routeDecision?.operatorForceHeavyLocal === true,
+      availableModels: [],
+    })
+    : null;
+  const effectiveModel = effectiveProvider === 'ollama'
+    ? String(ollamaLoadPreview?.modelAfterPolicy || requestedExecutionModel || '').trim()
+    : requestedExecutionModel;
 
   return {
     requestedProvider: requestedProviderNormalized || requestedProvider || '',
     effectiveProvider: effectiveProvider || requestedProviderNormalized || requestedProvider || '',
     effectiveModel: effectiveModel || null,
+    ollamaLoadMode: effectiveProvider === 'ollama' ? (ollamaLoadPreview?.ollamaLoadMode || ollamaLoadMode || 'balanced') : null,
   };
 }
 
@@ -2334,6 +2431,15 @@ export function useAIConsole() {
       const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
         || freshnessRouteDecision.selectedProvider
         || provider;
+      const normalizedUiRequestedProvider = normalizeProviderKey(provider);
+      const normalizedRequestProvider = normalizeProviderKey(requestedProvider);
+      const providerOverrideReason = normalizedRequestProvider !== normalizedUiRequestedProvider
+        ? (
+          freshnessRouteDecision.freshnessRouted === true
+            ? `freshness-routing:${freshnessRouteDecision.policyReason || 'provider override required by freshness truth'}`
+            : `route-selection:${freshnessRouteDecision.policyReason || 'runtime route selected different executable provider'}`
+        )
+        : null;
       const operatorContext = {
         northStar: 'Persistent cross-device identity and continuity layer that persists across reality.',
         subsystemInventory: [
@@ -2387,6 +2493,8 @@ export function useAIConsole() {
         runtimeStatus: requestRuntimeStatus,
         requestedProvider,
         providerConfigs: effectiveProviderConfigs,
+        ollamaLoadMode,
+        prompt,
       });
       const streamingPolicy = resolveStreamingRequestPolicy({
         streamingMode,
@@ -2397,9 +2505,15 @@ export function useAIConsole() {
       });
       const requestPayload = {
         provider: requestedProvider,
+        ui_requested_provider: normalizedUiRequestedProvider || requestedProvider,
+        request_side_selected_provider: normalizedRequestProvider || requestedProvider,
+        router_selected_provider: normalizeProviderKey(freshnessRouteDecision.selectedProvider || requestedProvider) || requestedProvider,
+        provider_override_reason: providerOverrideReason,
         routeMode: routeModeForRequest,
         streamingMode,
-        ollama_load_mode: ollamaLoadMode,
+        ollama_load_mode: normalizeProviderKey(requestedProvider) === 'ollama'
+          ? (timeoutExecutionEnvelope.ollamaLoadMode || ollamaLoadMode || 'balanced')
+          : (ollamaLoadMode || 'balanced'),
         streaming_mode_preference_input: streamingPolicy.streamingModePreferenceInput,
         streaming_mode_preference: streamingPolicy.normalizedMode,
         streaming_mode_preference_rehydrated: streamingModePreferenceRehydrated === true,
@@ -2486,6 +2600,10 @@ export function useAIConsole() {
       const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
+        uiRequestedProvider: requestPayload.ui_requested_provider,
+        requestSideSelectedProvider: requestPayload.request_side_selected_provider,
+        routerSelectedProvider: requestPayload.router_selected_provider,
+        providerOverrideReason: requestPayload.provider_override_reason,
         routeMode: routeModeForRequest,
         providerConfigs: effectiveProviderConfigs,
         fallbackEnabled,
@@ -2499,7 +2617,7 @@ export function useAIConsole() {
         routeDecision: freshnessRouteDecision,
         contextAssembly,
         streamingMode,
-        ollamaLoadMode,
+        ollamaLoadMode: requestPayload.ollama_load_mode || ollamaLoadMode,
         abortSignal: activePromptRequestRef.current?.signal || null,
         onStreamEvent: (event) => {
           if (!event || event.type !== 'token') return;

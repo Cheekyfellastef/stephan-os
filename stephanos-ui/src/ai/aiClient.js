@@ -1066,6 +1066,10 @@ async function requestMemory(path, options = {}, runtimeConfig = getApiRuntimeCo
 export async function sendPrompt({
   prompt,
   provider = DEFAULT_PROVIDER_KEY,
+  uiRequestedProvider = '',
+  requestSideSelectedProvider = '',
+  routerSelectedProvider = '',
+  providerOverrideReason = '',
   routeMode = 'auto',
   providerConfigs = {},
   fallbackEnabled = true,
@@ -1129,7 +1133,12 @@ export async function sendPrompt({
   const payload = {
     prompt,
     provider,
+    ui_requested_provider: firstNonEmpty(uiRequestedProvider, routeDecision?.uiRequestedProvider, provider),
+    request_side_selected_provider: firstNonEmpty(requestSideSelectedProvider, provider),
+    router_selected_provider: firstNonEmpty(routerSelectedProvider, routeDecision?.selectedProvider, provider),
+    provider_override_reason: firstNonEmpty(providerOverrideReason, routeDecision?.providerOverrideReason),
     routeMode,
+    ollama_load_mode: String(ollamaLoadMode || 'balanced').trim().toLowerCase(),
     providerConfig: safeProviderConfigs?.[provider] || {},
     providerConfigs: safeProviderConfigs,
     fallbackEnabled,
