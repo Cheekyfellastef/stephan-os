@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-04-26T20:24:37.972Z",
+  "updatedAt": "2026-04-27T11:44:38.208Z",
   "records": {
     "continuity::ai-1775391127518-iex7u-intent": {
       "schemaVersion": 2,
@@ -2350,6 +2350,56 @@
       "retentionHint": "default",
       "createdAt": "2026-04-26T20:24:37.972Z",
       "updatedAt": "2026-04-26T20:24:37.972Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777290278208-f0fy9-intent": {
+      "schemaVersion": 2,
+      "type": "ai.decision",
+      "source": "ai-continuity-intent",
+      "scope": "runtime",
+      "summary": "Operator intent captured for assistant route.",
+      "payload": {
+        "promptPreview": "Analyse the current Stephanos runtime state and propose the next safe improvement. Do not write files or execute Codex. Prepare a mission packet only.\n\n[System awareness context: include only relevant truth below; do not claim unavailable sources.]\n## memory\n{\"recentRecords\":[{\"i",
+        "route": "assistant",
+        "requestedProvider": "gemini",
+        "selectedProvider": "gemini"
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.intent"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-27T11:44:38.208Z",
+      "updatedAt": "2026-04-27T11:44:38.208Z",
+      "surface": "shared"
+    },
+    "continuity::ai-1777290278208-f0fy9-outcome": {
+      "schemaVersion": 2,
+      "type": "ai.summary",
+      "source": "ai-continuity-outcome",
+      "scope": "runtime",
+      "summary": "AI outcome recorded (gemini).",
+      "payload": {
+        "outputPreview": "**MISSION PACKET: Stephanos Runtime Analysis & Improvement Proposal**\n\n**1. Current Runtime State Analysis:**\n\n*   **Provider Status:** Ollama is detected as an executable and reports a healthy status. The current interaction is routed via Gemini (cloud).\n*   **Memory Subsystem:** Recent activity confirms Ollama's operational status and health.\n*   **Retrieval Subsystem:** Operating in `local-rag` mode. However, cont",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "fallbackUsed": false,
+        "fallbackReason": "",
+        "memoryHitCount": 4,
+        "tileLinked": true
+      },
+      "tags": [
+        "ai.continuity",
+        "route.assistant",
+        "ai.outcome",
+        "tile-linked"
+      ],
+      "importance": "normal",
+      "retentionHint": "default",
+      "createdAt": "2026-04-27T11:44:38.208Z",
+      "updatedAt": "2026-04-27T11:44:38.208Z",
       "surface": "shared"
     }
   }
