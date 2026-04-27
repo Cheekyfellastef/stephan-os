@@ -690,6 +690,8 @@ async function runOllamaChatAttempt({
 } = {}) {
   const startedAtMs = Date.now();
   let phase = 'awaiting-response-headers';
+  let ollamaReaderCancelled = false;
+  let ollamaFetchAborted = false;
 
   try {
     const { response, abortedBy } = await fetchWithTimeout(resolved.endpoint, {
@@ -711,6 +713,12 @@ async function runOllamaChatAttempt({
     let fullText = '';
     let usage = null;
     const reader = response.body?.getReader ? response.body.getReader() : null;
+    if (reader && signal && typeof signal.addEventListener === 'function') {
+      signal.addEventListener('abort', () => {
+        ollamaReaderCancelled = true;
+        reader.cancel('provider-abort').catch(() => {});
+      }, { once: true });
+    }
     if (reader) {
       const decoder = new TextDecoder();
       let buffer = '';
@@ -780,9 +788,12 @@ async function runOllamaChatAttempt({
         timeoutCategory: null,
         modelWarmupLikely: false,
         abortedBy: abortedBy || null,
+        ollamaFetchAborted,
+        ollamaReaderCancelled,
       },
     };
   } catch (error) {
+    ollamaFetchAborted = error?.name === 'AbortError';
     const failure = classifyOllamaFailurePhase({
       error,
       phase,
@@ -807,6 +818,8 @@ async function runOllamaChatAttempt({
         timeoutCategory: failure.timeoutCategory,
         modelWarmupLikely: failure.modelWarmupLikely,
         abortedBy: error?.abortSource || null,
+        ollamaFetchAborted,
+        ollamaReaderCancelled,
       },
     };
   }
@@ -1022,6 +1035,8 @@ export async function runOllamaProvider(request, config = {}) {
             initialProviderTimeoutCategory: firstAttempt.failure?.timeoutCategory || null,
             finalExecutionOutcome: 'error',
             fallbackAfterWarmupRetry: false,
+            ollamaFetchAborted: finalAttempt.diagnostics.ollamaFetchAborted === true,
+            ollamaReaderCancelled: finalAttempt.diagnostics.ollamaReaderCancelled === true,
           },
         },
         diagnostics: {
@@ -1072,6 +1087,8 @@ export async function runOllamaProvider(request, config = {}) {
             finalExecutionOutcome: 'error',
             fallbackAfterWarmupRetry: false,
             elapsedMs: finalAttempt.elapsedMs,
+            ollamaFetchAborted: finalAttempt.diagnostics.ollamaFetchAborted === true,
+            ollamaReaderCancelled: finalAttempt.diagnostics.ollamaReaderCancelled === true,
           },
         },
       };
@@ -1163,6 +1180,8 @@ export async function runOllamaProvider(request, config = {}) {
           fallbackAfterWarmupRetry: false,
           retriesAttempted: shouldRetryWarmup ? 1 : 0,
           elapsedMs: finalAttempt.elapsedMs,
+          ollamaFetchAborted: finalAttempt.diagnostics.ollamaFetchAborted === true,
+          ollamaReaderCancelled: finalAttempt.diagnostics.ollamaReaderCancelled === true,
           streamingSupported: true,
           streamingUsed: true,
           streamingFinalized: true,

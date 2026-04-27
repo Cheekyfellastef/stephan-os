@@ -13,6 +13,7 @@ export default function AIConsole({
   setInput,
   submitPrompt,
   cancelActivePrompt,
+  emergencyReleaseOllamaLoad,
   commandHistory,
 }) {
   const containerRef = useRef(null);
@@ -181,6 +182,9 @@ export default function AIConsole({
               Stop generating
             </button>
           ) : null}
+          <button type="button" className="ghost-button" onClick={() => emergencyReleaseOllamaLoad?.()}>
+            Emergency release Ollama load
+          </button>
         </form>
       </div>
     </CollapsiblePanel>

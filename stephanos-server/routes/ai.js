@@ -25,6 +25,16 @@ import {
 const logger = createLogger('ai-route');
 const router = express.Router();
 const STREAMING_MEDIA_TYPE = 'text/event-stream';
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+function isLocalDesktopRequest(req) {
+  const ip = String(req.ip || req.socket?.remoteAddress || '').trim();
+  const forwardedFor = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  const candidateIp = forwardedFor || ip;
+  if (LOOPBACK_IPS.has(candidateIp)) return true;
+  const origin = String(req.headers?.origin || '').trim();
+  return origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+}
 
 export function wantsStreaming(req) {
   const accept = String(req.headers?.accept || '').toLowerCase();
@@ -259,6 +269,29 @@ router.post('/providers/health', async (req, res) => {
       });
     });
   res.json({ success: true, data: snapshot });
+});
+
+router.post('/ollama/release', async (req, res) => {
+  if (!isLocalDesktopRequest(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Emergency Ollama release is local-desktop only.',
+      error_code: 'LOCAL_ONLY_OPERATION',
+    });
+  }
+  return res.json({
+    success: true,
+    data: {
+      release_requested: true,
+      release_mode: 'active-request-only',
+      safe_targeted_kill_available: false,
+      targeted_request_cancelled: false,
+      provider_generation_confirmed_stopped: false,
+      provider_generation_still_running_unknown: true,
+      cancellation_effectiveness: 'attempted-unknown',
+      note: 'No safe process-level targeted kill is currently available. Use normal Stop generating for active requests; if load persists, operator must manually intervene in local Ollama tooling.',
+    },
+  });
 });
 
 router.post('/chat', async (req, res) => {
@@ -665,6 +698,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       provider_cancelled: cancellationSource != null,
       provider_cancel_reason: cancellationSource ? `provider request aborted (${cancellationSource})` : null,
       ollama_abort_sent: cancellationSource != null && String(canonicalProviderResolution.executedProvider || '').trim().toLowerCase() === 'ollama',
+      ui_timeout_triggered: false,
+      backend_timeout_triggered: false,
+      abort_signal_created: true,
+      abort_signal_fired: cancellationSource != null,
+      abort_forwarded_to_router: cancellationSource != null,
+      abort_forwarded_to_provider: cancellationSource != null,
+      abort_forwarded_to_ollama_fetch: false,
+      ollama_fetch_aborted: false,
+      ollama_reader_cancelled: false,
+      provider_generation_still_running_unknown: false,
+      provider_generation_confirmed_stopped: cancellationSource == null,
+      cancellation_effectiveness: cancellationSource != null ? 'attempted-unknown' : 'not-needed',
     };
     executionMetadata.executable_provider = providerHealthSnapshot?.[executionMetadata.selected_provider]?.ok
       ? executionMetadata.selected_provider
@@ -745,6 +790,37 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     executionMetadata.selected_provider_elapsed_ms = selectedProviderAttempt?.result?.error?.details?.elapsedMs
       || selectedProviderAttempt?.result?.diagnostics?.ollama?.elapsedMs
       || null;
+    const selectedProviderFailureDetails = selectedProviderAttempt?.result?.error?.details || {};
+    const selectedProviderOllamaDiagnostics = selectedProviderAttempt?.result?.diagnostics?.ollama || {};
+    const timeoutFailureLayer = selectedProviderFailureDetails.failureLayer || executionMetadata.selected_provider_execution_failure_layer || null;
+    executionMetadata.ui_timeout_triggered = timeoutFailureLayer === 'ui' || executionMetadata.timeout_failure_layer === 'ui';
+    executionMetadata.backend_timeout_triggered = timeoutFailureLayer === 'backend' || timeoutFailureLayer === 'provider';
+    executionMetadata.abort_forwarded_to_ollama_fetch = Boolean(
+      executionMetadata.ollama_abort_sent
+      || selectedProviderFailureDetails.abortSource
+      || selectedProviderOllamaDiagnostics.ollamaFetchAborted,
+    );
+    executionMetadata.ollama_fetch_aborted = Boolean(
+      selectedProviderFailureDetails.abortSource
+      || selectedProviderOllamaDiagnostics.ollamaFetchAborted,
+    );
+    executionMetadata.ollama_reader_cancelled = Boolean(
+      selectedProviderFailureDetails.ollamaReaderCancelled
+      || selectedProviderOllamaDiagnostics.ollamaReaderCancelled,
+    );
+    executionMetadata.provider_generation_still_running_unknown = Boolean(
+      executionMetadata.ollama_abort_sent
+      && executionMetadata.actual_provider_used === 'ollama'
+      && !executionMetadata.ollama_reader_cancelled,
+    );
+    executionMetadata.provider_generation_confirmed_stopped = Boolean(
+      executionMetadata.actual_provider_used !== 'ollama'
+      || !executionMetadata.ollama_abort_sent
+      || executionMetadata.ollama_reader_cancelled,
+    );
+    executionMetadata.cancellation_effectiveness = executionMetadata.ollama_abort_sent
+      ? (executionMetadata.provider_generation_confirmed_stopped ? 'attempted-confirmed' : 'attempted-unknown')
+      : 'not-needed';
     executionMetadata.explicit_provider_fallback_policy_triggered = Boolean(
       executionMetadata.fallback_used && executionMetadata.actual_provider_used !== executionMetadata.selected_provider,
     );
@@ -784,6 +860,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       provider_cancelled: executionMetadata.provider_cancelled,
       provider_cancel_reason: executionMetadata.provider_cancel_reason,
       ollama_abort_sent: executionMetadata.ollama_abort_sent,
+      ui_timeout_triggered: executionMetadata.ui_timeout_triggered,
+      backend_timeout_triggered: executionMetadata.backend_timeout_triggered,
+      abort_signal_created: executionMetadata.abort_signal_created,
+      abort_signal_fired: executionMetadata.abort_signal_fired,
+      abort_forwarded_to_router: executionMetadata.abort_forwarded_to_router,
+      abort_forwarded_to_provider: executionMetadata.abort_forwarded_to_provider,
+      abort_forwarded_to_ollama_fetch: executionMetadata.abort_forwarded_to_ollama_fetch,
+      ollama_fetch_aborted: executionMetadata.ollama_fetch_aborted,
+      ollama_reader_cancelled: executionMetadata.ollama_reader_cancelled,
+      provider_generation_still_running_unknown: executionMetadata.provider_generation_still_running_unknown,
+      provider_generation_confirmed_stopped: executionMetadata.provider_generation_confirmed_stopped,
+      cancellation_effectiveness: executionMetadata.cancellation_effectiveness,
       ollama_fallback_model: executionMetadata.ollama_fallback_model,
       ollama_fallback_model_used: executionMetadata.ollama_fallback_model_used,
       ollama_fallback_reason: executionMetadata.ollama_fallback_reason,
@@ -1086,6 +1174,18 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
               provider_cancelled: true,
               provider_cancel_reason: 'client disconnected before completion',
               ollama_abort_sent: true,
+              ui_timeout_triggered: false,
+              backend_timeout_triggered: false,
+              abort_signal_created: true,
+              abort_signal_fired: true,
+              abort_forwarded_to_router: true,
+              abort_forwarded_to_provider: true,
+              abort_forwarded_to_ollama_fetch: true,
+              ollama_fetch_aborted: true,
+              ollama_reader_cancelled: true,
+              provider_generation_still_running_unknown: false,
+              provider_generation_confirmed_stopped: true,
+              cancellation_effectiveness: 'attempted-confirmed',
             },
           },
         });

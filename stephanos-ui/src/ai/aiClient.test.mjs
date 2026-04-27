@@ -84,6 +84,8 @@ test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
 test('transport cancellation uses explicit CANCELLED code with cancellationSource', () => {
   assert.match(clientSource, /code:\s*'CANCELLED'/);
   assert.match(clientSource, /cancellationSource:/);
+  assert.match(clientSource, /abortForwardedToOllamaFetch:\s*true/);
+  assert.match(clientSource, /ollamaFetchAborted:\s*true/);
 });
 
 test('sendPrompt falls back to non-stream JSON when explicit SSE dispatch fails', () => {
@@ -109,6 +111,13 @@ test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () =>
   assert.match(clientSource, /providerTimeoutMs:\s*timeoutPolicy\?\.providerTimeoutMs\s*\|\|\s*null/);
   assert.match(clientSource, /modelTimeoutMs:\s*timeoutPolicy\?\.modelTimeoutMs\s*\|\|\s*null/);
   assert.match(clientSource, /timeoutProvider:\s*timeoutPolicy\?\.timeoutProvider\s*\|\|\s*null/);
+  assert.match(clientSource, /abortSignalCreated:\s*true/);
+  assert.match(clientSource, /ollamaReaderCancelled:\s*true/);
+});
+
+test('releaseLocalOllamaLoad calls POST /api/ai/ollama/release', () => {
+  assert.match(clientSource, /requestJson\('\/api\/ai\/ollama\/release'/);
+  assert.match(clientSource, /method:\s*'POST'/);
 });
 
 

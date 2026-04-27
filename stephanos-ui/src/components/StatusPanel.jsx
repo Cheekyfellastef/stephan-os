@@ -337,6 +337,18 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastProviderCancelled: String(lastExecutionMetadata?.provider_cancelled ?? 'n/a'),
       lastProviderCancelReason: lastExecutionMetadata?.provider_cancel_reason || 'n/a',
       lastOllamaAbortSent: String(lastExecutionMetadata?.ollama_abort_sent ?? 'n/a'),
+      lastUiTimeoutTriggered: String(lastExecutionMetadata?.ui_timeout_triggered ?? 'n/a'),
+      lastBackendTimeoutTriggered: String(lastExecutionMetadata?.backend_timeout_triggered ?? 'n/a'),
+      lastAbortSignalCreated: String(lastExecutionMetadata?.abort_signal_created ?? 'n/a'),
+      lastAbortSignalFired: String(lastExecutionMetadata?.abort_signal_fired ?? 'n/a'),
+      lastAbortForwardedToRouter: String(lastExecutionMetadata?.abort_forwarded_to_router ?? 'n/a'),
+      lastAbortForwardedToProvider: String(lastExecutionMetadata?.abort_forwarded_to_provider ?? 'n/a'),
+      lastAbortForwardedToOllamaFetch: String(lastExecutionMetadata?.abort_forwarded_to_ollama_fetch ?? 'n/a'),
+      lastOllamaFetchAborted: String(lastExecutionMetadata?.ollama_fetch_aborted ?? 'n/a'),
+      lastOllamaReaderCancelled: String(lastExecutionMetadata?.ollama_reader_cancelled ?? 'n/a'),
+      lastProviderGenerationStillRunningUnknown: String(lastExecutionMetadata?.provider_generation_still_running_unknown ?? 'n/a'),
+      lastProviderGenerationConfirmedStopped: String(lastExecutionMetadata?.provider_generation_confirmed_stopped ?? 'n/a'),
+      lastCancellationEffectiveness: lastExecutionMetadata?.cancellation_effectiveness || 'n/a',
       lastGroqEndpointUsed: lastExecutionMetadata?.groq_endpoint_used || 'n/a',
       lastGroqModelUsed: lastExecutionMetadata?.groq_model_used || 'n/a',
       lastGroqFreshWebActive: String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a'),
@@ -927,6 +939,18 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Provider Cancelled: {String(lastExecutionMetadata?.provider_cancelled ?? 'n/a')}</li>
         <li>Provider Cancel Reason: {lastExecutionMetadata?.provider_cancel_reason || 'n/a'}</li>
         <li>Ollama Abort Sent: {String(lastExecutionMetadata?.ollama_abort_sent ?? 'n/a')}</li>
+        <li>UI Timeout Triggered: {String(lastExecutionMetadata?.ui_timeout_triggered ?? 'n/a')}</li>
+        <li>Backend Timeout Triggered: {String(lastExecutionMetadata?.backend_timeout_triggered ?? 'n/a')}</li>
+        <li>Abort Signal Created: {String(lastExecutionMetadata?.abort_signal_created ?? 'n/a')}</li>
+        <li>Abort Signal Fired: {String(lastExecutionMetadata?.abort_signal_fired ?? 'n/a')}</li>
+        <li>Abort Forwarded To Router: {String(lastExecutionMetadata?.abort_forwarded_to_router ?? 'n/a')}</li>
+        <li>Abort Forwarded To Provider: {String(lastExecutionMetadata?.abort_forwarded_to_provider ?? 'n/a')}</li>
+        <li>Abort Forwarded To Ollama Fetch: {String(lastExecutionMetadata?.abort_forwarded_to_ollama_fetch ?? 'n/a')}</li>
+        <li>Ollama Fetch Aborted: {String(lastExecutionMetadata?.ollama_fetch_aborted ?? 'n/a')}</li>
+        <li>Ollama Reader Cancelled: {String(lastExecutionMetadata?.ollama_reader_cancelled ?? 'n/a')}</li>
+        <li>Provider Generation Still Running Unknown: {String(lastExecutionMetadata?.provider_generation_still_running_unknown ?? 'n/a')}</li>
+        <li>Provider Generation Confirmed Stopped: {String(lastExecutionMetadata?.provider_generation_confirmed_stopped ?? 'n/a')}</li>
+        <li>Cancellation Effectiveness: {lastExecutionMetadata?.cancellation_effectiveness || 'n/a'}</li>
         <li>Last Groq Endpoint Used: {lastExecutionMetadata?.groq_endpoint_used || 'n/a'}</li>
         <li>Last Groq Model Used: {lastExecutionMetadata?.groq_model_used || 'n/a'}</li>
         <li>Last Groq Fresh Web Active: {String(lastExecutionMetadata?.groq_fresh_web_active ?? 'n/a')}</li>

@@ -36,4 +36,17 @@ test('useAIConsole tracks streaming request truth metadata and cancellation trut
   assert.match(source, /execution_cancelled/);
   assert.match(source, /provider_cancelled/);
   assert.match(source, /ollama_abort_sent/);
+  assert.match(source, /provider_generation_still_running_unknown/);
+  assert.match(source, /cancellation_effectiveness/);
+});
+
+test('useAIConsole blocks heavy ollama requests when previous cancellation may still be running', () => {
+  assert.match(source, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen:32b'\]\)/);
+  assert.match(source, /heavyOllamaRequest && previousGenerationUncertain/);
+  assert.match(source, /OLLAMA_HEAVY_REQUEST_BLOCKED_PENDING_CANCELLATION_RECOVERY/);
+});
+
+test('useAIConsole exposes emergency release ollama load control', () => {
+  assert.match(source, /const emergencyReleaseOllamaLoad = useCallback\(async \(\) => \{/);
+  assert.match(source, /releaseLocalOllamaLoad\(/);
 });
