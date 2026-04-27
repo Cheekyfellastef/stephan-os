@@ -233,6 +233,18 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const fastLaneModel = selectedProvider === 'ollama' && initialFastLaneEligibility.eligible
     ? 'llama3.2:3b'
     : '';
+  const resolveFastLaneTruth = ({ provider = '', modelUsed = '' } = {}) => {
+    const normalizedProvider = String(provider || '').trim().toLowerCase();
+    const normalizedModel = String(modelUsed || '').trim().toLowerCase();
+    const eligible = initialFastLaneEligibility.eligible === true
+      || (normalizedProvider === 'ollama' && normalizedModel === 'llama3.2:3b');
+    const active = eligible && normalizedProvider === 'ollama' && normalizedModel === 'llama3.2:3b';
+    return {
+      eligible,
+      active,
+      model: active ? 'llama3.2:3b' : '',
+    };
+  };
   const initialEscalationModel = selectedProvider === 'ollama' && fastLaneModel
     ? (
       String(configInput?.providerConfigs?.ollama?.model || '').trim().toLowerCase() === 'llama3.2:3b'
@@ -339,6 +351,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           actualProvider: provider,
           failedAttempts,
         });
+        const fastLaneTruth = resolveFastLaneTruth({
+          provider,
+          modelUsed: escalationAttempt.result.model || '',
+        });
         return {
           ...escalationAttempt.result,
           requestedProvider,
@@ -359,10 +375,10 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
             attempts,
             runtimeContext: routing.runtimeContext,
             fastResponseLane: {
-              eligible: true,
-              active: true,
+              eligible: fastLaneTruth.eligible,
+              active: fastLaneTruth.active,
               reason: initialFastLaneEligibility.reason,
-              model: fastLaneModel,
+              model: fastLaneTruth.model,
               escalationModel: initialEscalationModel,
               escalationReason: 'fast-lane-initial-attempt-failed',
             },
@@ -475,10 +491,11 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
               : ['retry-fresh-provider', 'switch-provider'],
           },
           fastResponseLane: {
-            eligible: initialFastLaneEligibility.eligible,
-            active: Boolean(provider === 'ollama' && fastLaneModel),
+            ...resolveFastLaneTruth({
+              provider,
+              modelUsed: attempt.result.model || '',
+            }),
             reason: initialFastLaneEligibility.reason,
-            model: provider === 'ollama' && fastLaneModel ? (attempt.result.model || fastLaneModel) : '',
             escalationModel: provider === 'ollama' && fastLaneModel ? initialEscalationModel : '',
             escalationReason: provider === 'ollama' && fastLaneModel ? '' : 'fast-lane-not-selected',
           },
@@ -570,10 +587,12 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           : ['retry-request', 'switch-provider'],
       },
       fastResponseLane: {
-        eligible: initialFastLaneEligibility.eligible,
-        active: false,
+        ...resolveFastLaneTruth({
+          provider: lastAttempt?.provider || selectedProvider,
+          modelUsed: lastAttempt?.result?.model || '',
+        }),
         reason: initialFastLaneEligibility.reason,
-        model: fastLaneModel,
+        model: '',
         escalationModel: initialEscalationModel,
         escalationReason: fastLaneModel ? 'fast-lane-exhausted-or-failed' : 'fast-lane-not-selected',
       },

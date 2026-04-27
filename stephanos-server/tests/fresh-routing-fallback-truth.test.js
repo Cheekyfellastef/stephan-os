@@ -300,6 +300,7 @@ test('local-first fast lane keeps llama3.2:3b as requested, selected, and execut
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.fastResponseLane.eligible, true);
     assert.equal(result.diagnostics.fastResponseLane.active, true);
+    assert.equal(result.diagnostics.fastResponseLane.model, 'llama3.2:3b');
     assert.equal(result.diagnostics.ollama.requestedModel, 'llama3.2:3b');
     assert.equal(result.diagnostics.ollama.selectedModel, 'llama3.2:3b');
     assert.equal(result.modelUsed, 'llama3.2:3b');

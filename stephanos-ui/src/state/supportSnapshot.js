@@ -673,6 +673,7 @@ export function buildSupportSnapshot({
     `Last Copy Mode: ${asText(runtimeStatus?.lastCopyMode)}`,
     `Last Copied Payload Kind: ${asText(runtimeStatus?.lastCopiedPayloadKind)}`,
     `Last Copied Payload Size: ${asText(runtimeStatus?.lastCopiedPayloadSize)}`,
+    `Streaming Requested: ${asText(runtimeStatus?.lastStreamingRequested, 'false')}`,
     `Streaming Supported: ${asText(runtimeStatus?.lastStreamingSupported, 'false')}`,
     `Streaming Used: ${asText(runtimeStatus?.lastStreamingUsed, 'false')}`,
     `Streaming Provider: ${asText(runtimeStatus?.lastStreamingProvider)}`,

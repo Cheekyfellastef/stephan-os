@@ -2,6 +2,7 @@ import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
+  DEFAULT_STREAMING_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -15,12 +16,15 @@ import {
   normalizeProviderSelection,
   normalizeRouteMode,
   ROUTE_MODE_KEYS,
+  STREAMING_MODE_KEYS,
+  normalizeStreamingMode,
 } from '../../../shared/ai/providerDefaults.mjs';
 
 export {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
+  DEFAULT_STREAMING_MODE,
   FALLBACK_PROVIDER_KEYS,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
@@ -34,6 +38,8 @@ export {
   normalizeProviderSelection,
   normalizeRouteMode,
   ROUTE_MODE_KEYS,
+  STREAMING_MODE_KEYS,
+  normalizeStreamingMode,
 };
 
 export const NON_SECRET_PROVIDER_FIELDS = {

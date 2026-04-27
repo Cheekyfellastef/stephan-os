@@ -4,6 +4,7 @@ import { createContext, createElement, useCallback, useContext, useEffect, useMe
 import {
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
+  DEFAULT_STREAMING_MODE,
   PROVIDER_DEFINITIONS,
   PROVIDER_KEYS,
   HOSTED_COGNITION_PROVIDER_KEYS,
@@ -12,6 +13,7 @@ import {
   normalizeProviderDraft,
   normalizeProviderSelection,
   normalizeRouteMode,
+  normalizeStreamingMode,
   sanitizeConfigForStorage,
   validateProviderDraft,
 } from '../ai/providerConfig';
@@ -594,6 +596,7 @@ function normalizeStoredSettings(persistedSession) {
       ...defaults,
       provider: normalizeProviderSelection(persistedSettings.provider),
       routeMode: normalizeRouteMode(persistedSettings.routeMode),
+      streamingMode: normalizeStreamingMode(persistedSettings.streamingMode),
       devMode: persistedSettings.devMode !== false,
       fallbackEnabled: persistedSettings.fallbackEnabled !== false,
       disableHomeNodeForLocalSession: persistedSettings.disableHomeNodeForLocalSession === true,
@@ -865,6 +868,7 @@ export function AIStoreProvider({ children }) {
   const [provider, setProviderState] = useState(initialSettings.provider);
   const [providerSelectionSource, setProviderSelectionSource] = useState('default:free-tier');
   const [routeMode, setRouteModeState] = useState(initialSettings.routeMode || DEFAULT_ROUTE_MODE);
+  const [streamingMode, setStreamingModeState] = useState(initialSettings.streamingMode || DEFAULT_STREAMING_MODE);
   const [devMode, setDevModeState] = useState(initialSettings.devMode);
   const [fallbackEnabled, setFallbackEnabledState] = useState(initialSettings.fallbackEnabled);
   const [disableHomeNodeForLocalSession, setDisableHomeNodeForLocalSessionState] = useState(initialSettings.disableHomeNodeForLocalSession === true);
@@ -1232,6 +1236,7 @@ export function AIStoreProvider({ children }) {
         providerPreferences: {
           provider,
           routeMode,
+          streamingMode,
           devMode,
           fallbackEnabled,
           disableHomeNodeForLocalSession,
@@ -1285,6 +1290,7 @@ export function AIStoreProvider({ children }) {
   }, [
     provider,
     routeMode,
+    streamingMode,
     devMode,
     fallbackEnabled,
     disableHomeNodeForLocalSession,
@@ -1401,6 +1407,10 @@ export function AIStoreProvider({ children }) {
 
   const setRouteMode = useCallback((nextRouteMode) => {
     setRouteModeState(normalizeRouteMode(nextRouteMode));
+  }, []);
+
+  const setStreamingMode = useCallback((nextStreamingMode) => {
+    setStreamingModeState(normalizeStreamingMode(nextStreamingMode));
   }, []);
 
   const setDevMode = useCallback((next) => {
@@ -1751,6 +1761,7 @@ export function AIStoreProvider({ children }) {
     const nextWorkingMemory = createDefaultStephanosSessionMemory().working;
     setProviderState(defaults.provider);
     setRouteModeState(defaults.routeMode);
+    setStreamingModeState(defaults.streamingMode || DEFAULT_STREAMING_MODE);
     setDevModeState(defaults.devMode);
     setFallbackEnabledState(defaults.fallbackEnabled);
     setDisableHomeNodeForLocalSessionState(defaults.disableHomeNodeForLocalSession === true);
@@ -2556,6 +2567,8 @@ export function AIStoreProvider({ children }) {
     providerSelectionSource,
     routeMode,
     setRouteMode,
+    streamingMode,
+    setStreamingMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -2690,6 +2703,7 @@ export function AIStoreProvider({ children }) {
     provider,
     providerSelectionSource,
     routeMode,
+    streamingMode,
     devMode,
     fallbackEnabled,
     disableHomeNodeForLocalSession,
@@ -2739,6 +2753,7 @@ export function AIStoreProvider({ children }) {
     setMissionDashboardUiState,
     setProvider,
     setRouteMode,
+    setStreamingMode,
     setDevMode,
     setFallbackEnabled,
     setDisableHomeNodeForLocalSession,

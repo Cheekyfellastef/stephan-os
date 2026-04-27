@@ -300,11 +300,13 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastFastResponseLaneReason: lastExecutionMetadata?.fast_response_lane_reason || 'n/a',
       lastFastResponseModel: lastExecutionMetadata?.fast_response_model || 'n/a',
       lastFastResponseStreaming: String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a'),
+      lastStreamingRequested: String(lastExecutionMetadata?.streaming_requested ?? 'n/a'),
       lastStreamingSupported: String(lastExecutionMetadata?.streaming_supported ?? 'n/a'),
       lastStreamingUsed: String(lastExecutionMetadata?.streaming_used ?? 'n/a'),
       lastStreamingProvider: lastExecutionMetadata?.streaming_provider || 'n/a',
       lastStreamingModel: lastExecutionMetadata?.streaming_model || 'n/a',
       lastStreamingFinalized: String(lastExecutionMetadata?.streaming_finalized ?? 'n/a'),
+      lastStreamingFallbackReason: lastExecutionMetadata?.streaming_fallback_reason || 'n/a',
       lastEscalationModel: lastExecutionMetadata?.escalation_model || 'n/a',
       lastEscalationReason: lastExecutionMetadata?.escalation_reason || 'n/a',
       lastOllamaFallbackModel: lastExecutionMetadata?.ollama_fallback_model || 'n/a',
@@ -655,11 +657,13 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Fast Response Reason: {routeTruthView.fastResponseLaneReason || 'n/a'}</li>
         <li>Fast Response Model: {routeTruthView.fastResponseModel || 'n/a'}</li>
         <li>Fast Response Streaming: {String(lastExecutionMetadata?.fast_response_streaming ?? 'n/a')}</li>
+        <li>Streaming Requested: {String(lastExecutionMetadata?.streaming_requested ?? 'n/a')}</li>
         <li>Streaming Supported: {String(lastExecutionMetadata?.streaming_supported ?? 'n/a')}</li>
         <li>Streaming Used: {String(lastExecutionMetadata?.streaming_used ?? 'n/a')}</li>
         <li>Streaming Provider: {lastExecutionMetadata?.streaming_provider || 'n/a'}</li>
         <li>Streaming Model: {lastExecutionMetadata?.streaming_model || 'n/a'}</li>
         <li>Streaming Finalized: {String(lastExecutionMetadata?.streaming_finalized ?? 'n/a')}</li>
+        <li>Streaming Fallback Reason: {lastExecutionMetadata?.streaming_fallback_reason || 'n/a'}</li>
         <li>Escalation Model: {routeTruthView.escalationModel || 'n/a'}</li>
         <li>Escalation Reason: {routeTruthView.escalationReason || 'n/a'}</li>
         <li>Active Route Kind: {runtimeStatus.activeRouteKind}</li>

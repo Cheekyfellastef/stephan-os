@@ -766,6 +766,7 @@ export async function sendPrompt({
   freshnessContext = null,
   routeDecision = null,
   contextAssembly = null,
+  streamingMode = 'off',
   onStreamEvent = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
@@ -863,7 +864,13 @@ export async function sendPrompt({
   });
 
   let result;
-  const explicitStreamingRequest = typeof onStreamEvent === 'function' && String(payload.provider || '').toLowerCase() === 'ollama';
+  const normalizedStreamingMode = String(streamingMode || 'off').trim().toLowerCase();
+  const streamingRequestedByMode = normalizedStreamingMode === 'on'
+    || (normalizedStreamingMode === 'auto' && String(payload.provider || '').toLowerCase() === 'ollama');
+  const explicitStreamingRequest = streamingRequestedByMode
+    && typeof onStreamEvent === 'function'
+    && String(payload.provider || '').toLowerCase() === 'ollama';
+  payload.streamingMode = normalizedStreamingMode;
   try {
     if (explicitStreamingRequest) {
       result = await requestEventStream('/api/ai/chat?stream=1', {

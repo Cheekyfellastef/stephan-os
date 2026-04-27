@@ -9,6 +9,8 @@ function createStore(overrides = {}) {
     setProvider: () => {},
     routeMode: 'cloud-first',
     setRouteMode: () => {},
+    streamingMode: 'off',
+    setStreamingMode: () => {},
     devMode: true,
     setDevMode: () => {},
     fallbackEnabled: true,

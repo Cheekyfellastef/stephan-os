@@ -157,6 +157,8 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setProvider,
     routeMode,
     setRouteMode,
+    streamingMode,
+    setStreamingMode,
     devMode,
     setDevMode,
     fallbackEnabled,
@@ -591,6 +593,14 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         <label className="toggle-chip"><input type="checkbox" checked={devMode} onChange={(event) => setDevMode(event.target.checked)} /> Dev-safe mode</label>
         <label className="toggle-chip"><input type="checkbox" checked={fallbackEnabled} onChange={(event) => setFallbackEnabled(event.target.checked)} /> Fallback enabled</label>
         <label className="toggle-chip"><input type="checkbox" checked={disableHomeNodeForLocalSession} onChange={(event) => setDisableHomeNodeForLocalSession(event.target.checked)} /> Force Local On This PC</label>
+        <label className="toggle-chip">
+          <span>Streaming</span>
+          <select value={streamingMode} onChange={(event) => setStreamingMode(event.target.value)}>
+            <option value="off">Off</option>
+            <option value="auto">Auto</option>
+            <option value="on">On</option>
+          </select>
+        </label>
       </div>
       <section className="provider-hint-box hosted-cloud-cognition-pane">
         <div className="provider-help-panel">
