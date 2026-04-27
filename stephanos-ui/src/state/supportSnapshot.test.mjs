@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSupportSnapshot } from './supportSnapshot.js';
+import { processMissionBridgeIntent } from './missionBridge.js';
 
 test('buildSupportSnapshot prefers canonical truth and labels unavailable fields', () => {
   const snapshot = buildSupportSnapshot({
@@ -1502,5 +1503,34 @@ test('buildSupportSnapshot reports mission bridge diagnostics fields', () => {
   assert.match(snapshot, /Mission Bridge Last AI Router Request Source: mission-bridge/);
   assert.match(snapshot, /Mission Bridge Last AI Response Routed To Mission Console: yes/);
   assert.match(snapshot, /Mission Bridge Local Desktop Agent Gate Passed: yes/);
+  assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);
+});
+
+test('support snapshot reflects mission packet generation from submitted operator intent', () => {
+  const missionBridgeTruth = processMissionBridgeIntent({
+    operatorIntent: 'Repair mission bridge activation and runtime truth gating.',
+    finalRouteTruth: {
+      routeLayerStatus: 'healthy',
+      backendExecutionContractStatus: 'validated',
+      providerExecutionGateStatus: 'open',
+      routeUsableState: 'yes',
+    },
+  });
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    missionBridgeTruth,
+  });
+
+  assert.match(snapshot, /Mission Bridge State: /);
+  assert.match(snapshot, /Mission Bridge Last Event: /);
   assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);
 });

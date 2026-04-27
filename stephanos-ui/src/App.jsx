@@ -36,6 +36,7 @@ import { buildProviderStatusSummary } from './ai/providerConfig';
 import { useAIStore } from './state/aiStore';
 import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
+import { evaluateRuntimeTruthDependencyGate } from './state/runtimeTruthDependencyGate.js';
 import { deriveContinuityLoopSnapshot } from './state/continuityLoopSnapshot';
 import {
   buildCanonicalCurrentIntent,
@@ -372,6 +373,10 @@ export default function App() {
   }, [commandHistory]);
   const hasFreshResearchIntent = /research|fresh|latest|today|news/i.test(latestCommandPrompt);
   const hasAssignedTaskIntent = latestCommandPrompt.length > 0;
+  const runtimeTruthDependencyGate = useMemo(() => evaluateRuntimeTruthDependencyGate({
+    routeTruthView,
+    runtimeStatus,
+  }), [routeTruthView, runtimeStatus]);
   const agentTruth = useMemo(() => adjudicateAgents({
     registry: agentRegistry,
     eventLog: agentEventLog,
@@ -387,7 +392,7 @@ export default function App() {
               ? 'cockpit'
               : 'mission-control',
       dependencyReadyMap: {
-        'runtime-truth': runtimeStatus?.appLaunchState === 'ready',
+        'runtime-truth': runtimeTruthDependencyGate.passed,
         'provider-routing': routeTruthView?.routeUsableState !== 'no',
         'shared-memory': continuitySnapshot?.memoryCapabilityReady === true,
         'operator-policy': true,
@@ -415,7 +420,7 @@ export default function App() {
       hasTaskIntent: hasAssignedTaskIntent,
     },
     operatorControls: agentControls,
-  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, hasAssignedTaskIntent, hasFreshResearchIntent, missionConsoleSurfaceMode, continuitySnapshot?.memoryCapabilityCanonical, continuitySnapshot?.memoryCapabilityReady, continuitySnapshot?.memoryCapabilityReason, continuitySnapshot?.memoryCapabilityState, openClawSurfaceMode, routeTruthView?.backendReachableState, routeTruthView?.backendStatusReason, routeTruthView?.routeKind, routeTruthView?.routeStatusReason, routeTruthView?.routeUsableState, runtimeStatus?.appLaunchState, runtimeStatus?.runtimeContext?.sessionKind]);
+  }), [agentControls, agentEventLog, agentRegistry, agentsSurfaceMode, cockpitSurfaceMode, hasAssignedTaskIntent, hasFreshResearchIntent, missionConsoleSurfaceMode, continuitySnapshot?.memoryCapabilityCanonical, continuitySnapshot?.memoryCapabilityReady, continuitySnapshot?.memoryCapabilityReason, continuitySnapshot?.memoryCapabilityState, openClawSurfaceMode, routeTruthView?.backendReachableState, routeTruthView?.backendStatusReason, routeTruthView?.routeKind, routeTruthView?.routeStatusReason, routeTruthView?.routeUsableState, runtimeStatus?.runtimeContext?.sessionKind, runtimeTruthDependencyGate.passed]);
   const finalAgentView = useMemo(() => buildFinalAgentView({
     adjudicated: agentTruth,
     selectedAgentId,
