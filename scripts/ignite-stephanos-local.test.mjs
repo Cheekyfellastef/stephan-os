@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import {
   classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
+  collectRuntimeStatePaths,
   evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
   isGitWorkingTreeClean,
@@ -76,6 +77,21 @@ test('ignition status evaluator allows approved generated dist dirt', () => {
   assert.equal(evaluation.meaningfulEntries.length, 0);
   assert.equal(evaluation.approvedEntries.length, 2);
   assert.equal(isGitWorkingTreeClean(' M apps/stephanos/dist/index.html\n'), true);
+});
+
+test('ignition status evaluator classifies backend runtime data dirt separately', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    ' M stephanos-server/data/activity/events.json',
+    '?? stephanos-server/data/memory/durable-memory.json',
+  ].join('\n'));
+
+  assert.equal(evaluation.runtimeStateEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(evaluation.approvedEntries.length, 0);
+  assert.deepEqual(collectRuntimeStatePaths(evaluation), [
+    'stephanos-server/data/activity/events.json',
+    'stephanos-server/data/memory/durable-memory.json',
+  ]);
 });
 
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
@@ -205,6 +221,71 @@ test('preflight keeps approved untracked local noise non-blocking without restor
   ]);
 });
 
+test('runtime state dirt is checkpointed and does not block launch preflight', () => {
+  const steps = [];
+  let createdPaths = [];
+  let restored = false;
+  runGitPullPreflightWithDeps({
+    captureStep: (label) => {
+      if (label === 'git-status') {
+        return {
+          stdout: [
+            ' M stephanos-server/data/activity/events.json',
+            '?? stephanos-server/data/memory/durable-memory.json',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+      if (label === 'git-branch') {
+        return { stdout: 'main\n', stderr: '' };
+      }
+      if (label === 'git-upstream') {
+        return { stdout: 'origin/main\n', stderr: '' };
+      }
+      if (label === 'git-ahead-behind') {
+        return { stdout: '0\t0\n', stderr: '' };
+      }
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    createCheckpoint: (runtimePaths) => {
+      createdPaths = runtimePaths;
+      return {
+        checkpointDir: '.stephanos/local-state-checkpoints/2026-04-27T00-00-00-000Z',
+        manifest: { paths: runtimePaths.map((path) => ({ path, exists: true })) },
+      };
+    },
+    restoreCheckpoint: () => {
+      restored = true;
+    },
+    runStepFn: (label, command, args) => {
+      steps.push({ label, command, args });
+    },
+  });
+
+  assert.deepEqual(createdPaths, [
+    'stephanos-server/data/activity/events.json',
+    'stephanos-server/data/memory/durable-memory.json',
+  ]);
+  assert.equal(restored, true);
+  assert.deepEqual(steps, [
+    {
+      label: 'git-restore-runtime-state-before-pull',
+      command: 'git',
+      args: ['restore', '--worktree', '--staged', '--', 'stephanos-server/data/activity/events.json'],
+    },
+    {
+      label: 'git-fetch',
+      command: 'git',
+      args: ['fetch', '--prune', '--tags'],
+    },
+    {
+      label: 'git-pull-ff-only',
+      command: 'git',
+      args: ['pull', '--ff-only'],
+    },
+  ]);
+});
+
 test('preflight blocks meaningful dirt', () => {
   assert.throws(
     () => runGitPullPreflightWithDeps({
@@ -235,6 +316,29 @@ test('preflight blocks mixed approved and meaningful dirt', () => {
       },
     }),
     /blocked for safety: local working tree is dirty/,
+  );
+});
+
+test('checkpoint failure blocks safely before pull', () => {
+  assert.throws(
+    () => runGitPullPreflightWithDeps({
+      captureStep: (label) => {
+        if (label === 'git-status') {
+          return {
+            stdout: ' M stephanos-server/data/activity/events.json\n',
+            stderr: '',
+          };
+        }
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      createCheckpoint: () => {
+        throw new Error('disk full');
+      },
+      runStepFn: () => {
+        throw new Error('should not run');
+      },
+    }),
+    /runtime state checkpoint failed/,
   );
 });
 
