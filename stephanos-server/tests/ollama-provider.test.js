@@ -426,6 +426,37 @@ test('runOllamaProvider forwards external AbortSignal into Ollama fetch executio
   }
 });
 
+test('runOllamaProvider exposes ollama abort diagnostics when external abort interrupts stream', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'qwen:14b' }] }) };
+    }
+    await new Promise((resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => {
+        const abortError = new Error('aborted');
+        abortError.name = 'AbortError';
+        abortError.abortSource = 'external-signal';
+        reject(abortError);
+      }, { once: true });
+    });
+    return { ok: false, status: 500 };
+  };
+  const controller = new AbortController();
+  setTimeout(() => controller.abort('test-abort'), 5);
+  try {
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'abort me' }] },
+      { baseURL: 'http://localhost:11434', model: 'qwen:14b', signal: controller.signal, selectedProviderHealthOkAtSelection: true },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error.details.failureLabel, 'backend_abort');
+    assert.equal(result.error.details.ollamaFetchAborted, true);
+    assert.equal(result.diagnostics.ollama.ollamaFetchAborted, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('checkOllamaHealth returns misconfigured result for malformed URL', async () => {
   const health = await checkOllamaHealth({ baseURL: 'not-a-url' });
 

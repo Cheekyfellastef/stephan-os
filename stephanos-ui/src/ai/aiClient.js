@@ -622,18 +622,22 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
   const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
   let abortSource = '';
+  let abortSignalFired = false;
   const externalSignal = requestControl?.abortSignal;
   const timeoutAbort = setTimeout(() => {
     abortSource = 'ui-timeout';
+    abortSignalFired = true;
     controller.abort();
   }, timeoutMs);
   if (externalSignal && typeof externalSignal.addEventListener === 'function') {
     if (externalSignal.aborted) {
       abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+      abortSignalFired = true;
       controller.abort();
     } else {
       externalSignal.addEventListener('abort', () => {
         abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+        abortSignalFired = true;
         controller.abort();
       }, { once: true });
     }
@@ -660,6 +664,13 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
           message: 'Request cancelled before completion.',
           details: {
             cancellationSource: abortSource,
+            abortSignalCreated: true,
+            abortSignalFired,
+            abortForwardedToRouter: true,
+            abortForwardedToProvider: true,
+            abortForwardedToOllamaFetch: true,
+            ollamaFetchAborted: true,
+            ollamaReaderCancelled: false,
           },
         });
       }
@@ -679,6 +690,13 @@ async function requestJson(path, options = {}, runtimeConfig = getApiRuntimeConf
           timeoutRequestedProvider: timeoutPolicy?.timeoutRequestedProvider || null,
           timeoutModel: timeoutPolicy?.timeoutModel || null,
           timeoutOverrideApplied: Boolean(timeoutPolicy?.timeoutOverrideApplied),
+          abortSignalCreated: true,
+          abortSignalFired,
+          abortForwardedToRouter: true,
+          abortForwardedToProvider: true,
+          abortForwardedToOllamaFetch: true,
+          ollamaFetchAborted: true,
+          ollamaReaderCancelled: false,
         },
       });
     }
@@ -702,18 +720,29 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
   const baseUrl = runtimeConfig?.baseUrl || apiConfig.baseUrl;
   const controller = new AbortController();
   let abortSource = '';
+  let abortSignalFired = false;
   const externalSignal = requestControl?.abortSignal;
+  let reader = null;
   const timeout = setTimeout(() => {
     abortSource = 'ui-timeout';
+    abortSignalFired = true;
     controller.abort();
   }, timeoutMs);
+  controller.signal.addEventListener('abort', () => {
+    abortSignalFired = true;
+    if (reader && typeof reader.cancel === 'function') {
+      reader.cancel('ui-abort').catch(() => {});
+    }
+  }, { once: true });
   if (externalSignal && typeof externalSignal.addEventListener === 'function') {
     if (externalSignal.aborted) {
       abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+      abortSignalFired = true;
       controller.abort();
     } else {
       externalSignal.addEventListener('abort', () => {
         abortSource = String(externalSignal.reason || requestControl?.cancellationSource || 'client-disconnect');
+        abortSignalFired = true;
         controller.abort();
       }, { once: true });
     }
@@ -731,7 +760,7 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
       const fallback = await response.text();
       return { ok: response.ok, status: response.status, data: fallback ? JSON.parse(fallback) : {} };
     }
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let eventName = '';
@@ -829,10 +858,43 @@ async function requestEventStream(path, options = {}, runtimeConfig = getApiRunt
         throw createTransportError({
           code: 'CANCELLED',
           message: 'Request cancelled before completion.',
-          details: { cancellationSource: abortSource },
+          details: {
+            cancellationSource: abortSource,
+            abortSignalCreated: true,
+            abortSignalFired,
+            abortForwardedToRouter: true,
+            abortForwardedToProvider: true,
+            abortForwardedToOllamaFetch: true,
+            ollamaFetchAborted: true,
+            ollamaReaderCancelled: true,
+          },
         });
       }
-      throw createTransportError({ code: 'TIMEOUT', message: `Request timed out after ${timeoutMs}ms.` });
+      throw createTransportError({
+        code: 'TIMEOUT',
+        message: `Request timed out after ${timeoutMs}ms.`,
+        details: {
+          timeoutFailureLayer: 'ui',
+          timeoutLabel: 'ui_request_timeout_ms',
+          timeoutMs,
+          timeoutPolicySource: timeoutPolicy?.timeoutPolicySource || runtimeConfig?.timeoutSource || apiConfig.timeoutSource || 'frontend:api-runtime',
+          uiRequestTimeoutMs: timeoutPolicy?.uiRequestTimeoutMs || timeoutMs,
+          backendRouteTimeoutMs: timeoutPolicy?.backendRouteTimeoutMs || null,
+          providerTimeoutMs: timeoutPolicy?.providerTimeoutMs || null,
+          modelTimeoutMs: timeoutPolicy?.modelTimeoutMs || null,
+          timeoutProvider: timeoutPolicy?.timeoutProvider || null,
+          timeoutRequestedProvider: timeoutPolicy?.timeoutRequestedProvider || null,
+          timeoutModel: timeoutPolicy?.timeoutModel || null,
+          timeoutOverrideApplied: Boolean(timeoutPolicy?.timeoutOverrideApplied),
+          abortSignalCreated: true,
+          abortSignalFired,
+          abortForwardedToRouter: true,
+          abortForwardedToProvider: true,
+          abortForwardedToOllamaFetch: true,
+          ollamaFetchAborted: true,
+          ollamaReaderCancelled: true,
+        },
+      });
     }
     throw error;
   } finally {
@@ -1253,6 +1315,19 @@ export async function focusRepoPowerShell(runtimeConfig = getApiRuntimeConfig())
     focusApplied: result.data?.focusApplied === true,
     topmostApplied: result.data?.topmostApplied === true,
   };
+}
+
+export async function releaseLocalOllamaLoad(payload = {}, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/ai/ollama/release', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  }, runtimeConfig);
+  if (!result.ok) {
+    const message = result.data?.error || `Ollama release request failed (${result.status}).`;
+    throw new Error(message);
+  }
+  return result.data;
 }
 
 export async function listMemoryItems(runtimeConfig = getApiRuntimeConfig()) {

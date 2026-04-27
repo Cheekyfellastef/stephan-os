@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseCommand } from '../ai/commandParser';
-import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, resolveStreamingRequestPolicy, sendPrompt } from '../ai/aiClient';
+import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, releaseLocalOllamaLoad, resolveStreamingRequestPolicy, sendPrompt } from '../ai/aiClient';
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import { resolveUiRequestTimeoutPolicy } from '../ai/timeoutPolicy';
@@ -36,6 +36,7 @@ import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../sta
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
 
 function normalizeFastLanePrompt(prompt = '') {
   const text = String(prompt || '').trim();
@@ -404,6 +405,18 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     provider_cancelled: Boolean(executionMetadata.provider_cancelled ?? requestTrace.provider_cancelled ?? false),
     provider_cancel_reason: executionMetadata.provider_cancel_reason || requestTrace.provider_cancel_reason || null,
     ollama_abort_sent: Boolean(executionMetadata.ollama_abort_sent ?? requestTrace.ollama_abort_sent ?? false),
+    ui_timeout_triggered: Boolean(executionMetadata.ui_timeout_triggered ?? requestTrace.ui_timeout_triggered ?? false),
+    backend_timeout_triggered: Boolean(executionMetadata.backend_timeout_triggered ?? requestTrace.backend_timeout_triggered ?? false),
+    abort_signal_created: Boolean(executionMetadata.abort_signal_created ?? requestTrace.abort_signal_created ?? false),
+    abort_signal_fired: Boolean(executionMetadata.abort_signal_fired ?? requestTrace.abort_signal_fired ?? false),
+    abort_forwarded_to_router: Boolean(executionMetadata.abort_forwarded_to_router ?? requestTrace.abort_forwarded_to_router ?? false),
+    abort_forwarded_to_provider: Boolean(executionMetadata.abort_forwarded_to_provider ?? requestTrace.abort_forwarded_to_provider ?? false),
+    abort_forwarded_to_ollama_fetch: Boolean(executionMetadata.abort_forwarded_to_ollama_fetch ?? requestTrace.abort_forwarded_to_ollama_fetch ?? false),
+    ollama_fetch_aborted: Boolean(executionMetadata.ollama_fetch_aborted ?? requestTrace.ollama_fetch_aborted ?? false),
+    ollama_reader_cancelled: Boolean(executionMetadata.ollama_reader_cancelled ?? requestTrace.ollama_reader_cancelled ?? false),
+    provider_generation_still_running_unknown: Boolean(executionMetadata.provider_generation_still_running_unknown ?? requestTrace.provider_generation_still_running_unknown ?? false),
+    provider_generation_confirmed_stopped: Boolean(executionMetadata.provider_generation_confirmed_stopped ?? requestTrace.provider_generation_confirmed_stopped ?? false),
+    cancellation_effectiveness: executionMetadata.cancellation_effectiveness || requestTrace.cancellation_effectiveness || 'not-attempted',
     fallback_used: Boolean(executionMetadata.fallback_used ?? requestTrace.fallback_used ?? false),
     fallback_reason: executionMetadata.fallback_reason || requestTrace.fallback_reason || null,
     selected_provider_health_ok: Boolean(executionMetadata.selected_provider_health_ok ?? requestTrace.selected_provider_health_ok ?? false),
@@ -1182,6 +1195,20 @@ function buildTimeoutFailureExecutionMetadata({
     provider_cancelled: cancelled,
     provider_cancel_reason: cancelled ? `frontend abort propagated (${cancellationSource || 'unknown'})` : null,
     ollama_abort_sent: cancelled && selectedProvider === 'ollama',
+    ui_timeout_triggered: timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
+    backend_timeout_triggered: timeoutDetails.timeoutFailureLayer === 'backend' || timeoutDetails.timeoutFailureLayer === 'provider',
+    abort_signal_created: true,
+    abort_signal_fired: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
+    abort_forwarded_to_router: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
+    abort_forwarded_to_provider: cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms',
+    abort_forwarded_to_ollama_fetch: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
+    ollama_fetch_aborted: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
+    ollama_reader_cancelled: selectedProvider === 'ollama' && Boolean(timeoutDetails.ollamaReaderCancelled ?? cancelled),
+    provider_generation_still_running_unknown: selectedProvider === 'ollama' && (cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms'),
+    provider_generation_confirmed_stopped: false,
+    cancellation_effectiveness: selectedProvider === 'ollama'
+      ? ((cancelled || timeoutDetails.timeoutFailureLayer === 'ui' || timeoutDetails.timeoutLabel === 'ui_request_timeout_ms') ? 'attempted-unknown' : 'not-attempted')
+      : (cancelled ? 'attempted-confirmed' : 'not-attempted'),
     fallback_used: false,
     fallback_reason: null,
     freshness_need: requestPayload?.freshnessContext?.freshnessNeed || 'low',
@@ -1984,6 +2011,28 @@ export function useAIConsole() {
     }
 
     const parsed = parseCommand(prompt);
+    const selectedModel = String(effectiveProviderConfigs?.ollama?.model || '').trim().toLowerCase();
+    const heavyOllamaRequest = String(provider || '').trim().toLowerCase() === 'ollama' && HEAVY_OLLAMA_MODELS.has(selectedModel);
+    const previousGenerationUncertain = Boolean(lastExecutionMetadata?.provider_generation_still_running_unknown);
+    if (heavyOllamaRequest && previousGenerationUncertain) {
+      setCommandHistory((prev) => appendCommandHistory(prev, {
+        id: `cmd_${Date.now()}`,
+        raw_input: prompt,
+        parsed_command: parsed,
+        route: 'assistant',
+        tool_used: null,
+        success: false,
+        output_text: 'Heavy Ollama request blocked: previous generation may still be running. Use Stop generating or Emergency release Ollama load, then retry after recovery is confirmed.',
+        data_payload: null,
+        timing_ms: 0,
+        timestamp: new Date().toISOString(),
+        error: 'Heavy request blocked for local resource safety.',
+        error_code: 'OLLAMA_HEAVY_REQUEST_BLOCKED_PENDING_CANCELLATION_RECOVERY',
+        response: null,
+      }));
+      setStatus('blocked');
+      return;
+    }
     const startedAt = performance.now();
     setIsBusy(true);
     setStatus('processing');
@@ -2309,6 +2358,11 @@ export function useAIConsole() {
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
       };
+      if (executionMetadata.actual_provider_used === 'ollama' && data.success) {
+        executionMetadata.provider_generation_still_running_unknown = false;
+        executionMetadata.provider_generation_confirmed_stopped = true;
+        executionMetadata.cancellation_effectiveness = executionMetadata.execution_cancelled ? 'attempted-confirmed' : 'not-needed';
+      }
       const streamFinalizationMissing = Boolean(
         data.success
         && executionMetadata.streaming_used
@@ -2581,6 +2635,21 @@ export function useAIConsole() {
     return true;
   }, []);
 
+  const emergencyReleaseOllamaLoad = useCallback(async () => {
+    const runtimeConfig = getApiRuntimeConfig();
+    const sessionKind = String(runtimeConfig?.sessionKind || '').trim().toLowerCase();
+    if (sessionKind && sessionKind !== 'local-desktop') {
+      setStatus('warning');
+      return { ok: false, message: 'Emergency release is local-desktop only.' };
+    }
+    const response = await releaseLocalOllamaLoad({
+      releaseMode: 'active-request-only',
+      source: 'operator-emergency-button',
+    }, runtimeConfig);
+    setStatus(response?.safeTargetedKillAvailable === true ? 'ready' : 'warning');
+    return response;
+  }, []);
+
   function clearConsole() {
     setCommandHistory([]);
     setStatus('idle');
@@ -2731,6 +2800,7 @@ export function useAIConsole() {
     commandHistory,
     submitPrompt,
     cancelActivePrompt,
+    emergencyReleaseOllamaLoad,
     clearConsole,
     refreshHealth,
     runAiButlerAction,

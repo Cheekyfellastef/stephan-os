@@ -103,6 +103,7 @@ export default function App() {
     setInput,
     submitPrompt,
     cancelActivePrompt,
+    emergencyReleaseOllamaLoad,
     commandHistory,
     refreshHealth,
     runAiButlerAction,
@@ -542,6 +543,7 @@ export default function App() {
           setInput={setInput}
           submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries, orchestrationTruth })}
           cancelActivePrompt={cancelActivePrompt}
+          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
           commandHistory={commandHistory}
         />
         <PowerShellMergeConsolePanel />

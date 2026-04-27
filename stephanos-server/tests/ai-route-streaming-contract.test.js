@@ -55,4 +55,13 @@ test('/api/ai/chat propagates client disconnect cancellation into provider execu
   assert.match(source, /abortSignal:\s*requestAbortController\.signal/);
   assert.match(source, /execution_cancelled:/);
   assert.match(source, /ollama_abort_sent:/);
+  assert.match(source, /abort_forwarded_to_provider:/);
+  assert.match(source, /provider_generation_still_running_unknown:/);
+  assert.match(source, /cancellation_effectiveness:/);
+});
+
+test('/api/ai\/ollama\/release is local-desktop only and reports targeted-kill truth', () => {
+  assert.match(source, /router\.post\('\/ollama\/release'/);
+  assert.match(source, /safe_targeted_kill_available:\s*false/);
+  assert.match(source, /provider_generation_still_running_unknown:\s*true/);
 });
