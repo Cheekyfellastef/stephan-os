@@ -21,6 +21,8 @@ test('timeout failure metadata derives from canonical timeout resolver', () => {
   assert.match(source, /const canonicalTimeoutPolicy = resolveUiRequestTimeoutPolicy\(/);
   assert.match(source, /ui_request_timeout_ms:\s*inactivityTimeoutTriggered/);
   assert.match(source, /ui_stream_inactivity_timeout_ms:\s*inactivityTimeoutTriggered \? \(timeoutDetails\.timeoutMs \?\? null\) : null/);
+  assert.match(source, /streaming_inactivity_timeout_ms:\s*timeoutDetails\.streamingInactivityTimeoutMs/);
+  assert.match(source, /streaming_failure_phase:\s*timeoutDetails\.streamingFailurePhase \|\| null/);
   assert.match(source, /model_timeout_ms:\s*timeoutDetails\.modelTimeoutMs\s*\?\?\s*canonicalTimeoutPolicy\.modelTimeoutMs\s*\?\?\s*null/);
 });
 

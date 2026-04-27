@@ -348,6 +348,18 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || null,
     streaming_supported: Boolean(executionMetadata.streaming_supported ?? requestTrace.streaming_supported ?? false),
     streaming_used: Boolean(executionMetadata.streaming_used ?? requestTrace.streaming_used ?? false),
+    streaming_entered_backend: Boolean(executionMetadata.streaming_entered_backend ?? requestTrace.streaming_entered_backend ?? false),
+    streaming_client_opened: Boolean(executionMetadata.streaming_client_opened ?? requestTrace.streaming_client_opened ?? false),
+    streaming_first_event_received: Boolean(executionMetadata.streaming_first_event_received ?? requestTrace.streaming_first_event_received ?? false),
+    streaming_inactivity_timeout_ms: executionMetadata.streaming_inactivity_timeout_ms
+      || requestTrace.streaming_inactivity_timeout_ms
+      || null,
+    streaming_last_event_at: executionMetadata.streaming_last_event_at
+      || requestTrace.streaming_last_event_at
+      || null,
+    streaming_failure_phase: executionMetadata.streaming_failure_phase
+      || requestTrace.streaming_failure_phase
+      || null,
     streaming_provider: executionMetadata.streaming_provider || requestTrace.streaming_provider || null,
     streaming_model: executionMetadata.streaming_model || requestTrace.streaming_model || null,
     streaming_finalized: Boolean(executionMetadata.streaming_finalized ?? requestTrace.streaming_finalized ?? false),
@@ -1210,6 +1222,13 @@ function buildTimeoutFailureExecutionMetadata({
     streaming_policy_reason: requestPayload?.streaming_policy_reason || null,
     streaming_supported: streamingSupported,
     streaming_used: Boolean(timeoutDetails.streamingUsed ?? false),
+    streaming_entered_backend: Boolean(timeoutDetails.streamingEnteredBackend ?? streamingRequested),
+    streaming_client_opened: Boolean(timeoutDetails.streamingClientOpened ?? false),
+    streaming_first_event_received: Boolean(timeoutDetails.streamingFirstEventReceived ?? false),
+    streaming_inactivity_timeout_ms: timeoutDetails.streamingInactivityTimeoutMs
+      ?? (inactivityTimeoutTriggered ? (timeoutDetails.timeoutMs ?? null) : null),
+    streaming_last_event_at: timeoutDetails.streamingLastEventAt ?? null,
+    streaming_failure_phase: timeoutDetails.streamingFailurePhase || null,
     streaming_provider: streamingSupported ? 'ollama' : null,
     streaming_model: streamingSupported ? (requestedModel || null) : null,
     streaming_finalized: false,
