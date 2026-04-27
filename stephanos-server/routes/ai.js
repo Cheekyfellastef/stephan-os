@@ -25,6 +25,7 @@ import {
 const logger = createLogger('ai-route');
 const router = express.Router();
 const STREAMING_MEDIA_TYPE = 'text/event-stream';
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function isLocalDesktopRequest(req) {
@@ -59,6 +60,52 @@ function writeSseCompletion(res, success = true) {
     done: true,
     success: success === true,
   });
+}
+
+function resolveFinalStreamingPolicy({
+  streamingModePreference = 'off',
+  clientStreamingRequestSource = '',
+  clientStreamingPolicyDecision = null,
+  clientStreamingPolicyReason = null,
+  actualProviderUsed = '',
+  executedModel = '',
+  streamingEnabled = false,
+} = {}) {
+  const normalizedMode = String(streamingModePreference || 'off').trim().toLowerCase();
+  const normalizedProvider = String(actualProviderUsed || '').trim().toLowerCase();
+  const normalizedModel = String(executedModel || '').trim().toLowerCase();
+  const heavyOllamaModel = normalizedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(normalizedModel);
+
+  if (normalizedMode === 'on') {
+    return {
+      streamingRequested: true,
+      streamingRequestSource: 'operator-on',
+      streamingPolicyDecision: 'stream-enabled',
+      streamingPolicyReason: 'Operator selected Streaming Mode = on.',
+    };
+  }
+  if (normalizedMode === 'off') {
+    return {
+      streamingRequested: false,
+      streamingRequestSource: 'operator-off',
+      streamingPolicyDecision: 'stream-disabled',
+      streamingPolicyReason: 'Operator selected Streaming Mode = off.',
+    };
+  }
+  if (heavyOllamaModel) {
+    return {
+      streamingRequested: true,
+      streamingRequestSource: 'auto-heavy-ollama',
+      streamingPolicyDecision: 'stream-enabled',
+      streamingPolicyReason: 'Auto mode enabled streaming for heavy Ollama model after load-governor model selection.',
+    };
+  }
+  return {
+    streamingRequested: Boolean(streamingEnabled),
+    streamingRequestSource: String(clientStreamingRequestSource || (streamingEnabled ? 'operator-on' : 'auto-default-off')).trim().toLowerCase() || 'auto-default-off',
+    streamingPolicyDecision: clientStreamingPolicyDecision || (streamingEnabled ? 'stream-enabled' : 'stream-disabled'),
+    streamingPolicyReason: clientStreamingPolicyReason || (streamingEnabled ? 'Streaming explicitly requested by client transport.' : 'Auto mode kept JSON request path for this provider/model.'),
+  };
 }
 
 function stripRawSecretsFromConfig(config = {}) {
@@ -748,6 +795,19 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       provider_generation_confirmed_stopped: cancellationSource == null,
       cancellation_effectiveness: cancellationSource != null ? 'attempted-unknown' : 'not-needed',
     };
+    const finalStreamingPolicy = resolveFinalStreamingPolicy({
+      streamingModePreference,
+      clientStreamingRequestSource,
+      clientStreamingPolicyDecision,
+      clientStreamingPolicyReason,
+      actualProviderUsed,
+      executedModel: canonicalModelTruth.executedModel,
+      streamingEnabled,
+    });
+    executionMetadata.streaming_requested = finalStreamingPolicy.streamingRequested;
+    executionMetadata.streaming_request_source = finalStreamingPolicy.streamingRequestSource;
+    executionMetadata.streaming_policy_decision = finalStreamingPolicy.streamingPolicyDecision;
+    executionMetadata.streaming_policy_reason = finalStreamingPolicy.streamingPolicyReason;
     executionMetadata.executable_provider = providerHealthSnapshot?.[executionMetadata.selected_provider]?.ok
       ? executionMetadata.selected_provider
       : '';

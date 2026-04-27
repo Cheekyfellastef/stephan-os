@@ -56,6 +56,10 @@ test('/api/ai/chat execution metadata tracks streaming_used only when SSE is act
   assert.match(source, /streaming_request_source:/);
   assert.match(source, /streaming_policy_decision:/);
   assert.match(source, /streaming_policy_reason:/);
+  assert.match(source, /resolveFinalStreamingPolicy\(/);
+  assert.match(source, /executedModel:\s*canonicalModelTruth\.executedModel/);
+  assert.match(source, /executionMetadata\.streaming_policy_decision = finalStreamingPolicy\.streamingPolicyDecision/);
+  assert.match(source, /executionMetadata\.streaming_request_source = finalStreamingPolicy\.streamingRequestSource/);
 });
 
 test('/api/ai/chat execution metadata exposes ollama load governor truth fields', () => {

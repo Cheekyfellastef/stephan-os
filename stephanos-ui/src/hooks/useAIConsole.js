@@ -4,6 +4,7 @@ import { checkApiHealth, getApiRuntimeConfig, getProviderHealth, releaseLocalOll
 import { applyDetectedOllamaConnection, createSearchingOllamaHealth, runOllamaDiscovery, shouldAutoSyncOllama } from '../ai/ollamaRuntimeSync';
 import { getApiRuntimeConfigSnapshotKey } from '../ai/apiConfig';
 import { resolveUiRequestTimeoutPolicy } from '../ai/timeoutPolicy';
+import { resolveOllamaLoadGovernorPolicy } from '../../../shared/ai/ollamaLoadGovernor.mjs';
 import {
   DEFAULT_HOME_NODE_BACKEND_PORT,
   createStephanosHomeNodeUrls,
@@ -1262,6 +1263,52 @@ function buildTimeoutFailureExecutionMetadata({
   const streamingRequested = Boolean(requestPayload?.streaming_requested ?? false);
   const streamingSupported = selectedProvider === 'ollama';
   const inactivityTimeoutTriggered = timeoutDetails.timeoutLabel === 'ui_stream_inactivity_timeout_ms';
+  const ollamaLoadMode = String(
+    requestPayload?.ollama_load_mode
+    || requestPayload?.ollamaLoadMode
+    || 'balanced',
+  ).trim().toLowerCase();
+  const ollamaLoadGovernor = selectedProvider === 'ollama'
+    ? resolveOllamaLoadGovernorPolicy({
+      ollamaLoadMode,
+      requestedModel,
+      prompt: String(requestPayload?.prompt || ''),
+      forceHeavyModel: requestPayload?.routeDecision?.operatorForceHeavyLocal === true,
+      availableModels: [],
+    })
+    : null;
+  const ollamaModelBeforeLoadPolicy = selectedProvider === 'ollama'
+    ? String(ollamaLoadGovernor?.modelBeforePolicy || requestedModel || '').trim() || null
+    : null;
+  const ollamaModelAfterLoadPolicy = selectedProvider === 'ollama'
+    ? String(ollamaLoadGovernor?.modelAfterPolicy || requestedModel || '').trim() || null
+    : null;
+  const effectiveStreamingPolicyModel = selectedProvider === 'ollama'
+    ? String(ollamaModelAfterLoadPolicy || requestedModel || '').trim().toLowerCase()
+    : String(requestedModel || '').trim().toLowerCase();
+  const heavyModelAfterLoadPolicy = selectedProvider === 'ollama' && HEAVY_OLLAMA_MODELS.has(effectiveStreamingPolicyModel);
+  const streamingModePreference = requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto';
+  const streamingModePreferenceInput = requestPayload?.streaming_mode_preference_input || requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto';
+  const timeoutStreamingPolicyDecision = selectedProvider === 'ollama'
+    ? resolveStreamingRequestPolicy({
+      streamingMode: streamingModePreference,
+      provider: selectedProvider,
+      executionProvider: selectedProvider,
+      executionModel: effectiveStreamingPolicyModel,
+      providerConfigs: safeProviderConfigs,
+      ollamaLoadMode,
+      prompt: String(requestPayload?.prompt || ''),
+    })
+    : null;
+  const streamingPolicyDecision = timeoutStreamingPolicyDecision?.streamingPolicyDecision
+    || requestPayload?.streaming_policy_decision
+    || null;
+  const streamingRequestSource = timeoutStreamingPolicyDecision?.streamingRequestSource
+    || requestPayload?.streaming_request_source
+    || 'auto-default-off';
+  const streamingRequestAllowed = timeoutStreamingPolicyDecision?.streamingRequested === true
+    || streamingPolicyDecision === 'stream-enabled'
+    || heavyModelAfterLoadPolicy;
 
   return {
     ui_default_provider: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
@@ -1276,6 +1323,13 @@ function buildTimeoutFailureExecutionMetadata({
     execution_selected_provider: selectedProvider || fallbackProvider || 'unknown',
     actual_provider_used: '',
     model_used: requestedModel || null,
+    ollama_load_mode: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.ollamaLoadMode || ollamaLoadMode || 'balanced') : null,
+    ollama_load_policy_applied: selectedProvider === 'ollama' ? Boolean(ollamaLoadGovernor?.policyApplied) : false,
+    ollama_load_policy_reason: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.policyReason || null) : null,
+    ollama_heavy_model_requested: selectedProvider === 'ollama' ? Boolean(ollamaLoadGovernor?.heavyModelRequested) : false,
+    ollama_heavy_model_allowed: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.heavyModelAllowed ?? null) : null,
+    ollama_model_before_load_policy: ollamaModelBeforeLoadPolicy,
+    ollama_model_after_load_policy: ollamaModelAfterLoadPolicy,
     ollama_timeout_ms: selectedProvider === 'ollama'
       ? (timeoutDetails.providerTimeoutMs ?? canonicalTimeoutPolicy.providerTimeoutMs ?? null)
       : null,
@@ -1302,15 +1356,15 @@ function buildTimeoutFailureExecutionMetadata({
     ),
     timeout_failure_layer: timeoutDetails.timeoutFailureLayer || null,
     timeout_failure_label: timeoutDetails.timeoutLabel || null,
-    streaming_mode_preference: requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto',
-    streaming_mode_preference_input: requestPayload?.streaming_mode_preference_input || requestPayload?.streamingMode || requestPayload?.streaming_mode_preference || 'auto',
+    streaming_mode_preference: streamingModePreference,
+    streaming_mode_preference_input: streamingModePreferenceInput,
     streaming_mode_preference_rehydrated: Boolean(requestPayload?.streaming_mode_preference_rehydrated ?? false),
     streaming_persistence_source: requestPayload?.streaming_persistence_source || 'default/auto',
     streaming_persistence_updated_at: requestPayload?.streaming_persistence_updated_at || null,
-    streaming_requested: streamingRequested,
-    streaming_request_source: requestPayload?.streaming_request_source || 'auto-default-off',
-    streaming_policy_decision: requestPayload?.streaming_policy_decision || null,
-    streaming_policy_reason: requestPayload?.streaming_policy_reason || null,
+    streaming_requested: streamingRequested || streamingRequestAllowed,
+    streaming_request_source: streamingRequestSource,
+    streaming_policy_decision: streamingPolicyDecision,
+    streaming_policy_reason: timeoutStreamingPolicyDecision?.streamingPolicyReason || requestPayload?.streaming_policy_reason || null,
     streaming_supported: streamingSupported,
     streaming_used: Boolean(timeoutDetails.streamingUsed ?? false),
     streaming_entered_backend: Boolean(timeoutDetails.streamingEnteredBackend ?? streamingRequested),

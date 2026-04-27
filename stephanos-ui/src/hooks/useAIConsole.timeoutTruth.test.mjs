@@ -24,6 +24,16 @@ test('timeout failure metadata derives from canonical timeout resolver', () => {
   assert.match(source, /streaming_inactivity_timeout_ms:\s*timeoutDetails\.streamingInactivityTimeoutMs/);
   assert.match(source, /streaming_failure_phase:\s*timeoutDetails\.streamingFailurePhase \|\| null/);
   assert.match(source, /model_timeout_ms:\s*timeoutDetails\.modelTimeoutMs\s*\?\?\s*canonicalTimeoutPolicy\.modelTimeoutMs\s*\?\?\s*null/);
+  assert.match(source, /const ollamaLoadGovernor = selectedProvider === 'ollama'/);
+  assert.match(source, /ollama_load_mode:\s*selectedProvider === 'ollama'/);
+  assert.match(source, /ollama_model_before_load_policy:\s*ollamaModelBeforeLoadPolicy/);
+  assert.match(source, /ollama_model_after_load_policy:\s*ollamaModelAfterLoadPolicy/);
+  assert.match(source, /const timeoutStreamingPolicyDecision = selectedProvider === 'ollama'/);
+  assert.match(source, /const heavyModelAfterLoadPolicy = selectedProvider === 'ollama' && HEAVY_OLLAMA_MODELS\.has\(effectiveStreamingPolicyModel\)/);
+  assert.match(source, /const streamingRequestAllowed = timeoutStreamingPolicyDecision\?\.streamingRequested === true/);
+  assert.match(source, /streaming_requested:\s*streamingRequested \|\| streamingRequestAllowed/);
+  assert.match(source, /streaming_policy_decision:\s*streamingPolicyDecision/);
+  assert.match(source, /streaming_request_source:\s*streamingRequestSource/);
 });
 
 test('timeout failure metadata keeps requested provider separate from effective provider and prevents ollama contamination', () => {
