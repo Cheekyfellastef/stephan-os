@@ -1612,3 +1612,44 @@ test('buildSupportSnapshot snapshot: streaming preference on reports requested t
   assert.match(snapshot, /Streaming Requested: true/);
   assert.match(snapshot, /Streaming Request Source: operator-on/);
 });
+
+test('buildSupportSnapshot snapshot: heavy ollama auto-stream truth surfaces canonical fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastStreamingModePreference: 'auto',
+      lastStreamingRequested: true,
+      lastStreamingRequestSource: 'auto-heavy-ollama',
+      lastStreamingPolicyDecision: 'stream-enabled',
+      lastStreamingPolicyReason: 'Auto mode enabled streaming for heavy Ollama model to prevent UI request timeout false failures.',
+      lastStreamingSupported: true,
+      lastStreamingUsed: true,
+      lastStreamingProvider: 'ollama',
+      lastStreamingModel: 'gpt-oss:20b',
+      lastStreamingFinalized: true,
+      lastStreamingFallbackReason: 'n/a',
+      lastTimeoutFailureLayer: 'n/a',
+      lastTimeoutFailureLabel: 'n/a',
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+
+  assert.match(snapshot, /Streaming Mode Preference: auto/);
+  assert.match(snapshot, /Streaming Requested: true/);
+  assert.match(snapshot, /Streaming Request Source: auto-heavy-ollama/);
+  assert.match(snapshot, /Streaming Policy Decision: stream-enabled/);
+  assert.match(snapshot, /Streaming Supported: true/);
+  assert.match(snapshot, /Streaming Used: true/);
+  assert.match(snapshot, /Streaming Provider: ollama/);
+  assert.match(snapshot, /Streaming Model: gpt-oss:20b/);
+  assert.match(snapshot, /Streaming Finalized: true/);
+  assert.match(snapshot, /Streaming Fallback Reason: n\/a/);
+  assert.match(snapshot, /Last Timeout Failure Layer: n\/a/);
+});

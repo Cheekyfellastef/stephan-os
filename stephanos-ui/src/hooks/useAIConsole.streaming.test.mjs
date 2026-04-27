@@ -29,6 +29,8 @@ test('useAIConsole preserves successful streamed token answers when metadata fin
 
 test('useAIConsole tracks streaming request truth metadata and cancellation truth', () => {
   assert.match(source, /const streamingPolicy = resolveStreamingRequestPolicy\(/);
+  assert.match(source, /executionProvider:\s*timeoutExecutionEnvelope\.effectiveProvider/);
+  assert.match(source, /executionModel:\s*timeoutExecutionEnvelope\.effectiveModel/);
   assert.match(source, /streaming_requested:\s*streamingPolicy\.streamingRequested/);
   assert.match(source, /streaming_request_source:\s*streamingPolicy\.streamingRequestSource/);
   assert.match(source, /streaming_mode_preference/);
@@ -38,6 +40,13 @@ test('useAIConsole tracks streaming request truth metadata and cancellation trut
   assert.match(source, /ollama_abort_sent/);
   assert.match(source, /provider_generation_still_running_unknown/);
   assert.match(source, /cancellation_effectiveness/);
+});
+
+test('useAIConsole timeout metadata preserves stream truth and uses UI timeout layer instead of fixed label checks', () => {
+  assert.match(source, /const uiTimeoutTriggered = timeoutDetails\.timeoutFailureLayer === 'ui'/);
+  assert.match(source, /streaming_supported:\s*streamingSupported/);
+  assert.match(source, /streaming_provider:\s*streamingSupported \? 'ollama' : null/);
+  assert.match(source, /abort_signal_fired:\s*cancelled \|\| uiTimeoutTriggered/);
 });
 
 test('useAIConsole blocks heavy ollama requests when previous cancellation may still be running', () => {

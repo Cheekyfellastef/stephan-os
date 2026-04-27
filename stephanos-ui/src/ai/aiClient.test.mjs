@@ -79,6 +79,15 @@ test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
   assert.match(clientSource, /streamingRequestSource:\s*'operator-off'/);
   assert.match(clientSource, /normalizedMode === 'auto' && heavyOllamaModel/);
   assert.match(clientSource, /streamingRequestSource: 'auto-heavy-ollama'/);
+  assert.match(clientSource, /executionProvider:\s*timeoutExecutionTruth\.effectiveProvider/);
+  assert.match(clientSource, /executionModel:\s*timeoutExecutionTruth\.effectiveModel/);
+  assert.match(clientSource, /prevent UI request timeout false failures/);
+});
+
+test('streaming auto policy resolves heavy Ollama models from effective execution truth', () => {
+  assert.match(clientSource, /const normalizedProvider = String\(executionProvider \|\| provider \|\| ''\)/);
+  assert.match(clientSource, /const resolvedModel = firstNonEmpty\(\s*executionModel,/);
+  assert.match(clientSource, /HEAVY_OLLAMA_MODELS\.has\(resolvedModel\)/);
 });
 
 test('transport cancellation uses explicit CANCELLED code with cancellationSource', () => {
@@ -113,6 +122,13 @@ test('transport timeout diagnostics are labeled as ui_request_timeout_ms', () =>
   assert.match(clientSource, /timeoutProvider:\s*timeoutPolicy\?\.timeoutProvider\s*\|\|\s*null/);
   assert.match(clientSource, /abortSignalCreated:\s*true/);
   assert.match(clientSource, /ollamaReaderCancelled:\s*true/);
+});
+
+test('streaming transport uses inactivity timeout and does not classify active streams as request timeout', () => {
+  assert.match(clientSource, /const armInactivityTimeout = \(\) => \{/);
+  assert.match(clientSource, /abortSource = 'ui-stream-inactivity-timeout'/);
+  assert.match(clientSource, /armInactivityTimeout\(\);[\s\S]*const \{ done, value \} = await reader\.read\(\);[\s\S]*armInactivityTimeout\(\);/m);
+  assert.match(clientSource, /timeoutLabel:\s*'ui_stream_inactivity_timeout_ms'/);
 });
 
 test('releaseLocalOllamaLoad calls POST /api/ai/ollama/release', () => {
