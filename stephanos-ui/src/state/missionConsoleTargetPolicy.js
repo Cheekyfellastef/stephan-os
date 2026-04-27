@@ -2,9 +2,9 @@ import { buildBoundedOpenClawIntent } from '../components/openclaw/openclawInteg
 import { isOpenClawActionBlocked } from '../components/openclaw/openclawGuardrails.js';
 
 export const MISSION_CONSOLE_TARGETS = Object.freeze([
-  { id: 'stephanos', label: 'Talk to Stephanos', sessionMode: 'conversational' },
-  { id: 'agents', label: 'Ask Agents', sessionMode: 'agent-directed' },
-  { id: 'openclaw', label: 'Ask OpenClaw', sessionMode: 'openclaw-bounded-analysis' },
+  { id: 'stephanos', label: 'Stephanos → Assistant Router', sessionMode: 'conversational' },
+  { id: 'agents', label: 'Agents → Mission Bridge', sessionMode: 'agent-directed' },
+  { id: 'openclaw', label: 'OpenClaw → Bounded Analysis', sessionMode: 'openclaw-bounded-analysis' },
 ]);
 
 export const OPENCLAW_ALLOWED_INTERACTIONS = Object.freeze([

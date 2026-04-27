@@ -28,5 +28,5 @@ test('mission console accepts bounded OpenClaw intent routing', () => {
 
 test('mission console declares Stephanos, agents, and OpenClaw addressed targets', () => {
   const labels = MISSION_CONSOLE_TARGETS.map((entry) => entry.label);
-  assert.deepEqual(labels, ['Talk to Stephanos', 'Ask Agents', 'Ask OpenClaw']);
+  assert.deepEqual(labels, ['Stephanos → Assistant Router', 'Agents → Mission Bridge', 'OpenClaw → Bounded Analysis']);
 });

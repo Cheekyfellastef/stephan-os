@@ -1491,6 +1491,8 @@ test('buildSupportSnapshot reports mission bridge diagnostics fields', () => {
     missionBridgeTruth: {
       state: 'awaiting-approval',
       lastAiRouterRequestSource: 'mission-bridge',
+      latestSubmissionConsole: 'agent-mission-console',
+      latestSubmissionRoute: 'mission-bridge',
       lastAiResponseRoutedToMissionConsole: true,
       localDesktopAgentGatePassed: true,
       missionPacketGeneratedFromOperatorIntent: true,
@@ -1501,6 +1503,10 @@ test('buildSupportSnapshot reports mission bridge diagnostics fields', () => {
   assert.match(snapshot, /Mission Bridge State: awaiting-approval/);
   assert.match(snapshot, /Mission Bridge Last Event: ai-response-received/);
   assert.match(snapshot, /Mission Bridge Last AI Router Request Source: mission-bridge/);
+  assert.match(snapshot, /Mission Bridge Latest Submission Console: agent-mission-console/);
+  assert.match(snapshot, /Mission Bridge Latest Submission Route: mission-bridge/);
+  assert.match(snapshot, /Latest Command Submission Console: stephanos-mission-console/);
+  assert.match(snapshot, /Latest Command Submission Route: assistant-router/);
   assert.match(snapshot, /Mission Bridge Last AI Response Routed To Mission Console: yes/);
   assert.match(snapshot, /Mission Bridge Local Desktop Agent Gate Passed: yes/);
   assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);

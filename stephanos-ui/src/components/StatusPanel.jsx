@@ -495,6 +495,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         : 'n/a',
       lastTileActionType: lastExecutionMetadata?.tile_action_type || 'n/a',
       lastTileSource: lastExecutionMetadata?.tile_source || 'n/a',
+      lastCommandSubmissionConsole: lastExecutionMetadata?.submission_console || 'stephanos-mission-console',
+      lastCommandSubmissionRoute: lastExecutionMetadata?.submission_route || 'assistant-router',
       lastMemoryCandidateSubmitted: String(lastExecutionMetadata?.memory_candidate_submitted ?? 'n/a'),
       lastTileMemoryPromoted: String(lastExecutionMetadata?.memory_promoted ?? 'n/a'),
       lastTileMemoryReason: lastExecutionMetadata?.memory_reason || 'n/a',

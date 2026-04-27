@@ -127,6 +127,10 @@ export default function AIConsole({
           <span>Route kind: {routeTruthView.routeKind} · Requested: {routeTruthView.requestedProvider} · Selected: {routeTruthView.selectedProvider} · Executed: {routeTruthView.executedProvider} · Usable: {routeTruthView.routeUsableState} · Preferred target: {routeTruthView.preferredTarget} · Source: {routeTruthView.source}</span>
           <span>Continuity mode: {continuityMode}</span>
         </div>
+        <div className="api-banner ready">
+          <strong>Routing Notice</strong>
+          <span>This console uses the assistant/provider router. Use Agent Mission Console for mission packets and agent orchestration.</span>
+        </div>
         {provider === 'ollama' && !runtimeStatus.localAvailable ? (
           <div className="api-banner degraded">
             <strong>{runtimeStatus.cloudAvailable ? 'Cloud route available' : ollamaState.title}</strong>
