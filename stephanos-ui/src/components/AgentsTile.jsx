@@ -112,6 +112,11 @@ export default function AgentsTile({
             <li><strong>Recommended agent:</strong> {operatorTask.recommendedAgent}</li>
             <li><strong>Codex readiness:</strong> {operatorTask.codexReadiness}</li>
             <li><strong>OpenClaw readiness:</strong> {operatorTask.openClawReadiness}</li>
+            <li><strong>OpenClaw integration mode:</strong> {operatorTask.openClawIntegrationMode || 'policy_only'}</li>
+            <li><strong>OpenClaw safe-to-use:</strong> {operatorTask.openClawSafeToUse ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw kill switch:</strong> {operatorTask.openClawKillSwitchState || 'missing'}</li>
+            <li><strong>OpenClaw highest priority blocker:</strong> {operatorTask.openClawHighestPriorityBlocker || 'none'}</li>
+            <li><strong>OpenClaw next action:</strong> {operatorTask.openClawNextAction || 'not reported'}</li>
             <li><strong>Approval gates pending:</strong> {formatReportedList(operatorTask.approvalPending)}</li>
             <li><strong>Handoff readiness:</strong> {operatorTask.handoffReady ? 'ready' : 'blocked'} ({operatorTask.handoffMode})</li>
             <li><strong>Codex handoff readiness:</strong> {operatorTask.codexHandoffPacketReady ? 'ready' : 'blocked'}</li>

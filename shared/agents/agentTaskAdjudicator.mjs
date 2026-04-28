@@ -1,6 +1,7 @@
 import { normalizeAgentTaskModel } from './agentTaskModel.mjs';
 import { buildCodexHandoffPacket } from './codexHandoffPacket.mjs';
 import { adjudicateVerificationReturn } from './agentVerificationReturn.mjs';
+import { adjudicateOpenClawPolicyHarness } from './openClawPolicyHarness.mjs';
 
 const LAYER_ACTIONS = Object.freeze([
   {
@@ -28,9 +29,9 @@ const LAYER_ACTIONS = Object.freeze([
     blocks: ['Trusted completion'],
   },
   {
-    id: 'openclaw-policy-harness-placeholder',
-    title: 'Add OpenClaw policy harness placeholder',
-    reason: 'OpenClaw must remain blocked until policy harness + kill switch exist.',
+    id: 'openclaw-kill-switch-and-adapter',
+    title: 'Wire OpenClaw kill switch + adapter contract',
+    reason: 'Policy harness exists; next dependency is kill switch + adapter lifecycle validation.',
     blocks: ['Safe OpenClaw automation'],
   },
 ]);
@@ -79,6 +80,7 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
   const sourceContext = context && typeof context === 'object' ? context : {};
   const approvalRequired = asArray(normalized.approvalGates.required);
   const pendingApprovals = approvalRequired.filter((gate) => !isApprovedGate(gate, normalized.approvalGates.approved));
+  const openClawPolicySummary = adjudicateOpenClawPolicyHarness(normalized.openClawPolicy);
   const explicitBlockers = [
     ...asArray(normalized.handoff.handoffBlockers),
     ...asArray(normalized.evidence.blockers),
@@ -90,8 +92,8 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
   if (normalized.agentReadiness.codex === 'needs_adapter') {
     explicitBlockers.push('Codex adapter integration is not available; manual handoff only.');
   }
-  if (['needs_policy', 'blocked', 'unavailable'].includes(normalized.agentReadiness.openclaw)) {
-    explicitBlockers.push('OpenClaw remains blocked until policy harness and kill switch are validated.');
+  if (openClawPolicySummary.openClawSafeToUse !== true) {
+    explicitBlockers.push(openClawPolicySummary.highestPriorityBlocker || 'OpenClaw remains blocked until policy harness, approvals, adapter, and kill switch are validated.');
   }
 
   const verificationStatus = asText(normalized.verification.verificationStatus).toLowerCase();
@@ -121,8 +123,8 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     if (candidate.id === 'verification-return-state') {
       return verificationRequired && (verificationReturn.verificationReturnReady !== true || verificationReturn.verificationDecision === 'not_ready');
     }
-    if (candidate.id === 'openclaw-policy-harness-placeholder') {
-      return normalized.agentReadiness.openclaw !== 'ready';
+    if (candidate.id === 'openclaw-kill-switch-and-adapter') {
+      return openClawPolicySummary.openClawSafeToUse !== true;
     }
     return false;
   }) || LAYER_ACTIONS[0];
@@ -144,7 +146,7 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     model: normalized,
     layerStatus,
     codexReadiness: normalized.agentReadiness.codex,
-    openClawReadiness: normalized.agentReadiness.openclaw,
+    openClawReadiness: openClawPolicySummary.openClawReadiness || normalized.agentReadiness.openclaw,
     approval: {
       required: approvalRequired,
       approved: asArray(normalized.approvalGates.approved),
@@ -171,6 +173,7 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     },
     verificationReturn,
     nextAction,
+    openClawPolicySummary,
     blockers: Array.from(new Set(explicitBlockers)).filter(Boolean),
     warnings: normalized.evidence.warnings,
     reasons: normalized.evidence.reasons,

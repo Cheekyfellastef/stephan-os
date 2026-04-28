@@ -92,6 +92,12 @@ export default function MissionConsoleTile({
       verificationReturnNextAction: summary.verificationReturnNextAction || operatorSurface.verificationReturnNextAction || 'not reported',
       highestPriorityIssue,
       manualOnly: (summary.codexManualHandoffMode || operatorSurface.codexHandoffPacketMode || '').toLowerCase() === 'manual_handoff_only',
+      openClawReadiness: summary.openClawReadiness || operatorSurface.openClawReadiness || 'unknown',
+      openClawIntegrationMode: summary.openClawIntegrationMode || operatorSurface.openClawIntegrationMode || 'policy_only',
+      openClawSafeToUse: summary.openClawSafeToUse === true || operatorSurface.openClawSafeToUse === true,
+      openClawKillSwitchState: summary.openClawKillSwitchState || operatorSurface.openClawKillSwitchState || 'missing',
+      openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || operatorSurface.openClawHighestPriorityBlocker || 'none',
+      openClawNextAction: summary.openClawNextAction || operatorSurface.openClawNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
 
@@ -445,6 +451,15 @@ export default function MissionConsoleTile({
           <li><strong>verification return next action:</strong> {compactVerificationSummary.verificationReturnNextAction}</li>
           <li><strong>highest priority blocker/warning:</strong> {compactVerificationSummary.highestPriorityIssue}</li>
           <li><strong>manual-only handoff:</strong> {compactVerificationSummary.manualOnly ? 'yes' : 'no'}</li>
+          <li><strong>openclaw readiness:</strong> {compactVerificationSummary.openClawReadiness}</li>
+          <li><strong>openclaw integration mode:</strong> {compactVerificationSummary.openClawIntegrationMode}</li>
+          <li><strong>openclaw safe-to-use:</strong> {compactVerificationSummary.openClawSafeToUse ? 'yes' : 'no'}</li>
+          <li><strong>openclaw kill switch:</strong> {compactVerificationSummary.openClawKillSwitchState}</li>
+          <li><strong>openclaw top blocker:</strong> {compactVerificationSummary.openClawHighestPriorityBlocker}</li>
+          <li><strong>openclaw next action:</strong> {compactVerificationSummary.openClawNextAction}</li>
+          {compactVerificationSummary.openClawIntegrationMode === 'policy_only' ? (
+            <li><strong>openclaw policy notice:</strong> policy-only, not direct automation</li>
+          ) : null}
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>

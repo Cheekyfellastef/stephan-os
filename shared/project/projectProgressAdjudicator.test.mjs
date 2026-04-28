@@ -87,7 +87,7 @@ test('adjudicateProjectProgress keeps verification return loop as next action wh
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
 });
 
-test('adjudicateProjectProgress recommends OpenClaw policy harness after verification return is ready', () => {
+test('adjudicateProjectProgress recommends kill-switch/adapter wiring after verification return is ready', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     agentTaskReadinessSummary: {
@@ -99,10 +99,10 @@ test('adjudicateProjectProgress recommends OpenClaw policy harness after verific
       verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       mergeReadiness: 'ready_for_operator_approval',
-      nextAgentTaskAction: 'Add OpenClaw policy harness placeholder',
-      nextActions: [{ title: 'Add OpenClaw policy harness placeholder', reason: 'Verification return loop exists.' }],
+      nextAgentTaskAction: 'Wire OpenClaw kill switch + adapter contract',
+      nextActions: [{ title: 'Wire OpenClaw kill switch + adapter contract', reason: 'Verification return loop exists.' }],
     },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'add-openclaw-policy-harness');
+  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch-and-adapter');
 });
