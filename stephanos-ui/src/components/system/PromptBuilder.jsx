@@ -10,9 +10,11 @@ import { buildPromptBuilderSummary } from '../../../../shared/prompts/promptBuil
 
 export default function PromptBuilder({
   runtimeStatusModel,
+  finalRouteTruth = null,
   telemetryEntries,
   actionHints,
   orchestrationTruth,
+  agentTaskProjection = null,
 }) {
   const { uiLayout, togglePanel } = useAIStore();
   const [mission, setMission] = useState('');
@@ -25,7 +27,7 @@ export default function PromptBuilder({
 
   const promptText = useMemo(() => buildStephanosPrompt({
     mission,
-    finalRouteTruth: runtimeStatusModel?.finalRouteTruth ?? null,
+    finalRouteTruth: finalRouteTruth ?? runtimeStatusModel?.finalRouteTruth ?? null,
     telemetryEntries,
     actionHints,
     includeTruth,
@@ -42,20 +44,47 @@ export default function PromptBuilder({
     includeTruth,
     maxTelemetryEntries,
     mission,
+    finalRouteTruth,
     runtimeStatusModel?.finalRouteTruth,
     telemetryEntries,
     orchestrationTruth,
   ]);
+
+  const contextBindings = useMemo(() => {
+    const readiness = agentTaskProjection?.readinessSummary || {};
+    return {
+      agentTaskContextAvailable: Boolean(agentTaskProjection?.readinessSummary),
+      codexHandoffContextAvailable: readiness.codexManualHandoffReady === true
+        || ['ready', 'manual_handoff_only'].includes(String(readiness.codexReadiness || '').toLowerCase()),
+      verificationReturnContextAvailable: Boolean(readiness.verificationReturnStatus),
+      telemetryContextAvailable: Array.isArray(telemetryEntries) && telemetryEntries.length > 0,
+      runtimeTruthContextAvailable: Boolean(finalRouteTruth ?? runtimeStatusModel?.finalRouteTruth),
+      openClawContextAvailable: Boolean(readiness.openClawReadiness),
+      actionHintsAvailable: Array.isArray(actionHints) && actionHints.length > 0,
+      constraintsAvailable: includeConstraints === true,
+    };
+  }, [actionHints, agentTaskProjection?.readinessSummary, finalRouteTruth, includeConstraints, runtimeStatusModel?.finalRouteTruth, telemetryEntries]);
 
   const promptBuilderSummary = useMemo(() => buildPromptBuilderSummary({
     promptBuilderAvailable: true,
     promptText,
     telemetryEntries,
     actionHints,
-    finalRouteTruth: runtimeStatusModel?.finalRouteTruth ?? null,
+    finalRouteTruth: finalRouteTruth ?? runtimeStatusModel?.finalRouteTruth ?? null,
     orchestrationTruth,
+    contextBindings,
+    constraintsIncluded: includeConstraints,
     copySupported: true,
-  }), [actionHints, orchestrationTruth, promptText, runtimeStatusModel?.finalRouteTruth, telemetryEntries]);
+  }), [actionHints, contextBindings, finalRouteTruth, includeConstraints, orchestrationTruth, promptText, runtimeStatusModel?.finalRouteTruth, telemetryEntries]);
+
+  const topMissingContext = useMemo(() => {
+    if (!promptBuilderSummary.supportsAgentTaskContext) return 'Agent Task context';
+    if (!promptBuilderSummary.supportsTelemetryContext) return 'Telemetry context';
+    if (!promptBuilderSummary.supportsRuntimeTruthContext) return 'Runtime truth context';
+    if (!promptBuilderSummary.supportsCodexHandoff) return 'Codex handoff context';
+    if (!promptBuilderSummary.supportsConstraints || !promptBuilderSummary.supportsActionHints) return 'Constraints/action hints';
+    return 'none';
+  }, [promptBuilderSummary]);
 
   const handleCopyPrompt = async () => {
     const result = await buildCopyResult({
@@ -78,7 +107,12 @@ export default function PromptBuilder({
 
       <ul className="compact-list">
         <li>Status: {promptBuilderSummary.status}</li>
-        <li>Context support: agent={promptBuilderSummary.supportsAgentTaskContext ? 'yes' : 'no'} · telemetry={promptBuilderSummary.supportsTelemetryContext ? 'yes' : 'no'} · truth={promptBuilderSummary.supportsRuntimeTruthContext ? 'yes' : 'no'}</li>
+        <li>Agent Task context: {promptBuilderSummary.supportsAgentTaskContext ? 'available' : 'missing'}</li>
+        <li>Telemetry context: {promptBuilderSummary.supportsTelemetryContext ? 'available' : 'missing'}</li>
+        <li>Runtime truth context: {promptBuilderSummary.supportsRuntimeTruthContext ? 'available' : 'missing'}</li>
+        <li>Codex handoff context: {promptBuilderSummary.supportsCodexHandoff ? 'available' : 'missing'}</li>
+        <li>Constraints/action hints: {(promptBuilderSummary.supportsConstraints && promptBuilderSummary.supportsActionHints) ? 'available' : 'missing'}</li>
+        <li>Top missing context: {topMissingContext}</li>
         <li>Top warning/blocker: {promptBuilderSummary.blockers[0] || promptBuilderSummary.warnings[0] || 'none'}</li>
         <li>Next action: {promptBuilderSummary.nextActions[0] || 'none'}</li>
       </ul>

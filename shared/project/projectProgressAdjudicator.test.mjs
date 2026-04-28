@@ -32,6 +32,25 @@ test('adjudicateProjectProgress advances next best action when Agent Task summar
   assert.equal(projection.agentTaskEvidence?.nextAgentTaskAction, 'Wire existing Agent Tile to Agent Task projection');
 });
 
+test('adjudicateProjectProgress overlays seed fallback lane with live agent-task summary status', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      systemId: 'agent-task-layer',
+      status: 'started',
+      agentTaskLayerStatus: 'preparing',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'not_started',
+      nextAgentTaskAction: 'Add verification return state',
+    },
+  });
+
+  const lane = projection.lanes.find((entry) => entry.id === 'agent-task-layer');
+  assert.equal(lane?.status, 'started');
+  assert.notEqual(lane?.status, 'not-started');
+});
+
 test('adjudicateProjectProgress emits doctrine warnings for localhost assumption drift', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
@@ -264,4 +283,36 @@ test('adjudicateProjectProgress consumes telemetry and prompt builder summaries 
   assert.equal(telemetryLane?.status, 'ready');
   assert.equal(promptLane?.status, 'partial');
   assert.equal(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
+});
+
+test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts when contexts are bound', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'policy_only',
+      openClawKillSwitchState: 'required',
+      nextAgentTaskAction: 'Wire OpenClaw kill switch',
+    },
+    telemetrySummary: {
+      status: 'flowing',
+      nextActions: ['Telemetry flowing.'],
+    },
+    promptBuilderSummary: {
+      status: 'ready',
+      supportsAgentTaskContext: true,
+      supportsTelemetryContext: true,
+      supportsRuntimeTruthContext: true,
+      nextActions: ['Prompt contexts bound.'],
+    },
+  });
+
+  assert.notEqual(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
+  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
 });

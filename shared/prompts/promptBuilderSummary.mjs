@@ -18,22 +18,26 @@ export function buildPromptBuilderSummary({
   actionHints = [],
   finalRouteTruth = null,
   orchestrationTruth = null,
+  contextBindings = {},
   copySupported = true,
   codexHandoffReady = null,
+  constraintsIncluded = true,
 } = {}) {
   const hasPromptText = asText(promptText).length > 0;
   const telemetryCount = asArray(telemetryEntries).length;
   const hintCount = asArray(actionHints).length;
   const missionWorkflow = orchestrationTruth?.missionPacketWorkflow || {};
 
-  const supportsTelemetryContext = telemetryCount > 0;
-  const supportsRuntimeTruthContext = finalRouteTruth && typeof finalRouteTruth === 'object';
-  const supportsActionHints = hintCount > 0;
-  const supportsConstraints = true;
+  const bindingSource = contextBindings && typeof contextBindings === 'object' ? contextBindings : {};
+  const supportsTelemetryContext = bindingSource.telemetryContextAvailable === true || telemetryCount > 0;
+  const supportsRuntimeTruthContext = bindingSource.runtimeTruthContextAvailable === true || (finalRouteTruth && typeof finalRouteTruth === 'object');
+  const supportsActionHints = bindingSource.actionHintsAvailable === true || hintCount > 0;
+  const supportsConstraints = bindingSource.constraintsAvailable === true || constraintsIncluded === true;
   const supportsCopyAction = copySupported === true;
-  const supportsAgentTaskContext = Boolean(orchestrationTruth?.canonicalMissionPacket || missionWorkflow?.missionPacket);
+  const supportsAgentTaskContext = bindingSource.agentTaskContextAvailable === true
+    || Boolean(orchestrationTruth?.canonicalMissionPacket || missionWorkflow?.missionPacket);
   const supportsCodexHandoff = codexHandoffReady === null
-    ? supportsAgentTaskContext
+    ? (bindingSource.codexHandoffContextAvailable === true || supportsAgentTaskContext)
     : asBoolean(codexHandoffReady);
 
   const blockers = [];
@@ -53,6 +57,9 @@ export function buildPromptBuilderSummary({
   }
   if (supportsAgentTaskContext !== true) {
     warnings.push('Agent Task context is not yet bound to Prompt Builder summary.');
+  }
+  if (supportsCodexHandoff !== true) {
+    warnings.push('Codex handoff context is missing from Prompt Builder summary.');
   }
 
   let status = 'unknown';
@@ -95,6 +102,9 @@ export function buildPromptBuilderSummary({
   }
   if (!supportsCopyAction) {
     nextActions.push('Restore Prompt Builder copy flow for Codex handoff packet usage.');
+  }
+  if (!supportsCodexHandoff) {
+    nextActions.push('Bind Codex handoff context into Prompt Builder summary export.');
   }
   if (nextActions.length === 0) {
     nextActions.push('Improve prompt packet preview quality and maintain copy-ready handoff flow.');
