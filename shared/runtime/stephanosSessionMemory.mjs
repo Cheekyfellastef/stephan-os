@@ -36,6 +36,7 @@ export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
   'session.ui.activeSubview',
   'session.ui.recentRoute',
   'session.ui.uiLayout',
+  'session.ui.operatorPaneLayout.order',
   'session.ui.debugConsoleVisible',
   'session.ui.missionDashboard.selectedMilestoneId',
   'session.ui.missionDashboard.expandedMilestoneIds',
@@ -371,12 +372,21 @@ function normalizeUiState(value = {}) {
     ...baseUiLayout,
     buildParityPanelVisible: baseUiLayout.buildParityPanelVisible === true,
   };
+  const operatorPaneLayout = source.operatorPaneLayout && typeof source.operatorPaneLayout === 'object'
+    ? source.operatorPaneLayout
+    : {};
+  const operatorPaneOrder = Array.isArray(operatorPaneLayout.order)
+    ? [...new Set(operatorPaneLayout.order.map((entry) => normalizeString(entry)).filter(Boolean))].slice(0, 80)
+    : [];
   const activeSubview = normalizeString(source.activeSubview || source.recentRoute, STEPHANOS_ACTIVE_SUBVIEW);
   return {
     activeWorkspace: normalizeString(source.activeWorkspace, STEPHANOS_ACTIVE_WORKSPACE),
     activeSubview,
     recentRoute: normalizeString(source.recentRoute, activeSubview),
     uiLayout,
+    operatorPaneLayout: {
+      order: operatorPaneOrder,
+    },
     debugConsoleVisible: source.debugConsoleVisible === true || uiLayout.debugConsole === true,
     missionDashboard: normalizeMissionDashboardUi(source.missionDashboard),
   };
