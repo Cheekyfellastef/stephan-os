@@ -138,3 +138,33 @@ test('tile projection uses executable provider truth over requested provider int
   assert.equal(projection.executableProvider, 'groq');
   assert.match(projection.summary, /executable provider groq/);
 });
+
+test('tile projection carries compact agent task layer summary when provided by runtime model', () => {
+  const projection = buildStephanosTileTruthProjection(createProject({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+      agentTaskReadinessSummary: {
+        agentTaskLayerStatus: 'in_progress',
+        codexReadiness: 'manual_handoff_only',
+        openClawReadiness: 'needs_policy',
+        nextAgentTaskAction: 'Wire existing Agent Tile to Agent Task projection',
+        readinessScore: 62,
+        agentTaskLayerBlockers: ['approve_handoff gate is pending'],
+      },
+    },
+  }));
+
+  assert.equal(projection.agentTaskSummary.agentTaskLayerStatus, 'in_progress');
+  assert.equal(projection.agentTaskSummary.codexReadiness, 'manual_handoff_only');
+  assert.equal(projection.agentTaskSummary.openClawReadiness, 'needs_policy');
+  assert.match(projection.summary, /agentLayer in_progress/);
+});

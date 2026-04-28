@@ -23,6 +23,7 @@ export default function AgentsTile({
   onToggle = () => {},
   debugVisibility = false,
   openClawIntegration = null,
+  agentTaskProjection = null,
 } = {}) {
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
@@ -34,6 +35,11 @@ export default function AgentsTile({
   const memoryCapability = view.memoryCapability || {};
 
   const openClaw = openClawIntegration && typeof openClawIntegration === 'object' ? openClawIntegration : null;
+
+  const agentTask = agentTaskProjection && typeof agentTaskProjection === 'object'
+    ? agentTaskProjection
+    : null;
+  const operatorTask = agentTask?.operatorSurface || null;
   const selectedGates = selected?.adjudicationGates && typeof selected.adjudicationGates === 'object'
     ? selected.adjudicationGates
     : {};
@@ -76,6 +82,30 @@ export default function AgentsTile({
           </button>
         ))}
       </div>
+
+
+      {operatorTask ? (
+        <section className="agents-region">
+          <h4>Agent Task Layer v1</h4>
+          <ul>
+            <li><strong>Layer status:</strong> {operatorTask.layerStatus}</li>
+            <li><strong>Active task:</strong> {operatorTask.activeTaskTitle}</li>
+            <li><strong>Lifecycle:</strong> {operatorTask.lifecycleState}</li>
+            <li><strong>Recommended agent:</strong> {operatorTask.recommendedAgent}</li>
+            <li><strong>Codex readiness:</strong> {operatorTask.codexReadiness}</li>
+            <li><strong>OpenClaw readiness:</strong> {operatorTask.openClawReadiness}</li>
+            <li><strong>Approval gates pending:</strong> {formatReportedList(operatorTask.approvalPending)}</li>
+            <li><strong>Handoff readiness:</strong> {operatorTask.handoffReady ? 'ready' : 'blocked'} ({operatorTask.handoffMode})</li>
+            <li><strong>Verification:</strong> {operatorTask.verificationStatus}</li>
+            <li><strong>Next best agent action:</strong> {operatorTask.nextAction?.title || 'none'}</li>
+            <li><strong>Action reason:</strong> {operatorTask.nextAction?.reason || 'not reported'}</li>
+            <li><strong>Blocks:</strong> {formatReportedList(operatorTask.nextAction?.blocks)}</li>
+          </ul>
+          {operatorTask.handoffPacketSummary ? <p><strong>Handoff packet summary:</strong> {operatorTask.handoffPacketSummary}</p> : null}
+          {operatorTask.blockers?.length > 0 ? <p><strong>Blockers:</strong> {operatorTask.blockers.join(' · ')}</p> : null}
+          {operatorTask.warnings?.length > 0 ? <p><strong>Warnings:</strong> {operatorTask.warnings.join(' · ')}</p> : null}
+        </section>
+      ) : null}
 
       <section className="agents-region">
         <h4>Active Handoff Chain</h4>

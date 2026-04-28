@@ -64,6 +64,7 @@ import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
 import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
 import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
 import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
+import { buildAgentTaskProjection } from '../../shared/agents/agentTaskProjection.mjs';
 import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { buildOpenClawIntegrationSnapshot } from './components/openclaw/openclawIntegrationAdapter.js';
 
@@ -443,6 +444,91 @@ export default function App() {
     finalAgentView: displayAgentView,
     surfaceMode,
   }), [displayAgentView, surfaceMode]);
+  const agentTaskProjection = useMemo(() => {
+    const missionPacket = missionBridgeTruth?.missionPacket || {};
+    const missionEvents = Array.isArray(missionBridgeTruth?.events) ? missionBridgeTruth.events : [];
+    const codexEventReady = missionEvents.some((entry) => entry?.type === 'codex-handoff-ready');
+    const codexReadiness = codexEventReady
+      ? 'ready'
+      : missionPacket?.codexHandoffEligible === true
+        ? 'manual_handoff_only'
+        : 'needs_adapter';
+    const hasOpenClawPolicyHarness = openClawIntegration?.zeroCostGuardrailsStatus === 'validated'
+      && String(openClawIntegration?.approvalRequired || '').toLowerCase() === 'required'
+      && String(openClawIntegration?.sandboxStatus || '').toLowerCase() !== 'unsafe';
+
+    return buildAgentTaskProjection({
+      model: {
+        taskIdentity: {
+          taskId: missionPacket?.missionId || 'agent-task-layer-v1',
+          title: missionPacket?.missionTitle || 'Agent Task Layer v1',
+          operatorIntent: canonicalCurrentIntent?.operatorIntent?.label || latestCommandPrompt || 'Upgrade agent task truth surfaces.',
+          taskType: missionPacket?.intentType || 'system-upgrade',
+          targetArea: 'agent-layer',
+          createdAt: missionPacket?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        taskLifecycle: {
+          state: missionBridgeTruth?.state === 'blocked'
+            ? 'blocked'
+            : missionBridgeTruth?.state === 'awaiting-approval'
+              ? 'ready_for_review'
+              : hasAssignedTaskIntent
+                ? 'in_progress'
+                : 'draft',
+        },
+        agentAssignment: {
+          recommendedAgent: missionPacket?.agentAssignments?.[0]?.roleId || 'stephanos',
+          assignedAgent: missionBridgeTruth?.orchestration?.actingAgent || displayAgentView?.actingAgentId || 'manual',
+          availableAgents: ['stephanos', 'codex', 'openclaw', 'manual'],
+          agentReason: missionBridgeTruth?.nextRecommendedAction || displayAgentView?.operatorSummary || 'Awaiting adjudication from runtime truth.',
+        },
+        agentReadiness: {
+          stephanos: 'ready',
+          codex: codexReadiness,
+          openclaw: hasOpenClawPolicyHarness ? 'ready' : 'needs_policy',
+          manual: 'available',
+        },
+        approvalGates: {
+          required: ['approve_scope', 'approve_file_access', 'approve_command_execution', 'approve_handoff', 'approve_merge_or_push'],
+          approved: missionBridgeTruth?.pendingApproval === true ? [] : ['approve_scope'],
+          blocked: hasOpenClawPolicyHarness ? [] : ['approve_handoff'],
+        },
+        taskConstraints: {
+          requiredChecks: ['npm run stephanos:build', 'npm run stephanos:verify'],
+          riskLevel: missionBridgeTruth?.pendingApproval ? 'high' : 'moderate',
+        },
+        handoff: {
+          handoffTarget: 'codex',
+          handoffMode: codexReadiness === 'ready' ? 'local_adapter' : 'manual_prompt',
+          handoffReady: codexEventReady && missionBridgeTruth?.pendingApproval !== true,
+          handoffBlockers: missionBridgeTruth?.pendingApproval === true ? ['Mission packet is approval-gated.'] : [],
+          handoffPacketSummary: missionPacket?.missionSummary || missionPacket?.missionTitle || 'Use Prompt Builder output for manual Codex handoff packet.',
+        },
+        verification: {
+          verificationRequired: true,
+          verificationChecks: ['npm run stephanos:build', 'npm run stephanos:verify'],
+          verificationStatus: missionEvents.some((entry) => entry?.type === 'mission-complete') ? 'passed' : 'not_started',
+          lastVerificationResult: missionEvents.some((entry) => entry?.type === 'mission-complete')
+            ? 'Mission bridge reached complete state; rerun build/verify gates before merge.'
+            : 'Verification loop pending.',
+        },
+        evidence: {
+          reasons: [displayAgentView?.operatorSummary, missionBridgeTruth?.nextRecommendedAction].filter(Boolean),
+          blockers: [orchestrationSelectors?.blockageExplanation, openClawIntegration?.warnings?.[0]].filter(Boolean),
+          warnings: openClawIntegration?.warnings || [],
+          dependencies: ['Prompt Builder', 'Telemetry Feed', 'Mission Bridge'],
+          sourceSignals: [
+            `agentVisible:${displayAgentView?.visibleAgents?.length || 0}`,
+            `pendingApprovals:${displayAgentView?.finalApprovalQueueView?.pendingCount || 0}`,
+          ],
+        },
+      },
+      context: {
+        agentTileProjectionConnected: true,
+      },
+    });
+  }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, orchestrationSelectors?.blockageExplanation]);
 
   useEffect(() => {
     setOpenClawIntegration((previous) => (previous && previous.currentActivity !== 'Standing by for bounded intent.'
@@ -586,6 +672,7 @@ export default function App() {
             onToggle={() => togglePanel('agentsPanel')}
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
+            agentTaskProjection={agentTaskProjection}
           />
         );
         markStartupStage('app-agents-panel-render-complete');
@@ -605,6 +692,7 @@ export default function App() {
             orchestrationSelectors={orchestrationSelectors}
             runtimeStatus={runtimeStatus}
             finalRouteTruth={finalRouteTruth}
+            agentTaskProjection={agentTaskProjection}
           />
         );
         markStartupStage('app-mission-dashboard-render-complete');
@@ -707,6 +795,7 @@ export default function App() {
     startupDiagnosticsVisible,
     submitPrompt,
     missionBridgeTruth,
+    agentTaskProjection,
   ]);
 
   const safePaneOrder = useMemo(() => {
@@ -824,6 +913,7 @@ export default function App() {
             onToggle={() => {}}
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
+            agentTaskProjection={agentTaskProjection}
           />
         </section>
         <DebugConsole />

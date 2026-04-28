@@ -38,6 +38,27 @@ function asBooleanOrNull(value) {
   return null;
 }
 
+
+function normalizeAgentReadinessSummary(value) {
+  const summary = value && typeof value === 'object' ? value : {};
+  const toText = (entry, fallback = 'unknown') => {
+    const text = String(entry || '').trim().toLowerCase();
+    return text || fallback;
+  };
+  const blockers = Array.isArray(summary.agentTaskLayerBlockers)
+    ? summary.agentTaskLayerBlockers.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    agentTaskLayerStatus: toText(summary.agentTaskLayerStatus),
+    codexReadiness: toText(summary.codexReadiness),
+    openClawReadiness: toText(summary.openClawReadiness),
+    nextAgentTaskAction: String(summary.nextAgentTaskAction || '').trim() || 'Build canonical Agent Task Model',
+    readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Math.max(0, Math.min(100, Number(summary.readinessScore))) : 0,
+    agentTaskLayerBlockers: blockers,
+  };
+}
+
 function buildCanonicalSnapshot(runtimeStatusModel = {}) {
   const canonical = runtimeStatusModel?.canonicalRouteRuntimeTruth;
   const compatibility = runtimeStatusModel?.runtimeTruthSnapshot;
@@ -101,6 +122,11 @@ export function buildStephanosTileTruthProjection(project = {}) {
   const canonicalBlockingIssues = normalizeBlockingIssues(snapshot?.blockingIssueCodes);
   const selectedRouteReachable = toYesNoUnknown(snapshot?.routeReachable);
   const selectedRouteUsable = toYesNoUnknown(snapshot?.routeUsable);
+  const agentTaskSummary = normalizeAgentReadinessSummary(
+    runtimeStatusModel?.agentTaskReadinessSummary
+    || runtimeStatusModel?.agentTaskLayerSummary
+    || project?.agentTaskReadinessSummary,
+  );
 
   const tone = launchState === 'ready' || launchState === 'degraded' || launchState === 'unavailable'
     ? launchState
@@ -139,6 +165,10 @@ export function buildStephanosTileTruthProjection(project = {}) {
     `executable provider ${canonicalProvider}`,
     `fallback ${canonicalFallbackState}`,
     `blockingIssues ${canonicalBlockingIssues.length ? canonicalBlockingIssues.join(', ') : 'n/a'}`,
+    `agentLayer ${agentTaskSummary.agentTaskLayerStatus}`,
+    `codex ${agentTaskSummary.codexReadiness}`,
+    `openclaw ${agentTaskSummary.openClawReadiness}`,
+    `nextAgentAction ${agentTaskSummary.nextAgentTaskAction}`,
   ].join(' · ');
 
   return {
@@ -152,6 +182,7 @@ export function buildStephanosTileTruthProjection(project = {}) {
     blockingIssues: canonicalBlockingIssues,
     selectedRouteReachable,
     selectedRouteUsable,
+    agentTaskSummary,
     drift,
     driftFields,
     summary,
