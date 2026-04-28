@@ -1,3 +1,6 @@
+import { useMemo } from 'react';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
 
 function formatList(list = []) {
@@ -25,6 +28,7 @@ export default function AgentsTile({
   openClawIntegration = null,
   agentTaskProjection = null,
 } = {}) {
+  const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
   const selected = visibleAgents.find((entry) => entry.agentId === selectedAgentId) || visibleAgents[0] || null;
@@ -57,6 +61,19 @@ export default function AgentsTile({
   const selectedSummary = selected
     ? `${formatTruth(selected.displayName, 'Agent')} is ${selected.eligible === true ? 'eligible' : 'not eligible'} and ${selected.enabled === true ? 'enabled' : 'disabled'}, but ${formatTruth(selected.stateReason, 'state reason not reported')}`
     : 'No selected agent.';
+  const codexPacketText = useMemo(
+    () => (typeof operatorTask?.codexHandoffPacketText === 'string' ? operatorTask.codexHandoffPacketText : ''),
+    [operatorTask?.codexHandoffPacketText],
+  );
+
+  async function handleCopyCodexPacket() {
+    if (!codexPacketText) {
+      setCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+    const result = await writeTextToClipboard(codexPacketText);
+    setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+  }
 
   return (
     <CollapsiblePanel
@@ -96,11 +113,37 @@ export default function AgentsTile({
             <li><strong>OpenClaw readiness:</strong> {operatorTask.openClawReadiness}</li>
             <li><strong>Approval gates pending:</strong> {formatReportedList(operatorTask.approvalPending)}</li>
             <li><strong>Handoff readiness:</strong> {operatorTask.handoffReady ? 'ready' : 'blocked'} ({operatorTask.handoffMode})</li>
+            <li><strong>Codex handoff readiness:</strong> {operatorTask.codexHandoffPacketReady ? 'ready' : 'blocked'}</li>
+            <li><strong>Handoff mode:</strong> {operatorTask.codexHandoffPacketMode || 'manual_prompt'}</li>
             <li><strong>Verification:</strong> {operatorTask.verificationStatus}</li>
             <li><strong>Next best agent action:</strong> {operatorTask.nextAction?.title || 'none'}</li>
             <li><strong>Action reason:</strong> {operatorTask.nextAction?.reason || 'not reported'}</li>
             <li><strong>Blocks:</strong> {formatReportedList(operatorTask.nextAction?.blocks)}</li>
+            <li><strong>Required checks:</strong> {formatReportedList(operatorTask.codexHandoffPacketRequiredChecks)}</li>
+            <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
+          <div className="agents-tile-copy-actions">
+            <button
+              type="button"
+              className={`status-panel-copy-button ${copyState}`}
+              onClick={handleCopyCodexPacket}
+              disabled={!codexPacketText}
+            >
+              Copy Codex Packet
+            </button>
+            <span role="status" aria-live="polite">
+              {copyState === COPY_STATE.SUCCESS ? 'Codex packet copied.' : null}
+              {copyState === COPY_STATE.FAILURE ? 'Copy Codex Packet failed.' : null}
+            </span>
+          </div>
+          {operatorTask.codexHandoffPacketSummary ? <p><strong>Codex packet:</strong> {operatorTask.codexHandoffPacketSummary}</p> : null}
+          {operatorTask.codexHandoffPacketBlockers?.length > 0 ? <p><strong>Current blockers:</strong> {operatorTask.codexHandoffPacketBlockers.join(' · ')}</p> : null}
+          {codexPacketText ? (
+            <details>
+              <summary>Compact packet preview</summary>
+              <pre>{codexPacketText.split('\n').slice(0, 18).join('\n')}</pre>
+            </details>
+          ) : null}
           {operatorTask.handoffPacketSummary ? <p><strong>Handoff packet summary:</strong> {operatorTask.handoffPacketSummary}</p> : null}
           {operatorTask.blockers?.length > 0 ? <p><strong>Blockers:</strong> {operatorTask.blockers.join(' · ')}</p> : null}
           {operatorTask.warnings?.length > 0 ? <p><strong>Warnings:</strong> {operatorTask.warnings.join(' · ')}</p> : null}

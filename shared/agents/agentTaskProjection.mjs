@@ -76,6 +76,13 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       handoffReady: adjudicated.handoff.handoffReady,
       handoffMode: adjudicated.handoff.handoffMode,
       handoffPacketSummary: adjudicated.handoff.handoffPacketSummary,
+      codexHandoffPacketMode: adjudicated.handoff.packetMode,
+      codexHandoffPacketReady: adjudicated.handoff.packetReady,
+      codexHandoffPacketSummary: adjudicated.handoff.packetSummary,
+      codexHandoffPacketBlockers: asArray(adjudicated.handoff.packetBlockers),
+      codexHandoffPacketText: adjudicated.handoff.packetText,
+      codexHandoffNextAction: adjudicated.handoff.nextActionLabel,
+      codexHandoffPacketRequiredChecks: asArray(adjudicated.verification.checks),
       approvalPending: pendingApprovals,
       verificationStatus: adjudicated.verification.status,
       nextAction: adjudicated.nextAction,
@@ -107,6 +114,9 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       nextAgentTaskAction: adjudicated.nextAction.title,
       agentTaskLayerBlockers: blockers,
       readinessScore: adjudicated.readinessScore,
+      codexManualHandoffMode: adjudicated.handoff.packetMode,
+      codexManualHandoffReady: adjudicated.handoff.packetReady === true,
+      codexManualHandoffSummary: adjudicated.handoff.packetSummary,
     },
   };
 }
