@@ -96,6 +96,8 @@ export default function MissionConsoleTile({
       openClawIntegrationMode: summary.openClawIntegrationMode || operatorSurface.openClawIntegrationMode || 'policy_only',
       openClawSafeToUse: summary.openClawSafeToUse === true || operatorSurface.openClawSafeToUse === true,
       openClawKillSwitchState: summary.openClawKillSwitchState || operatorSurface.openClawKillSwitchState || 'missing',
+      openClawKillSwitchMode: summary.openClawKillSwitchMode || operatorSurface.openClawKillSwitchMode || 'unavailable',
+      openClawExecutionAllowed: summary.openClawExecutionAllowed === true || operatorSurface.openClawExecutionAllowed === true,
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || operatorSurface.openClawHighestPriorityBlocker || 'none',
       openClawNextAction: summary.openClawNextAction || operatorSurface.openClawNextAction || 'not reported',
     };
@@ -455,6 +457,8 @@ export default function MissionConsoleTile({
           <li><strong>openclaw integration mode:</strong> {compactVerificationSummary.openClawIntegrationMode}</li>
           <li><strong>openclaw safe-to-use:</strong> {compactVerificationSummary.openClawSafeToUse ? 'yes' : 'no'}</li>
           <li><strong>openclaw kill switch:</strong> {compactVerificationSummary.openClawKillSwitchState}</li>
+          <li><strong>openclaw kill-switch mode:</strong> {compactVerificationSummary.openClawKillSwitchMode}</li>
+          <li><strong>openclaw execution allowed:</strong> {compactVerificationSummary.openClawExecutionAllowed ? 'yes' : 'no'}</li>
           <li><strong>openclaw top blocker:</strong> {compactVerificationSummary.openClawHighestPriorityBlocker}</li>
           <li><strong>openclaw next action:</strong> {compactVerificationSummary.openClawNextAction}</li>
           {compactVerificationSummary.openClawIntegrationMode === 'policy_only' ? (

@@ -154,7 +154,7 @@ export function createDefaultAgentTaskModel() {
       directAdapterAvailable: false,
       requiredApprovals: ['approve_handoff'],
       satisfiedApprovals: [],
-      killSwitchState: 'missing',
+      killSwitchState: 'required',
       blockers: ['OpenClaw policy harness is placeholder-only.'],
     },
   };

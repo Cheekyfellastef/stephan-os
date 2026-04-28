@@ -19,6 +19,8 @@ test('MissionConsoleTile renders compact agent task verification return summary 
     'openclaw integration mode:',
     'openclaw safe-to-use:',
     'openclaw kill switch:',
+    'openclaw kill-switch mode:',
+    'openclaw execution allowed:',
     'openclaw top blocker:',
     'openclaw next action:',
     'openclaw policy notice:',

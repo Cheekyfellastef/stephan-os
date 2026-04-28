@@ -29,10 +29,28 @@ const LAYER_ACTIONS = Object.freeze([
     blocks: ['Trusted completion'],
   },
   {
-    id: 'openclaw-kill-switch-and-adapter',
-    title: 'Wire OpenClaw kill switch + adapter contract',
-    reason: 'Policy harness exists; next dependency is kill switch + adapter lifecycle validation.',
-    blocks: ['Safe OpenClaw automation'],
+    id: 'openclaw-kill-switch',
+    title: 'Wire OpenClaw kill switch',
+    reason: 'Policy harness exists; kill-switch lifecycle must be operator-reachable before adapter execution.',
+    blocks: ['Safe OpenClaw execution gating'],
+  },
+  {
+    id: 'openclaw-local-adapter',
+    title: 'Design OpenClaw local adapter',
+    reason: 'Kill switch exists, but execution adapter contract is not implemented yet.',
+    blocks: ['Local OpenClaw execution contract'],
+  },
+  {
+    id: 'openclaw-approval-gates',
+    title: 'Complete OpenClaw approval gates',
+    reason: 'Adapter is present, but required approvals are still missing.',
+    blocks: ['Safe supervised OpenClaw execution'],
+  },
+  {
+    id: 'openclaw-execution-integration',
+    title: 'Add OpenClaw execution integration',
+    reason: 'Safety gates are satisfied; execution integration can proceed under kill-switch control.',
+    blocks: ['Production-safe OpenClaw automation'],
   },
 ]);
 
@@ -123,8 +141,20 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     if (candidate.id === 'verification-return-state') {
       return verificationRequired && (verificationReturn.verificationReturnReady !== true || verificationReturn.verificationDecision === 'not_ready');
     }
-    if (candidate.id === 'openclaw-kill-switch-and-adapter') {
-      return openClawPolicySummary.openClawSafeToUse !== true;
+    if (candidate.id === 'openclaw-kill-switch') {
+      return ['required', 'unavailable', 'unknown', 'missing'].includes(openClawPolicySummary.killSwitchState);
+    }
+    if (candidate.id === 'openclaw-local-adapter') {
+      return !openClawPolicySummary.policyOnly && openClawPolicySummary.killSwitchAvailable === true && openClawPolicySummary.adapterPresent !== true;
+    }
+    if (candidate.id === 'openclaw-approval-gates') {
+      return !openClawPolicySummary.policyOnly
+        && openClawPolicySummary.killSwitchAvailable === true
+        && openClawPolicySummary.adapterPresent === true
+        && openClawPolicySummary.approvalsComplete !== true;
+    }
+    if (candidate.id === 'openclaw-execution-integration') {
+      return openClawPolicySummary.openClawSafeToUse === true && openClawPolicySummary.openClawExecutionAllowed !== true;
     }
     return false;
   }) || LAYER_ACTIONS[0];

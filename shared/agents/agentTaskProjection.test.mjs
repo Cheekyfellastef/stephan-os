@@ -73,6 +73,60 @@ test('agent task projection advances next action beyond policy harness when poli
 
   assert.match(projection.readinessSummary.nextAgentTaskAction, /kill switch/i);
   assert.equal(projection.readinessSummary.openClawSafeToUse, false);
+  assert.equal(projection.readinessSummary.openClawExecutionAllowed, false);
+});
+
+test('agent task projection advances to adapter when kill switch is available but adapter is missing', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      taskLifecycle: { state: 'in_progress' },
+      openClawPolicy: {
+        integrationMode: 'local_adapter',
+        adapterPresent: false,
+        localAdapterAvailable: false,
+        requiredApprovals: ['approve_handoff'],
+        satisfiedApprovals: ['approve_handoff'],
+        killSwitchState: 'available',
+        blockers: [],
+      },
+      verification: {
+        verificationStatus: 'passed',
+      },
+      verificationReturn: {
+        returnStatus: 'verified',
+      },
+    },
+    context: { agentTileProjectionConnected: true },
+  });
+
+  assert.match(projection.readinessSummary.nextAgentTaskAction, /local adapter/i);
+});
+
+test('agent task projection advances to approvals when adapter exists but approvals are missing', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      taskLifecycle: { state: 'in_progress' },
+      openClawPolicy: {
+        integrationMode: 'local_adapter',
+        adapterPresent: true,
+        localAdapterAvailable: true,
+        requiredApprovals: ['approve_handoff', 'approve_command_execution'],
+        satisfiedApprovals: ['approve_handoff'],
+        killSwitchState: 'available',
+        blockers: [],
+      },
+      verification: {
+        verificationStatus: 'passed',
+      },
+      verificationReturn: {
+        returnStatus: 'verified',
+      },
+    },
+    context: { agentTileProjectionConnected: true },
+  });
+
+  assert.match(projection.readinessSummary.nextAgentTaskAction, /approval gates/i);
+  assert.equal(projection.readinessSummary.openClawExecutionAllowed, false);
 });
 
 test('agent task projection exposes codex manual handoff packet summary and packet text', () => {
