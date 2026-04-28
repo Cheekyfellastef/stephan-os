@@ -213,6 +213,21 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
   const contextAssemblyMetadata = requestPayload?.contextAssemblyMetadata || {};
+  const requestExecutionId = String(requestPayload?.request_execution_id || '').trim();
+  const executionMetadataRequestId = String(
+    executionMetadata.request_execution_id
+    || executionMetadata.request_id
+    || executionMetadata.execution_id
+    || '',
+  ).trim();
+  const requestTraceRequestId = String(
+    requestTrace.request_execution_id
+    || requestTrace.request_id
+    || requestTrace.execution_id
+    || '',
+  ).trim();
+  const currentRequestRouterMetadata = requestExecutionId
+    && (executionMetadataRequestId === requestExecutionId || requestTraceRequestId === requestExecutionId);
   const uiRequestedProvider = normalizeProviderKey(
     executionMetadata.ui_requested_provider
     || requestTrace.ui_requested_provider
@@ -243,7 +258,17 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || null,
   );
   const rawRouterSelectedProvider = normalizeProviderKey(
-    executionMetadata.router_selected_provider
+    requestSideSelectedProvider
+    || executableProvider
+    || actualProviderUsed
+    || (currentRequestRouterMetadata
+      ? (
+        executionMetadata.router_selected_provider
+        || requestTrace.router_selected_provider
+        || executionMetadata.router_provider
+        || requestTrace.router_provider
+      )
+      : null)
     || requestPayload.routeDecision?.selectedProvider
     || requestPayload.router_selected_provider
     || null,
@@ -263,6 +288,14 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       requestSideSelectedProvider
       || executableProvider
       || actualProviderUsed
+      || (currentRequestRouterMetadata
+        ? (
+          executionMetadata.router_selected_provider
+          || requestTrace.router_selected_provider
+          || executionMetadata.router_provider
+          || requestTrace.router_provider
+        )
+        : null)
       || requestPayload.provider,
     );
   })();
@@ -2562,6 +2595,7 @@ export function useAIConsole() {
         providerConfigs: effectiveProviderConfigs,
       });
       const requestPayload = {
+        request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
         provider: requestedProvider,
         ui_requested_provider: normalizedUiRequestedProvider || requestedProvider,
         request_side_selected_provider: normalizedRequestProvider || requestedProvider,
@@ -2606,9 +2640,16 @@ export function useAIConsole() {
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => ({
         ...(prev || {}),
+        request_execution_id: requestPayload.request_execution_id,
         ui_requested_provider: requestPayload.ui_requested_provider || 'unknown',
         request_side_selected_provider: requestPayload.request_side_selected_provider || 'unknown',
         router_selected_provider: requestPayload.router_selected_provider || 'unknown',
+        router_provider: requestPayload.router_selected_provider || 'unknown',
+        request_trace: {
+          request_execution_id: requestPayload.request_execution_id,
+          router_selected_provider: requestPayload.router_selected_provider || 'unknown',
+          router_provider: requestPayload.router_selected_provider || 'unknown',
+        },
         selected_provider: requestPayload.router_selected_provider || requestPayload.request_side_selected_provider || requestPayload.provider || 'unknown',
         execution_selected_provider: timeoutExecutionEnvelope.effectiveProvider || requestPayload.router_selected_provider || requestPayload.provider || 'unknown',
         executable_provider: timeoutExecutionEnvelope.effectiveProvider || requestPayload.router_selected_provider || requestPayload.provider || 'unknown',
@@ -2700,6 +2741,7 @@ export function useAIConsole() {
         uiRequestedProvider: requestPayload.ui_requested_provider,
         requestSideSelectedProvider: requestPayload.request_side_selected_provider,
         routerSelectedProvider: requestPayload.router_selected_provider,
+        requestExecutionId: requestPayload.request_execution_id,
         providerOverrideReason: requestPayload.provider_override_reason,
         routeMode: routeModeForRequest,
         providerConfigs: effectiveProviderConfigs,

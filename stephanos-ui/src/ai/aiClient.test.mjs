@@ -23,6 +23,8 @@ test('sendPrompt strips provider secrets from chat payloads', () => {
   assert.match(clientSource, /stripSecretsFromProviderConfigs\(providerConfigs\)/);
   assert.match(clientSource, /providerConfigs:\s*safeProviderConfigs/);
   assert.match(clientSource, /ollama_load_mode:\s*String\(ollamaLoadMode \|\| 'balanced'\)/);
+  assert.match(clientSource, /requestExecutionId\s*=\s*''/);
+  assert.match(clientSource, /request_execution_id:\s*firstNonEmpty\(requestExecutionId\)/);
   assert.match(clientSource, /ui_requested_provider:\s*firstNonEmpty\(uiRequestedProvider/);
   assert.match(clientSource, /request_side_selected_provider:\s*firstNonEmpty\(requestSideSelectedProvider/);
   assert.match(clientSource, /router_selected_provider:\s*firstNonEmpty\(routerSelectedProvider/);

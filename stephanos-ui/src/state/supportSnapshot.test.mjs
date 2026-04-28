@@ -784,6 +784,44 @@ test('buildSupportSnapshot clears stale router and cancellation contradiction wa
   assert.doesNotMatch(snapshot, /cancellation truth is true while execution outcome reports success/);
 });
 
+test('buildSupportSnapshot allows router/actual provider mismatch when explicit fallback reason is present', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRequestedProvider: 'ollama',
+      lastRequestSideSelectedProvider: 'ollama',
+      lastRouterSelectedProvider: 'ollama',
+      lastSelectedProvider: 'ollama',
+      lastExecutableProvider: 'ollama',
+      lastActualProviderUsed: 'gemini',
+      lastActualModelUsed: 'gemini-2.5-flash',
+      lastExecutionTruth: 'gemini answered after ollama timeout fallback',
+      lastExecutionStatus: 'ok:gemini',
+      lastProviderOverrideReason: 'fallback: ollama timed out',
+      lastFallbackProviderUsed: 'gemini',
+      lastFallbackReason: 'ollama timeout fallback to gemini',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'gemini',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:06.000Z' },
+  });
+
+  assert.match(snapshot, /Last Router Selected Provider: ollama/);
+  assert.match(snapshot, /Last Actual Provider Used: gemini/);
+  assert.match(snapshot, /Last Fallback Provider Used: gemini/);
+  assert.match(snapshot, /Last Provider Override Reason: fallback: ollama timed out/);
+  assert.doesNotMatch(snapshot, /router selected provider differs from actual provider without fallback\/override reason/);
+});
+
 test('buildSupportSnapshot separates provider health readiness from execution viability during fallback', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

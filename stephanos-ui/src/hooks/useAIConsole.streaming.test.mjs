@@ -72,10 +72,21 @@ test('useAIConsole normalizes cancellation truth from current request payload in
   assert.match(source, /execution_cancelled:\s*normalizedCancellation\.execution_cancelled/);
   assert.match(source, /provider_cancelled:\s*normalizedCancellation\.provider_cancelled/);
   assert.match(source, /ollama_abort_sent:\s*normalizedCancellation\.ollama_abort_sent/);
+  assert.match(source, /const requestExecutionId = String\(requestPayload\?\.request_execution_id \|\| ''\)\.trim\(\)/);
+  assert.match(source, /const currentRequestRouterMetadata = requestExecutionId/);
   assert.match(source, /const rawRouterSelectedProvider = normalizeProviderKey\(/);
+  assert.match(source, /requestSideSelectedProvider\s*\|\|\s*executableProvider\s*\|\|\s*actualProviderUsed/);
+  assert.match(source, /currentRequestRouterMetadata[\s\S]*executionMetadata\.router_selected_provider[\s\S]*requestTrace\.router_selected_provider/m);
   assert.match(source, /requestPayload\.routeDecision\?\.selectedProvider/);
   assert.match(source, /requestPayload\.router_selected_provider/);
   assert.match(source, /rawRouterSelectedProvider === requestSideSelectedProvider/);
+});
+
+test('useAIConsole resets router truth fields at request start and threads request execution id into dispatch payload', () => {
+  assert.match(source, /request_execution_id:\s*`req_\$\{Date\.now\(\)\}_\$\{Math\.random\(\)\.toString\(36\)\.slice\(2,\s*10\)\}`/);
+  assert.match(source, /router_provider:\s*requestPayload\.router_selected_provider \|\| 'unknown'/);
+  assert.match(source, /request_trace:\s*\{\s*request_execution_id:\s*requestPayload\.request_execution_id,/);
+  assert.match(source, /requestExecutionId:\s*requestPayload\.request_execution_id/);
 });
 
 test('useAIConsole timeout metadata preserves stream truth and uses UI timeout layer instead of fixed label checks', () => {
