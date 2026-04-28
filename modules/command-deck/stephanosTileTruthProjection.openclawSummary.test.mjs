@@ -29,10 +29,11 @@ test('Stephanos launcher tile includes compact OpenClaw policy summary from agen
     },
   });
 
-  assert.match(projection.summary, /openclawMode policy_only/i);
-  assert.match(projection.summary, /openclawSafe no/i);
-  assert.match(projection.summary, /killSwitch missing/i);
-  assert.match(projection.summary, /killSwitchMode unavailable/i);
-  assert.match(projection.summary, /openclawExecution no/i);
-  assert.match(projection.summary, /openclawAdapterMode design_only/i);
+  assert.equal(projection.landingTileSummary.overallStatus, 'Mission systems: Active');
+  assert.equal(projection.landingTileSummary.nextAction, 'Wire OpenClaw kill switch + adapter contract');
+  assert.equal(projection.landingTileSummary.safetyLabel, 'Policy-only');
+  assert.match(projection.summary, /OpenClaw: needs_policy \(policy_only\)/i);
+  assert.match(projection.summary, /Next: Wire OpenClaw kill switch \+ adapter contract/i);
+  assert.doesNotMatch(projection.summary, /openclawAdapterMode/i);
+  assert.doesNotMatch(projection.summary, /killSwitchMode/i);
 });

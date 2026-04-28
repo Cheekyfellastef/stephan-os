@@ -38,6 +38,90 @@ function asBooleanOrNull(value) {
   return null;
 }
 
+function isMeaningfulValue(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return Boolean(normalized) && !['unknown', 'none', 'n/a', 'na', 'unavailable'].includes(normalized);
+}
+
+function asCompactSentence(value, fallback = '') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  return text.endsWith('.') ? text.slice(0, -1) : text;
+}
+
+function classifyMissionStatus({ launchState, routeOperational, agentTaskLayerStatus }) {
+  if (launchState === 'unavailable') return 'Mission systems: Blocked';
+  if (launchState === 'degraded') return 'Mission systems: Degraded';
+  if (launchState === 'ready' && routeOperational && agentTaskLayerStatus === 'complete') return 'Mission systems: Ready';
+  if (launchState === 'ready' && routeOperational) return 'Mission systems: Active';
+  return 'Mission systems: Monitoring';
+}
+
+function buildExecutionSafetyLabel({ agentTaskSummary, topBlocker }) {
+  const blockerText = String(topBlocker || '').toLowerCase();
+  const hasApprovalBlocker = blockerText.includes('approval') || blockerText.includes('approve');
+  const executionAllowed = agentTaskSummary.openClawExecutionAllowed === 'yes'
+    && agentTaskSummary.openClawAdapterCanExecute === 'yes';
+
+  if (executionAllowed) {
+    return 'Execution permitted';
+  }
+  if (hasApprovalBlocker) {
+    return 'Execution blocked';
+  }
+  if (agentTaskSummary.openClawIntegrationMode === 'policy_only' || agentTaskSummary.openClawAdapterExecutionMode === 'disabled') {
+    return 'Policy-only';
+  }
+  return 'Execution guarded';
+}
+
+function isOpenClawTopDependency(nextAction, topBlocker) {
+  const combined = `${String(nextAction || '').toLowerCase()} ${String(topBlocker || '').toLowerCase()}`;
+  return ['openclaw', 'kill switch', 'adapter'].some((token) => combined.includes(token));
+}
+
+function buildLandingTileSummary({
+  launchState,
+  routeOperational,
+  agentTaskSummary,
+  canonicalBlockingIssues,
+}) {
+  const overallStatus = classifyMissionStatus({
+    launchState,
+    routeOperational,
+    agentTaskLayerStatus: agentTaskSummary.agentTaskLayerStatus,
+  });
+  const nextAction = asCompactSentence(agentTaskSummary.nextAgentTaskAction, 'Review mission task truth');
+  const topBlocker = isMeaningfulValue(agentTaskSummary.openClawHighestPriorityBlocker)
+    ? asCompactSentence(agentTaskSummary.openClawHighestPriorityBlocker)
+    : (agentTaskSummary.agentTaskLayerBlockers.find((entry) => isMeaningfulValue(entry))
+      || canonicalBlockingIssues.find((entry) => isMeaningfulValue(entry))
+      || '');
+  const safetyLabel = buildExecutionSafetyLabel({ agentTaskSummary, topBlocker });
+  const openClawDependencyTop = isOpenClawTopDependency(nextAction, topBlocker);
+  const openClawStatus = openClawDependencyTop
+    ? `OpenClaw: ${agentTaskSummary.openClawReadiness} (${agentTaskSummary.openClawIntegrationMode})`
+    : '';
+
+  const lines = [
+    overallStatus,
+    `Next: ${nextAction}`,
+    topBlocker ? `Blocker: ${asCompactSentence(topBlocker)}` : '',
+    openClawStatus,
+    `Status: ${safetyLabel}`,
+  ].filter(Boolean);
+
+  return {
+    overallStatus,
+    nextAction,
+    topBlocker: topBlocker ? asCompactSentence(topBlocker) : '',
+    openClawStatus,
+    safetyLabel,
+    lines,
+    summary: lines.join(' · '),
+  };
+}
+
 
 function normalizeAgentReadinessSummary(value) {
   const summary = value && typeof value === 'object' ? value : {};
@@ -169,33 +253,12 @@ export function buildStephanosTileTruthProjection(project = {}) {
   const routeOperational = canonicalRouteKind === 'cloud'
     && selectedRouteReachable === 'yes'
     && selectedRouteUsable === 'yes';
-
-  const summary = [
-    `launch ${launchState === 'unknown' ? 'unknown' : launchState}`,
-    `route ${canonicalRouteKind === 'unknown' ? 'unknown' : canonicalRouteKind}`,
-    `selected route reachable ${selectedRouteReachable}`,
-    `selected route usable ${selectedRouteUsable}`,
-    `executable provider ${canonicalProvider}`,
-    `fallback ${canonicalFallbackState}`,
-    `blockingIssues ${canonicalBlockingIssues.length ? canonicalBlockingIssues.join(', ') : 'n/a'}`,
-    `agentLayer ${agentTaskSummary.agentTaskLayerStatus}`,
-    `codex ${agentTaskSummary.codexReadiness}`,
-    `openclaw ${agentTaskSummary.openClawReadiness}`,
-    `openclawMode ${agentTaskSummary.openClawIntegrationMode}`,
-    `openclawSafe ${agentTaskSummary.openClawSafeToUse}`,
-    `killSwitch ${agentTaskSummary.openClawKillSwitchState}`,
-    `killSwitchMode ${agentTaskSummary.openClawKillSwitchMode}`,
-    `openclawExecution ${agentTaskSummary.openClawExecutionAllowed}`,
-    `priorityBlocker ${agentTaskSummary.openClawHighestPriorityBlocker}`,
-    `nextAgentAction ${agentTaskSummary.nextAgentTaskAction}`,
-    `nextOpenClawAction ${agentTaskSummary.openClawNextAction}`,
-    `openclawAdapterMode ${agentTaskSummary.openClawAdapterMode}`,
-    `openclawAdapterReadiness ${agentTaskSummary.openClawAdapterReadiness}`,
-    `openclawAdapterConnection ${agentTaskSummary.openClawAdapterConnectionState}`,
-    `openclawAdapterExecution ${agentTaskSummary.openClawAdapterExecutionMode}`,
-    `openclawAdapterCanExecute ${agentTaskSummary.openClawAdapterCanExecute}`,
-    `nextOpenClawAdapterAction ${agentTaskSummary.openClawAdapterNextAction}`,
-  ].join(' · ');
+  const landingTileSummary = buildLandingTileSummary({
+    launchState,
+    routeOperational,
+    agentTaskSummary,
+    canonicalBlockingIssues,
+  });
 
   return {
     source,
@@ -209,9 +272,10 @@ export function buildStephanosTileTruthProjection(project = {}) {
     selectedRouteReachable,
     selectedRouteUsable,
     agentTaskSummary,
+    landingTileSummary,
     drift,
     driftFields,
-    summary,
+    summary: landingTileSummary.summary,
     diagnosticLabel: drift
       ? `Truth drift detected: compatibility projection disagrees with canonical truth (${driftFields.join(', ')}).`
       : '',
