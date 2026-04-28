@@ -759,6 +759,7 @@ test('buildSupportSnapshot clears stale router and cancellation contradiction wa
       lastOllamaLoadPolicyApplied: 'true',
       lastProviderOverrideReason: 'n/a',
       lastFallbackProviderUsed: 'n/a',
+      lastFreshnessCandidateProvider: 'gemini',
     },
     routeTruthView: {
       selectedProvider: 'ollama',
@@ -776,10 +777,16 @@ test('buildSupportSnapshot clears stale router and cancellation contradiction wa
   });
 
   assert.match(snapshot, /Last Router Selected Provider: ollama/);
+  assert.match(snapshot, /Last Actual Provider Used: ollama/);
   assert.match(snapshot, /Last Actual Model Used: llama3.2:3b/);
   assert.match(snapshot, /Last Execution Cancelled: false/);
   assert.match(snapshot, /Provider Cancelled: false/);
   assert.match(snapshot, /Ollama Abort Sent: false/);
+  assert.match(snapshot, /Last Ollama Load Mode: cool/);
+  assert.match(snapshot, /Last Ollama Heavy Model Requested: true/);
+  assert.match(snapshot, /Last Ollama Heavy Model Allowed: false/);
+  assert.match(snapshot, /Last Ollama Model After Load Policy: llama3.2:3b/);
+  assert.match(snapshot, /Last Freshness Candidate Provider: gemini/);
   assert.doesNotMatch(snapshot, /router selected provider differs from actual provider/);
   assert.doesNotMatch(snapshot, /cancellation truth is true while execution outcome reports success/);
 });
