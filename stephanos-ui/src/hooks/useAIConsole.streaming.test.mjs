@@ -57,6 +57,24 @@ test('useAIConsole tracks streaming request truth metadata and cancellation trut
   assert.match(source, /cancellation_effectiveness/);
 });
 
+test('useAIConsole resets cancellation diagnostics at request start to avoid stale carry-over', () => {
+  assert.match(source, /execution_cancelled:\s*false/);
+  assert.match(source, /provider_cancelled:\s*false/);
+  assert.match(source, /ollama_abort_sent:\s*false/);
+  assert.match(source, /abort_forwarded_to_router:\s*false/);
+  assert.match(source, /abort_forwarded_to_provider:\s*false/);
+  assert.match(source, /abort_forwarded_to_ollama_fetch:\s*false/);
+  assert.match(source, /setLastExecutionMetadata\(\(prev\)\s*=>\s*\(\{/);
+});
+
+test('useAIConsole normalizes cancellation truth from current request payload instead of stale request trace fallback', () => {
+  assert.match(source, /execution_cancelled:\s*Boolean\(executionMetadata\.execution_cancelled \?\? requestPayload\.execution_cancelled \?\? false\)/);
+  assert.match(source, /provider_cancelled:\s*Boolean\(executionMetadata\.provider_cancelled \?\? requestPayload\.provider_cancelled \?\? false\)/);
+  assert.match(source, /const routerSelectedProvider = normalizeProviderKey\(/);
+  assert.match(source, /\|\|\s*requestPayload\.routeDecision\?\.selectedProvider/);
+  assert.match(source, /\|\|\s*requestPayload\.router_selected_provider/);
+});
+
 test('useAIConsole timeout metadata preserves stream truth and uses UI timeout layer instead of fixed label checks', () => {
   assert.match(source, /const uiTimeoutTriggered = timeoutDetails\.timeoutFailureLayer === 'ui'/);
   assert.match(source, /const inactivityTimeoutTriggered = timeoutDetails\.timeoutLabel === 'ui_stream_inactivity_timeout_ms'/);
