@@ -54,7 +54,7 @@ test('hosted cloud unresolved backend-target informational issues do not degrade
 
   assert.equal(projection.launchState, 'ready');
   assert.equal(projection.tone, 'ready');
-  assert.match(projection.summary, /blockingIssues n\/a/);
+  assert.match(projection.summary, /Mission systems: Active/);
 });
 
 
@@ -83,8 +83,7 @@ test('hosted canonical cloud ready truth is not overridden by compatibility degr
   assert.equal(projection.fallbackActive, 'no');
   assert.equal(projection.drift, true);
   assert.match(projection.diagnosticLabel, /route:dist->cloud/);
-  assert.doesNotMatch(projection.summary, /launch degraded/);
-  assert.doesNotMatch(projection.summary, /route dist/);
+  assert.match(projection.summary, /Mission systems: Active/);
 });
 
 test('hosted cloud with executable groq and no fallback projects cloud/groq truth', () => {
@@ -136,7 +135,7 @@ test('tile projection uses executable provider truth over requested provider int
   }));
 
   assert.equal(projection.executableProvider, 'groq');
-  assert.match(projection.summary, /executable provider groq/);
+  assert.equal(projection.landingTileSummary.overallStatus, 'Mission systems: Active');
 });
 
 test('tile projection carries compact agent task layer summary when provided by runtime model', () => {
@@ -166,5 +165,6 @@ test('tile projection carries compact agent task layer summary when provided by 
   assert.equal(projection.agentTaskSummary.agentTaskLayerStatus, 'in_progress');
   assert.equal(projection.agentTaskSummary.codexReadiness, 'manual_handoff_only');
   assert.equal(projection.agentTaskSummary.openClawReadiness, 'needs_policy');
-  assert.match(projection.summary, /agentLayer in_progress/);
+  assert.equal(projection.landingTileSummary.nextAction, 'Wire existing Agent Tile to Agent Task projection');
+  assert.equal(projection.landingTileSummary.topBlocker, 'approve_handoff gate is pending');
 });
