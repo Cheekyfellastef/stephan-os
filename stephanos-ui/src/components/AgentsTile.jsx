@@ -121,6 +121,17 @@ export default function AgentsTile({
             <li><strong>OpenClaw pause/cutoff:</strong> {operatorTask.openClawKillSwitchEngaged ? 'engaged (paused)' : 'not engaged'}</li>
             <li><strong>OpenClaw highest priority blocker:</strong> {operatorTask.openClawHighestPriorityBlocker || 'none'}</li>
             <li><strong>OpenClaw next action:</strong> {operatorTask.openClawNextAction || 'not reported'}</li>
+            <li><strong>OpenClaw adapter mode:</strong> {operatorTask.openClawAdapterMode || 'design_only'}</li>
+            <li><strong>OpenClaw adapter readiness:</strong> {operatorTask.openClawAdapterReadiness || 'needs_contract'}</li>
+            <li><strong>OpenClaw adapter connection:</strong> {operatorTask.openClawAdapterConnectionState || 'not_configured'}</li>
+            <li><strong>OpenClaw adapter execution mode:</strong> {operatorTask.openClawAdapterExecutionMode || 'disabled'}</li>
+            <li><strong>OpenClaw adapter can execute:</strong> {operatorTask.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter safe to connect:</strong> {operatorTask.openClawAdapterSafeToConnect ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter top blocker:</strong> {operatorTask.openClawAdapterHighestPriorityBlocker || 'none'}</li>
+            <li><strong>OpenClaw adapter next action:</strong> {operatorTask.openClawAdapterNextAction || 'not reported'}</li>
+            <li><strong>OpenClaw adapter capabilities:</strong> {formatReportedList(Object.entries(operatorTask.openClawAdapterCapabilities || {}).filter(([, enabled]) => enabled === true).map(([key]) => key), 'none')}</li>
+            <li><strong>OpenClaw adapter required approvals:</strong> {formatReportedList(operatorTask.openClawAdapterRequiredApprovals)}</li>
+            <li><strong>OpenClaw adapter evidence contract:</strong> {formatReportedList(operatorTask.openClawAdapterEvidenceContract)}</li>
             <li><strong>Approval gates pending:</strong> {formatReportedList(operatorTask.approvalPending)}</li>
             <li><strong>Handoff readiness:</strong> {operatorTask.handoffReady ? 'ready' : 'blocked'} ({operatorTask.handoffMode})</li>
             <li><strong>Codex handoff readiness:</strong> {operatorTask.codexHandoffPacketReady ? 'ready' : 'blocked'}</li>
@@ -142,8 +153,8 @@ export default function AgentsTile({
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
-          {operatorTask.openClawDirectAutomationDisabled ? (
-            <p className="muted"><strong>OpenClaw policy notice:</strong> policy-only/manual-only posture is active; direct OpenClaw automation remains disabled.</p>
+          {operatorTask.openClawDirectAutomationDisabled || ['design_only', 'contract_defined'].includes(operatorTask.openClawAdapterMode || '') ? (
+            <p className="muted"><strong>OpenClaw policy notice:</strong> adapter design/contract only, no live automation.</p>
           ) : null}
           <div className="agents-tile-copy-actions">
             <button

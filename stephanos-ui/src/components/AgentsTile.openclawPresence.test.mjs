@@ -30,6 +30,17 @@ test('AgentsTile renders OpenClaw bounded presence and integration topology fiel
     'OpenClaw direct automation disabled:',
     'OpenClaw kill-switch mode:',
     'OpenClaw pause/cutoff:',
+    'OpenClaw adapter evidence contract:',
+    'OpenClaw adapter required approvals:',
+    'OpenClaw adapter capabilities:',
+    'OpenClaw adapter next action:',
+    'OpenClaw adapter top blocker:',
+    'OpenClaw adapter safe to connect:',
+    'OpenClaw adapter can execute:',
+    'OpenClaw adapter execution mode:',
+    'OpenClaw adapter connection:',
+    'OpenClaw adapter readiness:',
+    'OpenClaw adapter mode:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('Mission Console'), false);

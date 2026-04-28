@@ -25,8 +25,15 @@ test('openClaw policy harness only marks safe-to-use true when adapter, approval
     localAdapterAvailable: true,
     requiredApprovals: ['approve_handoff', 'approve_command_execution'],
     satisfiedApprovals: ['approve_handoff', 'approve_command_execution'],
-    killSwitchState: 'available',
+    killSwitchState: 'disengaged',
     blockers: [],
+    openClawAdapter: {
+      adapterMode: 'connected',
+      adapterConnectionState: 'connected',
+      adapterExecutionMode: 'enabled',
+      adapterRequiredApprovals: ['approve_openclaw_adapter_enable'],
+      adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable'],
+    },
   });
 
   assert.equal(summary.openClawSafeToUse, true);
@@ -43,9 +50,16 @@ test('openClaw policy harness keeps execution blocked when kill switch is engage
     satisfiedApprovals: ['approve_handoff'],
     killSwitchState: 'engaged',
     blockers: [],
+    openClawAdapter: {
+      adapterMode: 'connected',
+      adapterConnectionState: 'connected',
+      adapterExecutionMode: 'enabled',
+      adapterRequiredApprovals: ['approve_openclaw_adapter_enable'],
+      adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable'],
+    },
   });
 
-  assert.equal(summary.openClawSafeToUse, true);
+  assert.equal(summary.openClawSafeToUse, false);
   assert.equal(summary.openClawExecutionAllowed, false);
   assert.equal(summary.killSwitchState, 'engaged');
 });

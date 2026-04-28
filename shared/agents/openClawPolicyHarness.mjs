@@ -1,4 +1,5 @@
 import { adjudicateOpenClawKillSwitch } from './openClawKillSwitch.mjs';
+import { adjudicateOpenClawLocalAdapter } from './openClawLocalAdapter.mjs';
 
 function asText(value = '', fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -50,7 +51,25 @@ export function adjudicateOpenClawPolicyHarness(input = {}) {
   const adapterSatisfied = adapterPresent && ((mode === 'local_adapter' && localAdapter) || (mode === 'direct_adapter' && directAdapter));
   const noBlockers = blockers.length === 0;
   const approvalsComplete = approvalsMissing.length === 0;
-  const safetyPreconditionsSatisfied = modeSupportsAutomation && adapterSatisfied && approvalsComplete && noBlockers;
+
+  const adapterSummary = adjudicateOpenClawLocalAdapter({
+    ...(source.openClawAdapter || {}),
+    killSwitchAvailable: ['available', 'disengaged'].includes(killSwitchState),
+    killSwitchEngaged: killSwitchState === 'engaged',
+    policyHarnessPresent: true,
+    policyAllowsExecution: modeSupportsAutomation,
+    adapterBlockers: source.openClawAdapter?.adapterBlockers || [],
+    adapterWarnings: source.openClawAdapter?.adapterWarnings || [],
+    adapterRequiredApprovals: source.openClawAdapter?.adapterRequiredApprovals,
+    adapterSatisfiedApprovals: source.openClawAdapter?.adapterSatisfiedApprovals,
+  });
+
+  const safetyPreconditionsSatisfied = modeSupportsAutomation
+    && adapterSatisfied
+    && approvalsComplete
+    && noBlockers
+    && adapterSummary.adapterExecutionPreconditionsSatisfied;
+
   const killSwitch = adjudicateOpenClawKillSwitch({
     integrationMode: mode,
     killSwitchState,
@@ -59,37 +78,48 @@ export function adjudicateOpenClawPolicyHarness(input = {}) {
     killSwitchWarnings: source.killSwitchWarnings,
     killSwitchReason: source.killSwitchReason,
     killSwitchNextAction: source.killSwitchNextAction,
+    adapterReadiness: adapterSummary.adapterReadiness,
+    adapterCanExecute: adapterSummary.adapterCanExecute,
   });
   const killSwitchAvailable = ['available', 'disengaged', 'engaged'].includes(killSwitch.killSwitchState);
-  const openClawSafeToUse = modeSupportsAutomation && adapterSatisfied && approvalsComplete && killSwitchAvailable && noBlockers;
+  const openClawSafeToUse = modeSupportsAutomation
+    && adapterSatisfied
+    && approvalsComplete
+    && killSwitchAvailable
+    && killSwitch.killSwitchState !== 'engaged'
+    && noBlockers
+    && adapterSummary.adapterCanExecute
+    && killSwitch.openClawExecutionAllowed;
 
   let readiness = 'needs_policy';
   if (openClawSafeToUse) {
     readiness = 'ready';
   } else if (mode === 'policy_only') {
     readiness = 'needs_policy';
-  } else if (!adapterSatisfied) {
+  } else if (!adapterSatisfied || ['needs_contract', 'needs_local_stub', 'needs_connection'].includes(adapterSummary.adapterReadiness)) {
     readiness = 'needs_adapter';
-  } else if (!approvalsComplete) {
+  } else if (!approvalsComplete || adapterSummary.adapterApprovalsComplete !== true) {
     readiness = 'needs_approval';
   } else {
     readiness = 'blocked';
   }
 
   const highestPriorityBlocker = blockers[0]
+    || adapterSummary.adapterBlockers[0]
     || killSwitch.killSwitchBlockers[0]
     || (killSwitchAvailable ? '' : 'Kill switch must be wired and operator-reachable.')
     || (approvalsMissing[0] ? `Approval missing: ${approvalsMissing[0]}` : '')
     || (modeSupportsAutomation ? '' : 'Policy-only harness is active; direct automation is intentionally disabled.');
   const nextAction = mode === 'policy_only'
     ? killSwitch.killSwitchNextAction
-    : !killSwitchAvailable
-      ? 'Wire and validate OpenClaw kill switch before enabling automation.'
-      : !adapterSatisfied
-        ? 'Complete adapter implementation and bind operator approvals.'
-        : approvalsMissing.length > 0
-          ? `Obtain missing approvals: ${approvalsMissing.join(', ')}.`
-          : blockers[0] || 'Resolve remaining OpenClaw blockers.';
+    : adapterSummary.adapterNextAction
+      || (!killSwitchAvailable
+        ? 'Wire and validate OpenClaw kill switch before enabling automation.'
+        : !adapterSatisfied
+          ? 'Complete adapter implementation and bind operator approvals.'
+          : approvalsMissing.length > 0
+            ? `Obtain missing approvals: ${approvalsMissing.join(', ')}.`
+            : blockers[0] || 'Resolve remaining OpenClaw blockers.');
 
   return {
     integrationMode: mode,
@@ -111,11 +141,12 @@ export function adjudicateOpenClawPolicyHarness(input = {}) {
     killSwitchEvidence: killSwitch.killSwitchEvidence,
     operatorCanPauseOpenClaw: killSwitch.operatorCanPauseOpenClaw,
     operatorCanResumeOpenClaw: killSwitch.operatorCanResumeOpenClaw,
-    openClawExecutionAllowed: killSwitch.openClawExecutionAllowed,
+    openClawExecutionAllowed: killSwitch.openClawExecutionAllowed && adapterSummary.adapterCanExecute,
     blockers,
     highestPriorityBlocker,
     nextAction,
     openClawSafeToUse,
     openClawReadiness: readiness,
+    openClawAdapter: adapterSummary,
   };
 }
