@@ -266,6 +266,9 @@ export function buildMissionHandoffText(state, { projectedMilestones = null, nex
         lines.push(`  blocks: ${action.blocks.join(', ')}`);
       }
       lines.push(`  source: ${action.source || 'live_projection'}`);
+      if (Array.isArray(action.evidence) && action.evidence.length > 0) {
+        lines.push(`  evidence: ${action.evidence.slice(0, 4).join(' | ')}`);
+      }
     });
   } else {
     lines.push('Next Best Actions: unavailable - no project-progress summary supplied');

@@ -222,6 +222,8 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
     openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
     openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
+    codexManualHandoffMode: toLower(source.codexManualHandoffMode || source.codexHandoffPacketMode, 'unknown'),
+    codexManualHandoffReady: source.codexManualHandoffReady === true || source.codexHandoffPacketReady === true,
     nextAgentTaskAction,
     nextActions,
     readinessScore: Number.isFinite(Number(source.readinessScore)) ? Math.max(0, Math.min(100, Number(source.readinessScore))) : null,
@@ -229,6 +231,83 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     warnings,
     evidence,
   };
+}
+
+function hasAgentTaskLayerEvidence(summary = {}) {
+  if (!summary.available) return false;
+  if (summary.evidence.length > 0) return true;
+  if (summary.nextActions.length > 0) return true;
+  return !['unknown', 'not_started', 'preparing'].includes(summary.agentTaskLayerStatus);
+}
+
+function hasVerificationReturnState(summary = {}) {
+  if (!summary.available) return false;
+  if (summary.verificationReturnReady === true) return true;
+  if (summary.verificationReturnNextAction) return true;
+  if (summary.verificationReturnBlockers.length > 0 || summary.verificationReturnWarnings.length > 0) return true;
+  return !['unknown', 'none', 'not_started'].includes(summary.verificationReturnStatus);
+}
+
+function hasOpenClawStubEvidence(summary = {}) {
+  return ['health_check_only', 'simulated_ready', 'present_disabled'].includes(summary.openClawAdapterStubStatus)
+    || ['local_only', 'simulated', 'connected'].includes(summary.openClawAdapterStubConnectionState)
+    || summary.openClawAdapterMode === 'local_stub';
+}
+
+function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder, launcherEntry }) {
+  const suppressed = new Set();
+  const hasAgentLayer = hasAgentTaskLayerEvidence(agentTaskSummary);
+  if (hasAgentLayer) {
+    suppressed.add('build-agent-task-layer-v1');
+  }
+  if (hasAgentLayer && !/wire existing agent tile/i.test(agentTaskSummary.nextAgentTaskAction || '')) {
+    suppressed.add('upgrade-agents-tile-status-surface');
+  }
+  if (['manual_handoff_only', 'ready'].includes(agentTaskSummary.codexReadiness) || agentTaskSummary.codexManualHandoffReady) {
+    suppressed.add('add-codex-handoff-mode');
+  }
+  if (hasVerificationReturnState(agentTaskSummary)) {
+    suppressed.add('add-verification-return-loop');
+  }
+  if (telemetry.available) {
+    suppressed.add('add-telemetry-summary-export');
+  }
+  if (promptBuilder.available) {
+    suppressed.add('add-prompt-builder-summary-export');
+  }
+  if (promptBuilder.available
+    && promptBuilder.supportsAgentTaskContext
+    && promptBuilder.supportsTelemetryContext
+    && promptBuilder.supportsRuntimeTruthContext) {
+    suppressed.add('bind-prompt-builder-contexts');
+  }
+  if (launcherEntry?.available) {
+    suppressed.add('add-launcher-entry-summary-export');
+  }
+  if (agentTaskSummary.openClawKillSwitchState && !['required', 'missing', 'unknown', 'unavailable'].includes(agentTaskSummary.openClawKillSwitchState)) {
+    suppressed.add('wire-openclaw-kill-switch');
+  }
+  if (!['design_only', 'unavailable', 'unknown'].includes(agentTaskSummary.openClawAdapterMode)) {
+    suppressed.add('design-openclaw-local-adapter');
+  }
+  if (hasOpenClawStubEvidence(agentTaskSummary)) {
+    suppressed.add('create-openclaw-local-adapter-stub');
+  }
+  if (agentTaskSummary.openClawAdapterConnectionState === 'connected') {
+    suppressed.add('connect-openclaw-local-adapter');
+  }
+  if (agentTaskSummary.openClawApprovalsComplete) {
+    suppressed.add('complete-openclaw-approval-gates');
+  }
+  return suppressed;
+}
+
+function prioritizeAction(actions, actionId) {
+  const index = actions.findIndex((action) => action.id === actionId);
+  if (index <= 0) return actions;
+  const [selected] = actions.splice(index, 1);
+  actions.unshift(selected);
+  return actions;
 }
 
 function resolveAgentTaskActionIndex(nextAgentTaskAction = '') {
@@ -474,35 +553,43 @@ export function adjudicateProjectProgress({
     .filter((lane) => lane.status === 'unknown' || lane.status === 'not-started' || lane.status === 'partial')
     .map((lane) => ({ id: lane.id, title: lane.title, risk: lane.why || 'Risk details pending.' }));
 
+  const suppressedActionIds = collectSuppressedActionIds({
+    agentTaskSummary,
+    telemetry,
+    promptBuilder,
+    launcherEntry,
+  });
+
   const nextBestActions = [...DEFAULT_NEXT_ACTIONS]
     .sort((a, b) => b.dependencyImpact - a.dependencyImpact)
     .filter((action, index) => {
+      if (suppressedActionIds.has(action.id)) return false;
       const nextIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction || nextAction?.title);
       if (nextIndex < 0) return true;
       return index >= nextIndex;
     });
 
   if (!telemetry.available) {
-    nextBestActions.sort((a, b) => (a.id === 'add-telemetry-summary-export' ? -1 : b.id === 'add-telemetry-summary-export' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'add-telemetry-summary-export');
   } else if (['not_started', 'started', 'degraded'].includes(telemetry.status)) {
-    nextBestActions.sort((a, b) => (a.id === 'bind-telemetry-lifecycle-context' ? -1 : b.id === 'bind-telemetry-lifecycle-context' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'bind-telemetry-lifecycle-context');
   } else if (!promptBuilder.available) {
-    nextBestActions.sort((a, b) => (a.id === 'add-prompt-builder-summary-export' ? -1 : b.id === 'add-prompt-builder-summary-export' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'add-prompt-builder-summary-export');
   } else if (!promptBuilder.supportsAgentTaskContext || !promptBuilder.supportsTelemetryContext || !promptBuilder.supportsRuntimeTruthContext) {
-    nextBestActions.sort((a, b) => (a.id === 'bind-prompt-builder-contexts' ? -1 : b.id === 'bind-prompt-builder-contexts' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'bind-prompt-builder-contexts');
   }
 
   if (!launcherEntry?.available) {
-    nextBestActions.sort((a, b) => (a.id === 'add-launcher-entry-summary-export' ? -1 : b.id === 'add-launcher-entry-summary-export' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'add-launcher-entry-summary-export');
   } else if (launcherEntry.diagnosticOverloadRisk) {
-    nextBestActions.sort((a, b) => (a.id === 'declutter-landing-tile-summary' ? -1 : b.id === 'declutter-landing-tile-summary' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'declutter-landing-tile-summary');
   } else if (Array.isArray(launcherEntry.shortcutSurfaces) && launcherEntry.shortcutSurfaces.some((entry) => entry?.present && entry?.statusSummaryAvailable !== true)) {
-    nextBestActions.sort((a, b) => (a.id === 'populate-launcher-shortcut-status' ? -1 : b.id === 'populate-launcher-shortcut-status' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'populate-launcher-shortcut-status');
   }
 
   const currentActionIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction || nextAction?.title);
   if (agentTaskSummary.available && currentActionIndex >= 3 && agentTaskSummary.verificationReturnReady !== true) {
-    nextBestActions.sort((a, b) => (a.id === 'add-verification-return-loop' ? -1 : b.id === 'add-verification-return-loop' ? 1 : 0));
+    prioritizeAction(nextBestActions, 'add-verification-return-loop');
   }
   if (agentTaskSummary.available
     && agentTaskSummary.verificationReturnReady === true
@@ -530,36 +617,39 @@ export function adjudicateProjectProgress({
       && adapterMode === 'connected'
       && agentTaskSummary.openClawApprovalsComplete !== true;
     if (shouldWireKillSwitch) {
-      nextBestActions.sort((a, b) => (a.id === 'wire-openclaw-kill-switch' ? -1 : b.id === 'wire-openclaw-kill-switch' ? 1 : 0));
+      prioritizeAction(nextBestActions, 'wire-openclaw-kill-switch');
     } else if (shouldDesignAdapter) {
-      nextBestActions.sort((a, b) => (a.id === 'design-openclaw-local-adapter' ? -1 : b.id === 'design-openclaw-local-adapter' ? 1 : 0));
+      prioritizeAction(nextBestActions, 'design-openclaw-local-adapter');
     } else if (shouldCreateStub) {
-      nextBestActions.sort((a, b) => (a.id === 'create-openclaw-local-adapter-stub' ? -1 : b.id === 'create-openclaw-local-adapter-stub' ? 1 : 0));
+      prioritizeAction(nextBestActions, 'create-openclaw-local-adapter-stub');
     } else if (shouldConnectAdapter) {
-      nextBestActions.sort((a, b) => (a.id === 'connect-openclaw-local-adapter' ? -1 : b.id === 'connect-openclaw-local-adapter' ? 1 : 0));
+      prioritizeAction(nextBestActions, 'connect-openclaw-local-adapter');
     } else if (shouldCompleteApprovals) {
-      nextBestActions.sort((a, b) => (a.id === 'complete-openclaw-approval-gates' ? -1 : b.id === 'complete-openclaw-approval-gates' ? 1 : 0));
+      prioritizeAction(nextBestActions, 'complete-openclaw-approval-gates');
     }
   }
 
-  if (!telemetry.available) {
-    nextBestActions.sort((a, b) => (a.id === 'add-telemetry-summary-export' ? -1 : b.id === 'add-telemetry-summary-export' ? 1 : 0));
-  } else if (['not_started', 'started', 'degraded'].includes(telemetry.status)) {
-    nextBestActions.sort((a, b) => (a.id === 'bind-telemetry-lifecycle-context' ? -1 : b.id === 'bind-telemetry-lifecycle-context' ? 1 : 0));
-  } else if (!promptBuilder.available) {
-    nextBestActions.sort((a, b) => (a.id === 'add-prompt-builder-summary-export' ? -1 : b.id === 'add-prompt-builder-summary-export' ? 1 : 0));
-  } else if (!promptBuilder.supportsAgentTaskContext || !promptBuilder.supportsTelemetryContext || !promptBuilder.supportsRuntimeTruthContext) {
-    nextBestActions.sort((a, b) => (a.id === 'bind-prompt-builder-contexts' ? -1 : b.id === 'bind-prompt-builder-contexts' ? 1 : 0));
-  }
 
+  const nextBestActionsWithEvidence = nextBestActions.map((action) => ({
+    ...action,
+    source: 'project_progress_adjudicator',
+    evidence: [
+      `suppressed-actions:${suppressedActionIds.size}`,
+      agentTaskSummary.available ? `agent-task:${agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus}` : '',
+      telemetry.available ? `telemetry:${telemetry.status}` : 'telemetry:unavailable',
+      promptBuilder.available ? `prompt-builder:${promptBuilder.status}` : 'prompt-builder:unavailable',
+    ].filter(Boolean),
+  }));
 
+  const verificationBound = agentTaskSummary.available
+    ? ['started', 'partial', 'ready', 'complete'].includes(agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus)
+      || hasVerificationReturnState(agentTaskSummary)
+    : laneStatusIs(agentTaskLane, ['partial', 'started', 'mostly-ready', 'ready', 'complete']);
   const verificationStatus = {
     buildVerifyScriptsPresent: true,
-    taskCompletionBound: agentTaskSummary.available
-      ? ['started', 'partial', 'ready', 'complete'].includes(agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus)
-      : laneStatusIs(agentTaskLane, ['partial', 'started', 'mostly-ready', 'ready', 'complete']),
-    status: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete']) ? 'started' : 'not-started',
-    summary: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete'])
+    taskCompletionBound: verificationBound,
+    status: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete']) || hasVerificationReturnState(agentTaskSummary) ? 'started' : 'not-started',
+    summary: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete']) || hasVerificationReturnState(agentTaskSummary)
       ? 'Build/verify truth gates exist; task-linked closure loop still needed.'
       : 'Verification loop not started.',
   };
@@ -611,7 +701,7 @@ export function adjudicateProjectProgress({
       .map((lane) => ({ id: lane.id, title: lane.title, milestone: lane.lastMilestone })),
     verificationStatus,
     doctrineWarnings,
-    nextBestActions,
+    nextBestActions: nextBestActionsWithEvidence,
     agentTaskEvidence: agentTaskSummary.available ? agentTaskSummary : null,
     telemetryEvidence: telemetry.available ? telemetry : null,
     promptBuilderEvidence: promptBuilder.available ? promptBuilder : null,

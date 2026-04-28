@@ -35,6 +35,12 @@ function laneIndex(projection) {
   return new Map(lanes.map((lane) => [lane.id, lane]));
 }
 
+function pickActionTitle(nextBestActions = [], ids = []) {
+  if (!Array.isArray(nextBestActions) || nextBestActions.length === 0) return '';
+  const candidate = nextBestActions.find((action) => ids.includes(action?.id));
+  return asText(candidate?.title);
+}
+
 function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummary = {}, telemetrySummary = {}, promptBuilderSummary = {}, launcherEntrySummary = null, finalRouteTruth = null } = {}) {
   const lanes = laneIndex(projectProgressProjection);
   const verification = projectProgressProjection?.verificationStatus || {};
@@ -46,6 +52,7 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
   const codexLane = lanes.get('codex-handoff');
   const openClawLane = lanes.get('openclaw-control');
   const verifyLane = lanes.get('verification-loop');
+  const queue = Array.isArray(projectProgressProjection?.nextBestActions) ? projectProgressProjection.nextBestActions : [];
 
   const live = new Map();
 
@@ -53,7 +60,11 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
     source: 'live_projection',
     statusSeed: agentTaskSummary.status || agentLane?.status,
     blockerReason: asArray(agentTaskSummary.blockers)[0] || '',
-    nextAction: asText(agentTaskSummary.nextAgentTaskAction || agentTaskSummary.nextActions?.[0]?.title),
+    nextAction: asText(
+      agentTaskSummary.nextAgentTaskAction
+      || agentTaskSummary.nextActions?.[0]?.title
+      || pickActionTitle(queue, ['upgrade-agents-tile-status-surface', 'add-codex-handoff-mode', 'add-verification-return-loop']),
+    ),
     notes: 'Bound to shared Agent Task, Codex handoff, and Verification Return summaries.',
     evidence: [
       ...asArray(agentTaskSummary.evidence),
@@ -67,7 +78,11 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
     source: missionConsoleLane ? 'live_projection' : 'unknown',
     statusSeed: missionConsoleLane?.status,
     blockerReason: asArray(missionConsoleLane?.blockers)[0] || '',
-    nextAction: asText(projectProgressProjection?.nextBestActions?.[0]?.title, 'Elevate agent surfaces across Mission Dashboard and launcher entry points.'),
+    nextAction: asText(
+      pickActionTitle(queue, ['upgrade-agents-tile-status-surface', 'declutter-landing-tile-summary', 'populate-launcher-shortcut-status'])
+      || queue[0]?.title,
+      'Elevate agent surfaces across Mission Dashboard and launcher entry points.',
+    ),
     notes: 'Surface elevation projection sourced from Mission Console UI + Agent tile readiness lanes.',
     evidence: [...asArray(missionConsoleLane?.evidence), ...asArray(missionConsoleLane?.blockers).map((entry) => `Blocker: ${entry}`)],
     linkedSystems: ['mission-console-ui', 'agent-task-layer'],
@@ -108,7 +123,7 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
     source: intentLane || promptBuilderSummary.status ? 'mixed' : 'unknown',
     statusSeed: promptBuilderSummary.status || intentLane?.status,
     blockerReason: asArray(promptBuilderSummary.blockers)[0] || asArray(intentLane?.blockers)[0] || '',
-    nextAction: asText(promptBuilderSummary.nextActions?.[0] || projectProgressProjection?.nextBestActions?.find((action) => action.id.includes('prompt'))?.title),
+    nextAction: asText(promptBuilderSummary.nextActions?.[0] || pickActionTitle(queue, ['bind-prompt-builder-contexts', 'add-prompt-builder-summary-export'])),
     notes: 'Intent operator interface milestone combines Prompt Builder and intent/proposal lane summaries.',
     evidence: [...asArray(promptBuilderSummary.evidence), ...asArray(intentLane?.evidence)],
     linkedSystems: ['intent-proposal-engine', 'prompt-builder'],
@@ -149,7 +164,9 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
 
   live.set('build-verify-truth-gates', {
     source: verifyLane || verification ? 'verified_build' : 'unknown',
-    statusSeed: verification.taskCompletionBound ? 'ready' : (verifyLane?.status || verification.status),
+    statusSeed: verification.taskCompletionBound || asText(agentTaskSummary.verificationReturnStatus)
+      ? 'ready'
+      : (verifyLane?.status || verification.status),
     blockerReason: verification.taskCompletionBound ? '' : asText(agentTaskSummary.missingRequiredChecks?.[0]),
     nextAction: asText(agentTaskSummary.verificationReturnNextAction || projectProgressProjection?.nextBestActions?.find((action) => action.id.includes('verification'))?.title),
     notes: verification.summary || 'Build/verify truth gate summary unavailable.',
