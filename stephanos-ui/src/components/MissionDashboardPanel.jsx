@@ -158,12 +158,31 @@ export default function MissionDashboardPanel({
   }, [dashboardState.milestones, uiState.showBlockedOnly]);
 
   const metrics = useMemo(() => buildMissionSummaryMetrics(dashboardState), [dashboardState]);
+  const agentTaskSummary = useMemo(() => {
+    const summary = agentTaskProjection?.readinessSummary || {};
+    return {
+      agentTaskLayerStatus: summary.agentTaskLayerStatus || 'unknown',
+      codexReadiness: summary.codexReadiness || 'unknown',
+      openClawReadiness: summary.openClawReadiness || 'unknown',
+      nextAgentTaskAction: summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
+      blockers: Array.isArray(summary.agentTaskLayerBlockers) ? summary.agentTaskLayerBlockers : [],
+      readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Number(summary.readinessScore) : 0,
+    };
+  }, [agentTaskProjection]);
   const projectProgressProjection = useMemo(() => adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     runtimeStatus,
     finalRouteTruth,
     orchestrationSelectors,
-  }), [finalRouteTruth, orchestrationSelectors, runtimeStatus]);
+    agentTaskReadinessSummary: {
+      agentTaskLayerStatus: agentTaskSummary.agentTaskLayerStatus,
+      codexReadiness: agentTaskSummary.codexReadiness,
+      openClawReadiness: agentTaskSummary.openClawReadiness,
+      nextAgentTaskAction: agentTaskSummary.nextAgentTaskAction,
+      readinessScore: agentTaskSummary.readinessScore,
+      agentTaskLayerBlockers: agentTaskSummary.blockers,
+    },
+  }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, runtimeStatus]);
   const liveProjection = useMemo(() => {
     const missionView = finalAgentView?.finalMissionOrchestrationView || {};
     const approvalView = finalAgentView?.finalApprovalQueueView || {};
@@ -189,18 +208,6 @@ export default function MissionDashboardPanel({
       actionLadder: Array.isArray(orchestrationSelectors?.operatorActionLadder) ? orchestrationSelectors.operatorActionLadder : [],
     };
   }, [finalAgentView, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.capabilityPosture, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary]);
-  const agentTaskSummary = useMemo(() => {
-    const summary = agentTaskProjection?.readinessSummary || {};
-    return {
-      agentTaskLayerStatus: summary.agentTaskLayerStatus || 'unknown',
-      codexReadiness: summary.codexReadiness || 'unknown',
-      openClawReadiness: summary.openClawReadiness || 'unknown',
-      nextAgentTaskAction: summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
-      blockers: Array.isArray(summary.agentTaskLayerBlockers) ? summary.agentTaskLayerBlockers : [],
-      readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Number(summary.readinessScore) : 0,
-    };
-  }, [agentTaskProjection]);
-
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
