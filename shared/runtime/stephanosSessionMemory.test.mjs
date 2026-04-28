@@ -80,6 +80,9 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
         activeWorkspace: 'mission-console',
         activeSubview: 'memory',
         recentRoute: 'memory',
+        operatorPaneLayout: {
+          order: ['missionDashboardPanel', 'aiConsole', 'agentsPanel'],
+        },
         uiLayout: {
           commandDeck: true,
           memoryPanel: true,
@@ -112,6 +115,7 @@ test('persistStephanosSessionMemory writes central schema and legacy mirrors for
   assert.equal(restored.session.providerPreferences.hostedCloudCognition.providers.gemini.baseURL, 'https://worker-gemini.example.workers.dev');
   assert.equal(restored.session.providerPreferences.hostedCloudCognition.providers.groq.baseURL, 'https://worker-groq.example.workers.dev');
   assert.equal(restored.session.ui.recentRoute, 'memory');
+  assert.deepEqual(restored.session.ui.operatorPaneLayout.order, ['missionDashboardPanel', 'aiConsole', 'agentsPanel']);
   assert.equal(restored.session.ui.debugConsoleVisible, true);
   assert.equal(restored.working.recentCommands.length, 1);
   assert.equal(restored.working.recentCommands[0].raw_input, '/status');

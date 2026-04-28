@@ -67,6 +67,12 @@ import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shar
 import { buildAgentTaskProjection } from '../../shared/agents/agentTaskProjection.mjs';
 import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { buildOpenClawIntegrationSnapshot } from './components/openclaw/openclawIntegrationAdapter.js';
+import {
+  loadPaneOrder,
+  reconcilePaneOrder,
+  savePaneOrder,
+  STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY,
+} from './utils/paneOrderPersistence.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
@@ -749,6 +755,7 @@ export default function App() {
           onMissionBridgeUpdate={setMissionBridgeTruth}
           submitPrompt={submitPrompt}
           orchestrationTruth={orchestrationTruth}
+          agentTaskProjection={agentTaskProjection}
         />
       ),
     },
@@ -798,12 +805,14 @@ export default function App() {
     agentTaskProjection,
   ]);
 
+  const defaultPaneOrder = useMemo(() => paneDefinitions.map((pane) => pane.id), [paneDefinitions]);
   const safePaneOrder = useMemo(() => {
-    if (Array.isArray(safePaneLayout.order) && safePaneLayout.order.length > 0) {
-      return safePaneLayout.order;
-    }
-    return paneDefinitions.map((pane) => pane.id);
-  }, [paneDefinitions, safePaneLayout.order]);
+    const sessionOrder = Array.isArray(safePaneLayout.order) && safePaneLayout.order.length > 0
+      ? safePaneLayout.order
+      : [];
+    const storedOrder = loadPaneOrder(STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY, defaultPaneOrder);
+    return sessionOrder.length > 0 ? reconcilePaneOrder(sessionOrder, defaultPaneOrder) : storedOrder;
+  }, [defaultPaneOrder, safePaneLayout.order]);
 
   const paneMap = useMemo(() => new Map(paneDefinitions.map((pane) => [pane.id, pane])), [paneDefinitions]);
   const orderedPanes = useMemo(() => safePaneOrder
@@ -865,6 +874,10 @@ export default function App() {
   useEffect(() => {
     console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
     console.info('[PANES] layout restored from memory', { order: safePaneOrder });
+  }, [safePaneOrder]);
+
+  useEffect(() => {
+    savePaneOrder(STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY, safePaneOrder);
   }, [safePaneOrder]);
 
   if (cockpitSurfaceMode) {
@@ -955,6 +968,7 @@ export default function App() {
             onMissionBridgeUpdate={setMissionBridgeTruth}
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
+            agentTaskProjection={agentTaskProjection}
           />
         </section>
         <DebugConsole />
@@ -991,6 +1005,7 @@ export default function App() {
             onMissionBridgeUpdate={setMissionBridgeTruth}
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
+            agentTaskProjection={agentTaskProjection}
           />
           <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />

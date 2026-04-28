@@ -38,6 +38,7 @@ export default function MissionConsoleTile({
   onMissionBridgeUpdate = () => {},
   submitPrompt = null,
   orchestrationTruth = null,
+  agentTaskProjection = null,
 }) {
   const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
@@ -78,6 +79,21 @@ export default function MissionConsoleTile({
     }),
   ]);
   const [missionBridgeState, setMissionBridgeState] = useState(() => createMissionBridgeState());
+  const compactVerificationSummary = useMemo(() => {
+    const summary = agentTaskProjection?.readinessSummary || {};
+    const operatorSurface = agentTaskProjection?.operatorSurface || {};
+    const blockers = Array.isArray(summary.verificationReturnBlockers) ? summary.verificationReturnBlockers : [];
+    const warnings = Array.isArray(summary.verificationReturnWarnings) ? summary.verificationReturnWarnings : [];
+    const highestPriorityIssue = blockers[0] || warnings[0] || 'none';
+    return {
+      verificationReturnStatus: summary.verificationReturnStatus || operatorSurface.verificationReturnStatus || 'unknown',
+      verificationDecision: summary.verificationDecision || operatorSurface.verificationDecision || 'not_ready',
+      mergeReadiness: summary.mergeReadiness || operatorSurface.mergeReadiness || 'not_ready',
+      verificationReturnNextAction: summary.verificationReturnNextAction || operatorSurface.verificationReturnNextAction || 'not reported',
+      highestPriorityIssue,
+      manualOnly: (summary.codexManualHandoffMode || operatorSurface.codexHandoffPacketMode || '').toLowerCase() === 'manual_handoff_only',
+    };
+  }, [agentTaskProjection]);
 
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
   const resolvedTarget = resolveMissionConsoleTarget(targetId);
@@ -420,6 +436,15 @@ export default function MissionConsoleTile({
           <li><strong>mission bridge next action:</strong> {missionBridgeState.nextRecommendedAction}</li>
           <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
           <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
+        </ul>
+        <h5>Agent Task Verification Return (compact)</h5>
+        <ul>
+          <li><strong>verification return status:</strong> {compactVerificationSummary.verificationReturnStatus}</li>
+          <li><strong>verification decision:</strong> {compactVerificationSummary.verificationDecision}</li>
+          <li><strong>merge readiness:</strong> {compactVerificationSummary.mergeReadiness}</li>
+          <li><strong>verification return next action:</strong> {compactVerificationSummary.verificationReturnNextAction}</li>
+          <li><strong>highest priority blocker/warning:</strong> {compactVerificationSummary.highestPriorityIssue}</li>
+          <li><strong>manual-only handoff:</strong> {compactVerificationSummary.manualOnly ? 'yes' : 'no'}</li>
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>
