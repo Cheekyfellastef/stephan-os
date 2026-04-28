@@ -67,13 +67,48 @@ function laneStatusIs(lane, statuses = []) {
   return statuses.includes(lane.status);
 }
 
+function normalizeAgentTaskReadinessSummary(summary = {}) {
+  const source = summary && typeof summary === 'object' ? summary : {};
+  const toText = (value, fallback = 'unknown') => {
+    const text = String(value || '').trim();
+    return text || fallback;
+  };
+  const toLower = (value, fallback = 'unknown') => toText(value, fallback).toLowerCase();
+  const blockers = Array.isArray(source.agentTaskLayerBlockers)
+    ? source.agentTaskLayerBlockers.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    available: Object.keys(source).length > 0,
+    agentTaskLayerStatus: toLower(source.agentTaskLayerStatus),
+    codexReadiness: toLower(source.codexReadiness),
+    openClawReadiness: toLower(source.openClawReadiness),
+    nextAgentTaskAction: toText(source.nextAgentTaskAction, ''),
+    readinessScore: Number.isFinite(Number(source.readinessScore)) ? Math.max(0, Math.min(100, Number(source.readinessScore))) : null,
+    blockers,
+  };
+}
+
+function resolveAgentTaskActionIndex(nextAgentTaskAction = '') {
+  const normalized = String(nextAgentTaskAction || '').trim().toLowerCase();
+  if (!normalized) return -1;
+  if (normalized.includes('build canonical agent task model')) return 0;
+  if (normalized.includes('wire existing agent tile')) return 1;
+  if (normalized.includes('codex manual handoff')) return 2;
+  if (normalized.includes('verification return state')) return 3;
+  if (normalized.includes('openclaw policy harness')) return 4;
+  return -1;
+}
+
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
   runtimeStatus = {},
   finalRouteTruth = null,
   orchestrationSelectors = {},
+  agentTaskReadinessSummary = {},
 } = {}) {
   const normalized = normalizeProjectProgressModel(model);
+  const agentTaskSummary = normalizeAgentTaskReadinessSummary(agentTaskReadinessSummary);
   const weightedTotal = normalized.lanes.reduce((sum, lane) => sum + lane.weight, 0);
   const weightedScore = normalized.lanes.reduce((sum, lane) => sum + (getProjectStatusScore(lane.status) * lane.weight), 0);
   const overallReadinessScore = weightedTotal > 0 ? Math.round(weightedScore / weightedTotal) : 0;
@@ -92,11 +127,19 @@ export function adjudicateProjectProgress({
     .filter((lane) => lane.status === 'unknown' || lane.status === 'not-started' || lane.status === 'partial')
     .map((lane) => ({ id: lane.id, title: lane.title, risk: lane.why || 'Risk details pending.' }));
 
-  const nextBestActions = [...DEFAULT_NEXT_ACTIONS].sort((a, b) => b.dependencyImpact - a.dependencyImpact);
+  const nextBestActions = [...DEFAULT_NEXT_ACTIONS]
+    .sort((a, b) => b.dependencyImpact - a.dependencyImpact)
+    .filter((action, index) => {
+      const nextIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction);
+      if (nextIndex < 0) return true;
+      return index >= nextIndex;
+    });
 
   const verificationStatus = {
     buildVerifyScriptsPresent: true,
-    taskCompletionBound: laneStatusIs(agentTaskLane, ['partial', 'started', 'mostly-ready', 'ready', 'complete']),
+    taskCompletionBound: agentTaskSummary.available
+      ? ['preparing', 'in_progress', 'ready'].includes(agentTaskSummary.agentTaskLayerStatus)
+      : laneStatusIs(agentTaskLane, ['partial', 'started', 'mostly-ready', 'ready', 'complete']),
     status: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete']) ? 'started' : 'not-started',
     summary: laneStatusIs(verificationLane, ['started', 'partial', 'mostly-ready', 'ready', 'complete'])
       ? 'Build/verify truth gates exist; task-linked closure loop still needed.'
@@ -104,7 +147,9 @@ export function adjudicateProjectProgress({
   };
 
   const doctrineWarnings = [];
-  if (laneStatusIs(agentTaskLane, ['not-started', 'unknown'])) {
+  if (agentTaskSummary.available
+    ? ['unknown', 'preparing'].includes(agentTaskSummary.agentTaskLayerStatus)
+    : laneStatusIs(agentTaskLane, ['not-started', 'unknown'])) {
     doctrineWarnings.push('Agent Task Layer is not canonical yet; keep Codex/OpenClaw orchestration as supervised/manual projection only.');
   }
   if (laneStatusIs(openClawLane, ['blocked', 'not-started', 'partial'])) {
@@ -124,7 +169,11 @@ export function adjudicateProjectProgress({
     lanes: normalized.lanes,
     readiness: {
       codex: codexLane ? codexLane.status : 'unknown',
-      agent: agentTaskLane ? agentTaskLane.status : 'unknown',
+      agent: agentTaskSummary.available
+        ? agentTaskSummary.agentTaskLayerStatus
+        : agentTaskLane
+          ? agentTaskLane.status
+          : 'unknown',
       openClaw: openClawLane ? openClawLane.status : 'unknown',
     },
     blockers,
@@ -136,5 +185,6 @@ export function adjudicateProjectProgress({
     verificationStatus,
     doctrineWarnings,
     nextBestActions,
+    agentTaskEvidence: agentTaskSummary.available ? agentTaskSummary : null,
   };
 }

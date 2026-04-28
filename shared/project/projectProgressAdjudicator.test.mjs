@@ -14,6 +14,24 @@ test('adjudicateProjectProgress returns seeded lanes and ranked next actions', (
   assert.equal(projection.verificationStatus.status, 'started');
 });
 
+test('adjudicateProjectProgress advances next best action when Agent Task summary indicates canonical model exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'needs_adapter',
+      openClawReadiness: 'needs_policy',
+      nextAgentTaskAction: 'Wire existing Agent Tile to Agent Task projection',
+      readinessScore: 52,
+      agentTaskLayerBlockers: ['Agent tile is not consuming projection yet.'],
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'upgrade-agents-tile-status-surface');
+  assert.equal(projection.readiness.agent, 'in_progress');
+  assert.equal(projection.agentTaskEvidence?.nextAgentTaskAction, 'Wire existing Agent Tile to Agent Task projection');
+});
+
 test('adjudicateProjectProgress emits doctrine warnings for localhost assumption drift', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
