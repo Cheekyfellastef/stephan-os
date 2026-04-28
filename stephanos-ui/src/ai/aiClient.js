@@ -1069,6 +1069,7 @@ export async function sendPrompt({
   uiRequestedProvider = '',
   requestSideSelectedProvider = '',
   routerSelectedProvider = '',
+  requestExecutionId = '',
   providerOverrideReason = '',
   routeMode = 'auto',
   providerConfigs = {},
@@ -1132,6 +1133,7 @@ export async function sendPrompt({
   };
   const payload = {
     prompt,
+    request_execution_id: firstNonEmpty(requestExecutionId),
     provider,
     ui_requested_provider: firstNonEmpty(uiRequestedProvider, routeDecision?.uiRequestedProvider, provider),
     request_side_selected_provider: firstNonEmpty(requestSideSelectedProvider, provider),
