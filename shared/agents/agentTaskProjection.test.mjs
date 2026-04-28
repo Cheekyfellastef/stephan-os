@@ -39,3 +39,30 @@ test('agent task projection exposes readiness summary payload for mission dashbo
   assert.equal(projection.readinessSummary.nextAgentTaskAction.length > 0, true);
   assert.equal(projection.readinessSummary.agentTaskLayerBlockers.length > 0, true);
 });
+
+test('agent task projection exposes codex manual handoff packet summary and packet text', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      taskIdentity: {
+        title: 'Manual handoff',
+        operatorIntent: 'Prepare Codex packet.',
+      },
+      taskLifecycle: { state: 'in_progress' },
+      approvalGates: {
+        required: ['approve_scope', 'approve_handoff'],
+        approved: ['approve_scope', 'approve_handoff'],
+      },
+      handoff: {
+        handoffReady: true,
+        handoffTarget: 'codex',
+        handoffMode: 'manual_prompt',
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.codexHandoffPacketMode, 'manual_prompt');
+  assert.equal(projection.operatorSurface.codexHandoffPacketReady, true);
+  assert.match(projection.operatorSurface.codexHandoffPacketSummary, /ready/i);
+  assert.match(projection.operatorSurface.codexHandoffPacketText, /Codex Manual Handoff Packet \(v1\)/i);
+  assert.equal(projection.readinessSummary.codexManualHandoffReady, true);
+});

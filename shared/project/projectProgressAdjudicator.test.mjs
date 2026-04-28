@@ -47,3 +47,24 @@ test('adjudicateProjectProgress emits doctrine warnings for localhost assumption
   assert.equal(projection.doctrineWarnings.length >= 2, true);
   assert.match(projection.doctrineWarnings.join('\n'), /route launchability/i);
 });
+
+test('adjudicateProjectProgress advances next action to verification when codex manual handoff is ready', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'started',
+      phase: 'in_progress',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'not_started',
+      nextAgentTaskAction: 'Add verification return state',
+      nextActions: [
+        { title: 'Add verification return state', reason: 'Need verification loop.' },
+      ],
+      readinessScore: 68,
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
+});

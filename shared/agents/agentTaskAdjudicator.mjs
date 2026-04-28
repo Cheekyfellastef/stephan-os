@@ -1,4 +1,5 @@
 import { normalizeAgentTaskModel } from './agentTaskModel.mjs';
+import { buildCodexHandoffPacket } from './codexHandoffPacket.mjs';
 
 const LAYER_ACTIONS = Object.freeze([
   {
@@ -116,6 +117,10 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
 
   const layerStatus = resolveLayerStatus(normalized);
   const readinessScore = resolveReadinessScore(normalized);
+  const codexHandoffPacket = buildCodexHandoffPacket({
+    model: normalized,
+    approvalPending: pendingApprovals,
+  });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -133,6 +138,12 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     handoff: {
       ...normalized.handoff,
       handoffReady: normalized.handoff.handoffReady === true && pendingApprovals.length === 0,
+      packetMode: codexHandoffPacket.mode,
+      packetReady: codexHandoffPacket.ready,
+      packetSummary: codexHandoffPacket.packetSummary,
+      packetBlockers: codexHandoffPacket.blockers,
+      packetText: codexHandoffPacket.packetText,
+      nextActionLabel: codexHandoffPacket.nextActionLabel,
     },
     verification: {
       required: verificationRequired,
