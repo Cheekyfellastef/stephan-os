@@ -68,11 +68,14 @@ test('useAIConsole resets cancellation diagnostics at request start to avoid sta
 });
 
 test('useAIConsole normalizes cancellation truth from current request payload instead of stale request trace fallback', () => {
-  assert.match(source, /execution_cancelled:\s*Boolean\(executionMetadata\.execution_cancelled \?\? requestPayload\.execution_cancelled \?\? false\)/);
-  assert.match(source, /provider_cancelled:\s*Boolean\(executionMetadata\.provider_cancelled \?\? requestPayload\.provider_cancelled \?\? false\)/);
-  assert.match(source, /const routerSelectedProvider = normalizeProviderKey\(/);
-  assert.match(source, /\|\|\s*requestPayload\.routeDecision\?\.selectedProvider/);
-  assert.match(source, /\|\|\s*requestPayload\.router_selected_provider/);
+  assert.match(source, /const normalizedCancellation = successClassOutcome && !cancellationClassOutcome/);
+  assert.match(source, /execution_cancelled:\s*normalizedCancellation\.execution_cancelled/);
+  assert.match(source, /provider_cancelled:\s*normalizedCancellation\.provider_cancelled/);
+  assert.match(source, /ollama_abort_sent:\s*normalizedCancellation\.ollama_abort_sent/);
+  assert.match(source, /const rawRouterSelectedProvider = normalizeProviderKey\(/);
+  assert.match(source, /requestPayload\.routeDecision\?\.selectedProvider/);
+  assert.match(source, /requestPayload\.router_selected_provider/);
+  assert.match(source, /rawRouterSelectedProvider === requestSideSelectedProvider/);
 });
 
 test('useAIConsole timeout metadata preserves stream truth and uses UI timeout layer instead of fixed label checks', () => {
