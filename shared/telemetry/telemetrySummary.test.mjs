@@ -25,3 +25,23 @@ test('telemetry summary reports flowing when recent events are present', () => {
   assert.equal(summary.recentEventCount, 2);
   assert.match(summary.dashboardSummaryText, /flowing/i);
 });
+
+test('telemetry lifecycle binding reports missing without lifecycle evidence', () => {
+  const summary = buildTelemetrySummary({
+    telemetryEntries: [],
+    telemetryAvailable: true,
+    agentTaskLifecycle: {},
+  });
+  assert.equal(summary.lifecycleBindingStatus, 'missing');
+  assert.equal(summary.agentTaskLifecycleBound, false);
+});
+
+test('telemetry lifecycle binding reports partial when projection-derived lifecycle exists', () => {
+  const summary = buildTelemetrySummary({
+    telemetryEntries: [],
+    telemetryAvailable: true,
+    agentTaskLifecycle: { phase: 'in_progress' },
+  });
+  assert.equal(summary.lifecycleBindingStatus, 'partial');
+  assert.equal(summary.agentTaskLifecycleBound, true);
+});

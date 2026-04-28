@@ -243,6 +243,7 @@ export default function TelemetryFeed({ runtimeStatusModel, telemetryEntries = [
             <li>Status: {summary.status}</li>
             <li>Recent transitions: {summary.recentTransitions.slice(0, 2).join(' · ') || 'none'}</li>
             <li>Top warning/blocker: {summary.topWarning || summary.blockers[0] || 'none'}</li>
+            <li>Lifecycle: {summary.lifecycleBindingStatus || 'unknown'} · {summary.recentLifecycleEventCount || 0} recent {summary.taskLifecycleSignals?.some((s) => s.startsWith('projection-derived:')) ? 'projection-derived' : 'event-derived'}</li>
             <li>Next action: {summary.nextActions[0] || 'none'}</li>
           </ul>
 
