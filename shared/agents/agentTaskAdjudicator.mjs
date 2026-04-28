@@ -35,10 +35,22 @@ const LAYER_ACTIONS = Object.freeze([
     blocks: ['Safe OpenClaw execution gating'],
   },
   {
-    id: 'openclaw-local-adapter',
-    title: 'Design OpenClaw local adapter',
+    id: 'openclaw-local-adapter-contract',
+    title: 'Design OpenClaw local adapter contract',
     reason: 'Kill switch exists, but execution adapter contract is not implemented yet.',
     blocks: ['Local OpenClaw execution contract'],
+  },
+  {
+    id: 'openclaw-local-adapter-stub',
+    title: 'Create OpenClaw local adapter stub',
+    reason: 'Adapter contract exists; local stub is required before connection and approvals.',
+    blocks: ['Local OpenClaw connection contract'],
+  },
+  {
+    id: 'openclaw-local-adapter-connect',
+    title: 'Connect OpenClaw local adapter',
+    reason: 'Adapter stub exists but is not connected.',
+    blocks: ['Connected OpenClaw adapter readiness'],
   },
   {
     id: 'openclaw-approval-gates',
@@ -98,7 +110,11 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
   const sourceContext = context && typeof context === 'object' ? context : {};
   const approvalRequired = asArray(normalized.approvalGates.required);
   const pendingApprovals = approvalRequired.filter((gate) => !isApprovedGate(gate, normalized.approvalGates.approved));
-  const openClawPolicySummary = adjudicateOpenClawPolicyHarness(normalized.openClawPolicy);
+  const openClawPolicySummary = adjudicateOpenClawPolicyHarness({
+    ...normalized.openClawPolicy,
+    openClawAdapter: normalized.openClawAdapter,
+  });
+  const openClawAdapterSummary = openClawPolicySummary.openClawAdapter || normalized.openClawAdapter;
   const explicitBlockers = [
     ...asArray(normalized.handoff.handoffBlockers),
     ...asArray(normalized.evidence.blockers),
@@ -144,17 +160,29 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     if (candidate.id === 'openclaw-kill-switch') {
       return ['required', 'unavailable', 'unknown', 'missing'].includes(openClawPolicySummary.killSwitchState);
     }
-    if (candidate.id === 'openclaw-local-adapter') {
-      return !openClawPolicySummary.policyOnly && openClawPolicySummary.killSwitchAvailable === true && openClawPolicySummary.adapterPresent !== true;
+    if (candidate.id === 'openclaw-local-adapter-contract') {
+      return !openClawPolicySummary.policyOnly
+        && openClawPolicySummary.killSwitchAvailable === true
+        && ['design_only', 'unavailable', 'unknown'].includes(openClawAdapterSummary.adapterMode);
+    }
+    if (candidate.id === 'openclaw-local-adapter-stub') {
+      return !openClawPolicySummary.policyOnly
+        && openClawPolicySummary.killSwitchAvailable === true
+        && openClawAdapterSummary.adapterMode === 'contract_defined';
+    }
+    if (candidate.id === 'openclaw-local-adapter-connect') {
+      return !openClawPolicySummary.policyOnly
+        && openClawPolicySummary.killSwitchAvailable === true
+        && ['local_stub'].includes(openClawAdapterSummary.adapterMode);
     }
     if (candidate.id === 'openclaw-approval-gates') {
       return !openClawPolicySummary.policyOnly
         && openClawPolicySummary.killSwitchAvailable === true
-        && openClawPolicySummary.adapterPresent === true
-        && openClawPolicySummary.approvalsComplete !== true;
+        && openClawAdapterSummary.adapterConnected === true
+        && openClawAdapterSummary.adapterApprovalsComplete !== true;
     }
     if (candidate.id === 'openclaw-execution-integration') {
-      return openClawPolicySummary.openClawSafeToUse === true && openClawPolicySummary.openClawExecutionAllowed !== true;
+      return openClawAdapterSummary.adapterCanExecute === true && openClawPolicySummary.openClawExecutionAllowed !== true;
     }
     return false;
   }) || LAYER_ACTIONS[0];
@@ -204,6 +232,7 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
     verificationReturn,
     nextAction,
     openClawPolicySummary,
+    openClawAdapterSummary,
     blockers: Array.from(new Set(explicitBlockers)).filter(Boolean),
     warnings: normalized.evidence.warnings,
     reasons: normalized.evidence.reasons,

@@ -95,6 +95,8 @@ export function adjudicateOpenClawKillSwitch(input = {}) {
       `kill-switch-state:${killSwitchState}`,
       `kill-switch-mode:${killSwitchMode}`,
       `execution-allowed:${openClawExecutionAllowed ? 'yes' : 'no'}`,
+      `adapter-readiness:${asText(source.adapterReadiness, 'unknown').toLowerCase()}`,
+      `adapter-can-execute:${source.adapterCanExecute === true ? 'yes' : 'no'}`,
       ...killSwitchBlockers.map((entry) => `blocker:${entry}`),
       ...killSwitchWarnings.map((entry) => `warning:${entry}`),
     ],

@@ -100,6 +100,12 @@ export default function MissionConsoleTile({
       openClawExecutionAllowed: summary.openClawExecutionAllowed === true || operatorSurface.openClawExecutionAllowed === true,
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || operatorSurface.openClawHighestPriorityBlocker || 'none',
       openClawNextAction: summary.openClawNextAction || operatorSurface.openClawNextAction || 'not reported',
+      openClawAdapterMode: summary.openClawAdapterMode || operatorSurface.openClawAdapterMode || 'design_only',
+      openClawAdapterReadiness: summary.openClawAdapterReadiness || operatorSurface.openClawAdapterReadiness || 'needs_contract',
+      openClawAdapterConnectionState: summary.openClawAdapterConnectionState || operatorSurface.openClawAdapterConnectionState || 'not_configured',
+      openClawAdapterExecutionMode: summary.openClawAdapterExecutionMode || operatorSurface.openClawAdapterExecutionMode || 'disabled',
+      openClawAdapterCanExecute: summary.openClawAdapterCanExecute === true || operatorSurface.openClawAdapterCanExecute === true,
+      openClawAdapterNextAction: summary.openClawAdapterNextAction || operatorSurface.openClawAdapterNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
 
@@ -461,8 +467,14 @@ export default function MissionConsoleTile({
           <li><strong>openclaw execution allowed:</strong> {compactVerificationSummary.openClawExecutionAllowed ? 'yes' : 'no'}</li>
           <li><strong>openclaw top blocker:</strong> {compactVerificationSummary.openClawHighestPriorityBlocker}</li>
           <li><strong>openclaw next action:</strong> {compactVerificationSummary.openClawNextAction}</li>
-          {compactVerificationSummary.openClawIntegrationMode === 'policy_only' ? (
-            <li><strong>openclaw policy notice:</strong> policy-only, not direct automation</li>
+          <li><strong>openclaw adapter mode:</strong> {compactVerificationSummary.openClawAdapterMode}</li>
+          <li><strong>openclaw adapter readiness:</strong> {compactVerificationSummary.openClawAdapterReadiness}</li>
+          <li><strong>openclaw adapter connection:</strong> {compactVerificationSummary.openClawAdapterConnectionState}</li>
+          <li><strong>openclaw adapter execution mode:</strong> {compactVerificationSummary.openClawAdapterExecutionMode}</li>
+          <li><strong>openclaw adapter can execute:</strong> {compactVerificationSummary.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter next action:</strong> {compactVerificationSummary.openClawAdapterNextAction}</li>
+          {compactVerificationSummary.openClawIntegrationMode === 'policy_only' || ['design_only', 'contract_defined'].includes(compactVerificationSummary.openClawAdapterMode) ? (
+            <li><strong>openclaw policy notice:</strong> adapter design/contract only, no live automation</li>
           ) : null}
         </ul>
         <div className="mission-console-copy-row">

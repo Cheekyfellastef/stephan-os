@@ -127,7 +127,8 @@ test('adjudicateProjectProgress recommends adapter design when kill switch exist
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
       openClawAdapterPresent: false,
-      nextAgentTaskAction: 'Design OpenClaw local adapter',
+      openClawAdapterMode: 'design_only',
+      nextAgentTaskAction: 'Design OpenClaw local adapter contract',
     },
   });
 
@@ -148,10 +149,56 @@ test('adjudicateProjectProgress recommends approval gates when adapter exists bu
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
       openClawAdapterPresent: true,
+      openClawAdapterMode: 'connected',
+      openClawAdapterConnectionState: 'connected',
       openClawApprovalsComplete: false,
       nextAgentTaskAction: 'Complete OpenClaw approval gates',
     },
   });
 
   assert.equal(projection.nextBestActions[0].id, 'complete-openclaw-approval-gates');
+});
+
+
+test('adjudicateProjectProgress recommends stub creation after adapter contract is defined', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'contract_defined',
+      nextAgentTaskAction: 'Create OpenClaw local adapter stub',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'create-openclaw-local-adapter-stub');
+});
+
+test('adjudicateProjectProgress recommends adapter connection after stub exists but no connection', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterConnectionState: 'not_connected',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
 });

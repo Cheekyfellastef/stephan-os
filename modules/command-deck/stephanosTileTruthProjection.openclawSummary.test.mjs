@@ -22,6 +22,8 @@ test('Stephanos launcher tile includes compact OpenClaw policy summary from agen
         openClawKillSwitchState: 'missing',
         openClawHighestPriorityBlocker: 'Kill switch must be wired and operator-reachable.',
         openClawNextAction: 'Wire kill-switch lifecycle + adapter contract.',
+        openClawAdapterMode: 'design_only',
+        openClawAdapterReadiness: 'needs_contract',
         nextAgentTaskAction: 'Wire OpenClaw kill switch + adapter contract',
       },
     },
@@ -32,4 +34,5 @@ test('Stephanos launcher tile includes compact OpenClaw policy summary from agen
   assert.match(projection.summary, /killSwitch missing/i);
   assert.match(projection.summary, /killSwitchMode unavailable/i);
   assert.match(projection.summary, /openclawExecution no/i);
+  assert.match(projection.summary, /openclawAdapterMode design_only/i);
 });

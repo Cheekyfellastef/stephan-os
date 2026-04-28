@@ -11,6 +11,8 @@ test('agent task projection defaults codex to manual handoff and openclaw to nee
   assert.equal(projection.operatorSurface.openClawIntegrationMode, 'policy_only');
   assert.equal(projection.compactSurface.agentTaskLayerStatus, 'preparing');
   assert.equal(typeof projection.readinessSummary.readinessScore, 'number');
+  assert.equal(projection.operatorSurface.openClawAdapterMode, 'design_only');
+  assert.equal(projection.operatorSurface.openClawAdapterCanExecute, false);
 });
 
 test('agent task projection exposes readiness summary payload for mission dashboard consumption', () => {
@@ -76,7 +78,7 @@ test('agent task projection advances next action beyond policy harness when poli
   assert.equal(projection.readinessSummary.openClawExecutionAllowed, false);
 });
 
-test('agent task projection advances to adapter when kill switch is available but adapter is missing', () => {
+test('agent task projection advances to adapter contract when kill switch is available but adapter contract is missing', () => {
   const projection = buildAgentTaskProjection({
     model: {
       taskLifecycle: { state: 'in_progress' },
@@ -89,6 +91,9 @@ test('agent task projection advances to adapter when kill switch is available bu
         killSwitchState: 'available',
         blockers: [],
       },
+      openClawAdapter: {
+        adapterMode: 'design_only',
+      },
       verification: {
         verificationStatus: 'passed',
       },
@@ -99,7 +104,7 @@ test('agent task projection advances to adapter when kill switch is available bu
     context: { agentTileProjectionConnected: true },
   });
 
-  assert.match(projection.readinessSummary.nextAgentTaskAction, /local adapter/i);
+  assert.match(projection.readinessSummary.nextAgentTaskAction, /adapter contract/i);
 });
 
 test('agent task projection advances to approvals when adapter exists but approvals are missing', () => {
@@ -114,6 +119,13 @@ test('agent task projection advances to approvals when adapter exists but approv
         satisfiedApprovals: ['approve_handoff'],
         killSwitchState: 'available',
         blockers: [],
+      },
+      openClawAdapter: {
+        adapterMode: 'connected',
+        adapterConnectionState: 'connected',
+        adapterExecutionMode: 'approval_required',
+        adapterRequiredApprovals: ['approve_openclaw_adapter_enable', 'approve_command_execution'],
+        adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable'],
       },
       verification: {
         verificationStatus: 'passed',
@@ -186,4 +198,31 @@ test('agent task projection exposes verification return summary and missing chec
   assert.equal(projection.operatorSurface.mergeReadiness, 'review_required');
   assert.equal(projection.operatorSurface.missingRequiredChecks.length, 1);
   assert.equal(projection.readinessSummary.verificationReturnReady, true);
+});
+
+
+test('agent task projection exposes openclaw adapter readiness fields', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawPolicy: {
+        integrationMode: 'local_adapter',
+        adapterPresent: true,
+        localAdapterAvailable: true,
+        requiredApprovals: ['approve_handoff'],
+        satisfiedApprovals: ['approve_handoff'],
+        killSwitchState: 'disengaged',
+        blockers: [],
+      },
+      openClawAdapter: {
+        adapterMode: 'local_stub',
+        adapterConnectionState: 'not_connected',
+        adapterExecutionMode: 'disabled',
+      },
+    },
+    context: { agentTileProjectionConnected: true },
+  });
+
+  assert.equal(projection.readinessSummary.openClawAdapterMode, 'local_stub');
+  assert.equal(projection.readinessSummary.openClawAdapterConnectionState, 'not_connected');
+  assert.equal(projection.readinessSummary.openClawAdapterCanExecute, false);
 });

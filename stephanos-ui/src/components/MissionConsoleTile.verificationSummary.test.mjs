@@ -23,6 +23,12 @@ test('MissionConsoleTile renders compact agent task verification return summary 
     'openclaw execution allowed:',
     'openclaw top blocker:',
     'openclaw next action:',
+    'openclaw adapter next action:',
+    'openclaw adapter can execute:',
+    'openclaw adapter execution mode:',
+    'openclaw adapter connection:',
+    'openclaw adapter readiness:',
+    'openclaw adapter mode:',
     'openclaw policy notice:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing compact verification label: ${label}`));

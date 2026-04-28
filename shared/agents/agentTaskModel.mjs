@@ -1,4 +1,5 @@
 import { normalizeVerificationReturn } from './agentVerificationReturn.mjs';
+import { adjudicateOpenClawLocalAdapter } from './openClawLocalAdapter.mjs';
 
 const TASK_LIFECYCLE_STATES = new Set([
   'draft',
@@ -35,6 +36,14 @@ const APPROVAL_GATES = new Set([
   'approve_memory_write',
   'approve_handoff',
   'approve_merge_or_push',
+  'approve_openclaw_adapter_enable',
+  'approve_file_inspection',
+  'approve_file_editing',
+  'approve_browser_control',
+  'approve_network_access',
+  'approve_git_write',
+  'approve_codex_handoff',
+  'approve_evidence_capture',
 ]);
 const HANDOFF_MODES = new Set(['manual_prompt', 'github_issue', 'local_adapter', 'unavailable']);
 
@@ -157,6 +166,26 @@ export function createDefaultAgentTaskModel() {
       killSwitchState: 'required',
       blockers: ['OpenClaw policy harness is placeholder-only.'],
     },
+    openClawAdapter: {
+      adapterMode: 'design_only',
+      adapterConnectionState: 'not_configured',
+      adapterExecutionMode: 'disabled',
+      adapterRequiredApprovals: [
+        'approve_openclaw_adapter_enable',
+        'approve_file_inspection',
+        'approve_file_editing',
+        'approve_command_execution',
+        'approve_browser_control',
+        'approve_network_access',
+        'approve_git_write',
+        'approve_memory_write',
+        'approve_codex_handoff',
+        'approve_evidence_capture',
+      ],
+      adapterSatisfiedApprovals: [],
+      adapterBlockers: ['OpenClaw local adapter is design/contract only.'],
+      adapterWarnings: ['No live OpenClaw automation is enabled.'],
+    },
   };
 }
 
@@ -175,6 +204,7 @@ export function normalizeAgentTaskModel(input = {}) {
   const verificationReturn = model.verificationReturn && typeof model.verificationReturn === 'object' ? model.verificationReturn : {};
   const evidence = model.evidence && typeof model.evidence === 'object' ? model.evidence : {};
   const openClawPolicy = model.openClawPolicy && typeof model.openClawPolicy === 'object' ? model.openClawPolicy : {};
+  const openClawAdapter = model.openClawAdapter && typeof model.openClawAdapter === 'object' ? model.openClawAdapter : {};
 
   const availableAgents = uniqueTextList(agentAssignment.availableAgents)
     .map((entry) => normalizeAgentId(entry, 'manual'));
@@ -255,5 +285,9 @@ export function normalizeAgentTaskModel(input = {}) {
       killSwitchState: asText(openClawPolicy.killSwitchState, defaults.openClawPolicy.killSwitchState),
       blockers: uniqueTextList(openClawPolicy.blockers),
     },
+    openClawAdapter: adjudicateOpenClawLocalAdapter({
+      ...defaults.openClawAdapter,
+      ...openClawAdapter,
+    }),
   };
 }

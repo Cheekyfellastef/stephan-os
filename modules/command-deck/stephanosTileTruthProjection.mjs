@@ -60,6 +60,12 @@ function normalizeAgentReadinessSummary(value) {
     openClawExecutionAllowed: summary.openClawExecutionAllowed === true ? 'yes' : 'no',
     openClawHighestPriorityBlocker: toText(summary.openClawHighestPriorityBlocker, 'none'),
     openClawNextAction: toText(summary.openClawNextAction, 'Wire kill-switch lifecycle + adapter contract.'),
+    openClawAdapterMode: toText(summary.openClawAdapterMode, 'design_only'),
+    openClawAdapterReadiness: toText(summary.openClawAdapterReadiness, 'needs_contract'),
+    openClawAdapterConnectionState: toText(summary.openClawAdapterConnectionState, 'not_configured'),
+    openClawAdapterExecutionMode: toText(summary.openClawAdapterExecutionMode, 'disabled'),
+    openClawAdapterCanExecute: summary.openClawAdapterCanExecute === true ? 'yes' : 'no',
+    openClawAdapterNextAction: toText(summary.openClawAdapterNextAction, 'Design OpenClaw local adapter contract.'),
     nextAgentTaskAction: String(summary.nextAgentTaskAction || '').trim() || 'Build canonical Agent Task Model',
     readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Math.max(0, Math.min(100, Number(summary.readinessScore))) : 0,
     agentTaskLayerBlockers: blockers,
@@ -183,6 +189,12 @@ export function buildStephanosTileTruthProjection(project = {}) {
     `priorityBlocker ${agentTaskSummary.openClawHighestPriorityBlocker}`,
     `nextAgentAction ${agentTaskSummary.nextAgentTaskAction}`,
     `nextOpenClawAction ${agentTaskSummary.openClawNextAction}`,
+    `openclawAdapterMode ${agentTaskSummary.openClawAdapterMode}`,
+    `openclawAdapterReadiness ${agentTaskSummary.openClawAdapterReadiness}`,
+    `openclawAdapterConnection ${agentTaskSummary.openClawAdapterConnectionState}`,
+    `openclawAdapterExecution ${agentTaskSummary.openClawAdapterExecutionMode}`,
+    `openclawAdapterCanExecute ${agentTaskSummary.openClawAdapterCanExecute}`,
+    `nextOpenClawAdapterAction ${agentTaskSummary.openClawAdapterNextAction}`,
   ].join(' · ');
 
   return {
