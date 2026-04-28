@@ -8,7 +8,7 @@ test('adjudicateProjectProgress returns seeded lanes and ranked next actions', (
 
   assert.equal(Array.isArray(projection.lanes), true);
   assert.equal(projection.lanes.length >= 10, true);
-  assert.equal(projection.nextBestActions[0].id, 'build-agent-task-layer-v1');
+  assert.equal(projection.nextBestActions[0].id, 'add-telemetry-summary-export');
   assert.equal(projection.readiness.agent, 'partial');
   assert.equal(projection.readiness.openClaw, 'blocked');
   assert.equal(projection.verificationStatus.status, 'started');
@@ -27,7 +27,7 @@ test('adjudicateProjectProgress advances next best action when Agent Task summar
     },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'upgrade-agents-tile-status-surface');
+  assert.equal(projection.nextBestActions[0].id, 'add-telemetry-summary-export');
   assert.equal(projection.readiness.agent, 'in_progress');
   assert.equal(projection.agentTaskEvidence?.nextAgentTaskAction, 'Wire existing Agent Tile to Agent Task projection');
 });
@@ -64,6 +64,8 @@ test('adjudicateProjectProgress advances next action to verification when codex 
       ],
       readinessScore: 68,
     },
+    telemetrySummary: { status: 'flowing' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
@@ -82,6 +84,8 @@ test('adjudicateProjectProgress keeps verification return loop as next action wh
       nextAgentTaskAction: 'Paste Codex result for verification',
       nextActions: [{ title: 'Paste Codex result for verification', reason: 'Awaiting return.' }],
     },
+    telemetrySummary: { status: 'flowing' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
@@ -104,6 +108,8 @@ test('adjudicateProjectProgress recommends kill-switch wiring after policy harne
       nextAgentTaskAction: 'Wire OpenClaw kill switch',
       nextActions: [{ title: 'Wire OpenClaw kill switch', reason: 'Policy harness exists and kill switch is still required.' }],
     },
+    telemetrySummary: { status: 'flowing' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
   assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
@@ -201,4 +207,61 @@ test('adjudicateProjectProgress recommends adapter connection after stub exists 
   });
 
   assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+});
+
+test('adjudicateProjectProgress prioritizes telemetry summary exporter when telemetry summary is missing', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'started',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'policy_only',
+      openClawKillSwitchState: 'required',
+      nextAgentTaskAction: 'Wire OpenClaw kill switch',
+    },
+    telemetrySummary: {},
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'add-telemetry-summary-export');
+});
+
+test('adjudicateProjectProgress consumes telemetry and prompt builder summaries and advances to context binding', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'started',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'policy_only',
+      openClawKillSwitchState: 'required',
+      nextAgentTaskAction: 'Wire OpenClaw kill switch',
+    },
+    telemetrySummary: {
+      status: 'flowing',
+      nextActions: ['Bind telemetry summary to agent/task lifecycle'],
+      evidence: ['2 lifecycle events observed'],
+    },
+    promptBuilderSummary: {
+      status: 'partial',
+      supportsAgentTaskContext: false,
+      supportsTelemetryContext: false,
+      supportsRuntimeTruthContext: true,
+      nextActions: ['Bind Prompt Builder summary to Agent Task context.'],
+    },
+  });
+
+  const telemetryLane = projection.lanes.find((lane) => lane.id === 'telemetry');
+  const promptLane = projection.lanes.find((lane) => lane.id === 'prompt-builder');
+  assert.equal(telemetryLane?.status, 'ready');
+  assert.equal(promptLane?.status, 'partial');
+  assert.equal(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
 });

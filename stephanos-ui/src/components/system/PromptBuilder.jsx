@@ -6,6 +6,7 @@ import {
   buildStephanosPrompt,
   PROMPT_BUILDER_DEFAULT_MAX_TELEMETRY,
 } from './promptBuilder.js';
+import { buildPromptBuilderSummary } from '../../../../shared/prompts/promptBuilderSummary.mjs';
 
 export default function PromptBuilder({
   runtimeStatusModel,
@@ -46,6 +47,16 @@ export default function PromptBuilder({
     orchestrationTruth,
   ]);
 
+  const promptBuilderSummary = useMemo(() => buildPromptBuilderSummary({
+    promptBuilderAvailable: true,
+    promptText,
+    telemetryEntries,
+    actionHints,
+    finalRouteTruth: runtimeStatusModel?.finalRouteTruth ?? null,
+    orchestrationTruth,
+    copySupported: true,
+  }), [actionHints, orchestrationTruth, promptText, runtimeStatusModel?.finalRouteTruth, telemetryEntries]);
+
   const handleCopyPrompt = async () => {
     const result = await buildCopyResult({
       clipboard: globalThis.navigator?.clipboard,
@@ -64,6 +75,14 @@ export default function PromptBuilder({
       isOpen={uiLayout.promptBuilderPanel !== false}
       onToggle={() => togglePanel('promptBuilderPanel')}
     >
+
+      <ul className="compact-list">
+        <li>Status: {promptBuilderSummary.status}</li>
+        <li>Context support: agent={promptBuilderSummary.supportsAgentTaskContext ? 'yes' : 'no'} · telemetry={promptBuilderSummary.supportsTelemetryContext ? 'yes' : 'no'} · truth={promptBuilderSummary.supportsRuntimeTruthContext ? 'yes' : 'no'}</li>
+        <li>Top warning/blocker: {promptBuilderSummary.blockers[0] || promptBuilderSummary.warnings[0] || 'none'}</li>
+        <li>Next action: {promptBuilderSummary.nextActions[0] || 'none'}</li>
+      </ul>
+
       <label className="prompt-builder-field">
         Mission
         <input

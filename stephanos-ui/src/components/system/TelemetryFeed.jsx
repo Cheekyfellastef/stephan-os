@@ -3,6 +3,7 @@ import CollapsiblePanel from '../CollapsiblePanel';
 import { COPY_STATE, useClipboardButtonState } from '../../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../../utils/clipboardCopy';
 import { useAIStore } from '../../state/aiStore';
+import { buildTelemetrySummary } from '../../../../shared/telemetry/telemetrySummary.mjs';
 
 const MISSION_TRACE_STEPS = Object.freeze([
   {
@@ -167,6 +168,10 @@ export default function TelemetryFeed({ runtimeStatusModel, telemetryEntries = [
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
   const events = Array.isArray(telemetryEntries) ? telemetryEntries : [];
   const traceEntries = useMemo(() => projectMissionTrace(events), [events]);
+  const summary = useMemo(() => buildTelemetrySummary({
+    telemetryEntries: events,
+    telemetryAvailable: true,
+  }), [events]);
   const isExpanded = detailMode === 'expanded';
   const blockedOrFailed = traceEntries.some((entry) => entry.status === 'blocked' || entry.status === 'failed');
 
@@ -232,6 +237,14 @@ export default function TelemetryFeed({ runtimeStatusModel, telemetryEntries = [
               {copyNotice}
             </p>
           ) : null}
+
+
+          <ul className="compact-list">
+            <li>Status: {summary.status}</li>
+            <li>Recent transitions: {summary.recentTransitions.slice(0, 2).join(' · ') || 'none'}</li>
+            <li>Top warning/blocker: {summary.topWarning || summary.blockers[0] || 'none'}</li>
+            <li>Next action: {summary.nextActions[0] || 'none'}</li>
+          </ul>
 
           <ul className={`telemetry-trace-list ${isExpanded ? 'expanded' : 'compact'}`} aria-live="polite">
             {traceEntries.map((entry, index) => (
