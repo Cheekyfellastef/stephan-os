@@ -41,6 +41,45 @@ function pickActionTitle(nextBestActions = [], ids = []) {
   return asText(candidate?.title);
 }
 
+function queueActionsForSystems(nextBestActions = [], linkedSystems = []) {
+  const queue = Array.isArray(nextBestActions) ? nextBestActions : [];
+  const links = Array.isArray(linkedSystems) ? linkedSystems : [];
+  if (links.length === 0) return [];
+  return queue.filter((action) => {
+    const id = asText(action?.id).toLowerCase();
+    if (!id) return false;
+    return links.some((systemId) => {
+      const token = asText(systemId).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      return token && id.includes(token);
+    });
+  });
+}
+
+function selectMilestoneNextAction({ manualMilestone, live, nextBestActions }) {
+  const hasOverride = manualMilestone.operatorOverride === true;
+  const manualNextAction = asText(manualMilestone.nextAction);
+  const liveNextAction = asText(live?.nextAction);
+  const linkedQueueAction = queueActionsForSystems(nextBestActions, live?.linkedSystems)[0];
+  const linkedQueueTitle = asText(linkedQueueAction?.title);
+  const generatedAction = asText(live?.generatedNextAction);
+
+  if (hasOverride) {
+    return asText(manualNextAction || liveNextAction || linkedQueueTitle || generatedAction);
+  }
+
+  const liveHasCanonicalEvidence = Array.isArray(live?.evidence) && live.evidence.length > 0;
+  const staleManualPattern = /build canonical agent task model|wire openclaw kill switch|declutter landing tile summary/i;
+  const staleLivePattern = /build canonical agent task model/i;
+  const preferredLive = staleLivePattern.test(liveNextAction) && liveHasCanonicalEvidence
+    ? ''
+    : liveNextAction;
+  const preferredManual = staleManualPattern.test(manualNextAction) && liveHasCanonicalEvidence
+    ? ''
+    : manualNextAction;
+
+  return asText(preferredLive || linkedQueueTitle || generatedAction || preferredManual || liveNextAction || manualNextAction);
+}
+
 function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummary = {}, telemetrySummary = {}, promptBuilderSummary = {}, launcherEntrySummary = null, finalRouteTruth = null } = {}) {
   const lanes = laneIndex(projectProgressProjection);
   const verification = projectProgressProjection?.verificationStatus || {};
@@ -72,6 +111,9 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
       asText(agentTaskSummary.verificationReturnStatus) ? `Verification Return: ${agentTaskSummary.verificationReturnStatus}` : '',
     ].filter(Boolean),
     linkedSystems: ['agent-task-layer', 'codex-handoff', 'verification-loop'],
+    generatedNextAction: asText(
+      pickActionTitle(queue, ['add-verification-return-loop', 'bind-telemetry-lifecycle-context', 'upgrade-agents-tile-status-surface']),
+    ),
   });
 
   live.set('agent-layer-v2-surface-elevation', {
@@ -86,6 +128,9 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
     notes: 'Surface elevation projection sourced from Mission Console UI + Agent tile readiness lanes.',
     evidence: [...asArray(missionConsoleLane?.evidence), ...asArray(missionConsoleLane?.blockers).map((entry) => `Blocker: ${entry}`)],
     linkedSystems: ['mission-console-ui', 'agent-task-layer'],
+    generatedNextAction: asText(
+      pickActionTitle(queue, ['populate-launcher-shortcut-status', 'upgrade-agents-tile-status-surface']),
+    ),
   });
 
   live.set('agent-layer-v3-persistent-orchestration', {
@@ -102,6 +147,9 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
       ...asArray(openClawLane?.evidence),
     ].filter(Boolean),
     linkedSystems: ['openclaw-control', 'agent-task-layer'],
+    generatedNextAction: asText(
+      pickActionTitle(queue, ['connect-openclaw-local-adapter', 'complete-openclaw-approval-gates']),
+    ),
   });
 
   live.set('mission-console-hosted-repair', {
@@ -288,9 +336,11 @@ export function buildMissionHandoffMilestones({
       percentComplete,
       blocker,
       blockerReason,
-      nextAction: hasOverride
-        ? asText(manualMilestone.nextAction || live?.nextAction)
-        : asText(live?.nextAction || manualMilestone.nextAction),
+      nextAction: selectMilestoneNextAction({
+        manualMilestone,
+        live,
+        nextBestActions: projectProgressProjection?.nextBestActions,
+      }),
       notes,
       evidence,
       truthSource,

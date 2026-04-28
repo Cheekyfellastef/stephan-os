@@ -283,6 +283,13 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   }
   if (launcherEntry?.available) {
     suppressed.add('add-launcher-entry-summary-export');
+    if (launcherEntry.diagnosticOverloadRisk !== true) {
+      suppressed.add('declutter-landing-tile-summary');
+    }
+    if (!Array.isArray(launcherEntry.shortcutSurfaces)
+      || !launcherEntry.shortcutSurfaces.some((entry) => entry?.present && entry?.statusSummaryAvailable !== true)) {
+      suppressed.add('populate-launcher-shortcut-status');
+    }
   }
   if (agentTaskSummary.openClawKillSwitchState && !['required', 'missing', 'unknown', 'unavailable'].includes(agentTaskSummary.openClawKillSwitchState)) {
     suppressed.add('wire-openclaw-kill-switch');
@@ -398,9 +405,9 @@ function normalizePromptBuilderSummary(summary = {}) {
   return {
     available: Object.keys(source).length > 0,
     status: toLower(source.status, 'unknown'),
-    supportsAgentTaskContext: source.supportsAgentTaskContext === true,
-    supportsTelemetryContext: source.supportsTelemetryContext === true,
-    supportsRuntimeTruthContext: source.supportsRuntimeTruthContext === true,
+    supportsAgentTaskContext: source.supportsAgentTaskContext === true || source.agentTaskContextAvailable === true,
+    supportsTelemetryContext: source.supportsTelemetryContext === true || source.telemetryContextAvailable === true,
+    supportsRuntimeTruthContext: source.supportsRuntimeTruthContext === true || source.runtimeTruthContextAvailable === true,
     nextActions: list(source.nextActions),
     blockers: list(source.blockers),
     warnings: list(source.warnings),
@@ -440,6 +447,16 @@ function mapLauncherEntryToLaneStatus(status = '') {
   if (normalized === 'blocked') return 'blocked';
   if (normalized === 'unavailable') return 'not-started';
   return 'unknown';
+}
+
+function summarizePromptBuilderEvidence(promptBuilder = {}) {
+  if (!promptBuilder.available) return 'prompt-builder:unavailable';
+  const missingContexts = [];
+  if (!promptBuilder.supportsAgentTaskContext) missingContexts.push('agent-task-context');
+  if (!promptBuilder.supportsTelemetryContext) missingContexts.push('telemetry-context');
+  if (!promptBuilder.supportsRuntimeTruthContext) missingContexts.push('runtime-truth-context');
+  if (missingContexts.length === 0) return `prompt-builder:${promptBuilder.status || 'ready'}`;
+  return `prompt-builder:${promptBuilder.status || 'partial'}:missing-${missingContexts.join(',')}`;
 }
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
@@ -637,7 +654,7 @@ export function adjudicateProjectProgress({
       `suppressed-actions:${suppressedActionIds.size}`,
       agentTaskSummary.available ? `agent-task:${agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus}` : '',
       telemetry.available ? `telemetry:${telemetry.status}` : 'telemetry:unavailable',
-      promptBuilder.available ? `prompt-builder:${promptBuilder.status}` : 'prompt-builder:unavailable',
+      summarizePromptBuilderEvidence(promptBuilder),
     ].filter(Boolean),
   }));
 
