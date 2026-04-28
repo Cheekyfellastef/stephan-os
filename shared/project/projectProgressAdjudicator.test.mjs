@@ -520,3 +520,47 @@ test('adjudicateProjectProgress suppresses kill-switch and adapter design action
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
   assert.equal(ids.includes('connect-openclaw-local-adapter'), true);
 });
+
+test('adjudicateProjectProgress suppresses telemetry lifecycle binding action when lifecycle is bound', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
+  });
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'bind-telemetry-lifecycle-context'), false);
+});
+
+test('adjudicateProjectProgress keeps telemetry lifecycle binding action when binding missing', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: { status: 'started', lifecycleBindingStatus: 'missing' },
+  });
+  assert.equal(projection.nextBestActions[0].id, 'bind-telemetry-lifecycle-context');
+});
+
+test('adjudicateProjectProgress suppresses stale openclaw setup actions when kill switch, contract, and stub truths exist', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterReadiness: 'local_stub',
+      openClawAdapterConnectionState: 'not_connected',
+      openClawAdapterStubStatus: 'present_disabled',
+      openClawAdapterStubConnectionState: 'local_only',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+  const ids = projection.nextBestActions.map((a) => a.id);
+  assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
+  assert.equal(ids.includes('design-openclaw-local-adapter'), false);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+});

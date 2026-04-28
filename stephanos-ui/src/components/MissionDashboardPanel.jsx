@@ -215,7 +215,11 @@ export default function MissionDashboardPanel({
   const telemetrySummary = useMemo(() => buildTelemetrySummary({
     telemetryEntries,
     telemetryAvailable: true,
-  }), [telemetryEntries]);
+    agentTaskLifecycle: {
+      phase: agentTaskSummary.phase,
+      status: agentTaskSummary.status,
+    },
+  }), [agentTaskSummary.phase, agentTaskSummary.status, telemetryEntries]);
   const promptBuilderSummary = useMemo(() => buildPromptBuilderSummary({
     promptBuilderAvailable: true,
     promptText: orchestrationSelectors?.promptBuilderSnapshot?.activeMissionSummary || '',

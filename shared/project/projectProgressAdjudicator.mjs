@@ -222,6 +222,9 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
     openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
     openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
+    openClawAdapterStubEvidence: Array.isArray(source.openClawAdapterStubEvidence)
+      ? source.openClawAdapterStubEvidence.map((entry) => toText(entry, '')).filter(Boolean)
+      : [],
     codexManualHandoffMode: toLower(source.codexManualHandoffMode || source.codexHandoffPacketMode, 'unknown'),
     codexManualHandoffReady: source.codexManualHandoffReady === true || source.codexHandoffPacketReady === true,
     nextAgentTaskAction,
@@ -251,7 +254,8 @@ function hasVerificationReturnState(summary = {}) {
 function hasOpenClawStubEvidence(summary = {}) {
   return ['health_check_only', 'simulated_ready', 'present_disabled'].includes(summary.openClawAdapterStubStatus)
     || ['local_only', 'simulated', 'connected'].includes(summary.openClawAdapterStubConnectionState)
-    || summary.openClawAdapterMode === 'local_stub';
+    || summary.openClawAdapterMode === 'local_stub'
+    || (Array.isArray(summary.openClawAdapterStubEvidence) && summary.openClawAdapterStubEvidence.length > 0);
 }
 
 function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder, launcherEntry }) {
@@ -271,6 +275,9 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   }
   if (telemetry.available) {
     suppressed.add('add-telemetry-summary-export');
+    if (['bound', 'partial'].includes(telemetry.lifecycleBindingStatus)) {
+      suppressed.add('bind-telemetry-lifecycle-context');
+    }
   }
   if (promptBuilder.available) {
     suppressed.add('add-prompt-builder-summary-export');
@@ -294,7 +301,10 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   if (agentTaskSummary.openClawKillSwitchState && !['required', 'missing', 'unknown', 'unavailable'].includes(agentTaskSummary.openClawKillSwitchState)) {
     suppressed.add('wire-openclaw-kill-switch');
   }
-  if (!['design_only', 'unavailable', 'unknown'].includes(agentTaskSummary.openClawAdapterMode)) {
+  const hasContractEvidence = !['design_only', 'unavailable', 'unknown'].includes(agentTaskSummary.openClawAdapterMode)
+    || ['contract_defined', 'local_stub', 'connected'].includes(agentTaskSummary.openClawAdapterReadiness)
+    || (Array.isArray(agentTaskSummary.openClawAdapterEvidenceContract) && agentTaskSummary.openClawAdapterEvidenceContract.length > 0);
+  if (hasContractEvidence) {
     suppressed.add('design-openclaw-local-adapter');
   }
   if (hasOpenClawStubEvidence(agentTaskSummary)) {
@@ -391,6 +401,8 @@ function normalizeTelemetrySummary(summary = {}) {
     blockers: list(source.blockers),
     warnings: list(source.warnings),
     evidence: list(source.evidence),
+    lifecycleBindingStatus: toLower(source.lifecycleBindingStatus, 'unknown'),
+    lifecycleBindingNextAction: toText(source.lifecycleBindingNextAction, ''),
   };
 }
 
@@ -588,7 +600,8 @@ export function adjudicateProjectProgress({
 
   if (!telemetry.available) {
     prioritizeAction(nextBestActions, 'add-telemetry-summary-export');
-  } else if (['not_started', 'started', 'degraded'].includes(telemetry.status)) {
+  } else if (['missing', 'degraded', 'unknown'].includes(telemetry.lifecycleBindingStatus)
+    || (telemetry.lifecycleBindingStatus === 'partial' && telemetry.status !== 'flowing')) {
     prioritizeAction(nextBestActions, 'bind-telemetry-lifecycle-context');
   } else if (!promptBuilder.available) {
     prioritizeAction(nextBestActions, 'add-prompt-builder-summary-export');

@@ -50,6 +50,8 @@ function buildTelemetryStatus({ eventCount, recentEventCount, blockers, warnings
 export function buildTelemetrySummary({
   telemetryEntries = [],
   telemetryAvailable = true,
+  agentTaskLifecycle = null,
+  lifecycleEntries = [],
   now = Date.now(),
   recentWindowMs = 15 * 60 * 1000,
   seededData = false,
@@ -92,6 +94,35 @@ export function buildTelemetrySummary({
     warnings,
     unavailable: telemetryAvailable !== true,
   });
+  const lifecycleSignals = asArray(lifecycleEntries)
+    .map((entry) => asText(entry))
+    .filter(Boolean);
+  const derivedLifecycleSignals = events
+    .filter((entry) => /(agent|task|lifecycle|handoff|verification)/i.test(`${entry.subsystem} ${entry.change} ${entry.reason}`))
+    .map((entry) => summarizeTransition(entry));
+  const taskLifecycleState = asText(agentTaskLifecycle?.phase || agentTaskLifecycle?.lifecycleState || agentTaskLifecycle?.status, '').toLowerCase();
+  const lifecycleTransitions = [...lifecycleSignals, ...derivedLifecycleSignals].slice(0, 8);
+  const recentLifecycleEventCount = recentEvents.filter((entry) => /(agent|task|lifecycle|handoff|verification)/i.test(`${entry.subsystem} ${entry.change} ${entry.reason}`)).length;
+  const lifecycleEventCount = lifecycleTransitions.length;
+  const lifecycleBindingEvidence = [];
+  if (lifecycleSignals.length > 0) lifecycleBindingEvidence.push(`event-stream-derived:${lifecycleSignals.length}`);
+  if (derivedLifecycleSignals.length > 0) lifecycleBindingEvidence.push(`telemetry-derived:${derivedLifecycleSignals.length}`);
+  if (taskLifecycleState) lifecycleBindingEvidence.push(`projection-derived:${taskLifecycleState}`);
+  const topLifecycleSignal = lifecycleTransitions[0] || (taskLifecycleState ? `Agent Task lifecycle (projection): ${taskLifecycleState}` : '');
+  let lifecycleBindingStatus = 'unknown';
+  if (telemetryAvailable !== true) lifecycleBindingStatus = 'unknown';
+  else if (!taskLifecycleState && lifecycleEventCount === 0) lifecycleBindingStatus = 'missing';
+  else if (lifecycleSignals.length > 0 || recentLifecycleEventCount > 0) lifecycleBindingStatus = 'bound';
+  else if (taskLifecycleState) lifecycleBindingStatus = 'partial';
+  else if (events.length > 0 && lifecycleEventCount === 0) lifecycleBindingStatus = 'degraded';
+  const agentTaskLifecycleBound = lifecycleBindingStatus === 'bound' || lifecycleBindingStatus === 'partial';
+  const lifecycleBindingNextAction = lifecycleBindingStatus === 'missing'
+    ? 'Bind telemetry summary to agent/task lifecycle transitions (no lifecycle signals detected).'
+    : lifecycleBindingStatus === 'partial'
+      ? 'Promote projection-derived lifecycle evidence to event-stream lifecycle telemetry.'
+      : lifecycleBindingStatus === 'degraded'
+        ? 'Repair lifecycle telemetry tags so mission lifecycle transitions are observable.'
+        : 'Lifecycle telemetry binding is present.';
 
   const readinessScore = telemetryAvailable !== true
     ? 10
@@ -110,8 +141,10 @@ export function buildTelemetrySummary({
   const nextActions = [];
   if (telemetryAvailable !== true) {
     nextActions.push('Restore telemetry feed wiring for Mission Console surfaces.');
-  } else if (events.length === 0) {
+  } else if (lifecycleBindingStatus === 'missing') {
     nextActions.push('Bind telemetry summary to agent/task lifecycle transitions.');
+  } else if (lifecycleBindingStatus === 'partial') {
+    nextActions.push('Upgrade lifecycle telemetry from projection-derived to event-stream-derived evidence.');
   } else if (recentEvents.length === 0) {
     nextActions.push('Emit fresh telemetry transitions from current mission lifecycle.');
   } else if (blockers.length > 0) {
@@ -123,12 +156,18 @@ export function buildTelemetrySummary({
   }
 
   const lastEventAt = events.length > 0 ? events[events.length - 1].timestamp : '';
+  const lastLifecycleEventAt = recentLifecycleEventCount > 0
+    ? recentEvents.filter((entry) => /(agent|task|lifecycle|handoff|verification)/i.test(`${entry.subsystem} ${entry.change} ${entry.reason}`)).slice(-1)[0]?.timestamp || ''
+    : '';
   const evidence = [];
   if (events.length > 0) {
     evidence.push(`Telemetry feed captured ${events.length} event(s).`);
   }
   if (recentEvents.length > 0) {
     evidence.push(`${recentEvents.length} event(s) observed within recent window.`);
+  }
+  if (lifecycleBindingEvidence.length > 0) {
+    evidence.push(`Lifecycle binding evidence: ${lifecycleBindingEvidence.join(', ')}.`);
   }
   if (seededData) {
     evidence.push('Telemetry evidence includes seeded/static data.');
@@ -147,6 +186,16 @@ export function buildTelemetrySummary({
     eventCount: events.length,
     recentEventCount: recentEvents.length,
     recentTransitions,
+    agentTaskLifecycleBound,
+    lifecycleEventCount,
+    recentLifecycleEventCount,
+    lastLifecycleEventAt,
+    lifecycleTransitions,
+    taskLifecycleSignals: lifecycleBindingEvidence,
+    topLifecycleSignal,
+    lifecycleBindingStatus,
+    lifecycleBindingNextAction,
+    lifecycleBindingEvidence,
     lastEventAt,
     topSignal,
     topWarning,
