@@ -167,6 +167,15 @@ export function createDefaultAgentTaskModel() {
       blockers: ['OpenClaw policy harness is placeholder-only.'],
     },
     openClawAdapter: {
+      adapterStub: {
+        stubMode: 'design_only',
+        stubStatus: 'not_present',
+        stubConnectionState: 'not_connected',
+        stubExecutionCapability: 'none',
+        stubHealth: 'unknown',
+        stubBlockers: ['OpenClaw local adapter stub is not present yet.'],
+        stubWarnings: ['Stub/status only, no live automation.'],
+      },
       adapterMode: 'design_only',
       adapterConnectionState: 'not_configured',
       adapterExecutionMode: 'disabled',

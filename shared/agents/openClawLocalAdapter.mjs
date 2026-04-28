@@ -1,3 +1,5 @@
+import { adjudicateOpenClawAdapterStub } from './openClawAdapterStub.mjs';
+
 function asText(value = '', fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -129,12 +131,32 @@ function pickDefaultReadiness(mode) {
   return 'unknown';
 }
 
+function mapStubToAdapterMode(stub = {}) {
+  if (stub.stubMode === 'design_only' || stub.stubStatus === 'not_present') return 'design_only';
+  if (stub.stubMode === 'local_stub' || stub.stubStatus === 'health_check_only') return 'local_stub';
+  if (stub.stubMode === 'simulated' || stub.stubStatus === 'simulated_ready') return 'local_stub';
+  if (stub.stubMode === 'disabled' || stub.stubStatus === 'present_disabled') return 'local_stub';
+  if (stub.stubMode === 'unavailable') return 'unavailable';
+  return '';
+}
+
+function mapStubConnectionToAdapterConnection(stub = {}) {
+  if (stub.stubConnectionState === 'simulated') return 'simulated';
+  if (stub.stubConnectionState === 'local_only') return 'not_connected';
+  if (stub.stubConnectionState === 'blocked') return 'blocked';
+  if (stub.stubConnectionState === 'not_connected') return 'not_connected';
+  return '';
+}
+
 export function adjudicateOpenClawLocalAdapter(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
-  const adapterMode = normalizeMode(source.adapterMode || source.mode);
+  const stubSummary = adjudicateOpenClawAdapterStub(source.adapterStub || source.openClawAdapterStub || {});
+  const inferredMode = mapStubToAdapterMode(stubSummary);
+  const adapterMode = normalizeMode(source.adapterMode || source.mode || inferredMode || 'design_only');
   const requestedReadiness = normalizeReadiness(source.adapterReadiness || source.readiness);
-  const adapterConnectionState = normalizeConnectionState(source.adapterConnectionState || source.connectionState);
-  const adapterExecutionMode = normalizeExecutionMode(source.adapterExecutionMode || source.executionMode);
+  const inferredConnection = mapStubConnectionToAdapterConnection(stubSummary);
+  const adapterConnectionState = normalizeConnectionState(source.adapterConnectionState || source.connectionState || inferredConnection || 'not_configured');
+  const adapterExecutionMode = normalizeExecutionMode(source.adapterExecutionMode || source.executionMode || 'disabled');
   const adapterCapabilities = normalizeCapabilities(source.adapterCapabilities);
   const adapterCapabilityPolicy = normalizeCapabilityPolicy(source.adapterCapabilityPolicy);
   const adapterRequiredApprovals = normalizeTextList(source.adapterRequiredApprovals, REQUIRED_APPROVALS);
@@ -154,9 +176,9 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
   const adapterConnected = adapterMode === 'connected' && adapterConnectionState === 'connected';
   const approvalsMissing = adapterRequiredApprovals.filter((approval) => !adapterSatisfiedApprovals.includes(approval));
   const approvalsComplete = approvalsMissing.length === 0;
-  const hasBlockers = manualBlockers.length > 0;
+  const hasManualBlockers = manualBlockers.length > 0;
 
-  const derivedBlockers = [...manualBlockers];
+  const derivedBlockers = [...manualBlockers, ...stubSummary.stubBlockers];
   if (!policyHarnessPresent) derivedBlockers.push('OpenClaw policy harness must be present before adapter execution can be enabled.');
   if (!contractDefined) derivedBlockers.push('OpenClaw local adapter contract is not defined yet.');
   if (contractDefined && !localStubAvailable) derivedBlockers.push('OpenClaw local adapter stub is missing.');
@@ -166,30 +188,25 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
   if (!policyAllowsExecution) derivedBlockers.push('OpenClaw policy harness does not allow execution yet.');
   if (!approvalsComplete) derivedBlockers.push(`Missing OpenClaw approvals: ${approvalsMissing.join(', ')}.`);
   if (adapterExecutionMode !== 'enabled') derivedBlockers.push('Adapter execution mode is not enabled.');
+  derivedBlockers.push('OpenClaw Local Adapter Stub v1 is status/health-only; live execution is intentionally disabled.');
 
   const adapterExecutionPreconditionsSatisfied = policyHarnessPresent
     && contractDefined
     && localStubAvailable
     && adapterConnected
     && approvalsComplete
-    && !hasBlockers;
+    && !hasManualBlockers;
 
-  const adapterCanExecute = adapterExecutionPreconditionsSatisfied
-    && killSwitchAvailable
-    && !killSwitchEngaged
-    && policyAllowsExecution
-    && adapterExecutionMode === 'enabled';
+  const adapterCanExecute = false;
 
   const adapterSafeToConnect = contractDefined
     && localStubAvailable
     && !killSwitchEngaged
     && policyHarnessPresent
-    && !hasBlockers;
+    && !hasManualBlockers;
 
   let adapterReadiness = requestedReadiness || pickDefaultReadiness(adapterMode);
-  if (adapterCanExecute) {
-    adapterReadiness = 'connected_ready';
-  } else if (hasBlockers || (!killSwitchAvailable && adapterMode === 'connected') || (killSwitchEngaged && adapterMode === 'connected')) {
+  if (hasManualBlockers || stubSummary.stubStatus === 'blocked' || adapterConnectionState === 'blocked') {
     adapterReadiness = adapterConnected ? 'connected_blocked' : 'blocked';
   } else if (!contractDefined) {
     adapterReadiness = 'needs_contract';
@@ -197,7 +214,7 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
     adapterReadiness = 'needs_local_stub';
   } else if (!adapterConnected) {
     adapterReadiness = 'needs_connection';
-  } else if (!approvalsComplete || adapterExecutionMode !== 'enabled') {
+  } else {
     adapterReadiness = 'connected_blocked';
   }
 
@@ -210,15 +227,11 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
     } else if (!localStubAvailable) {
       adapterNextAction = 'Create OpenClaw local adapter stub.';
     } else if (!adapterConnected) {
-      adapterNextAction = 'Connect OpenClaw local adapter.';
+      adapterNextAction = 'Advance OpenClaw adapter connection readiness (status-only).';
     } else if (!approvalsComplete) {
       adapterNextAction = 'Complete OpenClaw approval gates.';
-    } else if (!killSwitchAvailable || killSwitchEngaged) {
-      adapterNextAction = 'Restore OpenClaw kill-switch availability and disengage before execution.';
-    } else if (adapterExecutionMode !== 'enabled') {
-      adapterNextAction = 'Keep execution disabled; adapter design/contract only until explicitly enabled.';
     } else {
-      adapterNextAction = 'Maintain supervision and evidence capture for adapter execution.';
+      adapterNextAction = 'Plan dry-run and execution integration; keep stub status-only in v1.';
     }
   }
 
@@ -236,12 +249,13 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
     adapterSafetyRequirements,
     adapterEvidenceContract,
     adapterBlockers: Array.from(new Set(derivedBlockers)),
-    adapterWarnings,
+    adapterWarnings: Array.from(new Set([...adapterWarnings, ...stubSummary.stubWarnings])),
     adapterNextAction,
     adapterDesignReady,
     adapterConnected,
     adapterCanExecute,
     adapterSafeToConnect,
     adapterExecutionPreconditionsSatisfied,
+    adapterStub: stubSummary,
   };
 }

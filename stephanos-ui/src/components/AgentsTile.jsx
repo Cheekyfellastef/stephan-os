@@ -127,6 +127,14 @@ export default function AgentsTile({
             <li><strong>OpenClaw adapter execution mode:</strong> {operatorTask.openClawAdapterExecutionMode || 'disabled'}</li>
             <li><strong>OpenClaw adapter can execute:</strong> {operatorTask.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
             <li><strong>OpenClaw adapter safe to connect:</strong> {operatorTask.openClawAdapterSafeToConnect ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter stub mode:</strong> {operatorTask.openClawAdapterStubMode || 'unknown'}</li>
+            <li><strong>OpenClaw adapter stub status:</strong> {operatorTask.openClawAdapterStubStatus || 'unknown'}</li>
+            <li><strong>OpenClaw adapter stub health:</strong> {operatorTask.openClawAdapterStubHealth || 'unknown'}</li>
+            <li><strong>OpenClaw adapter stub connection:</strong> {operatorTask.openClawAdapterStubConnectionState || 'unknown'}</li>
+            <li><strong>OpenClaw adapter stub can execute:</strong> {operatorTask.openClawAdapterStubCanExecute ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter stub next action:</strong> {operatorTask.openClawAdapterStubNextAction || 'not reported'}</li>
+            <li><strong>OpenClaw adapter stub top blocker:</strong> {operatorTask.openClawAdapterStubHighestPriorityBlocker || 'none'}</li>
+            <li><strong>OpenClaw adapter stub warnings:</strong> {formatReportedList(operatorTask.openClawAdapterStubWarnings, 'none')}</li>
             <li><strong>OpenClaw adapter top blocker:</strong> {operatorTask.openClawAdapterHighestPriorityBlocker || 'none'}</li>
             <li><strong>OpenClaw adapter next action:</strong> {operatorTask.openClawAdapterNextAction || 'not reported'}</li>
             <li><strong>OpenClaw adapter capabilities:</strong> {formatReportedList(Object.entries(operatorTask.openClawAdapterCapabilities || {}).filter(([, enabled]) => enabled === true).map(([key]) => key), 'none')}</li>
@@ -153,9 +161,7 @@ export default function AgentsTile({
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
-          {operatorTask.openClawDirectAutomationDisabled || ['design_only', 'contract_defined'].includes(operatorTask.openClawAdapterMode || '') ? (
-            <p className="muted"><strong>OpenClaw policy notice:</strong> adapter design/contract only, no live automation.</p>
-          ) : null}
+          <p className="muted"><strong>OpenClaw stub notice:</strong> stub/status only, no live automation.</p>
           <div className="agents-tile-copy-actions">
             <button
               type="button"

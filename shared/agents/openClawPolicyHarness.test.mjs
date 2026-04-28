@@ -18,7 +18,7 @@ test('openClaw policy harness keeps safe-to-use false in policy-only mode', () =
   assert.equal(summary.killSwitchMode, 'policy_only');
 });
 
-test('openClaw policy harness only marks safe-to-use true when adapter, approvals, kill switch, and blocker gates pass', () => {
+test('openClaw policy harness keeps execution safely gated even when adapter/approvals/kill switch gates pass under stub v1', () => {
   const summary = adjudicateOpenClawPolicyHarness({
     integrationMode: 'local_adapter',
     adapterPresent: true,
@@ -36,9 +36,9 @@ test('openClaw policy harness only marks safe-to-use true when adapter, approval
     },
   });
 
-  assert.equal(summary.openClawSafeToUse, true);
-  assert.equal(summary.openClawReadiness, 'ready');
-  assert.equal(summary.openClawExecutionAllowed, true);
+  assert.equal(summary.openClawSafeToUse, false);
+  assert.equal(summary.openClawReadiness, 'blocked');
+  assert.equal(summary.openClawExecutionAllowed, false);
 });
 
 test('openClaw policy harness keeps execution blocked when kill switch is engaged', () => {

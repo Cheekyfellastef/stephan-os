@@ -1,4 +1,5 @@
 import { buildStephanosTileTruthProjection } from '../../modules/command-deck/stephanosTileTruthProjection.mjs';
+import { buildShortcutStatusSummary } from './shortcutStatusSummary.mjs';
 
 const STATUS_WEIGHT = Object.freeze({
   unavailable: 0,
@@ -60,13 +61,19 @@ function inferStatusFromCoverage({ landingTilePresent, compactSummaryAvailable, 
   return 'partial';
 }
 
-function toShortcutSurface({ id, label, present, statusSummaryAvailable, evidence }) {
+function toShortcutSurface(entry = {}) {
   return {
-    id,
-    label,
-    present: present === true,
-    statusSummaryAvailable: statusSummaryAvailable === true,
-    evidence: asText(evidence),
+    id: asText(entry.shortcutId || entry.id),
+    label: asText(entry.label),
+    targetSurface: asText(entry.targetSurface),
+    status: asText(entry.status, 'unknown'),
+    present: entry.present === true,
+    statusSummaryAvailable: entry.statusSummaryAvailable === true,
+    compactStatus: asText(entry.compactStatus),
+    nextAction: asText(entry.nextAction),
+    blocker: asText(entry.blocker),
+    warning: asText(entry.warning),
+    evidence: asArray(entry.evidence),
   };
 }
 
@@ -91,42 +98,46 @@ export function buildLauncherEntrySummary({
   const compactSummaryAvailable = landingTileCompact;
   const diagnosticOverloadRisk = hasDiagnosticOverload(compactLandingSummary);
 
-  const inferredShortcuts = [
-    toShortcutSurface({
-      id: 'stephanos-tile-entry',
+  const inferredShortcuts = buildShortcutStatusSummary([
+    {
+      shortcutId: 'stephanos-tile-entry',
       label: 'Stephanos Tile',
+      targetSurface: 'landing-tile',
       present: projection?.launchState && projection?.launchState !== 'unavailable',
       statusSummaryAvailable: Boolean(compactLandingSummary?.summary),
-      evidence: compactLandingSummary?.summary ? `Landing tile summary: ${compactLandingSummary.summary}` : '',
-    }),
-    toShortcutSurface({
-      id: 'agent-tile-entry',
+      compactStatus: compactLandingSummary?.overallStatus,
+      evidence: compactLandingSummary?.summary ? [`Landing tile summary: ${compactLandingSummary.summary}`] : [],
+    },
+    {
+      shortcutId: 'agent-tile-entry',
       label: 'Agent Tile',
+      targetSurface: 'agent-tile',
       present: Boolean(agentSurfaceProjection?.launcherSummary),
       statusSummaryAvailable: Boolean(agentSurfaceProjection?.launcherSummary?.summaryLabel),
+      compactStatus: asText(agentSurfaceProjection?.launcherSummary?.summaryLabel),
       evidence: agentSurfaceProjection?.launcherSummary?.summaryLabel
-        ? `Agent launcher summary: ${agentSurfaceProjection.launcherSummary.summaryLabel}`
-        : '',
-    }),
-    toShortcutSurface({
-      id: 'openclaw-entry',
+        ? [`Agent launcher summary: ${agentSurfaceProjection.launcherSummary.summaryLabel}`]
+        : [],
+    },
+    {
+      shortcutId: 'openclaw-entry',
       label: 'OpenClaw Entry Surface',
+      targetSurface: 'agent-tile',
       present: asText(normalizedRuntimeStatus?.runtimeContext?.launchSurface).toLowerCase().includes('openclaw')
-        || asText(normalizedRuntimeStatus?.finalRouteTruth?.launchSurface).toLowerCase().includes('openclaw'),
-      statusSummaryAvailable: false,
-      evidence: '',
-    }),
-  ];
+        || asText(normalizedRuntimeStatus?.finalRouteTruth?.launchSurface).toLowerCase().includes('openclaw')
+        || Boolean(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawReadiness),
+      statusSummaryAvailable: Boolean(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubStatus),
+      compactStatus: asText(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubStatus),
+      nextAction: asText(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubNextAction),
+      blocker: asText(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubHighestPriorityBlocker),
+      warning: asArray(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubWarnings)[0],
+      evidence: asArray(normalizedRuntimeStatus?.agentTaskReadinessSummary?.openClawAdapterStubEvidence),
+    },
+  ]);
 
   const surfaces = Array.isArray(shortcutSurfaces) && shortcutSurfaces.length > 0
-    ? shortcutSurfaces.map((entry, index) => toShortcutSurface({
-      id: asText(entry?.id, `shortcut-${index + 1}`),
-      label: asText(entry?.label, `Shortcut ${index + 1}`),
-      present: entry?.present === true,
-      statusSummaryAvailable: entry?.statusSummaryAvailable === true,
-      evidence: entry?.evidence,
-    }))
-    : inferredShortcuts;
+    ? buildShortcutStatusSummary(shortcutSurfaces).map((entry) => toShortcutSurface(entry))
+    : inferredShortcuts.map((entry) => toShortcutSurface(entry));
 
   const stephanosTileEntryPresent = surfaces.some((entry) => entry.id === 'stephanos-tile-entry' && entry.present);
   const agentTileEntryPresent = surfaces.some((entry) => entry.id === 'agent-tile-entry' && entry.present);
@@ -147,12 +158,16 @@ export function buildLauncherEntrySummary({
     nextAction = `Populate shortcut status summary for ${missingShortcutStatus[0].label}.`;
   }
 
-  const warnings = [];
+  const warnings = [
+    ...surfaces.filter((entry) => entry.warning).map((entry) => `Shortcut warning (${entry.label}): ${entry.warning}`),
+  ];
   if (missingShortcutStatus.length > 0) {
     warnings.push(`Shortcut status missing: ${missingShortcutStatus.map((entry) => entry.label).join(', ')}.`);
   }
 
-  const blockers = [];
+  const blockers = [
+    ...surfaces.filter((entry) => entry.blocker).map((entry) => `Shortcut blocker (${entry.label}): ${entry.blocker}`),
+  ];
   if (!landingTilePresent) {
     blockers.push('Landing tile summary is missing from launcher-entry projection evidence.');
   }
@@ -162,7 +177,10 @@ export function buildLauncherEntrySummary({
 
   const evidence = [
     compactLandingSummary?.summary ? `Landing compact summary: ${compactLandingSummary.summary}` : '',
-    ...surfaces.filter((entry) => entry.present).map((entry) => `Shortcut: ${entry.label}${entry.evidence ? ` (${entry.evidence})` : ''}`),
+    ...surfaces
+      .filter((entry) => entry.present)
+      .map((entry) => `Shortcut: ${entry.label}${entry.compactStatus ? ` (${entry.compactStatus})` : ''}`),
+    ...surfaces.flatMap((entry) => entry.evidence || []),
   ].filter(Boolean);
 
   const dashboardSummaryText = landingTilePresent
