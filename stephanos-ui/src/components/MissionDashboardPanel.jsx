@@ -170,6 +170,14 @@ export default function MissionDashboardPanel({
       codexReadiness: summary.codexReadiness || 'unknown',
       openClawReadiness: summary.openClawReadiness || 'unknown',
       verificationStatus: summary.verificationStatus || 'unknown',
+      verificationReturnStatus: summary.verificationReturnStatus || 'unknown',
+      verificationDecision: summary.verificationDecision || 'not_ready',
+      mergeReadiness: summary.mergeReadiness || 'not_ready',
+      verificationReturnReady: summary.verificationReturnReady === true,
+      verificationReturnBlockers: Array.isArray(summary.verificationReturnBlockers) ? summary.verificationReturnBlockers : [],
+      verificationReturnWarnings: Array.isArray(summary.verificationReturnWarnings) ? summary.verificationReturnWarnings : [],
+      verificationReturnNextAction: summary.verificationReturnNextAction || '',
+      missingRequiredChecks: Array.isArray(summary.missingRequiredChecks) ? summary.missingRequiredChecks : [],
       highestPriorityGate: summary.highestPriorityGate || 'none',
       nextActions,
       nextAgentTaskAction: primaryAction?.title || summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
@@ -196,6 +204,14 @@ export default function MissionDashboardPanel({
       codexReadiness: agentTaskSummary.codexReadiness,
       openClawReadiness: agentTaskSummary.openClawReadiness,
       verificationStatus: agentTaskSummary.verificationStatus,
+      verificationReturnStatus: agentTaskSummary.verificationReturnStatus,
+      verificationDecision: agentTaskSummary.verificationDecision,
+      mergeReadiness: agentTaskSummary.mergeReadiness,
+      verificationReturnReady: agentTaskSummary.verificationReturnReady,
+      verificationReturnBlockers: agentTaskSummary.verificationReturnBlockers,
+      verificationReturnWarnings: agentTaskSummary.verificationReturnWarnings,
+      verificationReturnNextAction: agentTaskSummary.verificationReturnNextAction,
+      missingRequiredChecks: agentTaskSummary.missingRequiredChecks,
       highestPriorityGate: agentTaskSummary.highestPriorityGate,
       nextAgentTaskAction: agentTaskSummary.nextAgentTaskAction,
       nextActions: agentTaskSummary.nextActions,
@@ -479,6 +495,10 @@ export default function MissionDashboardPanel({
           <li>Codex handoff readiness: {agentTaskSummary.codexReadiness}</li>
           <li>OpenClaw control safety: {agentTaskSummary.openClawReadiness}</li>
           <li>Verification status: {agentTaskSummary.verificationStatus}</li>
+          <li>Verification return status: {agentTaskSummary.verificationReturnStatus}</li>
+          <li>Verification decision: {agentTaskSummary.verificationDecision}</li>
+          <li>Merge readiness: {agentTaskSummary.mergeReadiness}</li>
+          <li>Verification return ready: {agentTaskSummary.verificationReturnReady ? 'yes' : 'no'}</li>
           <li>Highest priority gate: {agentTaskSummary.highestPriorityGate}</li>
           <li>Readiness score: {agentTaskSummary.readinessScore}%</li>
         </ul>

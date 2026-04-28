@@ -28,6 +28,13 @@ test('AgentsTile includes Agent Task Layer projection labels for shared adjudica
     'Approval gates pending:',
     'Handoff readiness:',
     'Verification:',
+    'Verification return status:',
+    'Return source:',
+    'Verification decision:',
+    'Merge readiness:',
+    'Verification return next action:',
+    'Manual return mode:',
+    'Manual verification return paste (non-persistent v1 placeholder)',
     'Next best agent action:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));

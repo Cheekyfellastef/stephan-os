@@ -68,3 +68,41 @@ test('adjudicateProjectProgress advances next action to verification when codex 
 
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
 });
+
+test('adjudicateProjectProgress keeps verification return loop as next action when return is not ready', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'started',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'not_started',
+      verificationReturnReady: false,
+      nextAgentTaskAction: 'Paste Codex result for verification',
+      nextActions: [{ title: 'Paste Codex result for verification', reason: 'Awaiting return.' }],
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
+});
+
+test('adjudicateProjectProgress recommends OpenClaw policy harness after verification return is ready', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_policy',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      mergeReadiness: 'ready_for_operator_approval',
+      nextAgentTaskAction: 'Add OpenClaw policy harness placeholder',
+      nextActions: [{ title: 'Add OpenClaw policy harness placeholder', reason: 'Verification return loop exists.' }],
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'add-openclaw-policy-harness');
+});
