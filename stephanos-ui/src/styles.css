@@ -1544,6 +1544,75 @@ pre {
   padding: 0.65rem;
 }
 
+.mission-project-readiness {
+  border: 1px solid rgba(94, 158, 236, 0.4);
+  background: rgba(6, 16, 33, 0.86);
+  border-radius: 10px;
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mission-project-readiness__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mission-project-readiness__header h3 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.mission-score-chip {
+  font-size: 0.76rem;
+  border: 1px solid rgba(131, 166, 214, 0.6);
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  color: #a9d8ff;
+}
+
+.mission-readiness-lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.55rem;
+}
+
+.mission-readiness-lane {
+  border: 1px solid rgba(84, 132, 218, 0.35);
+  background: rgba(7, 14, 28, 0.72);
+  border-radius: 9px;
+  padding: 0.55rem;
+}
+
+.mission-readiness-lane__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.mission-recommendation-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mission-recommendation-card {
+  border: 1px solid rgba(84, 132, 218, 0.35);
+  background: rgba(7, 14, 28, 0.72);
+  border-radius: 9px;
+  padding: 0.5rem;
+}
+
+.mission-recommendation-card p {
+  margin: 0.2rem 0;
+}
+
 .mission-live-projection h3 {
   margin: 0 0 0.35rem;
   font-size: 0.86rem;
@@ -1610,6 +1679,30 @@ pre {
   border: 1px solid rgba(131, 166, 214, 0.6);
   border-radius: 999px;
   padding: 0.12rem 0.45rem;
+}
+
+.mission-status-chip--readiness.status-complete,
+.mission-status-chip--readiness.status-ready {
+  border-color: rgba(113, 226, 176, 0.68);
+  color: #8ff0c6;
+}
+
+.mission-status-chip--readiness.status-mostly-ready,
+.mission-status-chip--readiness.status-started {
+  border-color: rgba(116, 190, 255, 0.68);
+  color: #9ed4ff;
+}
+
+.mission-status-chip--readiness.status-partial {
+  border-color: rgba(255, 204, 133, 0.7);
+  color: #ffd18a;
+}
+
+.mission-status-chip--readiness.status-blocked,
+.mission-status-chip--readiness.status-not-started,
+.mission-status-chip--readiness.status-unknown {
+  border-color: rgba(255, 145, 145, 0.68);
+  color: #ffb1b1;
 }
 
 .mission-progress-row {
