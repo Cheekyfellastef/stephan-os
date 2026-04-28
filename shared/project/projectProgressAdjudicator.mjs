@@ -105,6 +105,20 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     codexReadiness: toLower(source.codexReadiness),
     openClawReadiness: toLower(source.openClawReadiness),
     verificationStatus: toLower(source.verificationStatus, 'unknown'),
+    verificationReturnStatus: toLower(source.verificationReturnStatus, 'unknown'),
+    verificationDecision: toLower(source.verificationDecision, 'not_ready'),
+    mergeReadiness: toLower(source.mergeReadiness, 'not_ready'),
+    verificationReturnReady: source.verificationReturnReady === true,
+    verificationReturnBlockers: Array.isArray(source.verificationReturnBlockers)
+      ? source.verificationReturnBlockers.map((entry) => toText(entry, '')).filter(Boolean)
+      : [],
+    verificationReturnWarnings: Array.isArray(source.verificationReturnWarnings)
+      ? source.verificationReturnWarnings.map((entry) => toText(entry, '')).filter(Boolean)
+      : [],
+    verificationReturnNextAction: toText(source.verificationReturnNextAction, ''),
+    missingRequiredChecks: Array.isArray(source.missingRequiredChecks)
+      ? source.missingRequiredChecks.map((entry) => toText(entry, '')).filter(Boolean)
+      : [],
     highestPriorityGate: toText(source.highestPriorityGate, 'none'),
     nextAgentTaskAction,
     nextActions,
@@ -123,6 +137,7 @@ function resolveAgentTaskActionIndex(nextAgentTaskAction = '') {
   if (normalized.includes('codex manual handoff')) return 2;
   if (normalized.includes('verification return state')) return 3;
   if (normalized.includes('openclaw policy harness')) return 4;
+  if (normalized.includes('paste codex result for verification')) return 3;
   return -1;
 }
 
@@ -243,6 +258,17 @@ export function adjudicateProjectProgress({
       if (nextIndex < 0) return true;
       return index >= nextIndex;
     });
+
+  const currentActionIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction || nextAction?.title);
+  if (agentTaskSummary.available && currentActionIndex >= 3 && agentTaskSummary.verificationReturnReady !== true) {
+    nextBestActions.sort((a, b) => (a.id === 'add-verification-return-loop' ? -1 : b.id === 'add-verification-return-loop' ? 1 : 0));
+  }
+  if (agentTaskSummary.available
+    && agentTaskSummary.verificationReturnReady === true
+    && ['safe_to_accept', 'needs_review'].includes(agentTaskSummary.verificationDecision)
+    && agentTaskSummary.openClawReadiness !== 'ready') {
+    nextBestActions.sort((a, b) => (a.id === 'add-openclaw-policy-harness' ? -1 : b.id === 'add-openclaw-policy-harness' ? 1 : 0));
+  }
 
   const verificationStatus = {
     buildVerifyScriptsPresent: true,

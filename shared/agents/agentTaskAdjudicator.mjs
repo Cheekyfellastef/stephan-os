@@ -1,5 +1,6 @@
 import { normalizeAgentTaskModel } from './agentTaskModel.mjs';
 import { buildCodexHandoffPacket } from './codexHandoffPacket.mjs';
+import { adjudicateVerificationReturn } from './agentVerificationReturn.mjs';
 
 const LAYER_ACTIONS = Object.freeze([
   {
@@ -61,6 +62,7 @@ function resolveReadinessScore(model) {
   const approved = required.filter((gate) => isApprovedGate(gate, model.approvalGates.approved));
   score -= Math.max(0, required.length - approved.length) * 4;
   if (asText(model.verification.verificationStatus).toLowerCase() !== 'passed') score -= 9;
+  if (asText(model.verificationReturn?.mergeReadiness).toLowerCase() !== 'ready_for_operator_approval') score -= 7;
   return Math.max(0, Math.min(100, score));
 }
 
@@ -95,8 +97,18 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
   const verificationStatus = asText(normalized.verification.verificationStatus).toLowerCase();
   const verificationRequired = normalized.verification.verificationRequired === true;
   const verificationStarted = verificationStatus !== 'not_started';
+  const codexHandoffPacket = buildCodexHandoffPacket({
+    model: normalized,
+    approvalPending: pendingApprovals,
+  });
+  const verificationReturn = adjudicateVerificationReturn({
+    verificationReturn: normalized.verificationReturn,
+    fallbackChecks: normalized.verification.verificationChecks,
+    packetReady: codexHandoffPacket.ready,
+    lifecycleState: normalized.taskLifecycle.state,
+  });
 
-  const nextAction = LAYER_ACTIONS.find((candidate) => {
+  const baseNextAction = LAYER_ACTIONS.find((candidate) => {
     if (candidate.id === 'build-canonical-agent-task-model') {
       return normalized.taskLifecycle.state === 'draft';
     }
@@ -107,20 +119,25 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
       return normalized.agentReadiness.codex === 'needs_adapter' || normalized.handoff.handoffMode === 'unavailable';
     }
     if (candidate.id === 'verification-return-state') {
-      return verificationRequired && !verificationStarted;
+      return verificationRequired && (verificationReturn.verificationReturnReady !== true || verificationReturn.verificationDecision === 'not_ready');
     }
     if (candidate.id === 'openclaw-policy-harness-placeholder') {
       return normalized.agentReadiness.openclaw !== 'ready';
     }
     return false;
   }) || LAYER_ACTIONS[0];
+  let nextAction = { ...baseNextAction, blocks: asArray(baseNextAction.blocks) };
 
+  if (verificationReturn.verificationReturnStatus === 'waiting_for_return') {
+    nextAction = {
+      title: 'Paste Codex result for verification',
+      reason: 'Manual handoff packet is ready/sent, but no return payload has been captured yet.',
+      blocks: ['Trusted verification return loop'],
+      id: 'verification-return-state',
+    };
+  }
   const layerStatus = resolveLayerStatus(normalized);
   const readinessScore = resolveReadinessScore(normalized);
-  const codexHandoffPacket = buildCodexHandoffPacket({
-    model: normalized,
-    approvalPending: pendingApprovals,
-  });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -152,6 +169,7 @@ export function adjudicateAgentTaskLayer({ model = {}, context = {} } = {}) {
       started: verificationStarted,
       lastResult: normalized.verification.lastVerificationResult,
     },
+    verificationReturn,
     nextAction,
     blockers: Array.from(new Set(explicitBlockers)).filter(Boolean),
     warnings: normalized.evidence.warnings,

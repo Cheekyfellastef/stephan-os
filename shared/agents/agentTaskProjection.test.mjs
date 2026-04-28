@@ -66,3 +66,35 @@ test('agent task projection exposes codex manual handoff packet summary and pack
   assert.match(projection.operatorSurface.codexHandoffPacketText, /Codex Manual Handoff Packet \(v1\)/i);
   assert.equal(projection.readinessSummary.codexManualHandoffReady, true);
 });
+
+test('agent task projection exposes verification return summary and missing checks', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      taskLifecycle: { state: 'sent_to_agent' },
+      approvalGates: {
+        required: ['approve_handoff'],
+        approved: ['approve_handoff'],
+      },
+      handoff: {
+        handoffTarget: 'codex',
+        handoffMode: 'manual_prompt',
+        handoffReady: true,
+      },
+      verificationReturn: {
+        returnStatus: 'received',
+        returnSource: 'codex_manual',
+        returnedSummary: 'Implemented changes.',
+        returnedFilesChanged: ['shared/agents/agentTaskProjection.mjs'],
+        returnedChecksRun: ['npm run stephanos:build'],
+        verificationChecksRequired: ['npm run stephanos:build', 'npm run stephanos:verify'],
+        verificationChecksPassed: ['npm run stephanos:build'],
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.verificationReturnStatus, 'verification_required');
+  assert.equal(projection.operatorSurface.verificationDecision, 'needs_review');
+  assert.equal(projection.operatorSurface.mergeReadiness, 'review_required');
+  assert.equal(projection.operatorSurface.missingRequiredChecks.length, 1);
+  assert.equal(projection.readinessSummary.verificationReturnReady, true);
+});

@@ -41,6 +41,16 @@ function mapVerificationStatus(value = '') {
   return 'unknown';
 }
 
+function mapVerificationReturnStatus(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'verified') return 'ready';
+  if (normalized === 'waiting_for_return' || normalized === 'none') return 'not_started';
+  if (normalized === 'verifying') return 'started';
+  if (normalized === 'verification_required' || normalized === 'incomplete' || normalized === 'received') return 'partial';
+  if (normalized === 'blocked' || normalized === 'failed') return 'blocked';
+  return 'unknown';
+}
+
 export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const adjudicated = adjudicateAgentTaskLayer({ model, context });
   const pendingApprovals = asArray(adjudicated.approval.pending);
@@ -49,7 +59,8 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const lifecycleState = adjudicated.model.taskLifecycle.state;
   const dashboardStatus = mapLayerStatusToDashboardStatus(adjudicated.layerStatus, lifecycleState);
   const dashboardCodexReadiness = mapCodexReadiness(adjudicated.codexReadiness);
-  const dashboardVerificationStatus = mapVerificationStatus(adjudicated.verification.status);
+  const dashboardVerificationStatus = mapVerificationReturnStatus(adjudicated.verificationReturn.verificationReturnStatus)
+    || mapVerificationStatus(adjudicated.verification.status);
   const nextAction = {
     title: adjudicated.nextAction.title,
     priority: 1,
@@ -85,6 +96,18 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       codexHandoffPacketRequiredChecks: asArray(adjudicated.verification.checks),
       approvalPending: pendingApprovals,
       verificationStatus: adjudicated.verification.status,
+      verificationReturnStatus: adjudicated.verificationReturn.verificationReturnStatus,
+      verificationDecision: adjudicated.verificationReturn.verificationDecision,
+      mergeReadiness: adjudicated.verificationReturn.mergeReadiness,
+      verificationReturnReady: adjudicated.verificationReturn.verificationReturnReady,
+      verificationReturnBlockers: asArray(adjudicated.verificationReturn.verificationReturnBlockers),
+      verificationReturnWarnings: asArray(adjudicated.verificationReturn.verificationReturnWarnings),
+      verificationReturnNextAction: adjudicated.verificationReturn.verificationReturnNextAction,
+      returnedSummary: adjudicated.verificationReturn.returnedSummary,
+      returnSource: adjudicated.verificationReturn.returnSource,
+      returnedFilesChanged: asArray(adjudicated.verificationReturn.returnedFilesChanged),
+      returnedChecksRun: asArray(adjudicated.verificationReturn.returnedChecksRun),
+      missingRequiredChecks: asArray(adjudicated.verificationReturn.missingRequiredChecks),
       nextAction: adjudicated.nextAction,
       blockers,
       warnings,
@@ -117,6 +140,16 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       codexManualHandoffMode: adjudicated.handoff.packetMode,
       codexManualHandoffReady: adjudicated.handoff.packetReady === true,
       codexManualHandoffSummary: adjudicated.handoff.packetSummary,
+      verificationReturnStatus: adjudicated.verificationReturn.verificationReturnStatus,
+      verificationDecision: adjudicated.verificationReturn.verificationDecision,
+      mergeReadiness: adjudicated.verificationReturn.mergeReadiness,
+      verificationReturnReady: adjudicated.verificationReturn.verificationReturnReady,
+      verificationReturnBlockers: asArray(adjudicated.verificationReturn.verificationReturnBlockers),
+      verificationReturnWarnings: asArray(adjudicated.verificationReturn.verificationReturnWarnings),
+      verificationReturnNextAction: adjudicated.verificationReturn.verificationReturnNextAction,
+      returnedFilesChanged: asArray(adjudicated.verificationReturn.returnedFilesChanged),
+      returnedChecksRun: asArray(adjudicated.verificationReturn.returnedChecksRun),
+      missingRequiredChecks: asArray(adjudicated.verificationReturn.missingRequiredChecks),
     },
   };
 }

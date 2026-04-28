@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
@@ -65,6 +65,7 @@ export default function AgentsTile({
     () => (typeof operatorTask?.codexHandoffPacketText === 'string' ? operatorTask.codexHandoffPacketText : ''),
     [operatorTask?.codexHandoffPacketText],
   );
+  const [manualReturnDraft, setManualReturnDraft] = useState('');
 
   async function handleCopyCodexPacket() {
     if (!codexPacketText) {
@@ -116,12 +117,22 @@ export default function AgentsTile({
             <li><strong>Codex handoff readiness:</strong> {operatorTask.codexHandoffPacketReady ? 'ready' : 'blocked'}</li>
             <li><strong>Handoff mode:</strong> {operatorTask.codexHandoffPacketMode || 'manual_prompt'}</li>
             <li><strong>Verification:</strong> {operatorTask.verificationStatus}</li>
+            <li><strong>Verification return status:</strong> {operatorTask.verificationReturnStatus || 'none'}</li>
+            <li><strong>Return source:</strong> {operatorTask.returnSource || 'unknown'}</li>
+            <li><strong>Verification decision:</strong> {operatorTask.verificationDecision || 'not_ready'}</li>
+            <li><strong>Merge readiness:</strong> {operatorTask.mergeReadiness || 'not_ready'}</li>
+            <li><strong>Verification return ready:</strong> {operatorTask.verificationReturnReady ? 'yes' : 'no'}</li>
+            <li><strong>Verification return next action:</strong> {operatorTask.verificationReturnNextAction || 'not reported'}</li>
             <li><strong>Next best agent action:</strong> {operatorTask.nextAction?.title || 'none'}</li>
             <li><strong>Action reason:</strong> {operatorTask.nextAction?.reason || 'not reported'}</li>
             <li><strong>Blocks:</strong> {formatReportedList(operatorTask.nextAction?.blocks)}</li>
             <li><strong>Required checks:</strong> {formatReportedList(operatorTask.codexHandoffPacketRequiredChecks)}</li>
+            <li><strong>Returned checks run:</strong> {formatReportedList(operatorTask.returnedChecksRun)}</li>
+            <li><strong>Checks missing:</strong> {formatReportedList(operatorTask.missingRequiredChecks, 'none')}</li>
+            <li><strong>Returned files changed:</strong> {formatReportedList(operatorTask.returnedFilesChanged)}</li>
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
+          <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
           <div className="agents-tile-copy-actions">
             <button
               type="button"
@@ -145,8 +156,26 @@ export default function AgentsTile({
             </details>
           ) : null}
           {operatorTask.handoffPacketSummary ? <p><strong>Handoff packet summary:</strong> {operatorTask.handoffPacketSummary}</p> : null}
+          {operatorTask.returnedSummary ? <p><strong>Returned summary:</strong> {operatorTask.returnedSummary}</p> : null}
+          {operatorTask.verificationReturnBlockers?.length > 0 ? <p><strong>Verification blockers:</strong> {operatorTask.verificationReturnBlockers.join(' · ')}</p> : null}
+          {operatorTask.verificationReturnWarnings?.length > 0 ? <p><strong>Verification warnings:</strong> {operatorTask.verificationReturnWarnings.join(' · ')}</p> : null}
           {operatorTask.blockers?.length > 0 ? <p><strong>Blockers:</strong> {operatorTask.blockers.join(' · ')}</p> : null}
           {operatorTask.warnings?.length > 0 ? <p><strong>Warnings:</strong> {operatorTask.warnings.join(' · ')}</p> : null}
+          <details>
+            <summary>Manual verification return paste (non-persistent v1 placeholder)</summary>
+            <label className="paneFieldGroup" htmlFor="agent-verification-return-draft">
+              Paste Codex/manual return text for operator review (local component state only)
+            </label>
+            <textarea
+              id="agent-verification-return-draft"
+              className="paneControl"
+              rows={8}
+              value={manualReturnDraft}
+              onChange={(event) => setManualReturnDraft(event.target.value)}
+              placeholder="Paste manual return summary/checks/blockers here. This placeholder is not persisted."
+            />
+            <p className="muted">Draft length: {manualReturnDraft.trim().length} characters. Not stored in canonical task truth.</p>
+          </details>
         </section>
       ) : null}
 

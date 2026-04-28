@@ -1,3 +1,5 @@
+import { normalizeVerificationReturn } from './agentVerificationReturn.mjs';
+
 const TASK_LIFECYCLE_STATES = new Set([
   'draft',
   'ready_for_review',
@@ -137,6 +139,7 @@ export function createDefaultAgentTaskModel() {
       verificationStatus: 'not_started',
       lastVerificationResult: 'Not run for active task.',
     },
+    verificationReturn: normalizeVerificationReturn({}, ['npm run stephanos:build', 'npm run stephanos:verify']),
     evidence: {
       reasons: [],
       blockers: [],
@@ -159,6 +162,7 @@ export function normalizeAgentTaskModel(input = {}) {
   const taskConstraints = model.taskConstraints && typeof model.taskConstraints === 'object' ? model.taskConstraints : {};
   const handoff = model.handoff && typeof model.handoff === 'object' ? model.handoff : {};
   const verification = model.verification && typeof model.verification === 'object' ? model.verification : {};
+  const verificationReturn = model.verificationReturn && typeof model.verificationReturn === 'object' ? model.verificationReturn : {};
   const evidence = model.evidence && typeof model.evidence === 'object' ? model.evidence : {};
 
   const availableAgents = uniqueTextList(agentAssignment.availableAgents)
@@ -217,6 +221,10 @@ export function normalizeAgentTaskModel(input = {}) {
       verificationStatus: asText(verification.verificationStatus, defaults.verification.verificationStatus),
       lastVerificationResult: asText(verification.lastVerificationResult, defaults.verification.lastVerificationResult),
     },
+    verificationReturn: normalizeVerificationReturn(
+      verificationReturn,
+      uniqueTextList(Array.isArray(verification.verificationChecks) && verification.verificationChecks.length > 0 ? verification.verificationChecks : defaults.verification.verificationChecks),
+    ),
     evidence: {
       reasons: uniqueTextList(evidence.reasons),
       blockers: uniqueTextList(evidence.blockers),
