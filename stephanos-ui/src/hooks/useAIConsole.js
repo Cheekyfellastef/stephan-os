@@ -225,14 +225,6 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestPayload.request_side_selected_provider
     || requestPayload.provider,
   );
-  const routerSelectedProvider = normalizeProviderKey(
-    executionMetadata.router_selected_provider
-    || requestPayload.routeDecision?.selectedProvider
-    || requestPayload.router_selected_provider
-    || requestTrace.router_selected_provider
-    || requestSideSelectedProvider
-    || requestPayload.provider,
-  );
   const executableProvider = normalizeProviderKey(
     executionMetadata.executable_provider
     || requestTrace.executable_provider
@@ -240,7 +232,6 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
     || requestPayload.runtimeContext?.finalRouteTruth?.selectedProvider
     || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
-    || routerSelectedProvider
     || requestSideSelectedProvider
     || uiRequestedProvider,
   );
@@ -251,6 +242,30 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || executableProvider
     || null,
   );
+  const rawRouterSelectedProvider = normalizeProviderKey(
+    executionMetadata.router_selected_provider
+    || requestPayload.routeDecision?.selectedProvider
+    || requestPayload.router_selected_provider
+    || null,
+  );
+  const routerSelectedProvider = (() => {
+    if (
+      rawRouterSelectedProvider
+      && (
+        rawRouterSelectedProvider === requestSideSelectedProvider
+        || rawRouterSelectedProvider === executableProvider
+        || rawRouterSelectedProvider === actualProviderUsed
+      )
+    ) {
+      return rawRouterSelectedProvider;
+    }
+    return normalizeProviderKey(
+      requestSideSelectedProvider
+      || executableProvider
+      || actualProviderUsed
+      || requestPayload.provider,
+    );
+  })();
   const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
     || requestTrace.ui_default_provider
     || executionMetadata.ui_default_provider
@@ -277,6 +292,48 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestTrace.timeout_provider
     || requestPayload.runtimeContext?.timeoutPolicy?.timeoutProvider
     || selectedProvider;
+  const executionStatus = String(
+    executionMetadata.execution_status
+    || requestTrace.execution_status
+    || data.data?.execution_status
+    || data.data?.status
+    || '',
+  ).trim().toLowerCase();
+  const executionTruth = String(
+    executionMetadata.execution_truth
+    || requestTrace.execution_truth
+    || data.data?.execution_truth
+    || '',
+  ).trim().toLowerCase();
+  const finalExecutionOutcome = String(
+    executionMetadata.selected_provider_final_execution_outcome
+    || requestTrace.selected_provider_final_execution_outcome
+    || '',
+  ).trim().toLowerCase();
+  const successClassOutcome = finalExecutionOutcome === 'success'
+    || executionStatus.startsWith('ok')
+    || executionTruth.includes('answered');
+  const cancellationClassOutcome = /(cancel|abort)/.test(finalExecutionOutcome);
+  const rawExecutionCancelled = Boolean(executionMetadata.execution_cancelled ?? requestPayload.execution_cancelled ?? false);
+  const rawProviderCancelled = Boolean(executionMetadata.provider_cancelled ?? requestPayload.provider_cancelled ?? false);
+  const rawCancellationSource = executionMetadata.cancellation_source || requestPayload.cancellation_source || null;
+  const rawProviderCancelReason = executionMetadata.provider_cancel_reason || requestPayload.provider_cancel_reason || null;
+  const rawOllamaAbortSent = Boolean(executionMetadata.ollama_abort_sent ?? requestPayload.ollama_abort_sent ?? false);
+  const normalizedCancellation = successClassOutcome && !cancellationClassOutcome
+    ? {
+      execution_cancelled: false,
+      cancellation_source: null,
+      provider_cancelled: false,
+      provider_cancel_reason: null,
+      ollama_abort_sent: false,
+    }
+    : {
+      execution_cancelled: rawExecutionCancelled,
+      cancellation_source: rawCancellationSource,
+      provider_cancelled: rawProviderCancelled,
+      provider_cancel_reason: rawProviderCancelReason,
+      ollama_abort_sent: rawOllamaAbortSent,
+    };
   const rawModelUsed = executionMetadata.model_used
     || data.data?.model_used
     || data.data?.provider_model
@@ -581,11 +638,11 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ),
     timeout_failure_layer: executionMetadata.timeout_failure_layer || requestTrace.timeout_failure_layer || null,
     timeout_failure_label: executionMetadata.timeout_failure_label || requestTrace.timeout_failure_label || null,
-    execution_cancelled: Boolean(executionMetadata.execution_cancelled ?? requestPayload.execution_cancelled ?? false),
-    cancellation_source: executionMetadata.cancellation_source || requestPayload.cancellation_source || null,
-    provider_cancelled: Boolean(executionMetadata.provider_cancelled ?? requestPayload.provider_cancelled ?? false),
-    provider_cancel_reason: executionMetadata.provider_cancel_reason || requestPayload.provider_cancel_reason || null,
-    ollama_abort_sent: Boolean(executionMetadata.ollama_abort_sent ?? requestPayload.ollama_abort_sent ?? false),
+    execution_cancelled: normalizedCancellation.execution_cancelled,
+    cancellation_source: normalizedCancellation.cancellation_source,
+    provider_cancelled: normalizedCancellation.provider_cancelled,
+    provider_cancel_reason: normalizedCancellation.provider_cancel_reason,
+    ollama_abort_sent: normalizedCancellation.ollama_abort_sent,
     ui_timeout_triggered: Boolean(executionMetadata.ui_timeout_triggered ?? requestPayload.ui_timeout_triggered ?? false),
     backend_timeout_triggered: Boolean(executionMetadata.backend_timeout_triggered ?? requestPayload.backend_timeout_triggered ?? false),
     abort_signal_created: Boolean(executionMetadata.abort_signal_created ?? requestPayload.abort_signal_created ?? false),

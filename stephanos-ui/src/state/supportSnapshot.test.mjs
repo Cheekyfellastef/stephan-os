@@ -667,6 +667,7 @@ test('buildSupportSnapshot warns on unexplained router-to-actual provider drift 
       lastActualProviderUsed: 'ollama',
       lastExecutionCancelled: 'true',
       lastProviderCancelled: 'true',
+      lastOllamaAbortSent: 'true',
       lastExecutionStatus: 'ok:ollama',
       lastProviderOverrideReason: 'n/a',
       lastFallbackProviderUsed: 'n/a',
@@ -728,6 +729,57 @@ test('buildSupportSnapshot does not warn on legitimate ollama load-governor mode
     now: { toISOString: () => '2026-04-08T00:00:05.000Z' },
   });
 
+  assert.doesNotMatch(snapshot, /router selected provider differs from actual provider/);
+  assert.doesNotMatch(snapshot, /cancellation truth is true while execution outcome reports success/);
+});
+
+test('buildSupportSnapshot clears stale router and cancellation contradiction warnings after successful cool-mode ollama normalization', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRequestedProvider: 'ollama',
+      lastRequestSideSelectedProvider: 'ollama',
+      lastRouterSelectedProvider: 'ollama',
+      lastSelectedProvider: 'ollama',
+      lastExecutableProvider: 'ollama',
+      lastActualProviderUsed: 'ollama',
+      lastActualModelUsed: 'llama3.2:3b',
+      lastExecutionTruth: 'ollama answered',
+      lastExecutionStatus: 'ok:ollama',
+      lastSelectedProviderFinalExecutionOutcome: 'success',
+      lastExecutionCancelled: 'false',
+      lastProviderCancelled: 'false',
+      lastProviderCancelReason: 'n/a',
+      lastOllamaAbortSent: 'false',
+      lastCancellationSource: 'n/a',
+      lastOllamaLoadMode: 'cool',
+      lastOllamaModelBeforeLoadPolicy: 'qwen:32b',
+      lastOllamaModelAfterLoadPolicy: 'llama3.2:3b',
+      lastOllamaHeavyModelRequested: 'true',
+      lastOllamaHeavyModelAllowed: 'false',
+      lastOllamaLoadPolicyApplied: 'true',
+      lastProviderOverrideReason: 'n/a',
+      lastFallbackProviderUsed: 'n/a',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:05.000Z' },
+  });
+
+  assert.match(snapshot, /Last Router Selected Provider: ollama/);
+  assert.match(snapshot, /Last Actual Model Used: llama3.2:3b/);
+  assert.match(snapshot, /Last Execution Cancelled: false/);
+  assert.match(snapshot, /Provider Cancelled: false/);
+  assert.match(snapshot, /Ollama Abort Sent: false/);
   assert.doesNotMatch(snapshot, /router selected provider differs from actual provider/);
   assert.doesNotMatch(snapshot, /cancellation truth is true while execution outcome reports success/);
 });
