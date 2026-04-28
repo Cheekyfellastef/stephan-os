@@ -9,7 +9,7 @@ test('adjudicateProjectProgress returns seeded lanes and ranked next actions', (
   assert.equal(Array.isArray(projection.lanes), true);
   assert.equal(projection.lanes.length >= 10, true);
   assert.equal(projection.nextBestActions[0].id, 'build-agent-task-layer-v1');
-  assert.equal(projection.readiness.agent, 'not-started');
+  assert.equal(projection.readiness.agent, 'partial');
   assert.equal(projection.readiness.openClaw, 'blocked');
   assert.equal(projection.verificationStatus.status, 'started');
 });

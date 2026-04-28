@@ -82,6 +82,11 @@ export default function MissionConsoleTile({
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
     const operatorSurface = agentTaskProjection?.operatorSurface || {};
+    const pickBoolean = (primary, fallback) => {
+      if (primary === true) return true;
+      if (primary === false) return false;
+      return fallback === true;
+    };
     const blockers = Array.isArray(summary.verificationReturnBlockers) ? summary.verificationReturnBlockers : [];
     const warnings = Array.isArray(summary.verificationReturnWarnings) ? summary.verificationReturnWarnings : [];
     const highestPriorityIssue = blockers[0] || warnings[0] || 'none';
@@ -94,17 +99,17 @@ export default function MissionConsoleTile({
       manualOnly: (summary.codexManualHandoffMode || operatorSurface.codexHandoffPacketMode || '').toLowerCase() === 'manual_handoff_only',
       openClawReadiness: summary.openClawReadiness || operatorSurface.openClawReadiness || 'unknown',
       openClawIntegrationMode: summary.openClawIntegrationMode || operatorSurface.openClawIntegrationMode || 'policy_only',
-      openClawSafeToUse: summary.openClawSafeToUse === true || operatorSurface.openClawSafeToUse === true,
+      openClawSafeToUse: pickBoolean(summary.openClawSafeToUse, operatorSurface.openClawSafeToUse),
       openClawKillSwitchState: summary.openClawKillSwitchState || operatorSurface.openClawKillSwitchState || 'missing',
       openClawKillSwitchMode: summary.openClawKillSwitchMode || operatorSurface.openClawKillSwitchMode || 'unavailable',
-      openClawExecutionAllowed: summary.openClawExecutionAllowed === true || operatorSurface.openClawExecutionAllowed === true,
+      openClawExecutionAllowed: pickBoolean(summary.openClawExecutionAllowed, operatorSurface.openClawExecutionAllowed),
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || operatorSurface.openClawHighestPriorityBlocker || 'none',
       openClawNextAction: summary.openClawNextAction || operatorSurface.openClawNextAction || 'not reported',
       openClawAdapterMode: summary.openClawAdapterMode || operatorSurface.openClawAdapterMode || 'design_only',
       openClawAdapterReadiness: summary.openClawAdapterReadiness || operatorSurface.openClawAdapterReadiness || 'needs_contract',
       openClawAdapterConnectionState: summary.openClawAdapterConnectionState || operatorSurface.openClawAdapterConnectionState || 'not_configured',
       openClawAdapterExecutionMode: summary.openClawAdapterExecutionMode || operatorSurface.openClawAdapterExecutionMode || 'disabled',
-      openClawAdapterCanExecute: summary.openClawAdapterCanExecute === true || operatorSurface.openClawAdapterCanExecute === true,
+      openClawAdapterCanExecute: pickBoolean(summary.openClawAdapterCanExecute, operatorSurface.openClawAdapterCanExecute),
       openClawAdapterNextAction: summary.openClawAdapterNextAction || operatorSurface.openClawAdapterNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
