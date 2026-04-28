@@ -12,3 +12,18 @@ test('AgentsTile consumes finalAgentView projection and does not read runtime au
   assert.equal(source.includes('canonicalRouteRuntimeTruth'), false);
   assert.equal(source.includes('finalAgentView'), true);
 });
+
+test('AgentsTile includes Agent Task Layer projection labels for shared adjudicated truth', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  const requiredLabels = [
+    'Agent Task Layer v1',
+    'Recommended agent:',
+    'Codex readiness:',
+    'OpenClaw readiness:',
+    'Approval gates pending:',
+    'Handoff readiness:',
+    'Verification:',
+    'Next best agent action:',
+  ];
+  requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+});

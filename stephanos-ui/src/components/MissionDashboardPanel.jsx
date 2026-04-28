@@ -51,6 +51,7 @@ export default function MissionDashboardPanel({
   orchestrationSelectors = {},
   runtimeStatus = {},
   finalRouteTruth = null,
+  agentTaskProjection = null,
 } = {}) {
   const {
     uiLayout,
@@ -188,6 +189,18 @@ export default function MissionDashboardPanel({
       actionLadder: Array.isArray(orchestrationSelectors?.operatorActionLadder) ? orchestrationSelectors.operatorActionLadder : [],
     };
   }, [finalAgentView, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.capabilityPosture, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary]);
+  const agentTaskSummary = useMemo(() => {
+    const summary = agentTaskProjection?.readinessSummary || {};
+    return {
+      agentTaskLayerStatus: summary.agentTaskLayerStatus || 'unknown',
+      codexReadiness: summary.codexReadiness || 'unknown',
+      openClawReadiness: summary.openClawReadiness || 'unknown',
+      nextAgentTaskAction: summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
+      blockers: Array.isArray(summary.agentTaskLayerBlockers) ? summary.agentTaskLayerBlockers : [],
+      readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Number(summary.readinessScore) : 0,
+    };
+  }, [agentTaskProjection]);
+
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
@@ -428,6 +441,20 @@ export default function MissionDashboardPanel({
           </section>
         ) : null}
       </section>
+      <section className="mission-live-projection" aria-label="Agent task layer summary">
+        <h3>Agent Task Layer Summary</h3>
+        <ul className="compact-list">
+          <li>Agent layer state: {agentTaskSummary.agentTaskLayerStatus}</li>
+          <li>Current recommended next action: {agentTaskSummary.nextAgentTaskAction}</li>
+          <li>Codex handoff readiness: {agentTaskSummary.codexReadiness}</li>
+          <li>OpenClaw control safety: {agentTaskSummary.openClawReadiness}</li>
+          <li>Readiness score: {agentTaskSummary.readinessScore}%</li>
+        </ul>
+        {agentTaskSummary.blockers.length > 0 ? (
+          <p className="mission-note"><strong>Agent layer blockers:</strong> {agentTaskSummary.blockers.join(' · ')}</p>
+        ) : null}
+      </section>
+
       <section className="mission-live-projection" aria-label="Live system projection">
         <h3>Live System Projection</h3>
         <p className="mission-note">
