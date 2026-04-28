@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createStephanosMemory } from '../../../shared/runtime/stephanosMemory.mjs';
+import { adjudicateProjectProgress } from '../../../shared/project/projectProgressAdjudicator.mjs';
+import { createSeedProjectProgressModel, getProjectStatusLabel } from '../../../shared/project/projectProgressModel.mjs';
 import { useAIStore } from '../state/aiStore';
 import {
   buildMissionHandoffText,
@@ -155,6 +157,12 @@ export default function MissionDashboardPanel({
   }, [dashboardState.milestones, uiState.showBlockedOnly]);
 
   const metrics = useMemo(() => buildMissionSummaryMetrics(dashboardState), [dashboardState]);
+  const projectProgressProjection = useMemo(() => adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    runtimeStatus,
+    finalRouteTruth,
+    orchestrationSelectors,
+  }), [finalRouteTruth, orchestrationSelectors, runtimeStatus]);
   const liveProjection = useMemo(() => {
     const missionView = finalAgentView?.finalMissionOrchestrationView || {};
     const approvalView = finalAgentView?.finalApprovalQueueView || {};
@@ -355,6 +363,71 @@ export default function MissionDashboardPanel({
         Health: <strong>{dashboardState.overallSummary.projectHealth}</strong> · Last updated: <strong>{formatTimestamp(metrics.lastUpdatedAt)}</strong>
       </p>
       <p className="mission-note">{dashboardState.overallSummary.missionNote}</p>
+      <section className="mission-project-readiness" aria-label="Project progress and readiness">
+        <header className="mission-project-readiness__header">
+          <h3>Project Progress &amp; Readiness</h3>
+          <span className="mission-score-chip">Readiness {projectProgressProjection.overallReadinessScore}%</span>
+        </header>
+        <p className="mission-note">
+          Current phase: <strong>{projectProgressProjection.phase.label}</strong> · Verification: <strong>{projectProgressProjection.verificationStatus.status}</strong>
+        </p>
+        <div className="mission-summary-strip">
+          <span>Agent readiness: <strong>{getProjectStatusLabel(projectProgressProjection.readiness.agent)}</strong></span>
+          <span>Codex readiness: <strong>{getProjectStatusLabel(projectProgressProjection.readiness.codex)}</strong></span>
+          <span>OpenClaw readiness: <strong>{getProjectStatusLabel(projectProgressProjection.readiness.openClaw)}</strong></span>
+        </div>
+        <div className="mission-readiness-lanes">
+          {projectProgressProjection.lanes.map((lane) => (
+            <article key={lane.id} className="mission-readiness-lane">
+              <header className="mission-readiness-lane__header">
+                <span className="mission-title">{lane.title}</span>
+                <span className={`mission-status-chip mission-status-chip--readiness status-${lane.status}`}>{getProjectStatusLabel(lane.status)}</span>
+              </header>
+              <p className="mission-note">{lane.why || 'No adjudicated reason available.'}</p>
+              {lane.blockers.length > 0 ? <p className="mission-note"><strong>Blocks:</strong> {lane.blockers.join(' · ')}</p> : null}
+              {lane.lastMilestone ? <p className="mission-note"><strong>Recent:</strong> {lane.lastMilestone}</p> : null}
+              {lane.evidence.length > 0 ? <p className="mission-note"><strong>Evidence:</strong> {lane.evidence.join(', ')}</p> : null}
+            </article>
+          ))}
+        </div>
+        <section className="mission-next-best-actions" aria-label="Next best actions">
+          <h4>Next Best Actions</h4>
+          <ol className="mission-recommendation-list">
+            {projectProgressProjection.nextBestActions.map((action) => (
+              <li key={action.id} className="mission-recommendation-card">
+                <p><strong>{action.title}</strong></p>
+                <p className="mission-note">Why this matters: {action.whyThisMatters}</p>
+                <p className="mission-note">Reason: {action.reason}</p>
+                <p className="mission-note">Blocks: {action.blocks.join(', ')}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+        {projectProgressProjection.blockers.length > 0 ? (
+          <section aria-label="Current blockers">
+            <h4>Current blockers</h4>
+            <ul className="compact-list">
+              {projectProgressProjection.blockers.map((blocker) => <li key={blocker.id}><strong>{blocker.title}:</strong> {blocker.details.join(' · ')}</li>)}
+            </ul>
+          </section>
+        ) : null}
+        {projectProgressProjection.risks.length > 0 ? (
+          <section aria-label="Current risks">
+            <h4>Current risks</h4>
+            <ul className="compact-list">
+              {projectProgressProjection.risks.slice(0, 6).map((risk) => <li key={risk.id}><strong>{risk.title}:</strong> {risk.risk}</li>)}
+            </ul>
+          </section>
+        ) : null}
+        {projectProgressProjection.doctrineWarnings.length > 0 ? (
+          <section aria-label="Doctrine alignment warnings" className="mission-dashboard__banner mission-dashboard__banner--warning">
+            <h4>Doctrine alignment warnings</h4>
+            <ul className="compact-list">
+              {projectProgressProjection.doctrineWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+            </ul>
+          </section>
+        ) : null}
+      </section>
       <section className="mission-live-projection" aria-label="Live system projection">
         <h3>Live System Projection</h3>
         <p className="mission-note">
