@@ -206,3 +206,64 @@ test('manual baseline nextAction only wins when operatorOverride=true', () => {
   const mapped = projection.milestones.find((entry) => entry.id === 'agent-layer-v1-foundation');
   assert.equal(mapped.nextAction, 'Connect OpenClaw local adapter');
 });
+
+test('Agent Layer v2 avoids declutter recommendation when launcher compact evidence exists', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: {
+      ...createProjectionFixture(),
+      nextBestActions: [
+        { id: 'populate-launcher-shortcut-status', title: 'Populate launcher shortcut status' },
+      ],
+    },
+    agentTaskSummary: {
+      status: 'started',
+      evidence: ['Agent Task projection wired'],
+    },
+  });
+
+  const v2 = projection.milestones.find((entry) => entry.id === 'agent-layer-v2-surface-elevation');
+  assert.ok(v2);
+  assert.doesNotMatch(v2.nextAction, /declutter landing tile summary/i);
+});
+
+test('Agent Layer v3 advances beyond kill-switch and adapter design when truth already exists', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: {
+      ...createProjectionFixture(),
+      nextBestActions: [
+        { id: 'connect-openclaw-local-adapter', title: 'Connect OpenClaw local adapter' },
+      ],
+    },
+    agentTaskSummary: {
+      openClawReadiness: 'needs_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterReadiness: 'needs_connection',
+      openClawAdapterConnectionState: 'not_connected',
+      evidence: ['Kill switch represented', 'Adapter contract and stub represented'],
+      openClawNextAction: '',
+    },
+  });
+
+  const v3 = projection.milestones.find((entry) => entry.id === 'agent-layer-v3-persistent-orchestration');
+  assert.ok(v3);
+  assert.equal(v3.nextAction, 'Connect OpenClaw local adapter');
+});
+
+test('Intent Engine operator interface is not marked not-started when prompt summary exists', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: createProjectionFixture(),
+    promptBuilderSummary: {
+      status: 'partial',
+      nextActions: ['Bind telemetry context into Prompt Builder summary export.'],
+      evidence: ['Prompt Builder compiles prompt text.'],
+    },
+  });
+
+  const milestone = projection.milestones.find((entry) => entry.id === 'intent-engine-operator-interface');
+  assert.ok(milestone);
+  assert.notEqual(milestone.status, 'not-started');
+});

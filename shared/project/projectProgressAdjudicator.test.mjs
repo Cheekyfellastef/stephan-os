@@ -458,3 +458,65 @@ test('adjudicateProjectProgress advances beyond create-stub recommendation when 
 
   assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
 });
+
+test('adjudicateProjectProgress does not report prompt-builder unavailable when summary exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    promptBuilderSummary: {
+      status: 'partial',
+      supportsAgentTaskContext: true,
+      supportsTelemetryContext: false,
+      supportsRuntimeTruthContext: true,
+    },
+  });
+
+  const evidenceLines = projection.nextBestActions[0]?.evidence || [];
+  assert.equal(evidenceLines.some((entry) => entry === 'prompt-builder:unavailable'), false);
+  assert.equal(evidenceLines.some((entry) => entry.includes('prompt-builder:partial:missing-telemetry-context')), true);
+});
+
+test('adjudicateProjectProgress suppresses declutter action when landing tile is compact', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    launcherEntrySummary: {
+      systemId: 'launcher-entry',
+      available: true,
+      status: 'ready',
+      diagnosticOverloadRisk: false,
+      shortcutSurfaces: [
+        { id: 'stephanos-tile-entry', present: true, statusSummaryAvailable: true },
+        { id: 'agent-tile-entry', present: true, statusSummaryAvailable: true },
+      ],
+    },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('declutter-landing-tile-summary'), false);
+});
+
+test('adjudicateProjectProgress suppresses kill-switch and adapter design actions when represented in shared truth', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterReadiness: 'needs_connection',
+      openClawAdapterStubStatus: 'health_check_only',
+      openClawAdapterStubConnectionState: 'local_only',
+      openClawAdapterConnectionState: 'not_connected',
+    },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
+  assert.equal(ids.includes('design-openclaw-local-adapter'), false);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(ids.includes('connect-openclaw-local-adapter'), true);
+});
