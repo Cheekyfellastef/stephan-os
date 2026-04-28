@@ -26,6 +26,10 @@ test('AgentsTile renders OpenClaw bounded presence and integration topology fiel
     'Blocked Capabilities:',
     'Zero-Cost Guardrails Status:',
     'OpenClaw Integration Topology',
+    'OpenClaw execution allowed:',
+    'OpenClaw direct automation disabled:',
+    'OpenClaw kill-switch mode:',
+    'OpenClaw pause/cutoff:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('Mission Console'), false);

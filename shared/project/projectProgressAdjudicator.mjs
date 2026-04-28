@@ -45,12 +45,28 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     whyThisMatters: 'Prevents merges from relying on claimed completion without truth-gated verification evidence.',
   },
   {
-    id: 'wire-openclaw-kill-switch-and-adapter',
-    title: 'Wire OpenClaw Kill Switch + Adapter Contract',
-    reason: 'Policy harness exists in policy-only mode; next unmet dependency is kill-switch wiring + adapter execution contract.',
+    id: 'wire-openclaw-kill-switch',
+    title: 'Wire OpenClaw Kill Switch',
+    reason: 'Policy harness exists in policy-only mode; next unmet dependency is kill-switch wiring.',
     blocks: ['Safe UI/browser/local automation'],
     dependencyImpact: 60,
-    whyThisMatters: 'Keeps OpenClaw policy adjudication shared while preventing policy-only mode from being treated as direct automation.',
+    whyThisMatters: 'Adds first-class safety cutoff truth before any adapter execution contract can be considered.',
+  },
+  {
+    id: 'design-openclaw-local-adapter',
+    title: 'Design OpenClaw local adapter',
+    reason: 'Kill switch exists, but no local adapter contract is available.',
+    blocks: ['OpenClaw execution contract'],
+    dependencyImpact: 55,
+    whyThisMatters: 'Preserves policy/kill-switch guardrails while defining supervised execution boundaries.',
+  },
+  {
+    id: 'complete-openclaw-approval-gates',
+    title: 'Complete OpenClaw approval gates',
+    reason: 'Adapter exists but required approvals are not complete.',
+    blocks: ['Operator-authorized OpenClaw execution'],
+    dependencyImpact: 50,
+    whyThisMatters: 'Prevents execution from bypassing explicit operator approval gates.',
   },
 ]);
 
@@ -120,6 +136,13 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
       ? source.missingRequiredChecks.map((entry) => toText(entry, '')).filter(Boolean)
       : [],
     highestPriorityGate: toText(source.highestPriorityGate, 'none'),
+    openClawKillSwitchState: toLower(source.openClawKillSwitchState, 'unknown'),
+    openClawKillSwitchMode: toLower(source.openClawKillSwitchMode, 'unavailable'),
+    openClawSafeToUse: source.openClawSafeToUse === true,
+    openClawExecutionAllowed: source.openClawExecutionAllowed === true,
+    openClawPolicyOnly: source.openClawDirectAutomationDisabled === true || toLower(source.openClawIntegrationMode, 'policy_only') === 'policy_only',
+    openClawAdapterPresent: source.openClawAdapterPresent === true,
+    openClawApprovalsComplete: source.openClawApprovalsComplete === true,
     nextAgentTaskAction,
     nextActions,
     readinessScore: Number.isFinite(Number(source.readinessScore)) ? Math.max(0, Math.min(100, Number(source.readinessScore))) : null,
@@ -139,6 +162,9 @@ function resolveAgentTaskActionIndex(nextAgentTaskAction = '') {
   if (normalized.includes('openclaw policy harness')) return 4;
   if (normalized.includes('openclaw kill switch')) return 4;
   if (normalized.includes('kill-switch lifecycle')) return 4;
+  if (normalized.includes('openclaw local adapter')) return 5;
+  if (normalized.includes('approval gate')) return 6;
+  if (normalized.includes('approval-gate')) return 6;
   if (normalized.includes('paste codex result for verification')) return 3;
   return -1;
 }
@@ -269,7 +295,21 @@ export function adjudicateProjectProgress({
     && agentTaskSummary.verificationReturnReady === true
     && ['safe_to_accept', 'needs_review'].includes(agentTaskSummary.verificationDecision)
     && agentTaskSummary.openClawReadiness !== 'ready') {
-    nextBestActions.sort((a, b) => (a.id === 'add-openclaw-policy-harness' ? -1 : b.id === 'add-openclaw-policy-harness' ? 1 : 0));
+    const shouldWireKillSwitch = ['required', 'unavailable', 'unknown', 'missing'].includes(agentTaskSummary.openClawKillSwitchState);
+    const shouldDesignAdapter = !agentTaskSummary.openClawPolicyOnly
+      && !shouldWireKillSwitch
+      && agentTaskSummary.openClawAdapterPresent !== true;
+    const shouldCompleteApprovals = !agentTaskSummary.openClawPolicyOnly
+      && !shouldWireKillSwitch
+      && agentTaskSummary.openClawAdapterPresent === true
+      && agentTaskSummary.openClawApprovalsComplete !== true;
+    if (shouldWireKillSwitch) {
+      nextBestActions.sort((a, b) => (a.id === 'wire-openclaw-kill-switch' ? -1 : b.id === 'wire-openclaw-kill-switch' ? 1 : 0));
+    } else if (shouldDesignAdapter) {
+      nextBestActions.sort((a, b) => (a.id === 'design-openclaw-local-adapter' ? -1 : b.id === 'design-openclaw-local-adapter' ? 1 : 0));
+    } else if (shouldCompleteApprovals) {
+      nextBestActions.sort((a, b) => (a.id === 'complete-openclaw-approval-gates' ? -1 : b.id === 'complete-openclaw-approval-gates' ? 1 : 0));
+    }
   }
 
   const verificationStatus = {

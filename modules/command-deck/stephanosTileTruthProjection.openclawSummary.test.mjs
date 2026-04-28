@@ -30,4 +30,6 @@ test('Stephanos launcher tile includes compact OpenClaw policy summary from agen
   assert.match(projection.summary, /openclawMode policy_only/i);
   assert.match(projection.summary, /openclawSafe no/i);
   assert.match(projection.summary, /killSwitch missing/i);
+  assert.match(projection.summary, /killSwitchMode unavailable/i);
+  assert.match(projection.summary, /openclawExecution no/i);
 });

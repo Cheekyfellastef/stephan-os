@@ -87,7 +87,7 @@ test('adjudicateProjectProgress keeps verification return loop as next action wh
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
 });
 
-test('adjudicateProjectProgress recommends kill-switch/adapter wiring after verification return is ready', () => {
+test('adjudicateProjectProgress recommends kill-switch wiring after policy harness exists in policy_only mode', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     agentTaskReadinessSummary: {
@@ -99,10 +99,59 @@ test('adjudicateProjectProgress recommends kill-switch/adapter wiring after veri
       verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       mergeReadiness: 'ready_for_operator_approval',
-      nextAgentTaskAction: 'Wire OpenClaw kill switch + adapter contract',
-      nextActions: [{ title: 'Wire OpenClaw kill switch + adapter contract', reason: 'Verification return loop exists.' }],
+      openClawIntegrationMode: 'policy_only',
+      openClawKillSwitchState: 'required',
+      nextAgentTaskAction: 'Wire OpenClaw kill switch',
+      nextActions: [{ title: 'Wire OpenClaw kill switch', reason: 'Policy harness exists and kill switch is still required.' }],
     },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch-and-adapter');
+  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
+  assert.equal(
+    projection.nextBestActions.some((action) => /policy harness/i.test(action.title)),
+    false,
+  );
+});
+
+test('adjudicateProjectProgress recommends adapter design when kill switch exists but adapter is missing', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterPresent: false,
+      nextAgentTaskAction: 'Design OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'design-openclaw-local-adapter');
+});
+
+test('adjudicateProjectProgress recommends approval gates when adapter exists but approvals are missing', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_approval',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterPresent: true,
+      openClawApprovalsComplete: false,
+      nextAgentTaskAction: 'Complete OpenClaw approval gates',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'complete-openclaw-approval-gates');
 });

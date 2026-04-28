@@ -114,7 +114,11 @@ export default function AgentsTile({
             <li><strong>OpenClaw readiness:</strong> {operatorTask.openClawReadiness}</li>
             <li><strong>OpenClaw integration mode:</strong> {operatorTask.openClawIntegrationMode || 'policy_only'}</li>
             <li><strong>OpenClaw safe-to-use:</strong> {operatorTask.openClawSafeToUse ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw execution allowed:</strong> {operatorTask.openClawExecutionAllowed ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw direct automation disabled:</strong> {operatorTask.openClawDirectAutomationDisabled ? 'yes' : 'no'}</li>
             <li><strong>OpenClaw kill switch:</strong> {operatorTask.openClawKillSwitchState || 'missing'}</li>
+            <li><strong>OpenClaw kill-switch mode:</strong> {operatorTask.openClawKillSwitchMode || 'unavailable'}</li>
+            <li><strong>OpenClaw pause/cutoff:</strong> {operatorTask.openClawKillSwitchEngaged ? 'engaged (paused)' : 'not engaged'}</li>
             <li><strong>OpenClaw highest priority blocker:</strong> {operatorTask.openClawHighestPriorityBlocker || 'none'}</li>
             <li><strong>OpenClaw next action:</strong> {operatorTask.openClawNextAction || 'not reported'}</li>
             <li><strong>Approval gates pending:</strong> {formatReportedList(operatorTask.approvalPending)}</li>
@@ -138,6 +142,9 @@ export default function AgentsTile({
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
+          {operatorTask.openClawDirectAutomationDisabled ? (
+            <p className="muted"><strong>OpenClaw policy notice:</strong> policy-only/manual-only posture is active; direct OpenClaw automation remains disabled.</p>
+          ) : null}
           <div className="agents-tile-copy-actions">
             <button
               type="button"
