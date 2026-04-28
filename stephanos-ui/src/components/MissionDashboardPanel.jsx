@@ -4,6 +4,7 @@ import { adjudicateProjectProgress } from '../../../shared/project/projectProgre
 import { buildTelemetrySummary } from '../../../shared/telemetry/telemetrySummary.mjs';
 import { buildPromptBuilderSummary } from '../../../shared/prompts/promptBuilderSummary.mjs';
 import { createSeedProjectProgressModel, getProjectStatusLabel } from '../../../shared/project/projectProgressModel.mjs';
+import { buildMissionHandoffMilestones } from '../../../shared/project/missionHandoffMilestones.mjs';
 import { useAIStore } from '../state/aiStore';
 import {
   buildMissionHandoffText,
@@ -15,6 +16,7 @@ import {
   sortMilestonesForOperations,
   STATUS_VALUES,
 } from '../state/missionDashboardModel';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { normalizeMissionDashboardUiState } from '../state/missionDashboardUiState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
@@ -30,6 +32,7 @@ function createEmptyEditor() {
     blockerFlag: false,
     blockerDetails: '',
     nextAction: '',
+    operatorOverride: false,
   };
 }
 
@@ -73,6 +76,7 @@ export default function MissionDashboardPanel({
   const [feedback, setFeedback] = useState({ tone: 'neutral', message: '' });
   const [fallbackCopyText, setFallbackCopyText] = useState('');
   const [layoutMode, setLayoutMode] = useState('desktop');
+  const { copyState: missionHandoffCopyState, setCopyState: setMissionHandoffCopyState } = useClipboardButtonState();
 
   const uiState = useMemo(
     () => normalizeMissionDashboardUiState(missionDashboardUiState),
@@ -155,14 +159,6 @@ export default function MissionDashboardPanel({
     };
   }, []);
 
-  const orderedMilestones = useMemo(() => {
-    const source = uiState.showBlockedOnly
-      ? dashboardState.milestones.filter((milestone) => milestone.blockerFlag || milestone.status === 'blocked')
-      : dashboardState.milestones;
-    return sortMilestonesForOperations(source);
-  }, [dashboardState.milestones, uiState.showBlockedOnly]);
-
-  const metrics = useMemo(() => buildMissionSummaryMetrics(dashboardState), [dashboardState]);
   const agentTaskSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
     const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
@@ -271,6 +267,25 @@ export default function MissionDashboardPanel({
     telemetrySummary,
     promptBuilderSummary,
   }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, promptBuilderSummary, runtimeStatus, telemetrySummary]);
+  const handoffMilestoneProjection = useMemo(() => buildMissionHandoffMilestones({
+    dashboardState,
+    projectProgressProjection,
+    agentTaskSummary,
+    telemetrySummary,
+    promptBuilderSummary,
+    finalRouteTruth,
+  }), [agentTaskSummary, dashboardState, finalRouteTruth, projectProgressProjection, promptBuilderSummary, telemetrySummary]);
+  const orderedMilestones = useMemo(() => {
+    const source = uiState.showBlockedOnly
+      ? handoffMilestoneProjection.milestones.filter((milestone) => milestone.blocker || milestone.blockerFlag || milestone.status === 'blocked')
+      : handoffMilestoneProjection.milestones;
+    return sortMilestonesForOperations(source);
+  }, [handoffMilestoneProjection.milestones, uiState.showBlockedOnly]);
+
+  const metrics = useMemo(
+    () => buildMissionSummaryMetrics(dashboardState, { projectedMilestones: handoffMilestoneProjection.milestones }),
+    [dashboardState, handoffMilestoneProjection.milestones],
+  );
   const liveProjection = useMemo(() => {
     const missionView = finalAgentView?.finalMissionOrchestrationView || {};
     const approvalView = finalAgentView?.finalApprovalQueueView || {};
@@ -299,18 +314,20 @@ export default function MissionDashboardPanel({
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
+  const selectedManualMilestone = dashboardState.milestones.find((milestone) => milestone.id === selectedMilestone?.id) || selectedMilestone;
 
   useEffect(() => {
     if (!selectedMilestone) return;
     setEditorState({
-      status: selectedMilestone.status,
-      percentComplete: selectedMilestone.percentComplete,
-      notes: selectedMilestone.notes,
-      blockerFlag: selectedMilestone.blockerFlag,
-      blockerDetails: selectedMilestone.blockerDetails,
-      nextAction: selectedMilestone.nextAction,
+      status: selectedManualMilestone.status,
+      percentComplete: selectedManualMilestone.percentComplete,
+      notes: selectedManualMilestone.notes,
+      blockerFlag: selectedManualMilestone.blockerFlag,
+      blockerDetails: selectedManualMilestone.blockerDetails,
+      nextAction: selectedManualMilestone.nextAction,
+      operatorOverride: selectedManualMilestone.operatorOverride === true,
     });
-  }, [selectedMilestone?.id]);
+  }, [selectedManualMilestone?.id]);
 
   useEffect(() => {
     if (!selectedMilestone && orderedMilestones.length > 0) {
@@ -398,6 +415,7 @@ export default function MissionDashboardPanel({
             blockerFlag: editorState.blockerFlag,
             blockerDetails: editorState.blockerDetails,
             nextAction: editorState.nextAction,
+            operatorOverride: editorState.operatorOverride,
             updatedAt: now,
           }, index);
         }),
@@ -416,15 +434,21 @@ export default function MissionDashboardPanel({
   }
 
   async function handleCopyMissionHandoff() {
-    const handoffText = buildMissionHandoffText(dashboardState);
+    const handoffText = buildMissionHandoffText(dashboardState, {
+      projectedMilestones: handoffMilestoneProjection.milestones,
+      nextBestActions: handoffMilestoneProjection.nextBestActions,
+      wiringGaps: handoffMilestoneProjection.wiringGaps,
+    });
     console.info('[MISSION HANDOFF] generating summary');
 
     const copyResult = await writeTextToClipboard(handoffText, { navigatorObject: navigator });
     if (copyResult.ok) {
+      setMissionHandoffCopyState(COPY_STATE.SUCCESS);
       setFeedback({ tone: 'success', message: 'Mission handoff copied.' });
       console.info('[MISSION HANDOFF] copied to clipboard');
       return;
     }
+    setMissionHandoffCopyState(COPY_STATE.FAILURE);
 
     try {
       console.warn('[MISSION HANDOFF] clipboard API unavailable, using fallback');
@@ -454,8 +478,13 @@ export default function MissionDashboardPanel({
       isOpen={uiLayout.missionDashboardPanel}
       onToggle={() => togglePanel('missionDashboardPanel')}
       actions={(
-        <button type="button" className="ghost-button" onClick={handleCopyMissionHandoff}>
-          Copy Mission Handoff
+        <button
+          type="button"
+          className={`status-panel-copy-button ${missionHandoffCopyState}`}
+          onClick={handleCopyMissionHandoff}
+          title={missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
+        >
+          {missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Handoff copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy Mission Handoff'}
         </button>
       )}
     >
@@ -650,6 +679,16 @@ export default function MissionDashboardPanel({
                     <p><strong>Dependencies:</strong> {milestone.dependencies.length > 0 ? milestone.dependencies.join(', ') : 'none'}</p>
                     <p><strong>Linked systems/files:</strong> {milestone.linkedSystems.length > 0 ? milestone.linkedSystems.join(', ') : 'none'}</p>
                     <p><strong>Next action:</strong> {milestone.nextAction || 'unset'}</p>
+                    <p><strong>Truth source:</strong> {milestone.truthSource || 'manual_baseline'}</p>
+                    {milestone.staleReason ? <p><strong>Stale reason:</strong> {milestone.staleReason}</p> : null}
+                    {milestone.evidence?.length > 0 ? (
+                      <details>
+                        <summary>Evidence ({milestone.evidence.length})</summary>
+                        <ul className="compact-list">
+                          {milestone.evidence.slice(0, 6).map((entry) => <li key={`${milestone.id}-${entry}`}>{entry}</li>)}
+                        </ul>
+                      </details>
+                    ) : null}
                     <p><strong>Updated:</strong> {formatTimestamp(milestone.updatedAt)}</p>
                   </div>
                 ) : null}
@@ -700,6 +739,15 @@ export default function MissionDashboardPanel({
                   onChange={(event) => setEditorState((prev) => ({ ...prev, blockerFlag: event.target.checked }))}
                 />
                 Blocked
+              </label>
+              <label className="mission-inline-toggle paneFieldGroup">
+                <input
+                  className="paneControl"
+                  type="checkbox"
+                  checked={editorState.operatorOverride}
+                  onChange={(event) => setEditorState((prev) => ({ ...prev, operatorOverride: event.target.checked }))}
+                />
+                Operator override (manual status is authoritative)
               </label>
               <label className="paneFieldGroup">
                 Blocker details
