@@ -43,6 +43,7 @@ function createSeedMilestone(id, title, description, category, status, percentCo
     notes: 'Manual baseline; update with concrete progress evidence.',
     nextAction: 'Review and update status based on latest verified runtime truth.',
     linkedSystems: [],
+    operatorOverride: false,
     updatedAt: now,
     sortOrder: 0,
   };
@@ -114,6 +115,7 @@ export function normalizeMissionMilestone(value = {}, index = 0) {
     notes: normalizeString(value.notes),
     nextAction: normalizeString(value.nextAction),
     linkedSystems: normalizeList(value.linkedSystems || value.linkedFiles),
+    operatorOverride: value.operatorOverride === true,
     updatedAt: normalizeTimestamp(value.updatedAt),
     sortOrder: Number.isFinite(Number(value.sortOrder)) ? Number(value.sortOrder) : index + 1,
   };
@@ -160,21 +162,24 @@ export function sortMilestonesForOperations(milestones = []) {
   });
 }
 
-export function buildMissionSummaryMetrics(state) {
+export function buildMissionSummaryMetrics(state, { projectedMilestones = null } = {}) {
   const normalized = normalizeMissionDashboardState(state);
+  const milestoneList = Array.isArray(projectedMilestones) && projectedMilestones.length > 0
+    ? projectedMilestones.map((milestone, index) => normalizeMissionMilestone(milestone, index))
+    : normalized.milestones;
   const countsByStatus = Object.fromEntries(STATUS_VALUES.map((status) => [status, 0]));
-  normalized.milestones.forEach((milestone) => {
+  milestoneList.forEach((milestone) => {
     countsByStatus[milestone.status] += 1;
   });
 
-  const blockedMilestones = normalized.milestones.filter((milestone) => milestone.blockerFlag || milestone.status === 'blocked');
-  const totalProgress = normalized.milestones.reduce((sum, milestone) => sum + milestone.percentComplete, 0);
-  const completionEstimate = normalized.milestones.length > 0
-    ? Math.round(totalProgress / normalized.milestones.length)
+  const blockedMilestones = milestoneList.filter((milestone) => milestone.blockerFlag || milestone.blocker || milestone.status === 'blocked');
+  const totalProgress = milestoneList.reduce((sum, milestone) => sum + milestone.percentComplete, 0);
+  const completionEstimate = milestoneList.length > 0
+    ? Math.round(totalProgress / milestoneList.length)
     : normalized.overallSummary.completionEstimate;
 
   return {
-    totalMilestones: normalized.milestones.length,
+    totalMilestones: milestoneList.length,
     countsByStatus,
     blockedCount: blockedMilestones.length,
     inProgressCount: countsByStatus['in-progress'],
@@ -184,10 +189,13 @@ export function buildMissionSummaryMetrics(state) {
   };
 }
 
-export function buildMissionHandoffText(state) {
+export function buildMissionHandoffText(state, { projectedMilestones = null, nextBestActions = [], wiringGaps = [] } = {}) {
   const normalized = normalizeMissionDashboardState(state);
-  const metrics = buildMissionSummaryMetrics(normalized);
-  const orderedMilestones = sortMilestonesForOperations(normalized.milestones);
+  const milestoneList = Array.isArray(projectedMilestones) && projectedMilestones.length > 0
+    ? projectedMilestones.map((milestone, index) => normalizeMissionMilestone(milestone, index))
+    : normalized.milestones;
+  const metrics = buildMissionSummaryMetrics(normalized, { projectedMilestones: milestoneList });
+  const orderedMilestones = sortMilestonesForOperations(milestoneList);
   const generatedAt = new Date().toISOString();
 
   const lines = [
@@ -214,8 +222,20 @@ export function buildMissionHandoffText(state) {
     lines.push(`  status: ${milestone.status}`);
     lines.push(`  percent complete: ${milestone.percentComplete}%`);
     lines.push(`  blocker: ${milestone.blockerFlag ? `yes${milestone.blockerDetails ? ` - ${milestone.blockerDetails}` : ''}` : 'no'}`);
+    if (milestone.truthSource) {
+      lines.push(`  truth source: ${milestone.truthSource}`);
+    }
+    if (milestone.blockerReason) {
+      lines.push(`  blocker reason: ${milestone.blockerReason}`);
+    }
     lines.push(`  next action: ${milestone.nextAction || 'unset'}`);
     lines.push(`  notes: ${milestone.notes || 'none'}`);
+    if (Array.isArray(milestone.evidence) && milestone.evidence.length > 0) {
+      lines.push(`  evidence: ${milestone.evidence.slice(0, 4).join(' | ')}`);
+    }
+    if (milestone.staleReason) {
+      lines.push(`  stale reason: ${milestone.staleReason}`);
+    }
     lines.push(`  updated: ${milestone.updatedAt}`);
   });
 
@@ -236,6 +256,24 @@ export function buildMissionHandoffText(state) {
 
   if (normalized.overallSummary.missionNote) {
     lines.push('', 'Mission Note', normalized.overallSummary.missionNote);
+  }
+  lines.push('', 'Next Best Actions');
+  if (Array.isArray(nextBestActions) && nextBestActions.length > 0) {
+    nextBestActions.slice(0, 5).forEach((action, index) => {
+      lines.push(`- ${index + 1}. ${action.title || action.id || 'Untitled action'}`);
+      lines.push(`  reason: ${action.reason || action.whyThisMatters || 'none'}`);
+      if (Array.isArray(action.blocks) && action.blocks.length > 0) {
+        lines.push(`  blocks: ${action.blocks.join(', ')}`);
+      }
+      lines.push(`  source: ${action.source || 'live_projection'}`);
+    });
+  } else {
+    lines.push('Next Best Actions: unavailable - no project-progress summary supplied');
+  }
+
+  if (Array.isArray(wiringGaps) && wiringGaps.length > 0) {
+    lines.push('', 'Wiring Gaps');
+    wiringGaps.slice(0, 8).forEach((gap) => lines.push(`- ${gap}`));
   }
 
   const linkedSystemLines = orderedMilestones
