@@ -111,6 +111,11 @@ export default function MissionConsoleTile({
       openClawAdapterExecutionMode: summary.openClawAdapterExecutionMode || operatorSurface.openClawAdapterExecutionMode || 'disabled',
       openClawAdapterCanExecute: pickBoolean(summary.openClawAdapterCanExecute, operatorSurface.openClawAdapterCanExecute),
       openClawAdapterNextAction: summary.openClawAdapterNextAction || operatorSurface.openClawAdapterNextAction || 'not reported',
+      openClawAdapterStubStatus: summary.openClawAdapterStubStatus || operatorSurface.openClawAdapterStubStatus || 'unknown',
+      openClawAdapterStubHealth: summary.openClawAdapterStubHealth || operatorSurface.openClawAdapterStubHealth || 'unknown',
+      openClawAdapterStubConnectionState: summary.openClawAdapterStubConnectionState || operatorSurface.openClawAdapterStubConnectionState || 'unknown',
+      openClawAdapterStubCanExecute: pickBoolean(summary.openClawAdapterStubCanExecute, operatorSurface.openClawAdapterStubCanExecute),
+      openClawAdapterStubNextAction: summary.openClawAdapterStubNextAction || operatorSurface.openClawAdapterStubNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
 
@@ -478,9 +483,12 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter execution mode:</strong> {compactVerificationSummary.openClawAdapterExecutionMode}</li>
           <li><strong>openclaw adapter can execute:</strong> {compactVerificationSummary.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
           <li><strong>openclaw adapter next action:</strong> {compactVerificationSummary.openClawAdapterNextAction}</li>
-          {compactVerificationSummary.openClawIntegrationMode === 'policy_only' || ['design_only', 'contract_defined'].includes(compactVerificationSummary.openClawAdapterMode) ? (
-            <li><strong>openclaw policy notice:</strong> adapter design/contract only, no live automation</li>
-          ) : null}
+          <li><strong>openclaw adapter stub status:</strong> {compactVerificationSummary.openClawAdapterStubStatus}</li>
+          <li><strong>openclaw adapter stub health:</strong> {compactVerificationSummary.openClawAdapterStubHealth}</li>
+          <li><strong>openclaw adapter stub connection:</strong> {compactVerificationSummary.openClawAdapterStubConnectionState}</li>
+          <li><strong>openclaw adapter stub execution disabled:</strong> {compactVerificationSummary.openClawAdapterStubCanExecute ? 'no (unexpected)' : 'yes'}</li>
+          <li><strong>openclaw adapter stub next action:</strong> {compactVerificationSummary.openClawAdapterStubNextAction}</li>
+          <li><strong>openclaw policy notice:</strong> stub/status only, no live automation</li>
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>

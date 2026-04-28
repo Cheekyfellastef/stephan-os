@@ -374,3 +374,28 @@ test('adjudicateProjectProgress targets missing launcher shortcut status with sp
 
   assert.equal(projection.nextBestActions[0].id, 'populate-launcher-shortcut-status');
 });
+
+
+test('adjudicateProjectProgress advances beyond create-stub recommendation when explicit stub status evidence exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'contract_defined',
+      openClawAdapterStubStatus: 'health_check_only',
+      openClawAdapterStubConnectionState: 'local_only',
+      openClawAdapterConnectionState: 'not_connected',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+});

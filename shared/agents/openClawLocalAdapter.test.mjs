@@ -10,11 +10,19 @@ test('openClaw local adapter defaults to design-only contract posture', () => {
   assert.match(summary.adapterNextAction, /design openclaw local adapter contract/i);
 });
 
-test('openClaw local adapter remains non-executable in design_only and contract_defined modes', () => {
-  const designOnly = adjudicateOpenClawLocalAdapter({ adapterMode: 'design_only' });
-  const contractDefined = adjudicateOpenClawLocalAdapter({ adapterMode: 'contract_defined' });
-  assert.equal(designOnly.adapterCanExecute, false);
-  assert.equal(contractDefined.adapterCanExecute, false);
+test('openClaw local adapter consumes stub evidence and advances to connection-readiness action when stub exists', () => {
+  const summary = adjudicateOpenClawLocalAdapter({
+    adapterStub: {
+      stubMode: 'local_stub',
+      stubStatus: 'health_check_only',
+      stubConnectionState: 'local_only',
+    },
+  });
+
+  assert.equal(summary.adapterMode, 'local_stub');
+  assert.equal(summary.adapterCanExecute, false);
+  assert.match(summary.adapterNextAction, /connection readiness/i);
+  assert.equal(summary.adapterStub.stubCanExecute, false);
 });
 
 test('openClaw local adapter blocks execution when kill switch is unavailable or engaged', () => {
@@ -57,7 +65,7 @@ test('openClaw local adapter blocks execution when approvals are missing', () =>
   assert.match(summary.adapterNextAction, /complete openclaw approval gates/i);
 });
 
-test('openClaw local adapter enables execution only when all gates are satisfied', () => {
+test('openClaw local adapter v1 remains non-executing even when all future gates would otherwise be satisfied', () => {
   const summary = adjudicateOpenClawLocalAdapter({
     adapterMode: 'connected',
     adapterConnectionState: 'connected',
@@ -69,7 +77,7 @@ test('openClaw local adapter enables execution only when all gates are satisfied
     adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable', 'approve_command_execution'],
   });
 
-  assert.equal(summary.adapterCanExecute, true);
-  assert.equal(summary.adapterConnected, true);
-  assert.equal(summary.adapterReadiness, 'connected_ready');
+  assert.equal(summary.adapterCanExecute, false);
+  assert.equal(summary.adapterReadiness, 'connected_blocked');
+  assert.ok(summary.adapterBlockers.some((entry) => /status\/health-only/i.test(entry)));
 });

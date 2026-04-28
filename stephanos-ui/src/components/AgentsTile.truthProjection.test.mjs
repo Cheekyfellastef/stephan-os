@@ -36,6 +36,9 @@ test('AgentsTile includes Agent Task Layer projection labels for shared adjudica
     'Manual return mode:',
     'Manual verification return paste (non-persistent v1 placeholder)',
     'Next best agent action:',
+    'OpenClaw adapter stub status:',
+    'OpenClaw adapter stub can execute:',
+    'OpenClaw stub notice:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });

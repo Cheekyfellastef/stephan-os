@@ -219,6 +219,9 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterMode: toLower(source.openClawAdapterMode, 'design_only'),
     openClawAdapterReadiness: toLower(source.openClawAdapterReadiness, 'needs_contract'),
     openClawAdapterConnectionState: toLower(source.openClawAdapterConnectionState, 'not_configured'),
+    openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
+    openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
+    openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
     nextAgentTaskAction,
     nextActions,
     readinessScore: Number.isFinite(Number(source.readinessScore)) ? Math.max(0, Math.min(100, Number(source.readinessScore))) : null,
@@ -511,12 +514,16 @@ export function adjudicateProjectProgress({
     const shouldDesignAdapter = !agentTaskSummary.openClawPolicyOnly
       && !shouldWireKillSwitch
       && ['design_only', 'unavailable', 'unknown'].includes(adapterMode);
+    const stubExists = ['health_check_only', 'simulated_ready', 'present_disabled'].includes(agentTaskSummary.openClawAdapterStubStatus)
+      || ['local_only', 'simulated'].includes(agentTaskSummary.openClawAdapterStubConnectionState)
+      || adapterMode === 'local_stub';
     const shouldCreateStub = !agentTaskSummary.openClawPolicyOnly
       && !shouldWireKillSwitch
-      && adapterMode === 'contract_defined';
+      && adapterMode === 'contract_defined'
+      && !stubExists;
     const shouldConnectAdapter = !agentTaskSummary.openClawPolicyOnly
       && !shouldWireKillSwitch
-      && adapterMode === 'local_stub'
+      && stubExists
       && adapterConnectionState !== 'connected';
     const shouldCompleteApprovals = !agentTaskSummary.openClawPolicyOnly
       && !shouldWireKillSwitch

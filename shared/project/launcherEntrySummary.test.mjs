@@ -67,3 +67,32 @@ test('missing shortcut status creates targeted launcher next action and warning'
   assert.match(summary.nextAction, /agent tile/i);
   assert.ok(summary.warnings.some((entry) => /shortcut status missing/i.test(entry)));
 });
+
+
+test('launcherEntrySummary consumes explicit shortcut summaries instead of inference-only evidence', () => {
+  const summary = buildLauncherEntrySummary({
+    landingTileSummary: {
+      overallStatus: 'Mission systems: Active',
+      nextAction: 'Review mission task truth',
+      topBlocker: '',
+      safetyLabel: 'Policy-only',
+      lines: ['Mission systems: Active', 'Next: Review mission task truth', 'Status: Policy-only'],
+      summary: 'Mission systems: Active · Next: Review mission task truth · Status: Policy-only',
+    },
+    shortcutSurfaces: [
+      {
+        shortcutId: 'openclaw-entry',
+        label: 'OpenClaw Entry Surface',
+        targetSurface: 'agent-tile',
+        present: true,
+        statusSummaryAvailable: true,
+        compactStatus: 'health_check_only',
+        evidence: ['stub-status:health_check_only'],
+      },
+    ],
+  });
+
+  assert.equal(summary.shortcutSurfaces[0].statusSummaryAvailable, true);
+  assert.equal(summary.shortcutSurfaces[0].compactStatus, 'health_check_only');
+  assert.equal(summary.status, 'partial');
+});
