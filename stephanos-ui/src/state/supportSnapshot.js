@@ -22,6 +22,7 @@ function normalizeTruthText(value = '') {
 function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
   const warnings = [];
   const selectedProvider = normalizeTruthText(runtimeStatus?.lastSelectedProvider);
+  const routerSelectedProvider = normalizeTruthText(runtimeStatus?.lastRouterSelectedProvider);
   const requestedProviderForRequest = normalizeTruthText(runtimeStatus?.lastRequestedProviderForRequest);
   const actualProvider = normalizeTruthText(runtimeStatus?.lastActualProviderUsed);
   const actualModel = normalizeTruthText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed);
@@ -31,6 +32,10 @@ function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
   const loadMode = normalizeTruthText(runtimeStatus?.lastOllamaLoadMode);
   const loadBefore = normalizeTruthText(runtimeStatus?.lastOllamaModelBeforeLoadPolicy);
   const loadAfter = normalizeTruthText(runtimeStatus?.lastOllamaModelAfterLoadPolicy);
+  const executionCancelled = String(runtimeStatus?.lastExecutionCancelled || '').trim().toLowerCase() === 'true';
+  const providerCancelled = String(runtimeStatus?.lastProviderCancelled || '').trim().toLowerCase() === 'true';
+  const executionStatus = normalizeTruthText(runtimeStatus?.lastExecutionStatus || runtimeStatus?.status);
+  const successOutcome = executionStatus.startsWith('ok:') || normalizeTruthText(runtimeStatus?.lastResponseTruth) === 'ok';
   if (actualProvider === 'ollama' && actualModel.includes('gemini')) {
     warnings.push('Invariant warning: actual_provider_used=ollama with model containing "gemini".');
   }
@@ -45,6 +50,12 @@ function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
   const fallbackOrOverrideDocumented = Boolean(overrideReason || (fallbackProvider && fallbackProvider !== 'n/a' && fallbackProvider !== 'none'));
   if (providersMismatch && !fallbackOrOverrideDocumented) {
     warnings.push('Invariant warning: selected/requested/actual provider mismatch without fallback/override reason.');
+  }
+  if (routerSelectedProvider && actualProvider && routerSelectedProvider !== actualProvider && !fallbackOrOverrideDocumented) {
+    warnings.push('Invariant warning: router selected provider differs from actual provider without fallback/override reason.');
+  }
+  if ((executionCancelled || providerCancelled) && successOutcome) {
+    warnings.push('Invariant warning: cancellation truth is true while execution outcome reports success.');
   }
   if ((selectedProvider === 'ollama' || actualProvider === 'ollama')
     && (!loadMode || loadMode === 'n/a' || !loadBefore || loadBefore === 'n/a' || !loadAfter || loadAfter === 'n/a')) {

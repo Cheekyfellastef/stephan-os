@@ -658,6 +658,80 @@ test('buildSupportSnapshot flags impossible provider/model combinations and time
   assert.match(snapshot, /invariantWarnings:\n[\s\S]*Ollama selected\/actual but load governor fields are n\/a/m);
 });
 
+test('buildSupportSnapshot warns on unexplained router-to-actual provider drift and cancellation truth on success', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRouterSelectedProvider: 'gemini',
+      lastSelectedProvider: 'gemini',
+      lastRequestedProviderForRequest: 'gemini',
+      lastActualProviderUsed: 'ollama',
+      lastExecutionCancelled: 'true',
+      lastProviderCancelled: 'true',
+      lastExecutionStatus: 'ok:ollama',
+      lastProviderOverrideReason: 'n/a',
+      lastFallbackProviderUsed: 'n/a',
+      lastOllamaLoadMode: 'cool',
+      lastOllamaModelBeforeLoadPolicy: 'qwen:32b',
+      lastOllamaModelAfterLoadPolicy: 'llama3.2:3b',
+    },
+    routeTruthView: {
+      selectedProvider: 'gemini',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:05.000Z' },
+  });
+
+  assert.match(snapshot, /invariantWarnings:\n[\s\S]*router selected provider differs from actual provider without fallback\/override reason/m);
+  assert.match(snapshot, /invariantWarnings:\n[\s\S]*cancellation truth is true while execution outcome reports success/m);
+});
+
+test('buildSupportSnapshot does not warn on legitimate ollama load-governor model downgrade', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastRouterSelectedProvider: 'ollama',
+      lastSelectedProvider: 'ollama',
+      lastRequestedProviderForRequest: 'ollama',
+      lastActualProviderUsed: 'ollama',
+      lastActualModelUsed: 'llama3.2:3b',
+      lastExecutionCancelled: 'false',
+      lastProviderCancelled: 'false',
+      lastExecutionStatus: 'ok:ollama',
+      lastProviderOverrideReason: 'n/a',
+      lastFallbackProviderUsed: 'n/a',
+      lastOllamaLoadMode: 'cool',
+      lastOllamaModelBeforeLoadPolicy: 'qwen:32b',
+      lastOllamaModelAfterLoadPolicy: 'llama3.2:3b',
+      lastOllamaHeavyModelRequested: 'true',
+      lastOllamaHeavyModelAllowed: 'false',
+      lastOllamaLoadPolicyApplied: 'true',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-04-08T00:00:05.000Z' },
+  });
+
+  assert.doesNotMatch(snapshot, /router selected provider differs from actual provider/);
+  assert.doesNotMatch(snapshot, /cancellation truth is true while execution outcome reports success/);
+});
+
 test('buildSupportSnapshot separates provider health readiness from execution viability during fallback', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
