@@ -7,7 +7,7 @@ test('adjudicateProjectProgress returns seeded lanes and ranked next actions', (
   const projection = adjudicateProjectProgress({ model: createSeedProjectProgressModel() });
 
   assert.equal(Array.isArray(projection.lanes), true);
-  assert.equal(projection.lanes.length >= 10, true);
+  assert.equal(projection.lanes.length >= 11, true);
   assert.equal(projection.nextBestActions[0].id, 'add-telemetry-summary-export');
   assert.equal(projection.readiness.agent, 'partial');
   assert.equal(projection.readiness.openClaw, 'blocked');
@@ -315,4 +315,62 @@ test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts whe
 
   assert.notEqual(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
   assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
+});
+
+
+test('adjudicateProjectProgress consumes launcherEntrySummary into launcher-entry lane without UI-local logic', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    launcherEntrySummary: {
+      systemId: 'launcher-entry',
+      label: 'Launcher Entry',
+      available: true,
+      status: 'ready',
+      dashboardSummaryText: 'Launcher entry ready · shortcut status coverage present.',
+      compactSummaryText: 'Mission systems: Active · Next: Keep launcher compact.',
+      blockers: [],
+      warnings: [],
+      evidence: ['Landing compact summary: Mission systems: Active'],
+      shortcutSurfaces: [
+        { id: 'stephanos-tile-entry', label: 'Stephanos Tile', present: true, statusSummaryAvailable: true },
+        { id: 'agent-tile-entry', label: 'Agent Tile', present: true, statusSummaryAvailable: true },
+      ],
+    },
+  });
+
+  const launcherLane = projection.lanes.find((lane) => lane.id === 'launcher-entry');
+  assert.equal(launcherLane?.status, 'ready');
+  assert.equal(projection.nextBestActions[0].id === 'add-launcher-entry-summary-export', false);
+  assert.equal(projection.nextBestActions[0].id === 'declutter-landing-tile-summary', false);
+});
+
+test('adjudicateProjectProgress targets missing launcher shortcut status with specific next action', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: { status: 'flowing', nextActions: ['Telemetry flowing.'] },
+    promptBuilderSummary: {
+      status: 'ready',
+      supportsAgentTaskContext: true,
+      supportsTelemetryContext: true,
+      supportsRuntimeTruthContext: true,
+      nextActions: ['Prompt contexts bound.'],
+    },
+    launcherEntrySummary: {
+      systemId: 'launcher-entry',
+      label: 'Launcher Entry',
+      available: true,
+      status: 'partial',
+      dashboardSummaryText: 'Launcher entry partial · shortcut status gap.',
+      compactSummaryText: 'Mission systems: Active',
+      blockers: [],
+      warnings: ['Shortcut status missing: Agent Tile.'],
+      evidence: ['Landing compact summary present.'],
+      shortcutSurfaces: [
+        { id: 'stephanos-tile-entry', label: 'Stephanos Tile', present: true, statusSummaryAvailable: true },
+        { id: 'agent-tile-entry', label: 'Agent Tile', present: true, statusSummaryAvailable: false },
+      ],
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'populate-launcher-shortcut-status');
 });

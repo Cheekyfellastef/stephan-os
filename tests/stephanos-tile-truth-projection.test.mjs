@@ -218,3 +218,32 @@ test('landing tile remains compact and only includes telemetry when it is a top 
 
   assert.equal(telemetryPriorityProjection.landingTileSummary.lines.some((line) => line.startsWith('Telemetry:')), true);
 });
+
+
+test('landing tile compact summary excludes verbose adapter diagnostics fields', () => {
+  const projection = buildStephanosTileTruthProjection(createProject({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+      agentTaskReadinessSummary: {
+        agentTaskLayerStatus: 'in_progress',
+        openClawReadiness: 'needs_policy',
+        openClawIntegrationMode: 'policy_only',
+        openClawAdapterMode: 'design_only',
+        openClawKillSwitchMode: 'required',
+        nextAgentTaskAction: 'Wire OpenClaw kill switch + adapter contract',
+      },
+    },
+  }));
+
+  assert.equal(projection.landingTileSummary.lines.length <= 7, true);
+  assert.doesNotMatch(projection.landingTileSummary.summary, /openclawAdapterMode|killSwitchMode|diagnostic/i);
+});

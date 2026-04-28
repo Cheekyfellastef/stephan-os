@@ -85,6 +85,34 @@ test('build/verify truth gate milestone maps to review or complete when verifica
   assert.ok(gate.evidence.some((entry) => entry.includes('Build/verify')));
 });
 
+
+test('launcher-agents-entry milestone consumes launcherEntrySummary and clears wiring gap', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: createProjectionFixture(),
+    launcherEntrySummary: {
+      systemId: 'launcher-entry',
+      label: 'Launcher Entry',
+      available: true,
+      status: 'ready',
+      nextAction: 'Keep launcher entry shortcuts status-bound to shared summaries.',
+      blockers: [],
+      warnings: [],
+      evidence: ['Landing compact summary: Mission systems: Active'],
+      shortcutSurfaces: [
+        { id: 'stephanos-tile-entry', label: 'Stephanos Tile', present: true, statusSummaryAvailable: true },
+        { id: 'agent-tile-entry', label: 'Agent Tile', present: true, statusSummaryAvailable: true },
+      ],
+    },
+  });
+
+  const launcher = projection.milestones.find((entry) => entry.id === 'launcher-agents-entry');
+  assert.ok(launcher);
+  assert.equal(launcher.truthSource, 'live_projection');
+  assert.match(launcher.notes, /shared compact landing summary/i);
+  assert.equal(projection.wiringGaps.some((entry) => /Launcher Agents Entry/i.test(entry)), false);
+});
+
 test('manual baseline stays fallback and operator override is explicit', () => {
   const state = createDefaultMissionDashboardState();
   const launcher = state.milestones.find((entry) => entry.id === 'launcher-agents-entry');

@@ -3,6 +3,7 @@ import {
   getProjectStatusScore,
   normalizeProjectProgressModel,
 } from './projectProgressModel.mjs';
+import { buildLauncherEntrySummary } from './launcherEntrySummary.mjs';
 
 const PHASES = Object.freeze([
   { min: 85, id: 'deployment-readiness', label: 'Deployment Readiness' },
@@ -75,6 +76,30 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     blocks: ['Prompt handoff quality', 'Context-complete prompt packets'],
     dependencyImpact: 63,
     whyThisMatters: 'Ensures telemetry, agent-task, and runtime truth contexts are represented before handoff automation work.',
+  },
+  {
+    id: 'add-launcher-entry-summary-export',
+    title: 'Add Launcher Entry summary export',
+    reason: 'Mission surfaces need shared launcher-entry summary truth instead of wiring-gap fallbacks.',
+    blocks: ['Launcher Agents Entry milestone binding'],
+    dependencyImpact: 62,
+    whyThisMatters: 'Keeps launcher entry truth shared between dashboard and handoff without UI-local heuristics.',
+  },
+  {
+    id: 'declutter-landing-tile-summary',
+    title: 'Declutter landing tile summary',
+    reason: 'Landing tile summary must stay compact and shortcut-first.',
+    blocks: ['Launcher compact status readability'],
+    dependencyImpact: 61,
+    whyThisMatters: 'Prevents diagnostic overload from displacing launcher entry actions.',
+  },
+  {
+    id: 'populate-launcher-shortcut-status',
+    title: 'Populate launcher shortcut status',
+    reason: 'Shortcut surfaces exist but status summary projection is incomplete.',
+    blocks: ['Launcher entry milestone completeness'],
+    dependencyImpact: 59,
+    whyThisMatters: 'Maintains compact launcher tiles while preserving actionable shortcut status truth.',
   },
   {
     id: 'wire-openclaw-kill-switch',
@@ -322,6 +347,18 @@ function mapPromptBuilderToLaneStatus(status = '') {
   if (normalized === 'unavailable') return 'not-started';
   return 'unknown';
 }
+
+function mapLauncherEntryToLaneStatus(status = '') {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'ready') return 'ready';
+  if (normalized === 'partial') return 'partial';
+  if (normalized === 'started') return 'started';
+  if (normalized === 'not_started') return 'not-started';
+  if (normalized === 'degraded') return 'blocked';
+  if (normalized === 'blocked') return 'blocked';
+  if (normalized === 'unavailable') return 'not-started';
+  return 'unknown';
+}
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
   runtimeStatus = {},
@@ -330,11 +367,17 @@ export function adjudicateProjectProgress({
   agentTaskReadinessSummary = {},
   telemetrySummary = {},
   promptBuilderSummary = {},
+  launcherEntrySummary = null,
 } = {}) {
   const normalized = normalizeProjectProgressModel(model);
   const agentTaskSummary = normalizeAgentTaskReadinessSummary(agentTaskReadinessSummary);
   const telemetry = normalizeTelemetrySummary(telemetrySummary);
   const promptBuilder = normalizePromptBuilderSummary(promptBuilderSummary);
+  const launcherEntry = launcherEntrySummary && typeof launcherEntrySummary === 'object'
+    ? launcherEntrySummary
+    : buildLauncherEntrySummary({
+      runtimeStatusModel: runtimeStatus,
+    });
   const nextAction = agentTaskSummary.nextActions[0] || null;
   const overlayAgentLaneStatus = agentTaskSummary.available
     ? mapDashboardStatusToProjectStatus(agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus)
@@ -350,6 +393,7 @@ export function adjudicateProjectProgress({
     : null;
   const overlayTelemetryLaneStatus = telemetry.available ? mapTelemetryToLaneStatus(telemetry.status) : null;
   const overlayPromptBuilderLaneStatus = promptBuilder.available ? mapPromptBuilderToLaneStatus(promptBuilder.status) : null;
+  const overlayLauncherEntryLaneStatus = launcherEntry?.available ? mapLauncherEntryToLaneStatus(launcherEntry.status) : null;
   const lanes = normalized.lanes.map((lane) => {
     if (lane.id === 'agent-task-layer' && overlayAgentLaneStatus) {
       return {
@@ -397,6 +441,16 @@ export function adjudicateProjectProgress({
         evidence: promptBuilder.evidence.length > 0 ? promptBuilder.evidence : lane.evidence,
       };
     }
+    if (lane.id === 'launcher-entry' && overlayLauncherEntryLaneStatus) {
+      return {
+        ...lane,
+        status: overlayLauncherEntryLaneStatus,
+        why: launcherEntry.dashboardSummaryText || lane.why,
+        blockers: launcherEntry.blockers?.length > 0 ? launcherEntry.blockers : lane.blockers,
+        evidence: launcherEntry.evidence?.length > 0 ? launcherEntry.evidence : lane.evidence,
+        lastMilestone: launcherEntry.compactSummaryText || lane.lastMilestone,
+      };
+    }
     return lane;
   });
   const weightedTotal = lanes.reduce((sum, lane) => sum + lane.weight, 0);
@@ -433,6 +487,14 @@ export function adjudicateProjectProgress({
     nextBestActions.sort((a, b) => (a.id === 'add-prompt-builder-summary-export' ? -1 : b.id === 'add-prompt-builder-summary-export' ? 1 : 0));
   } else if (!promptBuilder.supportsAgentTaskContext || !promptBuilder.supportsTelemetryContext || !promptBuilder.supportsRuntimeTruthContext) {
     nextBestActions.sort((a, b) => (a.id === 'bind-prompt-builder-contexts' ? -1 : b.id === 'bind-prompt-builder-contexts' ? 1 : 0));
+  }
+
+  if (!launcherEntry?.available) {
+    nextBestActions.sort((a, b) => (a.id === 'add-launcher-entry-summary-export' ? -1 : b.id === 'add-launcher-entry-summary-export' ? 1 : 0));
+  } else if (launcherEntry.diagnosticOverloadRisk) {
+    nextBestActions.sort((a, b) => (a.id === 'declutter-landing-tile-summary' ? -1 : b.id === 'declutter-landing-tile-summary' ? 1 : 0));
+  } else if (Array.isArray(launcherEntry.shortcutSurfaces) && launcherEntry.shortcutSurfaces.some((entry) => entry?.present && entry?.statusSummaryAvailable !== true)) {
+    nextBestActions.sort((a, b) => (a.id === 'populate-launcher-shortcut-status' ? -1 : b.id === 'populate-launcher-shortcut-status' ? 1 : 0));
   }
 
   const currentActionIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction || nextAction?.title);
@@ -510,6 +572,9 @@ export function adjudicateProjectProgress({
   if (!promptBuilder.available) {
     doctrineWarnings.push('Prompt Builder summary exporter is missing; treat prompt readiness as partial until shared projection exists.');
   }
+  if (launcherEntry?.diagnosticOverloadRisk) {
+    doctrineWarnings.push('Launcher landing tile summary appears verbose; keep launcher tile compact and move diagnostics to dedicated panels.');
+  }
   if (runtimeStatus?.healthy === true && finalRouteTruth?.launchable !== true) {
     doctrineWarnings.push('Backend reachability is not equivalent to route launchability; continue route truth adjudication.');
   }
@@ -543,5 +608,6 @@ export function adjudicateProjectProgress({
     agentTaskEvidence: agentTaskSummary.available ? agentTaskSummary : null,
     telemetryEvidence: telemetry.available ? telemetry : null,
     promptBuilderEvidence: promptBuilder.available ? promptBuilder : null,
+    launcherEntryEvidence: launcherEntry?.available ? launcherEntry : null,
   };
 }
