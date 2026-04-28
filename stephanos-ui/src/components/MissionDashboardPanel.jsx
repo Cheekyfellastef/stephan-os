@@ -160,12 +160,26 @@ export default function MissionDashboardPanel({
   const metrics = useMemo(() => buildMissionSummaryMetrics(dashboardState), [dashboardState]);
   const agentTaskSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
+    const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
+    const primaryAction = nextActions[0] || null;
     return {
-      agentTaskLayerStatus: summary.agentTaskLayerStatus || 'unknown',
+      systemId: summary.systemId || 'agent-task-layer',
+      label: summary.label || 'Agent Task Layer',
+      status: summary.status || summary.agentTaskLayerStatus || 'unknown',
+      phase: summary.phase || 'unknown',
       codexReadiness: summary.codexReadiness || 'unknown',
       openClawReadiness: summary.openClawReadiness || 'unknown',
-      nextAgentTaskAction: summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
-      blockers: Array.isArray(summary.agentTaskLayerBlockers) ? summary.agentTaskLayerBlockers : [],
+      verificationStatus: summary.verificationStatus || 'unknown',
+      highestPriorityGate: summary.highestPriorityGate || 'none',
+      nextActions,
+      nextAgentTaskAction: primaryAction?.title || summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
+      blockers: Array.isArray(summary.blockers)
+        ? summary.blockers
+        : Array.isArray(summary.agentTaskLayerBlockers)
+          ? summary.agentTaskLayerBlockers
+          : [],
+      warnings: Array.isArray(summary.warnings) ? summary.warnings : [],
+      evidence: Array.isArray(summary.evidence) ? summary.evidence : [],
       readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Number(summary.readinessScore) : 0,
     };
   }, [agentTaskProjection]);
@@ -175,12 +189,20 @@ export default function MissionDashboardPanel({
     finalRouteTruth,
     orchestrationSelectors,
     agentTaskReadinessSummary: {
-      agentTaskLayerStatus: agentTaskSummary.agentTaskLayerStatus,
+      systemId: agentTaskSummary.systemId,
+      label: agentTaskSummary.label,
+      status: agentTaskSummary.status,
+      phase: agentTaskSummary.phase,
       codexReadiness: agentTaskSummary.codexReadiness,
       openClawReadiness: agentTaskSummary.openClawReadiness,
+      verificationStatus: agentTaskSummary.verificationStatus,
+      highestPriorityGate: agentTaskSummary.highestPriorityGate,
       nextAgentTaskAction: agentTaskSummary.nextAgentTaskAction,
+      nextActions: agentTaskSummary.nextActions,
+      blockers: agentTaskSummary.blockers,
+      warnings: agentTaskSummary.warnings,
+      evidence: agentTaskSummary.evidence,
       readinessScore: agentTaskSummary.readinessScore,
-      agentTaskLayerBlockers: agentTaskSummary.blockers,
     },
   }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, runtimeStatus]);
   const liveProjection = useMemo(() => {
@@ -451,14 +473,23 @@ export default function MissionDashboardPanel({
       <section className="mission-live-projection" aria-label="Agent task layer summary">
         <h3>Agent Task Layer Summary</h3>
         <ul className="compact-list">
-          <li>Agent layer state: {agentTaskSummary.agentTaskLayerStatus}</li>
+          <li>Agent layer state: {agentTaskSummary.status}</li>
+          <li>Lifecycle phase: {agentTaskSummary.phase}</li>
           <li>Current recommended next action: {agentTaskSummary.nextAgentTaskAction}</li>
           <li>Codex handoff readiness: {agentTaskSummary.codexReadiness}</li>
           <li>OpenClaw control safety: {agentTaskSummary.openClawReadiness}</li>
+          <li>Verification status: {agentTaskSummary.verificationStatus}</li>
+          <li>Highest priority gate: {agentTaskSummary.highestPriorityGate}</li>
           <li>Readiness score: {agentTaskSummary.readinessScore}%</li>
         </ul>
         {agentTaskSummary.blockers.length > 0 ? (
           <p className="mission-note"><strong>Agent layer blockers:</strong> {agentTaskSummary.blockers.join(' · ')}</p>
+        ) : null}
+        {agentTaskSummary.warnings.length > 0 ? (
+          <p className="mission-note"><strong>Agent layer warnings:</strong> {agentTaskSummary.warnings.join(' · ')}</p>
+        ) : null}
+        {agentTaskSummary.evidence.length > 0 ? (
+          <p className="mission-note"><strong>Agent layer evidence:</strong> {agentTaskSummary.evidence.slice(0, 4).join(' · ')}</p>
         ) : null}
       </section>
 
