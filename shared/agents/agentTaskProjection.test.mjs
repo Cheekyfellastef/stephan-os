@@ -13,6 +13,7 @@ test('agent task projection defaults codex to manual handoff and openclaw to nee
   assert.equal(typeof projection.readinessSummary.readinessScore, 'number');
   assert.equal(projection.operatorSurface.openClawAdapterMode, 'design_only');
   assert.equal(projection.operatorSurface.openClawAdapterCanExecute, false);
+  assert.equal(projection.readinessSummary.status, 'started');
 });
 
 test('agent task projection exposes readiness summary payload for mission dashboard consumption', () => {

@@ -216,6 +216,17 @@ export default function MissionDashboardPanel({
     actionHints,
     finalRouteTruth,
     orchestrationTruth,
+    contextBindings: {
+      agentTaskContextAvailable: Boolean(agentTaskProjection?.readinessSummary),
+      codexHandoffContextAvailable: agentTaskSummary.codexReadiness === 'ready' || agentTaskSummary.codexReadiness === 'manual_handoff_only',
+      telemetryContextAvailable: telemetryEntries.length > 0,
+      runtimeTruthContextAvailable: Boolean(finalRouteTruth),
+      actionHintsAvailable: actionHints.length > 0,
+      constraintsAvailable: true,
+      verificationReturnContextAvailable: Boolean(agentTaskSummary.verificationReturnStatus),
+      openClawContextAvailable: Boolean(agentTaskSummary.openClawReadiness),
+      projectProgressContextAvailable: true,
+    },
     copySupported: true,
     codexHandoffReady: agentTaskSummary.codexReadiness === 'ready' || agentTaskSummary.codexReadiness === 'manual_handoff_only',
   }), [actionHints, agentTaskSummary.codexReadiness, finalRouteTruth, orchestrationSelectors?.promptBuilderSnapshot?.activeMissionSummary, orchestrationTruth, telemetryEntries, uiLayout.promptBuilderPanel]);

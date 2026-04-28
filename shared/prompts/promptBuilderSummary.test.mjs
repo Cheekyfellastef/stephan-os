@@ -35,3 +35,30 @@ test('prompt builder summary detects capabilities and codex-handoff support', ()
   assert.equal(summary.supportsCodexHandoff, true);
   assert.equal(summary.blockers.length, 0);
 });
+
+test('prompt builder summary binds explicit context projections', () => {
+  const summary = buildPromptBuilderSummary({
+    promptBuilderAvailable: true,
+    promptText: '## REQUEST\nBind contexts',
+    telemetryEntries: [],
+    actionHints: [],
+    finalRouteTruth: null,
+    orchestrationTruth: null,
+    contextBindings: {
+      agentTaskContextAvailable: true,
+      telemetryContextAvailable: true,
+      runtimeTruthContextAvailable: true,
+      codexHandoffContextAvailable: true,
+      actionHintsAvailable: true,
+      constraintsAvailable: true,
+    },
+    copySupported: true,
+  });
+
+  assert.equal(summary.status, 'ready');
+  assert.equal(summary.supportsAgentTaskContext, true);
+  assert.equal(summary.supportsTelemetryContext, true);
+  assert.equal(summary.supportsRuntimeTruthContext, true);
+  assert.equal(summary.supportsCodexHandoff, true);
+  assert.equal(summary.nextActions[0].toLowerCase().includes('bind'), false);
+});

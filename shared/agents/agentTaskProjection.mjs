@@ -9,14 +9,15 @@ function toChip(value = '', fallback = 'unknown') {
   return text.length > 0 ? text : fallback;
 }
 
-function mapLayerStatusToDashboardStatus(layerStatus = '', lifecycleState = '') {
+function mapLayerStatusToDashboardStatus(layerStatus = '', lifecycleState = '', { hasCanonicalEvidence = false } = {}) {
   const normalizedLayer = String(layerStatus || '').trim().toLowerCase();
   const normalizedLifecycle = String(lifecycleState || '').trim().toLowerCase();
   if (['blocked', 'failed', 'cancelled'].includes(normalizedLifecycle) || normalizedLayer === 'blocked') return 'blocked';
   if (['complete', 'verified'].includes(normalizedLifecycle)) return 'ready';
-  if (normalizedLifecycle === 'draft') return 'not_started';
+  if (normalizedLifecycle === 'draft') return hasCanonicalEvidence ? 'started' : 'not_started';
   if (['in_progress', 'sent_to_agent'].includes(normalizedLifecycle) || normalizedLayer === 'in_progress') return 'started';
   if (normalizedLayer === 'ready') return 'ready';
+  if (normalizedLayer === 'preparing' && hasCanonicalEvidence) return 'started';
   if (normalizedLifecycle) return 'partial';
   return 'unknown';
 }
@@ -57,7 +58,8 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const blockers = asArray(adjudicated.blockers);
   const warnings = asArray(adjudicated.warnings);
   const lifecycleState = adjudicated.model.taskLifecycle.state;
-  const dashboardStatus = mapLayerStatusToDashboardStatus(adjudicated.layerStatus, lifecycleState);
+  const hasCanonicalEvidence = true;
+  const dashboardStatus = mapLayerStatusToDashboardStatus(adjudicated.layerStatus, lifecycleState, { hasCanonicalEvidence });
   const dashboardCodexReadiness = mapCodexReadiness(adjudicated.codexReadiness);
   const dashboardVerificationStatus = mapVerificationReturnStatus(adjudicated.verificationReturn.verificationReturnStatus)
     || mapVerificationStatus(adjudicated.verification.status);

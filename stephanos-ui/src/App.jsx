@@ -700,7 +700,16 @@ export default function App() {
         return node;
       },
     },
-    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => <PromptBuilder runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} actionHints={actionHints} orchestrationTruth={orchestrationTruth} /> },
+    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => (
+      <PromptBuilder
+        runtimeStatusModel={runtimeStatusModel}
+        finalRouteTruth={finalRouteTruth}
+        telemetryEntries={telemetryEntries}
+        actionHints={actionHints}
+        orchestrationTruth={orchestrationTruth}
+        agentTaskProjection={agentTaskProjection}
+      />
+    ) },
     { id: 'roadmapPanel', render: () => <RoadmapPanel commandHistory={commandHistory} /> },
     {
       id: 'missionDashboardPanel',
@@ -716,6 +725,7 @@ export default function App() {
             agentTaskProjection={agentTaskProjection}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
+            orchestrationTruth={orchestrationTruth}
           />
         );
         markStartupStage('app-mission-dashboard-render-complete');
@@ -808,6 +818,7 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     orchestrationSelectors,
+    orchestrationTruth,
     runtimeStatus,
     finalRouteTruth,
     runtimeStatus.dependencySummary,
