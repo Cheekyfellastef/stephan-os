@@ -53,6 +53,11 @@ function normalizeAgentReadinessSummary(value) {
     agentTaskLayerStatus: toText(summary.agentTaskLayerStatus),
     codexReadiness: toText(summary.codexReadiness),
     openClawReadiness: toText(summary.openClawReadiness),
+    openClawIntegrationMode: toText(summary.openClawIntegrationMode, 'policy_only'),
+    openClawSafeToUse: summary.openClawSafeToUse === true ? 'yes' : 'no',
+    openClawKillSwitchState: toText(summary.openClawKillSwitchState, 'missing'),
+    openClawHighestPriorityBlocker: toText(summary.openClawHighestPriorityBlocker, 'none'),
+    openClawNextAction: toText(summary.openClawNextAction, 'Wire kill-switch lifecycle + adapter contract.'),
     nextAgentTaskAction: String(summary.nextAgentTaskAction || '').trim() || 'Build canonical Agent Task Model',
     readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Math.max(0, Math.min(100, Number(summary.readinessScore))) : 0,
     agentTaskLayerBlockers: blockers,
@@ -168,7 +173,12 @@ export function buildStephanosTileTruthProjection(project = {}) {
     `agentLayer ${agentTaskSummary.agentTaskLayerStatus}`,
     `codex ${agentTaskSummary.codexReadiness}`,
     `openclaw ${agentTaskSummary.openClawReadiness}`,
+    `openclawMode ${agentTaskSummary.openClawIntegrationMode}`,
+    `openclawSafe ${agentTaskSummary.openClawSafeToUse}`,
+    `killSwitch ${agentTaskSummary.openClawKillSwitchState}`,
+    `priorityBlocker ${agentTaskSummary.openClawHighestPriorityBlocker}`,
     `nextAgentAction ${agentTaskSummary.nextAgentTaskAction}`,
+    `nextOpenClawAction ${agentTaskSummary.openClawNextAction}`,
   ].join(' · ');
 
   return {

@@ -45,12 +45,12 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     whyThisMatters: 'Prevents merges from relying on claimed completion without truth-gated verification evidence.',
   },
   {
-    id: 'add-openclaw-policy-harness',
-    title: 'Add OpenClaw Policy Harness',
-    reason: 'OpenClaw should be controlled as an actuator, not given broad unsupervised authority.',
+    id: 'wire-openclaw-kill-switch-and-adapter',
+    title: 'Wire OpenClaw Kill Switch + Adapter Contract',
+    reason: 'Policy harness exists in policy-only mode; next unmet dependency is kill-switch wiring + adapter execution contract.',
     blocks: ['Safe UI/browser/local automation'],
     dependencyImpact: 60,
-    whyThisMatters: 'Makes automation enforceable, reviewable, and interruptible under mission guardrails.',
+    whyThisMatters: 'Keeps OpenClaw policy adjudication shared while preventing policy-only mode from being treated as direct automation.',
   },
 ]);
 
@@ -137,6 +137,8 @@ function resolveAgentTaskActionIndex(nextAgentTaskAction = '') {
   if (normalized.includes('codex manual handoff')) return 2;
   if (normalized.includes('verification return state')) return 3;
   if (normalized.includes('openclaw policy harness')) return 4;
+  if (normalized.includes('openclaw kill switch')) return 4;
+  if (normalized.includes('kill-switch lifecycle')) return 4;
   if (normalized.includes('paste codex result for verification')) return 3;
   return -1;
 }

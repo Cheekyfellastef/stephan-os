@@ -147,6 +147,16 @@ export function createDefaultAgentTaskModel() {
       dependencies: [],
       sourceSignals: [],
     },
+    openClawPolicy: {
+      integrationMode: 'policy_only',
+      adapterPresent: false,
+      localAdapterAvailable: false,
+      directAdapterAvailable: false,
+      requiredApprovals: ['approve_handoff'],
+      satisfiedApprovals: [],
+      killSwitchState: 'missing',
+      blockers: ['OpenClaw policy harness is placeholder-only.'],
+    },
   };
 }
 
@@ -164,6 +174,7 @@ export function normalizeAgentTaskModel(input = {}) {
   const verification = model.verification && typeof model.verification === 'object' ? model.verification : {};
   const verificationReturn = model.verificationReturn && typeof model.verificationReturn === 'object' ? model.verificationReturn : {};
   const evidence = model.evidence && typeof model.evidence === 'object' ? model.evidence : {};
+  const openClawPolicy = model.openClawPolicy && typeof model.openClawPolicy === 'object' ? model.openClawPolicy : {};
 
   const availableAgents = uniqueTextList(agentAssignment.availableAgents)
     .map((entry) => normalizeAgentId(entry, 'manual'));
@@ -231,6 +242,18 @@ export function normalizeAgentTaskModel(input = {}) {
       warnings: uniqueTextList(evidence.warnings),
       dependencies: uniqueTextList(evidence.dependencies),
       sourceSignals: uniqueTextList(evidence.sourceSignals),
+    },
+    openClawPolicy: {
+      integrationMode: asText(openClawPolicy.integrationMode, defaults.openClawPolicy.integrationMode),
+      adapterPresent: openClawPolicy.adapterPresent === true,
+      localAdapterAvailable: openClawPolicy.localAdapterAvailable === true,
+      directAdapterAvailable: openClawPolicy.directAdapterAvailable === true,
+      requiredApprovals: normalizeApprovalGates(Array.isArray(openClawPolicy.requiredApprovals) && openClawPolicy.requiredApprovals.length > 0
+        ? openClawPolicy.requiredApprovals
+        : defaults.openClawPolicy.requiredApprovals),
+      satisfiedApprovals: normalizeApprovalGates(openClawPolicy.satisfiedApprovals),
+      killSwitchState: asText(openClawPolicy.killSwitchState, defaults.openClawPolicy.killSwitchState),
+      blockers: uniqueTextList(openClawPolicy.blockers),
     },
   };
 }

@@ -15,6 +15,13 @@ test('MissionConsoleTile renders compact agent task verification return summary 
     'verification return next action:',
     'highest priority blocker/warning:',
     'manual-only handoff:',
+    'openclaw readiness:',
+    'openclaw integration mode:',
+    'openclaw safe-to-use:',
+    'openclaw kill switch:',
+    'openclaw top blocker:',
+    'openclaw next action:',
+    'openclaw policy notice:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing compact verification label: ${label}`));
   assert.equal(source.includes('const summary = agentTaskProjection?.readinessSummary || {};'), true);

@@ -7,6 +7,8 @@ test('agent task projection defaults codex to manual handoff and openclaw to nee
   const projection = buildAgentTaskProjection();
   assert.equal(projection.operatorSurface.codexReadiness, 'manual_handoff_only');
   assert.equal(projection.operatorSurface.openClawReadiness, 'needs_policy');
+  assert.equal(projection.operatorSurface.openClawSafeToUse, false);
+  assert.equal(projection.operatorSurface.openClawIntegrationMode, 'policy_only');
   assert.equal(projection.compactSurface.agentTaskLayerStatus, 'preparing');
   assert.equal(typeof projection.readinessSummary.readinessScore, 'number');
 });
@@ -35,9 +37,42 @@ test('agent task projection exposes readiness summary payload for mission dashbo
 
   assert.equal(projection.readinessSummary.agentTaskLayerStatus, 'in_progress');
   assert.equal(projection.readinessSummary.codexReadiness, 'ready');
-  assert.equal(projection.readinessSummary.openClawReadiness, 'blocked');
+  assert.equal(projection.readinessSummary.openClawReadiness, 'needs_policy');
   assert.equal(projection.readinessSummary.nextAgentTaskAction.length > 0, true);
   assert.equal(projection.readinessSummary.agentTaskLayerBlockers.length > 0, true);
+});
+
+test('agent task projection advances next action beyond policy harness when policy-only harness exists', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      taskLifecycle: { state: 'in_progress' },
+      agentReadiness: {
+        stephanos: 'ready',
+        codex: 'manual_handoff_only',
+        openclaw: 'needs_policy',
+        manual: 'available',
+      },
+      openClawPolicy: {
+        integrationMode: 'policy_only',
+        requiredApprovals: ['approve_handoff'],
+        satisfiedApprovals: ['approve_handoff'],
+        killSwitchState: 'missing',
+        blockers: [],
+      },
+      verification: {
+        verificationStatus: 'passed',
+      },
+      verificationReturn: {
+        returnStatus: 'verified',
+      },
+    },
+    context: {
+      agentTileProjectionConnected: true,
+    },
+  });
+
+  assert.match(projection.readinessSummary.nextAgentTaskAction, /kill switch/i);
+  assert.equal(projection.readinessSummary.openClawSafeToUse, false);
 });
 
 test('agent task projection exposes codex manual handoff packet summary and packet text', () => {

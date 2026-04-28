@@ -492,7 +492,7 @@ export default function App() {
         agentReadiness: {
           stephanos: 'ready',
           codex: codexReadiness,
-          openclaw: hasOpenClawPolicyHarness ? 'ready' : 'needs_policy',
+          openclaw: hasOpenClawPolicyHarness ? 'needs_adapter' : 'needs_policy',
           manual: 'available',
         },
         approvalGates: {
@@ -527,6 +527,19 @@ export default function App() {
           sourceSignals: [
             `agentVisible:${displayAgentView?.visibleAgents?.length || 0}`,
             `pendingApprovals:${displayAgentView?.finalApprovalQueueView?.pendingCount || 0}`,
+          ],
+        },
+        openClawPolicy: {
+          integrationMode: hasOpenClawPolicyHarness ? 'policy_only' : 'policy_only',
+          adapterPresent: false,
+          localAdapterAvailable: false,
+          directAdapterAvailable: false,
+          requiredApprovals: ['approve_handoff'],
+          satisfiedApprovals: missionBridgeTruth?.pendingApproval === true ? [] : ['approve_handoff'],
+          killSwitchState: 'missing',
+          blockers: [
+            ...(openClawIntegration?.warnings || []),
+            'Policy-only harness active; direct OpenClaw automation is intentionally disabled.',
           ],
         },
       },
