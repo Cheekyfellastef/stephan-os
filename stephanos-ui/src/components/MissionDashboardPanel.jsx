@@ -5,6 +5,8 @@ import { buildTelemetrySummary } from '../../../shared/telemetry/telemetrySummar
 import { buildPromptBuilderSummary } from '../../../shared/prompts/promptBuilderSummary.mjs';
 import { createSeedProjectProgressModel, getProjectStatusLabel } from '../../../shared/project/projectProgressModel.mjs';
 import { buildMissionHandoffMilestones } from '../../../shared/project/missionHandoffMilestones.mjs';
+import { buildLauncherEntrySummary } from '../../../shared/project/launcherEntrySummary.mjs';
+import { buildAgentSurfaceProjection } from '../../../shared/agents/agentSurfaceProjection.mjs';
 import { useAIStore } from '../state/aiStore';
 import {
   buildMissionHandoffText,
@@ -227,6 +229,11 @@ export default function MissionDashboardPanel({
     codexHandoffReady: agentTaskSummary.codexReadiness === 'ready' || agentTaskSummary.codexReadiness === 'manual_handoff_only',
   }), [actionHints, agentTaskSummary.codexReadiness, finalRouteTruth, orchestrationSelectors?.promptBuilderSnapshot?.activeMissionSummary, orchestrationTruth, telemetryEntries, uiLayout.promptBuilderPanel]);
 
+  const launcherEntrySummary = useMemo(() => buildLauncherEntrySummary({
+    runtimeStatusModel: runtimeStatus,
+    agentSurfaceProjection: buildAgentSurfaceProjection({ finalAgentView, surfaceMode: 'mission-console' }),
+  }), [finalAgentView, runtimeStatus]);
+
   const projectProgressProjection = useMemo(() => adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     runtimeStatus,
@@ -266,15 +273,17 @@ export default function MissionDashboardPanel({
     },
     telemetrySummary,
     promptBuilderSummary,
-  }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, promptBuilderSummary, runtimeStatus, telemetrySummary]);
+    launcherEntrySummary,
+  }), [agentTaskSummary, finalRouteTruth, launcherEntrySummary, orchestrationSelectors, promptBuilderSummary, runtimeStatus, telemetrySummary]);
   const handoffMilestoneProjection = useMemo(() => buildMissionHandoffMilestones({
     dashboardState,
     projectProgressProjection,
     agentTaskSummary,
     telemetrySummary,
     promptBuilderSummary,
+    launcherEntrySummary,
     finalRouteTruth,
-  }), [agentTaskSummary, dashboardState, finalRouteTruth, projectProgressProjection, promptBuilderSummary, telemetrySummary]);
+  }), [agentTaskSummary, dashboardState, finalRouteTruth, launcherEntrySummary, projectProgressProjection, promptBuilderSummary, telemetrySummary]);
   const orderedMilestones = useMemo(() => {
     const source = uiState.showBlockedOnly
       ? handoffMilestoneProjection.milestones.filter((milestone) => milestone.blocker || milestone.blockerFlag || milestone.status === 'blocked')

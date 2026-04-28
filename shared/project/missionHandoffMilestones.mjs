@@ -1,4 +1,5 @@
 import { normalizeMissionDashboardState } from '../../stephanos-ui/src/state/missionDashboardModel.js';
+import { buildLauncherEntrySummary } from './launcherEntrySummary.mjs';
 
 const LIVE_STATUS = Object.freeze({
   not_started: { status: 'not-started', percent: 0 },
@@ -34,7 +35,7 @@ function laneIndex(projection) {
   return new Map(lanes.map((lane) => [lane.id, lane]));
 }
 
-function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummary = {}, telemetrySummary = {}, promptBuilderSummary = {}, finalRouteTruth = null } = {}) {
+function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummary = {}, telemetrySummary = {}, promptBuilderSummary = {}, launcherEntrySummary = null, finalRouteTruth = null } = {}) {
   const lanes = laneIndex(projectProgressProjection);
   const verification = projectProgressProjection?.verificationStatus || {};
   const routeLane = lanes.get('route-backend-health');
@@ -160,15 +161,30 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
     linkedSystems: ['verification-loop'],
   });
 
+  const launcherSummary = launcherEntrySummary && typeof launcherEntrySummary === 'object'
+    ? launcherEntrySummary
+    : buildLauncherEntrySummary({});
+  const launcherEvidence = [
+    ...asArray(launcherSummary?.evidence),
+    ...asArray(missionConsoleLane?.evidence),
+    ...asArray(launcherSummary?.shortcutSurfaces)
+      .filter((entry) => entry?.present)
+      .map((entry) => `${entry.label}: ${entry.statusSummaryAvailable ? 'status-wired' : 'status-missing'}`),
+  ];
+  const launcherWarnings = asArray(launcherSummary?.warnings);
+  const launcherBlockers = asArray(launcherSummary?.blockers);
+  const launcherStatusSeed = launcherSummary?.status || missionConsoleLane?.status;
   live.set('launcher-agents-entry', {
-    source: missionConsoleLane ? 'mixed' : 'unknown',
-    statusSeed: missionConsoleLane?.status,
-    blockerReason: '',
-    nextAction: asText(projectProgressProjection?.nextBestActions?.find((action) => action.id.includes('tile') || action.id.includes('surface'))?.title),
-    notes: 'Launcher entry milestone currently uses Mission Console UI and agent-surface projections; explicit launcher summary wiring still partial.',
-    evidence: [...asArray(missionConsoleLane?.evidence)],
-    linkedSystems: ['mission-console-ui'],
-    wiringGap: 'No dedicated shared launcher-agents-entry summary is exported yet.',
+    source: launcherSummary?.available ? 'live_projection' : (missionConsoleLane ? 'mixed' : 'unknown'),
+    statusSeed: launcherStatusSeed,
+    blockerReason: launcherBlockers[0] || launcherWarnings[0] || '',
+    nextAction: asText(launcherSummary?.nextAction || projectProgressProjection?.nextBestActions?.find((action) => action.id.includes('launcher') || action.id.includes('tile') || action.id.includes('surface'))?.title),
+    notes: launcherSummary?.available
+      ? 'Launcher entry milestone bound to shared compact landing summary plus launcher shortcut status evidence.'
+      : 'Launcher entry milestone is waiting for shared launcher-entry summary export wiring.',
+    evidence: launcherEvidence,
+    linkedSystems: ['launcher-entry', 'mission-console-ui'],
+    wiringGap: launcherSummary?.available ? '' : 'No dedicated shared launcher-agents-entry summary is exported yet.',
   });
 
   live.set('telemetry-summary-binding', {
@@ -191,6 +207,7 @@ export function buildMissionHandoffMilestones({
   telemetrySummary = {},
   promptBuilderSummary = {},
   finalRouteTruth = null,
+  launcherEntrySummary = null,
 } = {}) {
   const normalized = normalizeMissionDashboardState(dashboardState);
   const liveMap = buildLiveMilestoneMap({
@@ -198,6 +215,7 @@ export function buildMissionHandoffMilestones({
     agentTaskSummary,
     telemetrySummary,
     promptBuilderSummary,
+    launcherEntrySummary,
     finalRouteTruth,
   });
 
