@@ -152,3 +152,57 @@ test('handoff metrics and text no longer force complete zero when live milestone
   assert.match(handoffText, /Next Best Actions/);
   assert.doesNotMatch(handoffText, /Manual baseline; update with concrete progress evidence\./);
 });
+
+test('mission handoff next best actions stay aligned with adjudicated queue and include action evidence/source', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: {
+      ...createProjectionFixture(),
+      nextBestActions: [
+        {
+          id: 'connect-openclaw-local-adapter',
+          title: 'Connect OpenClaw local adapter',
+          reason: 'Adapter stub exists but is not connected.',
+          source: 'project_progress_adjudicator',
+          evidence: ['agent-task:started', 'telemetry:flowing'],
+        },
+      ],
+    },
+    agentTaskSummary: {
+      status: 'started',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+      evidence: ['Agent Task model present'],
+      verificationReturnStatus: 'verification_required',
+    },
+  });
+
+  const text = buildMissionHandoffText(createDefaultMissionDashboardState(), {
+    projectedMilestones: projection.milestones,
+    nextBestActions: projection.nextBestActions,
+    wiringGaps: projection.wiringGaps,
+  });
+
+  assert.match(text, /Connect OpenClaw local adapter/);
+  assert.match(text, /source: project_progress_adjudicator/);
+  assert.match(text, /evidence: agent-task:started \| telemetry:flowing/);
+});
+
+test('manual baseline nextAction only wins when operatorOverride=true', () => {
+  const state = createDefaultMissionDashboardState();
+  const v1 = state.milestones.find((entry) => entry.id === 'agent-layer-v1-foundation');
+  v1.nextAction = 'Build canonical Agent Task Model';
+  v1.operatorOverride = false;
+
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: state,
+    projectProgressProjection: createProjectionFixture(),
+    agentTaskSummary: {
+      status: 'started',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+      evidence: ['Agent Task model present'],
+    },
+  });
+
+  const mapped = projection.milestones.find((entry) => entry.id === 'agent-layer-v1-foundation');
+  assert.equal(mapped.nextAction, 'Connect OpenClaw local adapter');
+});

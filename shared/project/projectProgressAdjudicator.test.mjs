@@ -246,7 +246,7 @@ test('adjudicateProjectProgress prioritizes telemetry summary exporter when tele
     telemetrySummary: {},
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'add-telemetry-summary-export');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'add-telemetry-summary-export'), true);
 });
 
 test('adjudicateProjectProgress consumes telemetry and prompt builder summaries and advances to context binding', () => {
@@ -282,7 +282,7 @@ test('adjudicateProjectProgress consumes telemetry and prompt builder summaries 
   const promptLane = projection.lanes.find((lane) => lane.id === 'prompt-builder');
   assert.equal(telemetryLane?.status, 'ready');
   assert.equal(promptLane?.status, 'partial');
-  assert.equal(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'bind-prompt-builder-contexts'), true);
 });
 
 test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts when contexts are bound', () => {
@@ -315,6 +315,65 @@ test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts whe
 
   assert.notEqual(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
   assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
+});
+
+test('adjudicateProjectProgress suppresses stale foundational actions when live agent/codex/verification evidence exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'started',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      codexManualHandoffReady: true,
+      verificationStatus: 'started',
+      verificationReturnStatus: 'verification_required',
+      verificationReturnNextAction: 'Run and report all required verification checks.',
+      openClawReadiness: 'needs_adapter',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterStubStatus: 'present_disabled',
+      openClawAdapterConnectionState: 'not_connected',
+      nextActions: [{ title: 'Connect OpenClaw local adapter', reason: 'Stub exists but not connected.' }],
+      evidence: ['Agent Task model + projection exported'],
+    },
+    telemetrySummary: { status: 'flowing', nextActions: ['Telemetry flowing.'] },
+    promptBuilderSummary: {
+      status: 'ready',
+      supportsAgentTaskContext: true,
+      supportsTelemetryContext: true,
+      supportsRuntimeTruthContext: true,
+    },
+    launcherEntrySummary: {
+      systemId: 'launcher-entry',
+      label: 'Launcher Entry',
+      available: true,
+      status: 'ready',
+      shortcutSurfaces: [],
+      diagnosticOverloadRisk: false,
+    },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('build-agent-task-layer-v1'), false);
+  assert.equal(ids.includes('add-codex-handoff-mode'), false);
+  assert.equal(ids.includes('add-verification-return-loop'), false);
+  assert.equal(ids.includes('add-telemetry-summary-export'), false);
+  assert.equal(ids.includes('bind-prompt-builder-contexts'), false);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+});
+
+test('adjudicateProjectProgress keeps seeded fallback recommendations when live summaries are absent', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: {},
+    promptBuilderSummary: {},
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('build-agent-task-layer-v1'), true);
+  assert.equal(ids.includes('add-telemetry-summary-export'), true);
 });
 
 

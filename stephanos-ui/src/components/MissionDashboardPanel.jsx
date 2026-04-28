@@ -191,7 +191,7 @@ export default function MissionDashboardPanel({
       missingRequiredChecks: Array.isArray(summary.missingRequiredChecks) ? summary.missingRequiredChecks : [],
       highestPriorityGate: summary.highestPriorityGate || 'none',
       nextActions,
-      nextAgentTaskAction: primaryAction?.title || summary.nextAgentTaskAction || 'Build canonical Agent Task Model',
+      nextAgentTaskAction: primaryAction?.title || summary.nextAgentTaskAction || '',
       blockers: Array.isArray(summary.blockers)
         ? summary.blockers
         : Array.isArray(summary.agentTaskLayerBlockers)
