@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createStephanosMemory } from '../../../shared/runtime/stephanosMemory.mjs';
 import { adjudicateProjectProgress } from '../../../shared/project/projectProgressAdjudicator.mjs';
+import { buildTelemetrySummary } from '../../../shared/telemetry/telemetrySummary.mjs';
+import { buildPromptBuilderSummary } from '../../../shared/prompts/promptBuilderSummary.mjs';
 import { createSeedProjectProgressModel, getProjectStatusLabel } from '../../../shared/project/projectProgressModel.mjs';
 import { useAIStore } from '../state/aiStore';
 import {
@@ -52,6 +54,9 @@ export default function MissionDashboardPanel({
   runtimeStatus = {},
   finalRouteTruth = null,
   agentTaskProjection = null,
+  telemetryEntries = [],
+  actionHints = [],
+  orchestrationTruth = null,
 } = {}) {
   const {
     uiLayout,
@@ -199,6 +204,22 @@ export default function MissionDashboardPanel({
       readinessScore: Number.isFinite(Number(summary.readinessScore)) ? Number(summary.readinessScore) : 0,
     };
   }, [agentTaskProjection]);
+
+  const telemetrySummary = useMemo(() => buildTelemetrySummary({
+    telemetryEntries,
+    telemetryAvailable: true,
+  }), [telemetryEntries]);
+  const promptBuilderSummary = useMemo(() => buildPromptBuilderSummary({
+    promptBuilderAvailable: uiLayout.promptBuilderPanel !== false,
+    promptText: orchestrationSelectors?.promptBuilderSnapshot?.activeMissionSummary || '',
+    telemetryEntries,
+    actionHints,
+    finalRouteTruth,
+    orchestrationTruth,
+    copySupported: true,
+    codexHandoffReady: agentTaskSummary.codexReadiness === 'ready' || agentTaskSummary.codexReadiness === 'manual_handoff_only',
+  }), [actionHints, agentTaskSummary.codexReadiness, finalRouteTruth, orchestrationSelectors?.promptBuilderSnapshot?.activeMissionSummary, orchestrationTruth, telemetryEntries, uiLayout.promptBuilderPanel]);
+
   const projectProgressProjection = useMemo(() => adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     runtimeStatus,
@@ -236,7 +257,9 @@ export default function MissionDashboardPanel({
       evidence: agentTaskSummary.evidence,
       readinessScore: agentTaskSummary.readinessScore,
     },
-  }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, runtimeStatus]);
+    telemetrySummary,
+    promptBuilderSummary,
+  }), [agentTaskSummary, finalRouteTruth, orchestrationSelectors, promptBuilderSummary, runtimeStatus, telemetrySummary]);
   const liveProjection = useMemo(() => {
     const missionView = finalAgentView?.finalMissionOrchestrationView || {};
     const approvalView = finalAgentView?.finalApprovalQueueView || {};
@@ -527,6 +550,21 @@ export default function MissionDashboardPanel({
         {agentTaskSummary.evidence.length > 0 ? (
           <p className="mission-note"><strong>Agent layer evidence:</strong> {agentTaskSummary.evidence.slice(0, 4).join(' · ')}</p>
         ) : null}
+      </section>
+
+
+      <section className="mission-live-projection" aria-label="Telemetry and Prompt Builder summaries">
+        <h3>Telemetry + Prompt Builder Summary</h3>
+        <ul className="compact-list">
+          <li>Telemetry status: {telemetrySummary.status}</li>
+          <li>Telemetry recent transitions: {telemetrySummary.recentTransitions.slice(0, 2).join(' · ') || 'none'}</li>
+          <li>Telemetry top warning/blocker: {telemetrySummary.topWarning || telemetrySummary.blockers[0] || 'none'}</li>
+          <li>Telemetry next action: {telemetrySummary.nextActions[0] || 'none'}</li>
+          <li>Prompt Builder status: {promptBuilderSummary.status}</li>
+          <li>Prompt contexts: agent={promptBuilderSummary.supportsAgentTaskContext ? 'yes' : 'no'} · telemetry={promptBuilderSummary.supportsTelemetryContext ? 'yes' : 'no'} · truth={promptBuilderSummary.supportsRuntimeTruthContext ? 'yes' : 'no'}</li>
+          <li>Prompt Builder top warning/blocker: {promptBuilderSummary.blockers[0] || promptBuilderSummary.warnings[0] || 'none'}</li>
+          <li>Prompt Builder next action: {promptBuilderSummary.nextActions[0] || 'none'}</li>
+        </ul>
       </section>
 
       <section className="mission-live-projection" aria-label="Live system projection">

@@ -45,6 +45,38 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     whyThisMatters: 'Prevents merges from relying on claimed completion without truth-gated verification evidence.',
   },
   {
+    id: 'add-telemetry-summary-export',
+    title: 'Add Telemetry summary export',
+    reason: 'Mission Dashboard needs a shared telemetry summary projection instead of panel-local heuristics.',
+    blocks: ['Telemetry lane adjudication', 'Telemetry-aware next actions'],
+    dependencyImpact: 66,
+    whyThisMatters: 'Keeps telemetry truth in a shared exporter so dashboard/tile surfaces consume one canonical summary.',
+  },
+  {
+    id: 'bind-telemetry-lifecycle-context',
+    title: 'Bind telemetry summary to agent/task lifecycle',
+    reason: 'Telemetry summary exists but recent lifecycle transitions are not yet bound consistently.',
+    blocks: ['Lifecycle-aware telemetry readiness'],
+    dependencyImpact: 65,
+    whyThisMatters: 'Prevents stale telemetry from looking healthy when active mission transitions are missing.',
+  },
+  {
+    id: 'add-prompt-builder-summary-export',
+    title: 'Add Prompt Builder summary export',
+    reason: 'Mission Dashboard needs shared Prompt Builder capability truth for project progression.',
+    blocks: ['Prompt Builder lane adjudication', 'Prompt Builder dependency tracking'],
+    dependencyImpact: 64,
+    whyThisMatters: 'Moves prompt-builder readiness logic out of dashboard UI and into shared canonical projection.',
+  },
+  {
+    id: 'bind-prompt-builder-contexts',
+    title: 'Bind Prompt Builder summary to mission contexts',
+    reason: 'Prompt Builder summary exists but key contexts are not all bound yet.',
+    blocks: ['Prompt handoff quality', 'Context-complete prompt packets'],
+    dependencyImpact: 63,
+    whyThisMatters: 'Ensures telemetry, agent-task, and runtime truth contexts are represented before handoff automation work.',
+  },
+  {
     id: 'wire-openclaw-kill-switch',
     title: 'Wire OpenClaw Kill Switch',
     reason: 'Policy harness exists in policy-only mode; next unmet dependency is kill-switch wiring.',
@@ -229,15 +261,80 @@ function mapVerificationToLaneStatus(verificationStatus = '') {
   return 'unknown';
 }
 
+
+function normalizeTelemetrySummary(summary = {}) {
+  const source = summary && typeof summary === 'object' ? summary : {};
+  const toText = (value, fallback = '') => {
+    const text = String(value || '').trim();
+    return text || fallback;
+  };
+  const toLower = (value, fallback = 'unknown') => toText(value, fallback).toLowerCase();
+  const list = (value) => Array.isArray(value) ? value.map((entry) => toText(entry, '')).filter(Boolean) : [];
+  return {
+    available: Object.keys(source).length > 0,
+    status: toLower(source.status, 'unknown'),
+    nextActions: list(source.nextActions),
+    blockers: list(source.blockers),
+    warnings: list(source.warnings),
+    evidence: list(source.evidence),
+  };
+}
+
+function normalizePromptBuilderSummary(summary = {}) {
+  const source = summary && typeof summary === 'object' ? summary : {};
+  const toText = (value, fallback = '') => {
+    const text = String(value || '').trim();
+    return text || fallback;
+  };
+  const toLower = (value, fallback = 'unknown') => toText(value, fallback).toLowerCase();
+  const list = (value) => Array.isArray(value) ? value.map((entry) => toText(entry, '')).filter(Boolean) : [];
+  return {
+    available: Object.keys(source).length > 0,
+    status: toLower(source.status, 'unknown'),
+    supportsAgentTaskContext: source.supportsAgentTaskContext === true,
+    supportsTelemetryContext: source.supportsTelemetryContext === true,
+    supportsRuntimeTruthContext: source.supportsRuntimeTruthContext === true,
+    nextActions: list(source.nextActions),
+    blockers: list(source.blockers),
+    warnings: list(source.warnings),
+    evidence: list(source.evidence),
+  };
+}
+
+function mapTelemetryToLaneStatus(status = '') {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'flowing') return 'ready';
+  if (normalized === 'started') return 'started';
+  if (normalized === 'not_started') return 'not-started';
+  if (normalized === 'degraded') return 'partial';
+  if (normalized === 'blocked') return 'blocked';
+  if (normalized === 'unavailable') return 'not-started';
+  return 'unknown';
+}
+
+function mapPromptBuilderToLaneStatus(status = '') {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'ready') return 'ready';
+  if (normalized === 'started') return 'started';
+  if (normalized === 'partial') return 'partial';
+  if (normalized === 'not_started') return 'not-started';
+  if (normalized === 'blocked') return 'blocked';
+  if (normalized === 'unavailable') return 'not-started';
+  return 'unknown';
+}
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
   runtimeStatus = {},
   finalRouteTruth = null,
   orchestrationSelectors = {},
   agentTaskReadinessSummary = {},
+  telemetrySummary = {},
+  promptBuilderSummary = {},
 } = {}) {
   const normalized = normalizeProjectProgressModel(model);
   const agentTaskSummary = normalizeAgentTaskReadinessSummary(agentTaskReadinessSummary);
+  const telemetry = normalizeTelemetrySummary(telemetrySummary);
+  const promptBuilder = normalizePromptBuilderSummary(promptBuilderSummary);
   const nextAction = agentTaskSummary.nextActions[0] || null;
   const overlayAgentLaneStatus = agentTaskSummary.available
     ? mapDashboardStatusToProjectStatus(agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus)
@@ -251,6 +348,8 @@ export function adjudicateProjectProgress({
   const overlayVerificationLaneStatus = agentTaskSummary.available
     ? mapVerificationToLaneStatus(agentTaskSummary.verificationStatus)
     : null;
+  const overlayTelemetryLaneStatus = telemetry.available ? mapTelemetryToLaneStatus(telemetry.status) : null;
+  const overlayPromptBuilderLaneStatus = promptBuilder.available ? mapPromptBuilderToLaneStatus(promptBuilder.status) : null;
   const lanes = normalized.lanes.map((lane) => {
     if (lane.id === 'agent-task-layer' && overlayAgentLaneStatus) {
       return {
@@ -280,6 +379,24 @@ export function adjudicateProjectProgress({
         status: overlayVerificationLaneStatus,
       };
     }
+    if (lane.id === 'telemetry' && overlayTelemetryLaneStatus) {
+      return {
+        ...lane,
+        status: overlayTelemetryLaneStatus,
+        why: telemetry.nextActions[0] || lane.why,
+        blockers: telemetry.blockers.length > 0 ? telemetry.blockers : lane.blockers,
+        evidence: telemetry.evidence.length > 0 ? telemetry.evidence : lane.evidence,
+      };
+    }
+    if (lane.id === 'prompt-builder' && overlayPromptBuilderLaneStatus) {
+      return {
+        ...lane,
+        status: overlayPromptBuilderLaneStatus,
+        why: promptBuilder.nextActions[0] || lane.why,
+        blockers: promptBuilder.blockers.length > 0 ? promptBuilder.blockers : lane.blockers,
+        evidence: promptBuilder.evidence.length > 0 ? promptBuilder.evidence : lane.evidence,
+      };
+    }
     return lane;
   });
   const weightedTotal = lanes.reduce((sum, lane) => sum + lane.weight, 0);
@@ -307,6 +424,16 @@ export function adjudicateProjectProgress({
       if (nextIndex < 0) return true;
       return index >= nextIndex;
     });
+
+  if (!telemetry.available) {
+    nextBestActions.sort((a, b) => (a.id === 'add-telemetry-summary-export' ? -1 : b.id === 'add-telemetry-summary-export' ? 1 : 0));
+  } else if (['not_started', 'started', 'degraded'].includes(telemetry.status)) {
+    nextBestActions.sort((a, b) => (a.id === 'bind-telemetry-lifecycle-context' ? -1 : b.id === 'bind-telemetry-lifecycle-context' ? 1 : 0));
+  } else if (!promptBuilder.available) {
+    nextBestActions.sort((a, b) => (a.id === 'add-prompt-builder-summary-export' ? -1 : b.id === 'add-prompt-builder-summary-export' ? 1 : 0));
+  } else if (!promptBuilder.supportsAgentTaskContext || !promptBuilder.supportsTelemetryContext || !promptBuilder.supportsRuntimeTruthContext) {
+    nextBestActions.sort((a, b) => (a.id === 'bind-prompt-builder-contexts' ? -1 : b.id === 'bind-prompt-builder-contexts' ? 1 : 0));
+  }
 
   const currentActionIndex = resolveAgentTaskActionIndex(agentTaskSummary.nextAgentTaskAction || nextAction?.title);
   if (agentTaskSummary.available && currentActionIndex >= 3 && agentTaskSummary.verificationReturnReady !== true) {
@@ -346,6 +473,17 @@ export function adjudicateProjectProgress({
     }
   }
 
+  if (!telemetry.available) {
+    nextBestActions.sort((a, b) => (a.id === 'add-telemetry-summary-export' ? -1 : b.id === 'add-telemetry-summary-export' ? 1 : 0));
+  } else if (['not_started', 'started', 'degraded'].includes(telemetry.status)) {
+    nextBestActions.sort((a, b) => (a.id === 'bind-telemetry-lifecycle-context' ? -1 : b.id === 'bind-telemetry-lifecycle-context' ? 1 : 0));
+  } else if (!promptBuilder.available) {
+    nextBestActions.sort((a, b) => (a.id === 'add-prompt-builder-summary-export' ? -1 : b.id === 'add-prompt-builder-summary-export' ? 1 : 0));
+  } else if (!promptBuilder.supportsAgentTaskContext || !promptBuilder.supportsTelemetryContext || !promptBuilder.supportsRuntimeTruthContext) {
+    nextBestActions.sort((a, b) => (a.id === 'bind-prompt-builder-contexts' ? -1 : b.id === 'bind-prompt-builder-contexts' ? 1 : 0));
+  }
+
+
   const verificationStatus = {
     buildVerifyScriptsPresent: true,
     taskCompletionBound: agentTaskSummary.available
@@ -365,6 +503,12 @@ export function adjudicateProjectProgress({
   }
   if (laneStatusIs(openClawLane, ['blocked', 'not-started', 'partial'])) {
     doctrineWarnings.push('OpenClaw control is not policy-harness ready; do not treat actuator automation as production-safe.');
+  }
+  if (!telemetry.available) {
+    doctrineWarnings.push('Telemetry summary exporter is missing; keep telemetry readiness claims provisional.');
+  }
+  if (!promptBuilder.available) {
+    doctrineWarnings.push('Prompt Builder summary exporter is missing; treat prompt readiness as partial until shared projection exists.');
   }
   if (runtimeStatus?.healthy === true && finalRouteTruth?.launchable !== true) {
     doctrineWarnings.push('Backend reachability is not equivalent to route launchability; continue route truth adjudication.');
@@ -397,5 +541,7 @@ export function adjudicateProjectProgress({
     doctrineWarnings,
     nextBestActions,
     agentTaskEvidence: agentTaskSummary.available ? agentTaskSummary : null,
+    telemetryEvidence: telemetry.available ? telemetry : null,
+    promptBuilderEvidence: promptBuilder.available ? promptBuilder : null,
   };
 }

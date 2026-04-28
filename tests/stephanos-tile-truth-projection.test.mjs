@@ -168,3 +168,53 @@ test('tile projection carries compact agent task layer summary when provided by 
   assert.equal(projection.landingTileSummary.nextAction, 'Wire existing Agent Tile to Agent Task projection');
   assert.equal(projection.landingTileSummary.topBlocker, 'approve_handoff gate is pending');
 });
+
+test('landing tile remains compact and only includes telemetry when it is a top dependency', () => {
+  const baseProjection = buildStephanosTileTruthProjection(createProject({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+      telemetrySummary: {
+        status: 'flowing',
+        nextActions: ['Bind telemetry summary to agent/task lifecycle'],
+      },
+      promptBuilderSummary: {
+        status: 'ready',
+      },
+    },
+  }));
+
+  assert.equal(baseProjection.landingTileSummary.lines.some((line) => line.startsWith('Telemetry:')), false);
+
+  const telemetryPriorityProjection = buildStephanosTileTruthProjection(createProject({
+    runtimeStatusModel: {
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        appLaunchState: 'ready',
+        winningRoute: 'cloud',
+        routeReachable: true,
+        routeUsable: true,
+        executedProvider: 'groq',
+        fallbackActive: false,
+        blockingIssueCodes: [],
+      },
+      agentTaskReadinessSummary: {
+        nextAgentTaskAction: 'Fix telemetry summary lifecycle binding',
+      },
+      telemetrySummary: {
+        status: 'degraded',
+        blockers: ['No recent telemetry lifecycle events'],
+      },
+    },
+  }));
+
+  assert.equal(telemetryPriorityProjection.landingTileSummary.lines.some((line) => line.startsWith('Telemetry:')), true);
+});

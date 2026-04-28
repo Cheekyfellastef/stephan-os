@@ -80,11 +80,23 @@ function isOpenClawTopDependency(nextAction, topBlocker) {
   return ['openclaw', 'kill switch', 'adapter'].some((token) => combined.includes(token));
 }
 
+
+function normalizeSubsystemSummary(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const status = String(source.status || '').trim().toLowerCase() || 'unknown';
+  const nextAction = String((Array.isArray(source.nextActions) ? source.nextActions[0] : source.nextAction) || '').trim();
+  const blocker = String((Array.isArray(source.blockers) ? source.blockers[0] : '') || '').trim();
+  const warning = String((Array.isArray(source.warnings) ? source.warnings[0] : source.topWarning || '') || '').trim();
+  return { status, nextAction, blocker, warning };
+}
+
 function buildLandingTileSummary({
   launchState,
   routeOperational,
   agentTaskSummary,
   canonicalBlockingIssues,
+  telemetrySummary = {},
+  promptBuilderSummary = {},
 }) {
   const overallStatus = classifyMissionStatus({
     launchState,
@@ -102,12 +114,24 @@ function buildLandingTileSummary({
   const openClawStatus = openClawDependencyTop
     ? `OpenClaw: ${agentTaskSummary.openClawReadiness} (${agentTaskSummary.openClawIntegrationMode})`
     : '';
+  const telemetry = normalizeSubsystemSummary(telemetrySummary);
+  const promptBuilder = normalizeSubsystemSummary(promptBuilderSummary);
+  const telemetryPriority = ['blocked', 'degraded'].includes(telemetry.status)
+    || nextAction.toLowerCase().includes('telemetry')
+    || topBlocker.toLowerCase().includes('telemetry');
+  const promptPriority = ['blocked', 'degraded'].includes(promptBuilder.status)
+    || nextAction.toLowerCase().includes('prompt builder')
+    || topBlocker.toLowerCase().includes('prompt');
+  const telemetryLine = telemetryPriority ? `Telemetry: ${telemetry.status}${telemetry.blocker ? ` (${asCompactSentence(telemetry.blocker)})` : ''}` : '';
+  const promptLine = promptPriority ? `Prompt Builder: ${promptBuilder.status}${promptBuilder.blocker ? ` (${asCompactSentence(promptBuilder.blocker)})` : ''}` : '';
 
   const lines = [
     overallStatus,
     `Next: ${nextAction}`,
     topBlocker ? `Blocker: ${asCompactSentence(topBlocker)}` : '',
     openClawStatus,
+    telemetryLine,
+    promptLine,
     `Status: ${safetyLabel}`,
   ].filter(Boolean);
 
@@ -253,11 +277,16 @@ export function buildStephanosTileTruthProjection(project = {}) {
   const routeOperational = canonicalRouteKind === 'cloud'
     && selectedRouteReachable === 'yes'
     && selectedRouteUsable === 'yes';
+  const telemetrySummary = runtimeStatusModel?.telemetrySummary || project?.telemetrySummary || {};
+  const promptBuilderSummary = runtimeStatusModel?.promptBuilderSummary || project?.promptBuilderSummary || {};
+
   const landingTileSummary = buildLandingTileSummary({
     launchState,
     routeOperational,
     agentTaskSummary,
     canonicalBlockingIssues,
+    telemetrySummary,
+    promptBuilderSummary,
   });
 
   return {

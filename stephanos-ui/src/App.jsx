@@ -692,6 +692,8 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            telemetryEntries={telemetryEntries}
+            actionHints={actionHints}
           />
         );
         markStartupStage('app-agents-panel-render-complete');
@@ -712,6 +714,8 @@ export default function App() {
             runtimeStatus={runtimeStatus}
             finalRouteTruth={finalRouteTruth}
             agentTaskProjection={agentTaskProjection}
+            telemetryEntries={telemetryEntries}
+            actionHints={actionHints}
           />
         );
         markStartupStage('app-mission-dashboard-render-complete');
@@ -940,6 +944,8 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            telemetryEntries={telemetryEntries}
+            actionHints={actionHints}
           />
         </section>
         <DebugConsole />
@@ -982,6 +988,8 @@ export default function App() {
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            telemetryEntries={telemetryEntries}
+            actionHints={actionHints}
           />
         </section>
         <DebugConsole />
@@ -1019,6 +1027,8 @@ export default function App() {
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            telemetryEntries={telemetryEntries}
+            actionHints={actionHints}
           />
           <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
