@@ -257,48 +257,17 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || executableProvider
     || null,
   );
-  const rawRouterSelectedProvider = normalizeProviderKey(
-    requestSideSelectedProvider
-    || executableProvider
-    || actualProviderUsed
-    || (currentRequestRouterMetadata
-      ? (
-        executionMetadata.router_selected_provider
-        || requestTrace.router_selected_provider
-        || executionMetadata.router_provider
-        || requestTrace.router_provider
-      )
-      : null)
-    || requestPayload.routeDecision?.selectedProvider
-    || requestPayload.router_selected_provider
-    || null,
+  const fallbackUsedForRouter = Boolean(
+    executionMetadata.fallback_used
+    ?? requestTrace.fallback_used
+    ?? false,
   );
-  const routerSelectedProvider = (() => {
-    if (
-      rawRouterSelectedProvider
-      && (
-        rawRouterSelectedProvider === requestSideSelectedProvider
-        || rawRouterSelectedProvider === executableProvider
-        || rawRouterSelectedProvider === actualProviderUsed
-      )
-    ) {
-      return rawRouterSelectedProvider;
-    }
-    return normalizeProviderKey(
-      requestSideSelectedProvider
-      || executableProvider
-      || actualProviderUsed
-      || (currentRequestRouterMetadata
-        ? (
-          executionMetadata.router_selected_provider
-          || requestTrace.router_selected_provider
-          || executionMetadata.router_provider
-          || requestTrace.router_provider
-        )
-        : null)
-      || requestPayload.provider,
-    );
-  })();
+  const providerOverrideReasonForRouter = String(
+    executionMetadata.provider_override_reason
+    || requestTrace.provider_override_reason
+    || requestPayload.provider_override_reason
+    || '',
+  ).trim();
   const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
     || requestTrace.ui_default_provider
     || executionMetadata.ui_default_provider
@@ -346,6 +315,53 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const successClassOutcome = finalExecutionOutcome === 'success'
     || executionStatus.startsWith('ok')
     || executionTruth.includes('answered');
+  const requestScopedRouterTraceProvider = normalizeProviderKey(
+    currentRequestRouterMetadata
+      ? (
+        executionMetadata.router_selected_provider
+        || requestTrace.router_selected_provider
+        || executionMetadata.router_provider
+        || requestTrace.router_provider
+      )
+      : null,
+  );
+  const rawRouterSelectedProvider = normalizeProviderKey(
+    requestSideSelectedProvider
+    || executableProvider
+    || actualProviderUsed
+    || requestScopedRouterTraceProvider
+    || requestPayload.routeDecision?.selectedProvider
+    || requestPayload.router_selected_provider
+    || null,
+  );
+  const routerSelectedProvider = (() => {
+    if (successClassOutcome && !fallbackUsedForRouter && !providerOverrideReasonForRouter) {
+      return normalizeProviderKey(
+        actualProviderUsed
+        || executableProvider
+        || requestSideSelectedProvider
+        || requestScopedRouterTraceProvider
+        || requestPayload.provider,
+      );
+    }
+    if (
+      rawRouterSelectedProvider
+      && (
+        rawRouterSelectedProvider === requestSideSelectedProvider
+        || rawRouterSelectedProvider === executableProvider
+        || rawRouterSelectedProvider === actualProviderUsed
+      )
+    ) {
+      return rawRouterSelectedProvider;
+    }
+    return normalizeProviderKey(
+      requestSideSelectedProvider
+      || executableProvider
+      || actualProviderUsed
+      || requestScopedRouterTraceProvider
+      || requestPayload.provider,
+    );
+  })();
   const cancellationClassOutcome = /(cancel|abort)/.test(finalExecutionOutcome);
   const rawExecutionCancelled = Boolean(executionMetadata.execution_cancelled ?? requestPayload.execution_cancelled ?? false);
   const rawProviderCancelled = Boolean(executionMetadata.provider_cancelled ?? requestPayload.provider_cancelled ?? false);

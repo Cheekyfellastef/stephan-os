@@ -80,6 +80,9 @@ test('useAIConsole normalizes cancellation truth from current request payload in
   assert.match(source, /requestPayload\.routeDecision\?\.selectedProvider/);
   assert.match(source, /requestPayload\.router_selected_provider/);
   assert.match(source, /rawRouterSelectedProvider === requestSideSelectedProvider/);
+  assert.match(source, /const requestScopedRouterTraceProvider = normalizeProviderKey\(/);
+  assert.match(source, /if \(successClassOutcome && !fallbackUsedForRouter && !providerOverrideReasonForRouter\)/);
+  assert.match(source, /actualProviderUsed\s*\|\|\s*executableProvider\s*\|\|\s*requestSideSelectedProvider/);
 });
 
 test('useAIConsole resets router truth fields at request start and threads request execution id into dispatch payload', () => {
