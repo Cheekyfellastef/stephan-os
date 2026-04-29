@@ -38,7 +38,7 @@ test('AgentsTile includes Agent Task Layer projection labels for shared adjudica
     'Next best agent action:',
     'OpenClaw adapter stub status:',
     'OpenClaw adapter stub can execute:',
-    'OpenClaw stub notice:',
+    'OpenClaw readiness notice:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });
