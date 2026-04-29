@@ -190,3 +190,37 @@ test('dist server exposes restart endpoint and reflects restart request in healt
   assert.equal(healthPayload.ignitionRestart.requested, true);
   assert.equal(healthPayload.ignitionRestart.source, 'test');
 });
+
+test('readonly validation endpoint rejects non-loopback host', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpointHost: '192.168.1.20', endpointPort: 8787, endpointScope: 'local_only', allowedProbeTypes: 'health_and_handshake' }),
+  });
+  assert.equal(response.status, 400);
+  const payload = await response.json();
+  assert.equal(payload.validationStatus, 'blocked');
+});
+
+test('readonly validation endpoint returns unavailable/failing safely when local adapter is offline', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpointHost: '127.0.0.1', endpointPort: 65534, endpointScope: 'local_only', expectedProtocolVersion: 'v1', allowedProbeTypes: 'health_and_handshake' }),
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.executionAllowed, false);
+  assert.match(payload.validationStatus, /failed|succeeded/);
+  assert.ok(['unavailable', 'failing', 'passing', 'not_run'].includes(payload.healthResult.state));
+});

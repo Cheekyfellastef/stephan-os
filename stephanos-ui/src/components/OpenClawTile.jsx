@@ -56,6 +56,13 @@ export default function OpenClawTile({
     };
   const validationSafePath = operatorTask?.openClawHealthValidationEvidence?.includes('safe-probe-path:available') === true;
   const validationStatus = operatorTask?.openClawHealthValidationStatus || 'idle';
+  const validationButtonEnabled = operatorTask?.openClawAdapterEndpointConfigured === true
+    && operatorTask?.openClawAdapterConnectionConfigReady === true
+    && operatorTask?.openClawAdapterEndpointScope === 'local_only'
+    && ['health_only', 'handshake_only', 'health_and_handshake'].includes(operatorTask?.openClawAdapterAllowedProbeTypes || 'none')
+    && (operatorTask?.openClawAdapterConnectionConfigBlockers?.length || 0) === 0
+    && validationSafePath
+    && validationStatus !== 'running';
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -182,8 +189,8 @@ export default function OpenClawTile({
           <li><strong>Top warning:</strong> {operatorTask?.openClawHealthValidationWarnings?.[0] || 'none'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawHealthValidationNextAction || operatorTask?.openClawHealthHandshakeNextAction || 'not reported'}</li>
         </ul>
-        <button type="button" disabled={!validationSafePath} onClick={onRequestReadonlyValidation}>
-          {validationSafePath ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe local probe path'}
+        <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>
+          {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe local probe path'}
         </button>
       </section>
 
