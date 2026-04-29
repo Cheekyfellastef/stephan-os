@@ -1,3 +1,5 @@
+import { adjudicateOpenClawAdapterConnectionConfig } from './openClawAdapterConnectionConfig.mjs';
+import { adjudicateOpenClawHealthHandshake } from './openClawHealthHandshake.mjs';
 function asText(value = '', fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -22,12 +24,18 @@ export function adjudicateOpenClawAdapterConnection(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const blockers = asList(source.connectionBlockers);
   const warnings = asList(source.connectionWarnings);
-  const endpointConfigured = asBoolean(source.endpointConfigured, false);
+  const config = adjudicateOpenClawAdapterConnectionConfig(source.connectionConfig || source.openClawAdapterConnectionConfig || source);
+  const telemetry = adjudicateOpenClawHealthHandshake({
+    ...(source.healthHandshake || source.openClawHealthHandshake || {}),
+    expectedProtocolVersion: config.expectedProtocolVersion,
+    expectedAdapterIdentity: config.expectedAdapterIdentity,
+  });
+  const endpointConfigured = config.endpointConfigured;
 
   const connectionMode = normalizeEnum(source.connectionMode, ['unavailable', 'readiness_only', 'health_check_only', 'local_stub', 'simulated', 'configured', 'connected', 'blocked', 'unknown'], 'readiness_only');
-  const endpointScope = normalizeEnum(source.endpointScope, ['none', 'local_only', 'tailscale_only', 'hosted_proxy', 'unknown'], endpointConfigured ? 'unknown' : 'none');
-  const healthCheckState = normalizeEnum(source.healthCheckState, ['unavailable', 'not_run', 'passing', 'failing', 'blocked', 'unknown'], endpointConfigured ? 'not_run' : 'unavailable');
-  const handshakeState = normalizeEnum(source.handshakeState, ['unavailable', 'not_run', 'compatible', 'incompatible', 'blocked', 'unknown'], endpointConfigured ? 'not_run' : 'unavailable');
+  const endpointScope = config.endpointScope;
+  const healthCheckState = normalizeEnum(source.healthCheckState || telemetry.healthState, ['unavailable', 'not_run', 'passing', 'failing', 'blocked', 'unknown'], endpointConfigured ? 'not_run' : 'unavailable');
+  const handshakeState = normalizeEnum(source.handshakeState || telemetry.handshakeState, ['unavailable', 'not_run', 'compatible', 'incompatible', 'blocked', 'unknown'], endpointConfigured ? 'not_run' : 'unavailable');
 
   let connectionState = normalizeEnum(source.connectionState, ['not_configured', 'not_connected', 'configured_not_checked', 'health_check_ready', 'handshake_ready', 'connected_readonly', 'connected_blocked', 'blocked', 'unknown'], endpointConfigured ? 'configured_not_checked' : 'not_connected');
 
@@ -75,13 +83,15 @@ export function adjudicateOpenClawAdapterConnection(input = {}) {
     connectionMode,
     connectionState,
     endpointConfigured,
-    endpointLabel: asText(source.endpointLabel, endpointConfigured ? 'OpenClaw local endpoint' : ''),
+    endpointLabel: config.endpointLabel || asText(source.endpointLabel, endpointConfigured ? 'OpenClaw local endpoint' : ''),
     endpointScope,
     healthCheckState,
     handshakeState,
-    protocolVersion: asText(source.protocolVersion, ''),
-    expectedProtocolVersion: asText(source.expectedProtocolVersion, ''),
-    adapterIdentity: asText(source.adapterIdentity, ''),
+    protocolVersion: telemetry.protocol.protocolVersion || asText(source.protocolVersion, ''),
+    expectedProtocolVersion: config.expectedProtocolVersion || telemetry.protocol.expectedProtocolVersion,
+    adapterIdentity: telemetry.adapterIdentity.id || asText(source.adapterIdentity, ''),
+    connectionConfig: config,
+    healthHandshake: telemetry,
     adapterCapabilitiesReported: asList(source.adapterCapabilitiesReported),
     readonlyConnection,
     connectionReady,
