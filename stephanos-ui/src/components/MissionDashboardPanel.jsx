@@ -7,6 +7,7 @@ import { createSeedProjectProgressModel, getProjectStatusLabel } from '../../../
 import { buildMissionHandoffMilestones } from '../../../shared/project/missionHandoffMilestones.mjs';
 import { buildLauncherEntrySummary } from '../../../shared/project/launcherEntrySummary.mjs';
 import { buildAgentSurfaceProjection } from '../../../shared/agents/agentSurfaceProjection.mjs';
+import { buildOpenClawReadonlyEndpointTrace } from '../../../shared/agents/openClawReadonlyEndpointTrace.mjs';
 import { useAIStore } from '../state/aiStore';
 import {
   buildMissionHandoffText,
@@ -188,6 +189,10 @@ export default function MissionDashboardPanel({
       openClawAdapterStubCanExecute: summary.openClawAdapterStubCanExecute === true,
       openClawAdapterEvidenceContract: Array.isArray(summary.openClawAdapterEvidenceContract) ? summary.openClawAdapterEvidenceContract : [],
       openClawStageEvidence: summary.openClawStageEvidence && typeof summary.openClawStageEvidence === 'object' ? summary.openClawStageEvidence : {},
+      openClawReadonlyValidationEndpointAvailable: summary.openClawReadonlyValidationEndpointAvailable === true,
+      openClawReadonlyValidationEndpointPath: summary.openClawReadonlyValidationEndpointPath || '',
+      openClawReadonlyValidationEndpointMode: summary.openClawReadonlyValidationEndpointMode || 'missing',
+      openClawReadonlyValidationEndpointCanExecute: summary.openClawReadonlyValidationEndpointCanExecute === true,
       openClawNextAction: summary.openClawNextAction || '',
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || '',
       verificationStatus: summary.verificationStatus || 'unknown',
@@ -307,6 +312,20 @@ export default function MissionDashboardPanel({
     promptBuilderSummary,
     launcherEntrySummary,
   }), [agentTaskSummary, finalRouteTruth, launcherEntrySummary, orchestrationSelectors, promptBuilderSummary, runtimeStatus, telemetrySummary]);
+
+  const openClawReadonlyEndpointTrace = useMemo(() => buildOpenClawReadonlyEndpointTrace({
+    dashboardSummary: agentTaskSummary,
+    progressNormalized: projectProgressProjection?.agentTaskEvidence || {},
+    stageEvidence: agentTaskSummary.openClawStageEvidence || {},
+    nextBestActionsEvidence: projectProgressProjection?.nextBestActions?.[0]?.evidence || [],
+    projectionOutput: {
+      openClawReadonlyValidationEndpointAvailable: agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointAvailable,
+      openClawReadonlyValidationEndpointPath: agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointPath,
+      openClawReadonlyValidationEndpointMode: agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointMode,
+      openClawReadonlyValidationEndpointCanExecute: agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointCanExecute,
+    },
+  }), [agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointAvailable, agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointCanExecute, agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointMode, agentTaskProjection?.operatorSurface?.openClawReadonlyValidationEndpointPath, agentTaskSummary, projectProgressProjection?.agentTaskEvidence, projectProgressProjection?.nextBestActions]);
+
   const handoffMilestoneProjection = useMemo(() => buildMissionHandoffMilestones({
     dashboardState,
     projectProgressProjection,
@@ -631,6 +650,22 @@ export default function MissionDashboardPanel({
         {agentTaskSummary.evidence.length > 0 ? (
           <p className="mission-note"><strong>Agent layer evidence:</strong> {agentTaskSummary.evidence.slice(0, 4).join(' · ')}</p>
         ) : null}
+      </section>
+
+      <section className="mission-live-projection" aria-label="OpenClaw readonly endpoint trace">
+        <h3>OpenClaw Readonly Endpoint Trace</h3>
+        <ul className="compact-list">
+          <li>First missing hop: {openClawReadonlyEndpointTrace.firstMissingHop}</li>
+          <li>App: {openClawReadonlyEndpointTrace.appStateAvailable ? 'available' : 'missing'}</li>
+          <li>Projection output: {openClawReadonlyEndpointTrace.projectionOutputAvailable ? 'available' : 'missing'}</li>
+          <li>Dashboard summary: {openClawReadonlyEndpointTrace.dashboardSummaryAvailable ? 'available' : 'missing'}</li>
+          <li>Progress normalized: {openClawReadonlyEndpointTrace.progressNormalizedAvailable ? 'available' : 'missing'}</li>
+          <li>Stage evidence: {openClawReadonlyEndpointTrace.stageEvidenceValue || 'missing'}</li>
+          <li>Next action evidence: {openClawReadonlyEndpointTrace.nextBestActionEvidenceValue || 'missing'}</li>
+          <li>Path: {openClawReadonlyEndpointTrace.actualPath || 'missing'}</li>
+          <li>Mode: {openClawReadonlyEndpointTrace.mode}</li>
+          <li>canExecute: {openClawReadonlyEndpointTrace.canExecute ? 'true' : 'false'}</li>
+        </ul>
       </section>
 
 
