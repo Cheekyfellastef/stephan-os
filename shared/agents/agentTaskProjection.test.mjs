@@ -257,3 +257,32 @@ test('agent task projection exposes OpenClaw adapter stub fields on operator sur
   assert.equal(projection.operatorSurface.openClawAdapterStubCanExecute, false);
   assert.equal(projection.readinessSummary.openClawAdapterStubConnectionState, 'local_only');
 });
+
+
+test('agent task projection readiness summary exposes OpenClaw stage evidence', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawPolicy: {
+        integrationMode: 'policy_only',
+        killSwitchState: 'available',
+        blockers: [],
+      },
+      openClawAdapter: {
+        adapterMode: 'local_stub',
+        adapterReadiness: 'contract_defined',
+        adapterConnectionState: 'not_connected',
+        adapterExecutionMode: 'disabled',
+        adapterStub: {
+          stubStatus: 'present_disabled',
+          stubHealth: 'healthy',
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.readinessSummary.openClawStageEvidence.killSwitchState, 'available');
+  assert.equal(projection.readinessSummary.openClawStageEvidence.adapterContractPresent, true);
+  assert.equal(projection.readinessSummary.openClawStageEvidence.stubPresent, true);
+  assert.equal(projection.readinessSummary.openClawStageEvidence.connectionState, 'not_connected');
+  assert.equal(projection.readinessSummary.openClawStageEvidence.executionAllowed, false);
+});

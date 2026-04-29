@@ -564,3 +564,42 @@ test('adjudicateProjectProgress suppresses stale openclaw setup actions when kil
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
   assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
 });
+
+
+test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when stage evidence exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterReadiness: 'contract_defined',
+      openClawAdapterConnectionState: 'not_connected',
+      openClawAdapterStubStatus: 'present_disabled',
+      openClawAdapterStubConnectionState: 'local_only',
+      openClawAdapterEvidenceContract: ['schema-defined'],
+      openClawExecutionAllowed: false,
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+    telemetrySummary: { status: 'flowing' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
+  assert.equal(ids.includes('design-openclaw-local-adapter'), false);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+  assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-kill-switch:available'), true);
+  assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-adapter:contract_defined'), true);
+  assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-stub:present_disabled'), true);
+  assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-connection:not_connected'), true);
+  assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-execution:disabled'), true);
+});

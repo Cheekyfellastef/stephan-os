@@ -52,6 +52,32 @@ function mapVerificationReturnStatus(value = '') {
   return 'unknown';
 }
 
+
+
+function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, adapterStub = {} } = {}) {
+  const policyMode = String(policySummary.integrationMode || 'policy_only').trim() || 'policy_only';
+  const killSwitchState = String(policySummary.killSwitchState || 'missing').trim() || 'missing';
+  const adapterMode = String(adapterSummary.adapterMode || 'unknown').trim() || 'unknown';
+  const adapterReadiness = String(adapterSummary.adapterReadiness || 'unknown').trim() || 'unknown';
+  const stubStatus = String(adapterStub.stubStatus || 'unknown').trim() || 'unknown';
+  const connectionState = String(adapterSummary.adapterConnectionState || 'unknown').trim() || 'unknown';
+  return {
+    policyPresent: policyMode !== 'unavailable',
+    policyMode,
+    killSwitchRepresented: killSwitchState !== 'missing',
+    killSwitchState,
+    adapterContractPresent: ['contract_defined', 'local_stub', 'connected'].includes(adapterReadiness)
+      || ['contract_defined', 'local_stub', 'connected'].includes(adapterMode),
+    adapterMode,
+    adapterReadiness,
+    stubPresent: ['health_check_only', 'simulated_ready', 'present_disabled'].includes(stubStatus),
+    stubStatus,
+    stubHealth: String(adapterStub.stubHealth || 'unknown').trim() || 'unknown',
+    connectionState,
+    executionAllowed: policySummary.openClawExecutionAllowed === true,
+    safeToUse: policySummary.openClawSafeToUse === true,
+  };
+}
 export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const adjudicated = adjudicateAgentTaskLayer({ model, context });
   const pendingApprovals = asArray(adjudicated.approval.pending);
@@ -67,6 +93,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const adapterTopBlocker = (Array.isArray(adapter.adapterBlockers) ? adapter.adapterBlockers[0] : '') || '';
   const adapterStub = adapter.adapterStub || {};
   const adapterStubTopBlocker = (Array.isArray(adapterStub.stubBlockers) ? adapterStub.stubBlockers[0] : '') || '';
+  const openClawStageEvidence = buildOpenClawStageEvidence({
+    policySummary: adjudicated.openClawPolicySummary || {},
+    adapterSummary: adapter || {},
+    adapterStub: adapterStub || {},
+  });
   const nextAction = {
     title: adjudicated.nextAction.title,
     priority: 1,
@@ -122,6 +153,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterCapabilities: adapter.adapterCapabilities || {},
       openClawAdapterRequiredApprovals: asArray(adapter.adapterRequiredApprovals),
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
+      openClawStageEvidence,
       handoffReady: adjudicated.handoff.handoffReady,
       handoffMode: adjudicated.handoff.handoffMode,
       handoffPacketSummary: adjudicated.handoff.handoffPacketSummary,
@@ -185,6 +217,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterCapabilities: adapter.adapterCapabilities || {},
       openClawAdapterRequiredApprovals: asArray(adapter.adapterRequiredApprovals),
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
+      openClawStageEvidence,
       highestPriorityApprovalGate: toChip(adjudicated.approval.highestPriorityGate, 'none'),
     },
     readinessSummary: {
@@ -234,6 +267,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterCapabilities: adapter.adapterCapabilities || {},
       openClawAdapterRequiredApprovals: asArray(adapter.adapterRequiredApprovals),
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
+      openClawStageEvidence,
       nextAgentTaskAction: adjudicated.nextAction.title,
       agentTaskLayerBlockers: blockers,
       readinessScore: adjudicated.readinessScore,

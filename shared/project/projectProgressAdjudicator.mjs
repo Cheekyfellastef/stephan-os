@@ -222,6 +222,12 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
     openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
     openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
+    openClawAdapterEvidenceContract: Array.isArray(source.openClawAdapterEvidenceContract)
+      ? source.openClawAdapterEvidenceContract.map((entry) => toText(entry, '')).filter(Boolean)
+      : [],
+    openClawStageEvidence: source.openClawStageEvidence && typeof source.openClawStageEvidence === 'object'
+      ? source.openClawStageEvidence
+      : {},
     openClawAdapterStubEvidence: Array.isArray(source.openClawAdapterStubEvidence)
       ? source.openClawAdapterStubEvidence.map((entry) => toText(entry, '')).filter(Boolean)
       : [],
@@ -303,6 +309,7 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   }
   const hasContractEvidence = !['design_only', 'unavailable', 'unknown'].includes(agentTaskSummary.openClawAdapterMode)
     || ['contract_defined', 'local_stub', 'connected'].includes(agentTaskSummary.openClawAdapterReadiness)
+    || agentTaskSummary.openClawStageEvidence?.adapterContractPresent === true
     || (Array.isArray(agentTaskSummary.openClawAdapterEvidenceContract) && agentTaskSummary.openClawAdapterEvidenceContract.length > 0);
   if (hasContractEvidence) {
     suppressed.add('design-openclaw-local-adapter');
@@ -470,6 +477,18 @@ function summarizePromptBuilderEvidence(promptBuilder = {}) {
   if (missingContexts.length === 0) return `prompt-builder:${promptBuilder.status || 'ready'}`;
   return `prompt-builder:${promptBuilder.status || 'partial'}:missing-${missingContexts.join(',')}`;
 }
+function summarizeOpenClawStageEvidence(agentTaskSummary = {}) {
+  if (!agentTaskSummary.available) return [];
+  return [
+    `openclaw-policy:${agentTaskSummary.openClawPolicyOnly ? 'policy_only' : (agentTaskSummary.openClawReadiness || 'unknown')}`,
+    `openclaw-kill-switch:${agentTaskSummary.openClawKillSwitchState || 'unknown'}`,
+    `openclaw-adapter:${agentTaskSummary.openClawAdapterReadiness || agentTaskSummary.openClawAdapterMode || 'unknown'}`,
+    `openclaw-stub:${agentTaskSummary.openClawAdapterStubStatus || 'unknown'}`,
+    `openclaw-connection:${agentTaskSummary.openClawAdapterConnectionState || 'unknown'}`,
+    `openclaw-execution:${agentTaskSummary.openClawExecutionAllowed ? 'enabled' : 'disabled'}`,
+  ];
+}
+
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
   runtimeStatus = {},
@@ -668,6 +687,7 @@ export function adjudicateProjectProgress({
       agentTaskSummary.available ? `agent-task:${agentTaskSummary.status || agentTaskSummary.agentTaskLayerStatus}` : '',
       telemetry.available ? `telemetry:${telemetry.status}` : 'telemetry:unavailable',
       summarizePromptBuilderEvidence(promptBuilder),
+      ...summarizeOpenClawStageEvidence(agentTaskSummary),
     ].filter(Boolean),
   }));
 
