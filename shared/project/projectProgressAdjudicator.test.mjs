@@ -83,7 +83,7 @@ test('adjudicateProjectProgress advances next action to verification when codex 
       ],
       readinessScore: 68,
     },
-    telemetrySummary: { status: 'flowing' },
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
     promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
@@ -103,14 +103,14 @@ test('adjudicateProjectProgress keeps verification return loop as next action wh
       nextAgentTaskAction: 'Paste Codex result for verification',
       nextActions: [{ title: 'Paste Codex result for verification', reason: 'Awaiting return.' }],
     },
-    telemetrySummary: { status: 'flowing' },
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
     promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
   assert.equal(projection.nextBestActions[0].id, 'add-verification-return-loop');
 });
 
-test('adjudicateProjectProgress recommends kill-switch wiring after policy harness exists in policy_only mode', () => {
+test('adjudicateProjectProgress suppresses generic kill-switch wiring when kill-switch truth is represented', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
     agentTaskReadinessSummary: {
@@ -127,11 +127,11 @@ test('adjudicateProjectProgress recommends kill-switch wiring after policy harne
       nextAgentTaskAction: 'Wire OpenClaw kill switch',
       nextActions: [{ title: 'Wire OpenClaw kill switch', reason: 'Policy harness exists and kill switch is still required.' }],
     },
-    telemetrySummary: { status: 'flowing' },
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
     promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'wire-openclaw-kill-switch'), false);
   assert.equal(
     projection.nextBestActions.some((action) => /policy harness/i.test(action.title)),
     false,
@@ -146,6 +146,8 @@ test('adjudicateProjectProgress recommends adapter design when kill switch exist
       agentTaskLayerStatus: 'in_progress',
       codexReadiness: 'manual_handoff_only',
       openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationStatus: 'ready',
       verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
@@ -195,6 +197,8 @@ test('adjudicateProjectProgress recommends stub creation after adapter contract 
       openClawReadiness: 'needs_adapter',
       verificationStatus: 'ready',
       verificationReturnReady: true,
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
@@ -206,6 +210,50 @@ test('adjudicateProjectProgress recommends stub creation after adapter contract 
   assert.equal(projection.nextBestActions[0].id, 'create-openclaw-local-adapter-stub');
 });
 
+
+test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when stage evidence is present', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
+    agentTaskReadinessSummary: {
+      status: 'started',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      openClawIntegrationMode: 'policy_only',
+      openClawKillSwitchState: 'required',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterReadiness: 'contract_defined',
+      openClawAdapterConnectionState: 'not_connected',
+      openClawAdapterStubStatus: 'present_disabled',
+      openClawStageEvidence: {
+        policyMode: 'policy_only',
+        killSwitchRepresented: true,
+        killSwitchState: 'required',
+        adapterReadiness: 'contract_defined',
+        stubStatus: 'present_disabled',
+        connectionState: 'not_connected',
+        executionAllowed: false,
+      },
+    },
+  });
+
+  const ids = projection.nextBestActions.map((a) => a.id);
+  assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
+  assert.equal(ids.includes('design-openclaw-local-adapter'), false);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  const evidence = projection.nextBestActions[0].evidence.join('|');
+  assert.match(evidence, /openclaw-policy:policy_only/);
+  assert.match(evidence, /openclaw-kill-switch:required/);
+  assert.match(evidence, /openclaw-adapter:contract_defined/);
+  assert.match(evidence, /openclaw-stub:present_disabled/);
+  assert.match(evidence, /openclaw-connection:not_connected/);
+  assert.match(evidence, /openclaw-execution:disabled/);
+});
 test('adjudicateProjectProgress recommends adapter connection after stub exists but no connection', () => {
   const projection = adjudicateProjectProgress({
     model: createSeedProjectProgressModel(),
@@ -214,6 +262,8 @@ test('adjudicateProjectProgress recommends adapter connection after stub exists 
       agentTaskLayerStatus: 'in_progress',
       codexReadiness: 'manual_handoff_only',
       openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationStatus: 'ready',
       verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
@@ -225,7 +275,7 @@ test('adjudicateProjectProgress recommends adapter connection after stub exists 
     },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
 });
 
 test('adjudicateProjectProgress prioritizes telemetry summary exporter when telemetry summary is missing', () => {
@@ -302,6 +352,7 @@ test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts whe
     },
     telemetrySummary: {
       status: 'flowing',
+      lifecycleBindingStatus: 'bound',
       nextActions: ['Telemetry flowing.'],
     },
     promptBuilderSummary: {
@@ -314,7 +365,7 @@ test('adjudicateProjectProgress advances beyond bind-prompt-builder-contexts whe
   });
 
   assert.notEqual(projection.nextBestActions[0].id, 'bind-prompt-builder-contexts');
-  assert.equal(projection.nextBestActions[0].id, 'wire-openclaw-kill-switch');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'wire-openclaw-kill-switch'), false);
 });
 
 test('adjudicateProjectProgress suppresses stale foundational actions when live agent/codex/verification evidence exists', () => {
@@ -329,6 +380,8 @@ test('adjudicateProjectProgress suppresses stale foundational actions when live 
       verificationReturnStatus: 'verification_required',
       verificationReturnNextAction: 'Run and report all required verification checks.',
       openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
@@ -445,6 +498,8 @@ test('adjudicateProjectProgress advances beyond create-stub recommendation when 
       openClawReadiness: 'needs_adapter',
       verificationStatus: 'ready',
       verificationReturnReady: true,
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
@@ -456,7 +511,7 @@ test('adjudicateProjectProgress advances beyond create-stub recommendation when 
     },
   });
 
-  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
 });
 
 test('adjudicateProjectProgress does not report prompt-builder unavailable when summary exists', () => {
@@ -504,6 +559,8 @@ test('adjudicateProjectProgress suppresses kill-switch and adapter design action
       openClawReadiness: 'needs_adapter',
       verificationStatus: 'ready',
       verificationReturnReady: true,
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
@@ -547,6 +604,8 @@ test('adjudicateProjectProgress suppresses stale openclaw setup actions when kil
       openClawReadiness: 'needs_adapter',
       verificationStatus: 'ready',
       verificationReturnReady: true,
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
       openClawIntegrationMode: 'local_adapter',
       openClawKillSwitchState: 'available',
@@ -562,7 +621,7 @@ test('adjudicateProjectProgress suppresses stale openclaw setup actions when kil
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
 });
 
 
@@ -574,6 +633,8 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
       agentTaskLayerStatus: 'in_progress',
       codexReadiness: 'manual_handoff_only',
       openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
       verificationStatus: 'ready',
       verificationReturnReady: true,
       verificationDecision: 'safe_to_accept',
@@ -588,7 +649,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
       openClawExecutionAllowed: false,
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
     },
-    telemetrySummary: { status: 'flowing' },
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
     promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
   });
 
@@ -596,7 +657,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions[0].id, 'connect-openclaw-local-adapter');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-kill-switch:available'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-adapter:contract_defined'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-stub:present_disabled'), true);

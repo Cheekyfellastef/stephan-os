@@ -228,6 +228,7 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawStageEvidence: source.openClawStageEvidence && typeof source.openClawStageEvidence === 'object'
       ? source.openClawStageEvidence
       : {},
+    openClawIntegrationMode: toLower(source.openClawIntegrationMode, 'policy_only'),
     openClawAdapterStubEvidence: Array.isArray(source.openClawAdapterStubEvidence)
       ? source.openClawAdapterStubEvidence.map((entry) => toText(entry, '')).filter(Boolean)
       : [],
@@ -304,7 +305,8 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
       suppressed.add('populate-launcher-shortcut-status');
     }
   }
-  if (agentTaskSummary.openClawKillSwitchState && !['required', 'missing', 'unknown', 'unavailable'].includes(agentTaskSummary.openClawKillSwitchState)) {
+  if (agentTaskSummary.openClawStageEvidence?.killSwitchRepresented === true
+    || (agentTaskSummary.openClawKillSwitchState && !['missing', 'unknown', 'unavailable'].includes(agentTaskSummary.openClawKillSwitchState))) {
     suppressed.add('wire-openclaw-kill-switch');
   }
   const hasContractEvidence = !['design_only', 'unavailable', 'unknown'].includes(agentTaskSummary.openClawAdapterMode)
@@ -479,15 +481,25 @@ function summarizePromptBuilderEvidence(promptBuilder = {}) {
 }
 function summarizeOpenClawStageEvidence(agentTaskSummary = {}) {
   if (!agentTaskSummary.available) return [];
+  const stage = agentTaskSummary.openClawStageEvidence && typeof agentTaskSummary.openClawStageEvidence === 'object'
+    ? agentTaskSummary.openClawStageEvidence
+    : {};
+  const policy = stage.policyMode || (agentTaskSummary.openClawPolicyOnly ? 'policy_only' : (agentTaskSummary.openClawReadiness || 'unknown'));
+  const killSwitch = stage.killSwitchState || agentTaskSummary.openClawKillSwitchState || 'unknown';
+  const adapter = stage.adapterReadiness || stage.adapterMode || agentTaskSummary.openClawAdapterReadiness || agentTaskSummary.openClawAdapterMode || 'unknown';
+  const stub = stage.stubStatus || agentTaskSummary.openClawAdapterStubStatus || 'unknown';
+  const connection = stage.connectionState || agentTaskSummary.openClawAdapterConnectionState || 'unknown';
+  const executionAllowed = stage.executionAllowed === true || agentTaskSummary.openClawExecutionAllowed === true;
   return [
-    `openclaw-policy:${agentTaskSummary.openClawPolicyOnly ? 'policy_only' : (agentTaskSummary.openClawReadiness || 'unknown')}`,
-    `openclaw-kill-switch:${agentTaskSummary.openClawKillSwitchState || 'unknown'}`,
-    `openclaw-adapter:${agentTaskSummary.openClawAdapterReadiness || agentTaskSummary.openClawAdapterMode || 'unknown'}`,
-    `openclaw-stub:${agentTaskSummary.openClawAdapterStubStatus || 'unknown'}`,
-    `openclaw-connection:${agentTaskSummary.openClawAdapterConnectionState || 'unknown'}`,
-    `openclaw-execution:${agentTaskSummary.openClawExecutionAllowed ? 'enabled' : 'disabled'}`,
+    `openclaw-policy:${policy}`,
+    `openclaw-kill-switch:${killSwitch}`,
+    `openclaw-adapter:${adapter}`,
+    `openclaw-stub:${stub}`,
+    `openclaw-connection:${connection}`,
+    `openclaw-execution:${executionAllowed ? 'enabled' : 'disabled'}`,
   ];
 }
+
 
 export function adjudicateProjectProgress({
   model = createSeedProjectProgressModel(),
