@@ -258,6 +258,13 @@ function hasVerificationReturnState(summary = {}) {
   return !['unknown', 'none', 'not_started'].includes(summary.verificationReturnStatus);
 }
 
+
+function hasOpenClawConnectionReadiness(summary = {}) {
+  const state = String(summary.openClawAdapterConnectionState || '').toLowerCase();
+  return ['health_check_ready', 'handshake_ready', 'connected_readonly'].includes(state)
+    || summary.openClawAdapterConnectionReady === true;
+}
+
 function hasOpenClawStubEvidence(summary = {}) {
   return ['health_check_only', 'simulated_ready', 'present_disabled'].includes(summary.openClawAdapterStubStatus)
     || ['local_only', 'simulated', 'connected'].includes(summary.openClawAdapterStubConnectionState)
@@ -318,6 +325,9 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   }
   if (hasOpenClawStubEvidence(agentTaskSummary)) {
     suppressed.add('create-openclaw-local-adapter-stub');
+  }
+  if (hasOpenClawConnectionReadiness(agentTaskSummary)) {
+    suppressed.add('connect-openclaw-local-adapter');
   }
   if (agentTaskSummary.openClawAdapterConnectionState === 'connected') {
     suppressed.add('connect-openclaw-local-adapter');
