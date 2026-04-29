@@ -164,7 +164,7 @@ test('mission handoff next best actions stay aligned with adjudicated queue and 
           title: 'Connect OpenClaw local adapter',
           reason: 'Adapter stub exists but is not connected.',
           source: 'project_progress_adjudicator',
-          evidence: ['agent-task:started', 'telemetry:flowing', 'openclaw-policy:policy_only', 'openclaw-kill-switch:required', 'openclaw-adapter:contract_defined', 'openclaw-stub:present_disabled', 'openclaw-connection:not_connected', 'openclaw-health:not_run', 'openclaw-handshake:not_run', 'openclaw-execution:disabled'],
+          evidence: ['agent-task:started', 'telemetry:flowing', 'openclaw-policy:policy_only', 'openclaw-kill-switch:required', 'openclaw-adapter:contract_defined', 'openclaw-stub:present_disabled', 'openclaw-connection:not_connected', 'openclaw-validation:idle', 'openclaw-health:not_run', 'openclaw-handshake:not_run', 'openclaw-execution:disabled'],
         },
       ],
     },
@@ -185,6 +185,7 @@ test('mission handoff next best actions stay aligned with adjudicated queue and 
   assert.match(text, /Connect OpenClaw local adapter/);
   assert.match(text, /source: project_progress_adjudicator/);
   assert.match(text, /openclaw-connection:not_connected/);
+  assert.match(text, /openclaw-validation:idle/);
   assert.match(text, /openclaw-health:not_run/);
   assert.match(text, /openclaw-handshake:not_run/);
   assert.match(text, /openclaw-execution:disabled/);

@@ -87,6 +87,7 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
     'openclaw-endpoint-scope': String(connection.endpointScope || connectionConfig.endpointScope || 'none').trim() || 'none',
     'openclaw-health': String(healthHandshake.healthState || connection.healthCheckState || 'not_run').trim() || 'not_run',
     'openclaw-handshake': String(healthHandshake.handshakeState || connection.handshakeState || 'not_run').trim() || 'not_run',
+    'openclaw-validation': String(healthHandshake.validationStatus || healthHandshake.validation?.validationStatus || 'idle').trim() || 'idle',
     'openclaw-protocol': protocol.compatible === true ? 'compatible' : `mismatch:${String(protocol.mismatchReason || 'unknown').trim() || 'unknown'}`,
     'openclaw-identity': String((healthHandshake.adapterIdentity || {}).id || connection.adapterIdentity || 'missing').trim() || 'missing',
     'openclaw-readonly': readonlyAssurance.readonlyOnly === true ? 'asserted' : 'not_asserted',

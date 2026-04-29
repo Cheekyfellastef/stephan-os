@@ -285,4 +285,5 @@ test('agent task projection readiness summary exposes OpenClaw stage evidence', 
   assert.equal(projection.readinessSummary.openClawStageEvidence.stubPresent, true);
   assert.equal(projection.readinessSummary.openClawStageEvidence.connectionState, 'not_connected');
   assert.equal(projection.readinessSummary.openClawStageEvidence.executionAllowed, false);
+  assert.equal(projection.readinessSummary.openClawStageEvidence['openclaw-validation'], 'idle');
 });
