@@ -19,3 +19,12 @@ test('MissionDashboardPanel copy payload includes next best actions from shared 
   assert.match(source, /nextBestActions: handoffMilestoneProjection\.nextBestActions/);
   assert.match(source, /wiringGaps: handoffMilestoneProjection\.wiringGaps/);
 });
+
+
+test('MissionDashboardPanel preserves readonly endpoint summary fields for project progress normalization', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.match(source, /openClawReadonlyValidationEndpointAvailable: summary\.openClawReadonlyValidationEndpointAvailable === true/);
+  assert.match(source, /openClawReadonlyValidationEndpointPath: summary\.openClawReadonlyValidationEndpointPath \|\| ''/);
+  assert.match(source, /openClawReadonlyValidationEndpointMode: summary\.openClawReadonlyValidationEndpointMode \|\| 'missing'/);
+  assert.match(source, /openClawReadonlyValidationEndpointCanExecute: summary\.openClawReadonlyValidationEndpointCanExecute === true/);
+});
