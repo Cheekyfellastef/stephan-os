@@ -364,10 +364,13 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
     suppressed.add('configure-openclaw-adapter-endpoint');
     suppressed.add('validate-openclaw-health-handshake-readonly');
   }
-  if (!agentTaskSummary.openClawReadonlyValidationEndpointAvailable) {
+  if (!hasReadonlyValidationEndpointAvailableTruth(agentTaskSummary)) {
     suppressed.add('validate-openclaw-health-handshake-readonly');
   } else if (!shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
     suppressed.add('validate-openclaw-health-handshake-readonly');
+  }
+  if (hasReadonlyValidationEndpointAvailableTruth(agentTaskSummary) || hasSafeReadonlyValidationProbe(agentTaskSummary)) {
+    suppressed.add('add-safe-readonly-openclaw-validation-endpoint');
   }
   if (agentTaskSummary.openClawApprovalsComplete) {
     suppressed.add('complete-openclaw-approval-gates');
@@ -528,6 +531,7 @@ function summarizePromptBuilderEvidence(promptBuilder = {}) {
 }
 
 function hasSafeReadonlyValidationProbe(agentTaskSummary = {}) {
+  if (hasReadonlyValidationEndpointAvailableTruth(agentTaskSummary)) return true;
   const allowedProbeTypes = String(agentTaskSummary.openClawAdapterAllowedProbeTypes || '').trim().toLowerCase();
   if (['health_only', 'handshake_only', 'health_and_handshake'].includes(allowedProbeTypes)) return true;
   const mode = String(agentTaskSummary.openClawReadonlyValidationEndpointMode || '').trim().toLowerCase();
@@ -536,6 +540,24 @@ function hasSafeReadonlyValidationProbe(agentTaskSummary = {}) {
     && mode === 'local_readonly_probe'
     && agentTaskSummary.openClawReadonlyValidationEndpointCanExecute !== true
     && /\/api\/openclaw\/health-handshake\/validate-readonly$/i.test(path);
+}
+
+function hasReadonlyValidationEndpointAvailableTruth(agentTaskSummary = {}) {
+  if (agentTaskSummary.openClawReadonlyValidationEndpointAvailable === true) return true;
+  const directEvidence = Array.isArray(agentTaskSummary.evidence) ? agentTaskSummary.evidence : [];
+  if (directEvidence.some((entry) => String(entry || '').trim().toLowerCase() === 'openclaw-validation-endpoint:available')) {
+    return true;
+  }
+  const stageEvidence = agentTaskSummary.openClawStageEvidence;
+  if (!stageEvidence || typeof stageEvidence !== 'object') return false;
+  const stageEntries = [];
+  for (const value of Object.values(stageEvidence)) {
+    if (typeof value === 'string') stageEntries.push(value);
+    if (Array.isArray(value)) {
+      stageEntries.push(...value.filter((entry) => typeof entry === 'string'));
+    }
+  }
+  return stageEntries.some((entry) => String(entry || '').trim().toLowerCase() === 'openclaw-validation-endpoint:available');
 }
 
 function shouldValidateReadonlyHealthHandshake(agentTaskSummary = {}) {
@@ -758,7 +780,7 @@ export function adjudicateProjectProgress({
         || agentTaskSummary.openClawAdapterConnectionState === 'configured_not_checked';
       if (!connectionConfiguredOrReady) {
         prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
-      } else if (!agentTaskSummary.openClawReadonlyValidationEndpointAvailable || !hasSafeReadonlyValidationProbe(agentTaskSummary)) {
+      } else if (!hasReadonlyValidationEndpointAvailableTruth(agentTaskSummary) || !hasSafeReadonlyValidationProbe(agentTaskSummary)) {
         prioritizeAction(nextBestActions, 'add-safe-readonly-openclaw-validation-endpoint');
       } else if (shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
         prioritizeAction(nextBestActions, 'validate-openclaw-health-handshake-readonly');
