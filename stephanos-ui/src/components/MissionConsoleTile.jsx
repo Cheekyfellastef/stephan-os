@@ -131,6 +131,11 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionConfigTopWarning: (summary.openClawAdapterConnectionConfigWarnings || operatorSurface.openClawAdapterConnectionConfigWarnings || [])[0] || 'none',
       openClawAdapterHealthCheckState: summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
       openClawAdapterHandshakeState: summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
+      openClawHealthValidationStatus: summary.openClawHealthValidationStatus || operatorSurface.openClawHealthValidationStatus || 'idle',
+      openClawHealthValidationMode: summary.openClawHealthValidationMode || operatorSurface.openClawHealthValidationMode || 'none',
+      openClawHealthValidationNextAction: summary.openClawHealthValidationNextAction || operatorSurface.openClawHealthValidationNextAction || 'not reported',
+      openClawProtocolCompatible: pickBoolean(summary.openClawProtocolCompatible, operatorSurface.openClawProtocolCompatible),
+      openClawReadonlyAsserted: pickBoolean(summary.openClawReadonlyAssurance?.readonlyOnly, operatorSurface.openClawReadonlyAssurance?.readonlyOnly),
       openClawAdapterConnectionReady: pickBoolean(summary.openClawAdapterConnectionReady, operatorSurface.openClawAdapterConnectionReady),
       openClawAdapterConnectionExecutionAllowed: pickBoolean(summary.openClawAdapterConnectionExecutionAllowed, operatorSurface.openClawAdapterConnectionExecutionAllowed),
       openClawAdapterConnectionHighestPriorityBlocker: summary.openClawAdapterConnectionHighestPriorityBlocker || operatorSurface.openClawAdapterConnectionHighestPriorityBlocker || 'none',
@@ -513,6 +518,11 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter config next action:</strong> {compactVerificationSummary.openClawAdapterConnectionConfigNextAction}</li>
           <li><strong>openclaw adapter health check:</strong> {compactVerificationSummary.openClawAdapterHealthCheckState}</li>
           <li><strong>openclaw adapter handshake:</strong> {compactVerificationSummary.openClawAdapterHandshakeState}</li>
+          <li><strong>openclaw readonly validation status:</strong> {compactVerificationSummary.openClawHealthValidationStatus}</li>
+          <li><strong>openclaw readonly validation mode:</strong> {compactVerificationSummary.openClawHealthValidationMode}</li>
+          <li><strong>openclaw protocol compatible:</strong> {compactVerificationSummary.openClawProtocolCompatible ? 'yes' : 'no'}</li>
+          <li><strong>openclaw readonly assurance:</strong> {compactVerificationSummary.openClawReadonlyAsserted ? 'asserted' : 'not asserted'}</li>
+          <li><strong>openclaw validation next action:</strong> {compactVerificationSummary.openClawHealthValidationNextAction}</li>
           <li><strong>openclaw adapter connection ready:</strong> {compactVerificationSummary.openClawAdapterConnectionReady ? 'yes' : 'no'}</li>
           <li><strong>openclaw adapter connection execution allowed:</strong> {compactVerificationSummary.openClawAdapterConnectionExecutionAllowed ? 'yes' : 'no'}</li>
           <li><strong>openclaw adapter connection blocker:</strong> {compactVerificationSummary.openClawAdapterConnectionHighestPriorityBlocker}</li>
