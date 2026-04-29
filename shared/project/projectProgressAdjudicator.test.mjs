@@ -710,3 +710,110 @@ test('live-style agent task projection suppresses create-stub and emits connecti
   assert.equal(projection.readinessSummary.openClawAdapterStubCanExecute, false);
   assert.equal(projection.readinessSummary.openClawExecutionAllowed, false);
 });
+
+
+test('configured_not_checked suppresses configure endpoint and promotes readonly validation when probe exists', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterConnectionState: 'configured_not_checked',
+      openClawAdapterConnectionConfigReady: true,
+      openClawAdapterAllowedProbeTypes: 'health_and_handshake',
+      openClawHealthState: 'not_run',
+      openClawHandshakeState: 'not_run',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('configure-openclaw-adapter-endpoint'), false);
+  assert.equal(projection.nextBestActions[0].id, 'validate-openclaw-health-handshake-readonly');
+});
+
+test('configured_not_checked promotes add-safe-readonly-validation-endpoint when probe path is missing', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterConnectionState: 'configured_not_checked',
+      openClawAdapterConnectionConfigReady: true,
+      openClawAdapterAllowedProbeTypes: 'none',
+      openClawHealthState: 'not_run',
+      openClawHandshakeState: 'not_run',
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'add-safe-readonly-openclaw-validation-endpoint');
+});
+
+test('missing endpoint still recommends configure endpoint', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterConnectionState: 'not_connected',
+      openClawAdapterConnectionConfigReady: false,
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'configure-openclaw-adapter-endpoint');
+});
+
+test('validation passed advances from validation to approval gate closure flow', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_approval',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'connected',
+      openClawAdapterConnectionState: 'configured_not_checked',
+      openClawAdapterConnectionConfigReady: true,
+      openClawAdapterAllowedProbeTypes: 'health_and_handshake',
+      openClawHealthState: 'passing',
+      openClawHandshakeState: 'compatible',
+      openClawApprovalsComplete: false,
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  const ids = projection.nextBestActions.map((action) => action.id);
+  assert.equal(ids.includes('validate-openclaw-health-handshake-readonly'), false);
+  assert.equal(projection.nextBestActions[0].id, 'complete-openclaw-approval-gates');
+});

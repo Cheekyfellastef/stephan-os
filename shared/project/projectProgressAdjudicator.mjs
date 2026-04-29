@@ -134,6 +134,14 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     whyThisMatters: 'Keeps endpoint truth explicit without implying connection or execution.',
   },
   {
+    id: 'add-safe-readonly-openclaw-validation-endpoint',
+    title: 'Add safe readonly OpenClaw validation endpoint',
+    reason: 'Endpoint is configured, but no safe readonly probe path is declared yet.',
+    blocks: ['Readonly health/handshake validation'],
+    dependencyImpact: 51,
+    whyThisMatters: 'Preserves readonly-only verification posture without reverting endpoint readiness claims.',
+  },
+  {
     id: 'validate-openclaw-health-handshake-readonly',
     title: 'Validate readonly OpenClaw health/handshake',
     reason: 'Endpoint is configured but readonly health/handshake has not been validated yet.',
@@ -229,6 +237,10 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterConnectionState: toLower(source.openClawAdapterConnectionState, 'not_configured'),
     openClawAdapterEndpointConfigured: source.openClawAdapterEndpointConfigured === true,
     openClawAdapterConnectionConfigReady: source.openClawAdapterConnectionConfigReady === true,
+    openClawAdapterEndpointScope: toLower(source.openClawAdapterEndpointScope, 'none'),
+    openClawAdapterAllowedProbeTypes: toLower(source.openClawAdapterAllowedProbeTypes, 'none'),
+    openClawHealthState: toLower(source.openClawHealthState, 'not_run'),
+    openClawHandshakeState: toLower(source.openClawHandshakeState, 'not_run'),
     openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
     openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
     openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
@@ -336,12 +348,16 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
   if (hasOpenClawStubEvidence(agentTaskSummary)) {
     suppressed.add('create-openclaw-local-adapter-stub');
   }
-  if (hasOpenClawConnectionReadiness(agentTaskSummary)) {
+  if (hasOpenClawConnectionReadiness(agentTaskSummary)
+    || agentTaskSummary.openClawAdapterConnectionState === 'configured_not_checked'
+    || agentTaskSummary.openClawAdapterConnectionConfigReady === true) {
     suppressed.add('configure-openclaw-adapter-endpoint');
-    suppressed.add('validate-openclaw-health-handshake-readonly');
   }
   if (agentTaskSummary.openClawAdapterConnectionState === 'connected') {
     suppressed.add('configure-openclaw-adapter-endpoint');
+    suppressed.add('validate-openclaw-health-handshake-readonly');
+  }
+  if (!shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
     suppressed.add('validate-openclaw-health-handshake-readonly');
   }
   if (agentTaskSummary.openClawApprovalsComplete) {
@@ -501,6 +517,18 @@ function summarizePromptBuilderEvidence(promptBuilder = {}) {
   if (missingContexts.length === 0) return `prompt-builder:${promptBuilder.status || 'ready'}`;
   return `prompt-builder:${promptBuilder.status || 'partial'}:missing-${missingContexts.join(',')}`;
 }
+
+function hasSafeReadonlyValidationProbe(agentTaskSummary = {}) {
+  const allowedProbeTypes = String(agentTaskSummary.openClawAdapterAllowedProbeTypes || '').trim().toLowerCase();
+  return ['health_only', 'handshake_only', 'health_and_handshake'].includes(allowedProbeTypes);
+}
+
+function shouldValidateReadonlyHealthHandshake(agentTaskSummary = {}) {
+  const health = String(agentTaskSummary.openClawHealthState || 'not_run').trim().toLowerCase();
+  const handshake = String(agentTaskSummary.openClawHandshakeState || 'not_run').trim().toLowerCase();
+  return ['not_run', 'unknown'].includes(health) || ['not_run', 'unknown'].includes(handshake);
+}
+
 function summarizeOpenClawStageEvidence(agentTaskSummary = {}) {
   if (!agentTaskSummary.available) return [];
   const stage = agentTaskSummary.openClawStageEvidence && typeof agentTaskSummary.openClawStageEvidence === 'object'
@@ -710,12 +738,17 @@ export function adjudicateProjectProgress({
     } else if (shouldCreateStub) {
       prioritizeAction(nextBestActions, 'create-openclaw-local-adapter-stub');
     } else if (shouldConnectAdapter) {
-      if (agentTaskSummary.openClawAdapterConnectionConfigReady !== true) {
-      prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
-    } else if (['not_run','unknown'].includes(agentTaskSummary.openClawHealthState || 'not_run')
-      || ['not_run','unknown'].includes(agentTaskSummary.openClawHandshakeState || 'not_run')) {
-      prioritizeAction(nextBestActions, 'validate-openclaw-health-handshake-readonly');
-    }
+      const connectionConfiguredOrReady = agentTaskSummary.openClawAdapterConnectionConfigReady === true
+        || agentTaskSummary.openClawAdapterConnectionState === 'configured_not_checked';
+      if (!connectionConfiguredOrReady) {
+        prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
+      } else if (!hasSafeReadonlyValidationProbe(agentTaskSummary)) {
+        prioritizeAction(nextBestActions, 'add-safe-readonly-openclaw-validation-endpoint');
+      } else if (shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
+        prioritizeAction(nextBestActions, 'validate-openclaw-health-handshake-readonly');
+      } else {
+        prioritizeAction(nextBestActions, 'complete-openclaw-approval-gates');
+      }
     } else if (shouldCompleteApprovals) {
       prioritizeAction(nextBestActions, 'complete-openclaw-approval-gates');
     }
