@@ -123,7 +123,16 @@ export default function AgentsTile({
             <li><strong>OpenClaw next action:</strong> {operatorTask.openClawNextAction || 'not reported'}</li>
             <li><strong>OpenClaw adapter mode:</strong> {operatorTask.openClawAdapterMode || 'design_only'}</li>
             <li><strong>OpenClaw adapter readiness:</strong> {operatorTask.openClawAdapterReadiness || 'needs_contract'}</li>
-            <li><strong>OpenClaw adapter connection:</strong> {operatorTask.openClawAdapterConnectionState || 'not_configured'}</li>
+            <li><strong>OpenClaw adapter connection mode:</strong> {operatorTask.openClawAdapterConnectionMode || 'readiness_only'}</li>
+            <li><strong>OpenClaw adapter connection state:</strong> {operatorTask.openClawAdapterConnectionState || 'not_connected'}</li>
+            <li><strong>OpenClaw adapter endpoint configured:</strong> {operatorTask.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter endpoint scope:</strong> {operatorTask.openClawAdapterEndpointScope || 'none'}</li>
+            <li><strong>OpenClaw adapter health check:</strong> {operatorTask.openClawAdapterHealthCheckState || 'not_run'}</li>
+            <li><strong>OpenClaw adapter handshake:</strong> {operatorTask.openClawAdapterHandshakeState || 'not_run'}</li>
+            <li><strong>OpenClaw adapter connection ready:</strong> {operatorTask.openClawAdapterConnectionReady ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter connection execution allowed:</strong> {operatorTask.openClawAdapterConnectionExecutionAllowed ? 'yes' : 'no'}</li>
+            <li><strong>OpenClaw adapter connection next action:</strong> {operatorTask.openClawAdapterConnectionNextAction || 'not reported'}</li>
+            <li><strong>OpenClaw adapter connection top blocker:</strong> {operatorTask.openClawAdapterConnectionHighestPriorityBlocker || 'none'}</li>
             <li><strong>OpenClaw adapter execution mode:</strong> {operatorTask.openClawAdapterExecutionMode || 'disabled'}</li>
             <li><strong>OpenClaw adapter can execute:</strong> {operatorTask.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
             <li><strong>OpenClaw adapter safe to connect:</strong> {operatorTask.openClawAdapterSafeToConnect ? 'yes' : 'no'}</li>
@@ -161,7 +170,7 @@ export default function AgentsTile({
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
-          <p className="muted"><strong>OpenClaw stub notice:</strong> stub/status only, no live automation.</p>
+          <p className="muted"><strong>OpenClaw readiness notice:</strong> connection readiness only, no live automation.</p>
           <div className="agents-tile-copy-actions">
             <button
               type="button"

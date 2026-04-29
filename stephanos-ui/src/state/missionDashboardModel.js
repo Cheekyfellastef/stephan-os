@@ -267,7 +267,7 @@ export function buildMissionHandoffText(state, { projectedMilestones = null, nex
       }
       lines.push(`  source: ${action.source || 'live_projection'}`);
       if (Array.isArray(action.evidence) && action.evidence.length > 0) {
-        lines.push(`  evidence: ${action.evidence.slice(0, 4).join(' | ')}`);
+        lines.push(`  evidence: ${action.evidence.slice(0, 12).join(' | ')}`);
       }
     });
   } else {

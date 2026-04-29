@@ -116,6 +116,15 @@ export default function MissionConsoleTile({
       openClawAdapterStubConnectionState: summary.openClawAdapterStubConnectionState || operatorSurface.openClawAdapterStubConnectionState || 'unknown',
       openClawAdapterStubCanExecute: pickBoolean(summary.openClawAdapterStubCanExecute, operatorSurface.openClawAdapterStubCanExecute),
       openClawAdapterStubNextAction: summary.openClawAdapterStubNextAction || operatorSurface.openClawAdapterStubNextAction || 'not reported',
+      openClawAdapterConnectionMode: summary.openClawAdapterConnectionMode || operatorSurface.openClawAdapterConnectionMode || 'readiness_only',
+      openClawAdapterEndpointConfigured: pickBoolean(summary.openClawAdapterEndpointConfigured, operatorSurface.openClawAdapterEndpointConfigured),
+      openClawAdapterEndpointScope: summary.openClawAdapterEndpointScope || operatorSurface.openClawAdapterEndpointScope || 'none',
+      openClawAdapterHealthCheckState: summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
+      openClawAdapterHandshakeState: summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
+      openClawAdapterConnectionReady: pickBoolean(summary.openClawAdapterConnectionReady, operatorSurface.openClawAdapterConnectionReady),
+      openClawAdapterConnectionExecutionAllowed: pickBoolean(summary.openClawAdapterConnectionExecutionAllowed, operatorSurface.openClawAdapterConnectionExecutionAllowed),
+      openClawAdapterConnectionHighestPriorityBlocker: summary.openClawAdapterConnectionHighestPriorityBlocker || operatorSurface.openClawAdapterConnectionHighestPriorityBlocker || 'none',
+      openClawAdapterConnectionNextAction: summary.openClawAdapterConnectionNextAction || operatorSurface.openClawAdapterConnectionNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
 
@@ -479,7 +488,16 @@ export default function MissionConsoleTile({
           <li><strong>openclaw next action:</strong> {compactVerificationSummary.openClawNextAction}</li>
           <li><strong>openclaw adapter mode:</strong> {compactVerificationSummary.openClawAdapterMode}</li>
           <li><strong>openclaw adapter readiness:</strong> {compactVerificationSummary.openClawAdapterReadiness}</li>
-          <li><strong>openclaw adapter connection:</strong> {compactVerificationSummary.openClawAdapterConnectionState}</li>
+          <li><strong>openclaw adapter connection mode:</strong> {compactVerificationSummary.openClawAdapterConnectionMode}</li>
+          <li><strong>openclaw adapter connection state:</strong> {compactVerificationSummary.openClawAdapterConnectionState}</li>
+          <li><strong>openclaw adapter endpoint configured:</strong> {compactVerificationSummary.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter endpoint scope:</strong> {compactVerificationSummary.openClawAdapterEndpointScope}</li>
+          <li><strong>openclaw adapter health check:</strong> {compactVerificationSummary.openClawAdapterHealthCheckState}</li>
+          <li><strong>openclaw adapter handshake:</strong> {compactVerificationSummary.openClawAdapterHandshakeState}</li>
+          <li><strong>openclaw adapter connection ready:</strong> {compactVerificationSummary.openClawAdapterConnectionReady ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter connection execution allowed:</strong> {compactVerificationSummary.openClawAdapterConnectionExecutionAllowed ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter connection blocker:</strong> {compactVerificationSummary.openClawAdapterConnectionHighestPriorityBlocker}</li>
+          <li><strong>openclaw adapter connection next action:</strong> {compactVerificationSummary.openClawAdapterConnectionNextAction}</li>
           <li><strong>openclaw adapter execution mode:</strong> {compactVerificationSummary.openClawAdapterExecutionMode}</li>
           <li><strong>openclaw adapter can execute:</strong> {compactVerificationSummary.openClawAdapterCanExecute ? 'yes' : 'no'}</li>
           <li><strong>openclaw adapter next action:</strong> {compactVerificationSummary.openClawAdapterNextAction}</li>
@@ -488,7 +506,7 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter stub connection:</strong> {compactVerificationSummary.openClawAdapterStubConnectionState}</li>
           <li><strong>openclaw adapter stub execution disabled:</strong> {compactVerificationSummary.openClawAdapterStubCanExecute ? 'no (unexpected)' : 'yes'}</li>
           <li><strong>openclaw adapter stub next action:</strong> {compactVerificationSummary.openClawAdapterStubNextAction}</li>
-          <li><strong>openclaw policy notice:</strong> stub/status only, no live automation</li>
+          <li><strong>openclaw policy notice:</strong> connection readiness only, no live automation</li>
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>
