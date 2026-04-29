@@ -267,3 +267,53 @@ test('Intent Engine operator interface is not marked not-started when prompt sum
   assert.ok(milestone);
   assert.notEqual(milestone.status, 'not-started');
 });
+
+
+test('mission handoff text excludes create-stub when stub evidence exists and recommends connection readiness', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: {
+      ...createProjectionFixture(),
+      nextBestActions: [
+        {
+          id: 'connect-openclaw-local-adapter',
+          title: 'Connect OpenClaw local adapter',
+          reason: 'Adapter stub exists but connection state is still not connected.',
+          source: 'project_progress_adjudicator',
+          evidence: [
+            'openclaw-adapter:contract_defined',
+            'openclaw-stub:present_disabled',
+            'openclaw-connection:not_connected',
+            'openclaw-execution:disabled',
+          ],
+        },
+      ],
+    },
+    agentTaskSummary: {
+      openClawReadiness: 'needs_adapter',
+      openClawKillSwitchState: 'required',
+      openClawAdapterMode: 'contract_defined',
+      openClawAdapterReadiness: 'needs_connection',
+      openClawAdapterConnectionState: 'not_connected',
+      openClawAdapterStubStatus: 'present_disabled',
+      openClawNextAction: 'Connect OpenClaw local adapter',
+      openClawStageEvidence: {
+        adapterReadiness: 'contract_defined',
+        stubStatus: 'present_disabled',
+        connectionState: 'not_connected',
+        executionAllowed: false,
+      },
+    },
+  });
+
+  const text = buildMissionHandoffText(createDefaultMissionDashboardState(), {
+    projectedMilestones: projection.milestones,
+    nextBestActions: projection.nextBestActions,
+    wiringGaps: projection.wiringGaps,
+  });
+
+  assert.match(text, /Connect OpenClaw local adapter/);
+  assert.doesNotMatch(text, /Create OpenClaw local adapter stub/);
+  assert.match(text, /openclaw-stub:present_disabled/);
+  assert.match(text, /openclaw-connection:not_connected/);
+});
