@@ -33,7 +33,8 @@ test('CollapsiblePanel collapse toggle is marked as non-draggable and controls i
   );
 
   const rendered = renderCollapsiblePanel({ isOpen: true });
-  assert.match(rendered, /class="panel-collapse-toggle"/);
+  assert.match(rendered, /class="panel-header-row" data-pane-drag-handle="true"/);
+  assert.match(rendered, /class="panel-collapse-toggle" data-pane-drag-handle="true"/);
   assert.match(rendered, /class="stephanos-canon-rotating-chevron-button panel-collapse-button"/);
   assert.match(rendered, /data-no-drag="true"/);
   assert.match(rendered, /aria-controls="testPanel-body"/);

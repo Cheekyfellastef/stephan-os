@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { importBundledModule, srcRoot } from '../test/renderHarness.mjs';
 
-test('shouldStartPaneDrag blocks drag start for interactive pane controls', async () => {
+test('shouldStartPaneDrag only allows drag starts from canonical pane drag handles', async () => {
   const { shouldStartPaneDrag } = await importBundledModule(
     path.join(srcRoot, 'App.jsx'),
     {},
@@ -11,12 +11,24 @@ test('shouldStartPaneDrag blocks drag start for interactive pane controls', asyn
   );
 
   assert.equal(shouldStartPaneDrag({
-    closest: (selector) => (selector.includes('button') ? {} : null),
+    closest: (selector) => {
+      if (selector === '[data-pane-drag-handle="true"]') {
+        return {};
+      }
+      if (selector.includes('button')) {
+        return {};
+      }
+      return null;
+    },
   }), false);
 
   assert.equal(shouldStartPaneDrag({
-    closest: () => null,
+    closest: (selector) => (selector === '[data-pane-drag-handle="true"]' ? {} : null),
   }), true);
+
+  assert.equal(shouldStartPaneDrag({
+    closest: () => null,
+  }), false);
 });
 
 test('resolvePaneCollapsedState uses canonical layout key so outer pane follows panel collapse truth', async () => {
