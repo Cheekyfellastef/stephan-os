@@ -28,6 +28,7 @@ import AgentsTile from './components/AgentsTile.jsx';
 import AgentQuickControls from './components/AgentQuickControls.jsx';
 import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
+import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -179,6 +180,7 @@ export default function App() {
   const agentsSurfaceMode = surfaceMode === 'agents';
   const missionConsoleSurfaceMode = surfaceMode === 'mission-console';
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
+  const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
@@ -787,6 +789,16 @@ export default function App() {
       ),
     },
     {
+      id: 'capabilityRadarPanel',
+      className: 'pane-span-2',
+      render: () => (
+        <CapabilityRadarTile
+          uiLayout={safeUiLayout}
+          togglePanel={togglePanel}
+        />
+      ),
+    },
+    {
       id: 'openClawPanel',
       className: 'pane-span-2',
       render: () => (
@@ -1002,6 +1014,20 @@ export default function App() {
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
+  if (capabilityRadarSurfaceMode) {
+    return (
+      <main className="app-shell-root mission-console-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          CAPABILITY RADAR SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <section className="mission-console-surface-stage">
+          <CapabilityRadarTile uiLayout={{ ...safeUiLayout, capabilityRadarPanel: true }} togglePanel={() => {}} />
         </section>
         <DebugConsole />
       </main>
