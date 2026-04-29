@@ -29,6 +29,7 @@ import AgentQuickControls from './components/AgentQuickControls.jsx';
 import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
+import SkillForgeTile from './components/SkillForgeTile.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -181,6 +182,7 @@ export default function App() {
   const missionConsoleSurfaceMode = surfaceMode === 'mission-console';
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
+  const skillForgeSurfaceMode = surfaceMode === 'skill-forge' || launcherDestination === 'skill-forge';
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
@@ -797,6 +799,11 @@ export default function App() {
           togglePanel={togglePanel}
         />
       ),
+    },
+    {
+      id: 'skillForgePanel',
+      className: 'pane-span-2',
+      render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} />,
     },
     {
       id: 'openClawPanel',
