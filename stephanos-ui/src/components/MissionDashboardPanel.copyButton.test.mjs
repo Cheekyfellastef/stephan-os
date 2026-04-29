@@ -23,8 +23,8 @@ test('MissionDashboardPanel copy payload includes next best actions from shared 
 
 test('MissionDashboardPanel preserves readonly endpoint summary fields for project progress normalization', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  assert.match(source, /openClawReadonlyValidationEndpointAvailable: summary\.openClawReadonlyValidationEndpointAvailable === true/);
-  assert.match(source, /openClawReadonlyValidationEndpointPath: summary\.openClawReadonlyValidationEndpointPath \|\| ''/);
-  assert.match(source, /openClawReadonlyValidationEndpointMode: summary\.openClawReadonlyValidationEndpointMode \|\| 'missing'/);
-  assert.match(source, /openClawReadonlyValidationEndpointCanExecute: summary\.openClawReadonlyValidationEndpointCanExecute === true/);
+  assert.match(source, /deriveReadonlyEndpointSummary\(summary, projectionOperatorSurface\)/);
+  assert.match(source, /openClawReadonlyValidationEndpointPath:[\s\S]*\/api\/openclaw\/health-handshake\/validate-readonly/);
+  assert.match(source, /openClawReadonlyValidationEndpointMode:[\s\S]*local_readonly_probe/);
+  assert.match(source, /openclaw-validation-endpoint'] === 'available'/);
 });

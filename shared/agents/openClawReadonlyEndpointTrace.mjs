@@ -11,6 +11,26 @@ function firstMissingHop(hops = []) {
   return missing ? missing.id : 'none';
 }
 
+function deriveFirstMissingHop(trace) {
+  const canonicalAvailable = trace.projectionOutputAvailable || trace.stageEvidenceValue === 'available';
+  if (canonicalAvailable && trace.dashboardSummaryAvailable !== true) {
+    return 'dashboardSummary';
+  }
+  if (canonicalAvailable && trace.progressNormalizedAvailable !== true) {
+    return 'progressNormalized';
+  }
+  return firstMissingHop([
+    { id: 'appState', available: trace.appStateAvailable },
+    { id: 'projectionInput', available: trace.projectionInputAvailable },
+    { id: 'healthHandshakeOutput', available: trace.healthHandshakeOutputAvailable },
+    { id: 'projectionOutput', available: trace.projectionOutputAvailable },
+    { id: 'dashboardSummary', available: trace.dashboardSummaryAvailable },
+    { id: 'progressNormalized', available: trace.progressNormalizedAvailable },
+    { id: 'stageEvidence', available: trace.stageEvidenceValue === 'available' },
+    { id: 'nextBestActionEvidence', available: /openclaw-validation-endpoint:available/.test(trace.nextBestActionEvidenceValue) },
+  ]);
+}
+
 export function buildOpenClawReadonlyEndpointTrace({
   appState = {},
   projectionInput = {},
@@ -66,16 +86,7 @@ export function buildOpenClawReadonlyEndpointTrace({
       || asBool(progressNormalized.openClawReadonlyValidationEndpointCanExecute),
   };
 
-  trace.firstMissingHop = firstMissingHop([
-    { id: 'appState', available: trace.appStateAvailable },
-    { id: 'projectionInput', available: trace.projectionInputAvailable },
-    { id: 'healthHandshakeOutput', available: trace.healthHandshakeOutputAvailable },
-    { id: 'projectionOutput', available: trace.projectionOutputAvailable },
-    { id: 'dashboardSummary', available: trace.dashboardSummaryAvailable },
-    { id: 'progressNormalized', available: trace.progressNormalizedAvailable },
-    { id: 'stageEvidence', available: trace.stageEvidenceValue === 'available' },
-    { id: 'nextBestActionEvidence', available: /openclaw-validation-endpoint:available/.test(trace.nextBestActionEvidenceValue) },
-  ]);
+  trace.firstMissingHop = deriveFirstMissingHop(trace);
 
   return trace;
 }
