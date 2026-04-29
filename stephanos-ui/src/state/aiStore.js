@@ -134,6 +134,7 @@ const DEFAULT_UI_LAYOUT = {
   missionPacketQueuePanel: true,
   hostedIdeaStagingPanel: true,
   openClawPanel: true,
+  skillForgePanel: true,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
@@ -158,6 +159,7 @@ const DEFAULT_OPERATOR_PANE_ORDER = [
   'missionPacketQueuePanel',
   'hostedIdeaStagingPanel',
   'openClawPanel',
+  'skillForgePanel',
 ];
 const DEFAULT_OLLAMA_CONNECTION = {
   lastSuccessfulBaseURL: '',

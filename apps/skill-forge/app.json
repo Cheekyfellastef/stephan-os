@@ -1,0 +1,14 @@
+{
+  "name": "Skill Forge",
+  "icon": "⚒️",
+  "entry": "../stephanos/dist/index.html?surface=skill-forge&destination=skill-forge",
+  "type": "system",
+  "packaging": "classic-static",
+  "description": "Turns repeated successful workflows into visible, approved, reusable Stephanos skills.",
+  "launcherBadges": [
+    "Transparent growth",
+    "Read-only phase 1",
+    "Operator approval required"
+  ],
+  "launcherActionLabel": "Open Forge"
+}
