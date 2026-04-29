@@ -46,11 +46,23 @@ export function adjudicateOpenClawHealthHandshake(input = {}) {
   const readonlyAssurance = { readonlyOnly:true, executionDisabled:true, writeAccessDisabled:true, commandExecutionDisabled:true, browserControlDisabled:true, gitWriteDisabled:true, networkActionDisabled:true, ...(source.readonlyAssurance||{}) };
   const validation = adjudicateValidation(source.validation || source);
 
+  const nestedReadonlyValidationEndpoint = source.readonlyValidationEndpoint && typeof source.readonlyValidationEndpoint === 'object'
+    ? source.readonlyValidationEndpoint
+    : null;
+  const readonlyValidationEndpointAvailable = nestedReadonlyValidationEndpoint
+    ? nestedReadonlyValidationEndpoint.available === true
+    : source.openClawReadonlyValidationEndpointAvailable === true;
   const readonlyValidationEndpoint = {
-    available: source.openClawReadonlyValidationEndpointAvailable === true,
-    path: asText(source.openClawReadonlyValidationEndpointPath, ''),
-    mode: normalizeEnum(source.openClawReadonlyValidationEndpointMode, ['local_readonly_probe', 'missing', 'unknown'], source.openClawReadonlyValidationEndpointAvailable === true ? 'local_readonly_probe' : 'missing'),
-    canExecute: source.openClawReadonlyValidationEndpointCanExecute === true,
+    available: readonlyValidationEndpointAvailable,
+    path: nestedReadonlyValidationEndpoint
+      ? asText(nestedReadonlyValidationEndpoint.path, '')
+      : asText(source.openClawReadonlyValidationEndpointPath, ''),
+    mode: nestedReadonlyValidationEndpoint
+      ? normalizeEnum(nestedReadonlyValidationEndpoint.mode, ['local_readonly_probe', 'missing', 'unknown'], readonlyValidationEndpointAvailable ? 'local_readonly_probe' : 'missing')
+      : normalizeEnum(source.openClawReadonlyValidationEndpointMode, ['local_readonly_probe', 'missing', 'unknown'], readonlyValidationEndpointAvailable ? 'local_readonly_probe' : 'missing'),
+    canExecute: nestedReadonlyValidationEndpoint
+      ? nestedReadonlyValidationEndpoint.canExecute === true
+      : source.openClawReadonlyValidationEndpointCanExecute === true,
   };
   const healthResult = {
     healthState,

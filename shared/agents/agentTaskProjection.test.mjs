@@ -288,6 +288,31 @@ test('agent task projection readiness summary exposes OpenClaw stage evidence', 
   assert.equal(projection.readinessSummary.openClawStageEvidence['openclaw-validation'], 'idle');
 });
 
+
+test('app-style nested healthHandshake endpoint projects openclaw-validation-endpoint available evidence', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            readonlyValidationEndpoint: {
+              available: true,
+              path: '/api/openclaw/health-handshake/validate-readonly',
+              mode: 'local_readonly_probe',
+              canExecute: false,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.openClawReadonlyValidationEndpointAvailable, true);
+  assert.equal(projection.operatorSurface.openClawReadonlyValidationEndpointPath, '/api/openclaw/health-handshake/validate-readonly');
+  assert.equal(projection.operatorSurface.openClawReadonlyValidationEndpointMode, 'local_readonly_probe');
+  assert.equal(projection.operatorSurface.openClawReadonlyValidationEndpointCanExecute, false);
+  assert.equal(projection.readinessSummary.openClawStageEvidence['openclaw-validation-endpoint'], 'available');
+});
 test('agent task projection keeps readonly endpoint missing evidence when canonical nested and flat endpoint fields are absent', () => {
   const projection = buildAgentTaskProjection({
     model: {
