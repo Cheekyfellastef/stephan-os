@@ -12,6 +12,7 @@ import {
 } from './stephanos-build-utils.mjs';
 import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
 import { getSystemPanelToggleDefinitions } from '../shared/runtime/systemPanelToggleRegistry.mjs';
+import { OPENCLAW_READONLY_VALIDATION_ENDPOINT } from '../shared/agents/openClawReadonlyValidationEndpoint.mjs';
 
 const host = process.env.STEPHANOS_SERVE_HOST || '0.0.0.0';
 const port = Number(process.env.STEPHANOS_SERVE_PORT || 4173);
@@ -679,7 +680,7 @@ export function createStephanosDistServer() {
       }, null, 2)}\n`);
       return;
     }
-    if ((request.url || '').startsWith('/api/openclaw/health-handshake/validate-readonly')) {
+    if ((request.url || '').startsWith(OPENCLAW_READONLY_VALIDATION_ENDPOINT.path)) {
       if (request.method !== 'POST') {
         response.writeHead(405, { ...baseHeaders, 'Content-Type': 'application/json; charset=utf-8' });
         response.end(`${JSON.stringify({ validationStatus: 'blocked', executionAllowed: false, validationBlockers: ['POST required'] })}\n`);

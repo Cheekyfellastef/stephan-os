@@ -9,6 +9,7 @@ import {
 } from './serve-stephanos-dist.mjs';
 import { repoRoot } from './stephanos-build-utils.mjs';
 import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
+import { OPENCLAW_READONLY_VALIDATION_ENDPOINT } from '../shared/agents/openClawReadonlyValidationEndpoint.mjs';
 
 
 const { distMountPath } = createStephanosLocalUrls({
@@ -197,7 +198,7 @@ test('readonly validation endpoint rejects non-loopback host', async (t) => {
   await once(server, 'listening');
   t.after(() => server.close());
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+  const response = await fetch(`http://127.0.0.1:${port}${OPENCLAW_READONLY_VALIDATION_ENDPOINT.path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpointHost: '192.168.1.20', endpointPort: 8787, endpointScope: 'local_only', allowedProbeTypes: 'health_and_handshake' }),
@@ -213,7 +214,7 @@ test('readonly validation endpoint rejects non-local scope and credential-bearin
   await once(server, 'listening');
   t.after(() => server.close());
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+  const response = await fetch(`http://127.0.0.1:${port}${OPENCLAW_READONLY_VALIDATION_ENDPOINT.path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -238,7 +239,7 @@ test('readonly validation endpoint rejects unsupported probe types (no arbitrary
   await once(server, 'listening');
   t.after(() => server.close());
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+  const response = await fetch(`http://127.0.0.1:${port}${OPENCLAW_READONLY_VALIDATION_ENDPOINT.path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -260,7 +261,7 @@ test('readonly validation endpoint returns unavailable/failing safely when local
   await once(server, 'listening');
   t.after(() => server.close());
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+  const response = await fetch(`http://127.0.0.1:${port}${OPENCLAW_READONLY_VALIDATION_ENDPOINT.path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpointHost: '127.0.0.1', endpointPort: 65534, endpointScope: 'local_only', expectedProtocolVersion: 'v1', allowedProbeTypes: 'health_and_handshake' }),

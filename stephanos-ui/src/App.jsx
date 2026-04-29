@@ -69,6 +69,7 @@ import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
 import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
 import { buildAgentTaskProjection } from '../../shared/agents/agentTaskProjection.mjs';
 import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
+import { OPENCLAW_READONLY_VALIDATION_ENDPOINT } from '../../shared/agents/openClawReadonlyValidationEndpoint.mjs';
 import { buildOpenClawIntegrationSnapshot } from './components/openclaw/openclawIntegrationAdapter.js';
 import {
   loadPaneOrder,
@@ -669,7 +670,7 @@ export default function App() {
       validationStartedAt: new Date().toISOString(),
     }));
     try {
-      const response = await fetch('/api/openclaw/health-handshake/validate-readonly', {
+      const response = await fetch(OPENCLAW_READONLY_VALIDATION_ENDPOINT.path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
