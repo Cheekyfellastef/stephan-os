@@ -145,6 +145,7 @@ function buildLiveMilestoneMap({ projectProgressProjection = {}, agentTaskSummar
       asText(agentTaskSummary.openClawAdapterReadiness) ? `Adapter readiness: ${agentTaskSummary.openClawAdapterReadiness}` : '',
       asText(agentTaskSummary.openClawStageEvidence?.['openclaw-endpoint']) ? `openclaw-endpoint: ${agentTaskSummary.openClawStageEvidence['openclaw-endpoint']}` : '',
       asText(agentTaskSummary.openClawStageEvidence?.['openclaw-endpoint-scope']) ? `openclaw-endpoint-scope: ${agentTaskSummary.openClawStageEvidence['openclaw-endpoint-scope']}` : '',
+      asText(agentTaskSummary.openClawStageEvidence?.['openclaw-validation-endpoint']) ? `openclaw-validation-endpoint: ${agentTaskSummary.openClawStageEvidence['openclaw-validation-endpoint']}` : '',
       asText(agentTaskSummary.openClawStageEvidence?.['openclaw-validation']) ? `openclaw-validation: ${agentTaskSummary.openClawStageEvidence['openclaw-validation']}` : '',
       asText(agentTaskSummary.openClawStageEvidence?.['openclaw-health']) ? `openclaw-health: ${agentTaskSummary.openClawStageEvidence['openclaw-health']}` : '',
       asText(agentTaskSummary.openClawStageEvidence?.['openclaw-handshake']) ? `openclaw-handshake: ${agentTaskSummary.openClawStageEvidence['openclaw-handshake']}` : '',
