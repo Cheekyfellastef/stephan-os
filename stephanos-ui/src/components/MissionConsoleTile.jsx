@@ -119,6 +119,14 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionMode: summary.openClawAdapterConnectionMode || operatorSurface.openClawAdapterConnectionMode || 'readiness_only',
       openClawAdapterEndpointConfigured: pickBoolean(summary.openClawAdapterEndpointConfigured, operatorSurface.openClawAdapterEndpointConfigured),
       openClawAdapterEndpointScope: summary.openClawAdapterEndpointScope || operatorSurface.openClawAdapterEndpointScope || 'none',
+      openClawAdapterEndpointLabel: summary.openClawAdapterEndpointLabel || operatorSurface.openClawAdapterEndpointLabel || 'none',
+      openClawAdapterEndpointMode: summary.openClawAdapterEndpointMode || operatorSurface.openClawAdapterEndpointMode || 'model_only',
+      openClawAdapterExpectedProtocolVersion: summary.openClawAdapterExpectedProtocolVersion || operatorSurface.openClawAdapterExpectedProtocolVersion || 'unknown',
+      openClawAdapterAllowedProbeTypes: summary.openClawAdapterAllowedProbeTypes || operatorSurface.openClawAdapterAllowedProbeTypes || 'none',
+      openClawAdapterConnectionConfigReady: pickBoolean(summary.openClawAdapterConnectionConfigReady, operatorSurface.openClawAdapterConnectionConfigReady),
+      openClawAdapterConnectionConfigNextAction: summary.openClawAdapterConnectionConfigNextAction || operatorSurface.openClawAdapterConnectionConfigNextAction || 'not reported',
+      openClawAdapterConnectionConfigTopBlocker: (summary.openClawAdapterConnectionConfigBlockers || operatorSurface.openClawAdapterConnectionConfigBlockers || [])[0] || 'none',
+      openClawAdapterConnectionConfigTopWarning: (summary.openClawAdapterConnectionConfigWarnings || operatorSurface.openClawAdapterConnectionConfigWarnings || [])[0] || 'none',
       openClawAdapterHealthCheckState: summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
       openClawAdapterHandshakeState: summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
       openClawAdapterConnectionReady: pickBoolean(summary.openClawAdapterConnectionReady, operatorSurface.openClawAdapterConnectionReady),
@@ -491,7 +499,15 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter connection mode:</strong> {compactVerificationSummary.openClawAdapterConnectionMode}</li>
           <li><strong>openclaw adapter connection state:</strong> {compactVerificationSummary.openClawAdapterConnectionState}</li>
           <li><strong>openclaw adapter endpoint configured:</strong> {compactVerificationSummary.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter endpoint label:</strong> {compactVerificationSummary.openClawAdapterEndpointLabel}</li>
           <li><strong>openclaw adapter endpoint scope:</strong> {compactVerificationSummary.openClawAdapterEndpointScope}</li>
+          <li><strong>openclaw adapter endpoint mode:</strong> {compactVerificationSummary.openClawAdapterEndpointMode}</li>
+          <li><strong>openclaw adapter expected protocol:</strong> {compactVerificationSummary.openClawAdapterExpectedProtocolVersion}</li>
+          <li><strong>openclaw adapter allowed probes:</strong> {compactVerificationSummary.openClawAdapterAllowedProbeTypes}</li>
+          <li><strong>openclaw adapter config ready:</strong> {compactVerificationSummary.openClawAdapterConnectionConfigReady ? 'yes' : 'no'}</li>
+          <li><strong>openclaw adapter config blocker:</strong> {compactVerificationSummary.openClawAdapterConnectionConfigTopBlocker}</li>
+          <li><strong>openclaw adapter config warning:</strong> {compactVerificationSummary.openClawAdapterConnectionConfigTopWarning}</li>
+          <li><strong>openclaw adapter config next action:</strong> {compactVerificationSummary.openClawAdapterConnectionConfigNextAction}</li>
           <li><strong>openclaw adapter health check:</strong> {compactVerificationSummary.openClawAdapterHealthCheckState}</li>
           <li><strong>openclaw adapter handshake:</strong> {compactVerificationSummary.openClawAdapterHandshakeState}</li>
           <li><strong>openclaw adapter connection ready:</strong> {compactVerificationSummary.openClawAdapterConnectionReady ? 'yes' : 'no'}</li>
@@ -506,7 +522,7 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter stub connection:</strong> {compactVerificationSummary.openClawAdapterStubConnectionState}</li>
           <li><strong>openclaw adapter stub execution disabled:</strong> {compactVerificationSummary.openClawAdapterStubCanExecute ? 'no (unexpected)' : 'yes'}</li>
           <li><strong>openclaw adapter stub next action:</strong> {compactVerificationSummary.openClawAdapterStubNextAction}</li>
-          <li><strong>openclaw policy notice:</strong> connection readiness only, no live automation</li>
+          <li><strong>openclaw policy notice:</strong> endpoint configuration only, no live automation</li>
         </ul>
         <div className="mission-console-copy-row">
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(intentToBuild.missionSpec, null, 2), setSpecCopyState)}>

@@ -51,7 +51,7 @@ export function adjudicateOpenClawAdapterConnection(input = {}) {
 
   const informationalOnlyBlockers = blockers.filter((entry) => /informational/i.test(entry));
   const hardBlockers = blockers.filter((entry) => !informationalOnlyBlockers.includes(entry));
-  const connectionReady = endpointConfigured
+  const connectionReady = config.connectionConfigReady === true
     && ['configured_not_checked', 'health_check_ready', 'handshake_ready', 'connected_readonly'].includes(connectionState)
     && hardBlockers.length === 0;
 
@@ -62,7 +62,7 @@ export function adjudicateOpenClawAdapterConnection(input = {}) {
   let connectionNextAction = asText(source.connectionNextAction);
   if (!connectionNextAction) {
     if (!endpointConfigured) connectionNextAction = 'Configure OpenClaw local adapter endpoint for connection readiness.';
-    else if (healthCheckState === 'not_run' || healthCheckState === 'unknown') connectionNextAction = 'Run health-check-only OpenClaw adapter handshake.';
+    else if (healthCheckState === 'not_run' || healthCheckState === 'unknown') connectionNextAction = 'Validate readonly OpenClaw health/handshake telemetry.';
     else if (healthCheckState === 'passing' && handshakeState !== 'compatible') connectionNextAction = 'Validate readonly adapter handshake compatibility.';
     else if (handshakeState === 'compatible') connectionNextAction = 'Advance to approval-gate completion and dry-run planning.';
     else connectionNextAction = 'Resolve OpenClaw adapter connection blockers.';

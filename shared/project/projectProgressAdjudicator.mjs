@@ -227,6 +227,8 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterMode: toLower(source.openClawAdapterMode, 'design_only'),
     openClawAdapterReadiness: toLower(source.openClawAdapterReadiness, 'needs_contract'),
     openClawAdapterConnectionState: toLower(source.openClawAdapterConnectionState, 'not_configured'),
+    openClawAdapterEndpointConfigured: source.openClawAdapterEndpointConfigured === true,
+    openClawAdapterConnectionConfigReady: source.openClawAdapterConnectionConfigReady === true,
     openClawAdapterStubStatus: toLower(source.openClawAdapterStubStatus, 'unknown'),
     openClawAdapterStubConnectionState: toLower(source.openClawAdapterStubConnectionState, 'unknown'),
     openClawAdapterStubCanExecute: source.openClawAdapterStubCanExecute === true,
@@ -708,7 +710,7 @@ export function adjudicateProjectProgress({
     } else if (shouldCreateStub) {
       prioritizeAction(nextBestActions, 'create-openclaw-local-adapter-stub');
     } else if (shouldConnectAdapter) {
-      if (agentTaskSummary.openClawAdapterEndpointConfigured !== true) {
+      if (agentTaskSummary.openClawAdapterConnectionConfigReady !== true) {
       prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
     } else if (['not_run','unknown'].includes(agentTaskSummary.openClawHealthState || 'not_run')
       || ['not_run','unknown'].includes(agentTaskSummary.openClawHandshakeState || 'not_run')) {
