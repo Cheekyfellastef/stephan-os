@@ -61,6 +61,10 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
   const adapterReadiness = String(adapterSummary.adapterReadiness || 'unknown').trim() || 'unknown';
   const stubStatus = String(adapterStub.stubStatus || 'unknown').trim() || 'unknown';
   const connection = adapterSummary.adapterConnection || {};
+  const connectionConfig = connection.connectionConfig || {};
+  const healthHandshake = connection.healthHandshake || {};
+  const protocol = healthHandshake.protocol || {};
+  const readonlyAssurance = healthHandshake.readonlyAssurance || {};
   const connectionState = String(connection.connectionState || adapterSummary.adapterConnectionState || 'unknown').trim() || 'unknown';
   return {
     policyPresent: policyMode !== 'unavailable',
@@ -79,6 +83,14 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
     connectionMode: String(connection.connectionMode || 'unknown').trim() || 'unknown',
     connectionHealth: String(connection.healthCheckState || 'not_run').trim() || 'not_run',
     connectionHandshake: String(connection.handshakeState || 'not_run').trim() || 'not_run',
+    'openclaw-endpoint': connection.endpointConfigured === true ? 'configured' : 'missing',
+    'openclaw-endpoint-scope': String(connection.endpointScope || connectionConfig.endpointScope || 'none').trim() || 'none',
+    'openclaw-health': String(healthHandshake.healthState || connection.healthCheckState || 'not_run').trim() || 'not_run',
+    'openclaw-handshake': String(healthHandshake.handshakeState || connection.handshakeState || 'not_run').trim() || 'not_run',
+    'openclaw-protocol': protocol.compatible === true ? 'compatible' : `mismatch:${String(protocol.mismatchReason || 'unknown').trim() || 'unknown'}`,
+    'openclaw-identity': String((healthHandshake.adapterIdentity || {}).id || connection.adapterIdentity || 'missing').trim() || 'missing',
+    'openclaw-readonly': readonlyAssurance.readonlyOnly === true ? 'asserted' : 'not_asserted',
+    'openclaw-execution': 'disabled',
     connectionExecution: 'disabled',
     safeToUse: policySummary.openClawSafeToUse === true,
   };
@@ -98,6 +110,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const adapterTopBlocker = (Array.isArray(adapter.adapterBlockers) ? adapter.adapterBlockers[0] : '') || '';
   const adapterStub = adapter.adapterStub || {};
   const connection = adapter.adapterConnection || {};
+  const connectionConfig = connection.connectionConfig || {};
+  const healthHandshake = connection.healthHandshake || {};
+  const protocol = healthHandshake.protocol || {};
+  const identity = healthHandshake.adapterIdentity || {};
+  const readonlyAssurance = healthHandshake.readonlyAssurance || {};
   const adapterStubTopBlocker = (Array.isArray(adapterStub.stubBlockers) ? adapterStub.stubBlockers[0] : '') || '';
   const openClawStageEvidence = buildOpenClawStageEvidence({
     policySummary: adjudicated.openClawPolicySummary || {},
@@ -157,6 +174,27 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterConnectionHighestPriorityBlocker: (Array.isArray(connection.connectionBlockers) ? connection.connectionBlockers[0] : '') || '',
       openClawAdapterConnectionWarnings: asArray(connection.connectionWarnings),
       openClawAdapterConnectionEvidence: asArray(connection.connectionEvidence),
+      openClawAdapterEndpointLabel: connection.endpointLabel || connectionConfig.endpointLabel || '',
+      openClawAdapterEndpointMode: connectionConfig.endpointMode || 'unknown',
+      openClawAdapterExpectedProtocolVersion: connection.expectedProtocolVersion || connectionConfig.expectedProtocolVersion || protocol.expectedProtocolVersion || '',
+      openClawAdapterConnectionConfigReady: connectionConfig.connectionConfigReady === true,
+      openClawAdapterConnectionConfigNextAction: connectionConfig.connectionConfigNextAction || '',
+      openClawAdapterConnectionConfigBlockers: asArray(connectionConfig.connectionConfigBlockers),
+      openClawAdapterConnectionConfigWarnings: asArray(connectionConfig.connectionConfigWarnings),
+      openClawHealthTelemetryMode: healthHandshake.healthTelemetryMode || 'unknown',
+      openClawHealthState: healthHandshake.healthState || connection.healthCheckState || 'not_run',
+      openClawHandshakeState: healthHandshake.handshakeState || connection.handshakeState || 'not_run',
+      openClawAdapterIdentity: identity.id || connection.adapterIdentity || '',
+      openClawProtocolVersion: protocol.protocolVersion || connection.protocolVersion || '',
+      openClawExpectedProtocolVersion: protocol.expectedProtocolVersion || connection.expectedProtocolVersion || '',
+      openClawProtocolCompatible: protocol.compatible === true,
+      openClawProtocolMismatchReason: protocol.mismatchReason || '',
+      openClawCapabilityDeclaration: healthHandshake.capabilityDeclaration || {},
+      openClawReadonlyAssurance: readonlyAssurance,
+      openClawHealthHandshakeNextAction: healthHandshake.healthHandshakeNextAction || '',
+      openClawHealthHandshakeHighestPriorityBlocker: (asArray(healthHandshake.healthBlockers)[0] || asArray(healthHandshake.handshakeBlockers)[0] || ''),
+      openClawHealthHandshakeWarnings: [...asArray(healthHandshake.healthWarnings), ...asArray(healthHandshake.handshakeWarnings)],
+      openClawHealthHandshakeEvidence: asArray(healthHandshake.healthHandshakeEvidence),
       openClawAdapterStubMode: adapterStub.stubMode || 'unknown',
       openClawAdapterStubStatus: adapterStub.stubStatus || 'unknown',
       openClawAdapterStubConnectionState: adapterStub.stubConnectionState || 'unknown',
@@ -235,6 +273,27 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterConnectionHighestPriorityBlocker: (Array.isArray(connection.connectionBlockers) ? connection.connectionBlockers[0] : '') || '',
       openClawAdapterConnectionWarnings: asArray(connection.connectionWarnings),
       openClawAdapterConnectionEvidence: asArray(connection.connectionEvidence),
+      openClawAdapterEndpointLabel: connection.endpointLabel || connectionConfig.endpointLabel || '',
+      openClawAdapterEndpointMode: connectionConfig.endpointMode || 'unknown',
+      openClawAdapterExpectedProtocolVersion: connection.expectedProtocolVersion || connectionConfig.expectedProtocolVersion || protocol.expectedProtocolVersion || '',
+      openClawAdapterConnectionConfigReady: connectionConfig.connectionConfigReady === true,
+      openClawAdapterConnectionConfigNextAction: connectionConfig.connectionConfigNextAction || '',
+      openClawAdapterConnectionConfigBlockers: asArray(connectionConfig.connectionConfigBlockers),
+      openClawAdapterConnectionConfigWarnings: asArray(connectionConfig.connectionConfigWarnings),
+      openClawHealthTelemetryMode: healthHandshake.healthTelemetryMode || 'unknown',
+      openClawHealthState: healthHandshake.healthState || connection.healthCheckState || 'not_run',
+      openClawHandshakeState: healthHandshake.handshakeState || connection.handshakeState || 'not_run',
+      openClawAdapterIdentity: identity.id || connection.adapterIdentity || '',
+      openClawProtocolVersion: protocol.protocolVersion || connection.protocolVersion || '',
+      openClawExpectedProtocolVersion: protocol.expectedProtocolVersion || connection.expectedProtocolVersion || '',
+      openClawProtocolCompatible: protocol.compatible === true,
+      openClawProtocolMismatchReason: protocol.mismatchReason || '',
+      openClawCapabilityDeclaration: healthHandshake.capabilityDeclaration || {},
+      openClawReadonlyAssurance: readonlyAssurance,
+      openClawHealthHandshakeNextAction: healthHandshake.healthHandshakeNextAction || '',
+      openClawHealthHandshakeHighestPriorityBlocker: (asArray(healthHandshake.healthBlockers)[0] || asArray(healthHandshake.handshakeBlockers)[0] || ''),
+      openClawHealthHandshakeWarnings: [...asArray(healthHandshake.healthWarnings), ...asArray(healthHandshake.handshakeWarnings)],
+      openClawHealthHandshakeEvidence: asArray(healthHandshake.healthHandshakeEvidence),
       openClawAdapterStubMode: adapterStub.stubMode || 'unknown',
       openClawAdapterStubStatus: adapterStub.stubStatus || 'unknown',
       openClawAdapterStubConnectionState: adapterStub.stubConnectionState || 'unknown',
