@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { adjudicateProjectProgress } from './projectProgressAdjudicator.mjs';
 import { createSeedProjectProgressModel } from './projectProgressModel.mjs';
+import { buildAgentTaskProjection } from '../agents/agentTaskProjection.mjs';
 
 test('adjudicateProjectProgress returns seeded lanes and ranked next actions', () => {
   const projection = adjudicateProjectProgress({ model: createSeedProjectProgressModel() });
@@ -663,4 +664,49 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-stub:present_disabled'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-connection:not_connected'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-execution:disabled'), true);
+});
+
+
+test('live-style agent task projection suppresses create-stub and emits connection-stage evidence', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawPolicy: {
+        integrationMode: 'policy_only',
+        adapterPresent: true,
+        localAdapterAvailable: true,
+        killSwitchState: 'required',
+      },
+      openClawAdapter: {
+        adapterMode: 'contract_defined',
+        adapterConnectionState: 'not_connected',
+        adapterExecutionMode: 'disabled',
+        adapterStub: {
+          stubMode: 'disabled',
+          stubStatus: 'present_disabled',
+          stubConnectionState: 'not_connected',
+          stubExecutionCapability: 'none',
+          stubHealth: 'healthy',
+        },
+      },
+    },
+  });
+
+  const progress = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    telemetrySummary: { status: 'flowing', lifecycleBindingStatus: 'bound' },
+    promptBuilderSummary: { status: 'ready', supportsAgentTaskContext: true, supportsTelemetryContext: true, supportsRuntimeTruthContext: true },
+    agentTaskReadinessSummary: projection.readinessSummary,
+  });
+
+  const ids = progress.nextBestActions.map((entry) => entry.id);
+  assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
+  assert.equal(ids.includes('connect-openclaw-local-adapter'), true);
+  const connectAction = progress.nextBestActions.find((entry) => entry.id === 'connect-openclaw-local-adapter');
+  assert.ok(connectAction);
+  assert.equal(connectAction.evidence.includes('openclaw-adapter:contract_defined'), true);
+  assert.equal(connectAction.evidence.includes('openclaw-stub:present_disabled'), true);
+  assert.equal(connectAction.evidence.includes('openclaw-connection:not_connected'), true);
+  assert.equal(connectAction.evidence.includes('openclaw-execution:disabled'), true);
+  assert.equal(projection.readinessSummary.openClawAdapterStubCanExecute, false);
+  assert.equal(projection.readinessSummary.openClawExecutionAllowed, false);
 });

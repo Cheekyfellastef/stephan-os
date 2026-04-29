@@ -486,7 +486,11 @@ function summarizeOpenClawStageEvidence(agentTaskSummary = {}) {
     : {};
   const policy = stage.policyMode || (agentTaskSummary.openClawPolicyOnly ? 'policy_only' : (agentTaskSummary.openClawReadiness || 'unknown'));
   const killSwitch = stage.killSwitchState || agentTaskSummary.openClawKillSwitchState || 'unknown';
-  const adapter = stage.adapterReadiness || stage.adapterMode || agentTaskSummary.openClawAdapterReadiness || agentTaskSummary.openClawAdapterMode || 'unknown';
+  const adapterReadiness = stage.adapterReadiness || agentTaskSummary.openClawAdapterReadiness || '';
+  const adapterMode = stage.adapterMode || agentTaskSummary.openClawAdapterMode || '';
+  const adapter = ['blocked', 'unknown', 'needs_connection'].includes(String(adapterReadiness || '').toLowerCase())
+    ? (adapterMode || adapterReadiness || 'unknown')
+    : (adapterReadiness || adapterMode || 'unknown');
   const stub = stage.stubStatus || agentTaskSummary.openClawAdapterStubStatus || 'unknown';
   const connection = stage.connectionState || agentTaskSummary.openClawAdapterConnectionState || 'unknown';
   const executionAllowed = stage.executionAllowed === true || agentTaskSummary.openClawExecutionAllowed === true;
