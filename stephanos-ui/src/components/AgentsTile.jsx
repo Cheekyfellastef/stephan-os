@@ -129,6 +129,7 @@ export default function AgentsTile({
             <li><strong>OpenClaw adapter endpoint label:</strong> {operatorTask.openClawAdapterEndpointLabel || 'none'}</li>
             <li><strong>OpenClaw adapter endpoint scope:</strong> {operatorTask.openClawAdapterEndpointScope || 'none'}</li>
             <li><strong>OpenClaw adapter endpoint mode:</strong> {operatorTask.openClawAdapterEndpointMode || 'model_only'}</li>
+            <li><strong>OpenClaw adapter config persistence:</strong> {operatorTask.openClawAdapterConfigPersistenceMode || 'session_only'}</li>
             <li><strong>OpenClaw adapter expected protocol:</strong> {operatorTask.openClawAdapterExpectedProtocolVersion || 'unknown'}</li>
             <li><strong>OpenClaw adapter allowed probes:</strong> {operatorTask.openClawAdapterAllowedProbeTypes || 'none'}</li>
             <li><strong>OpenClaw adapter config ready:</strong> {operatorTask.openClawAdapterConnectionConfigReady ? 'yes' : 'no'}</li>
@@ -178,7 +179,7 @@ export default function AgentsTile({
             <li><strong>Next action:</strong> {operatorTask.codexHandoffNextAction || 'Complete task scope first'}</li>
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
-          <p className="muted"><strong>OpenClaw readiness notice:</strong> endpoint configuration only, no live automation.</p>
+          <p className="muted"><strong>OpenClaw readiness notice:</strong> endpoint configuration only, no live automation (session-only / no secrets stored unless durable non-secret path is explicitly configured).</p>
           <div className="agents-tile-copy-actions">
             <button
               type="button"
