@@ -1,0 +1,14 @@
+{
+  "name": "Capability Radar",
+  "icon": "📡",
+  "entry": "../stephanos/dist/index.html?surface=capability-radar&destination=capability-radar",
+  "type": "system",
+  "packaging": "classic-static",
+  "description": "Scans free/open-source ecosystems for useful capabilities Stephanos could adopt later.",
+  "launcherBadges": [
+    "Read-only",
+    "Seeded discovery",
+    "Operator approval"
+  ],
+  "launcherActionLabel": "Open Radar"
+}

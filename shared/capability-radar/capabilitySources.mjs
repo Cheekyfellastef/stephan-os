@@ -1,0 +1,17 @@
+export const CAPABILITY_RADAR_SOURCES = [
+  { id: 'mcp-servers', name: 'modelcontextprotocol/servers', ecosystem: 'GitHub', url: 'https://github.com/modelcontextprotocol/servers' },
+  { id: 'mcp-sdks', name: 'modelcontextprotocol SDK repositories', ecosystem: 'GitHub', url: 'https://github.com/modelcontextprotocol' },
+  { id: 'mcpservers-org', name: 'mcpservers.org', ecosystem: 'Directory', url: 'https://mcpservers.org' },
+  { id: 'ollama-core', name: 'ollama/ollama', ecosystem: 'GitHub', url: 'https://github.com/ollama/ollama' },
+  { id: 'ollama-js', name: 'ollama/ollama-js', ecosystem: 'GitHub', url: 'https://github.com/ollama/ollama-js' },
+  { id: 'ollama-python', name: 'ollama/ollama-python', ecosystem: 'GitHub', url: 'https://github.com/ollama/ollama-python' },
+  { id: 'llama-index', name: 'run-llama/llama_index', ecosystem: 'GitHub', url: 'https://github.com/run-llama/llama_index' },
+  { id: 'langgraph', name: 'langchain-ai/langgraph', ecosystem: 'GitHub', url: 'https://github.com/langchain-ai/langgraph' },
+  { id: 'langchain', name: 'langchain-ai/langchain', ecosystem: 'GitHub', url: 'https://github.com/langchain-ai/langchain' },
+  { id: 'n8n', name: 'n8n-io/n8n', ecosystem: 'GitHub', url: 'https://github.com/n8n-io/n8n' },
+  { id: 'awesome-ai-agents-2026', name: 'caramaschiHG/awesome-ai-agents-2026', ecosystem: 'GitHub', url: 'https://github.com/caramaschiHG/awesome-ai-agents-2026' },
+  { id: 'awesome-opensource-ai', name: 'alvinreal/awesome-opensource-ai', ecosystem: 'GitHub', url: 'https://github.com/alvinreal/awesome-opensource-ai' },
+  { id: 'hf-models', name: 'Hugging Face models', ecosystem: 'Hugging Face', url: 'https://huggingface.co/models' },
+  { id: 'hf-spaces', name: 'Hugging Face Spaces', ecosystem: 'Hugging Face', url: 'https://huggingface.co/spaces' },
+  { id: 'hf-papers', name: 'Hugging Face papers', ecosystem: 'Hugging Face', url: 'https://huggingface.co/papers' },
+];
