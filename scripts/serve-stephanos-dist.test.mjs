@@ -207,6 +207,53 @@ test('readonly validation endpoint rejects non-loopback host', async (t) => {
   assert.equal(payload.validationStatus, 'blocked');
 });
 
+test('readonly validation endpoint rejects non-local scope and credential-bearing payloads', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      endpointHost: '127.0.0.1',
+      endpointPort: 8787,
+      endpointScope: 'remote',
+      allowedProbeTypes: 'health_and_handshake',
+      authorization: 'Bearer should-be-rejected',
+    }),
+  });
+  assert.equal(response.status, 400);
+  const payload = await response.json();
+  assert.equal(payload.executionAllowed, false);
+  assert.equal(payload.validationStatus, 'blocked');
+  assert.equal(payload.validationBlockers.some((entry) => entry.includes('local_only')), true);
+  assert.equal(payload.validationBlockers.some((entry) => entry.includes('Credential/token-bearing input')), true);
+});
+
+test('readonly validation endpoint rejects unsupported probe types (no arbitrary path proxy)', async (t) => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/openclaw/health-handshake/validate-readonly`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      endpointHost: '127.0.0.1',
+      endpointPort: 8787,
+      endpointScope: 'local_only',
+      allowedProbeTypes: '/arbitrary/path',
+    }),
+  });
+  assert.equal(response.status, 400);
+  const payload = await response.json();
+  assert.equal(payload.validationStatus, 'blocked');
+  assert.equal(payload.validationBlockers.some((entry) => entry.includes('Allowed probe type')), true);
+});
+
 test('readonly validation endpoint returns unavailable/failing safely when local adapter is offline', async (t) => {
   const server = createStephanosDistServer();
   server.listen(0, '127.0.0.1');
@@ -223,4 +270,7 @@ test('readonly validation endpoint returns unavailable/failing safely when local
   assert.equal(payload.executionAllowed, false);
   assert.match(payload.validationStatus, /failed|succeeded/);
   assert.ok(['unavailable', 'failing', 'passing', 'not_run'].includes(payload.healthResult.state));
+  assert.deepEqual(payload.healthResult.evidence, ['probe:/health']);
+  assert.deepEqual(payload.handshakeResult.evidence, ['probe:/handshake']);
+  assert.equal(payload.executionAllowed, false);
 });
