@@ -120,6 +120,8 @@ export default function MissionConsoleTile({
       openClawAdapterEndpointConfigured: pickBoolean(summary.openClawAdapterEndpointConfigured, operatorSurface.openClawAdapterEndpointConfigured),
       openClawAdapterEndpointScope: summary.openClawAdapterEndpointScope || operatorSurface.openClawAdapterEndpointScope || 'none',
       openClawAdapterEndpointLabel: summary.openClawAdapterEndpointLabel || operatorSurface.openClawAdapterEndpointLabel || 'none',
+      openClawAdapterEndpointHost: summary.openClawAdapterEndpointHost || operatorSurface.openClawAdapterEndpointHost || 'none',
+      openClawAdapterEndpointPort: summary.openClawAdapterEndpointPort || operatorSurface.openClawAdapterEndpointPort || 'none',
       openClawAdapterEndpointMode: summary.openClawAdapterEndpointMode || operatorSurface.openClawAdapterEndpointMode || 'model_only',
       openClawAdapterExpectedProtocolVersion: summary.openClawAdapterExpectedProtocolVersion || operatorSurface.openClawAdapterExpectedProtocolVersion || 'unknown',
       openClawAdapterAllowedProbeTypes: summary.openClawAdapterAllowedProbeTypes || operatorSurface.openClawAdapterAllowedProbeTypes || 'none',
@@ -500,6 +502,7 @@ export default function MissionConsoleTile({
           <li><strong>openclaw adapter connection state:</strong> {compactVerificationSummary.openClawAdapterConnectionState}</li>
           <li><strong>openclaw adapter endpoint configured:</strong> {compactVerificationSummary.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
           <li><strong>openclaw adapter endpoint label:</strong> {compactVerificationSummary.openClawAdapterEndpointLabel}</li>
+          <li><strong>openclaw adapter endpoint host/port:</strong> {compactVerificationSummary.openClawAdapterEndpointHost}:{compactVerificationSummary.openClawAdapterEndpointPort}</li>
           <li><strong>openclaw adapter endpoint scope:</strong> {compactVerificationSummary.openClawAdapterEndpointScope}</li>
           <li><strong>openclaw adapter endpoint mode:</strong> {compactVerificationSummary.openClawAdapterEndpointMode}</li>
           <li><strong>openclaw adapter expected protocol:</strong> {compactVerificationSummary.openClawAdapterExpectedProtocolVersion}</li>

@@ -257,6 +257,17 @@ export default function App() {
     verificationStatus: 'pending',
   });
   const [missionBridgeTruth, setMissionBridgeTruth] = useState(null);
+  const [openClawEndpointDraft, setOpenClawEndpointDraft] = useState({
+    endpointLabel: 'Local OpenClaw Adapter',
+    endpointHost: '127.0.0.1',
+    endpointPort: '',
+    endpointScope: 'local_only',
+    expectedProtocolVersion: 'v1',
+    expectedAdapterIdentity: '',
+    allowedProbeTypes: 'health_and_handshake',
+    configPersistenceMode: 'session_only',
+    endpointMode: 'configured',
+  });
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
@@ -554,13 +565,19 @@ export default function App() {
           adapterExecutionMode: 'disabled',
           adapterBlockers: ['OpenClaw local adapter is not connected.'],
           adapterWarnings: ['No live OpenClaw automation is enabled.'],
+          adapterConnection: {
+            connectionConfig: {
+              ...openClawEndpointDraft,
+              endpointConfigured: Boolean((openClawEndpointDraft.endpointHost || '').trim() || (openClawEndpointDraft.endpointPort || '').trim()),
+            },
+          },
         },
       },
       context: {
         agentTileProjectionConnected: true,
       },
     });
-  }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, orchestrationSelectors?.blockageExplanation]);
+  }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, orchestrationSelectors?.blockageExplanation]);
 
   useEffect(() => {
     setOpenClawIntegration((previous) => (previous && previous.currentActivity !== 'Standing by for bounded intent.'
@@ -706,6 +723,18 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
@@ -737,6 +766,18 @@ export default function App() {
             runtimeStatus={runtimeStatus}
             finalRouteTruth={finalRouteTruth}
             agentTaskProjection={agentTaskProjection}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
             orchestrationTruth={orchestrationTruth}
@@ -988,6 +1029,18 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
@@ -1032,6 +1085,18 @@ export default function App() {
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
@@ -1085,6 +1150,18 @@ export default function App() {
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />

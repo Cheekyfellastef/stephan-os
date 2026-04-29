@@ -27,6 +27,8 @@ export default function AgentsTile({
   debugVisibility = false,
   openClawIntegration = null,
   agentTaskProjection = null,
+  onApplyOpenClawEndpointConfig = () => {},
+  onClearOpenClawEndpointConfig = () => {},
 } = {}) {
   const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
@@ -66,6 +68,15 @@ export default function AgentsTile({
     [operatorTask?.codexHandoffPacketText],
   );
   const [manualReturnDraft, setManualReturnDraft] = useState('');
+  const [endpointDraft, setEndpointDraft] = useState({
+    endpointLabel: 'Local OpenClaw Adapter',
+    endpointHost: '127.0.0.1',
+    endpointPort: '',
+    endpointScope: 'local_only',
+    expectedProtocolVersion: 'v1',
+    expectedAdapterIdentity: '',
+    allowedProbeTypes: 'health_and_handshake',
+  });
 
   async function handleCopyCodexPacket() {
     if (!codexPacketText) {
@@ -180,6 +191,31 @@ export default function AgentsTile({
           </ul>
           <p className="muted"><strong>Manual return mode:</strong> Verification Return State v1 is manual-return only. Direct Codex automation and auto-merge are intentionally not enabled.</p>
           <p className="muted"><strong>OpenClaw readiness notice:</strong> endpoint configuration only, no live automation (session-only / no secrets stored unless durable non-secret path is explicitly configured).</p>
+          <details>
+            <summary>OpenClaw endpoint configuration (session-only v1)</summary>
+            <p className="muted"><strong>session-only, no secrets stored</strong></p>
+            <p className="muted"><strong>configuration only, no health check, no connection, no automation</strong></p>
+            <label>label input
+              <input value={endpointDraft.endpointLabel} onChange={(event) => setEndpointDraft((prev) => ({ ...prev, endpointLabel: event.target.value }))} />
+            </label>
+            <label>host input
+              <input value={endpointDraft.endpointHost} onChange={(event) => setEndpointDraft((prev) => ({ ...prev, endpointHost: event.target.value }))} />
+            </label>
+            <label>port input
+              <input value={endpointDraft.endpointPort} onChange={(event) => setEndpointDraft((prev) => ({ ...prev, endpointPort: event.target.value }))} />
+            </label>
+            <label>expected protocol input/select
+              <input value={endpointDraft.expectedProtocolVersion} onChange={(event) => setEndpointDraft((prev) => ({ ...prev, expectedProtocolVersion: event.target.value }))} />
+            </label>
+            <label>allowed probes select
+              <select value={endpointDraft.allowedProbeTypes} onChange={(event) => setEndpointDraft((prev) => ({ ...prev, allowedProbeTypes: event.target.value }))}>
+                <option value="none">none</option><option value="health_only">health_only</option><option value="handshake_only">handshake_only</option><option value="health_and_handshake">health_and_handshake</option>
+              </select>
+            </label>
+            <p>scope display/select locked to local_only for v1</p>
+            <button type="button" onClick={() => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointScope: 'local_only', configPersistenceMode: 'session_only', endpointMode: 'configured' })}>apply/update button</button>
+            <button type="button" onClick={onClearOpenClawEndpointConfig}>reset/clear session config button</button>
+          </details>
           <div className="agents-tile-copy-actions">
             <button
               type="button"
