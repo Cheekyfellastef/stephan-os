@@ -27,6 +27,7 @@ export default function OpenClawTile({
   openClawEndpointDraft = null,
   onApplyOpenClawEndpointConfig = () => {},
   onClearOpenClawEndpointConfig = () => {},
+  onRequestReadonlyValidation = () => {},
   repoPath = '/workspace/stephan-os',
   branchName = 'unknown',
   onIntegrationUpdate = () => {},
@@ -53,6 +54,8 @@ export default function OpenClawTile({
       configPersistenceMode: 'session_only',
       endpointMode: 'model_only',
     };
+  const validationSafePath = operatorTask?.openClawHealthValidationEvidence?.includes('safe-probe-path:available') === true;
+  const validationStatus = operatorTask?.openClawHealthValidationStatus || 'idle';
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -162,6 +165,26 @@ export default function OpenClawTile({
           <li><strong>OpenClaw adapter config blocker:</strong> {operatorTask?.openClawAdapterConnectionConfigBlockers?.[0] || 'none'}</li>
           <li><strong>OpenClaw adapter config warning:</strong> {operatorTask?.openClawAdapterConnectionConfigWarnings?.[0] || 'none'}</li>
         </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Readonly Health / Handshake Validation v1</h4>
+        <p className="muted"><strong>readonly validation only:</strong> no commands, no file edits, no browser control, no Git writes, no execution.</p>
+        <ul>
+          <li><strong>Validation status:</strong> {validationStatus}</li>
+          <li><strong>Validation mode:</strong> {operatorTask?.openClawHealthValidationMode || 'none'}</li>
+          <li><strong>Validation source:</strong> {operatorTask?.openClawHealthValidationSource || 'unknown'}</li>
+          <li><strong>Health state:</strong> {operatorTask?.openClawHealthState || 'not_run'}</li>
+          <li><strong>Handshake state:</strong> {operatorTask?.openClawHandshakeState || 'not_run'}</li>
+          <li><strong>Protocol compatible:</strong> {operatorTask?.openClawProtocolCompatible ? 'yes' : 'no'}</li>
+          <li><strong>Adapter identity:</strong> {operatorTask?.openClawAdapterIdentity || 'missing'}</li>
+          <li><strong>Readonly assurance:</strong> {operatorTask?.openClawReadonlyAssurance?.readonlyOnly ? 'asserted' : 'not asserted'}</li>
+          <li><strong>Top blocker:</strong> {operatorTask?.openClawHealthValidationBlockers?.[0] || 'none'}</li>
+          <li><strong>Top warning:</strong> {operatorTask?.openClawHealthValidationWarnings?.[0] || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawHealthValidationNextAction || operatorTask?.openClawHealthHandshakeNextAction || 'not reported'}</li>
+        </ul>
+        <button type="button" disabled={!validationSafePath} onClick={onRequestReadonlyValidation}>
+          {validationSafePath ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe local probe path'}
+        </button>
       </section>
 
       <section className="openclaw-section">
