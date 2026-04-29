@@ -13,3 +13,10 @@ test('OpenClawTile consumes final route truth projection and avoids canonical tr
   assert.equal(source.includes('persistStephanosSessionMemory'), false);
   assert.equal(source.includes('runtimeStatusModel.runtimeTruth ='), false);
 });
+
+
+test('OpenClawTile validation button gating consumes shared endpoint-availability truth', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('openClawReadonlyValidationEndpointAvailable'), true);
+  assert.equal(source.includes('validationEndpointAvailable'), true);
+});

@@ -54,14 +54,14 @@ export default function OpenClawTile({
       configPersistenceMode: 'session_only',
       endpointMode: 'model_only',
     };
-  const validationSafePath = operatorTask?.openClawHealthValidationEvidence?.includes('safe-probe-path:available') === true;
+  const validationEndpointAvailable = operatorTask?.openClawReadonlyValidationEndpointAvailable === true;
   const validationStatus = operatorTask?.openClawHealthValidationStatus || 'idle';
   const validationButtonEnabled = operatorTask?.openClawAdapterEndpointConfigured === true
     && operatorTask?.openClawAdapterConnectionConfigReady === true
     && operatorTask?.openClawAdapterEndpointScope === 'local_only'
     && ['health_only', 'handshake_only', 'health_and_handshake'].includes(operatorTask?.openClawAdapterAllowedProbeTypes || 'none')
     && (operatorTask?.openClawAdapterConnectionConfigBlockers?.length || 0) === 0
-    && validationSafePath
+    && validationEndpointAvailable
     && validationStatus !== 'running';
 
   function record(type, details = {}) {
@@ -177,6 +177,9 @@ export default function OpenClawTile({
         <h4>Readonly Health / Handshake Validation v1</h4>
         <p className="muted"><strong>readonly validation only:</strong> no commands, no file edits, no browser control, no Git writes, no execution.</p>
         <ul>
+          <li><strong>Validation endpoint:</strong> {validationEndpointAvailable ? 'available' : 'missing'}</li>
+          <li><strong>Validation endpoint path:</strong> {operatorTask?.openClawReadonlyValidationEndpointPath || 'none'}</li>
+          <li><strong>Validation endpoint mode:</strong> {operatorTask?.openClawReadonlyValidationEndpointMode || 'missing'}</li>
           <li><strong>Validation status:</strong> {validationStatus}</li>
           <li><strong>Validation mode:</strong> {operatorTask?.openClawHealthValidationMode || 'none'}</li>
           <li><strong>Validation source:</strong> {operatorTask?.openClawHealthValidationSource || 'unknown'}</li>
@@ -190,7 +193,7 @@ export default function OpenClawTile({
           <li><strong>Next action:</strong> {operatorTask?.openClawHealthValidationNextAction || operatorTask?.openClawHealthHandshakeNextAction || 'not reported'}</li>
         </ul>
         <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>
-          {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe local probe path'}
+          {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
       </section>
 

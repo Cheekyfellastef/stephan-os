@@ -45,6 +45,13 @@ export function adjudicateOpenClawHealthHandshake(input = {}) {
   const capabilityDeclaration = { canReportHealth:true, canReportHandshake:true, canReportCapabilities:true, canReportEvidence:true, canExecuteActions:false, canEditFiles:false, canRunCommands:false, canUseBrowser:false, canUseGit:false, canAccessNetwork:false, ...(source.capabilityDeclaration||{}) };
   const readonlyAssurance = { readonlyOnly:true, executionDisabled:true, writeAccessDisabled:true, commandExecutionDisabled:true, browserControlDisabled:true, gitWriteDisabled:true, networkActionDisabled:true, ...(source.readonlyAssurance||{}) };
   const validation = adjudicateValidation(source.validation || source);
+
+  const readonlyValidationEndpoint = {
+    available: source.openClawReadonlyValidationEndpointAvailable === true,
+    path: asText(source.openClawReadonlyValidationEndpointPath, ''),
+    mode: normalizeEnum(source.openClawReadonlyValidationEndpointMode, ['local_readonly_probe', 'missing', 'unknown'], source.openClawReadonlyValidationEndpointAvailable === true ? 'local_readonly_probe' : 'missing'),
+    canExecute: source.openClawReadonlyValidationEndpointCanExecute === true,
+  };
   const healthResult = {
     healthState,
     healthMessage: asText(source.healthMessage),
@@ -72,5 +79,5 @@ export function adjudicateOpenClawHealthHandshake(input = {}) {
   if (executionClaims.length > 0) {
     handshakeWarnings.push(`Execution-like capability claims reported (${executionClaims.join(', ')}) and are treated as unapproved claims only.`);
   }
-  return { healthTelemetryMode, healthState, handshakeState, adapterIdentity, protocol: { protocolVersion, expectedProtocolVersion, compatible: protocolCompatible, mismatchReason: protocolMismatchReason }, capabilityDeclaration, readonlyAssurance, validation, validationStatus: validation.validationStatus, validationMode: validation.validationMode, validationSource: validation.validationSource, healthResult, handshakeResult, protocolResult: handshakeResult, identityResult: adapterIdentity, readonlyAssuranceResult: readonlyAssurance, lastHealthCheckAt: asText(source.lastHealthCheckAt), lastHandshakeAt: asText(source.lastHandshakeAt), healthLatencyMs: asNumber(source.healthLatencyMs), handshakeLatencyMs: asNumber(source.handshakeLatencyMs), healthBlockers: asList(source.healthBlockers), healthWarnings, handshakeBlockers: asList(source.handshakeBlockers), handshakeWarnings, healthHandshakeEvidence, healthHandshakeNextAction };
+  return { healthTelemetryMode, healthState, handshakeState, adapterIdentity, protocol: { protocolVersion, expectedProtocolVersion, compatible: protocolCompatible, mismatchReason: protocolMismatchReason }, capabilityDeclaration, readonlyAssurance, readonlyValidationEndpoint, validation, validationStatus: validation.validationStatus, validationMode: validation.validationMode, validationSource: validation.validationSource, healthResult, handshakeResult, protocolResult: handshakeResult, identityResult: adapterIdentity, readonlyAssuranceResult: readonlyAssurance, lastHealthCheckAt: asText(source.lastHealthCheckAt), lastHandshakeAt: asText(source.lastHandshakeAt), healthLatencyMs: asNumber(source.healthLatencyMs), handshakeLatencyMs: asNumber(source.handshakeLatencyMs), healthBlockers: asList(source.healthBlockers), healthWarnings, handshakeBlockers: asList(source.handshakeBlockers), handshakeWarnings, healthHandshakeEvidence, healthHandshakeNextAction };
 }

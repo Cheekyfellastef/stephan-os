@@ -25,3 +25,15 @@ test('OpenClawTile renders endpoint configuration controls and session-only safe
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });
+
+
+test('OpenClawTile shows safe readonly validation endpoint availability and operator-facing endpoint metadata', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  const requiredLabels = [
+    'Validation endpoint:',
+    'Validation endpoint path:',
+    'Validation endpoint mode:',
+    'Validation unavailable: missing safe readonly validation endpoint or config readiness',
+  ];
+  requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+});

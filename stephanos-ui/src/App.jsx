@@ -274,6 +274,10 @@ export default function App() {
     validationSource: 'operator',
     validationEvidence: ['safe-probe-path:available'],
     safeProbePathAvailable: true,
+    openClawReadonlyValidationEndpointAvailable: OPENCLAW_READONLY_VALIDATION_ENDPOINT.available,
+    openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
+    openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
+    openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
   });
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
@@ -692,6 +696,10 @@ export default function App() {
         lastHandshakeAt: payload?.handshakeResult?.checkedAt || '',
         healthLatencyMs: payload?.healthResult?.latencyMs ?? null,
         handshakeLatencyMs: payload?.handshakeResult?.latencyMs ?? null,
+        openClawReadonlyValidationEndpointAvailable: OPENCLAW_READONLY_VALIDATION_ENDPOINT.available,
+        openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
+        openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
+        openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
       });
     } catch (error) {
       setOpenClawReadonlyValidation({
@@ -701,6 +709,10 @@ export default function App() {
         validationBlockers: [String(error?.message || 'Readonly validation request failed.')],
         validationEvidence: ['safe-probe-path:available'],
         safeProbePathAvailable: true,
+        openClawReadonlyValidationEndpointAvailable: OPENCLAW_READONLY_VALIDATION_ENDPOINT.available,
+        openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
+        openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
+        openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
       });
     }
   }

@@ -237,6 +237,7 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterConnectionState: toLower(source.openClawAdapterConnectionState, 'not_configured'),
     openClawAdapterEndpointConfigured: source.openClawAdapterEndpointConfigured === true,
     openClawAdapterConnectionConfigReady: source.openClawAdapterConnectionConfigReady === true,
+    openClawReadonlyValidationEndpointAvailable: source.openClawReadonlyValidationEndpointAvailable === true,
     openClawAdapterEndpointScope: toLower(source.openClawAdapterEndpointScope, 'none'),
     openClawAdapterAllowedProbeTypes: toLower(source.openClawAdapterAllowedProbeTypes, 'none'),
     openClawHealthState: toLower(source.openClawHealthState, 'not_run'),
@@ -357,7 +358,9 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
     suppressed.add('configure-openclaw-adapter-endpoint');
     suppressed.add('validate-openclaw-health-handshake-readonly');
   }
-  if (!shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
+  if (!agentTaskSummary.openClawReadonlyValidationEndpointAvailable) {
+    suppressed.add('validate-openclaw-health-handshake-readonly');
+  } else if (!shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
     suppressed.add('validate-openclaw-health-handshake-readonly');
   }
   if (agentTaskSummary.openClawApprovalsComplete) {
@@ -550,6 +553,7 @@ function summarizeOpenClawStageEvidence(agentTaskSummary = {}) {
     `openclaw-adapter:${adapter}`,
     `openclaw-stub:${stub}`,
     `openclaw-connection:${connection}`,
+    `openclaw-validation-endpoint:${agentTaskSummary.openClawReadonlyValidationEndpointAvailable ? 'available' : 'missing'}`,
     `openclaw-execution:${executionAllowed ? 'enabled' : 'disabled'}`,
   ];
 }
@@ -742,7 +746,7 @@ export function adjudicateProjectProgress({
         || agentTaskSummary.openClawAdapterConnectionState === 'configured_not_checked';
       if (!connectionConfiguredOrReady) {
         prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
-      } else if (!hasSafeReadonlyValidationProbe(agentTaskSummary)) {
+      } else if (!agentTaskSummary.openClawReadonlyValidationEndpointAvailable || !hasSafeReadonlyValidationProbe(agentTaskSummary)) {
         prioritizeAction(nextBestActions, 'add-safe-readonly-openclaw-validation-endpoint');
       } else if (shouldValidateReadonlyHealthHandshake(agentTaskSummary)) {
         prioritizeAction(nextBestActions, 'validate-openclaw-health-handshake-readonly');

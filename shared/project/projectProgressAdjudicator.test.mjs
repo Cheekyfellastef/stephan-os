@@ -229,6 +229,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
       openClawAdapterMode: 'local_stub',
       openClawAdapterReadiness: 'contract_defined',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterStubStatus: 'present_disabled',
       openClawStageEvidence: {
         policyMode: 'policy_only',
@@ -272,6 +273,7 @@ test('adjudicateProjectProgress recommends adapter connection after stub exists 
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
     },
   });
@@ -388,6 +390,7 @@ test('adjudicateProjectProgress suppresses stale foundational actions when live 
       openClawAdapterMode: 'local_stub',
       openClawAdapterStubStatus: 'present_disabled',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       nextActions: [{ title: 'Connect OpenClaw local adapter', reason: 'Stub exists but not connected.' }],
       evidence: ['Agent Task model + projection exported'],
     },
@@ -508,6 +511,7 @@ test('adjudicateProjectProgress advances beyond create-stub recommendation when 
       openClawAdapterStubStatus: 'health_check_only',
       openClawAdapterStubConnectionState: 'local_only',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
     },
   });
@@ -569,6 +573,7 @@ test('adjudicateProjectProgress suppresses kill-switch and adapter design action
       openClawAdapterStubStatus: 'health_check_only',
       openClawAdapterStubConnectionState: 'local_only',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
     },
   });
 
@@ -613,6 +618,7 @@ test('adjudicateProjectProgress suppresses stale openclaw setup actions when kil
       openClawAdapterMode: 'local_stub',
       openClawAdapterReadiness: 'local_stub',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterStubStatus: 'present_disabled',
       openClawAdapterStubConnectionState: 'local_only',
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
@@ -644,6 +650,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
       openClawAdapterMode: 'local_stub',
       openClawAdapterReadiness: 'contract_defined',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterStubStatus: 'present_disabled',
       openClawAdapterStubConnectionState: 'local_only',
       openClawAdapterEvidenceContract: ['schema-defined'],
@@ -700,8 +707,8 @@ test('live-style agent task projection suppresses create-stub and emits connecti
 
   const ids = progress.nextBestActions.map((entry) => entry.id);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(ids.includes('validate-openclaw-health-handshake-readonly'), true);
-  const connectAction = progress.nextBestActions.find((entry) => entry.id === 'validate-openclaw-health-handshake-readonly');
+  assert.equal(ids.includes('add-safe-readonly-openclaw-validation-endpoint'), true);
+  const connectAction = progress.nextBestActions.find((entry) => entry.id === 'add-safe-readonly-openclaw-validation-endpoint');
   assert.ok(connectAction);
   assert.equal(connectAction.evidence.includes('openclaw-adapter:contract_defined'), true);
   assert.equal(connectAction.evidence.includes('openclaw-stub:present_disabled'), true);
@@ -727,8 +734,10 @@ test('configured_not_checked suppresses configure endpoint and promotes readonly
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
       openClawAdapterConnectionState: 'configured_not_checked',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterConnectionConfigReady: true,
       openClawAdapterAllowedProbeTypes: 'health_and_handshake',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawHealthState: 'not_run',
       openClawHandshakeState: 'not_run',
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
@@ -755,8 +764,10 @@ test('configured_not_checked promotes add-safe-readonly-validation-endpoint when
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
       openClawAdapterConnectionState: 'configured_not_checked',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterConnectionConfigReady: true,
       openClawAdapterAllowedProbeTypes: 'none',
+      openClawReadonlyValidationEndpointAvailable: false,
       openClawHealthState: 'not_run',
       openClawHandshakeState: 'not_run',
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
@@ -781,6 +792,7 @@ test('missing endpoint still recommends configure endpoint', () => {
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'local_stub',
       openClawAdapterConnectionState: 'not_connected',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterConnectionConfigReady: false,
       nextAgentTaskAction: 'Connect OpenClaw local adapter',
     },
@@ -804,8 +816,10 @@ test('validation passed advances from validation to approval gate closure flow',
       openClawKillSwitchState: 'available',
       openClawAdapterMode: 'connected',
       openClawAdapterConnectionState: 'configured_not_checked',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawAdapterConnectionConfigReady: true,
       openClawAdapterAllowedProbeTypes: 'health_and_handshake',
+      openClawReadonlyValidationEndpointAvailable: true,
       openClawHealthState: 'passing',
       openClawHandshakeState: 'compatible',
       openClawApprovalsComplete: false,
