@@ -52,6 +52,9 @@ test('AgentsTile renders OpenClaw bounded presence and integration topology fiel
     'OpenClaw adapter mode:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+  assert.equal(source.includes('label input'), false);
+  assert.equal(source.includes('apply/update button'), false);
+  assert.equal(source.includes('OpenClaw endpoint config location:'), true);
   assert.equal(source.includes('Mission Console'), false);
   assert.equal(source.includes("join(' -> ')"), true);
 });

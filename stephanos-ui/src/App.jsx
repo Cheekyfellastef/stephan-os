@@ -871,6 +871,20 @@ export default function App() {
           finalRouteTruth={routeTruthView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
           onIntegrationUpdate={setOpenClawIntegration}
+          agentTaskProjection={agentTaskProjection}
+          openClawEndpointDraft={openClawEndpointDraft}
+          onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+          onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+            endpointLabel: 'Local OpenClaw Adapter',
+            endpointHost: '',
+            endpointPort: '',
+            endpointScope: 'local_only',
+            expectedProtocolVersion: 'v1',
+            expectedAdapterIdentity: '',
+            allowedProbeTypes: 'health_and_handshake',
+            configPersistenceMode: 'session_only',
+            endpointMode: 'model_only',
+          })}
         />
       ),
     },
@@ -1136,6 +1150,20 @@ export default function App() {
             finalRouteTruth={routeTruthView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onIntegrationUpdate={setOpenClawIntegration}
+            agentTaskProjection={agentTaskProjection}
+            openClawEndpointDraft={openClawEndpointDraft}
+            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
+              endpointLabel: 'Local OpenClaw Adapter',
+              endpointHost: '',
+              endpointPort: '',
+              endpointScope: 'local_only',
+              expectedProtocolVersion: 'v1',
+              expectedAdapterIdentity: '',
+              allowedProbeTypes: 'health_and_handshake',
+              configPersistenceMode: 'session_only',
+              endpointMode: 'model_only',
+            })}
           />
           <MissionConsoleTile
             uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}

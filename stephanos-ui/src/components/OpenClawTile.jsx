@@ -23,6 +23,10 @@ export default function OpenClawTile({
   togglePanel,
   runtimeStatusModel,
   finalRouteTruth,
+  agentTaskProjection = null,
+  openClawEndpointDraft = null,
+  onApplyOpenClawEndpointConfig = () => {},
+  onClearOpenClawEndpointConfig = () => {},
   repoPath = '/workspace/stephan-os',
   branchName = 'unknown',
   onIntegrationUpdate = () => {},
@@ -36,6 +40,19 @@ export default function OpenClawTile({
 
   const distParity = runtimeStatusModel?.runtimeTruth?.sourceDistParityOk;
   const distCautionVisible = distParity !== true;
+  const operatorTask = agentTaskProjection?.operatorSurface || null;
+  const endpointDraft = openClawEndpointDraft && typeof openClawEndpointDraft === 'object'
+    ? openClawEndpointDraft
+    : {
+      endpointLabel: 'Local OpenClaw Adapter',
+      endpointHost: '',
+      endpointPort: '',
+      endpointScope: 'local_only',
+      expectedProtocolVersion: 'v1',
+      allowedProbeTypes: 'health_and_handshake',
+      configPersistenceMode: 'session_only',
+      endpointMode: 'model_only',
+    };
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -107,6 +124,46 @@ export default function OpenClawTile({
       isOpen={uiLayout.openClawPanel !== false}
       onToggle={() => togglePanel('openClawPanel')}
     >
+      <section className="openclaw-section">
+        <h4>Endpoint Configuration (session-only v1)</h4>
+        <p className="muted"><strong>session-only, no secrets stored</strong></p>
+        <p className="muted"><strong>endpoint configuration only: no health check, no handshake, no connection, no live automation</strong></p>
+        <label>label input
+          <input value={endpointDraft.endpointLabel || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointLabel: event.target.value })} />
+        </label>
+        <label>host input
+          <input value={endpointDraft.endpointHost || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointHost: event.target.value })} />
+        </label>
+        <label>port input
+          <input value={endpointDraft.endpointPort || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointPort: event.target.value })} />
+        </label>
+        <label>expected protocol input/select
+          <input value={endpointDraft.expectedProtocolVersion || 'v1'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, expectedProtocolVersion: event.target.value })} />
+        </label>
+        <label>allowed probes select
+          <select value={endpointDraft.allowedProbeTypes || 'health_and_handshake'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, allowedProbeTypes: event.target.value })}>
+            <option value="none">none</option><option value="health_only">health_only</option><option value="handshake_only">handshake_only</option><option value="health_and_handshake">health_and_handshake</option>
+          </select>
+        </label>
+        <p>scope display/select locked to local_only for v1</p>
+        <button type="button" onClick={() => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointScope: 'local_only', configPersistenceMode: 'session_only', endpointMode: 'configured' })}>apply/update button</button>
+        <button type="button" onClick={onClearOpenClawEndpointConfig}>reset/clear session config button</button>
+        <ul>
+          <li><strong>OpenClaw adapter endpoint configured:</strong> {operatorTask?.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
+          <li><strong>OpenClaw adapter endpoint label:</strong> {operatorTask?.openClawAdapterEndpointLabel || 'none'}</li>
+          <li><strong>OpenClaw adapter endpoint host:</strong> {operatorTask?.openClawAdapterEndpointHost || 'none'}</li>
+          <li><strong>OpenClaw adapter endpoint port:</strong> {operatorTask?.openClawAdapterEndpointPort || 'none'}</li>
+          <li><strong>OpenClaw adapter endpoint scope:</strong> {operatorTask?.openClawAdapterEndpointScope || 'none'}</li>
+          <li><strong>OpenClaw adapter endpoint mode:</strong> {operatorTask?.openClawAdapterEndpointMode || 'model_only'}</li>
+          <li><strong>OpenClaw adapter expected protocol:</strong> {operatorTask?.openClawAdapterExpectedProtocolVersion || 'unknown'}</li>
+          <li><strong>OpenClaw adapter config persistence:</strong> {operatorTask?.openClawAdapterConfigPersistenceMode || 'session_only'}</li>
+          <li><strong>OpenClaw adapter config ready:</strong> {operatorTask?.openClawAdapterConnectionConfigReady ? 'yes' : 'no'}</li>
+          <li><strong>OpenClaw adapter config next action:</strong> {operatorTask?.openClawAdapterConnectionConfigNextAction || 'not reported'}</li>
+          <li><strong>OpenClaw adapter config blocker:</strong> {operatorTask?.openClawAdapterConnectionConfigBlockers?.[0] || 'none'}</li>
+          <li><strong>OpenClaw adapter config warning:</strong> {operatorTask?.openClawAdapterConnectionConfigWarnings?.[0] || 'none'}</li>
+        </ul>
+      </section>
+
       <section className="openclaw-section">
         <h4>Status / Governance</h4>
         <ul>
