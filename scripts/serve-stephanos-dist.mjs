@@ -55,10 +55,16 @@ const mimeTypes = {
 
 const baseHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Cache-Control': 'no-store',
 };
+const OPENCLAW_ALLOWED_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+const OPENCLAW_ALLOWED_PROBE_TYPES = new Set(['health_only', 'handshake_only', 'health_and_handshake']);
+const OPENCLAW_SECRET_PATTERNS = [/\bapi[_-]?key\b/i, /\btoken\b/i, /\bsecret\b/i, /\bpassword\b/i, /\bauthorization\b/i, /\bbearer\b/i, /\baccess_token\b/i, /:\/\/[^\s/@]+:[^\s/@]+@/i, /@[^@\s]+:[^@\s]+@/i];
+const OPENCLAW_TIMEOUT_MS = 1200;
+const OPENCLAW_HEALTH_PATH = '/health';
+const OPENCLAW_HANDSHAKE_PATH = '/handshake';
 const mimeDebugEnabled = process.env.STEPHANOS_SERVE_DEBUG_MIME === '1';
 const restartWindowMs = Number(process.env.STEPHANOS_RESTART_WINDOW_MS || 20_000);
 const ignitionRestartState = {
@@ -87,6 +93,44 @@ function sendRedirect(response, location) {
     Location: location,
   });
   response.end();
+}
+
+function hasSecretLikeContent(value = '') {
+  return OPENCLAW_SECRET_PATTERNS.some((pattern) => pattern.test(String(value || '')));
+}
+
+function buildOpenClawValidationPayload(payload = {}) {
+  const endpointScope = String(payload.endpointScope || '').trim().toLowerCase();
+  const endpointHost = String(payload.endpointHost || '').trim().toLowerCase();
+  const endpointPort = Number(payload.endpointPort);
+  const expectedProtocolVersion = String(payload.expectedProtocolVersion || '').trim();
+  const expectedAdapterIdentity = String(payload.expectedAdapterIdentity || '').trim();
+  const allowedProbeTypes = String(payload.allowedProbeTypes || '').trim().toLowerCase();
+  const blockers = [];
+  const warnings = [];
+  if (endpointScope !== 'local_only') blockers.push('Endpoint scope must be local_only for readonly validation.');
+  if (!OPENCLAW_ALLOWED_LOOPBACK_HOSTS.has(endpointHost)) blockers.push('Endpoint host must be loopback-only (127.0.0.1, localhost, ::1).');
+  if (!Number.isInteger(endpointPort) || endpointPort < 1 || endpointPort > 65535) blockers.push('Endpoint port must be a valid numeric port.');
+  if (!OPENCLAW_ALLOWED_PROBE_TYPES.has(allowedProbeTypes)) blockers.push('Allowed probe type must be health_only, handshake_only, or health_and_handshake.');
+  if (hasSecretLikeContent(JSON.stringify(payload))) blockers.push('Credential/token-bearing input is not accepted.');
+  return { endpointHost, endpointPort, expectedProtocolVersion, expectedAdapterIdentity, allowedProbeTypes, blockers, warnings };
+}
+
+async function fetchReadonlyProbe(url) {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENCLAW_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { method: 'GET', signal: controller.signal, headers: { Accept: 'application/json' } });
+    const text = await response.text();
+    let body = {};
+    try { body = JSON.parse(text || '{}'); } catch { body = {}; }
+    return { ok: response.ok, status: response.status, latencyMs: Date.now() - startedAt, body };
+  } catch (error) {
+    return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: String(error?.message || error || 'probe-failed') };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function readRuntimeStatus() {
@@ -633,6 +677,48 @@ export function createStephanosDistServer() {
         launcherCriticalSourceTruth,
         checkedAt: new Date().toISOString(),
       }, null, 2)}\n`);
+      return;
+    }
+    if ((request.url || '').startsWith('/api/openclaw/health-handshake/validate-readonly')) {
+      if (request.method !== 'POST') {
+        response.writeHead(405, { ...baseHeaders, 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(`${JSON.stringify({ validationStatus: 'blocked', executionAllowed: false, validationBlockers: ['POST required'] })}\n`);
+        return;
+      }
+      const bodyParts = [];
+      request.on('data', (chunk) => bodyParts.push(chunk));
+      request.on('end', async () => {
+        let payload = {};
+        try { payload = JSON.parse(Buffer.concat(bodyParts).toString('utf8') || '{}'); } catch { payload = {}; }
+        const validated = buildOpenClawValidationPayload(payload);
+        const checkedAt = new Date().toISOString();
+        if (validated.blockers.length > 0) {
+          response.writeHead(400, { ...baseHeaders, 'Content-Type': 'application/json; charset=utf-8' });
+          response.end(`${JSON.stringify({ validationStatus: 'blocked', validationSource: 'backend_readonly_probe', validationBlockers: validated.blockers, validationWarnings: validated.warnings, executionAllowed: false })}\n`);
+          return;
+        }
+        const baseUrl = `http://${validated.endpointHost}:${validated.endpointPort}`;
+        const healthProbe = validated.allowedProbeTypes === 'handshake_only' ? null : await fetchReadonlyProbe(`${baseUrl}${OPENCLAW_HEALTH_PATH}`);
+        const handshakeProbe = validated.allowedProbeTypes === 'health_only' ? null : await fetchReadonlyProbe(`${baseUrl}${OPENCLAW_HANDSHAKE_PATH}`);
+        const healthState = !healthProbe ? 'not_run' : (healthProbe.ok ? 'passing' : (healthProbe.status === 0 ? 'unavailable' : 'failing'));
+        const handshakeState = !handshakeProbe ? 'not_run' : (handshakeProbe.ok ? 'compatible' : (handshakeProbe.status === 0 ? 'unavailable' : 'incompatible'));
+        const capabilityDeclaration = handshakeProbe?.body?.capabilityDeclaration && typeof handshakeProbe.body.capabilityDeclaration === 'object' ? handshakeProbe.body.capabilityDeclaration : {};
+        const validationWarnings = [];
+        const executionClaimKeys = ['canExecuteActions', 'canEditFiles', 'canRunCommands', 'canUseBrowser', 'canUseGit', 'canAccessNetwork'].filter((key) => capabilityDeclaration[key] === true);
+        if (executionClaimKeys.length > 0) validationWarnings.push(`Execution-like claims remain unapproved: ${executionClaimKeys.join(', ')}`);
+        const validationStatus = (healthState === 'passing' || healthState === 'not_run') && (handshakeState === 'compatible' || handshakeState === 'not_run') ? 'succeeded' : 'failed';
+        response.writeHead(200, { ...baseHeaders, 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(`${JSON.stringify({
+          validationStatus,
+          validationSource: 'backend_readonly_probe',
+          healthResult: { state: healthState, message: healthProbe?.error || '', latencyMs: healthProbe?.latencyMs ?? null, checkedAt, evidence: [`probe:${OPENCLAW_HEALTH_PATH}`] },
+          handshakeResult: { state: handshakeState, adapterIdentity: handshakeProbe?.body?.adapterIdentity || validated.expectedAdapterIdentity || '', protocolVersion: handshakeProbe?.body?.protocolVersion || '', expectedProtocolVersion: validated.expectedProtocolVersion || '', protocolCompatible: handshakeState === 'compatible', protocolMismatchReason: handshakeState === 'incompatible' ? 'Readonly handshake probe did not satisfy expected compatibility.' : '', capabilityDeclaration, readonlyAssurance: { readonlyOnly: true, executionDisabled: true, writeAccessDisabled: true, commandExecutionDisabled: true, browserControlDisabled: true, gitWriteDisabled: true, networkActionDisabled: true }, checkedAt, evidence: [`probe:${OPENCLAW_HANDSHAKE_PATH}`] },
+          validationBlockers: [],
+          validationWarnings,
+          validationEvidence: ['safe-probe-path:available', `probe-type:${validated.allowedProbeTypes}`],
+          executionAllowed: false,
+        })}\n`);
+      });
       return;
     }
 

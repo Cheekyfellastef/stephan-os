@@ -268,6 +268,13 @@ export default function App() {
     configPersistenceMode: 'session_only',
     endpointMode: 'configured',
   });
+  const [openClawReadonlyValidation, setOpenClawReadonlyValidation] = useState({
+    validationStatus: 'idle',
+    validationMode: 'health_and_handshake',
+    validationSource: 'operator',
+    validationEvidence: ['safe-probe-path:available'],
+    safeProbePathAvailable: true,
+  });
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
   const finalRouteTruth = runtimeStatusModel?.finalRouteTruth ?? null;
@@ -570,6 +577,7 @@ export default function App() {
               ...openClawEndpointDraft,
               endpointConfigured: Boolean((openClawEndpointDraft.endpointHost || '').trim() || (openClawEndpointDraft.endpointPort || '').trim()),
             },
+            healthHandshake: openClawReadonlyValidation,
           },
         },
       },
@@ -577,7 +585,7 @@ export default function App() {
         agentTileProjectionConnected: true,
       },
     });
-  }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, orchestrationSelectors?.blockageExplanation]);
+  }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, openClawReadonlyValidation, orchestrationSelectors?.blockageExplanation]);
 
   useEffect(() => {
     setOpenClawIntegration((previous) => (previous && previous.currentActivity !== 'Standing by for bounded intent.'
@@ -649,6 +657,53 @@ export default function App() {
 
     previousTelemetryTruthRef.current = finalRouteTruth;
   }, [finalRouteTruth]);
+
+  async function requestOpenClawReadonlyValidation(endpointDraft = {}) {
+    setOpenClawReadonlyValidation((previous) => ({
+      ...previous,
+      validationStatus: 'running',
+      validationStartedAt: new Date().toISOString(),
+    }));
+    try {
+      const response = await fetch('/api/openclaw/health-handshake/validate-readonly', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpointHost: endpointDraft.endpointHost,
+          endpointPort: endpointDraft.endpointPort,
+          endpointScope: endpointDraft.endpointScope,
+          expectedProtocolVersion: endpointDraft.expectedProtocolVersion,
+          expectedAdapterIdentity: endpointDraft.expectedAdapterIdentity,
+          allowedProbeTypes: endpointDraft.allowedProbeTypes,
+        }),
+      });
+      const payload = await response.json();
+      setOpenClawReadonlyValidation({
+        ...payload,
+        validationMode: endpointDraft.allowedProbeTypes || 'health_and_handshake',
+        safeProbePathAvailable: true,
+        healthState: payload?.healthResult?.state || 'unknown',
+        handshakeState: payload?.handshakeResult?.state || 'unknown',
+        protocolCompatible: payload?.handshakeResult?.protocolCompatible === true,
+        protocolVersion: payload?.handshakeResult?.protocolVersion || '',
+        adapterIdentity: payload?.handshakeResult?.adapterIdentity || '',
+        readonlyAssurance: payload?.handshakeResult?.readonlyAssurance || {},
+        lastHealthCheckAt: payload?.healthResult?.checkedAt || '',
+        lastHandshakeAt: payload?.handshakeResult?.checkedAt || '',
+        healthLatencyMs: payload?.healthResult?.latencyMs ?? null,
+        handshakeLatencyMs: payload?.handshakeResult?.latencyMs ?? null,
+      });
+    } catch (error) {
+      setOpenClawReadonlyValidation({
+        validationStatus: 'unavailable',
+        validationMode: endpointDraft.allowedProbeTypes || 'health_and_handshake',
+        validationSource: 'backend_readonly_probe',
+        validationBlockers: [String(error?.message || 'Readonly validation request failed.')],
+        validationEvidence: ['safe-probe-path:available'],
+        safeProbePathAvailable: true,
+      });
+    }
+  }
 
   const ignitionModeBanner = useMemo(() => {
     const pathname = runtimeFingerprint.currentPathname || '';
@@ -874,6 +929,7 @@ export default function App() {
           agentTaskProjection={agentTaskProjection}
           openClawEndpointDraft={openClawEndpointDraft}
           onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+          onRequestReadonlyValidation={requestOpenClawReadonlyValidation}
           onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
             endpointLabel: 'Local OpenClaw Adapter',
             endpointHost: '',
@@ -1153,6 +1209,7 @@ export default function App() {
             agentTaskProjection={agentTaskProjection}
             openClawEndpointDraft={openClawEndpointDraft}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
+            onRequestReadonlyValidation={requestOpenClawReadonlyValidation}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
               endpointHost: '',
