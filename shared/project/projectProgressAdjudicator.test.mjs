@@ -805,6 +805,36 @@ test('configured_not_checked promotes readonly validation when endpoint truth is
   });
 
   assert.equal(projection.nextBestActions[0].id, 'validate-openclaw-health-handshake-readonly');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'add-safe-readonly-openclaw-validation-endpoint'), false);
+});
+
+test('stage evidence endpoint availability suppresses add-endpoint and promotes readonly validation', () => {
+  const projection = adjudicateProjectProgress({
+    model: createSeedProjectProgressModel(),
+    agentTaskReadinessSummary: {
+      status: 'partial',
+      agentTaskLayerStatus: 'in_progress',
+      codexReadiness: 'manual_handoff_only',
+      openClawReadiness: 'needs_adapter',
+      verificationStatus: 'ready',
+      verificationReturnReady: true,
+      verificationDecision: 'safe_to_accept',
+      openClawIntegrationMode: 'local_adapter',
+      openClawKillSwitchState: 'available',
+      openClawAdapterMode: 'local_stub',
+      openClawAdapterConnectionState: 'configured_not_checked',
+      openClawAdapterConnectionConfigReady: true,
+      openClawAdapterAllowedProbeTypes: 'none',
+      openClawReadonlyValidationEndpointAvailable: false,
+      openClawHealthState: 'not_run',
+      openClawHandshakeState: 'not_run',
+      evidence: ['openclaw-validation-endpoint:available'],
+      nextAgentTaskAction: 'Connect OpenClaw local adapter',
+    },
+  });
+
+  assert.equal(projection.nextBestActions[0].id, 'validate-openclaw-health-handshake-readonly');
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'add-safe-readonly-openclaw-validation-endpoint'), false);
 });
 
 test('missing endpoint still recommends configure endpoint', () => {
