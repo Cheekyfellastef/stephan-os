@@ -246,7 +246,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
   const evidence = projection.nextBestActions[0].evidence.join('|');
   assert.match(evidence, /openclaw-policy:policy_only/);
   assert.match(evidence, /openclaw-kill-switch:required/);
@@ -276,7 +276,7 @@ test('adjudicateProjectProgress recommends adapter connection after stub exists 
     },
   });
 
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
 });
 
 test('adjudicateProjectProgress prioritizes telemetry summary exporter when telemetry summary is missing', () => {
@@ -415,7 +415,7 @@ test('adjudicateProjectProgress suppresses stale foundational actions when live 
   assert.equal(ids.includes('add-telemetry-summary-export'), false);
   assert.equal(ids.includes('bind-prompt-builder-contexts'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
 });
 
 test('adjudicateProjectProgress keeps seeded fallback recommendations when live summaries are absent', () => {
@@ -512,7 +512,7 @@ test('adjudicateProjectProgress advances beyond create-stub recommendation when 
     },
   });
 
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
 });
 
 test('adjudicateProjectProgress does not report prompt-builder unavailable when summary exists', () => {
@@ -576,7 +576,7 @@ test('adjudicateProjectProgress suppresses kill-switch and adapter design action
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(ids.includes('connect-openclaw-local-adapter'), true);
+  assert.equal(ids.includes('validate-openclaw-health-handshake-readonly'), true);
 });
 
 test('adjudicateProjectProgress suppresses telemetry lifecycle binding action when lifecycle is bound', () => {
@@ -622,7 +622,7 @@ test('adjudicateProjectProgress suppresses stale openclaw setup actions when kil
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
 });
 
 
@@ -658,7 +658,7 @@ test('adjudicateProjectProgress suppresses stale OpenClaw setup actions when sta
   assert.equal(ids.includes('wire-openclaw-kill-switch'), false);
   assert.equal(ids.includes('design-openclaw-local-adapter'), false);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(projection.nextBestActions.some((action) => action.id === 'connect-openclaw-local-adapter'), true);
+  assert.equal(projection.nextBestActions.some((action) => action.id === 'validate-openclaw-health-handshake-readonly'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-kill-switch:available'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-adapter:contract_defined'), true);
   assert.equal(projection.nextBestActions[0].evidence.some((entry) => entry === 'openclaw-stub:present_disabled'), true);
@@ -700,8 +700,8 @@ test('live-style agent task projection suppresses create-stub and emits connecti
 
   const ids = progress.nextBestActions.map((entry) => entry.id);
   assert.equal(ids.includes('create-openclaw-local-adapter-stub'), false);
-  assert.equal(ids.includes('connect-openclaw-local-adapter'), true);
-  const connectAction = progress.nextBestActions.find((entry) => entry.id === 'connect-openclaw-local-adapter');
+  assert.equal(ids.includes('validate-openclaw-health-handshake-readonly'), true);
+  const connectAction = progress.nextBestActions.find((entry) => entry.id === 'validate-openclaw-health-handshake-readonly');
   assert.ok(connectAction);
   assert.equal(connectAction.evidence.includes('openclaw-adapter:contract_defined'), true);
   assert.equal(connectAction.evidence.includes('openclaw-stub:present_disabled'), true);

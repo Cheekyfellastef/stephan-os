@@ -126,12 +126,20 @@ const DEFAULT_NEXT_ACTIONS = Object.freeze([
     whyThisMatters: 'Creates non-executing adapter implementation evidence before connection work.',
   },
   {
-    id: 'connect-openclaw-local-adapter',
-    title: 'Connect OpenClaw local adapter',
-    reason: 'Adapter stub exists but connection state is still not connected.',
-    blocks: ['Connected adapter readiness'],
+    id: 'configure-openclaw-adapter-endpoint',
+    title: 'Configure OpenClaw local adapter endpoint',
+    reason: 'Adapter endpoint configuration model is required before readonly telemetry validation.',
+    blocks: ['Readonly health/handshake validation'],
     dependencyImpact: 52,
-    whyThisMatters: 'Separates contract/stub work from connection truth so execution remains safely gated.',
+    whyThisMatters: 'Keeps endpoint truth explicit without implying connection or execution.',
+  },
+  {
+    id: 'validate-openclaw-health-handshake-readonly',
+    title: 'Validate readonly OpenClaw health/handshake',
+    reason: 'Endpoint is configured but readonly health/handshake has not been validated yet.',
+    blocks: ['Compatibility readiness evidence'],
+    dependencyImpact: 51,
+    whyThisMatters: 'Advances status-only compatibility evidence while preserving non-executing posture.',
   },
   {
     id: 'complete-openclaw-approval-gates',
@@ -327,10 +335,12 @@ function collectSuppressedActionIds({ agentTaskSummary, telemetry, promptBuilder
     suppressed.add('create-openclaw-local-adapter-stub');
   }
   if (hasOpenClawConnectionReadiness(agentTaskSummary)) {
-    suppressed.add('connect-openclaw-local-adapter');
+    suppressed.add('configure-openclaw-adapter-endpoint');
+    suppressed.add('validate-openclaw-health-handshake-readonly');
   }
   if (agentTaskSummary.openClawAdapterConnectionState === 'connected') {
-    suppressed.add('connect-openclaw-local-adapter');
+    suppressed.add('configure-openclaw-adapter-endpoint');
+    suppressed.add('validate-openclaw-health-handshake-readonly');
   }
   if (agentTaskSummary.openClawApprovalsComplete) {
     suppressed.add('complete-openclaw-approval-gates');
@@ -698,7 +708,12 @@ export function adjudicateProjectProgress({
     } else if (shouldCreateStub) {
       prioritizeAction(nextBestActions, 'create-openclaw-local-adapter-stub');
     } else if (shouldConnectAdapter) {
-      prioritizeAction(nextBestActions, 'connect-openclaw-local-adapter');
+      if (agentTaskSummary.openClawAdapterEndpointConfigured !== true) {
+      prioritizeAction(nextBestActions, 'configure-openclaw-adapter-endpoint');
+    } else if (['not_run','unknown'].includes(agentTaskSummary.openClawHealthState || 'not_run')
+      || ['not_run','unknown'].includes(agentTaskSummary.openClawHandshakeState || 'not_run')) {
+      prioritizeAction(nextBestActions, 'validate-openclaw-health-handshake-readonly');
+    }
     } else if (shouldCompleteApprovals) {
       prioritizeAction(nextBestActions, 'complete-openclaw-approval-gates');
     }
