@@ -30,6 +30,7 @@ import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
 import SkillForgeTile from './components/SkillForgeTile.jsx';
+import StephanosSurfacePane from './components/StephanosSurfacePane.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
 import { appendTelemetryHistory, createTelemetryBaselineEvent, extractTelemetryEvents, TELEMETRY_MAX_HISTORY } from './components/system/telemetryEvents.js';
@@ -75,6 +76,7 @@ import {
   savePaneOrder,
   STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY,
 } from './utils/paneOrderPersistence.js';
+import { getPaneMoveAvailability, resolvePaneCollapsedState } from './utils/stephanosPaneBehavior.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
@@ -96,15 +98,6 @@ export function shouldStartPaneDrag(target) {
     return true;
   }
   return !target.closest(PANE_DRAG_BLOCK_SELECTOR);
-}
-
-export function resolvePaneCollapsedState(pane, uiLayout) {
-  const layout = uiLayout && typeof uiLayout === 'object' ? uiLayout : {};
-  const layoutKey = String(pane?.layoutKey || pane?.id || '').trim();
-  if (!layoutKey) {
-    return false;
-  }
-  return layout[layoutKey] === false;
 }
 
 export default function App() {
@@ -661,9 +654,10 @@ export default function App() {
         <PowerShellMergeConsolePanel />
       </div>
     ) },
-    { id: 'statusPanel', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} /> },
+    { id: 'statusPanel', title: 'Route Status', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} /> },
     {
       id: 'toolsPanel',
+      title: 'Tools',
       render: () => (
         <ToolsPanel
           commandHistory={commandHistory}
@@ -672,14 +666,14 @@ export default function App() {
         />
       ),
     },
-    { id: 'memoryPanel', render: () => <MemoryPanel commandHistory={commandHistory} /> },
+    { id: 'memoryPanel', title: 'Memory / Retrieval', render: () => <MemoryPanel commandHistory={commandHistory} /> },
     { id: 'knowledgeGraphPanel', render: () => <KnowledgeGraphPanel commandHistory={commandHistory} /> },
     { id: 'simulationListPanel', render: () => <SimulationListPanel commandHistory={commandHistory} /> },
     { id: 'simulationPanel', render: () => <SimulationPanel commandHistory={commandHistory} /> },
     { id: 'simulationHistoryPanel', render: () => <SimulationHistoryPanel commandHistory={commandHistory} /> },
     { id: 'proposalPanel', render: () => <ProposalPanel commandHistory={commandHistory} /> },
     { id: 'activityPanel', render: () => <ActivityPanel commandHistory={commandHistory} /> },
-    { id: 'telemetryFeedPanel', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
+    { id: 'telemetryFeedPanel', title: 'Telemetry', render: () => <TelemetryFeed runtimeStatusModel={runtimeStatusModel} telemetryEntries={telemetryEntries} /> },
     { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} /> },
     {
       id: 'agentsPanel',
@@ -704,7 +698,7 @@ export default function App() {
         return node;
       },
     },
-    { id: 'promptBuilderPanel', className: 'pane-span-2', render: () => (
+    { id: 'promptBuilderPanel', title: 'Prompt Builder', className: 'pane-span-2', render: () => (
       <PromptBuilder
         runtimeStatusModel={runtimeStatusModel}
         finalRouteTruth={finalRouteTruth}
@@ -772,6 +766,7 @@ export default function App() {
     },
     {
       id: 'missionConsolePanel',
+      title: 'Mission Console',
       className: 'pane-span-2',
       render: () => (
         <MissionConsoleTile
@@ -792,6 +787,7 @@ export default function App() {
     },
     {
       id: 'capabilityRadarPanel',
+      title: 'Capability Radar',
       className: 'pane-span-2',
       render: () => (
         <CapabilityRadarTile
@@ -802,11 +798,13 @@ export default function App() {
     },
     {
       id: 'skillForgePanel',
+      title: 'Skill Forge',
       className: 'pane-span-2',
       render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} />,
     },
     {
       id: 'openClawPanel',
+      title: 'OpenClaw Control',
       className: 'pane-span-2',
       render: () => (
         <OpenClawTile
@@ -1158,33 +1156,25 @@ export default function App() {
 
       <section className="operator-pane-wall" onDragOver={(event) => event.preventDefault()}>
         {orderedPanes.map((pane) => {
-          const paneCollapsed = resolvePaneCollapsedState(pane, safeUiLayout);
+          const moveState = getPaneMoveAvailability(safePaneOrder, pane.id);
           return (
-            <div
+            <StephanosSurfacePane
               key={pane.id}
-              className={`operator-pane-slot ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
-              draggable
-              data-pane-id={pane.id}
-              data-pane-collapsed={paneCollapsed ? 'true' : 'false'}
-              onDragStart={(event) => {
-                if (!shouldStartPaneDrag(event.target)) {
-                  event.preventDefault();
-                  return;
-                }
-                setDragPaneId(pane.id);
-              }}
+              pane={pane}
+              uiLayout={safeUiLayout}
+              dragPaneId={dragPaneId}
+              shouldStartPaneDrag={shouldStartPaneDrag}
+              onDragStart={() => setDragPaneId(pane.id)}
               onDragEnd={() => setDragPaneId('')}
               onDrop={() => {
                 reorderPanes(dragPaneId, pane.id);
                 setDragPaneId('');
               }}
-            >
-              <div className="pane-order-controls" aria-label="Pane arrangement controls">
-                <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, -1)}>Move up</button>
-                <button type="button" className="ghost-button" onClick={() => nudgePane(pane.id, 1)}>Move down</button>
-              </div>
-              {pane.render()}
-            </div>
+              onMoveUp={() => nudgePane(pane.id, -1)}
+              onMoveDown={() => nudgePane(pane.id, 1)}
+              canMoveUp={moveState.canMoveUp}
+              canMoveDown={moveState.canMoveDown}
+            />
           );
         })}
       </section>
