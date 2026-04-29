@@ -321,3 +321,24 @@ test('mission handoff text excludes create-stub when stub evidence exists and re
   assert.match(text, /openclaw-stub:present_disabled/);
   assert.match(text, /openclaw-connection:not_connected/);
 });
+
+test('mission handoff milestone evidence includes readonly validation endpoint availability', () => {
+  const projection = buildMissionHandoffMilestones({
+    dashboardState: createDefaultMissionDashboardState(),
+    projectProgressProjection: createProjectionFixture(),
+    agentTaskSummary: {
+      openClawReadiness: 'needs_adapter',
+      openClawStageEvidence: {
+        'openclaw-validation-endpoint': 'available',
+        'openclaw-validation': 'idle',
+        'openclaw-health': 'not_run',
+        'openclaw-handshake': 'not_run',
+        'openclaw-execution': 'disabled',
+      },
+    },
+  });
+
+  const v3 = projection.milestones.find((entry) => entry.id === 'agent-layer-v3-persistent-orchestration');
+  assert.ok(v3);
+  assert.equal(v3.evidence.some((entry) => /openclaw-validation-endpoint:\s*available/i.test(entry)), true);
+});
