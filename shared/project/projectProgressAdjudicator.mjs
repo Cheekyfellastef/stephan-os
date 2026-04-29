@@ -238,6 +238,12 @@ function normalizeAgentTaskReadinessSummary(summary = {}) {
     openClawAdapterEndpointConfigured: source.openClawAdapterEndpointConfigured === true,
     openClawAdapterConnectionConfigReady: source.openClawAdapterConnectionConfigReady === true,
     openClawReadonlyValidationEndpointAvailable: source.openClawReadonlyValidationEndpointAvailable === true,
+    openClawReadonlyValidationEndpointPath: toText(source.openClawReadonlyValidationEndpointPath, ''),
+    openClawReadonlyValidationEndpointMode: toLower(
+      source.openClawReadonlyValidationEndpointMode,
+      source.openClawReadonlyValidationEndpointAvailable === true ? 'local_readonly_probe' : 'missing',
+    ),
+    openClawReadonlyValidationEndpointCanExecute: source.openClawReadonlyValidationEndpointCanExecute === true,
     openClawAdapterEndpointScope: toLower(source.openClawAdapterEndpointScope, 'none'),
     openClawAdapterAllowedProbeTypes: toLower(source.openClawAdapterAllowedProbeTypes, 'none'),
     openClawHealthState: toLower(source.openClawHealthState, 'not_run'),
@@ -523,7 +529,13 @@ function summarizePromptBuilderEvidence(promptBuilder = {}) {
 
 function hasSafeReadonlyValidationProbe(agentTaskSummary = {}) {
   const allowedProbeTypes = String(agentTaskSummary.openClawAdapterAllowedProbeTypes || '').trim().toLowerCase();
-  return ['health_only', 'handshake_only', 'health_and_handshake'].includes(allowedProbeTypes);
+  if (['health_only', 'handshake_only', 'health_and_handshake'].includes(allowedProbeTypes)) return true;
+  const mode = String(agentTaskSummary.openClawReadonlyValidationEndpointMode || '').trim().toLowerCase();
+  const path = String(agentTaskSummary.openClawReadonlyValidationEndpointPath || '').trim();
+  return agentTaskSummary.openClawReadonlyValidationEndpointAvailable === true
+    && mode === 'local_readonly_probe'
+    && agentTaskSummary.openClawReadonlyValidationEndpointCanExecute !== true
+    && /\/api\/openclaw\/health-handshake\/validate-readonly$/i.test(path);
 }
 
 function shouldValidateReadonlyHealthHandshake(agentTaskSummary = {}) {
