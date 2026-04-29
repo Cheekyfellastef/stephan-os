@@ -54,6 +54,32 @@ function progressClassName(percent) {
   return 'low';
 }
 
+function deriveReadonlyEndpointSummary(summary = {}, projection = {}) {
+  const stageEvidence = summary.openClawStageEvidence && typeof summary.openClawStageEvidence === 'object'
+    ? summary.openClawStageEvidence
+    : {};
+  const projectionAvailable = projection.openClawReadonlyValidationEndpointAvailable === true;
+  const stageAvailable = stageEvidence['openclaw-validation-endpoint'] === 'available';
+  const fallbackAvailable = summary.openClawReadonlyValidationEndpointAvailable === true;
+  const available = projectionAvailable || stageAvailable || fallbackAvailable;
+  return {
+    openClawReadonlyValidationEndpointAvailable: available,
+    openClawReadonlyValidationEndpointPath:
+      projection.openClawReadonlyValidationEndpointPath
+      || summary.openClawReadonlyValidationEndpointPath
+      || (available ? '/api/openclaw/health-handshake/validate-readonly' : ''),
+    openClawReadonlyValidationEndpointMode:
+      projection.openClawReadonlyValidationEndpointMode
+      || summary.openClawReadonlyValidationEndpointMode
+      || (available ? 'local_readonly_probe' : 'missing'),
+    openClawReadonlyValidationEndpointCanExecute:
+      projection.openClawReadonlyValidationEndpointCanExecute === true
+      || summary.openClawReadonlyValidationEndpointCanExecute === true
+      ? true
+      : false,
+  };
+}
+
 export default function MissionDashboardPanel({
   finalAgentView = {},
   orchestrationSelectors = {},
@@ -164,6 +190,8 @@ export default function MissionDashboardPanel({
 
   const agentTaskSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
+    const projectionOperatorSurface = agentTaskProjection?.operatorSurface || {};
+    const readonlyEndpointSummary = deriveReadonlyEndpointSummary(summary, projectionOperatorSurface);
     const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
     const primaryAction = nextActions[0] || null;
     return {
@@ -189,10 +217,7 @@ export default function MissionDashboardPanel({
       openClawAdapterStubCanExecute: summary.openClawAdapterStubCanExecute === true,
       openClawAdapterEvidenceContract: Array.isArray(summary.openClawAdapterEvidenceContract) ? summary.openClawAdapterEvidenceContract : [],
       openClawStageEvidence: summary.openClawStageEvidence && typeof summary.openClawStageEvidence === 'object' ? summary.openClawStageEvidence : {},
-      openClawReadonlyValidationEndpointAvailable: summary.openClawReadonlyValidationEndpointAvailable === true,
-      openClawReadonlyValidationEndpointPath: summary.openClawReadonlyValidationEndpointPath || '',
-      openClawReadonlyValidationEndpointMode: summary.openClawReadonlyValidationEndpointMode || 'missing',
-      openClawReadonlyValidationEndpointCanExecute: summary.openClawReadonlyValidationEndpointCanExecute === true,
+      ...readonlyEndpointSummary,
       openClawNextAction: summary.openClawNextAction || '',
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || '',
       verificationStatus: summary.verificationStatus || 'unknown',
