@@ -60,7 +60,8 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
   const adapterMode = String(adapterSummary.adapterMode || 'unknown').trim() || 'unknown';
   const adapterReadiness = String(adapterSummary.adapterReadiness || 'unknown').trim() || 'unknown';
   const stubStatus = String(adapterStub.stubStatus || 'unknown').trim() || 'unknown';
-  const connectionState = String(adapterSummary.adapterConnectionState || 'unknown').trim() || 'unknown';
+  const connection = adapterSummary.adapterConnection || {};
+  const connectionState = String(connection.connectionState || adapterSummary.adapterConnectionState || 'unknown').trim() || 'unknown';
   return {
     policyPresent: policyMode !== 'unavailable',
     policyMode,
@@ -75,6 +76,10 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
     stubHealth: String(adapterStub.stubHealth || 'unknown').trim() || 'unknown',
     connectionState,
     executionAllowed: policySummary.openClawExecutionAllowed === true,
+    connectionMode: String(connection.connectionMode || 'unknown').trim() || 'unknown',
+    connectionHealth: String(connection.healthCheckState || 'not_run').trim() || 'not_run',
+    connectionHandshake: String(connection.handshakeState || 'not_run').trim() || 'not_run',
+    connectionExecution: 'disabled',
     safeToUse: policySummary.openClawSafeToUse === true,
   };
 }
@@ -92,6 +97,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const adapter = adjudicated.openClawAdapterSummary || adjudicated.openClawPolicySummary?.openClawAdapter || {};
   const adapterTopBlocker = (Array.isArray(adapter.adapterBlockers) ? adapter.adapterBlockers[0] : '') || '';
   const adapterStub = adapter.adapterStub || {};
+  const connection = adapter.adapterConnection || {};
   const adapterStubTopBlocker = (Array.isArray(adapterStub.stubBlockers) ? adapterStub.stubBlockers[0] : '') || '';
   const openClawStageEvidence = buildOpenClawStageEvidence({
     policySummary: adjudicated.openClawPolicySummary || {},
@@ -137,6 +143,20 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterConnectionState: adapter.adapterConnectionState || 'unknown',
       openClawAdapterExecutionMode: adapter.adapterExecutionMode || 'disabled',
       openClawAdapterCanExecute: adapter.adapterCanExecute === true,
+
+      openClawAdapterConnectionMode: connection.connectionMode || 'readiness_only',
+      openClawAdapterConnectionState: connection.connectionState || adapter.adapterConnectionState || 'not_connected',
+      openClawAdapterEndpointConfigured: connection.endpointConfigured === true,
+      openClawAdapterEndpointScope: connection.endpointScope || 'none',
+      openClawAdapterHealthCheckState: connection.healthCheckState || 'not_run',
+      openClawAdapterHandshakeState: connection.handshakeState || 'not_run',
+      openClawAdapterConnectionReady: connection.connectionReady === true,
+      openClawAdapterConnectionCanExecute: connection.connectionCanExecute === true,
+      openClawAdapterConnectionExecutionAllowed: connection.connectionExecutionAllowed === true,
+      openClawAdapterConnectionNextAction: connection.connectionNextAction || '',
+      openClawAdapterConnectionHighestPriorityBlocker: (Array.isArray(connection.connectionBlockers) ? connection.connectionBlockers[0] : '') || '',
+      openClawAdapterConnectionWarnings: asArray(connection.connectionWarnings),
+      openClawAdapterConnectionEvidence: asArray(connection.connectionEvidence),
       openClawAdapterStubMode: adapterStub.stubMode || 'unknown',
       openClawAdapterStubStatus: adapterStub.stubStatus || 'unknown',
       openClawAdapterStubConnectionState: adapterStub.stubConnectionState || 'unknown',
@@ -201,6 +221,20 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterConnectionState: adapter.adapterConnectionState || 'unknown',
       openClawAdapterExecutionMode: adapter.adapterExecutionMode || 'disabled',
       openClawAdapterCanExecute: adapter.adapterCanExecute === true,
+
+      openClawAdapterConnectionMode: connection.connectionMode || 'readiness_only',
+      openClawAdapterConnectionState: connection.connectionState || adapter.adapterConnectionState || 'not_connected',
+      openClawAdapterEndpointConfigured: connection.endpointConfigured === true,
+      openClawAdapterEndpointScope: connection.endpointScope || 'none',
+      openClawAdapterHealthCheckState: connection.healthCheckState || 'not_run',
+      openClawAdapterHandshakeState: connection.handshakeState || 'not_run',
+      openClawAdapterConnectionReady: connection.connectionReady === true,
+      openClawAdapterConnectionCanExecute: connection.connectionCanExecute === true,
+      openClawAdapterConnectionExecutionAllowed: connection.connectionExecutionAllowed === true,
+      openClawAdapterConnectionNextAction: connection.connectionNextAction || '',
+      openClawAdapterConnectionHighestPriorityBlocker: (Array.isArray(connection.connectionBlockers) ? connection.connectionBlockers[0] : '') || '',
+      openClawAdapterConnectionWarnings: asArray(connection.connectionWarnings),
+      openClawAdapterConnectionEvidence: asArray(connection.connectionEvidence),
       openClawAdapterStubMode: adapterStub.stubMode || 'unknown',
       openClawAdapterStubStatus: adapterStub.stubStatus || 'unknown',
       openClawAdapterStubConnectionState: adapterStub.stubConnectionState || 'unknown',
@@ -251,6 +285,20 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterConnectionState: adapter.adapterConnectionState || 'unknown',
       openClawAdapterExecutionMode: adapter.adapterExecutionMode || 'disabled',
       openClawAdapterCanExecute: adapter.adapterCanExecute === true,
+
+      openClawAdapterConnectionMode: connection.connectionMode || 'readiness_only',
+      openClawAdapterConnectionState: connection.connectionState || adapter.adapterConnectionState || 'not_connected',
+      openClawAdapterEndpointConfigured: connection.endpointConfigured === true,
+      openClawAdapterEndpointScope: connection.endpointScope || 'none',
+      openClawAdapterHealthCheckState: connection.healthCheckState || 'not_run',
+      openClawAdapterHandshakeState: connection.handshakeState || 'not_run',
+      openClawAdapterConnectionReady: connection.connectionReady === true,
+      openClawAdapterConnectionCanExecute: connection.connectionCanExecute === true,
+      openClawAdapterConnectionExecutionAllowed: connection.connectionExecutionAllowed === true,
+      openClawAdapterConnectionNextAction: connection.connectionNextAction || '',
+      openClawAdapterConnectionHighestPriorityBlocker: (Array.isArray(connection.connectionBlockers) ? connection.connectionBlockers[0] : '') || '',
+      openClawAdapterConnectionWarnings: asArray(connection.connectionWarnings),
+      openClawAdapterConnectionEvidence: asArray(connection.connectionEvidence),
       openClawAdapterStubMode: adapterStub.stubMode || 'unknown',
       openClawAdapterStubStatus: adapterStub.stubStatus || 'unknown',
       openClawAdapterStubConnectionState: adapterStub.stubConnectionState || 'unknown',
