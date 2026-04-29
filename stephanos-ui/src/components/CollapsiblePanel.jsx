@@ -23,9 +23,9 @@ export default function CollapsiblePanel({
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
-      <div className="panel-header-row">
-        <div className="panel-heading-wrap">
-          <div className="panel-collapse-toggle">
+      <div className="panel-header-row" data-pane-drag-handle="true">
+        <div className="panel-heading-wrap" data-pane-drag-handle="true">
+          <div className="panel-collapse-toggle" data-pane-drag-handle="true">
             <button
               type="button"
               className="stephanos-canon-rotating-chevron-button panel-collapse-button"

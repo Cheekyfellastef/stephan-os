@@ -250,6 +250,33 @@ body {
   display: none;
 }
 
+
+.operator-pane-slot [data-pane-drag-handle="true"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.operator-pane-slot .panel-body,
+.operator-pane-slot .panel-body *,
+.operator-pane-slot p,
+.operator-pane-slot pre,
+.operator-pane-slot code,
+.operator-pane-slot .assistant-answer-text,
+.operator-pane-slot .diagnostics-pre,
+.operator-pane-slot .handoff-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.operator-pane-slot .panel-body button,
+.operator-pane-slot .panel-body input,
+.operator-pane-slot .panel-body textarea,
+.operator-pane-slot .panel-body select,
+.operator-pane-slot .panel-body a {
+  touch-action: manipulation;
+}
+
+
 .collapsible-panel.is-collapsed {
   min-height: 0;
 }
