@@ -366,3 +366,27 @@ test('openclaw capability trial projection remains readonly and non-executing af
   assert.equal(projection.operatorSurface.openClawCapabilityTrial.executionAllowed, false);
   assert.equal(projection.operatorSurface.openClawCapabilityReport.executionAllowed, false);
 });
+
+test('agent task projection sets openclaw capability trial ready when readonly validation truth succeeds', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'succeeded',
+            healthState: 'passing',
+            handshakeState: 'compatible',
+            protocol: { compatible: true },
+            readonlyAssurance: { readonlyOnly: true },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.adapterValidated, true);
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.trialStatus, 'ready');
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.nextAction, 'Run readonly capability trial.');
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.executionAllowed, false);
+  assert.deepEqual(projection.operatorSurface.openClawCapabilityTrial.forbiddenTrialActions, ['execute_command', 'edit_file', 'control_browser', 'write_git', 'mutate_system']);
+});
