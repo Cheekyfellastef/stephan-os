@@ -78,6 +78,13 @@ import {
   STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY,
 } from './utils/paneOrderPersistence.js';
 import { getPaneMoveAvailability, resolvePaneCollapsedState } from './utils/stephanosPaneBehavior.js';
+import {
+  OPENCLAW_DEFAULT_HOST,
+  OPENCLAW_DEFAULT_PORT,
+  OPENCLAW_ENDPOINT_STORAGE_KEY,
+  normalizeEndpointDraft,
+  resolveReadonlyValidationEndpoint,
+} from './utils/openClawEndpointConfig.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
@@ -267,8 +274,8 @@ export default function App() {
   const [missionBridgeTruth, setMissionBridgeTruth] = useState(null);
   const [openClawEndpointDraft, setOpenClawEndpointDraft] = useState({
     endpointLabel: 'Local OpenClaw Adapter',
-    endpointHost: '127.0.0.1',
-    endpointPort: '',
+    endpointHost: OPENCLAW_DEFAULT_HOST,
+    endpointPort: OPENCLAW_DEFAULT_PORT,
     endpointScope: 'local_only',
     expectedProtocolVersion: 'v1',
     expectedAdapterIdentity: '',
@@ -672,6 +679,8 @@ export default function App() {
   }, [finalRouteTruth]);
 
   async function requestOpenClawReadonlyValidation(endpointDraft = {}) {
+    const normalizedDraft = normalizeEndpointDraft(endpointDraft);
+    const resolvedEndpoint = resolveReadonlyValidationEndpoint(normalizedDraft);
     setOpenClawReadonlyValidation((previous) => ({
       ...previous,
       validationStatus: 'running',
@@ -682,8 +691,8 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          endpointHost: endpointDraft.endpointHost,
-          endpointPort: endpointDraft.endpointPort,
+          endpointHost: resolvedEndpoint.host,
+          endpointPort: resolvedEndpoint.port,
           endpointScope: endpointDraft.endpointScope,
           expectedProtocolVersion: endpointDraft.expectedProtocolVersion,
           expectedAdapterIdentity: endpointDraft.expectedAdapterIdentity,
@@ -693,12 +702,12 @@ export default function App() {
       const payload = await response.json();
       setOpenClawReadonlyValidation({
         ...payload,
-        validationMode: endpointDraft.allowedProbeTypes || 'health_and_handshake',
+        validationMode: normalizedDraft.allowedProbeTypes || 'health_and_handshake',
         safeProbePathAvailable: true,
         readonlyValidationEndpoint: OPENCLAW_READONLY_VALIDATION_ENDPOINT,
         healthState: payload?.healthResult?.state || 'unknown',
         handshakeState: payload?.handshakeResult?.state || 'unknown',
-        protocolCompatible: payload?.handshakeResult?.protocolCompatible === true,
+        protocolCompatible: payload?.handshakeResult?.protocolCompatible === true || (payload?.validationStatus === 'succeeded' && payload?.handshakeResult?.state === 'compatible'),
         protocolVersion: payload?.handshakeResult?.protocolVersion || '',
         adapterIdentity: payload?.handshakeResult?.adapterIdentity || '',
         readonlyAssurance: payload?.handshakeResult?.readonlyAssurance || {},
@@ -710,11 +719,13 @@ export default function App() {
         openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
         openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
         openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
+        resolvedValidationHost: resolvedEndpoint.host,
+        resolvedValidationPort: resolvedEndpoint.port,
       });
     } catch (error) {
       setOpenClawReadonlyValidation({
         validationStatus: 'unavailable',
-        validationMode: endpointDraft.allowedProbeTypes || 'health_and_handshake',
+        validationMode: normalizedDraft.allowedProbeTypes || 'health_and_handshake',
         validationSource: 'backend_readonly_probe',
         validationBlockers: [String(error?.message || 'Readonly validation request failed.')],
         validationEvidence: ['safe-probe-path:available'],
@@ -724,9 +735,31 @@ export default function App() {
         openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
         openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
         openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
+        resolvedValidationHost: resolvedEndpoint.host,
+        resolvedValidationPort: resolvedEndpoint.port,
       });
     }
   }
+
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(OPENCLAW_ENDPOINT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = normalizeEndpointDraft(JSON.parse(raw));
+      setOpenClawEndpointDraft((prev) => ({ ...prev, ...parsed }));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const normalized = normalizeEndpointDraft(openClawEndpointDraft);
+    const resolved = resolveReadonlyValidationEndpoint(normalized);
+    const toPersist = { ...normalized, endpointHost: resolved.host, endpointPort: resolved.port };
+    try { window.localStorage.setItem(OPENCLAW_ENDPOINT_STORAGE_KEY, JSON.stringify(toPersist)); } catch {}
+  }, [openClawEndpointDraft]);
 
   const ignitionModeBanner = useMemo(() => {
     const pathname = runtimeFingerprint.currentPathname || '';
