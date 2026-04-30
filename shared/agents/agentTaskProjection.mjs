@@ -1,5 +1,5 @@
 import { adjudicateAgentTaskLayer } from './agentTaskAdjudicator.mjs';
-import { buildOpenClawCapabilityReport, buildOpenClawCapabilityTrialState } from './openClawCapabilityTrial.mjs';
+import { buildOpenClawCapabilityReport, buildOpenClawCapabilityTrialState, evaluateReadonlyValidationTruth } from './openClawCapabilityTrial.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -106,12 +106,13 @@ function buildOpenClawControlPlane({ policySummary = {}, operatorSurface = {} } 
   const validationAvailable = operatorSurface.openClawReadonlyValidationEndpointAvailable === true;
   const validationStatus = String(operatorSurface.openClawHealthValidationStatus || 'idle');
   const executionAllowed = false;
+  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
   const openClawControlMode = killSwitchEngaged
     ? 'disabled'
     : paused
       ? 'paused'
       : validationAvailable
-        ? (validationStatus === 'passed' ? 'ready_for_operator_review' : 'readonly_validation')
+        ? (readonlyTruth.adapterValidated ? 'ready_for_operator_review' : 'readonly_validation')
         : 'readonly_validation';
   const openClawControlNextAction = killSwitchEngaged
     ? 'Kill switch engaged: OpenClaw control plane blocked. Execution remains disabled.'
@@ -121,8 +122,8 @@ function buildOpenClawControlPlane({ policySummary = {}, operatorSurface = {} } 
         ? 'Start or repair readonly adapter, then re-run readonly health/handshake validation.'
         : validationStatus === 'idle'
           ? 'Validate readonly health/handshake.'
-          : validationStatus === 'passed'
-            ? 'No action required for readonly validation. OpenClaw capability trial may be run in proposal-only mode. Execution remains disabled.'
+          : readonlyTruth.adapterValidated
+            ? 'Run readonly capability trial.'
             : 'Re-run readonly health/handshake validation.';
   return {
     openClawControlMode,
@@ -188,6 +189,15 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   };
   const capabilityTrial = buildOpenClawCapabilityTrialState({ operatorSurface: capabilityTrialSeed });
   const capabilityReport = buildOpenClawCapabilityReport({ operatorSurface: capabilityTrialSeed });
+  const openClawControlPlane = buildOpenClawControlPlane({
+    policySummary: adjudicated.openClawPolicySummary || {},
+    operatorSurface: {
+      ...capabilityTrialSeed,
+      openClawKillSwitchEngaged: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged',
+      openClawPauseState: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged' ? 'paused' : 'resumed',
+      openClawReadonlyValidationEndpointAvailable: healthHandshake.readonlyValidationEndpoint?.available === true,
+    },
+  });
 
   return {
     generatedAt: adjudicated.generatedAt,
@@ -210,20 +220,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawDirectAutomationDisabled: adjudicated.openClawPolicySummary?.integrationMode === 'policy_only',
       openClawKillSwitchEngaged: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged',
       openClawPauseState: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged' ? 'paused' : 'resumed',
-      openClawControlMode: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged' ? 'disabled' : 'readonly_validation',
+      openClawControlMode: openClawControlPlane.openClawControlMode,
       openClawReadonlyValidationAvailable: healthHandshake.readonlyValidationEndpoint?.available === true,
       openClawReadonlyValidationStatus: healthHandshake.validationStatus || healthHandshake.validation?.validationStatus || 'idle',
-      openClawControlNextAction: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged'
-        ? 'Kill switch engaged: OpenClaw control plane blocked. Execution remains disabled.'
-        : (healthHandshake.readonlyValidationEndpoint?.available === true
-          ? (((healthHandshake.validationStatus === 'succeeded' || healthHandshake.validationStatus === 'passed')
-            && (healthHandshake.healthState || connection.healthCheckState) === 'passing'
-            && (healthHandshake.handshakeState || connection.handshakeState) === 'compatible'
-            && protocol.compatible === true)
-              ? 'Run readonly OpenClaw capability trial.'
-              : 'Validate readonly health/handshake.')
-          : 'Start or repair readonly adapter, then re-run readonly health/handshake validation.'),
-      openClawControlEvidence: ['execution:disabled'],
+      openClawControlNextAction: openClawControlPlane.openClawControlNextAction,
+      openClawControlEvidence: openClawControlPlane.openClawControlEvidence,
       openClawHighestPriorityBlocker: adjudicated.openClawPolicySummary?.highestPriorityBlocker || '',
       openClawNextAction: adjudicated.openClawPolicySummary?.nextAction || '',
       openClawAdapterMode: adapter.adapterMode || 'unknown',

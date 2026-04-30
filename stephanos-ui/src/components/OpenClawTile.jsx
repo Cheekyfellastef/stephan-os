@@ -280,11 +280,16 @@ export default function OpenClawTile({
           <li><strong>Readonly validation available:</strong> {operatorTask?.openClawReadonlyValidationAvailable ? 'yes' : 'no'}</li>
           <li><strong>Readonly validation status:</strong> {operatorTask?.openClawReadonlyValidationStatus || validationStatus}</li>
           <li><strong>Execution allowed:</strong> no (disabled)</li>
-          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || (validationSucceeded ? 'No action required for readonly validation. OpenClaw capability trial may be run in proposal-only mode. Execution remains disabled.' : 'Validate readonly health/handshake. Execution remains disabled.')}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || trialNextAction}</li>
         </ul>
-        <p className="muted">Kill switch engaged: OpenClaw control plane blocked.</p>
-        <p className="muted">Paused: readonly validation is paused. Execution remains disabled.</p>
-        <p className="muted">Readonly validation ready. Execution remains disabled.</p>
+        {(operatorTask?.openClawKillSwitchEngaged || killSwitchEngagedUi) ? (
+          <p className="muted">Kill switch engaged: OpenClaw control plane blocked.</p>
+        ) : null}
+        {(operatorTask?.openClawPauseState || pauseStateUi) === 'paused' ? (
+          <p className="muted">Paused: readonly validation is paused. Execution remains disabled.</p>
+        ) : validationSucceeded ? (
+          <p className="muted">Readonly validation ready. Execution remains disabled.</p>
+        ) : null}
         <button type="button" onClick={() => setKillSwitchEngagedUi(true)}>Engage Kill Switch</button>
         <button type="button" onClick={() => setPauseStateUi('paused')}>Pause OpenClaw control plane</button>
         <button type="button" onClick={() => setPauseStateUi('resumed')}>Resume readonly validation/control plane</button>
