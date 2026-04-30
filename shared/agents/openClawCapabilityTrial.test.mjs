@@ -29,3 +29,15 @@ test('capability report includes blocked execution/mutation surfaces', () => {
   assert.equal(report.adapterIdentity, 'openclaw-readonly-adapter-stub');
   assert.deepEqual(report.blockedCapabilities, ['command_execution', 'file_mutation', 'browser_control', 'git_write', 'autonomous_action']);
 });
+
+test('capability report infers compatible protocol from succeeded validation plus compatible handshake', () => {
+  const report = buildOpenClawCapabilityReport({ operatorSurface: {
+    openClawHealthValidationStatus: 'succeeded',
+    openClawHealthState: 'passing',
+    openClawHandshakeState: 'compatible',
+    openClawProtocolCompatible: false,
+    openClawReadonlyAssurance: { readonlyOnly: true },
+  } });
+  assert.equal(report.protocolCompatibility, 'compatible');
+  assert.equal(report.executionAllowed, false);
+});

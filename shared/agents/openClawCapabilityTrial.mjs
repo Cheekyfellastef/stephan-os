@@ -18,8 +18,9 @@ export const OPENCLAW_FORBIDDEN_TRIAL_ACTIONS = [
   'mutate_system',
 ];
 
-export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {}) {
-  const validationSucceeded = ['succeeded', 'passed'].includes(String(operatorSurface.openClawHealthValidationStatus || '').trim());
+export function evaluateReadonlyValidationTruth({ operatorSurface = {} } = {}) {
+  const validationStatus = String(operatorSurface.openClawHealthValidationStatus || '').trim();
+  const validationSucceeded = ['succeeded', 'passed'].includes(validationStatus);
   const healthPassing = operatorSurface.openClawHealthState === 'passing';
   const handshakeCompatible = operatorSurface.openClawHandshakeState === 'compatible';
   const protocolCompatible = operatorSurface.openClawProtocolCompatible === true || (validationSucceeded && handshakeCompatible);
@@ -29,6 +30,20 @@ export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {})
     && handshakeCompatible
     && protocolCompatible
     && readonlyAsserted;
+  return {
+    validationStatus,
+    validationSucceeded,
+    healthPassing,
+    handshakeCompatible,
+    protocolCompatible,
+    readonlyAsserted,
+    adapterValidated,
+  };
+}
+
+export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {}) {
+  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
+  const adapterValidated = readonlyTruth.adapterValidated;
   const trialStatus = adapterValidated ? 'ready' : 'not_started';
   const nextAction = adapterValidated
     ? 'Run readonly capability trial.'
@@ -53,12 +68,13 @@ export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {})
 }
 
 export function buildOpenClawCapabilityReport({ operatorSurface = {} } = {}) {
+  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
   return {
     adapterIdentity: asText(operatorSurface.openClawAdapterIdentity, 'missing'),
     healthState: asText(operatorSurface.openClawHealthState, 'not_run'),
     handshakeState: asText(operatorSurface.openClawHandshakeState, 'not_run'),
-    protocolCompatibility: operatorSurface.openClawProtocolCompatible === true ? 'compatible' : 'not_compatible',
-    readonlyAssurance: operatorSurface.openClawReadonlyAssurance?.readonlyOnly === true ? 'asserted' : 'not_asserted',
+    protocolCompatibility: readonlyTruth.protocolCompatible ? 'compatible' : 'not_compatible',
+    readonlyAssurance: readonlyTruth.readonlyAsserted ? 'asserted' : 'not_asserted',
     executionAllowed: false,
     declaredSafeCapabilities: ['health_check', 'handshake_check', 'identity_report', 'safety_posture_report'],
     blockedCapabilities: ['command_execution', 'file_mutation', 'browser_control', 'git_write', 'autonomous_action'],

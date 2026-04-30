@@ -390,3 +390,56 @@ test('agent task projection sets openclaw capability trial ready when readonly v
   assert.equal(projection.operatorSurface.openClawCapabilityTrial.executionAllowed, false);
   assert.deepEqual(projection.operatorSurface.openClawCapabilityTrial.forbiddenTrialActions, ['execute_command', 'edit_file', 'control_browser', 'write_git', 'mutate_system']);
 });
+
+test('agent task projection keeps lifecycle/report/capability truth aligned for succeeded readonly validation', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawPolicy: { killSwitchState: 'available' },
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'succeeded',
+            healthState: 'passing',
+            handshakeState: 'compatible',
+            protocol: { compatible: false },
+            readonlyValidationEndpoint: { available: true },
+            readonlyAssurance: { readonlyOnly: true },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.adapterValidated, true);
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.trialStatus, 'ready');
+  assert.equal(projection.operatorSurface.openClawCapabilityReport.protocolCompatibility, 'compatible');
+  assert.equal(projection.operatorSurface.openClawControlNextAction, 'Run readonly capability trial.');
+  assert.equal(projection.operatorSurface.openClawKillSwitchEngaged, false);
+  assert.equal(projection.operatorSurface.openClawPauseState, 'resumed');
+  assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
+});
+
+test('agent task projection blocks trial progression when protocol compatibility remains invalid', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'failed',
+            healthState: 'passing',
+            handshakeState: 'mismatch',
+            protocol: { compatible: false, mismatchReason: 'version_mismatch' },
+            readonlyValidationEndpoint: { available: true },
+            readonlyAssurance: { readonlyOnly: true },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.adapterValidated, false);
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.trialStatus, 'not_started');
+  assert.equal(projection.operatorSurface.openClawCapabilityReport.protocolCompatibility, 'not_compatible');
+  assert.match(projection.operatorSurface.openClawControlNextAction, /validation/i);
+  assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
+});
