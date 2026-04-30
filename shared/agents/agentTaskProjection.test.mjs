@@ -343,3 +343,26 @@ test('openclaw control plane sequencing: kill switch engaged stays blocked and s
   assert.equal(projection.operatorSurface.openClawKillSwitchEngaged, true);
   assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
 });
+
+test('openclaw capability trial projection remains readonly and non-executing after validation-like signal', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'succeeded',
+            healthState: 'passing',
+            handshakeState: 'compatible',
+            protocol: { compatible: true },
+            readonlyValidationEndpoint: { available: true },
+            readonlyAssurance: { readonlyOnly: true },
+            adapterIdentity: { id: 'openclaw-readonly-adapter-stub' },
+          },
+        },
+      },
+    },
+  });
+  assert.equal(typeof projection.operatorSurface.openClawCapabilityTrialNextAction, 'string');
+  assert.equal(projection.operatorSurface.openClawCapabilityTrial.executionAllowed, false);
+  assert.equal(projection.operatorSurface.openClawCapabilityReport.executionAllowed, false);
+});

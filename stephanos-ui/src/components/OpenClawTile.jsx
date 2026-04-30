@@ -72,6 +72,20 @@ export default function OpenClawTile({
   const adapterUnreachable = validationStatus === 'failed'
     && (operatorTask?.openClawHealthState === 'unavailable')
     && (operatorTask?.openClawHandshakeState === 'unavailable');
+  const capabilityTrial = operatorTask?.openClawCapabilityTrial || null;
+  const capabilityReport = operatorTask?.openClawCapabilityReport || null;
+  const validationSucceeded = validationStatus === 'succeeded'
+    && operatorTask?.openClawHealthState === 'passing'
+    && operatorTask?.openClawHandshakeState === 'compatible'
+    && operatorTask?.openClawProtocolCompatible === true;
+  const [trialRunRequested, setTrialRunRequested] = useState(false);
+  const trialStatus = capabilityTrial?.trialStatus || (validationSucceeded ? (trialRunRequested ? 'report_ready' : 'ready') : 'not_started');
+  const trialNextAction = capabilityTrial?.nextAction || (!validationSucceeded
+    ? 'Validate readonly adapter first.'
+    : trialStatus === 'report_ready'
+      ? 'Review OpenClaw capability report.'
+      : 'Run readonly capability trial.');
+  const reportVisible = trialStatus === 'report_ready' || (capabilityReport && validationSucceeded);
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -217,9 +231,39 @@ export default function OpenClawTile({
             Stephanos is alive, but the readonly OpenClaw adapter is not reachable at {adapterHost}:{adapterPort}. Start or repair the readonly adapter. Execution remains disabled.
           </p>
         ) : null}
-        <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation({ ...endpointDraft, endpointHost: resolvedValidationEndpoint.host, endpointPort: resolvedValidationEndpoint.port })}>
-          {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
+        {validationSucceeded ? (
+          <p className="muted"><strong>Readonly adapter validated. OpenClaw can be observed and assessed. Execution remains disabled.</strong></p>
+        ) : null}
+        <button type="button" disabled={!validationButtonEnabled} onClick={() => { setTrialRunRequested(false); onRequestReadonlyValidation({ ...endpointDraft, endpointHost: resolvedValidationEndpoint.host, endpointPort: resolvedValidationEndpoint.port }); }}>
+          {validationButtonEnabled ? (validationSucceeded ? 'Re-check readonly health/handshake' : 'Validate readonly health/handshake') : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
+      </section>
+      <section className="openclaw-section">
+        <h4>OpenClaw Capability Trial</h4>
+        <ul>
+          <li><strong>Trial status:</strong> {trialStatus}</li>
+          <li><strong>Capability mode:</strong> {capabilityTrial?.capabilityMode || 'readonly_observation'}</li>
+          <li><strong>Adapter validated:</strong> {validationSucceeded ? 'yes' : 'no'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+          <li><strong>Operator approval required:</strong> yes</li>
+          <li><strong>Allowed readonly trial actions:</strong> {(capabilityTrial?.allowedTrialActions || ['report_identity', 'report_declared_capabilities', 'report_safety_posture', 'report_required_permissions']).join(', ')}</li>
+          <li><strong>Forbidden actions:</strong> {(capabilityTrial?.forbiddenTrialActions || ['execute_command', 'edit_file', 'control_browser', 'write_git', 'mutate_system']).join(', ')}</li>
+          <li><strong>Next action:</strong> {trialNextAction}</li>
+        </ul>
+        <button type="button" disabled={!validationSucceeded} onClick={() => setTrialRunRequested(true)}>Run readonly capability trial</button>
+        {reportVisible ? (
+          <ul>
+            <li><strong>Adapter identity:</strong> {capabilityReport?.adapterIdentity || operatorTask?.openClawAdapterIdentity || 'missing'}</li>
+            <li><strong>Health state:</strong> {capabilityReport?.healthState || operatorTask?.openClawHealthState || 'not_run'}</li>
+            <li><strong>Handshake state:</strong> {capabilityReport?.handshakeState || operatorTask?.openClawHandshakeState || 'not_run'}</li>
+            <li><strong>Protocol compatibility:</strong> {capabilityReport?.protocolCompatibility || (operatorTask?.openClawProtocolCompatible ? 'compatible' : 'not_compatible')}</li>
+            <li><strong>Readonly assurance:</strong> {capabilityReport?.readonlyAssurance || (operatorTask?.openClawReadonlyAssurance?.readonlyOnly ? 'asserted' : 'not_asserted')}</li>
+            <li><strong>Execution allowed:</strong> no</li>
+            <li><strong>Declared safe capabilities:</strong> {(capabilityReport?.declaredSafeCapabilities || ['health_check', 'handshake_check', 'identity_report', 'safety_posture_report']).join(', ')}</li>
+            <li><strong>Blocked capabilities:</strong> {(capabilityReport?.blockedCapabilities || ['command_execution', 'file_mutation', 'browser_control', 'git_write', 'autonomous_action']).join(', ')}</li>
+            <li><strong>Suggested next stage:</strong> {capabilityReport?.suggestedNextStage || 'Operator-reviewed proposal generation only.'}</li>
+          </ul>
+        ) : null}
       </section>
       <section className="openclaw-section">
         <h4>Control Plane Safety Lifecycle</h4>
@@ -235,7 +279,7 @@ export default function OpenClawTile({
           <li><strong>Readonly validation available:</strong> {operatorTask?.openClawReadonlyValidationAvailable ? 'yes' : 'no'}</li>
           <li><strong>Readonly validation status:</strong> {operatorTask?.openClawReadonlyValidationStatus || validationStatus}</li>
           <li><strong>Execution allowed:</strong> no (disabled)</li>
-          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || 'Validate readonly health/handshake. Execution remains disabled.'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || (validationSucceeded ? 'No action required for readonly validation. OpenClaw capability trial may be run in proposal-only mode. Execution remains disabled.' : 'Validate readonly health/handshake. Execution remains disabled.')}</li>
         </ul>
         <p className="muted">Kill switch engaged: OpenClaw control plane blocked.</p>
         <p className="muted">Paused: readonly validation is paused. Execution remains disabled.</p>
