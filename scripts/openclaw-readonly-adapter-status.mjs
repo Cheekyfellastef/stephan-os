@@ -7,10 +7,10 @@ async function main() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     const available = payload?.state === 'available';
-    console.log(JSON.stringify({ available, host, port, executionAllowed: payload?.executionAllowed === true ? true : false, service: payload?.service || '' }));
+    console.log(JSON.stringify({ available, host, port, executionAllowed: payload?.executionAllowed === true ? true : false, service: payload?.service || '', nextAction: available ? 'Readonly OpenClaw adapter validated. Keep execution disabled until operator approval.' : 'Start or repair the readonly adapter: npm run openclaw:stub:ensure' }));
     process.exit(available ? 0 : 1);
   } catch {
-    console.log(JSON.stringify({ available: false, host, port, executionAllowed: false, service: 'openclaw-readonly-adapter-stub' }));
+    console.log(JSON.stringify({ available: false, host, port, executionAllowed: false, service: 'openclaw-readonly-adapter-stub', nextAction: 'Start or repair the readonly adapter: npm run openclaw:stub:ensure' }));
     process.exit(1);
   }
 }

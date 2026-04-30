@@ -130,6 +130,23 @@ $serveMappingPresent = Test-ExpectedServeMapping -ServeStatusText $tailscaleServ
 $dnsWarnings = Find-TailscaleDnsWarnings -StatusText $tailscaleStatusText
 $hostedResult = Test-Url -Url $expectedServeHealthUrl -TimeoutSeconds $HttpTimeoutSeconds
 
+
+$openClawStubStatus = $null
+$openClawStubRunning = $false
+$openClawStubExecutionDisabled = $true
+$openClawStubStatusError = $null
+
+try {
+    $openClawStubRaw = npm run --silent openclaw:stub:status 2>&1 | Out-String
+    if (-not [string]::IsNullOrWhiteSpace($openClawStubRaw)) {
+        $openClawStubStatus = $openClawStubRaw.Trim() | ConvertFrom-Json
+        $openClawStubRunning = $openClawStubStatus.available -eq $true
+        $openClawStubExecutionDisabled = $openClawStubStatus.executionAllowed -ne $true
+    }
+}
+catch {
+    $openClawStubStatusError = $_.Exception.Message
+}
 $usableBridge = $localResult.Healthy -and $hostedResult.Healthy
 
 Write-Host ''
@@ -194,6 +211,21 @@ Write-Host '--- Hosted Bridge ---'
     Error = if ($hostedResult.Error) { $hostedResult.Error } else { 'none' }
 } | Format-List
 
+
+
+Write-Host '--- OpenClaw Readonly Stub ---'
+[PSCustomObject]@{
+    Host = if ($openClawStubStatus) { [string]$openClawStubStatus.host } else { '127.0.0.1' }
+    Port = if ($openClawStubStatus) { [string]$openClawStubStatus.port } else { '8790' }
+    StubRunning = Format-Boolean -Value $openClawStubRunning
+    ValidationReachable = Format-Boolean -Value $openClawStubRunning
+    SafetyExecutionDisabled = Format-Boolean -Value $openClawStubExecutionDisabled
+    NextAction = if ($openClawStubRunning) { 'Readonly adapter validated. Keep execution disabled.' } else { 'Run: npm run openclaw:stub:ensure' }
+} | Format-List
+
+if ($openClawStubStatusError) {
+    Write-Host "openclaw stub status error: $openClawStubStatusError"
+}
 Write-Host '--- Overall ---'
 [PSCustomObject]@{
     BridgeUsable = Format-Boolean -Value $usableBridge
