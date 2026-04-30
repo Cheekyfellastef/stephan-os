@@ -11,6 +11,9 @@ function adjudicateValidation(source = {}) {
   const safeProbePathAvailable = validation.safeProbePathAvailable === true;
   const validationMode = normalizeEnum(validation.validationMode, ['none', 'health_only', 'handshake_only', 'health_and_handshake', 'blocked', 'unknown'], 'none');
   const validationStatus = normalizeEnum(validation.validationStatus, ['idle', 'not_ready', 'ready', 'running', 'succeeded', 'failed', 'blocked', 'unknown'], 'idle');
+  const healthState = normalizeEnum(validation.healthResult?.state || validation.healthState, ['unavailable', 'not_run', 'passing', 'degraded', 'failing', 'blocked', 'unknown'], 'unknown');
+  const handshakeState = normalizeEnum(validation.handshakeResult?.state || validation.handshakeState, ['unavailable', 'not_run', 'compatible', 'incompatible', 'degraded', 'blocked', 'unknown'], 'unknown');
+  const failedUnavailable = validationStatus === 'failed' && healthState === 'unavailable' && handshakeState === 'unavailable';
   return {
     validationRequested: validation.validationRequested === true,
     validationMode,
@@ -22,9 +25,11 @@ function adjudicateValidation(source = {}) {
     validationBlockers: blockers,
     validationWarnings: warnings,
     validationEvidence: asList(validation.validationEvidence),
-    validationNextAction: asText(validation.validationNextAction) || (safeProbePathAvailable
-      ? 'Validate readonly OpenClaw health/handshake telemetry.'
-      : 'Readonly validation requires a safe local probe endpoint.'),
+    validationNextAction: asText(validation.validationNextAction) || (!safeProbePathAvailable
+      ? 'Readonly validation requires a safe local probe endpoint.'
+      : failedUnavailable
+        ? 'Start or configure readonly OpenClaw local adapter.'
+        : 'Validate readonly OpenClaw health/handshake telemetry.'),
     safeProbePathAvailable,
   };
 }

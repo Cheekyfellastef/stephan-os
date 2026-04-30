@@ -86,3 +86,15 @@ test('canExecute claims never open execution gates', () => {
   assert.equal(r.capabilityDeclaration.canExecuteActions, false);
   assert.equal(r.capabilityDeclaration.canRunCommands, false);
 });
+
+test('failed unavailable validation recommends starting/configuring local readonly adapter', () => {
+  const r = adjudicateOpenClawHealthHandshake({
+    validation: {
+      safeProbePathAvailable: true,
+      validationStatus: 'failed',
+      healthResult: { state: 'unavailable' },
+      handshakeResult: { state: 'unavailable' },
+    },
+  });
+  assert.equal(r.validation.validationNextAction, 'Start or configure readonly OpenClaw local adapter.');
+});

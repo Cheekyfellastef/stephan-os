@@ -63,6 +63,11 @@ export default function OpenClawTile({
     && (operatorTask?.openClawAdapterConnectionConfigBlockers?.length || 0) === 0
     && validationEndpointAvailable
     && validationStatus !== 'running';
+  const adapterHost = operatorTask?.openClawAdapterEndpointHost || endpointDraft.endpointHost || '127.0.0.1';
+  const adapterPort = operatorTask?.openClawAdapterEndpointPort || endpointDraft.endpointPort || '8790';
+  const adapterUnreachable = validationStatus === 'failed'
+    && (operatorTask?.openClawHealthState === 'unavailable')
+    && (operatorTask?.openClawHandshakeState === 'unavailable');
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -192,6 +197,11 @@ export default function OpenClawTile({
           <li><strong>Top warning:</strong> {operatorTask?.openClawHealthValidationWarnings?.[0] || 'none'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawHealthValidationNextAction || operatorTask?.openClawHealthHandshakeNextAction || 'not reported'}</li>
         </ul>
+        {adapterUnreachable ? (
+          <p className="muted">
+            Stephanos is alive, but the readonly OpenClaw adapter is not reachable at {adapterHost}:{adapterPort}. Start or configure the local adapter, then retry validation. Execution remains disabled.
+          </p>
+        ) : null}
         <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>
           {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
