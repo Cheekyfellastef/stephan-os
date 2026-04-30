@@ -148,6 +148,7 @@ catch {
     $openClawStubStatusError = $_.Exception.Message
 }
 $usableBridge = $localResult.Healthy -and $hostedResult.Healthy
+$allHealthy = $localResult.Healthy -and $hostedResult.Healthy -and $openClawStubRunning -and $openClawStubExecutionDisabled
 
 Write-Host ''
 Write-Host '--- Scheduled Task ---'
@@ -241,6 +242,11 @@ Write-Host '--- Overall ---'
 } | Format-List
 
 Write-Host '--- What do I run now? ---'
-Write-Host '  npm run stephanos:battle-bridge:status'
-Write-Host '  npm run stephanos:battle-bridge:repair'
-Write-Host '  Then re-run readonly validation in the OpenClaw tile UI (execution remains disabled).'
+if ($allHealthy) {
+    Write-Host '  No action required. Battle Bridge and readonly OpenClaw adapter are healthy. Execution remains disabled.'
+}
+else {
+    Write-Host '  npm run stephanos:battle-bridge:status'
+    Write-Host '  npm run stephanos:battle-bridge:repair'
+    Write-Host '  Then re-run readonly validation in the OpenClaw tile UI (execution remains disabled).'
+}

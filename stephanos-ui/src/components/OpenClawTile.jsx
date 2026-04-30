@@ -13,6 +13,7 @@ import { runOpenClawScan } from './openclaw/openclawScanController.js';
 import { buildOpenClawIntegrationSnapshot } from './openclaw/openclawIntegrationAdapter.js';
 import { buildOpenClawCandidatePrompts } from './openclaw/openclawPromptGenerator.js';
 import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditModel.js';
+import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
 
 function getTone(status = '') {
   return status === 'blocked' ? 'blocked' : 'allowed';
@@ -58,7 +59,8 @@ export default function OpenClawTile({
     };
   const validationEndpointAvailable = operatorTask?.openClawReadonlyValidationEndpointAvailable === true;
   const validationStatus = operatorTask?.openClawHealthValidationStatus || 'idle';
-  const validationButtonEnabled = operatorTask?.openClawAdapterEndpointConfigured === true
+  const resolvedValidationEndpoint = resolveReadonlyValidationEndpoint(endpointDraft);
+  const validationButtonEnabled = (operatorTask?.openClawAdapterEndpointConfigured === true || resolvedValidationEndpoint.valid === true)
     && operatorTask?.openClawAdapterConnectionConfigReady === true
     && operatorTask?.openClawAdapterEndpointScope === 'local_only'
     && ['health_only', 'handshake_only', 'health_and_handshake'].includes(operatorTask?.openClawAdapterAllowedProbeTypes || 'none')
@@ -166,6 +168,11 @@ export default function OpenClawTile({
         <button type="button" onClick={() => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointScope: 'local_only', configPersistenceMode: 'session_only', endpointMode: 'configured' })}>apply/update button</button>
         <button type="button" onClick={onClearOpenClawEndpointConfig}>reset/clear session config button</button>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           <li><strong>OpenClaw adapter endpoint configured:</strong> {operatorTask?.openClawAdapterEndpointConfigured ? 'yes' : 'no'}</li>
           <li><strong>OpenClaw adapter endpoint label:</strong> {operatorTask?.openClawAdapterEndpointLabel || 'none'}</li>
           <li><strong>OpenClaw adapter endpoint host:</strong> {operatorTask?.openClawAdapterEndpointHost || 'none'}</li>
@@ -184,15 +191,21 @@ export default function OpenClawTile({
         <h4>Readonly Health / Handshake Validation v1</h4>
         <p className="muted"><strong>readonly validation only:</strong> no commands, no file edits, no browser control, no Git writes, no execution.</p>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           <li><strong>Validation endpoint:</strong> {validationEndpointAvailable ? 'available' : 'missing'}</li>
           <li><strong>Validation endpoint path:</strong> {operatorTask?.openClawReadonlyValidationEndpointPath || 'none'}</li>
+          <li><strong>Execution disabled:</strong> yes</li>
           <li><strong>Validation endpoint mode:</strong> {operatorTask?.openClawReadonlyValidationEndpointMode || 'missing'}</li>
           <li><strong>Validation status:</strong> {validationStatus}</li>
           <li><strong>Validation mode:</strong> {operatorTask?.openClawHealthValidationMode || 'none'}</li>
           <li><strong>Validation source:</strong> {operatorTask?.openClawHealthValidationSource || 'unknown'}</li>
           <li><strong>Health state:</strong> {operatorTask?.openClawHealthState || 'not_run'}</li>
           <li><strong>Handshake state:</strong> {operatorTask?.openClawHandshakeState || 'not_run'}</li>
-          <li><strong>Protocol compatible:</strong> {operatorTask?.openClawProtocolCompatible ? 'yes' : 'no'}</li>
+          <li><strong>Protocol compatible:</strong> {(operatorTask?.openClawProtocolCompatible || (validationStatus === 'succeeded' && operatorTask?.openClawHandshakeState === 'compatible')) ? 'yes' : 'no'}</li>
           <li><strong>Adapter identity:</strong> {operatorTask?.openClawAdapterIdentity || 'missing'}</li>
           <li><strong>Readonly assurance:</strong> {operatorTask?.openClawReadonlyAssurance?.readonlyOnly ? 'asserted' : 'not asserted'}</li>
           <li><strong>Top blocker:</strong> {operatorTask?.openClawHealthValidationBlockers?.[0] || 'none'}</li>
@@ -204,13 +217,18 @@ export default function OpenClawTile({
             Stephanos is alive, but the readonly OpenClaw adapter is not reachable at {adapterHost}:{adapterPort}. Start or repair the readonly adapter. Execution remains disabled.
           </p>
         ) : null}
-        <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>
+        <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation({ ...endpointDraft, endpointHost: resolvedValidationEndpoint.host, endpointPort: resolvedValidationEndpoint.port })}>
           {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
       </section>
       <section className="openclaw-section">
         <h4>Control Plane Safety Lifecycle</h4>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           <li><strong>Control mode:</strong> {operatorTask?.openClawControlMode || 'readonly_validation'}</li>
           <li><strong>Kill switch engaged:</strong> {(operatorTask?.openClawKillSwitchEngaged || killSwitchEngagedUi) ? 'yes' : 'no'}</li>
           <li><strong>Pause state:</strong> {operatorTask?.openClawPauseState || pauseStateUi || 'not_configured'}</li>
@@ -230,6 +248,11 @@ export default function OpenClawTile({
       <section className="openclaw-section">
         <h4>Status / Governance</h4>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           <li><strong>OpenClaw mode:</strong> {OPENCLAW_MODE}</li>
           <li><strong>Authority:</strong> {OPENCLAW_AUTHORITY}</li>
           <li><strong>Cost posture:</strong> {OPENCLAW_COST_POSTURE}</li>
@@ -255,6 +278,11 @@ export default function OpenClawTile({
         <section className="openclaw-section">
           <h4>Trust Posture Warnings</h4>
           <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
             {integrationSnapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
         </section>
@@ -264,6 +292,11 @@ export default function OpenClawTile({
         <h4>Integration Topology</h4>
         <p>{integrationSnapshot.topology.map((entry) => entry.label).join(' → ')}</p>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           {integrationSnapshot.topology.map((entry) => (
             <li key={entry.id}><strong>{entry.label}:</strong> {entry.policyNote}</li>
           ))}
@@ -314,6 +347,11 @@ export default function OpenClawTile({
                   <h5>{finding.title}</h5>
                   <p>{finding.diagnosis}</p>
                   <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
                     <li><strong>Confidence:</strong> {finding.confidence}</li>
                     <li><strong>Uncertainty:</strong> {finding.uncertainty}</li>
                     <li><strong>Doctrine drift risk:</strong> {finding.doctrineRisk}</li>
@@ -321,6 +359,11 @@ export default function OpenClawTile({
                   </ul>
                   <p><strong>Evidence:</strong></p>
                   <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
                     {finding.evidence.map((line) => <li key={line}>{line}</li>)}
                   </ul>
                 </article>
@@ -339,6 +382,11 @@ export default function OpenClawTile({
                 <h5>{prompt.title}</h5>
                 <p>{prompt.diagnosis}</p>
                 <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
                   <li><strong>Risk level:</strong> {prompt.riskLevel}</li>
                   <li><strong>Relevant files:</strong> {prompt.relevantFiles.join(', ') || 'none'}</li>
                   <li><strong>Doctrine alignment:</strong> {prompt.doctrineAlignment}</li>
@@ -363,6 +411,11 @@ export default function OpenClawTile({
         <h4>Catastrophic-Safety Blocks</h4>
         <p>Hard blocks active for catastrophic actions in shadow mode. These actions are structurally disallowed, not only warned.</p>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           {guardrails.blockedActions.map((actionId) => (
             <li key={actionId}>
               <code>{actionId}</code> — {isOpenClawActionBlocked(actionId) ? 'BLOCKED' : 'unexpected'}
@@ -374,6 +427,11 @@ export default function OpenClawTile({
       <section className="openclaw-section">
         <h4>Trace / Audit</h4>
         <ul>
+          <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
+          <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
+          <li><strong>Resolved validation host:</strong> {resolvedValidationEndpoint.host}</li>
+          <li><strong>Resolved validation port:</strong> {resolvedValidationEndpoint.port}</li>
+          <li><strong>Endpoint validity:</strong> {resolvedValidationEndpoint.valid ? 'valid' : 'invalid'}</li>
           {auditTrail.length === 0 ? <li>No actions yet.</li> : auditTrail.map((entry) => (
             <li key={entry.id}>
               <strong>{entry.type}</strong> · {entry.at}
