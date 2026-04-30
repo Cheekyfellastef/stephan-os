@@ -78,6 +78,7 @@ import {
   STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY,
 } from './utils/paneOrderPersistence.js';
 import { getPaneMoveAvailability, resolvePaneCollapsedState } from './utils/stephanosPaneBehavior.js';
+import { auditStephanosTilePanes } from './utils/stephanosPaneContract.js';
 import {
   OPENCLAW_DEFAULT_HOST,
   OPENCLAW_DEFAULT_PORT,
@@ -1033,6 +1034,20 @@ export default function App() {
     agentTaskProjection,
   ]);
 
+  const canonicalPaneDefinitions = useMemo(() => paneDefinitions.map((pane) => ({
+    title: pane.title || pane.id,
+    layoutKey: pane.layoutKey || pane.id,
+    usesCanonicalWrapper: true,
+    hasCollapseSupport: true,
+    hasCanonicalDragHandle: true,
+    bodyTextSelectable: true,
+    supportsOrderPersistence: true,
+    supportsCollapsePersistence: true,
+    ...pane,
+  })), [paneDefinitions]);
+
+  const paneAudit = useMemo(() => auditStephanosTilePanes(canonicalPaneDefinitions), [canonicalPaneDefinitions]);
+
   const defaultPaneOrder = useMemo(() => paneDefinitions.map((pane) => pane.id), [paneDefinitions]);
   const safePaneOrder = useMemo(() => {
     const sessionOrder = Array.isArray(safePaneLayout.order) && safePaneLayout.order.length > 0
@@ -1042,7 +1057,7 @@ export default function App() {
     return sessionOrder.length > 0 ? reconcilePaneOrder(sessionOrder, defaultPaneOrder) : storedOrder;
   }, [defaultPaneOrder, safePaneLayout.order]);
 
-  const paneMap = useMemo(() => new Map(paneDefinitions.map((pane) => [pane.id, pane])), [paneDefinitions]);
+  const paneMap = useMemo(() => new Map(canonicalPaneDefinitions.map((pane) => [pane.id, pane])), [canonicalPaneDefinitions]);
   const orderedPanes = useMemo(() => safePaneOrder
     .map((paneId) => paneMap.get(paneId))
     .filter(Boolean), [safePaneOrder, paneMap]);
@@ -1098,6 +1113,10 @@ export default function App() {
   useEffect(() => {
     console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
   }, [runtimeFingerprint]);
+
+  useEffect(() => {
+    console.info('[PANES] pane audit snapshot', paneAudit);
+  }, [paneAudit]);
 
   useEffect(() => {
     console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
