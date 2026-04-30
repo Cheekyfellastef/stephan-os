@@ -327,3 +327,19 @@ test('agent task projection keeps readonly endpoint missing evidence when canoni
   assert.equal(projection.operatorSurface.openClawReadonlyValidationEndpointAvailable, false);
   assert.equal(projection.readinessSummary.openClawStageEvidence['openclaw-validation-endpoint'], 'missing');
 });
+
+test('openclaw control plane sequencing: missing stub drives repair next action and execution stays disabled', () => {
+  const projection = buildAgentTaskProjection({ model: {} });
+  assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
+  assert.equal(projection.operatorSurface.openClawControlMode, 'readonly_validation');
+  assert.match(projection.operatorSurface.openClawControlNextAction, /Start or repair readonly adapter/i);
+});
+
+test('openclaw control plane sequencing: kill switch engaged stays blocked and safe', () => {
+  const projection = buildAgentTaskProjection({
+    model: { openClawPolicy: { killSwitchState: 'engaged' } },
+  });
+  assert.equal(projection.operatorSurface.openClawControlMode, 'disabled');
+  assert.equal(projection.operatorSurface.openClawKillSwitchEngaged, true);
+  assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
+});
