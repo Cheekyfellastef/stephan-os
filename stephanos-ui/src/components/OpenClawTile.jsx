@@ -199,7 +199,7 @@ export default function OpenClawTile({
         </ul>
         {adapterUnreachable ? (
           <p className="muted">
-            Stephanos is alive, but the readonly OpenClaw adapter is not reachable at {adapterHost}:{adapterPort}. Start or configure the local adapter, then retry validation. Execution remains disabled.
+            Stephanos is alive, but the readonly OpenClaw adapter is not reachable at {adapterHost}:{adapterPort}. Start or repair the readonly adapter. Execution remains disabled.
           </p>
         ) : null}
         <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>

@@ -217,5 +217,16 @@ if (-not $hostedHealthy) {
 }
 
 Write-Log "Hosted bridge healthy (HTTP $($hostedResult.StatusCode))."
+
+Write-Log 'Ensuring readonly OpenClaw adapter stub at 127.0.0.1:8790.'
+$openClawEnsureOutput = ''
+try {
+    $openClawEnsureOutput = npm run --silent openclaw:stub:ensure 2>&1 | Out-String
+    Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
+}
+catch {
+    Write-Log ("ERROR: openclaw:stub:ensure failed: {0}" -f $_.Exception.Message)
+    exit 7
+}
 Write-Log 'Battle Bridge repair completed successfully.'
 exit 0

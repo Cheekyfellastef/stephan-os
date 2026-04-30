@@ -98,3 +98,14 @@ test('failed unavailable validation recommends starting/configuring local readon
   });
   assert.equal(r.validation.validationNextAction, 'Start or configure readonly OpenClaw local adapter.');
 });
+
+
+test('succeeded validation uses completed next action wording', () => {
+  const r = adjudicateOpenClawHealthHandshake({
+    validation: {
+      safeProbePathAvailable: true,
+      validationStatus: 'succeeded',
+    },
+  });
+  assert.equal(r.validation.validationNextAction, 'Readonly OpenClaw adapter validated. Keep execution disabled until operator approval.');
+});

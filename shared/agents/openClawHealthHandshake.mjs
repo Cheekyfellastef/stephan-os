@@ -29,7 +29,9 @@ function adjudicateValidation(source = {}) {
       ? 'Readonly validation requires a safe local probe endpoint.'
       : failedUnavailable
         ? 'Start or configure readonly OpenClaw local adapter.'
-        : 'Validate readonly OpenClaw health/handshake telemetry.'),
+        : validationStatus === 'succeeded'
+          ? 'Readonly OpenClaw adapter validated. Keep execution disabled until operator approval.'
+          : 'Validate readonly OpenClaw health/handshake telemetry.'),
     safeProbePathAvailable,
   };
 }

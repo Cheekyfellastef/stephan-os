@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./openclaw-readonly-adapter-stub.mjs', import.meta.url));
 const statusScript = fileURLToPath(new URL('./openclaw-readonly-adapter-status.mjs', import.meta.url));
+const ensureScript = fileURLToPath(new URL('./openclaw-readonly-adapter-ensure.mjs', import.meta.url));
 
 async function waitForReady(proc) {
   await new Promise((resolve, reject) => {
@@ -70,4 +71,26 @@ test('stub exposes no command/file/git/browser endpoints and status script track
   const statusUp = spawn(process.execPath, [statusScript], { env: { ...process.env, OPENCLAW_STUB_HOST: '127.0.0.1', OPENCLAW_STUB_PORT: String(port) } });
   const upCode = await new Promise((resolve) => statusUp.once('exit', resolve));
   assert.equal(upCode, 0);
+});
+
+
+test('ensure script starts stub when unavailable and reports safe next action', async (t) => {
+  const port = 18793;
+  const ensure = spawn(process.execPath, [ensureScript], { env: { ...process.env, OPENCLAW_STUB_HOST: '127.0.0.1', OPENCLAW_STUB_PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  ensure.stdout.on('data', (chunk) => { out += String(chunk); });
+  const code = await new Promise((resolve) => ensure.once('exit', resolve));
+  assert.equal(code, 0);
+  const payload = JSON.parse(out.trim());
+  assert.equal(payload.available, true);
+  assert.equal(payload.executionAllowed, false);
+
+  const stopProbe = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(stopProbe.status, 200);
+});
+
+test('ensure script refuses non-loopback host', async () => {
+  const ensure = spawn(process.execPath, [ensureScript], { env: { ...process.env, OPENCLAW_STUB_HOST: '0.0.0.0', OPENCLAW_STUB_PORT: '18794' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const code = await new Promise((resolve) => ensure.once('exit', resolve));
+  assert.equal(code, 1);
 });
