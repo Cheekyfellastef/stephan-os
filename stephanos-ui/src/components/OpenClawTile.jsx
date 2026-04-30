@@ -74,10 +74,11 @@ export default function OpenClawTile({
     && (operatorTask?.openClawHandshakeState === 'unavailable');
   const capabilityTrial = operatorTask?.openClawCapabilityTrial || null;
   const capabilityReport = operatorTask?.openClawCapabilityReport || null;
-  const validationSucceeded = validationStatus === 'succeeded'
+  const validationSucceeded = ['succeeded', 'passed'].includes(validationStatus)
     && operatorTask?.openClawHealthState === 'passing'
     && operatorTask?.openClawHandshakeState === 'compatible'
-    && operatorTask?.openClawProtocolCompatible === true;
+    && (operatorTask?.openClawProtocolCompatible === true || operatorTask?.openClawHandshakeState === 'compatible')
+    && operatorTask?.openClawReadonlyAssurance?.readonlyOnly === true;
   const [trialRunRequested, setTrialRunRequested] = useState(false);
   const trialStatus = capabilityTrial?.trialStatus || (validationSucceeded ? (trialRunRequested ? 'report_ready' : 'ready') : 'not_started');
   const trialNextAction = capabilityTrial?.nextAction || (!validationSucceeded
@@ -243,7 +244,7 @@ export default function OpenClawTile({
         <ul>
           <li><strong>Trial status:</strong> {trialStatus}</li>
           <li><strong>Capability mode:</strong> {capabilityTrial?.capabilityMode || 'readonly_observation'}</li>
-          <li><strong>Adapter validated:</strong> {validationSucceeded ? 'yes' : 'no'}</li>
+          <li><strong>Adapter validated:</strong> {capabilityTrial?.adapterValidated ? 'yes' : 'no'}</li>
           <li><strong>Execution allowed:</strong> no</li>
           <li><strong>Operator approval required:</strong> yes</li>
           <li><strong>Allowed readonly trial actions:</strong> {(capabilityTrial?.allowedTrialActions || ['report_identity', 'report_declared_capabilities', 'report_safety_posture', 'report_required_permissions']).join(', ')}</li>

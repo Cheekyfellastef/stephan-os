@@ -19,21 +19,20 @@ export const OPENCLAW_FORBIDDEN_TRIAL_ACTIONS = [
 ];
 
 export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {}) {
-  const adapterValidated = operatorSurface.openClawHealthValidationStatus === 'succeeded'
-    && operatorSurface.openClawHealthState === 'passing'
-    && operatorSurface.openClawHandshakeState === 'compatible'
-    && operatorSurface.openClawProtocolCompatible === true;
-  const reportReady = adapterValidated;
-  const trialStatus = !adapterValidated
-    ? 'not_started'
-    : reportReady
-      ? 'report_ready'
-      : 'ready';
-  const nextAction = !adapterValidated
-    ? 'Validate readonly adapter first.'
-    : reportReady
-      ? 'Review OpenClaw capability report.'
-      : 'Run readonly capability trial.';
+  const validationSucceeded = ['succeeded', 'passed'].includes(String(operatorSurface.openClawHealthValidationStatus || '').trim());
+  const healthPassing = operatorSurface.openClawHealthState === 'passing';
+  const handshakeCompatible = operatorSurface.openClawHandshakeState === 'compatible';
+  const protocolCompatible = operatorSurface.openClawProtocolCompatible === true || (validationSucceeded && handshakeCompatible);
+  const readonlyAsserted = operatorSurface.openClawReadonlyAssurance?.readonlyOnly === true;
+  const adapterValidated = validationSucceeded
+    && healthPassing
+    && handshakeCompatible
+    && protocolCompatible
+    && readonlyAsserted;
+  const trialStatus = adapterValidated ? 'ready' : 'not_started';
+  const nextAction = adapterValidated
+    ? 'Run readonly capability trial.'
+    : 'Validate readonly adapter first.';
 
   return {
     trialStatus,
