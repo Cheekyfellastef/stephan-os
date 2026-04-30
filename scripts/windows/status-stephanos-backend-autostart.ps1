@@ -220,7 +220,7 @@ Write-Host '--- OpenClaw Readonly Stub ---'
     StubRunning = Format-Boolean -Value $openClawStubRunning
     ValidationReachable = Format-Boolean -Value $openClawStubRunning
     SafetyExecutionDisabled = Format-Boolean -Value $openClawStubExecutionDisabled
-    NextAction = if ($openClawStubRunning) { 'Readonly adapter validated. Keep execution disabled.' } else { 'Run: npm run openclaw:stub:ensure' }
+    NextAction = if ($openClawStubRunning) { 'Readonly adapter validated. Keep execution disabled.' } else { 'Run: npm run stephanos:battle-bridge:repair' }
 } | Format-List
 
 if ($openClawStubStatusError) {
@@ -239,3 +239,8 @@ Write-Host '--- Overall ---'
         'No DNS/health warnings detected from tailscale status output.'
     }
 } | Format-List
+
+Write-Host '--- What do I run now? ---'
+Write-Host '  npm run stephanos:battle-bridge:status'
+Write-Host '  npm run stephanos:battle-bridge:repair'
+Write-Host '  Then re-run readonly validation in the OpenClaw tile UI (execution remains disabled).'

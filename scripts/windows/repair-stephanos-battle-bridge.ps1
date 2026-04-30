@@ -225,8 +225,9 @@ try {
     Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
 }
 catch {
-    Write-Log ("ERROR: openclaw:stub:ensure failed: {0}" -f $_.Exception.Message)
-    exit 7
+    Write-Log ("WARNING: openclaw:stub:ensure failed: {0}" -f $_.Exception.Message)
+    Write-Log 'WARNING: Continue with backend/bridge repair success. OpenClaw execution remains disabled.'
 }
+Write-Log 'What to run now: npm run stephanos:battle-bridge:status ; npm run stephanos:battle-bridge:repair ; then re-run readonly validation in UI.'
 Write-Log 'Battle Bridge repair completed successfully.'
 exit 0

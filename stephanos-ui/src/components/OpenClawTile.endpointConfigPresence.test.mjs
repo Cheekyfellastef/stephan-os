@@ -34,6 +34,11 @@ test('OpenClawTile shows safe readonly validation endpoint availability and oper
     'Validation endpoint path:',
     'Validation endpoint mode:',
     'Validation unavailable: missing safe readonly validation endpoint or config readiness',
+    'Control Plane Safety Lifecycle',
+    'Engage Kill Switch',
+    'Pause OpenClaw control plane',
+    'Resume readonly validation/control plane',
+    'Execution allowed:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });

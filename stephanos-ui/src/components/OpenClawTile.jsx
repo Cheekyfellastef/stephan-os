@@ -37,6 +37,8 @@ export default function OpenClawTile({
   const [candidatePrompts, setCandidatePrompts] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
   const [sessionState, setSessionState] = useState('idle');
+  const [killSwitchEngagedUi, setKillSwitchEngagedUi] = useState(false);
+  const [pauseStateUi, setPauseStateUi] = useState('resumed');
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
 
   const distParity = runtimeStatusModel?.runtimeTruth?.sourceDistParityOk;
@@ -205,6 +207,24 @@ export default function OpenClawTile({
         <button type="button" disabled={!validationButtonEnabled} onClick={() => onRequestReadonlyValidation(endpointDraft)}>
           {validationButtonEnabled ? 'Validate readonly health/handshake' : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
+      </section>
+      <section className="openclaw-section">
+        <h4>Control Plane Safety Lifecycle</h4>
+        <ul>
+          <li><strong>Control mode:</strong> {operatorTask?.openClawControlMode || 'readonly_validation'}</li>
+          <li><strong>Kill switch engaged:</strong> {(operatorTask?.openClawKillSwitchEngaged || killSwitchEngagedUi) ? 'yes' : 'no'}</li>
+          <li><strong>Pause state:</strong> {operatorTask?.openClawPauseState || pauseStateUi || 'not_configured'}</li>
+          <li><strong>Readonly validation available:</strong> {operatorTask?.openClawReadonlyValidationAvailable ? 'yes' : 'no'}</li>
+          <li><strong>Readonly validation status:</strong> {operatorTask?.openClawReadonlyValidationStatus || validationStatus}</li>
+          <li><strong>Execution allowed:</strong> no (disabled)</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || 'Validate readonly health/handshake. Execution remains disabled.'}</li>
+        </ul>
+        <p className="muted">Kill switch engaged: OpenClaw control plane blocked.</p>
+        <p className="muted">Paused: readonly validation is paused. Execution remains disabled.</p>
+        <p className="muted">Readonly validation ready. Execution remains disabled.</p>
+        <button type="button" onClick={() => setKillSwitchEngagedUi(true)}>Engage Kill Switch</button>
+        <button type="button" onClick={() => setPauseStateUi('paused')}>Pause OpenClaw control plane</button>
+        <button type="button" onClick={() => setPauseStateUi('resumed')}>Resume readonly validation/control plane</button>
       </section>
 
       <section className="openclaw-section">

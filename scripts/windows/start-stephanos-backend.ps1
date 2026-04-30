@@ -41,6 +41,16 @@ function Write-Log {
 
 Write-Log "Stephanos Battle Bridge backend start requested. Repo root: $repoRoot"
 Write-Log "Health endpoint: $healthUrl"
+Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
+
+try {
+    $openClawEnsureOutput = npm run --silent openclaw:stub:ensure 2>&1 | Out-String
+    Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
+}
+catch {
+    Write-Log ("WARNING: OpenClaw readonly stub ensure failed: {0}" -f $_.Exception.Message)
+    Write-Log 'WARNING: Continuing backend startup. OpenClaw execution remains disabled.'
+}
 
 if (Test-BackendHealth -Url $healthUrl) {
     Write-Log 'Backend already healthy; exiting without starting a new process.'
