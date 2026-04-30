@@ -16,6 +16,8 @@
     "stephanos:build": "node scripts/build-stephanos-ui.mjs",
     "stephanos:guard:imports": "node scripts/guard-import-structure.mjs",
     "stephanos:verify": "node scripts/verify-stephanos-dist.mjs",
+    "openclaw:stub:start": "node scripts/openclaw-readonly-adapter-stub.mjs",
+    "openclaw:stub:status": "node scripts/openclaw-readonly-adapter-status.mjs",
     "dev:server": "npm --prefix stephanos-server run dev",
     "dev:ui": "npm --prefix stephanos-ui run dev",
     "build:ui": "npm run stephanos:build",
