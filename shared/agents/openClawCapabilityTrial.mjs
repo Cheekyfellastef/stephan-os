@@ -18,25 +18,45 @@ export const OPENCLAW_FORBIDDEN_TRIAL_ACTIONS = [
   'mutate_system',
 ];
 
-export function evaluateReadonlyValidationTruth({ operatorSurface = {} } = {}) {
-  const validationStatus = String(operatorSurface.openClawHealthValidationStatus || '').trim();
+export function evaluateReadonlyValidationTruth({
+  operatorSurface = {},
+  validationStatus: explicitValidationStatus,
+  healthState: explicitHealthState,
+  handshakeState: explicitHandshakeState,
+  protocolCompatible: explicitProtocolCompatible,
+  readonlyAssurance: explicitReadonlyAssurance,
+  executionDisabled: explicitExecutionDisabled,
+} = {}) {
+  const validationStatus = String(explicitValidationStatus ?? operatorSurface.openClawHealthValidationStatus ?? '').trim();
   const validationSucceeded = ['succeeded', 'passed'].includes(validationStatus);
-  const healthPassing = operatorSurface.openClawHealthState === 'passing';
-  const handshakeCompatible = operatorSurface.openClawHandshakeState === 'compatible';
-  const protocolCompatible = operatorSurface.openClawProtocolCompatible === true || (validationSucceeded && handshakeCompatible);
-  const readonlyAsserted = operatorSurface.openClawReadonlyAssurance?.readonlyOnly === true;
+  const healthState = String(explicitHealthState ?? operatorSurface.openClawHealthState ?? '').trim();
+  const handshakeState = String(explicitHandshakeState ?? operatorSurface.openClawHandshakeState ?? '').trim();
+  const healthPassing = healthState === 'passing';
+  const handshakeCompatible = handshakeState === 'compatible';
+  const protocolCompatible = explicitProtocolCompatible === true
+    || operatorSurface.openClawProtocolCompatible === true
+    || (validationSucceeded && handshakeCompatible);
+  const readonlyAssurance = explicitReadonlyAssurance ?? operatorSurface.openClawReadonlyAssurance ?? {};
+  const readonlyAsserted = readonlyAssurance?.readonlyOnly === true;
+  const executionDisabled = explicitExecutionDisabled !== undefined
+    ? explicitExecutionDisabled === true
+    : operatorSurface.openClawExecutionAllowed !== true;
   const adapterValidated = validationSucceeded
     && healthPassing
     && handshakeCompatible
     && protocolCompatible
-    && readonlyAsserted;
+    && readonlyAsserted
+    && executionDisabled;
   return {
     validationStatus,
+    healthState,
+    handshakeState,
     validationSucceeded,
     healthPassing,
     handshakeCompatible,
     protocolCompatible,
     readonlyAsserted,
+    executionDisabled,
     adapterValidated,
   };
 }
@@ -70,6 +90,10 @@ export function buildOpenClawCapabilityTrialState({ operatorSurface = {} } = {})
 export function buildOpenClawCapabilityReport({ operatorSurface = {} } = {}) {
   const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
   return {
+    reportStatus: readonlyTruth.adapterValidated ? 'ready' : 'awaiting_readonly_validation',
+    reportSummary: readonlyTruth.adapterValidated
+      ? 'Readonly capability report is available for operator review.'
+      : 'Readonly capability report is waiting for adapter validation.',
     adapterIdentity: asText(operatorSurface.openClawAdapterIdentity, 'missing'),
     healthState: asText(operatorSurface.openClawHealthState, 'not_run'),
     handshakeState: asText(operatorSurface.openClawHandshakeState, 'not_run'),

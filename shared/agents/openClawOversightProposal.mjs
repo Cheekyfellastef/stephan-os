@@ -40,8 +40,8 @@ function asArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
-export function buildOpenClawOversightProposal({ operatorSurface = {}, capabilityTrial = {} } = {}) {
-  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
+export function buildOpenClawOversightProposal({ operatorSurface = {}, readonlyTruth: providedReadonlyTruth = null, capabilityTrial = {} } = {}) {
+  const readonlyTruth = providedReadonlyTruth || evaluateReadonlyValidationTruth({ operatorSurface });
   const blocked = asArray(capabilityTrial.blockers).length > 0 || readonlyTruth.validationBlocked;
   const adapterValidated = readonlyTruth.adapterValidated;
   const trialReady = capabilityTrial.trialStatus === 'ready' || capabilityTrial.trialStatus === 'report_ready';
@@ -52,7 +52,7 @@ export function buildOpenClawOversightProposal({ operatorSurface = {}, capabilit
   const nextAction = blocked
     ? 'Resolve blockers before proposal review.'
     : trustStage === 'stage_2_proposal_only'
-      ? 'Review OpenClaw oversight proposal before any capability increase.'
+      ? 'Submit oversight proposal for operator review.'
       : 'Validate readonly adapter before generating oversight proposal.';
 
   const proposedNextControls = blocked

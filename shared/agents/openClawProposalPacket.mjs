@@ -16,8 +16,10 @@ export function buildOpenClawProposalPacket(input = {}) {
   const risk = classifyOpenClawProposalRisk({ proposedActions: input.proposedActions || [], proposalType });
   const rollback = buildOpenClawProposalRollback({ rollbackSteps: input.rollbackPreview?.rollbackSteps });
   const approvalRequirements = buildOpenClawProposalApprovalRequirements({ evidence, risk, rollback, proposalType });
-  const readonlyOk = evidence.some((e) => e.evidenceType === 'readonly_validation' && e.evidenceStatus === 'succeeded');
-  const capabilityOk = evidence.some((e) => e.evidenceType === 'capability_report' && e.evidenceStatus !== 'blocked');
+  const readonlyOk = input.readonlyTruth?.adapterValidated === true
+    || evidence.some((e) => e.evidenceType === 'readonly_validation' && e.evidenceStatus === 'succeeded');
+  const capabilityOk = input.proposalEvidenceStatus === 'capability_report_available'
+    || evidence.some((e) => e.evidenceType === 'capability_report' && e.evidenceStatus !== 'blocked');
   let packetStatus = 'awaiting_readonly_validation';
   if (risk.riskLevel === 'blocked') packetStatus = 'blocked_by_risk';
   else if (readonlyOk && !capabilityOk) packetStatus = 'awaiting_capability_report';

@@ -515,3 +515,27 @@ test('proposal packet readiness reacts to validation and capability report prese
   const waitingProjection = buildAgentTaskProjection({ model: { openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'idle' } } } } });
   assert.equal(waitingProjection.operatorSurface.openClawProposalPacket.packetStatus, 'awaiting_readonly_validation');
 });
+
+test('successful readonly validation keeps governance surfaces consistently review-ready and non-executing', () => {
+  const projection = buildAgentTaskProjection({ model: { openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'succeeded', healthState: 'passing', handshakeState: 'compatible', readonlyAssurance: { readonlyOnly: true } } } } } });
+  const ops = projection.operatorSurface;
+  assert.equal(ops.openClawOversightProposal.proposalStatus, 'ready_for_operator_review');
+  assert.equal(ops.openClawProposalPacket.packetStatus, 'ready_for_operator_review');
+  assert.equal(ops.openClawProposalEvidence.status, 'capability_report_available');
+  assert.equal(ops.openClawPermissionEnvelope.envelopeStatus, 'readonly_validated');
+  assert.equal(ops.openClawApprovalGate.gateStatus, 'ready_for_operator_review');
+  assert.equal(ops.openClawProposalReviewQueue.queueStatus, 'ready_for_operator_review');
+  assert.equal(ops.openClawProposalPacket.actionExecutionEligible, false);
+  assert.equal(ops.openClawApprovalGate.approvalEligible, false);
+  assert.equal(ops.openClawProposalPacket.executionAllowed, false);
+  assert.equal(ops.openClawProposalPacket.selfModificationAllowed, false);
+  assert.equal(ops.openClawProposalPacket.operatorApprovalRequired, true);
+});
+
+test('protocol compatibility inference is consistent across report/proposal/harness when readonly validation succeeds', () => {
+  const projection = buildAgentTaskProjection({ model: { openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'succeeded', healthState: 'passing', handshakeState: 'compatible', protocol: { compatible: false }, readonlyAssurance: { readonlyOnly: true } } } } } });
+  const ops = projection.operatorSurface;
+  assert.equal(ops.openClawCapabilityReport.protocolCompatibility, 'compatible');
+  assert.equal(ops.openClawOversightProposal.proposalStatus, 'ready_for_operator_review');
+  assert.equal(ops.openClawPermissionEnvelope.envelopeStatus, 'readonly_validated');
+});

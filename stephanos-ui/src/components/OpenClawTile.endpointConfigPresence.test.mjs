@@ -53,3 +53,9 @@ test('OpenClawTile shows safe readonly validation endpoint availability and oper
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });
+
+test('OpenClawTile avoids stale readonly fallback statuses in governance sections', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes("proposalStatus || 'awaiting_readonly_validation'"), false);
+  assert.equal(source.includes("packetStatus || 'awaiting_readonly_validation'"), false);
+});

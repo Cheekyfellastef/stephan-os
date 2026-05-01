@@ -75,11 +75,11 @@ export default function OpenClawTile({
   const capabilityTrial = operatorTask?.openClawCapabilityTrial || null;
   const capabilityReport = operatorTask?.openClawCapabilityReport || null;
   const oversightProposal = operatorTask?.openClawOversightProposal || null;
-  const validationSucceeded = ['succeeded', 'passed'].includes(validationStatus)
+  const validationSucceeded = capabilityTrial?.adapterValidated === true || (['succeeded', 'passed'].includes(validationStatus)
     && operatorTask?.openClawHealthState === 'passing'
     && operatorTask?.openClawHandshakeState === 'compatible'
     && (operatorTask?.openClawProtocolCompatible === true || operatorTask?.openClawHandshakeState === 'compatible')
-    && operatorTask?.openClawReadonlyAssurance?.readonlyOnly === true;
+    && operatorTask?.openClawReadonlyAssurance?.readonlyOnly === true);
   const [trialRunRequested, setTrialRunRequested] = useState(false);
   const trialStatus = capabilityTrial?.trialStatus || (validationSucceeded ? (trialRunRequested ? 'report_ready' : 'ready') : 'not_started');
   const trialNextAction = capabilityTrial?.nextAction || (!validationSucceeded
@@ -272,7 +272,7 @@ export default function OpenClawTile({
         <h4>OpenClaw Oversight Proposal</h4>
         <p className="muted"><strong>OpenClaw can help design oversight, but cannot approve or apply its own power increase.</strong></p>
         <ul>
-          <li><strong>Proposal status:</strong> {oversightProposal?.proposalStatus || 'awaiting_readonly_validation'}</li>
+          <li><strong>Proposal status:</strong> {oversightProposal?.proposalStatus || 'unknown'}</li>
           <li><strong>Proposal mode:</strong> {oversightProposal?.proposalMode || 'proposal_only'}</li>
           <li><strong>Trust stage:</strong> {oversightProposal?.trustStage || 'stage_0_stub_validated'}</li>
           <li><strong>Execution allowed:</strong> no</li>
@@ -292,7 +292,7 @@ export default function OpenClawTile({
         <p className="muted"><strong>Review packet only.</strong> OpenClaw may contribute readonly observations, but cannot approve or apply its own packet.</p>
         <p className="muted">This packet is for operator review and future ChatGPT/Codex workflow. Execution remains unavailable.</p>
         <ul>
-          <li><strong>Packet status:</strong> {operatorTask?.openClawProposalPacket?.packetStatus || 'awaiting_readonly_validation'}</li>
+          <li><strong>Packet status:</strong> {operatorTask?.openClawProposalPacket?.packetStatus || 'unknown'}</li>
           <li><strong>Packet mode:</strong> {operatorTask?.openClawProposalPacket?.packetMode || 'proposal_only'}</li>
           <li><strong>Proposal type:</strong> {operatorTask?.openClawProposalPacket?.proposalType || 'observe_capability'}</li>
           <li><strong>Requested outcome:</strong> {operatorTask?.openClawProposalPacket?.requestedOutcome || 'operator_review'}</li>
