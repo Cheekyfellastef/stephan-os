@@ -44,6 +44,12 @@ test('OpenClawTile shows safe readonly validation endpoint availability and oper
     'Pause OpenClaw control plane',
     'Resume readonly validation/control plane',
     'Execution allowed:',
+    'OpenClaw Oversight Proposal',
+    'Self-modification allowed:',
+    'Required oversight layers:',
+    'Proposed next controls:',
+    'Forbidden self-actions:',
+    'OpenClaw can help design oversight, but cannot approve or apply its own power increase.',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
 });

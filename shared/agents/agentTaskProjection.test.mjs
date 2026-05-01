@@ -443,3 +443,28 @@ test('agent task projection blocks trial progression when protocol compatibility
   assert.match(projection.operatorSurface.openClawControlNextAction, /validation/i);
   assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
 });
+
+
+test('agent task projection carries canonical OpenClaw oversight proposal from readonly validation truth', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'succeeded',
+            healthState: 'passing',
+            handshakeState: 'compatible',
+            protocol: { compatible: true },
+            readonlyAssurance: { readonlyOnly: true },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.operatorSurface.openClawOversightProposal.proposalMode, 'proposal_only');
+  assert.equal(projection.operatorSurface.openClawOversightProposal.executionAllowed, false);
+  assert.equal(projection.operatorSurface.openClawOversightProposal.selfModificationAllowed, false);
+  assert.equal(projection.operatorSurface.openClawOversightProposal.operatorApprovalRequired, true);
+  assert.equal(projection.operatorSurface.openClawOversightProposal.trustStage, 'stage_2_proposal_only');
+});
