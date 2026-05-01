@@ -36,3 +36,26 @@ export function buildOpenClawProposalEvidence(input = {}) {
 export function normalizeOpenClawProposalEvidence(list = []) {
   return toArray(list).map((item) => buildOpenClawProposalEvidence(item));
 }
+
+
+export function buildOpenClawProposalEvidenceProjection({ readonlyTruth = {}, capabilityTrial = {}, capabilityReport = {} } = {}) {
+  const readonlyValidated = readonlyTruth.adapterValidated === true;
+  const capabilityReportReady = capabilityReport.reportStatus === 'ready';
+  const evidenceStatus = readonlyValidated && capabilityReportReady
+    ? 'capability_report_available'
+    : readonlyValidated
+      ? 'readonly_validation_available'
+      : 'awaiting_readonly_validation';
+  return {
+    status: evidenceStatus,
+    readonlyValidated,
+    capabilityReportReady,
+    executionAllowed: false,
+    operatorApprovalRequired: true,
+    nextAction: evidenceStatus === 'capability_report_available'
+      ? 'Review evidence package in operator queue.'
+      : readonlyValidated
+        ? 'Capture capability report evidence for operator review.'
+        : 'Validate readonly health/handshake before evidence review.',
+  };
+}

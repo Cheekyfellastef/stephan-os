@@ -302,7 +302,7 @@ export default function OpenClawTile({
           <li><strong>Operator approval required:</strong> {operatorTask?.openClawProposalPacket?.operatorApprovalRequired ? 'yes' : 'no'}</li>
           <li><strong>Approval status:</strong> {operatorTask?.openClawProposalApprovalRequirements?.approvalStatus || 'awaiting_requirements'}</li>
           <li><strong>Rollback status:</strong> {operatorTask?.openClawProposalRollback?.rollbackStatus || 'missing_preview'}</li>
-          <li><strong>Evidence status:</strong> {(operatorTask?.openClawProposalEvidence?.[0]?.evidenceStatus) || 'none'}</li>
+          <li><strong>Evidence status:</strong> {operatorTask?.openClawProposalEvidence?.status || 'none'}</li>
           <li><strong>Blocked actions:</strong> {(operatorTask?.openClawProposalPacket?.blockedActions || []).join(', ') || 'none'}</li>
           <li><strong>Forbidden self-actions:</strong> {(operatorTask?.openClawProposalPacket?.forbiddenSelfActions || []).join(', ') || 'none'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawProposalPacket?.nextAction || 'Operator review only.'}</li>
@@ -323,6 +323,8 @@ export default function OpenClawTile({
           <li><strong>Future-gated capabilities:</strong> {(operatorTask?.openClawPermissionEnvelope?.futureGatedCapabilities || []).join(', ') || 'none'}</li>
           <li><strong>Permission diff status:</strong> {operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}</li>
           <li><strong>Approval gate status:</strong> {operatorTask?.openClawApprovalGate?.gateStatus || 'unknown'}</li>
+          <li><strong>Proposal Review Queue:</strong> {operatorTask?.openClawProposalReviewQueue?.queueStatus || 'not_available'}</li>
+          <li><strong>Permission Diff Viewer:</strong> {operatorTask?.openClawPermissionDiff?.diffMode || 'preview_only'}</li>
           <li><strong>Audit preview status:</strong> {(operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated'}</li>
           <li><strong>Rollback plan status:</strong> {operatorTask?.openClawRollbackPlan?.rollbackStatus || 'unknown'}</li>
           <li><strong>Risk level:</strong> {operatorTask?.openClawPermissionEnvelope?.riskLevel || operatorTask?.openClawOversightProposal?.riskLevel || 'guarded'}</li>

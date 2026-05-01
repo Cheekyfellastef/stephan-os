@@ -7,6 +7,8 @@ import { buildOpenClawApprovalGate } from './openClawApprovalGate.mjs';
 import { createOpenClawAuditPreviewEvent } from './openClawAuditLedger.mjs';
 import { buildOpenClawRollbackPlan } from './openClawRollbackPlan.mjs';
 import { buildOpenClawProposalPacket } from './openClawProposalPacket.mjs';
+import { buildOpenClawProposalEvidenceProjection } from './openClawProposalEvidence.mjs';
+import { buildOpenClawProposalReviewQueue } from './openClawProposalReviewQueue.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -194,6 +196,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     openClawAdapterIdentity: identity.id || connection.adapterIdentity || '',
     openClawReadonlyAssurance: readonlyAssurance,
   };
+  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface: capabilityTrialSeed });
   const capabilityTrial = buildOpenClawCapabilityTrialState({ operatorSurface: capabilityTrialSeed });
   const capabilityReport = buildOpenClawCapabilityReport({ operatorSurface: capabilityTrialSeed });
   const openClawOversightProposal = buildOpenClawOversightProposal({
@@ -201,7 +204,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     capabilityTrial,
   });
   const openClawPermissionEnvelope = buildOpenClawPermissionEnvelope({
-    readonlyValidated: capabilityTrial.adapterValidated === true,
+    readonlyValidated: readonlyTruth.adapterValidated === true,
     evidenceTokens: capabilityReport.evidenceTokens || [],
   });
   const openClawPermissionDiff = buildOpenClawPermissionDiff({
@@ -210,7 +213,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   });
   const openClawRollbackPlan = buildOpenClawRollbackPlan();
   const openClawApprovalGate = buildOpenClawApprovalGate({
-    readonlyValidated: capabilityTrial.adapterValidated === true,
+    readonlyValidated: readonlyTruth.adapterValidated === true,
     capabilityReportReady: capabilityReport.reportStatus === 'ready',
     permissionDiffReady: openClawPermissionDiff.diffStatus === 'preview_ready',
     auditPreviewReady: true,
@@ -226,6 +229,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     createOpenClawAuditPreviewEvent({ eventType: 'rollback_plan_previewed', evidenceTokens: ['rollback:preview_only'], actionRequested: 'rollback_plan_preview' }),
   ];
 
+  const openClawProposalEvidence = buildOpenClawProposalEvidenceProjection({ readonlyTruth, capabilityTrial, capabilityReport });
   const openClawProposalPacket = buildOpenClawProposalPacket({
     source: 'agent_task_projection',
     proposalType: 'generate_oversight_plan',
@@ -240,6 +244,14 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       { evidenceType: 'oversight_proposal', evidenceStatus: 'provided', source: 'openclaw_oversight', summary: openClawOversightProposal.proposalSummary || 'Oversight proposal generated.' },
       { evidenceType: 'permission_boundary', evidenceStatus: 'provided', source: 'openclaw_policy', summary: 'Execution disabled, self-modification disabled, operator approval required.' },
     ],
+  });
+
+  const openClawProposalReviewQueue = buildOpenClawProposalReviewQueue({
+    proposalPacket: openClawProposalPacket,
+    evidence: openClawProposalEvidence,
+    risk: openClawProposalPacket.riskClassification,
+    rollback: openClawRollbackPlan,
+    approvalRequirements: openClawProposalPacket.approvalRequirements,
   });
 
   const openClawControlPlane = buildOpenClawControlPlane({
@@ -365,7 +377,9 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawRollbackPlan,
       openClawCapabilityReport: capabilityReport,
       openClawProposalPacket,
-      openClawProposalEvidence: openClawProposalPacket.readonlyEvidence,
+      openClawProposalEvidence,
+      openClawProposalReviewQueue,
+      openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,
       openClawProposalRisk: openClawProposalPacket.riskClassification,
       openClawProposalApprovalRequirements: openClawProposalPacket.approvalRequirements,
       openClawProposalRollback: openClawProposalPacket.rollbackPreview,
