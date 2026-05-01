@@ -25,7 +25,7 @@ export function buildOpenClawApprovalGate(inputs = {}) {
   const satisfiedPreconditions = REQUIRED_PRECONDITIONS.filter((item) => map[item]);
   const missingPreconditions = REQUIRED_PRECONDITIONS.filter((item) => !map[item]);
   return {
-    gateStatus: missingPreconditions.length === 0 ? 'harness_locked_operator_stage_pending' : 'preconditions_incomplete',
+    gateStatus: missingPreconditions.length <= 1 ? 'ready_for_operator_review' : 'preconditions_incomplete',
     gateMode: 'operator_review_only',
     approvalEligible: false,
     operatorApprovalRequired: true,
@@ -38,6 +38,6 @@ export function buildOpenClawApprovalGate(inputs = {}) {
     ],
     executionAllowed: false,
     selfModificationAllowed: false,
-    nextAction: 'Keep proposal-only review path; collect operator-reviewed evidence for future stage gating.',
+    nextAction: missingPreconditions.length <= 1 ? 'Review proposal packet in operator queue.' : 'Keep proposal-only review path; collect operator-reviewed evidence for future stage gating.',
   };
 }

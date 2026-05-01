@@ -31,7 +31,7 @@ const FUTURE_GATED_CAPABILITIES = Object.freeze([
 
 export function buildOpenClawPermissionEnvelope({ readonlyValidated = false, evidenceTokens = [] } = {}) {
   return {
-    envelopeStatus: readonlyValidated ? 'ready_for_operator_review' : 'readonly_validation_required',
+    envelopeStatus: readonlyValidated ? 'readonly_validated' : 'readonly_validation_required',
     currentMode: 'proposal_only',
     executionAllowed: false,
     selfModificationAllowed: false,
