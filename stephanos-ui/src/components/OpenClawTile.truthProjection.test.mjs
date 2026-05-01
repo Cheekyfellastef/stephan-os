@@ -27,3 +27,11 @@ test('OpenClawTile lifecycle messaging is driven by projected canonical control 
   assert.equal(source.includes("(operatorTask?.openClawPauseState || pauseStateUi) === 'paused'"), true);
   assert.equal(source.includes('validationSucceeded ? ('), true);
 });
+
+test('OpenClawTile renders control harness governance section copy', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('OpenClaw Control Harness'), true);
+  assert.equal(source.includes('Governance scaffolding only for future operator-reviewed stages'), true);
+  assert.equal(source.includes('Permission envelope status:'), true);
+  assert.equal(source.includes('Execution allowed:'), true);
+});

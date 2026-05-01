@@ -285,6 +285,28 @@ export default function OpenClawTile({
           <li><strong>Next action:</strong> {oversightProposal?.nextAction || 'Validate readonly adapter before generating oversight proposal.'}</li>
         </ul>
       </section>
+
+      <section className="openclaw-section">
+        <h4>OpenClaw Control Harness</h4>
+        <p className="muted">Governance scaffolding only for future operator-reviewed stages; no execution machinery is enabled in this stage.</p>
+        <ul>
+          <li><strong>Permission envelope status:</strong> {operatorTask?.openClawPermissionEnvelope?.envelopeStatus || 'unknown'}</li>
+          <li><strong>Current mode:</strong> {operatorTask?.openClawPermissionEnvelope?.currentMode || 'proposal_only'}</li>
+          <li><strong>Execution allowed:</strong> {(operatorTask?.openClawPermissionEnvelope?.executionAllowed || operatorTask?.openClawPermissionDiff?.executionAllowed || operatorTask?.openClawApprovalGate?.executionAllowed || operatorTask?.openClawRollbackPlan?.executionAllowed) ? 'yes' : 'no'}</li>
+          <li><strong>Self-modification allowed:</strong> {(operatorTask?.openClawPermissionEnvelope?.selfModificationAllowed || operatorTask?.openClawApprovalGate?.selfModificationAllowed) ? 'yes' : 'no'}</li>
+          <li><strong>Operator approval required:</strong> {(operatorTask?.openClawPermissionEnvelope?.operatorApprovalRequired || operatorTask?.openClawApprovalGate?.operatorApprovalRequired) ? 'yes' : 'no'}</li>
+          <li><strong>Allowed capabilities:</strong> {(operatorTask?.openClawPermissionEnvelope?.allowedCapabilities || []).join(', ') || 'none'}</li>
+          <li><strong>Blocked capabilities:</strong> {(operatorTask?.openClawPermissionEnvelope?.blockedCapabilities || []).join(', ') || 'none'}</li>
+          <li><strong>Future-gated capabilities:</strong> {(operatorTask?.openClawPermissionEnvelope?.futureGatedCapabilities || []).join(', ') || 'none'}</li>
+          <li><strong>Permission diff status:</strong> {operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}</li>
+          <li><strong>Approval gate status:</strong> {operatorTask?.openClawApprovalGate?.gateStatus || 'unknown'}</li>
+          <li><strong>Audit preview status:</strong> {(operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated'}</li>
+          <li><strong>Rollback plan status:</strong> {operatorTask?.openClawRollbackPlan?.rollbackStatus || 'unknown'}</li>
+          <li><strong>Risk level:</strong> {operatorTask?.openClawPermissionEnvelope?.riskLevel || operatorTask?.openClawOversightProposal?.riskLevel || 'guarded'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawApprovalGate?.nextAction || operatorTask?.openClawPermissionEnvelope?.nextAction || 'Operator review only.'}</li>
+        </ul>
+      </section>
+
       <section className="openclaw-section">
         <h4>Control Plane Safety Lifecycle</h4>
         <ul>

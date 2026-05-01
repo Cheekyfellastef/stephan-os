@@ -468,3 +468,31 @@ test('agent task projection carries canonical OpenClaw oversight proposal from r
   assert.equal(projection.operatorSurface.openClawOversightProposal.operatorApprovalRequired, true);
   assert.equal(projection.operatorSurface.openClawOversightProposal.trustStage, 'stage_2_proposal_only');
 });
+
+test('agent task projection exposes OpenClaw control harness models with execution disabled', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawAdapter: {
+        adapterConnection: {
+          healthHandshake: {
+            validationStatus: 'succeeded',
+            healthState: 'passing',
+            handshakeState: 'compatible',
+            protocol: { compatible: true },
+            readonlyAssurance: { readonlyOnly: true },
+          },
+        },
+      },
+    },
+  });
+  const ops = projection.operatorSurface;
+  assert.ok(ops.openClawPermissionEnvelope);
+  assert.ok(ops.openClawPermissionDiff);
+  assert.ok(ops.openClawApprovalGate);
+  assert.ok(Array.isArray(ops.openClawAuditLedgerPreview));
+  assert.ok(ops.openClawRollbackPlan);
+  assert.equal(ops.openClawPermissionEnvelope.executionAllowed, false);
+  assert.equal(ops.openClawApprovalGate.selfModificationAllowed, false);
+  assert.equal(ops.openClawPermissionEnvelope.blockedCapabilities.includes('execute_command'), true);
+  assert.equal(ops.openClawApprovalGate.gateMode, 'operator_review_only');
+});
