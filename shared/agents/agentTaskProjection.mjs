@@ -1,5 +1,6 @@
 import { adjudicateAgentTaskLayer } from './agentTaskAdjudicator.mjs';
 import { buildOpenClawCapabilityReport, buildOpenClawCapabilityTrialState, evaluateReadonlyValidationTruth } from './openClawCapabilityTrial.mjs';
+import { buildOpenClawOversightProposal } from './openClawOversightProposal.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -189,6 +190,10 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   };
   const capabilityTrial = buildOpenClawCapabilityTrialState({ operatorSurface: capabilityTrialSeed });
   const capabilityReport = buildOpenClawCapabilityReport({ operatorSurface: capabilityTrialSeed });
+  const openClawOversightProposal = buildOpenClawOversightProposal({
+    operatorSurface: capabilityTrialSeed,
+    capabilityTrial,
+  });
   const openClawControlPlane = buildOpenClawControlPlane({
     policySummary: adjudicated.openClawPolicySummary || {},
     operatorSurface: {
@@ -304,10 +309,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
       openClawStageEvidence,
       openClawCapabilityTrial: capabilityTrial,
+      openClawOversightProposal,
       openClawCapabilityReport: capabilityReport,
       openClawCapabilityTrialStatus: capabilityTrial.trialStatus,
       openClawCapabilityTrialNextAction: capabilityTrial.nextAction,
       openClawCapabilityTrialExecutionAllowed: false,
+      openClawOversightProposalTrustStage: openClawOversightProposal.trustStage,
       handoffReady: adjudicated.handoff.handoffReady,
       handoffMode: adjudicated.handoff.handoffMode,
       handoffPacketSummary: adjudicated.handoff.handoffPacketSummary,
@@ -415,6 +422,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterRequiredApprovals: asArray(adapter.adapterRequiredApprovals),
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
       openClawStageEvidence,
+      openClawOversightProposal,
       highestPriorityApprovalGate: toChip(adjudicated.approval.highestPriorityGate, 'none'),
     },
     readinessSummary: {
@@ -479,6 +487,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterRequiredApprovals: asArray(adapter.adapterRequiredApprovals),
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
       openClawStageEvidence,
+      openClawOversightProposal,
       nextAgentTaskAction: adjudicated.nextAction.title,
       agentTaskLayerBlockers: blockers,
       readinessScore: adjudicated.readinessScore,

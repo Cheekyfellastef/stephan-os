@@ -74,6 +74,7 @@ export default function OpenClawTile({
     && (operatorTask?.openClawHandshakeState === 'unavailable');
   const capabilityTrial = operatorTask?.openClawCapabilityTrial || null;
   const capabilityReport = operatorTask?.openClawCapabilityReport || null;
+  const oversightProposal = operatorTask?.openClawOversightProposal || null;
   const validationSucceeded = ['succeeded', 'passed'].includes(validationStatus)
     && operatorTask?.openClawHealthState === 'passing'
     && operatorTask?.openClawHandshakeState === 'compatible'
@@ -265,6 +266,24 @@ export default function OpenClawTile({
             <li><strong>Suggested next stage:</strong> {capabilityReport?.suggestedNextStage || 'Operator-reviewed proposal generation only.'}</li>
           </ul>
         ) : null}
+      </section>
+
+      <section className="openclaw-section">
+        <h4>OpenClaw Oversight Proposal</h4>
+        <p className="muted"><strong>OpenClaw can help design oversight, but cannot approve or apply its own power increase.</strong></p>
+        <ul>
+          <li><strong>Proposal status:</strong> {oversightProposal?.proposalStatus || 'awaiting_readonly_validation'}</li>
+          <li><strong>Proposal mode:</strong> {oversightProposal?.proposalMode || 'proposal_only'}</li>
+          <li><strong>Trust stage:</strong> {oversightProposal?.trustStage || 'stage_0_stub_validated'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+          <li><strong>Self-modification allowed:</strong> no</li>
+          <li><strong>Operator approval required:</strong> yes</li>
+          <li><strong>Required oversight layers:</strong> {(oversightProposal?.requiredOversightLayers || []).join(', ') || 'operator approval gate, readonly validation'}</li>
+          <li><strong>Proposed next controls:</strong> {(oversightProposal?.proposedNextControls || []).join(', ') || 'Validate readonly adapter before generating oversight proposal.'}</li>
+          <li><strong>Forbidden self-actions:</strong> {(oversightProposal?.forbiddenSelfActions || []).join(', ') || 'enable_execution, change_own_permissions, weaken_guardrails'}</li>
+          <li><strong>Risk level:</strong> {oversightProposal?.riskLevel || 'guarded'}</li>
+          <li><strong>Next action:</strong> {oversightProposal?.nextAction || 'Validate readonly adapter before generating oversight proposal.'}</li>
+        </ul>
       </section>
       <section className="openclaw-section">
         <h4>Control Plane Safety Lifecycle</h4>
