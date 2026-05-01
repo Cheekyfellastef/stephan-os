@@ -27,7 +27,7 @@ test('successful readonly validation advances only to proposal-only trust stage'
     capabilityTrial: { trialStatus: 'ready', blockers: [] },
   });
   assert.equal(proposal.trustStage, 'stage_2_proposal_only');
-  assert.equal(proposal.nextAction, 'Review OpenClaw oversight proposal before any capability increase.');
+  assert.equal(proposal.nextAction, 'Submit oversight proposal for operator review.');
   assert.equal(proposal.trustStageLadder.find((x) => x.stage === 'stage_3_operator_reviewed_execution_candidate').futureGated, true);
 });
 

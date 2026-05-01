@@ -196,11 +196,18 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     openClawAdapterIdentity: identity.id || connection.adapterIdentity || '',
     openClawReadonlyAssurance: readonlyAssurance,
   };
-  const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface: capabilityTrialSeed });
+  const readonlyTruth = evaluateReadonlyValidationTruth({
+    validationStatus: capabilityTrialSeed.openClawHealthValidationStatus,
+    healthState: capabilityTrialSeed.openClawHealthState,
+    handshakeState: capabilityTrialSeed.openClawHandshakeState,
+    protocolCompatible: capabilityTrialSeed.openClawProtocolCompatible,
+    readonlyAssurance: capabilityTrialSeed.openClawReadonlyAssurance,
+    executionDisabled: true,
+  });
   const capabilityTrial = buildOpenClawCapabilityTrialState({ operatorSurface: capabilityTrialSeed });
   const capabilityReport = buildOpenClawCapabilityReport({ operatorSurface: capabilityTrialSeed });
   const openClawOversightProposal = buildOpenClawOversightProposal({
-    operatorSurface: capabilityTrialSeed,
+    readonlyTruth,
     capabilityTrial,
   });
   const openClawPermissionEnvelope = buildOpenClawPermissionEnvelope({
@@ -244,6 +251,8 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       { evidenceType: 'oversight_proposal', evidenceStatus: 'provided', source: 'openclaw_oversight', summary: openClawOversightProposal.proposalSummary || 'Oversight proposal generated.' },
       { evidenceType: 'permission_boundary', evidenceStatus: 'provided', source: 'openclaw_policy', summary: 'Execution disabled, self-modification disabled, operator approval required.' },
     ],
+    readonlyTruth,
+    proposalEvidenceStatus: openClawProposalEvidence.status,
   });
 
   const openClawProposalReviewQueue = buildOpenClawProposalReviewQueue({
