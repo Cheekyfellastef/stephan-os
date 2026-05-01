@@ -6,6 +6,7 @@ import { buildOpenClawPermissionDiff } from './openClawPermissionDiff.mjs';
 import { buildOpenClawApprovalGate } from './openClawApprovalGate.mjs';
 import { createOpenClawAuditPreviewEvent } from './openClawAuditLedger.mjs';
 import { buildOpenClawRollbackPlan } from './openClawRollbackPlan.mjs';
+import { buildOpenClawProposalPacket } from './openClawProposalPacket.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -224,6 +225,23 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     createOpenClawAuditPreviewEvent({ eventType: 'approval_gate_evaluated', evidenceTokens: ['gate:operator_review_only'], actionRequested: 'approval_gate' }),
     createOpenClawAuditPreviewEvent({ eventType: 'rollback_plan_previewed', evidenceTokens: ['rollback:preview_only'], actionRequested: 'rollback_plan_preview' }),
   ];
+
+  const openClawProposalPacket = buildOpenClawProposalPacket({
+    source: 'agent_task_projection',
+    proposalType: 'generate_oversight_plan',
+    proposalTitle: 'OpenClaw Oversight + Proposal Packet v1',
+    proposalSummary: 'Proposal packet for operator review only. OpenClaw remains non-executing and cannot self-approve.',
+    requestedOutcome: 'operator_review_for_future_codex_workflow',
+    proposedActions: openClawOversightProposal?.proposedActions || ['generate_oversight_plan'],
+    readonlyEvidence: [
+      { evidenceType: 'readonly_validation', evidenceStatus: capabilityTrial.adapterValidated ? 'succeeded' : 'awaiting', source: 'openclaw_validation', summary: capabilityTrial.readonlyValidationSummary || 'Readonly validation status pending.' },
+      { evidenceType: 'capability_trial', evidenceStatus: capabilityTrial.trialStatus || 'not_started', source: 'openclaw_trial', summary: capabilityTrial.nextAction || 'Capability trial pending.' },
+      { evidenceType: 'capability_report', evidenceStatus: capabilityReport.reportStatus === 'ready' ? 'provided' : 'missing', source: 'openclaw_report', summary: capabilityReport.reportSummary || 'Capability report pending.' },
+      { evidenceType: 'oversight_proposal', evidenceStatus: 'provided', source: 'openclaw_oversight', summary: openClawOversightProposal.proposalSummary || 'Oversight proposal generated.' },
+      { evidenceType: 'permission_boundary', evidenceStatus: 'provided', source: 'openclaw_policy', summary: 'Execution disabled, self-modification disabled, operator approval required.' },
+    ],
+  });
+
   const openClawControlPlane = buildOpenClawControlPlane({
     policySummary: adjudicated.openClawPolicySummary || {},
     operatorSurface: {
@@ -346,6 +364,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAuditLedgerPreview,
       openClawRollbackPlan,
       openClawCapabilityReport: capabilityReport,
+      openClawProposalPacket,
+      openClawProposalEvidence: openClawProposalPacket.readonlyEvidence,
+      openClawProposalRisk: openClawProposalPacket.riskClassification,
+      openClawProposalApprovalRequirements: openClawProposalPacket.approvalRequirements,
+      openClawProposalRollback: openClawProposalPacket.rollbackPreview,
       openClawCapabilityTrialStatus: capabilityTrial.trialStatus,
       openClawCapabilityTrialNextAction: capabilityTrial.nextAction,
       openClawCapabilityTrialExecutionAllowed: false,
