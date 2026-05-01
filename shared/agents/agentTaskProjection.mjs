@@ -1,6 +1,11 @@
 import { adjudicateAgentTaskLayer } from './agentTaskAdjudicator.mjs';
 import { buildOpenClawCapabilityReport, buildOpenClawCapabilityTrialState, evaluateReadonlyValidationTruth } from './openClawCapabilityTrial.mjs';
 import { buildOpenClawOversightProposal } from './openClawOversightProposal.mjs';
+import { buildOpenClawPermissionEnvelope } from './openClawPermissionEnvelope.mjs';
+import { buildOpenClawPermissionDiff } from './openClawPermissionDiff.mjs';
+import { buildOpenClawApprovalGate } from './openClawApprovalGate.mjs';
+import { createOpenClawAuditPreviewEvent } from './openClawAuditLedger.mjs';
+import { buildOpenClawRollbackPlan } from './openClawRollbackPlan.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -194,6 +199,31 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     operatorSurface: capabilityTrialSeed,
     capabilityTrial,
   });
+  const openClawPermissionEnvelope = buildOpenClawPermissionEnvelope({
+    readonlyValidated: capabilityTrial.adapterValidated === true,
+    evidenceTokens: capabilityReport.evidenceTokens || [],
+  });
+  const openClawPermissionDiff = buildOpenClawPermissionDiff({
+    currentEnvelope: openClawPermissionEnvelope,
+    requestedEnvelope: openClawPermissionEnvelope,
+  });
+  const openClawRollbackPlan = buildOpenClawRollbackPlan();
+  const openClawApprovalGate = buildOpenClawApprovalGate({
+    readonlyValidated: capabilityTrial.adapterValidated === true,
+    capabilityReportReady: capabilityReport.reportStatus === 'ready',
+    permissionDiffReady: openClawPermissionDiff.diffStatus === 'preview_ready',
+    auditPreviewReady: true,
+    rollbackReady: openClawRollbackPlan.rollbackAvailable === true,
+    riskPresent: true,
+  });
+  const openClawAuditLedgerPreview = [
+    createOpenClawAuditPreviewEvent({ eventType: 'readonly_validation_observed', evidenceTokens: capabilityReport.evidenceTokens || [], actionRequested: 'readonly_validation' }),
+    createOpenClawAuditPreviewEvent({ eventType: 'capability_trial_reported', evidenceTokens: capabilityReport.evidenceTokens || [], actionRequested: 'capability_report' }),
+    createOpenClawAuditPreviewEvent({ eventType: 'oversight_proposal_generated', evidenceTokens: openClawOversightProposal.evidenceTokens || [], actionRequested: 'oversight_proposal' }),
+    createOpenClawAuditPreviewEvent({ eventType: 'permission_diff_previewed', evidenceTokens: ['diff:preview_only'], actionRequested: 'permission_diff_preview' }),
+    createOpenClawAuditPreviewEvent({ eventType: 'approval_gate_evaluated', evidenceTokens: ['gate:operator_review_only'], actionRequested: 'approval_gate' }),
+    createOpenClawAuditPreviewEvent({ eventType: 'rollback_plan_previewed', evidenceTokens: ['rollback:preview_only'], actionRequested: 'rollback_plan_preview' }),
+  ];
   const openClawControlPlane = buildOpenClawControlPlane({
     policySummary: adjudicated.openClawPolicySummary || {},
     operatorSurface: {
@@ -310,6 +340,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawStageEvidence,
       openClawCapabilityTrial: capabilityTrial,
       openClawOversightProposal,
+      openClawPermissionEnvelope,
+      openClawPermissionDiff,
+      openClawApprovalGate,
+      openClawAuditLedgerPreview,
+      openClawRollbackPlan,
       openClawCapabilityReport: capabilityReport,
       openClawCapabilityTrialStatus: capabilityTrial.trialStatus,
       openClawCapabilityTrialNextAction: capabilityTrial.nextAction,
