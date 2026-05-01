@@ -496,3 +496,22 @@ test('agent task projection exposes OpenClaw control harness models with executi
   assert.equal(ops.openClawPermissionEnvelope.blockedCapabilities.includes('execute_command'), true);
   assert.equal(ops.openClawApprovalGate.gateMode, 'operator_review_only');
 });
+
+test('proposal packet projection exists and remains non-executing', () => {
+  const projection = buildAgentTaskProjection();
+  assert.ok(projection.operatorSurface.openClawProposalPacket);
+  assert.ok(projection.operatorSurface.openClawProposalEvidence);
+  assert.ok(projection.operatorSurface.openClawProposalRisk);
+  assert.ok(projection.operatorSurface.openClawProposalApprovalRequirements);
+  assert.ok(projection.operatorSurface.openClawProposalRollback);
+  assert.equal(projection.operatorSurface.openClawProposalPacket.executionAllowed, false);
+  assert.equal(projection.operatorSurface.openClawProposalPacket.selfModificationAllowed, false);
+  assert.equal(projection.operatorSurface.openClawProposalApprovalRequirements.openClawSelfApprovalAllowed, false);
+});
+
+test('proposal packet readiness reacts to validation and capability report presence', () => {
+  const readyProjection = buildAgentTaskProjection({ model: { openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'succeeded', healthState: 'passing', handshakeState: 'compatible', readonlyAssurance: { readonlyOnly: true } } } } } });
+  assert.equal(readyProjection.operatorSurface.openClawProposalPacket.packetStatus, 'ready_for_operator_review');
+  const waitingProjection = buildAgentTaskProjection({ model: { openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'idle' } } } } });
+  assert.equal(waitingProjection.operatorSurface.openClawProposalPacket.packetStatus, 'awaiting_readonly_validation');
+});
