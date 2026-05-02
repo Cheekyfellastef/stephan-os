@@ -14,6 +14,8 @@ import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHand
 import { buildOpenClawCodexProposalExport } from './openClawCodexProposalExport.mjs';
 import { buildOpenClawOperatorReviewWorkflow } from './openClawOperatorReviewWorkflow.mjs';
 import { normalizeOpenClawReviewDecision } from './openClawReviewDecision.mjs';
+import { buildOpenClawEvidenceRequest } from './openClawEvidenceRequest.mjs';
+import { buildOpenClawEvidenceAttachment } from './openClawEvidenceAttachment.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -281,6 +283,9 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     rollback: openClawRollbackPlan,
     approvalRequirements: openClawProposalPacket.approvalRequirements,
   });
+  const openClawEvidenceAttachments = [];
+  const openClawEvidenceRequest = buildOpenClawEvidenceRequest({}, { reviewDecision: openClawReviewDecision.reviewDecision, packetId: openClawProposalPacket.packetId, attachments: openClawEvidenceAttachments });
+
   const openClawOperatorReviewQueue = buildOpenClawOperatorReviewQueue({
     openClawProposalPacket,
     openClawProposalEvidence,
@@ -291,6 +296,8 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     openClawAuditLedgerPreview,
     openClawOversightProposal,
     openClawReviewDecision,
+    openClawEvidenceRequest,
+    openClawEvidenceAttachments,
   });
 
   const openClawCodexProposalExport = buildOpenClawCodexProposalExport({
@@ -302,12 +309,16 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     permissionDiff: openClawPermissionDiff,
     auditPreview: openClawAuditLedgerPreview,
     reviewDecision: openClawReviewDecision,
+    evidenceRequest: openClawEvidenceRequest,
+    evidenceAttachments: openClawEvidenceAttachments,
   });
 
   const openClawOperatorReviewWorkflow = buildOpenClawOperatorReviewWorkflow({
     reviewQueue: openClawOperatorReviewQueue,
     codexProposalExport: openClawCodexProposalExport,
     reviewDecision: openClawReviewDecision,
+    evidenceRequest: openClawEvidenceRequest,
+    evidenceAttachments: openClawEvidenceAttachments,
   });
 
   const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
@@ -458,6 +469,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalReviewQueue,
       openClawOperatorReviewQueue,
       openClawOperatorReviewWorkflow,
+    openClawEvidenceRequest,
+    openClawEvidenceAttachments,
+    openClawEvidenceRequestStatus: openClawEvidenceRequest.requestStatus,
+    openClawEvidenceRequestNextAction: openClawEvidenceRequest.nextAction,
+    openClawEvidenceMissingItems: openClawEvidenceRequest.missingEvidence || [],
+    openClawEvidenceSatisfied: openClawEvidenceRequest.requestStatus === 'satisfied',
       openClawCodexProposalExport,
       openClawReviewDecision,
       openClawReviewDecisionStatus: openClawReviewDecision.reviewDecision,

@@ -30,11 +30,14 @@ export function buildOpenClawOperatorReviewWorkflow({
   reviewNotes = '',
   reviewEvidence = [],
   reviewDecision = null,
+  evidenceRequest = {},
+  evidenceAttachments = [],
 } = {}) {
   const activePacketId = reviewQueue.activePacketId || 'none';
   const queueReady = reviewQueue.queueStatus === 'ready_for_operator_review';
   const exportAvailable = codexProposalExport.exportStatus === 'generated';
   const missingEvidence = asArray(reviewQueue.missingEvidence);
+  const requestStatus = evidenceRequest.requestStatus || 'none';
   const decisionValue = reviewDecision?.reviewDecision || priorDecision;
   const safeDecision = ['not_reviewed','needs_more_evidence','ready_for_codex_review','rejected','archived'].includes(decisionValue) ? decisionValue : 'not_reviewed';
 
@@ -58,9 +61,13 @@ export function buildOpenClawOperatorReviewWorkflow({
     reviewedBy,
     reviewNotes: reviewDecision?.reviewNotes || reviewNotes,
     reviewEvidence: asArray(reviewDecision?.reviewEvidence || reviewEvidence),
+    evidenceRequest,
+    evidenceAttachments: asArray(evidenceAttachments),
     allowedReviewActions: ALLOWED_REVIEW_ACTIONS,
     forbiddenReviewActions: FORBIDDEN_REVIEW_ACTIONS,
-    nextAction: safeDecision === 'ready_for_codex_review'
+    nextAction: requestStatus === 'satisfied' && safeDecision === 'needs_more_evidence'
+      ? 'Mark ready for Codex review.'
+      : safeDecision === 'ready_for_codex_review'
       ? 'Copy Codex review prompt for manual ChatGPT/Codex review.'
       : queueReady
         ? (exportAvailable ? 'Review proposal packet and copy Codex review prompt.' : 'Generate/copy Codex proposal export for review.')

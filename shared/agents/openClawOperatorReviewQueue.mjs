@@ -20,6 +20,8 @@ export function buildOpenClawOperatorReviewQueue({
   openClawOversightProposal = {},
   openClawCodexProposalExport = {},
   openClawReviewDecision = {},
+  openClawEvidenceRequest = {},
+  openClawEvidenceAttachments = [],
 } = {}) {
   const packetId = openClawProposalPacket.packetId || 'none';
   const packetStatus = String(openClawProposalPacket.packetStatus || 'awaiting_packet');
@@ -39,6 +41,8 @@ export function buildOpenClawOperatorReviewQueue({
   if (rollbackStatus !== 'preview_ready') missingEvidence.push('rollback_preview_missing');
   if (permissionDiffStatus !== 'preview_ready') missingEvidence.push('permission_diff_preview_missing');
   if (auditPreviewStatus !== 'preview_ready') missingEvidence.push('audit_preview_missing');
+  const evidenceMissing = asArray(openClawEvidenceRequest.missingEvidence);
+  if (evidenceMissing.length > 0) missingEvidence.push(...evidenceMissing.map((m)=>`evidence_request:${m}`));
 
   const availableEvidence = [
     `packet:${packetStatus}`,
@@ -71,6 +75,8 @@ export function buildOpenClawOperatorReviewQueue({
     permissionDiffSummary: { permissionDiffStatus, diffSummary: openClawPermissionDiff.diffSummary || 'Permission diff preview pending.' },
     auditSummary: { auditPreviewStatus, auditEventCount },
     codexExportStatus,
+    evidenceRequests: openClawEvidenceRequest.requestStatus && openClawEvidenceRequest.requestStatus !== 'none' ? [openClawEvidenceRequest] : [],
+    attachedEvidence: asArray(openClawEvidenceAttachments),
     executionAllowed: false,
     selfModificationAllowed: false,
     actionExecutionEligible: false,
