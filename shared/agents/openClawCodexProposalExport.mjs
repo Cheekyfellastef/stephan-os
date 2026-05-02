@@ -28,6 +28,8 @@ export function buildOpenClawCodexProposalExport({
   permissionDiff = null,
   auditPreview = [],
   reviewDecision = null,
+  evidenceRequest = {},
+  evidenceAttachments = [],
 } = {}) {
   const packetStatus = String(proposalPacket?.packetStatus || '').toLowerCase();
   const sourcePacketId = proposalPacket?.packetId || 'none';
@@ -63,6 +65,7 @@ export function buildOpenClawCodexProposalExport({
     ? asArray(proposalPacket.blockedActions)
     : ['execute_commands', 'edit_repository', 'create_commits', 'create_pull_requests'];
 
+  const evidenceIncomplete = ['requested','partially_satisfied','blocked'].includes(String(evidenceRequest.requestStatus || 'none'));
   const promptLines = [
     'OpenClaw Proposal Packet → Codex Review/Planning Prompt (v1)',
     `Project context: Stephanos OpenClaw proposal-only workflow. Packet id: ${sourcePacketId}.`,
@@ -82,6 +85,10 @@ export function buildOpenClawCodexProposalExport({
     `Forbidden self-actions: ${forbiddenSelfActions.join(', ') || 'none'}.`,
     'Do not enable OpenClaw execution in this task unless the operator explicitly requests a future execution-stage design.',
     'Definition of done: produce review findings, implementation plan, risks, rollback validation, and required test/check results.',
+    `Evidence request status: ${evidenceRequest.requestStatus || 'none'}.`,
+    `Evidence missing items: ${asArray(evidenceRequest.missingEvidence).join(', ') || 'none'}.`,
+    `Evidence attachment summaries: ${asArray(evidenceAttachments).map((a)=>a.summary || a.title || a.evidenceType).join(' | ') || 'none'}.`,
+    evidenceIncomplete ? 'Evidence is incomplete. Review only; do not implement unless operator explicitly asks.' : 'Evidence appears satisfied for review context.',
     'Required report format: Summary, Files/Scope, Risks, Rollback, Required Checks, Safety Confirmations, Open Questions.',
   ];
 
@@ -124,6 +131,9 @@ export function buildOpenClawCodexProposalExport({
     nextAction,
     queueStatus: operatorReviewQueue?.queueStatus || 'awaiting_packet',
     reviewDecision: decision,
+    evidenceRequestStatus: evidenceRequest.requestStatus || 'none',
+    evidenceIncomplete,
+    evidenceAttachmentSummaries: asArray(evidenceAttachments).map((a)=>a.summary || a.title || a.evidenceType),
     auditPreviewCount: asArray(auditPreview).length,
   };
 }

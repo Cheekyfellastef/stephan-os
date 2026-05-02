@@ -15,6 +15,7 @@ import { buildOpenClawCandidatePrompts } from './openclaw/openclawPromptGenerato
 import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditModel.js';
 import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
 import { clearOpenClawReviewDecision, loadOpenClawReviewDecisions, saveOpenClawReviewDecision } from '../../../shared/agents/openClawReviewDecisionStore.mjs';
+import { buildOpenClawEvidenceAttachment } from '../../../shared/agents/openClawEvidenceAttachment.mjs';
 
 
 function getCodexExportRiskPresentation(canonicalRiskLevel = '') {
@@ -129,6 +130,11 @@ export default function OpenClawTile({
   const codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt || 'OpenClaw Codex prompt unavailable.';
   const codexRiskPresentation = getCodexExportRiskPresentation(operatorTask?.openClawProposalRisk?.riskLevel);
 
+  const [evidenceNote, setEvidenceNote] = useState('');
+  const [localEvidenceAttachments, setLocalEvidenceAttachments] = useState([]);
+  const evidenceRequest = operatorTask?.openClawEvidenceRequest || null;
+  const evidenceAttachments = operatorTask?.openClawEvidenceAttachments?.length ? operatorTask.openClawEvidenceAttachments : localEvidenceAttachments;
+
   const activePacketId = operatorReviewQueue?.activePacketId || operatorTask?.openClawProposalPacket?.packetId || 'none';
   useEffect(() => {
     const decisions = loadOpenClawReviewDecisions();
@@ -202,6 +208,16 @@ export default function OpenClawTile({
   async function copyCodexProposalPrompt() {
     await navigator.clipboard.writeText(codexPromptText);
     setCodexExportCopyStatus('copied');
+  }
+
+
+  function attachOperatorEvidenceNote() {
+    const attachment = buildOpenClawEvidenceAttachment({
+      requestId: evidenceRequest?.requestId || 'none', packetId: activePacketId, evidenceType: 'operator_note', source: 'operator', title: 'Operator evidence note',
+      summary: evidenceNote || 'Operator note attached.', content: evidenceNote, trustedForReview: true,
+    });
+    setLocalEvidenceAttachments((prev) => [...prev, attachment]);
+    setEvidenceNote('');
   }
 
   function updatePromptStatus(promptId, nextStatus) {
@@ -454,6 +470,29 @@ export default function OpenClawTile({
         <button type="button" onClick={() => updateReviewDecision('rejected')}>Reject packet</button>
         <button type="button" onClick={() => updateReviewDecision('archived')}>Archive packet</button>
         <button type="button" onClick={() => { clearOpenClawReviewDecision({ packetId: activePacketId }); setLocalReviewDecision(null); }}>Clear review decision</button>
+      </section>
+
+
+      <section className="openclaw-section">
+        <h4>OpenClaw Evidence Requests</h4>
+        <ul>
+          <li><strong>Evidence request status:</strong> {evidenceRequest?.requestStatus || 'none'}</li>
+          <li><strong>Requested evidence type:</strong> {evidenceRequest?.requestedEvidenceType || 'none'}</li>
+          <li><strong>Reason:</strong> {evidenceRequest?.reason || 'none'}</li>
+          <li><strong>Blocking:</strong> {evidenceRequest?.blocking ? 'yes' : 'no'}</li>
+          <li><strong>Missing evidence:</strong> {(evidenceRequest?.missingEvidence || []).join(', ') || 'none'}</li>
+          <li><strong>Attached evidence summary:</strong> {(evidenceAttachments || []).map((a)=>a.summary || a.title).join(' | ') || 'none'}</li>
+          <li><strong>Next action:</strong> {evidenceRequest?.nextAction || 'Add requested OpenClaw proposal evidence'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+        </ul>
+        <label>Operator evidence note
+          <input value={evidenceNote} onChange={(event) => setEvidenceNote(event.target.value)} />
+        </label>
+        <button type="button" onClick={attachOperatorEvidenceNote}>Attach operator note</button>
+        <button type="button">Add evidence request</button>
+        <button type="button">Mark evidence request satisfied</button>
+        <button type="button">Mark evidence insufficient</button>
+        <button type="button">Clear evidence request</button>
       </section>
 
       <section className="openclaw-section">
