@@ -23,9 +23,10 @@ test('OpenClawTile validation button gating consumes shared endpoint-availabilit
 
 test('OpenClawTile lifecycle messaging is driven by projected canonical control truth', async () => {
   const source = await fs.readFile(tilePath, 'utf8');
-  assert.equal(source.includes('openClawControlNextAction || trialNextAction'), true);
+  assert.equal(source.includes("openClawControlNextAction || 'Keep proposal-only review path and collect evidence.'"), true);
   assert.equal(source.includes("(operatorTask?.openClawPauseState || pauseStateUi) === 'paused'"), true);
   assert.equal(source.includes('validationSucceeded ? ('), true);
+  assert.equal(source.includes('openClawOperatorReviewHandoff'), true);
 });
 
 test('OpenClawTile renders control harness governance section copy', async () => {

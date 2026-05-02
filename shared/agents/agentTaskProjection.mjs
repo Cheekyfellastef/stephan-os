@@ -9,6 +9,7 @@ import { buildOpenClawRollbackPlan } from './openClawRollbackPlan.mjs';
 import { buildOpenClawProposalPacket } from './openClawProposalPacket.mjs';
 import { buildOpenClawProposalEvidenceProjection } from './openClawProposalEvidence.mjs';
 import { buildOpenClawProposalReviewQueue } from './openClawProposalReviewQueue.mjs';
+import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHandoff.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -109,31 +110,39 @@ function buildOpenClawStageEvidence({ policySummary = {}, adapterSummary = {}, a
   return result;
 }
 
-function buildOpenClawControlPlane({ policySummary = {}, operatorSurface = {} } = {}) {
+function buildOpenClawControlPlane({ policySummary = {}, operatorSurface = {}, operatorReviewHandoff = {}, capabilityReport = {}, oversightProposal = {}, proposalPacket = {}, proposalReviewQueue = {} } = {}) {
   const killSwitchEngaged = operatorSurface.openClawKillSwitchEngaged === true;
   const paused = String(operatorSurface.openClawPauseState || 'not_configured') === 'paused';
   const validationAvailable = operatorSurface.openClawReadonlyValidationEndpointAvailable === true;
   const validationStatus = String(operatorSurface.openClawHealthValidationStatus || 'idle');
   const executionAllowed = false;
   const readonlyTruth = evaluateReadonlyValidationTruth({ operatorSurface });
+  const reportReady = String(capabilityReport.reportStatus || '').toLowerCase() === 'ready';
+  const packetReady = String(proposalPacket.packetStatus || '').toLowerCase() === 'ready_for_operator_review';
+  const queueReady = String(proposalReviewQueue.queueStatus || '').toLowerCase() === 'ready_for_operator_review';
+  const oversightReady = String(oversightProposal.proposalStatus || '').toLowerCase() === 'ready_for_operator_review';
   const openClawControlMode = killSwitchEngaged
     ? 'disabled'
     : paused
       ? 'paused'
-      : validationAvailable
-        ? (readonlyTruth.adapterValidated ? 'ready_for_operator_review' : 'readonly_validation')
-        : 'readonly_validation';
+      : (packetReady || queueReady || oversightReady)
+        ? 'ready_for_operator_review'
+        : validationAvailable
+          ? (readonlyTruth.adapterValidated ? 'readonly_validation_complete' : 'readonly_validation')
+          : 'readonly_validation';
   const openClawControlNextAction = killSwitchEngaged
     ? 'Kill switch engaged: OpenClaw control plane blocked. Execution remains disabled.'
     : paused
       ? 'Paused: readonly validation is paused. Execution remains disabled.'
-      : !validationAvailable
-        ? 'Start or repair readonly adapter, then re-run readonly health/handshake validation.'
-        : validationStatus === 'idle'
-          ? 'Validate readonly health/handshake.'
-          : readonlyTruth.adapterValidated
-            ? 'Run readonly capability trial.'
-            : 'Re-run readonly health/handshake validation.';
+      : !readonlyTruth.adapterValidated
+        ? (validationAvailable && validationStatus !== 'idle' ? 'Re-run readonly health/handshake validation.' : 'Validate readonly health/handshake.')
+        : !reportReady
+          ? 'Run readonly capability trial.'
+          : (packetReady || queueReady)
+            ? 'Submit packet for operator review.'
+            : oversightReady
+              ? 'Prepare proposal packet for operator review.'
+              : (operatorReviewHandoff.nextAction || 'Keep proposal-only review path and collect evidence.');
   return {
     openClawControlMode,
     openClawKillSwitchEngaged: killSwitchEngaged,
@@ -262,9 +271,25 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     rollback: openClawRollbackPlan,
     approvalRequirements: openClawProposalPacket.approvalRequirements,
   });
+  const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
+    readonlyValidated: readonlyTruth.adapterValidated === true,
+    capabilityTrial,
+    capabilityReport,
+    oversightProposal: openClawOversightProposal,
+    proposalPacket: openClawProposalPacket,
+    proposalReviewQueue: openClawProposalReviewQueue,
+    approvalGate: openClawApprovalGate,
+    killSwitchEngaged: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged',
+    paused: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged',
+  });
 
   const openClawControlPlane = buildOpenClawControlPlane({
     policySummary: adjudicated.openClawPolicySummary || {},
+    operatorReviewHandoff: openClawOperatorReviewHandoff,
+    capabilityReport,
+    oversightProposal: openClawOversightProposal,
+    proposalPacket: openClawProposalPacket,
+    proposalReviewQueue: openClawProposalReviewQueue,
     operatorSurface: {
       ...capabilityTrialSeed,
       openClawKillSwitchEngaged: adjudicated.openClawPolicySummary?.killSwitchState === 'engaged',
@@ -378,6 +403,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawAdapterEvidenceContract: asArray(adapter.adapterEvidenceContract),
       openClawStageEvidence,
       openClawCapabilityTrial: capabilityTrial,
+      openClawOperatorReviewHandoff,
       openClawOversightProposal,
       openClawPermissionEnvelope,
       openClawPermissionDiff,
@@ -388,6 +414,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalPacket,
       openClawProposalEvidence,
       openClawProposalReviewQueue,
+      openClawOperatorReviewHandoff,
       openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,
       openClawProposalRisk: openClawProposalPacket.riskClassification,
       openClawProposalApprovalRequirements: openClawProposalPacket.approvalRequirements,
