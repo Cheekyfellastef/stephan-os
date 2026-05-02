@@ -36,3 +36,21 @@ test('OpenClawTile renders control harness governance section copy', async () =>
   assert.equal(source.includes('Permission envelope status:'), true);
   assert.equal(source.includes('Execution allowed:'), true);
 });
+
+test('OpenClawTile renders operator review queue and copy packet affordance', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('OpenClaw Operator Review Queue'), true);
+  assert.equal(source.includes('Copy active review packet'), true);
+  assert.equal(source.includes('This queue is for human/ChatGPT/Codex review only.'), true);
+  assert.equal(source.includes('Risk classification:'), true);
+  assert.equal(source.includes('Rollback preview:'), true);
+  assert.equal(source.includes('Permission diff:'), true);
+  assert.equal(source.includes('Approval requirements:'), true);
+  assert.equal(source.includes('Audit preview:'), true);
+});
+
+test('OpenClawTile reduces duplicate submit-for-review copy', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  const matches = source.match(/Submit packet for operator review/g) || [];
+  assert.equal(matches.length <= 2, true);
+});

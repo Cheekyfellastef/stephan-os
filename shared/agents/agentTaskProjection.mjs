@@ -9,6 +9,7 @@ import { buildOpenClawRollbackPlan } from './openClawRollbackPlan.mjs';
 import { buildOpenClawProposalPacket } from './openClawProposalPacket.mjs';
 import { buildOpenClawProposalEvidenceProjection } from './openClawProposalEvidence.mjs';
 import { buildOpenClawProposalReviewQueue } from './openClawProposalReviewQueue.mjs';
+import { buildOpenClawOperatorReviewQueue } from './openClawOperatorReviewQueue.mjs';
 import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHandoff.mjs';
 
 function asArray(value) {
@@ -271,6 +272,16 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     rollback: openClawRollbackPlan,
     approvalRequirements: openClawProposalPacket.approvalRequirements,
   });
+  const openClawOperatorReviewQueue = buildOpenClawOperatorReviewQueue({
+    openClawProposalPacket,
+    openClawProposalEvidence,
+    openClawProposalRisk: openClawProposalPacket.riskClassification,
+    openClawProposalApprovalRequirements: openClawProposalPacket.approvalRequirements,
+    openClawProposalRollback: openClawProposalPacket.rollbackPreview,
+    openClawPermissionDiff,
+    openClawAuditLedgerPreview,
+    openClawOversightProposal,
+  });
   const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
     readonlyValidated: readonlyTruth.adapterValidated === true,
     capabilityTrial,
@@ -414,6 +425,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalPacket,
       openClawProposalEvidence,
       openClawProposalReviewQueue,
+      openClawOperatorReviewQueue,
       openClawOperatorReviewHandoff,
       openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,
       openClawProposalRisk: openClawProposalPacket.riskClassification,
