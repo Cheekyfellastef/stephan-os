@@ -15,6 +15,33 @@ import { buildOpenClawCandidatePrompts } from './openclaw/openclawPromptGenerato
 import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditModel.js';
 import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
 
+
+function getCodexExportRiskPresentation(canonicalRiskLevel = '') {
+  const riskLevel = String(canonicalRiskLevel || 'guarded').toLowerCase();
+  if (['low', 'review_only', 'review-only', 'readonly', 'read_only'].includes(riskLevel)) {
+    return {
+      toneClass: 'openclaw-codex-preview--low',
+      riskLabel: 'Risk: low',
+      policyLabel: 'Review-only, execution disabled.',
+      blockedWarning: null,
+    };
+  }
+  if (['blocked', 'high', 'critical', 'red'].includes(riskLevel)) {
+    return {
+      toneClass: 'openclaw-codex-preview--high',
+      riskLabel: riskLevel === 'blocked' ? 'Risk: blocked' : 'Risk: high',
+      policyLabel: 'Blocked / do not execute. Review-only export path.',
+      blockedWarning: 'Blocked / do not execute.',
+    };
+  }
+  return {
+    toneClass: 'openclaw-codex-preview--guarded',
+    riskLabel: 'Risk: guarded',
+    policyLabel: 'Guarded proposal. Review-only, execution disabled.',
+    blockedWarning: null,
+  };
+}
+
 function getTone(status = '') {
   return status === 'blocked' ? 'blocked' : 'allowed';
 }
@@ -93,6 +120,8 @@ export default function OpenClawTile({
   const operatorReviewWorkflow = operatorTask?.openClawOperatorReviewWorkflow || null;
   const [packetCopyStatus, setPacketCopyStatus] = useState('idle');
   const [codexExportCopyStatus, setCodexExportCopyStatus] = useState('idle');
+  const codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt || 'OpenClaw Codex prompt unavailable.';
+  const codexRiskPresentation = getCodexExportRiskPresentation(operatorTask?.openClawProposalRisk?.riskLevel);
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -148,8 +177,7 @@ export default function OpenClawTile({
 
 
   async function copyCodexProposalPrompt() {
-    const codexExport = operatorTask?.openClawCodexProposalExport || {};
-    await navigator.clipboard.writeText(codexExport.codexPrompt || 'OpenClaw Codex prompt unavailable.');
+    await navigator.clipboard.writeText(codexPromptText);
     setCodexExportCopyStatus('copied');
   }
 
@@ -401,6 +429,20 @@ export default function OpenClawTile({
           <li><strong>Required tests:</strong> {(operatorTask?.openClawCodexProposalExport?.requiredTests || []).join(', ') || 'none'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawCodexProposalExport?.nextAction || 'Prepare packet for operator review.'}</li>
         </ul>
+        <div className={`openclaw-codex-preview ${codexRiskPresentation.toneClass}`} role="region" aria-label="Codex prompt preview">
+          <p className="openclaw-codex-preview__risk"><strong>{codexRiskPresentation.riskLabel}</strong></p>
+          <p className="openclaw-codex-preview__policy">{codexRiskPresentation.policyLabel}</p>
+          {codexRiskPresentation.blockedWarning ? <p className="openclaw-codex-preview__warning"><strong>{codexRiskPresentation.blockedWarning}</strong></p> : null}
+          <label htmlFor="openclawCodexPromptPreview"><strong>Codex Prompt Preview</strong></label>
+          <textarea
+            id="openclawCodexPromptPreview"
+            value={codexPromptText}
+            readOnly
+            rows={10}
+            aria-readonly="true"
+          />
+          <p className="muted">Selectable review text only. Execution remains disabled.</p>
+        </div>
         <button type="button" onClick={() => copyCodexProposalPrompt()}>
           Copy Codex prompt ({operatorTask?.openClawCodexProposalExport?.sourcePacketId || 'none'})
         </button>
