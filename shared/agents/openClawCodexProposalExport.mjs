@@ -27,6 +27,7 @@ export function buildOpenClawCodexProposalExport({
   rollback = null,
   permissionDiff = null,
   auditPreview = [],
+  reviewDecision = null,
 } = {}) {
   const packetStatus = String(proposalPacket?.packetStatus || '').toLowerCase();
   const sourcePacketId = proposalPacket?.packetId || 'none';
@@ -84,8 +85,15 @@ export function buildOpenClawCodexProposalExport({
     'Required report format: Summary, Files/Scope, Risks, Rollback, Required Checks, Safety Confirmations, Open Questions.',
   ];
 
-  const nextAction = exportStatus === 'generated'
-    ? 'Operator may copy prompt and hand to Codex/ChatGPT for review or planning.'
+  const decision = reviewDecision?.reviewDecision || 'not_reviewed';
+  const nextAction = decision === 'ready_for_codex_review'
+    ? 'Copy Codex prompt for review/planning.'
+    : decision === 'needs_more_evidence'
+      ? 'Evidence incomplete: add requested proposal evidence before Codex review.'
+      : decision === 'rejected' || decision === 'archived'
+        ? 'Packet inactive for active Codex handoff; use audit copy only if needed.'
+        : exportStatus === 'generated'
+    ? 'Review proposal packet first, then copy prompt for Codex/ChatGPT review.'
     : exportStatus === 'blocked_by_risk'
       ? 'Resolve critical risk before generating Codex export.'
       : exportStatus === 'missing_packet'
@@ -115,6 +123,7 @@ export function buildOpenClawCodexProposalExport({
     operatorApprovalRequired: true,
     nextAction,
     queueStatus: operatorReviewQueue?.queueStatus || 'awaiting_packet',
+    reviewDecision: decision,
     auditPreviewCount: asArray(auditPreview).length,
   };
 }

@@ -13,6 +13,7 @@ import { buildOpenClawOperatorReviewQueue } from './openClawOperatorReviewQueue.
 import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHandoff.mjs';
 import { buildOpenClawCodexProposalExport } from './openClawCodexProposalExport.mjs';
 import { buildOpenClawOperatorReviewWorkflow } from './openClawOperatorReviewWorkflow.mjs';
+import { normalizeOpenClawReviewDecision } from './openClawReviewDecision.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -267,6 +268,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     proposalEvidenceStatus: openClawProposalEvidence.status,
   });
 
+
+  const openClawReviewDecision = normalizeOpenClawReviewDecision(
+    context?.openClawReviewDecision || {},
+    { packetId: openClawProposalPacket.packetId || 'none' },
+  );
+
   const openClawProposalReviewQueue = buildOpenClawProposalReviewQueue({
     proposalPacket: openClawProposalPacket,
     evidence: openClawProposalEvidence,
@@ -283,6 +290,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     openClawPermissionDiff,
     openClawAuditLedgerPreview,
     openClawOversightProposal,
+    openClawReviewDecision,
   });
 
   const openClawCodexProposalExport = buildOpenClawCodexProposalExport({
@@ -293,11 +301,13 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     rollback: openClawProposalPacket.rollbackPreview,
     permissionDiff: openClawPermissionDiff,
     auditPreview: openClawAuditLedgerPreview,
+    reviewDecision: openClawReviewDecision,
   });
 
   const openClawOperatorReviewWorkflow = buildOpenClawOperatorReviewWorkflow({
     reviewQueue: openClawOperatorReviewQueue,
     codexProposalExport: openClawCodexProposalExport,
+    reviewDecision: openClawReviewDecision,
   });
 
   const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
@@ -446,6 +456,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawOperatorReviewQueue,
       openClawOperatorReviewWorkflow,
       openClawCodexProposalExport,
+      openClawReviewDecision,
+      openClawReviewDecisionStatus: openClawReviewDecision.reviewDecision,
+      openClawReviewDecisionNextAction: openClawReviewDecision.nextAction,
+      openClawReviewDecisionEvidence: openClawReviewDecision.reviewEvidence,
+      openClawReviewDecisionSource: openClawReviewDecision.decisionMode,
+      openClawReviewDecisionUpdatedAt: openClawReviewDecision.updatedAt,
       openClawOperatorReviewHandoff,
       openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,
       openClawProposalRisk: openClawProposalPacket.riskClassification,

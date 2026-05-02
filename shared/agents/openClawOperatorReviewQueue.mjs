@@ -19,6 +19,7 @@ export function buildOpenClawOperatorReviewQueue({
   openClawAuditLedgerPreview = [],
   openClawOversightProposal = {},
   openClawCodexProposalExport = {},
+  openClawReviewDecision = {},
 } = {}) {
   const packetId = openClawProposalPacket.packetId || 'none';
   const packetStatus = String(openClawProposalPacket.packetStatus || 'awaiting_packet');
@@ -59,7 +60,7 @@ export function buildOpenClawOperatorReviewQueue({
     queueStatus,
     queueMode: 'operator_review_only',
     activePacketId: packetId,
-    reviewStatus: 'not_reviewed',
+    reviewStatus: openClawReviewDecision.reviewDecision || 'not_reviewed',
     missingEvidence,
     availableEvidence,
     reviewBlockers: queueStatus === 'blocked_by_risk' ? [openClawProposalRisk.riskSummary || `Risk level ${riskLevel} requires mitigation.`] : [],
@@ -76,7 +77,7 @@ export function buildOpenClawOperatorReviewQueue({
     openClawSelfApprovalAllowed: false,
     operatorApprovalRequired: true,
     nextAction: queueStatus === 'ready_for_operator_review'
-      ? 'Review proposal packet / Copy Codex review prompt.'
+      ? (openClawReviewDecision.nextAction || 'Review proposal packet / Copy Codex review prompt.')
       : queueStatus === 'needs_more_evidence'
         ? `Collect missing evidence: ${missingEvidence.join(', ')}`
         : queueStatus === 'blocked_by_risk'
