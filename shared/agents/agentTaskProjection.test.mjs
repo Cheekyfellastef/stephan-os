@@ -332,7 +332,7 @@ test('openclaw control plane sequencing: missing stub drives repair next action 
   const projection = buildAgentTaskProjection({ model: {} });
   assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
   assert.equal(projection.operatorSurface.openClawControlMode, 'readonly_validation');
-  assert.match(projection.operatorSurface.openClawControlNextAction, /Start or repair readonly adapter/i);
+  assert.match(projection.operatorSurface.openClawControlNextAction, /Validate readonly health\/handshake/i);
 });
 
 test('openclaw control plane sequencing: kill switch engaged stays blocked and safe', () => {
@@ -413,7 +413,7 @@ test('agent task projection keeps lifecycle/report/capability truth aligned for 
   assert.equal(projection.operatorSurface.openClawCapabilityTrial.adapterValidated, true);
   assert.equal(projection.operatorSurface.openClawCapabilityTrial.trialStatus, 'ready');
   assert.equal(projection.operatorSurface.openClawCapabilityReport.protocolCompatibility, 'compatible');
-  assert.equal(projection.operatorSurface.openClawControlNextAction, 'Run readonly capability trial.');
+  assert.equal(projection.operatorSurface.openClawControlNextAction, 'Submit packet for operator review.');
   assert.equal(projection.operatorSurface.openClawKillSwitchEngaged, false);
   assert.equal(projection.operatorSurface.openClawPauseState, 'resumed');
   assert.equal(projection.operatorSurface.openClawExecutionAllowed, false);
@@ -538,4 +538,30 @@ test('protocol compatibility inference is consistent across report/proposal/harn
   assert.equal(ops.openClawCapabilityReport.protocolCompatibility, 'compatible');
   assert.equal(ops.openClawOversightProposal.proposalStatus, 'ready_for_operator_review');
   assert.equal(ops.openClawPermissionEnvelope.envelopeStatus, 'readonly_validated');
+});
+
+
+test('agent task projection lifecycle next action resolves to operator review submit when packet/review queue are ready', () => {
+  const projection = buildAgentTaskProjection({
+    model: {
+      openClawPolicy: { killSwitchState: 'available' },
+      openClawAdapter: { adapterConnection: { healthHandshake: {
+        validationStatus: 'succeeded', healthState: 'passing', handshakeState: 'compatible', protocol: { compatible: true }, readonlyValidationEndpoint: { available: true }, readonlyAssurance: { readonlyOnly: true }, adapterIdentity: { id: 'openclaw-readonly-adapter-stub' },
+      } } },
+    },
+  });
+  assert.equal(projection.operatorSurface.openClawProposalPacket.packetStatus, 'ready_for_operator_review');
+  assert.equal(projection.operatorSurface.openClawProposalReviewQueue.queueStatus, 'ready_for_operator_review');
+  assert.equal(projection.operatorSurface.openClawControlNextAction, 'Submit packet for operator review.');
+  assert.notEqual(projection.operatorSurface.openClawControlNextAction, 'Run readonly capability trial.');
+  assert.equal(projection.operatorSurface.openClawOperatorReviewHandoff.handoffStatus, 'ready_for_operator_review');
+  assert.equal(projection.operatorSurface.openClawOperatorReviewHandoff.executionAllowed, false);
+  assert.equal(projection.operatorSurface.openClawOperatorReviewHandoff.selfModificationAllowed, false);
+  assert.equal(projection.operatorSurface.openClawOperatorReviewHandoff.openClawSelfApprovalForbidden, true);
+});
+
+test('agent task projection lifecycle keeps kill switch and pause overrides over operator review readiness', () => {
+  const engaged = buildAgentTaskProjection({ model: { openClawPolicy: { killSwitchState: 'engaged' }, openClawAdapter: { adapterConnection: { healthHandshake: { validationStatus: 'succeeded', healthState: 'passing', handshakeState: 'compatible', protocol: { compatible: true }, readonlyValidationEndpoint: { available: true }, readonlyAssurance: { readonlyOnly: true } } } } } });
+  assert.match(engaged.operatorSurface.openClawControlNextAction, /Kill switch engaged/);
+  assert.equal(engaged.operatorSurface.openClawExecutionAllowed, false);
 });

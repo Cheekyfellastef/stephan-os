@@ -88,6 +88,7 @@ export default function OpenClawTile({
       ? 'Review OpenClaw capability report.'
       : 'Run readonly capability trial.');
   const reportVisible = trialStatus === 'report_ready' || (capabilityReport && validationSucceeded);
+  const operatorReviewHandoff = operatorTask?.openClawOperatorReviewHandoff || null;
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -324,12 +325,21 @@ export default function OpenClawTile({
           <li><strong>Permission diff status:</strong> {operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}</li>
           <li><strong>Approval gate status:</strong> {operatorTask?.openClawApprovalGate?.gateStatus || 'unknown'}</li>
           <li><strong>Proposal Review Queue:</strong> {operatorTask?.openClawProposalReviewQueue?.queueStatus || 'not_available'}</li>
+          <li><strong>Operator review handoff status:</strong> {operatorReviewHandoff?.handoffStatus || 'unknown'}</li>
+          <li><strong>Operator review handoff next action:</strong> {operatorReviewHandoff?.nextAction || 'Operator review only.'}</li>
           <li><strong>Permission Diff Viewer:</strong> {operatorTask?.openClawPermissionDiff?.diffMode || 'preview_only'}</li>
           <li><strong>Audit preview status:</strong> {(operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated'}</li>
           <li><strong>Rollback plan status:</strong> {operatorTask?.openClawRollbackPlan?.rollbackStatus || 'unknown'}</li>
           <li><strong>Risk level:</strong> {operatorTask?.openClawPermissionEnvelope?.riskLevel || operatorTask?.openClawOversightProposal?.riskLevel || 'guarded'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawApprovalGate?.nextAction || operatorTask?.openClawPermissionEnvelope?.nextAction || 'Operator review only.'}</li>
         </ul>
+        {operatorReviewHandoff?.handoffStatus === 'ready_for_operator_review' ? (
+          <div className="mission-dashboard__banner mission-dashboard__banner--warning">
+            <strong>Submit packet for operator review</strong>
+            <span> Preview-only marker: OpenClaw cannot submit/approve/apply its own packet. </span>
+            <button type="button" disabled>Submit packet for operator review (preview only)</button>
+          </div>
+        ) : null}
       </section>
 
       <section className="openclaw-section">
@@ -346,7 +356,7 @@ export default function OpenClawTile({
           <li><strong>Readonly validation available:</strong> {operatorTask?.openClawReadonlyValidationAvailable ? 'yes' : 'no'}</li>
           <li><strong>Readonly validation status:</strong> {operatorTask?.openClawReadonlyValidationStatus || validationStatus}</li>
           <li><strong>Execution allowed:</strong> no (disabled)</li>
-          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || trialNextAction}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawControlNextAction || 'Keep proposal-only review path and collect evidence.'}</li>
         </ul>
         {(operatorTask?.openClawKillSwitchEngaged || killSwitchEngagedUi) ? (
           <p className="muted">Kill switch engaged: OpenClaw control plane blocked.</p>
