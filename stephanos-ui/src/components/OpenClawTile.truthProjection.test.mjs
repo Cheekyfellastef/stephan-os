@@ -62,3 +62,39 @@ test('OpenClawTile renders Codex Proposal Export section and packet-specific cop
   assert.equal(source.includes('openClawCodexProposalExport'), true);
 });
 
+
+
+test('OpenClawTile shows codex prompt preview before copy and keeps it read-only/selectable', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('Codex Prompt Preview'), true);
+  assert.equal(source.includes('<textarea'), true);
+  assert.equal(source.includes('readOnly'), true);
+  assert.equal(source.includes('aria-readonly="true"'), true);
+  assert.equal(source.includes('Copy Codex prompt ('), true);
+});
+
+test('OpenClawTile copies canonical codex preview text and uses canonical copy feedback', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt'), true);
+  assert.equal(source.includes('await navigator.clipboard.writeText(codexPromptText);'), true);
+  assert.equal(source.includes("setCodexExportCopyStatus('copied')"), true);
+  assert.equal(source.includes('Codex prompt copied.'), true);
+});
+
+test('OpenClawTile risk treatment is derived from canonical risk classification with green/amber/red labels', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('getCodexExportRiskPresentation(operatorTask?.openClawProposalRisk?.riskLevel)'), true);
+  assert.equal(source.includes('openclaw-codex-preview--low'), true);
+  assert.equal(source.includes('openclaw-codex-preview--guarded'), true);
+  assert.equal(source.includes('openclaw-codex-preview--high'), true);
+  assert.equal(source.includes('Risk: low'), true);
+  assert.equal(source.includes('Risk: guarded'), true);
+  assert.equal(source.includes('Risk: blocked'), true);
+});
+
+test('OpenClawTile blocked/high-risk proposals render warning while execution stays disabled', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('Blocked / do not execute.'), true);
+  assert.equal(source.includes('Execution remains disabled.'), true);
+  assert.equal(source.includes('Execution allowed:</strong> no'), true);
+});
