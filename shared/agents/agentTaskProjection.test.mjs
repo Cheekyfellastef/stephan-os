@@ -606,3 +606,16 @@ test('openclaw operator review workflow remains manual and non-executing', () =>
   assert.equal(workflow.allowedReviewActions.includes('mark_ready_for_codex_review'), true);
   assert.equal(workflow.forbiddenReviewActions.includes('approve_execution'), true);
 });
+
+
+test('openclaw review decision persists across projection rebuild for same logical packet', () => {
+  const projection1 = buildAgentTaskProjection();
+  const packetId = projection1.operatorSurface.openClawProposalPacket.packetId;
+  const projection2 = buildAgentTaskProjection({
+    context: { openClawReviewDecision: { packetId, reviewDecision: 'ready_for_codex_review', reviewedBy: 'operator' } },
+  });
+  assert.equal(projection2.operatorSurface.openClawProposalPacket.packetId, packetId);
+  assert.equal(projection2.operatorSurface.openClawReviewDecision.reviewDecision, 'ready_for_codex_review');
+  assert.equal(projection2.operatorSurface.openClawOperatorReviewWorkflow.reviewDecision, 'ready_for_codex_review');
+  assert.match(projection2.operatorSurface.openClawOperatorReviewWorkflow.nextAction, /Codex review/);
+});
