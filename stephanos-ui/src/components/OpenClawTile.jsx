@@ -108,6 +108,9 @@ export default function OpenClawTile({
     && operatorTask?.openClawHandshakeState === 'compatible'
     && (operatorTask?.openClawProtocolCompatible === true || operatorTask?.openClawHandshakeState === 'compatible')
     && operatorTask?.openClawReadonlyAssurance?.readonlyOnly === true);
+  const validationFreshness = operatorTask?.openClawValidationFreshness || 'unknown';
+  const validationRestoredFromStorage = operatorTask?.openClawValidationRestoredFromStorage === true;
+  const validationLastCheckedAt = operatorTask?.openClawValidationLastCheckedAt || operatorTask?.openClawLastHandshakeAt || operatorTask?.openClawLastHealthCheckAt || 'unknown';
   const [trialRunRequested, setTrialRunRequested] = useState(false);
   const trialStatus = capabilityTrial?.trialStatus || (validationSucceeded ? (trialRunRequested ? 'report_ready' : 'ready') : 'not_started');
   const trialNextAction = capabilityTrial?.nextAction || (!validationSucceeded
@@ -309,6 +312,9 @@ export default function OpenClawTile({
           <li><strong>Readonly assurance:</strong> {operatorTask?.openClawReadonlyAssurance?.readonlyOnly ? 'asserted' : 'not asserted'}</li>
           <li><strong>Top blocker:</strong> {operatorTask?.openClawHealthValidationBlockers?.[0] || 'none'}</li>
           <li><strong>Top warning:</strong> {operatorTask?.openClawHealthValidationWarnings?.[0] || 'none'}</li>
+          <li><strong>Validation freshness:</strong> {validationFreshness}</li>
+          <li><strong>Last validated at:</strong> {validationLastCheckedAt || 'unknown'}</li>
+          <li><strong>Validation restored from local evidence:</strong> {validationRestoredFromStorage ? 'yes' : 'no'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawHealthValidationNextAction || operatorTask?.openClawHealthHandshakeNextAction || 'not reported'}</li>
         </ul>
         {adapterUnreachable ? (
@@ -318,6 +324,12 @@ export default function OpenClawTile({
         ) : null}
         {validationSucceeded ? (
           <p className="muted"><strong>Readonly adapter validated. OpenClaw can be observed and assessed. Execution remains disabled.</strong></p>
+        ) : null}
+        {validationRestoredFromStorage && validationFreshness === 'fresh' ? (
+          <p className="muted"><strong>Readonly validation restored. Execution remains disabled.</strong></p>
+        ) : null}
+        {validationSucceeded && validationFreshness === 'stale' ? (
+          <p className="muted"><strong>Last validation is stale; re-check recommended.</strong></p>
         ) : null}
         <button type="button" disabled={!validationButtonEnabled} onClick={() => { setTrialRunRequested(false); onRequestReadonlyValidation({ ...endpointDraft, endpointHost: resolvedValidationEndpoint.host, endpointPort: resolvedValidationEndpoint.port }); }}>
           {validationButtonEnabled ? (validationSucceeded ? 'Re-check readonly health/handshake' : 'Validate readonly health/handshake') : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}

@@ -86,6 +86,12 @@ import {
   normalizeEndpointDraft,
   resolveReadonlyValidationEndpoint,
 } from './utils/openClawEndpointConfig.js';
+import {
+  buildOpenClawValidationEndpointFingerprint,
+  classifyReadonlyValidationFreshness,
+  loadOpenClawReadonlyValidationEvidence,
+  saveOpenClawReadonlyValidationEvidence,
+} from '../../shared/agents/openClawReadonlyValidationStore.mjs';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
@@ -295,6 +301,9 @@ export default function App() {
     openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
     openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
     openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
+    validationFreshness: 'unknown',
+    validationRestoredFromStorage: false,
+    validationLastCheckedAt: '',
   });
   const telemetryBaselineAddedRef = useRef(false);
   const previousTelemetryTruthRef = useRef(null);
@@ -701,7 +710,7 @@ export default function App() {
         }),
       });
       const payload = await response.json();
-      setOpenClawReadonlyValidation({
+      const nextValidation = {
         ...payload,
         validationMode: normalizedDraft.allowedProbeTypes || 'health_and_handshake',
         safeProbePathAvailable: true,
@@ -722,7 +731,36 @@ export default function App() {
         openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
         resolvedValidationHost: resolvedEndpoint.host,
         resolvedValidationPort: resolvedEndpoint.port,
-      });
+        validationLastCheckedAt: payload?.handshakeResult?.checkedAt || payload?.healthResult?.checkedAt || new Date().toISOString(),
+        validationFreshness: 'fresh',
+        validationRestoredFromStorage: false,
+      };
+      setOpenClawReadonlyValidation(nextValidation);
+      if (nextValidation.validationStatus === 'succeeded') {
+        saveOpenClawReadonlyValidationEvidence({ evidence: {
+          endpointHost: resolvedEndpoint.host,
+          endpointPort: resolvedEndpoint.port,
+          endpointScope: normalizedDraft.endpointScope,
+          expectedProtocolVersion: normalizedDraft.expectedProtocolVersion,
+          validationStatus: nextValidation.validationStatus,
+          validationMode: nextValidation.validationMode,
+          validationSource: nextValidation.validationSource,
+          healthState: nextValidation.healthState,
+          handshakeState: nextValidation.handshakeState,
+          protocolCompatible: nextValidation.protocolCompatible,
+          adapterIdentity: nextValidation.adapterIdentity,
+          readonlyAssurance: nextValidation.readonlyAssurance,
+          lastHealthCheckAt: nextValidation.lastHealthCheckAt,
+          lastHandshakeAt: nextValidation.lastHandshakeAt,
+          healthLatencyMs: nextValidation.healthLatencyMs,
+          handshakeLatencyMs: nextValidation.handshakeLatencyMs,
+          validationEvidence: nextValidation.validationEvidence,
+          validationWarnings: nextValidation.validationWarnings,
+          validationBlockers: nextValidation.validationBlockers,
+          savedAt: new Date().toISOString(),
+          sourceEndpointFingerprint: buildOpenClawValidationEndpointFingerprint({ endpointHost: resolvedEndpoint.host, endpointPort: resolvedEndpoint.port, endpointScope: normalizedDraft.endpointScope, expectedProtocolVersion: normalizedDraft.expectedProtocolVersion }),
+        } });
+      }
     } catch (error) {
       setOpenClawReadonlyValidation({
         validationStatus: 'unavailable',
@@ -738,11 +776,41 @@ export default function App() {
         openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
         resolvedValidationHost: resolvedEndpoint.host,
         resolvedValidationPort: resolvedEndpoint.port,
+        validationLastCheckedAt: new Date().toISOString(),
+        validationFreshness: 'unknown',
+        validationRestoredFromStorage: false,
       });
     }
   }
 
 
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = loadOpenClawReadonlyValidationEvidence({ storage: window.localStorage });
+    if (!stored || stored.validationStatus !== 'succeeded') return;
+    const endpoint = normalizeEndpointDraft(openClawEndpointDraft);
+    const resolved = resolveReadonlyValidationEndpoint(endpoint);
+    const fingerprint = buildOpenClawValidationEndpointFingerprint({ endpointHost: resolved.host, endpointPort: resolved.port, endpointScope: endpoint.endpointScope, expectedProtocolVersion: endpoint.expectedProtocolVersion });
+    if (stored.sourceEndpointFingerprint !== fingerprint) return;
+    const freshness = classifyReadonlyValidationFreshness(stored);
+    if (freshness === 'expired') return;
+    setOpenClawReadonlyValidation((prev) => ({
+      ...prev,
+      ...stored,
+      safeProbePathAvailable: true,
+      readonlyValidationEndpoint: OPENCLAW_READONLY_VALIDATION_ENDPOINT,
+      openClawReadonlyValidationEndpointAvailable: OPENCLAW_READONLY_VALIDATION_ENDPOINT.available,
+      openClawReadonlyValidationEndpointPath: OPENCLAW_READONLY_VALIDATION_ENDPOINT.path,
+      openClawReadonlyValidationEndpointMode: OPENCLAW_READONLY_VALIDATION_ENDPOINT.mode,
+      openClawReadonlyValidationEndpointCanExecute: OPENCLAW_READONLY_VALIDATION_ENDPOINT.canExecute,
+      validationFreshness: freshness,
+      validationRestoredFromStorage: true,
+      validationLastCheckedAt: stored.lastHandshakeAt || stored.lastHealthCheckAt || stored.savedAt,
+      validationNextAction: freshness === 'stale' ? 'Re-check readonly health/handshake' : 'Validation restored from local evidence. Execution remains disabled.',
+    }));
+  }, [openClawEndpointDraft]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
