@@ -54,3 +54,11 @@ test('OpenClawTile reduces duplicate submit-for-review copy', async () => {
   const matches = source.match(/Submit packet for operator review/g) || [];
   assert.equal(matches.length <= 2, true);
 });
+
+test('OpenClawTile renders Codex Proposal Export section and packet-specific copy text', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('Codex Proposal Export'), true);
+  assert.equal(source.includes('Copy Codex prompt ('), true);
+  assert.equal(source.includes('openClawCodexProposalExport'), true);
+});
+

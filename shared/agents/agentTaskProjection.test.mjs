@@ -576,3 +576,14 @@ test('agent task projection exposes openclaw operator review queue with safety i
   assert.equal(queue.openClawSelfApprovalAllowed, false);
   assert.equal(['ready_for_operator_review', 'needs_more_evidence', 'blocked_by_risk', 'awaiting_packet', 'empty'].includes(queue.queueStatus), true);
 });
+
+test('agent task projection exposes OpenClaw codex proposal export with execution disabled and self-approval forbidden', () => {
+  const projection = buildAgentTaskProjection();
+  const exportModel = projection.operatorSurface.openClawCodexProposalExport;
+
+  assert.equal(typeof exportModel, 'object');
+  assert.equal(exportModel.executionAllowed, false);
+  assert.equal(exportModel.openClawExecutionAllowed, false);
+  assert.equal(exportModel.operatorApprovalRequired, true);
+  assert.equal(exportModel.forbiddenSelfActions.includes('approve_own_proposal'), true);
+});
