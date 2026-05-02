@@ -10,6 +10,37 @@ export const OPENCLAW_FORBIDDEN_SELF_ACTIONS = [
   'approve_own_packet','apply_own_packet','alter_own_approval_gate','remove_audit_requirement','reduce_operator_visibility','escalate_without_operator','create_execution_endpoint',
 ];
 
+function toStableString(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => toStableString(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${toStableString(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function deterministicPacketHash(input) {
+  let hash = 2166136261;
+  for (const ch of input) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function deriveStablePacketId({ proposalType, requestedOutcome, source, proposedActions, readonlyEvidence, packetMode = 'proposal_only', packetVersion = 'v1' }) {
+  const basis = toStableString({
+    proposalType,
+    requestedOutcome,
+    source,
+    proposedActions,
+    readonlyEvidence,
+    packetMode,
+    packetVersion,
+  });
+  return `openclaw-proposal-${deterministicPacketHash(basis)}-${packetVersion}`;
+}
+
 export function buildOpenClawProposalPacket(input = {}) {
   const proposalType = input.proposalType || 'observe_capability';
   const evidence = normalizeOpenClawProposalEvidence(input.readonlyEvidence || []);
@@ -24,12 +55,24 @@ export function buildOpenClawProposalPacket(input = {}) {
   if (risk.riskLevel === 'blocked') packetStatus = 'blocked_by_risk';
   else if (readonlyOk && !capabilityOk) packetStatus = 'awaiting_capability_report';
   else if (readonlyOk && capabilityOk) packetStatus = 'ready_for_operator_review';
+  const packetVersion = String(input.packetVersion || 'v1');
+  const packetId = String(input.packetId || deriveStablePacketId({
+    proposalType,
+    requestedOutcome: String(input.requestedOutcome || 'operator_review'),
+    source: String(input.source || 'stephanos_openclaw'),
+    proposedActions: Array.isArray(input.proposedActions) ? input.proposedActions : [],
+    readonlyEvidence: evidence.map(({ evidenceType, evidenceStatus, source, summary }) => ({ evidenceType, evidenceStatus, source, summary })),
+    packetMode: 'proposal_only',
+    packetVersion,
+  }));
+  const createdAt = String(input.createdAt || '1970-01-01T00:00:00.000Z');
+
   return {
-    packetId: String(input.packetId || `packet-${Date.now()}`),
+    packetId,
     packetStatus,
     packetMode: 'proposal_only',
     source: String(input.source || 'stephanos_openclaw'),
-    createdAt: String(input.createdAt || new Date().toISOString()),
+    createdAt,
     proposalType,
     proposalTitle: String(input.proposalTitle || 'OpenClaw Proposal Packet'),
     proposalSummary: String(input.proposalSummary || 'Proposal-only review packet. No execution path is enabled.'),
