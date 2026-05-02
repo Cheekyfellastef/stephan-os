@@ -91,6 +91,7 @@ export default function OpenClawTile({
   const operatorReviewHandoff = operatorTask?.openClawOperatorReviewHandoff || null;
   const operatorReviewQueue = operatorTask?.openClawOperatorReviewQueue || null;
   const [packetCopyStatus, setPacketCopyStatus] = useState('idle');
+  const [codexExportCopyStatus, setCodexExportCopyStatus] = useState('idle');
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -140,6 +141,13 @@ export default function OpenClawTile({
     ];
     await navigator.clipboard.writeText(lines.join('\n'));
     setPacketCopyStatus('copied');
+  }
+
+
+  async function copyCodexProposalPrompt() {
+    const codexExport = operatorTask?.openClawCodexProposalExport || {};
+    await navigator.clipboard.writeText(codexExport.codexPrompt || 'OpenClaw Codex prompt unavailable.');
+    setCodexExportCopyStatus('copied');
   }
 
   function updatePromptStatus(promptId, nextStatus) {
@@ -355,6 +363,24 @@ export default function OpenClawTile({
         </ul>
         <button type="button" onClick={() => copyOperatorReviewPacket()}>Copy active review packet</button>
         {packetCopyStatus === 'copied' ? <p className="muted">Review packet copied.</p> : null}
+      </section>
+
+
+      <section className="openclaw-section">
+        <h4>Codex Proposal Export</h4>
+        <p className="muted">Manual prompt export only. OpenClaw does not execute, approve, commit, or create PRs.</p>
+        <ul>
+          <li><strong>Export status:</strong> {operatorTask?.openClawCodexProposalExport?.exportStatus || 'unavailable'}</li>
+          <li><strong>Export mode:</strong> {operatorTask?.openClawCodexProposalExport?.exportMode || 'manual_prompt'}</li>
+          <li><strong>Source packet id:</strong> {operatorTask?.openClawCodexProposalExport?.sourcePacketId || 'none'}</li>
+          <li><strong>Risk level:</strong> {operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}</li>
+          <li><strong>Required tests:</strong> {(operatorTask?.openClawCodexProposalExport?.requiredTests || []).join(', ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawCodexProposalExport?.nextAction || 'Prepare packet for operator review.'}</li>
+        </ul>
+        <button type="button" onClick={() => copyCodexProposalPrompt()}>
+          Copy Codex prompt ({operatorTask?.openClawCodexProposalExport?.sourcePacketId || 'none'})
+        </button>
+        {codexExportCopyStatus === 'copied' ? <p className="muted">Codex prompt copied.</p> : null}
       </section>
 
       <section className="openclaw-section">

@@ -11,6 +11,7 @@ import { buildOpenClawProposalEvidenceProjection } from './openClawProposalEvide
 import { buildOpenClawProposalReviewQueue } from './openClawProposalReviewQueue.mjs';
 import { buildOpenClawOperatorReviewQueue } from './openClawOperatorReviewQueue.mjs';
 import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHandoff.mjs';
+import { buildOpenClawCodexProposalExport } from './openClawCodexProposalExport.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -282,6 +283,17 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     openClawAuditLedgerPreview,
     openClawOversightProposal,
   });
+
+  const openClawCodexProposalExport = buildOpenClawCodexProposalExport({
+    proposalPacket: openClawProposalPacket,
+    operatorReviewQueue: openClawOperatorReviewQueue,
+    approvalRequirements: openClawProposalPacket.approvalRequirements,
+    risk: openClawProposalPacket.riskClassification,
+    rollback: openClawProposalPacket.rollbackPreview,
+    permissionDiff: openClawPermissionDiff,
+    auditPreview: openClawAuditLedgerPreview,
+  });
+
   const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
     readonlyValidated: readonlyTruth.adapterValidated === true,
     capabilityTrial,
@@ -426,6 +438,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalEvidence,
       openClawProposalReviewQueue,
       openClawOperatorReviewQueue,
+      openClawCodexProposalExport,
       openClawOperatorReviewHandoff,
       openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,
       openClawProposalRisk: openClawProposalPacket.riskClassification,
