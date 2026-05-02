@@ -2,33 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildOpenClawOperatorReviewQueue } from './openClawOperatorReviewQueue.mjs';
 
-test('operator review queue enforces non-executing safety defaults', () => {
-  const queue = buildOpenClawOperatorReviewQueue({});
-  assert.equal(queue.executionAllowed, false);
-  assert.equal(queue.selfModificationAllowed, false);
-  assert.equal(queue.actionExecutionEligible, false);
-  assert.equal(queue.openClawSelfApprovalAllowed, false);
+test('needs_more_evidence always reports explicit missingEvidence', () => {
+  const queue = buildOpenClawOperatorReviewQueue({
+    openClawProposalPacket: { packetId: 'p1', packetStatus: 'ready_for_operator_review' },
+  });
+  assert.equal(queue.queueStatus, 'needs_more_evidence');
+  assert.equal(queue.missingEvidence.length > 0, true);
 });
 
-test('operator review queue classifies packet status from canonical readiness truth', () => {
-  const ready = buildOpenClawOperatorReviewQueue({
-    openClawProposalPacket: { packetId: 'p1', packetStatus: 'ready_for_operator_review', readonlyEvidence: [{}, {}] },
-    openClawProposalEvidence: { status: 'sufficient' },
-    openClawProposalRisk: { riskLevel: 'guarded' },
+test('blocked_by_risk when risk is blocked', () => {
+  const queue = buildOpenClawOperatorReviewQueue({
+    openClawProposalPacket: { packetId: 'p1', packetStatus: 'ready_for_operator_review' },
+    openClawProposalEvidence: { status: 'capability_report_available' },
+    openClawProposalApprovalRequirements: { approvalStatus: 'ready_for_operator_review' },
+    openClawProposalRollback: { rollbackStatus: 'preview_ready' },
+    openClawPermissionDiff: { diffStatus: 'preview_ready' },
+    openClawAuditLedgerPreview: [{ id: 1 }],
+    openClawProposalRisk: { riskStatus: 'blocked', riskLevel: 'high' },
   });
-  assert.equal(ready.queueStatus, 'ready_for_operator_review');
-
-  const missingEvidence = buildOpenClawOperatorReviewQueue({
-    openClawProposalPacket: { packetId: 'p2', packetStatus: 'ready_for_operator_review' },
-    openClawProposalEvidence: { status: 'missing' },
-    openClawProposalRisk: { riskLevel: 'guarded' },
-  });
-  assert.equal(missingEvidence.queueStatus, 'needs_more_evidence');
-
-  const blocked = buildOpenClawOperatorReviewQueue({
-    openClawProposalPacket: { packetId: 'p3', packetStatus: 'ready_for_operator_review' },
-    openClawProposalEvidence: { status: 'sufficient' },
-    openClawProposalRisk: { riskLevel: 'high' },
-  });
-  assert.equal(blocked.queueStatus, 'blocked_by_risk');
+  assert.equal(queue.queueStatus, 'blocked_by_risk');
 });

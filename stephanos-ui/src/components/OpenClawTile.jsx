@@ -90,6 +90,7 @@ export default function OpenClawTile({
   const reportVisible = trialStatus === 'report_ready' || (capabilityReport && validationSucceeded);
   const operatorReviewHandoff = operatorTask?.openClawOperatorReviewHandoff || null;
   const operatorReviewQueue = operatorTask?.openClawOperatorReviewQueue || null;
+  const operatorReviewWorkflow = operatorTask?.openClawOperatorReviewWorkflow || null;
   const [packetCopyStatus, setPacketCopyStatus] = useState('idle');
   const [codexExportCopyStatus, setCodexExportCopyStatus] = useState('idle');
 
@@ -123,21 +124,23 @@ export default function OpenClawTile({
   }
 
   async function copyOperatorReviewPacket() {
-    const active = operatorReviewQueue?.packets?.[0] || {};
+    const active = operatorTask?.openClawProposalPacket || {};
     const lines = [
       'OpenClaw Operator Review Packet (v1)',
       `Packet summary: ${operatorTask?.openClawProposalPacket?.proposalSummary || 'none'}`,
-      `Requested outcome: ${active.requestedOutcome || operatorTask?.openClawProposalPacket?.requestedOutcome || 'operator_review'}`,
-      `Readonly validation evidence: ${operatorTask?.openClawProposalEvidence?.status || 'none'}`,
-      `Capability report: ${operatorTask?.openClawCapabilityReport?.reportStatus || 'unknown'}`,
-      `Risk classification: ${active.riskLevel || operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}`,
-      `Permission diff: ${active.permissionDiffStatus || operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}`,
-      `Approval requirements: ${active.approvalStatus || operatorTask?.openClawProposalApprovalRequirements?.approvalStatus || 'unknown'}`,
-      `Rollback preview: ${active.rollbackStatus || operatorTask?.openClawProposalRollback?.rollbackStatus || 'unknown'}`,
-      `Audit preview: ${active.auditPreviewStatus || ((operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated')}`,
-      `Blocked actions: ${(active.blockedActions || operatorTask?.openClawProposalPacket?.blockedActions || []).join(', ') || 'none'}`,
-      `Forbidden self-actions: ${(active.forbiddenSelfActions || operatorTask?.openClawProposalPacket?.forbiddenSelfActions || []).join(', ') || 'none'}`,
-      `Next action: ${operatorReviewQueue?.nextAction || operatorTask?.openClawProposalPacket?.nextAction || 'Operator review only.'}`,
+      `Packet id: ${operatorReviewQueue?.activePacketId || active.packetId || 'none'}`,
+      `Proposal type: ${active.proposalType || 'observe_capability'}`,
+      `Requested outcome: ${active.requestedOutcome || 'operator_review'}`,
+      `Evidence status: ${operatorTask?.openClawProposalEvidence?.status || 'none'}`,
+      `Missing evidence: ${(operatorReviewQueue?.missingEvidence || []).join(', ') || 'none'}`,
+      `Current risk: ${operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}`,
+      `Approval requirements: ${operatorTask?.openClawProposalApprovalRequirements?.approvalStatus || 'unknown'}`,
+      `Rollback preview: ${operatorTask?.openClawProposalRollback?.rollbackStatus || 'unknown'}`,
+      `Permission diff: ${operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}`,
+      `Audit preview: ${((operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated')}`,
+      `Blocked actions: ${(active.blockedActions || []).join(', ') || 'none'}`,
+      `Forbidden self-actions: ${(active.forbiddenSelfActions || []).join(', ') || 'none'}`,
+      `Codex export status: ${operatorTask?.openClawCodexProposalExport?.exportStatus || 'unavailable'}`,      `Next action: ${operatorReviewQueue?.nextAction || operatorTask?.openClawProposalPacket?.nextAction || 'Operator review only.'}`,
     ];
     await navigator.clipboard.writeText(lines.join('\n'));
     setPacketCopyStatus('copied');
@@ -348,14 +351,21 @@ export default function OpenClawTile({
           <li><strong>Queue status:</strong> {operatorReviewQueue?.queueStatus || 'awaiting_packet'}</li>
           <li><strong>Queue mode:</strong> {operatorReviewQueue?.queueMode || 'operator_review_only'}</li>
           <li><strong>Active packet id:</strong> {operatorReviewQueue?.activePacketId || 'none'}</li>
-          <li><strong>Proposal type:</strong> {operatorReviewQueue?.packets?.[0]?.proposalType || operatorTask?.openClawProposalPacket?.proposalType || 'observe_capability'}</li>
-          <li><strong>Risk level:</strong> {operatorReviewQueue?.packets?.[0]?.riskLevel || operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}</li>
-          <li><strong>Evidence status:</strong> {operatorReviewQueue?.packets?.[0]?.evidenceStatus || operatorTask?.openClawProposalEvidence?.status || 'unknown'}</li>
-          <li><strong>Approval status:</strong> {operatorReviewQueue?.packets?.[0]?.approvalStatus || operatorTask?.openClawProposalApprovalRequirements?.approvalStatus || 'unknown'}</li>
-          <li><strong>Rollback status:</strong> {operatorReviewQueue?.packets?.[0]?.rollbackStatus || operatorTask?.openClawProposalRollback?.rollbackStatus || 'unknown'}</li>
-          <li><strong>Permission diff status:</strong> {operatorReviewQueue?.packets?.[0]?.permissionDiffStatus || operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}</li>
-          <li><strong>Audit preview status:</strong> {operatorReviewQueue?.packets?.[0]?.auditPreviewStatus || 'unknown'}</li>
-          <li><strong>Operator approval required:</strong> {operatorReviewQueue?.operatorApprovalRequired ? 'yes' : 'no'}</li>
+          <li><strong>Review status:</strong> {operatorReviewQueue?.reviewStatus || 'not_reviewed'}</li>
+          <li><strong>Missing evidence:</strong> {(operatorReviewQueue?.missingEvidence || []).join(', ') || 'none'}</li>
+          <li><strong>Available evidence:</strong> {(operatorReviewQueue?.availableEvidence || []).join(', ') || 'none'}</li>
+          <li><strong>Risk summary:</strong> {operatorReviewQueue?.riskSummary?.riskSummary || 'Risk under review.'}</li>
+          <li><strong>Approval summary:</strong> {operatorReviewQueue?.approvalSummary?.approvalStatus || 'unknown'}</li>
+          <li><strong>Rollback summary:</strong> {operatorReviewQueue?.rollbackSummary?.rollbackStatus || 'unknown'}</li>
+          <li><strong>Permission diff summary:</strong> {operatorReviewQueue?.permissionDiffSummary?.permissionDiffStatus || 'unknown'}</li>
+          <li><strong>Audit preview summary:</strong> {operatorReviewQueue?.auditSummary?.auditPreviewStatus || 'unknown'}</li>
+          <li><strong>Codex export status:</strong> {operatorReviewQueue?.codexExportStatus || 'unavailable'}</li>
+                    <li><strong>Risk classification:</strong> {operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}</li>
+          <li><strong>Rollback preview:</strong> {operatorTask?.openClawProposalRollback?.rollbackStatus || 'unknown'}</li>
+          <li><strong>Permission diff:</strong> {operatorTask?.openClawPermissionDiff?.diffStatus || 'unknown'}</li>
+          <li><strong>Approval requirements:</strong> {operatorTask?.openClawProposalApprovalRequirements?.approvalStatus || 'unknown'}</li>
+          <li><strong>Audit preview:</strong> {(operatorTask?.openClawAuditLedgerPreview?.length || 0) > 0 ? 'preview_ready' : 'not_generated'}</li>
+<li><strong>Operator approval required:</strong> {operatorReviewQueue?.operatorApprovalRequired ? 'yes' : 'no'}</li>
           <li><strong>Execution allowed:</strong> no</li>
           <li><strong>Self-modification allowed:</strong> no</li>
           <li><strong>OpenClaw self-approval allowed:</strong> no</li>
@@ -365,6 +375,20 @@ export default function OpenClawTile({
         {packetCopyStatus === 'copied' ? <p className="muted">Review packet copied.</p> : null}
       </section>
 
+      <section className="openclaw-section">
+        <h4>Operator Review Workflow</h4>
+        <ul>
+          <li><strong>Workflow status:</strong> {operatorReviewWorkflow?.workflowStatus || 'awaiting_packet'}</li>
+          <li><strong>Review decision:</strong> {operatorReviewWorkflow?.reviewDecision || 'not_reviewed'}</li>
+          <li><strong>Allowed review actions:</strong> {(operatorReviewWorkflow?.allowedReviewActions || []).join(', ') || 'none'}</li>
+          <li><strong>Forbidden review actions:</strong> {(operatorReviewWorkflow?.forbiddenReviewActions || []).join(', ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorReviewWorkflow?.nextAction || 'Review packet manually.'}</li>
+        </ul>
+        <button type="button" disabled>Mark needs more evidence (local review state)</button>
+        <button type="button" disabled>Mark ready for Codex review (local review state)</button>
+        <button type="button" disabled>Reject packet (local review state)</button>
+        <button type="button" disabled>Archive packet (local review state)</button>
+      </section>
 
       <section className="openclaw-section">
         <h4>Codex Proposal Export</h4>
