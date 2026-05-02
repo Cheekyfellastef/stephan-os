@@ -12,6 +12,7 @@ import { buildOpenClawProposalReviewQueue } from './openClawProposalReviewQueue.
 import { buildOpenClawOperatorReviewQueue } from './openClawOperatorReviewQueue.mjs';
 import { buildOpenClawOperatorReviewHandoff } from './openClawOperatorReviewHandoff.mjs';
 import { buildOpenClawCodexProposalExport } from './openClawCodexProposalExport.mjs';
+import { buildOpenClawOperatorReviewWorkflow } from './openClawOperatorReviewWorkflow.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -294,6 +295,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
     auditPreview: openClawAuditLedgerPreview,
   });
 
+  const openClawOperatorReviewWorkflow = buildOpenClawOperatorReviewWorkflow({
+    reviewQueue: openClawOperatorReviewQueue,
+    codexProposalExport: openClawCodexProposalExport,
+  });
+
   const openClawOperatorReviewHandoff = buildOpenClawOperatorReviewHandoff({
     readonlyValidated: readonlyTruth.adapterValidated === true,
     capabilityTrial,
@@ -438,6 +444,7 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalEvidence,
       openClawProposalReviewQueue,
       openClawOperatorReviewQueue,
+      openClawOperatorReviewWorkflow,
       openClawCodexProposalExport,
       openClawOperatorReviewHandoff,
       openClawProposalEvidenceItems: openClawProposalPacket.readonlyEvidence,

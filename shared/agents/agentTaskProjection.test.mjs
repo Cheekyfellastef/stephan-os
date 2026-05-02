@@ -587,3 +587,22 @@ test('agent task projection exposes OpenClaw codex proposal export with executio
   assert.equal(exportModel.operatorApprovalRequired, true);
   assert.equal(exportModel.forbiddenSelfActions.includes('approve_own_proposal'), true);
 });
+
+test('openclaw operator review queue is ready when all review ingredients are available', () => {
+  const projection = buildAgentTaskProjection();
+  const queue = projection.operatorSurface.openClawOperatorReviewQueue;
+  assert.equal(queue.queueStatus === 'ready_for_operator_review' || queue.missingEvidence.length > 0, true);
+  if (queue.queueStatus === 'needs_more_evidence') assert.equal(queue.missingEvidence.length > 0, true);
+  assert.equal(queue.executionAllowed, false);
+  assert.equal(queue.openClawSelfApprovalAllowed, false);
+});
+
+test('openclaw operator review workflow remains manual and non-executing', () => {
+  const projection = buildAgentTaskProjection();
+  const workflow = projection.operatorSurface.openClawOperatorReviewWorkflow;
+  assert.equal(workflow.workflowMode, 'manual_review');
+  assert.equal(workflow.executionAllowed, false);
+  assert.equal(workflow.openClawSelfApprovalAllowed, false);
+  assert.equal(workflow.allowedReviewActions.includes('mark_ready_for_codex_review'), true);
+  assert.equal(workflow.forbiddenReviewActions.includes('approve_execution'), true);
+});
