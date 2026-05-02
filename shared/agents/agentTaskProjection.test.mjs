@@ -565,3 +565,14 @@ test('agent task projection lifecycle keeps kill switch and pause overrides over
   assert.match(engaged.operatorSurface.openClawControlNextAction, /Kill switch engaged/);
   assert.equal(engaged.operatorSurface.openClawExecutionAllowed, false);
 });
+
+
+test('agent task projection exposes openclaw operator review queue with safety invariants', () => {
+  const projection = buildAgentTaskProjection();
+  const queue = projection.operatorSurface.openClawOperatorReviewQueue;
+  assert.ok(queue);
+  assert.equal(queue.executionAllowed, false);
+  assert.equal(queue.selfModificationAllowed, false);
+  assert.equal(queue.openClawSelfApprovalAllowed, false);
+  assert.equal(['ready_for_operator_review', 'needs_more_evidence', 'blocked_by_risk', 'awaiting_packet', 'empty'].includes(queue.queueStatus), true);
+});
