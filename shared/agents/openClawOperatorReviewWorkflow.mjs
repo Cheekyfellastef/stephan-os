@@ -29,14 +29,14 @@ export function buildOpenClawOperatorReviewWorkflow({
   reviewedBy = 'unknown',
   reviewNotes = '',
   reviewEvidence = [],
+  reviewDecision = null,
 } = {}) {
   const activePacketId = reviewQueue.activePacketId || 'none';
   const queueReady = reviewQueue.queueStatus === 'ready_for_operator_review';
   const exportAvailable = codexProposalExport.exportStatus === 'generated';
   const missingEvidence = asArray(reviewQueue.missingEvidence);
-  const safeDecision = queueReady && exportAvailable && missingEvidence.length === 0
-    ? (priorDecision === 'ready_for_codex_review' ? priorDecision : 'not_reviewed')
-    : (priorDecision === 'archived' || priorDecision === 'rejected' || priorDecision === 'needs_more_evidence' ? priorDecision : 'not_reviewed');
+  const decisionValue = reviewDecision?.reviewDecision || priorDecision;
+  const safeDecision = ['not_reviewed','needs_more_evidence','ready_for_codex_review','rejected','archived'].includes(decisionValue) ? decisionValue : 'not_reviewed';
 
   const workflowStatus = activePacketId === 'none'
     ? 'awaiting_packet'
@@ -56,8 +56,8 @@ export function buildOpenClawOperatorReviewWorkflow({
     activePacketId,
     reviewDecision: safeDecision,
     reviewedBy,
-    reviewNotes,
-    reviewEvidence: asArray(reviewEvidence),
+    reviewNotes: reviewDecision?.reviewNotes || reviewNotes,
+    reviewEvidence: asArray(reviewDecision?.reviewEvidence || reviewEvidence),
     allowedReviewActions: ALLOWED_REVIEW_ACTIONS,
     forbiddenReviewActions: FORBIDDEN_REVIEW_ACTIONS,
     nextAction: safeDecision === 'ready_for_codex_review'

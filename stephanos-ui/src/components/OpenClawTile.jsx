@@ -14,6 +14,7 @@ import { buildOpenClawIntegrationSnapshot } from './openclaw/openclawIntegration
 import { buildOpenClawCandidatePrompts } from './openclaw/openclawPromptGenerator.js';
 import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditModel.js';
 import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
+import { clearOpenClawReviewDecision, loadOpenClawReviewDecisions, saveOpenClawReviewDecision } from '../../../shared/agents/openClawReviewDecisionStore.mjs';
 
 
 function getCodexExportRiskPresentation(canonicalRiskLevel = '') {
@@ -119,9 +120,24 @@ export default function OpenClawTile({
   const operatorReviewQueue = operatorTask?.openClawOperatorReviewQueue || null;
   const operatorReviewWorkflow = operatorTask?.openClawOperatorReviewWorkflow || null;
   const [packetCopyStatus, setPacketCopyStatus] = useState('idle');
+  const [reviewNote, setReviewNote] = useState('');
+  const [localReviewDecision, setLocalReviewDecision] = useState(null);
   const [codexExportCopyStatus, setCodexExportCopyStatus] = useState('idle');
   const codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt || 'OpenClaw Codex prompt unavailable.';
   const codexRiskPresentation = getCodexExportRiskPresentation(operatorTask?.openClawProposalRisk?.riskLevel);
+
+  const activePacketId = operatorReviewQueue?.activePacketId || operatorTask?.openClawProposalPacket?.packetId || 'none';
+  useEffect(() => {
+    const decisions = loadOpenClawReviewDecisions();
+    setLocalReviewDecision(decisions[activePacketId] || null);
+  }, [activePacketId]);
+
+  function updateReviewDecision(reviewDecision) {
+    const saved = saveOpenClawReviewDecision({
+      decision: { packetId: activePacketId, reviewDecision, reviewedBy: 'operator', reviewNotes: reviewNote },
+    });
+    setLocalReviewDecision(saved);
+  }
 
   function record(type, details = {}) {
     setAuditTrail((previous) => appendAuditEvent(previous, createAuditEvent(type, details)));
@@ -160,6 +176,8 @@ export default function OpenClawTile({
       `Packet id: ${operatorReviewQueue?.activePacketId || active.packetId || 'none'}`,
       `Proposal type: ${active.proposalType || 'observe_capability'}`,
       `Requested outcome: ${active.requestedOutcome || 'operator_review'}`,
+      `Review decision: ${effectiveReviewDecision?.reviewDecision || 'not_reviewed'}`,
+      `Review notes: ${effectiveReviewDecision?.reviewNotes || 'none'}`,
       `Evidence status: ${operatorTask?.openClawProposalEvidence?.status || 'none'}`,
       `Missing evidence: ${(operatorReviewQueue?.missingEvidence || []).join(', ') || 'none'}`,
       `Current risk: ${operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}`,
@@ -175,6 +193,8 @@ export default function OpenClawTile({
     setPacketCopyStatus('copied');
   }
 
+
+  const effectiveReviewDecision = localReviewDecision || operatorTask?.openClawReviewDecision || null;
 
   async function copyCodexProposalPrompt() {
     await navigator.clipboard.writeText(codexPromptText);
@@ -407,15 +427,21 @@ export default function OpenClawTile({
         <h4>Operator Review Workflow</h4>
         <ul>
           <li><strong>Workflow status:</strong> {operatorReviewWorkflow?.workflowStatus || 'awaiting_packet'}</li>
-          <li><strong>Review decision:</strong> {operatorReviewWorkflow?.reviewDecision || 'not_reviewed'}</li>
+          <li><strong>Review decision:</strong> {effectiveReviewDecision?.reviewDecision || operatorReviewWorkflow?.reviewDecision || 'not_reviewed'}</li>
+          <li><strong>Persistence mode:</strong> local review state</li>
+          <li><strong>Last updated:</strong> {effectiveReviewDecision?.updatedAt || 'n/a'}</li>
           <li><strong>Allowed review actions:</strong> {(operatorReviewWorkflow?.allowedReviewActions || []).join(', ') || 'none'}</li>
           <li><strong>Forbidden review actions:</strong> {(operatorReviewWorkflow?.forbiddenReviewActions || []).join(', ') || 'none'}</li>
-          <li><strong>Next action:</strong> {operatorReviewWorkflow?.nextAction || 'Review packet manually.'}</li>
+          <li><strong>Next action:</strong> {effectiveReviewDecision?.nextAction || operatorReviewWorkflow?.nextAction || 'Review packet manually.'}</li>
         </ul>
-        <button type="button" disabled>Mark needs more evidence (local review state)</button>
-        <button type="button" disabled>Mark ready for Codex review (local review state)</button>
-        <button type="button" disabled>Reject packet (local review state)</button>
-        <button type="button" disabled>Archive packet (local review state)</button>
+        <label>Review note
+          <input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
+        </label>
+        <button type="button" onClick={() => updateReviewDecision('needs_more_evidence')}>Mark needs more evidence</button>
+        <button type="button" onClick={() => updateReviewDecision('ready_for_codex_review')}>Mark ready for Codex review</button>
+        <button type="button" onClick={() => updateReviewDecision('rejected')}>Reject packet</button>
+        <button type="button" onClick={() => updateReviewDecision('archived')}>Archive packet</button>
+        <button type="button" onClick={() => { clearOpenClawReviewDecision({ packetId: activePacketId }); setLocalReviewDecision(null); }}>Clear review decision</button>
       </section>
 
       <section className="openclaw-section">
@@ -428,6 +454,7 @@ export default function OpenClawTile({
           <li><strong>Risk level:</strong> {operatorTask?.openClawProposalRisk?.riskLevel || 'guarded'}</li>
           <li><strong>Required tests:</strong> {(operatorTask?.openClawCodexProposalExport?.requiredTests || []).join(', ') || 'none'}</li>
           <li><strong>Next action:</strong> {operatorTask?.openClawCodexProposalExport?.nextAction || 'Prepare packet for operator review.'}</li>
+          <li><strong>Next safe stage after review:</strong> Codex planning/implementation proposal only.</li>
         </ul>
         <div className={`openclaw-codex-preview ${codexRiskPresentation.toneClass}`} role="region" aria-label="Codex prompt preview">
           <p className="openclaw-codex-preview__risk"><strong>{codexRiskPresentation.riskLabel}</strong></p>
