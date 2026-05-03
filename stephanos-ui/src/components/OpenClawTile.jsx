@@ -49,6 +49,22 @@ function getTone(status = '') {
   return status === 'blocked' ? 'blocked' : 'allowed';
 }
 
+const OPENCLAW_STAGE_ORDER = ['validation_required', 'capability_trial_ready', 'proposal_packet_ready', 'operator_review', 'evidence_needed', 'codex_review_intake', 'implementation_planning', 'approval_readiness', 'dry_run_preview', 'future_execution_gated'];
+
+function resolveOpenClawCurrentStage(operatorTask = {}) {
+  if (OPENCLAW_STAGE_ORDER.includes(operatorTask?.openClawCurrentStage)) return operatorTask.openClawCurrentStage;
+  if (operatorTask?.openClawControlledExecutionGate?.controlledExecutionStatus === 'future_gated') return 'future_execution_gated';
+  if (operatorTask?.openClawDryRunPlan?.dryRunStatus && operatorTask?.openClawDryRunPlan?.dryRunStatus !== 'unavailable') return 'dry_run_preview';
+  if (operatorTask?.openClawApprovalGateReadiness?.approvalReadinessStatus) return 'approval_readiness';
+  if (operatorTask?.openClawImplementationPlan?.planStatus && operatorTask?.openClawImplementationPlan?.planStatus !== 'unavailable') return 'implementation_planning';
+  if (operatorTask?.openClawCodexReviewResult || operatorTask?.openClawCodexProposalExport) return 'codex_review_intake';
+  if ((operatorTask?.openClawEvidenceRequest?.missingEvidence || []).length > 0) return 'evidence_needed';
+  if (operatorTask?.openClawOperatorReviewQueue || operatorTask?.openClawOperatorReviewWorkflow) return 'operator_review';
+  if (operatorTask?.openClawProposalPacket) return 'proposal_packet_ready';
+  if (operatorTask?.openClawCapabilityTrial?.adapterValidated) return 'capability_trial_ready';
+  return 'validation_required';
+}
+
 export default function OpenClawTile({
   uiLayout,
   togglePanel,
@@ -281,6 +297,15 @@ export default function OpenClawTile({
     onIntegrationUpdate(integrationSnapshot);
   }, [integrationSnapshot, onIntegrationUpdate]);
 
+  const currentStage = resolveOpenClawCurrentStage(operatorTask || {});
+  const currentStageIndex = OPENCLAW_STAGE_ORDER.indexOf(currentStage);
+  const missionNextAction = operatorTask?.openClawControlNextAction || operatorTask?.openClawProposalPacket?.nextAction || operatorReviewQueue?.nextAction || 'Keep proposal-only review path and collect evidence.';
+  const topBlockerOrWarning = operatorTask?.openClawHealthValidationBlockers?.[0]
+    || operatorTask?.openClawAdapterConnectionConfigBlockers?.[0]
+    || operatorTask?.openClawHealthValidationWarnings?.[0]
+    || operatorTask?.openClawAdapterConnectionConfigWarnings?.[0]
+    || 'none';
+
   return (
     <CollapsiblePanel
       panelId="openClawPanel"
@@ -290,6 +315,32 @@ export default function OpenClawTile({
       isOpen={uiLayout.openClawPanel !== false}
       onToggle={() => togglePanel('openClawPanel')}
     >
+      <section className="openclaw-section">
+        <h4>OpenClaw Mission Card</h4>
+        <ul>
+          <li><strong>Current stage:</strong> {currentStage}</li>
+          <li><strong>Next action:</strong> {missionNextAction}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+          <li><strong>Risk level:</strong> {operatorTask?.openClawProposalRisk?.riskLevel || oversightProposal?.riskLevel || 'guarded'}</li>
+          <li><strong>Top blocker/warning:</strong> {topBlockerOrWarning}</li>
+          <li><strong>Primary operator action:</strong> {operatorReviewQueue?.nextAction || operatorTask?.openClawHealthValidationNextAction || 'Review current stage and resolve blockers.'}</li>
+        </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Current Stage Progression</h4>
+        {OPENCLAW_STAGE_ORDER.map((stageId, index) => {
+          const stageState = index < currentStageIndex ? 'completed' : (stageId === currentStage ? 'current' : 'future');
+          return (
+            <details key={stageId} open={stageState === 'current'}>
+              <summary>{stageId} ({stageState})</summary>
+              <p className="muted">Execution allowed: no</p>
+              <p className="muted">Next action: {missionNextAction}</p>
+            </details>
+          );
+        })}
+      </section>
+      <details className="openclaw-section">
+        <summary>Details</summary>
       <section className="openclaw-section">
         <h4>Endpoint Configuration (session-only v1)</h4>
         <p className="muted"><strong>session-only, no secrets stored</strong></p>
@@ -892,6 +943,7 @@ export default function OpenClawTile({
           ))}
         </ul>
       </section>
+      </details>
     </CollapsiblePanel>
   );
 }
