@@ -16,6 +16,10 @@ import { buildOpenClawOperatorReviewWorkflow } from './openClawOperatorReviewWor
 import { normalizeOpenClawReviewDecision } from './openClawReviewDecision.mjs';
 import { buildOpenClawEvidenceRequest } from './openClawEvidenceRequest.mjs';
 import { buildOpenClawEvidenceAttachment } from './openClawEvidenceAttachment.mjs';
+import { buildOpenClawCodexReviewResult } from './openClawCodexReviewResult.mjs';
+import { buildOpenClawImplementationPlan } from './openClawImplementationPlan.mjs';
+import { buildOpenClawApprovalGateReadiness } from './openClawApprovalGateReadiness.mjs';
+import { buildOpenClawDryRunPlan } from './openClawDryRunPlan.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -347,6 +351,37 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawReadonlyValidationEndpointAvailable: healthHandshake.readonlyValidationEndpoint?.available === true,
     },
   });
+  const openClawCodexReviewResult = buildOpenClawCodexReviewResult(context?.openClawCodexReviewResult || {}, { packetId: openClawProposalPacket.packetId });
+  const openClawImplementationPlan = buildOpenClawImplementationPlan({ packetId: openClawProposalPacket.packetId, reviewResult: openClawCodexReviewResult });
+  const openClawApprovalGateReadiness = buildOpenClawApprovalGateReadiness({
+    satisfiedGates: [
+      readonlyTruth.adapterValidated === true ? 'readonly_validation_succeeded' : '',
+      capabilityReport.reportStatus === 'ready' ? 'capability_report_available' : '',
+      openClawProposalPacket.packetStatus === 'ready_for_operator_review' ? 'proposal_packet_ready' : '',
+      openClawReviewDecision.reviewDecision === 'ready_for_codex_review' ? 'operator_review_decision_ready_for_codex_review' : '',
+      ['parsed', 'ready_for_implementation_planning'].includes(openClawCodexReviewResult.resultStatus) ? 'codex_review_result_parsed' : '',
+      openClawImplementationPlan.planStatus === 'ready_for_operator_review' ? 'implementation_plan_ready' : '',
+      openClawProposalPacket.riskClassification?.riskLevel ? 'risk_classification_present' : '',
+      openClawProposalPacket.rollbackPreview?.rollbackReady === true ? 'rollback_plan_present' : '',
+      (openClawImplementationPlan.proposedTests || []).length > 0 ? 'tests_specified' : '',
+      (openClawAuditLedgerPreview || []).length > 0 ? 'audit_preview_present' : '',
+      openClawPermissionDiff.diffStatus === 'preview_ready' ? 'permission_diff_present' : '',
+    ].filter(Boolean),
+    blockedReasons: openClawImplementationPlan.planStatus === 'blocked_by_risk' ? ['Implementation planning blocked by risk.'] : [],
+    riskLevel: openClawProposalPacket.riskClassification?.riskLevel || 'guarded',
+    rollbackReady: openClawProposalPacket.rollbackPreview?.rollbackReady === true,
+    testsSpecified: (openClawImplementationPlan.proposedTests || []).length > 0,
+    evidenceReady: openClawCodexReviewResult.resultStatus !== 'not_received',
+    permissionDiffReady: openClawPermissionDiff.diffStatus === 'preview_ready',
+    auditReady: (openClawAuditLedgerPreview || []).length > 0,
+    planStatus: openClawImplementationPlan.planStatus,
+  });
+  const openClawDryRunPlan = buildOpenClawDryRunPlan({ packetId: openClawProposalPacket.packetId, implementationPlan: openClawImplementationPlan });
+  const openClawControlledExecutionGate = {
+    controlledExecutionStatus: 'future_gated',
+    controlledExecutionAvailable: false,
+    controlledExecutionReason: 'Requires explicit future operator approval design, completed dry-run review, audit ledger, rollback plan, and permission gate.',
+  };
 
   return {
     generatedAt: adjudicated.generatedAt,
@@ -469,6 +504,11 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       openClawProposalReviewQueue,
       openClawOperatorReviewQueue,
       openClawOperatorReviewWorkflow,
+      openClawCodexReviewResult,
+      openClawImplementationPlan,
+      openClawApprovalGateReadiness,
+      openClawDryRunPlan,
+      openClawControlledExecutionGate,
     openClawEvidenceRequest,
     openClawEvidenceAttachments,
     openClawEvidenceRequestStatus: openClawEvidenceRequest.requestStatus,

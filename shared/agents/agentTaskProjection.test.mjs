@@ -228,6 +228,20 @@ test('agent task projection exposes openclaw adapter readiness fields', () => {
   assert.equal(projection.readinessSummary.openClawAdapterCanExecute, false);
 });
 
+test('agent task projection exposes codex review intake, planning, approval readiness, dry-run, and future-gated execution gate', () => {
+  const projection = buildAgentTaskProjection({
+    context: {
+      openClawCodexReviewResult: { reviewSummary: 'Looks safe', findings: ['Add tests'] },
+    },
+  });
+  assert.equal(Boolean(projection.operatorSurface.openClawCodexReviewResult), true);
+  assert.equal(Boolean(projection.operatorSurface.openClawImplementationPlan), true);
+  assert.equal(Boolean(projection.operatorSurface.openClawApprovalGateReadiness), true);
+  assert.equal(Boolean(projection.operatorSurface.openClawDryRunPlan), true);
+  assert.equal(projection.operatorSurface.openClawControlledExecutionGate.controlledExecutionStatus, 'future_gated');
+  assert.equal(projection.operatorSurface.openClawControlledExecutionGate.controlledExecutionAvailable, false);
+});
+
 
 test('agent task projection exposes OpenClaw adapter stub fields on operator surface', () => {
   const projection = buildAgentTaskProjection({

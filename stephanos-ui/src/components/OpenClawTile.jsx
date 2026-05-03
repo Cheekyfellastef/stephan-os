@@ -526,6 +526,63 @@ export default function OpenClawTile({
         </button>
         {codexExportCopyStatus === 'copied' ? <p className="muted">Codex prompt copied.</p> : null}
       </section>
+      <section className="openclaw-section">
+        <h4>Codex Review Result</h4>
+        <ul>
+          <li><strong>Status:</strong> {operatorTask?.openClawCodexReviewResult?.resultStatus || 'not_received'}</li>
+          <li><strong>Summary:</strong> {operatorTask?.openClawCodexReviewResult?.reviewSummary || 'none'}</li>
+          <li><strong>Findings:</strong> {(operatorTask?.openClawCodexReviewResult?.findings || []).join(' | ') || 'none'}</li>
+          <li><strong>Risks:</strong> {(operatorTask?.openClawCodexReviewResult?.risks || []).join(' | ') || 'none'}</li>
+          <li><strong>Open questions:</strong> {(operatorTask?.openClawCodexReviewResult?.openQuestions || []).join(' | ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawCodexReviewResult?.nextAction || 'Ingest Codex review result.'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+        </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Implementation Planning Packet</h4>
+        <ul>
+          <li><strong>Plan status:</strong> {operatorTask?.openClawImplementationPlan?.planStatus || 'unavailable'}</li>
+          <li><strong>Files to inspect:</strong> {(operatorTask?.openClawImplementationPlan?.proposedFilesToInspect || []).join(', ') || 'none'}</li>
+          <li><strong>Files to change:</strong> {(operatorTask?.openClawImplementationPlan?.proposedFilesToChange || []).join(', ') || 'none'}</li>
+          <li><strong>Required tests:</strong> {(operatorTask?.openClawImplementationPlan?.proposedTests || []).join(', ') || 'none'}</li>
+          <li><strong>Build checks:</strong> {(operatorTask?.openClawImplementationPlan?.proposedBuildChecks || []).join(', ') || 'none'}</li>
+          <li><strong>Rollback plan:</strong> {(operatorTask?.openClawImplementationPlan?.rollbackPlan || []).join(' | ') || 'none'}</li>
+          <li><strong>Open questions:</strong> {(operatorTask?.openClawImplementationPlan?.openQuestions || []).join(' | ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawImplementationPlan?.nextAction || 'Build implementation planning packet.'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+        </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Approval Gate Readiness</h4>
+        <ul>
+          <li><strong>Readiness status:</strong> {operatorTask?.openClawApprovalGateReadiness?.approvalReadinessStatus || 'not_ready'}</li>
+          <li><strong>Satisfied gates:</strong> {(operatorTask?.openClawApprovalGateReadiness?.satisfiedGates || []).join(', ') || 'none'}</li>
+          <li><strong>Missing gates:</strong> {(operatorTask?.openClawApprovalGateReadiness?.missingGates || []).join(', ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawApprovalGateReadiness?.nextAction || 'Complete approval readiness evidence.'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+        </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Dry-run Action Planning Preview</h4>
+        <ul>
+          <li><strong>Dry-run status:</strong> {operatorTask?.openClawDryRunPlan?.dryRunStatus || 'unavailable'}</li>
+          <li><strong>Simulated steps:</strong> {(operatorTask?.openClawDryRunPlan?.simulatedSteps || []).join(' | ') || 'none'}</li>
+          <li><strong>Files that would be touched:</strong> {(operatorTask?.openClawDryRunPlan?.filesThatWouldBeChanged || []).join(', ') || 'none'}</li>
+          <li><strong>Commands that would be requested:</strong> {(operatorTask?.openClawDryRunPlan?.commandsThatWouldBeRequested || []).join(', ') || 'none'}</li>
+          <li><strong>Tests that would be required:</strong> {(operatorTask?.openClawDryRunPlan?.testsThatWouldBeRun || []).join(', ') || 'none'}</li>
+          <li><strong>Blocked steps:</strong> {(operatorTask?.openClawDryRunPlan?.blockedSteps || []).join(' | ') || 'none'}</li>
+          <li><strong>Next action:</strong> {operatorTask?.openClawDryRunPlan?.nextAction || 'Prepare dry-run action planning preview.'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+        </ul>
+      </section>
+      <section className="openclaw-section">
+        <h4>Controlled Execution Gate</h4>
+        <ul>
+          <li><strong>Status:</strong> {operatorTask?.openClawControlledExecutionGate?.controlledExecutionStatus || 'future_gated'}</li>
+          <li><strong>Available:</strong> {operatorTask?.openClawControlledExecutionGate?.controlledExecutionAvailable ? 'yes' : 'no'}</li>
+          <li><strong>Reason:</strong> {operatorTask?.openClawControlledExecutionGate?.controlledExecutionReason || 'Future-gated by policy.'}</li>
+        </ul>
+      </section>
 
       <section className="openclaw-section">
         <h4>OpenClaw Control Harness</h4>
