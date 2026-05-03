@@ -112,3 +112,21 @@ test('OpenClawTile renders new pre-execution planning sections and future-gated 
   assert.equal(source.includes('Controlled Execution Gate'), true);
   assert.equal(source.includes('controlledExecutionStatus'), true);
 });
+
+test('OpenClawTile mission card exposes always-visible operator controls', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('OpenClaw Mission Card'), true);
+  assert.equal(source.includes('Current stage:'), true);
+  assert.equal(source.includes('Execution allowed:</strong> no'), true);
+  assert.equal(source.includes('Risk level:'), true);
+  assert.equal(source.includes('Top blocker/warning:'), true);
+});
+
+test('OpenClawTile stage resolver and progressive disclosure defaults are present', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('resolveOpenClawCurrentStage'), true);
+  assert.equal(source.includes('validation_required'), true);
+  assert.equal(source.includes('future_execution_gated'), true);
+  assert.equal(source.includes('open={stageState === \'current\'}'), true);
+  assert.equal(source.includes('<summary>{stageId} ({stageState})</summary>'), true);
+});
