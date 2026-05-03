@@ -43,6 +43,13 @@ export function buildOpenClawOperatorReviewQueue({
   if (auditPreviewStatus !== 'preview_ready') missingEvidence.push('audit_preview_missing');
   const evidenceMissing = asArray(openClawEvidenceRequest.missingEvidence);
   if (evidenceMissing.length > 0) missingEvidence.push(...evidenceMissing.map((m)=>`evidence_request:${m}`));
+  const reviewDecision = String(openClawReviewDecision.reviewDecision || 'not_reviewed');
+  const reviewReady = reviewDecision === 'ready_for_codex_review';
+  const requestStatus = String(openClawEvidenceRequest.requestStatus || 'none');
+  if (reviewReady && requestStatus === 'none') {
+    const index = missingEvidence.indexOf('evidence_request:operator_note');
+    if (index >= 0) missingEvidence.splice(index, 1);
+  }
 
   const availableEvidence = [
     `packet:${packetStatus}`,
@@ -64,7 +71,7 @@ export function buildOpenClawOperatorReviewQueue({
     queueStatus,
     queueMode: 'operator_review_only',
     activePacketId: packetId,
-    reviewStatus: openClawReviewDecision.reviewDecision || 'not_reviewed',
+    reviewStatus: reviewDecision,
     missingEvidence,
     availableEvidence,
     reviewBlockers: queueStatus === 'blocked_by_risk' ? [openClawProposalRisk.riskSummary || `Risk level ${riskLevel} requires mitigation.`] : [],

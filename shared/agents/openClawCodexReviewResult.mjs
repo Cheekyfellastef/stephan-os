@@ -1,7 +1,8 @@
 const SOURCES = new Set(['codex', 'chatgpt', 'operator', 'unknown']);
 const STATUSES = new Set(['not_received', 'received', 'parsed', 'needs_more_evidence', 'rejected', 'ready_for_implementation_planning', 'blocked']);
 
-const BLOCKED_PATTERNS = [/\bexecute\b/i, /\brun\s+command/i, /\bgit\s+(commit|push|checkout|merge|rebase|write)\b/i, /\bbrowser\s+control\b/i, /\bedit\s+files?\b/i, /\bautonom/i, /\bbypass\s+approval\b/i, /\bweaken\s+guardrail/i, /\benable\s+openclaw\s+execution\b/i];
+const BLOCKED_PATTERNS = [/\benable\s+(?:openclaw\s+)?(?:command\s+execution|execution)\b/i, /\ballow\s+openclaw\s+to\s+edit\s+files?\b/i, /\bgive\s+openclaw\s+git\s+write\s+access\b/i, /\blet\s+openclaw\s+control\s+the\s+browser\b/i, /\bbypass\s+approval\b/i, /\bweaken\s+guardrail/i, /\bhide\s+audit\s+trail\b/i, /\brun\s+command\b/i, /\bgit\s+(commit|push|checkout|merge|rebase|write)\b/i, /\bbrowser\s+control\b/i, /\bedit\s+files?\b/i, /\bautonom/i];
+const SAFETY_CONFIRMATION_PATTERNS = [/\bno\s+(?:command\s+execution|file\s+edits?|git\s+writes?|browser\s+control|repo\s+mutation)\b/i, /\bdo\s+not\s+(?:enable|allow|execute|run|edit|write|bypass|weaken|hide)\b/i, /\bmust\s+not\s+(?:enable|allow|execute|run|edit|write|bypass|weaken|hide)\b/i, /\bexecution\s+remains\s+disabled\b/i, /\bremain\s+non-executing\b/i, /\bmust\s+remain\s+non-executing\b/i, /\bblocked\b/i];
 
 function asArray(v) { return Array.isArray(v) ? v.filter(Boolean) : []; }
 function asText(v) { return typeof v === 'string' ? v.trim() : ''; }
@@ -23,6 +24,11 @@ function parseSections(rawText = '') {
   return sections;
 }
 
+function isSafetyConfirmationLine(line = '') {
+  const text = String(line || '').trim();
+  return SAFETY_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function buildOpenClawCodexReviewResult(input = {}, { packetId = 'none' } = {}) {
   const rawText = asText(input?.rawText);
   const parsed = parseSections(rawText);
@@ -32,13 +38,16 @@ export function buildOpenClawCodexReviewResult(input = {}, { packetId = 'none' }
   const evidenceRequests = asArray(input?.evidenceRequests);
   const source = SOURCES.has(input?.source) ? input.source : 'unknown';
   const requestedStatus = STATUSES.has(input?.resultStatus) ? input.resultStatus : '';
-  const blockedByText = BLOCKED_PATTERNS.some((p) => p.test(rawText));
+  const nonEmptyLines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const blockedByText = nonEmptyLines.some((line) => BLOCKED_PATTERNS.some((pattern) => pattern.test(line)) && !isSafetyConfirmationLine(line));
   const blockedByEvidence = blockers.length > 0 || blockedByText;
+  const normalizedOpenQuestions = (openQuestions.length ? openQuestions : parsed.openQuestions).filter((question) => !/^none\.?$/i.test(String(question || '').trim()));
+  const safetyConfirmations = Array.from(new Set([...(parsed.safetyConfirmations || []), ...nonEmptyLines.filter((line) => isSafetyConfirmationLine(line))]));
 
   let resultStatus = requestedStatus || 'not_received';
   if (rawText || findings.length || asText(input?.reviewSummary)) resultStatus = resultStatus === 'not_received' ? 'received' : resultStatus;
   if (blockedByEvidence) resultStatus = 'blocked';
-  else if (openQuestions.length > 0 || evidenceRequests.length > 0) resultStatus = 'needs_more_evidence';
+  else if (normalizedOpenQuestions.length > 0 || evidenceRequests.length > 0) resultStatus = 'needs_more_evidence';
   else if ((findings.length > 0 || asText(input?.reviewSummary) || parsed.summary.length > 0) && blockers.length === 0) resultStatus = 'ready_for_implementation_planning';
 
   return {
@@ -52,10 +61,11 @@ export function buildOpenClawCodexReviewResult(input = {}, { packetId = 'none' }
     recommendedChanges: asArray(input?.recommendedChanges),
     requiredTests: asArray(input?.requiredTests).length ? asArray(input?.requiredTests) : parsed.requiredChecks,
     requiredBuildCommands: asArray(input?.requiredBuildCommands),
-    openQuestions: openQuestions.length ? openQuestions : parsed.openQuestions,
+    openQuestions: normalizedOpenQuestions,
     evidenceRequests,
     blockers: blockedByText ? [...blockers, 'Execution/autonomy request detected in pasted review text.'] : blockers,
-    warnings: asArray(input?.warnings).concat(parsed.safetyConfirmations.length ? [] : rawText ? ['Safety confirmations missing from review evidence.'] : []),
+    safetyConfirmations,
+    warnings: asArray(input?.warnings).concat(safetyConfirmations.length ? [] : rawText ? ['Safety confirmations missing from review evidence.'] : []),
     rollbackPlan: asArray(input?.rollbackPlan).length ? asArray(input?.rollbackPlan) : parsed.rollback,
     rawText,
     receivedAt: input?.receivedAt || new Date().toISOString(),

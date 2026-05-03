@@ -294,26 +294,28 @@ export default function OpenClawTile({
         <h4>Endpoint Configuration (session-only v1)</h4>
         <p className="muted"><strong>session-only, no secrets stored</strong></p>
         <p className="muted"><strong>endpoint configuration only: no health check, no handshake, no connection, no live automation</strong></p>
-        <label>label input
-          <input value={endpointDraft.endpointLabel || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointLabel: event.target.value })} />
+        <label className="openclaw-field">label input
+          <input className="openclaw-input" value={endpointDraft.endpointLabel || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointLabel: event.target.value })} />
         </label>
-        <label>host input
-          <input value={endpointDraft.endpointHost || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointHost: event.target.value })} />
+        <label className="openclaw-field">host input
+          <input className="openclaw-input" value={endpointDraft.endpointHost || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointHost: event.target.value })} />
         </label>
-        <label>port input
-          <input value={endpointDraft.endpointPort || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointPort: event.target.value })} />
+        <label className="openclaw-field">port input
+          <input className="openclaw-input" value={endpointDraft.endpointPort || ''} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointPort: event.target.value })} />
         </label>
-        <label>expected protocol input/select
-          <input value={endpointDraft.expectedProtocolVersion || 'v1'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, expectedProtocolVersion: event.target.value })} />
+        <label className="openclaw-field">expected protocol input/select
+          <input className="openclaw-input" value={endpointDraft.expectedProtocolVersion || 'v1'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, expectedProtocolVersion: event.target.value })} />
         </label>
-        <label>allowed probes select
-          <select value={endpointDraft.allowedProbeTypes || 'health_and_handshake'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, allowedProbeTypes: event.target.value })}>
+        <label className="openclaw-field">allowed probes select
+          <select className="openclaw-input" value={endpointDraft.allowedProbeTypes || 'health_and_handshake'} onChange={(event) => onApplyOpenClawEndpointConfig({ ...endpointDraft, allowedProbeTypes: event.target.value })}>
             <option value="none">none</option><option value="health_only">health_only</option><option value="handshake_only">handshake_only</option><option value="health_and_handshake">health_and_handshake</option>
           </select>
         </label>
         <p>scope display/select locked to local_only for v1</p>
+        <div className="openclaw-button-row">
         <button type="button" onClick={() => onApplyOpenClawEndpointConfig({ ...endpointDraft, endpointScope: 'local_only', configPersistenceMode: 'session_only', endpointMode: 'configured' })}>apply/update button</button>
         <button type="button" onClick={onClearOpenClawEndpointConfig}>reset/clear session config button</button>
+        </div>
         <ul>
           <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
           <li><strong>Configured port:</strong> {endpointDraft.endpointPort || 'none'}</li>
@@ -458,6 +460,7 @@ export default function OpenClawTile({
           <li><strong>Active packet id:</strong> {operatorReviewQueue?.activePacketId || 'none'}</li>
           <li><strong>Review status:</strong> {operatorReviewQueue?.reviewStatus || 'not_reviewed'}</li>
           <li><strong>Missing evidence:</strong> {(operatorReviewQueue?.missingEvidence || []).join(', ') || 'none'}</li>
+          <li><strong>Evidence context:</strong> {(operatorReviewQueue?.missingEvidence || []).length === 0 ? 'Evidence satisfied for review context.' : 'Missing evidence must be resolved before advancing.'}</li>
           <li><strong>Available evidence:</strong> {(operatorReviewQueue?.availableEvidence || []).join(', ') || 'none'}</li>
           <li><strong>Risk summary:</strong> {operatorReviewQueue?.riskSummary?.riskSummary || 'Risk under review.'}</li>
           <li><strong>Approval summary:</strong> {operatorReviewQueue?.approvalSummary?.approvalStatus || 'unknown'}</li>
@@ -491,8 +494,8 @@ export default function OpenClawTile({
           <li><strong>Forbidden review actions:</strong> {(operatorReviewWorkflow?.forbiddenReviewActions || []).join(', ') || 'none'}</li>
           <li><strong>Next action:</strong> {effectiveReviewDecision?.nextAction || operatorReviewWorkflow?.nextAction || 'Review packet manually.'}</li>
         </ul>
-        <label>Review note
-          <input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
+        <label className="openclaw-field">Review note
+          <input className="openclaw-input" value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
         </label>
         <button type="button" onClick={() => updateReviewDecision('needs_more_evidence')}>Mark needs more evidence</button>
         <button type="button" onClick={() => updateReviewDecision('ready_for_codex_review')}>Mark ready for Codex review</button>
@@ -514,8 +517,8 @@ export default function OpenClawTile({
           <li><strong>Next action:</strong> {evidenceRequest?.nextAction || 'Add requested OpenClaw proposal evidence'}</li>
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
-        <label>Operator evidence note
-          <input value={evidenceNote} onChange={(event) => setEvidenceNote(event.target.value)} />
+        <label className="openclaw-field">Operator evidence note
+          <textarea className="openclaw-input" value={evidenceNote} onChange={(event) => setEvidenceNote(event.target.value)} rows={4} />
         </label>
         <button type="button" onClick={attachOperatorEvidenceNote}>Attach operator note</button>
         <button type="button">Add evidence request</button>
@@ -542,6 +545,7 @@ export default function OpenClawTile({
           {codexRiskPresentation.blockedWarning ? <p className="openclaw-codex-preview__warning"><strong>{codexRiskPresentation.blockedWarning}</strong></p> : null}
           <label htmlFor="openclawCodexPromptPreview"><strong>Codex Prompt Preview</strong></label>
           <textarea
+            className="openclaw-input"
             id="openclawCodexPromptPreview"
             value={codexPromptText}
             readOnly
@@ -561,18 +565,22 @@ export default function OpenClawTile({
         <p className="muted">Review evidence only. Planning only. Preview only. Execution disabled. Operator approval required.</p>
         <p className="muted">Pasted Codex result is review evidence only. It cannot execute, edit files, write Git, or approve OpenClaw actions.</p>
         <label htmlFor="openclawCodexReviewResultIntake">Paste Codex review result</label>
-        <textarea id="openclawCodexReviewResultIntake" value={codexReviewText} onChange={(event) => setCodexReviewText(event.target.value)} rows={8} />
+        <textarea className="openclaw-input" id="openclawCodexReviewResultIntake" value={codexReviewText} onChange={(event) => setCodexReviewText(event.target.value)} rows={8} />
+        <div className="openclaw-button-row">
         <button type="button" onClick={importCodexReviewResult}>Import Codex review result</button>
         <button type="button" onClick={clearCodexReviewResult}>Clear Codex review result</button>
+        </div>
       </section>
       <section className="openclaw-section">
         <h4>Codex Review Result</h4>
         <ul>
           <li><strong>Status:</strong> {effectiveCodexReviewResult?.resultStatus || 'not_received'}</li>
+          <li><strong>Safety classification:</strong> {effectiveCodexReviewResult?.resultStatus === 'blocked' ? 'blocked (unsafe request detected)' : effectiveCodexReviewResult?.resultStatus ? 'safe/reviewable' : 'not yet reviewed'}</li>
           <li><strong>Summary:</strong> {effectiveCodexReviewResult?.reviewSummary || 'none'}</li>
           <li><strong>Findings:</strong> {(effectiveCodexReviewResult?.findings || []).join(' | ') || 'none'}</li>
           <li><strong>Risks:</strong> {(effectiveCodexReviewResult?.risks || []).join(' | ') || 'none'}</li>
           <li><strong>Open questions:</strong> {(effectiveCodexReviewResult?.openQuestions || []).join(' | ') || 'none'}</li>
+          <li><strong>Safety confirmations:</strong> {(effectiveCodexReviewResult?.safetyConfirmations || []).join(' | ') || 'none'}</li>
           <li><strong>Next action:</strong> {effectiveCodexReviewResult?.nextAction || 'Ingest Codex review result.'}</li>
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
