@@ -16,6 +16,7 @@ import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditMode
 import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
 import { clearOpenClawReviewDecision, loadOpenClawReviewDecisions, saveOpenClawReviewDecision } from '../../../shared/agents/openClawReviewDecisionStore.mjs';
 import { buildOpenClawEvidenceAttachment } from '../../../shared/agents/openClawEvidenceAttachment.mjs';
+import { clearOpenClawCodexReviewResult, loadOpenClawCodexReviewResults, saveOpenClawCodexReviewResult } from '../../../shared/agents/openClawCodexReviewResultStore.mjs';
 
 
 function getCodexExportRiskPresentation(canonicalRiskLevel = '') {
@@ -127,6 +128,12 @@ export default function OpenClawTile({
   const [reviewNote, setReviewNote] = useState('');
   const [localReviewDecision, setLocalReviewDecision] = useState(null);
   const [codexExportCopyStatus, setCodexExportCopyStatus] = useState('idle');
+
+  const [codexReviewText, setCodexReviewText] = useState('');
+  const [localCodexReviewResult, setLocalCodexReviewResult] = useState(null);
+  const [codexReviewCopyStatus, setCodexReviewCopyStatus] = useState('idle');
+  const [implementationPlanCopyStatus, setImplementationPlanCopyStatus] = useState('idle');
+  const [dryRunCopyStatus, setDryRunCopyStatus] = useState('idle');
   const codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt || 'OpenClaw Codex prompt unavailable.';
   const codexRiskPresentation = getCodexExportRiskPresentation(operatorTask?.openClawProposalRisk?.riskLevel);
 
@@ -140,6 +147,28 @@ export default function OpenClawTile({
     const decisions = loadOpenClawReviewDecisions();
     setLocalReviewDecision(decisions[activePacketId] || null);
   }, [activePacketId]);
+
+  useEffect(() => {
+    const results = loadOpenClawCodexReviewResults();
+    const restored = results[activePacketId] || null;
+    setLocalCodexReviewResult(restored);
+    setCodexReviewText(restored?.rawText || '');
+  }, [activePacketId]);
+
+  const effectiveCodexReviewResult = localCodexReviewResult || operatorTask?.openClawCodexReviewResult || null;
+
+  function importCodexReviewResult() {
+    const saved = saveOpenClawCodexReviewResult({
+      result: { packetId: activePacketId, source: 'codex', rawText: codexReviewText, reviewSummary: codexReviewText },
+    });
+    setLocalCodexReviewResult(saved);
+  }
+
+  function clearCodexReviewResult() {
+    clearOpenClawCodexReviewResult({ packetId: activePacketId });
+    setLocalCodexReviewResult(null);
+    setCodexReviewText('');
+  }
 
   function updateReviewDecision(reviewDecision) {
     const saved = saveOpenClawReviewDecision({
@@ -526,17 +555,29 @@ export default function OpenClawTile({
         </button>
         {codexExportCopyStatus === 'copied' ? <p className="muted">Codex prompt copied.</p> : null}
       </section>
+
+      <section className="openclaw-section">
+        <h4>Codex Review Result Intake</h4>
+        <p className="muted">Review evidence only. Planning only. Preview only. Execution disabled. Operator approval required.</p>
+        <p className="muted">Pasted Codex result is review evidence only. It cannot execute, edit files, write Git, or approve OpenClaw actions.</p>
+        <label htmlFor="openclawCodexReviewResultIntake">Paste Codex review result</label>
+        <textarea id="openclawCodexReviewResultIntake" value={codexReviewText} onChange={(event) => setCodexReviewText(event.target.value)} rows={8} />
+        <button type="button" onClick={importCodexReviewResult}>Import Codex review result</button>
+        <button type="button" onClick={clearCodexReviewResult}>Clear Codex review result</button>
+      </section>
       <section className="openclaw-section">
         <h4>Codex Review Result</h4>
         <ul>
-          <li><strong>Status:</strong> {operatorTask?.openClawCodexReviewResult?.resultStatus || 'not_received'}</li>
-          <li><strong>Summary:</strong> {operatorTask?.openClawCodexReviewResult?.reviewSummary || 'none'}</li>
-          <li><strong>Findings:</strong> {(operatorTask?.openClawCodexReviewResult?.findings || []).join(' | ') || 'none'}</li>
-          <li><strong>Risks:</strong> {(operatorTask?.openClawCodexReviewResult?.risks || []).join(' | ') || 'none'}</li>
-          <li><strong>Open questions:</strong> {(operatorTask?.openClawCodexReviewResult?.openQuestions || []).join(' | ') || 'none'}</li>
-          <li><strong>Next action:</strong> {operatorTask?.openClawCodexReviewResult?.nextAction || 'Ingest Codex review result.'}</li>
+          <li><strong>Status:</strong> {effectiveCodexReviewResult?.resultStatus || 'not_received'}</li>
+          <li><strong>Summary:</strong> {effectiveCodexReviewResult?.reviewSummary || 'none'}</li>
+          <li><strong>Findings:</strong> {(effectiveCodexReviewResult?.findings || []).join(' | ') || 'none'}</li>
+          <li><strong>Risks:</strong> {(effectiveCodexReviewResult?.risks || []).join(' | ') || 'none'}</li>
+          <li><strong>Open questions:</strong> {(effectiveCodexReviewResult?.openQuestions || []).join(' | ') || 'none'}</li>
+          <li><strong>Next action:</strong> {effectiveCodexReviewResult?.nextAction || 'Ingest Codex review result.'}</li>
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
+        <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(effectiveCodexReviewResult || {}, null, 2)); setCodexReviewCopyStatus('copied'); }}>Copy imported Codex review summary</button>
+        {codexReviewCopyStatus === 'copied' ? <p className="muted">Codex review summary copied.</p> : null}
       </section>
       <section className="openclaw-section">
         <h4>Implementation Planning Packet</h4>
@@ -551,6 +592,8 @@ export default function OpenClawTile({
           <li><strong>Next action:</strong> {operatorTask?.openClawImplementationPlan?.nextAction || 'Build implementation planning packet.'}</li>
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
+        <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(operatorTask?.openClawImplementationPlan || {}, null, 2)); setImplementationPlanCopyStatus('copied'); }}>Copy implementation planning packet</button>
+        {implementationPlanCopyStatus === 'copied' ? <p className="muted">Implementation planning packet copied.</p> : null}
       </section>
       <section className="openclaw-section">
         <h4>Approval Gate Readiness</h4>
@@ -574,6 +617,8 @@ export default function OpenClawTile({
           <li><strong>Next action:</strong> {operatorTask?.openClawDryRunPlan?.nextAction || 'Prepare dry-run action planning preview.'}</li>
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
+        <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(operatorTask?.openClawDryRunPlan || {}, null, 2)); setDryRunCopyStatus('copied'); }}>Copy dry-run preview</button>
+        {dryRunCopyStatus === 'copied' ? <p className="muted">Dry-run preview copied.</p> : null}
       </section>
       <section className="openclaw-section">
         <h4>Controlled Execution Gate</h4>

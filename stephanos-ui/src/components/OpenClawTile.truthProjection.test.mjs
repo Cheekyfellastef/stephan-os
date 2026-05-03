@@ -101,6 +101,10 @@ test('OpenClawTile blocked/high-risk proposals render warning while execution st
 
 test('OpenClawTile renders new pre-execution planning sections and future-gated controlled execution gate', async () => {
   const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('Codex Review Result Intake'), true);
+  assert.equal(source.includes('Import Codex review result'), true);
+  assert.equal(source.includes('Clear Codex review result'), true);
+  assert.equal(source.includes('review evidence only'), true);
   assert.equal(source.includes('Codex Review Result'), true);
   assert.equal(source.includes('Implementation Planning Packet'), true);
   assert.equal(source.includes('Approval Gate Readiness'), true);

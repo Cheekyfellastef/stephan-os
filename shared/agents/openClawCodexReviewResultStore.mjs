@@ -23,3 +23,11 @@ export function saveOpenClawCodexReviewResult({ result = {}, storage } = {}) {
   s.setItem(OPENCLAW_CODEX_REVIEW_RESULT_STORAGE_KEY, JSON.stringify(all));
   return normalized;
 }
+
+export function clearOpenClawCodexReviewResult({ packetId = 'none', storage } = {}) {
+  const s = getStorage(storage);
+  if (!s) return;
+  const all = loadOpenClawCodexReviewResults({ storage: s });
+  delete all[packetId];
+  s.setItem(OPENCLAW_CODEX_REVIEW_RESULT_STORAGE_KEY, JSON.stringify(all));
+}
