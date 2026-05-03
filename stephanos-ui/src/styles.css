@@ -2682,6 +2682,25 @@ pre {
   margin-bottom: 1rem;
 }
 
+.openclaw-field {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  margin-bottom: 0.55rem;
+}
+
+.openclaw-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.openclaw-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .openclaw-scan-controls {
   display: grid;
   gap: 0.4rem;

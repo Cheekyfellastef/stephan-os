@@ -24,6 +24,9 @@ test('OpenClawTile renders endpoint configuration controls and session-only safe
     'OpenClaw adapter config warning:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+  assert.equal(source.includes('className="openclaw-input"'), true);
+  assert.equal(source.includes('className="openclaw-field"'), true);
+  assert.equal(source.includes('className="openclaw-button-row"'), true);
 });
 
 
