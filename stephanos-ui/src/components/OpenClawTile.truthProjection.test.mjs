@@ -120,6 +120,7 @@ test('OpenClawTile mission card exposes always-visible operator controls', async
   assert.equal(source.includes('Execution allowed:</strong> no'), true);
   assert.equal(source.includes('Risk level:'), true);
   assert.equal(source.includes('Top blocker/warning:'), true);
+  assert.equal(source.includes('resolveMissionPrimaryOperatorAction'), true);
 });
 
 test('OpenClawTile stage resolver and progressive disclosure defaults are present', async () => {
@@ -129,4 +130,17 @@ test('OpenClawTile stage resolver and progressive disclosure defaults are presen
   assert.equal(source.includes('future_execution_gated'), true);
   assert.equal(source.includes('open={stageState === \'current\'}'), true);
   assert.equal(source.includes('<summary>{stageId} ({stageState})</summary>'), true);
+});
+
+test('OpenClawTile mission primary operator action follows canonical current stage priority', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes("if (currentStage === 'future_execution_gated')"), true);
+  assert.equal(source.includes('Keep execution disabled until future operator-approved execution design.'), true);
+  assert.equal(source.includes("if (currentStage === 'evidence_needed' || missingEvidence.length > 0)"), true);
+  assert.equal(source.includes('Collect missing evidence:'), true);
+  assert.equal(source.includes("if (currentStage === 'operator_review') return 'Submit packet for operator review.';"), true);
+  assert.equal(source.includes("if (currentStage === 'codex_review_intake') return 'Import Codex review result.';"), true);
+  assert.equal(source.includes("if (currentStage === 'implementation_planning') return 'Review implementation planning packet.';"), true);
+  assert.equal(source.includes("if (currentStage === 'approval_readiness') return 'Review approval gate readiness.';"), true);
+  assert.equal(source.includes("if (currentStage === 'dry_run_preview') return 'Review dry-run preview.';"), true);
 });
