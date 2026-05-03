@@ -65,6 +65,22 @@ function resolveOpenClawCurrentStage(operatorTask = {}) {
   return 'validation_required';
 }
 
+function resolveMissionPrimaryOperatorAction({ currentStage = 'validation_required', operatorTask = {}, operatorReviewQueue = null } = {}) {
+  const missingEvidence = operatorTask?.openClawEvidenceRequest?.missingEvidence || [];
+  if (currentStage === 'evidence_needed' || missingEvidence.length > 0) {
+    return `Collect missing evidence: ${missingEvidence.join(', ') || 'evidence_request:operator_note'}`;
+  }
+  if (currentStage === 'operator_review') return 'Submit packet for operator review.';
+  if (currentStage === 'codex_review_intake') return 'Import Codex review result.';
+  if (currentStage === 'implementation_planning') return 'Review implementation planning packet.';
+  if (currentStage === 'approval_readiness') return 'Review approval gate readiness.';
+  if (currentStage === 'dry_run_preview') return 'Review dry-run preview.';
+  if (currentStage === 'future_execution_gated') {
+    return 'Keep execution disabled until future operator-approved execution design.';
+  }
+  return operatorReviewQueue?.nextAction || operatorTask?.openClawHealthValidationNextAction || 'Review current stage and resolve blockers.';
+}
+
 export default function OpenClawTile({
   uiLayout,
   togglePanel,
@@ -300,6 +316,7 @@ export default function OpenClawTile({
   const currentStage = resolveOpenClawCurrentStage(operatorTask || {});
   const currentStageIndex = OPENCLAW_STAGE_ORDER.indexOf(currentStage);
   const missionNextAction = operatorTask?.openClawControlNextAction || operatorTask?.openClawProposalPacket?.nextAction || operatorReviewQueue?.nextAction || 'Keep proposal-only review path and collect evidence.';
+  const primaryOperatorAction = resolveMissionPrimaryOperatorAction({ currentStage, operatorTask: operatorTask || {}, operatorReviewQueue });
   const topBlockerOrWarning = operatorTask?.openClawHealthValidationBlockers?.[0]
     || operatorTask?.openClawAdapterConnectionConfigBlockers?.[0]
     || operatorTask?.openClawHealthValidationWarnings?.[0]
@@ -323,7 +340,7 @@ export default function OpenClawTile({
           <li><strong>Execution allowed:</strong> no</li>
           <li><strong>Risk level:</strong> {operatorTask?.openClawProposalRisk?.riskLevel || oversightProposal?.riskLevel || 'guarded'}</li>
           <li><strong>Top blocker/warning:</strong> {topBlockerOrWarning}</li>
-          <li><strong>Primary operator action:</strong> {operatorReviewQueue?.nextAction || operatorTask?.openClawHealthValidationNextAction || 'Review current stage and resolve blockers.'}</li>
+          <li><strong>Primary operator action:</strong> {primaryOperatorAction}</li>
         </ul>
       </section>
       <section className="openclaw-section">
