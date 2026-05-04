@@ -19,6 +19,8 @@ import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButton
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { createIntentToBuildState, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
+import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
+import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -142,6 +144,15 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionNextAction: summary.openClawAdapterConnectionNextAction || operatorSurface.openClawAdapterConnectionNextAction || 'not reported',
     };
   }, [agentTaskProjection]);
+
+
+  const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
+    agentTaskProjection,
+    projectProgressNextActions: agentTaskProjection?.readinessSummary?.nextAgentTaskAction ? [agentTaskProjection.readinessSummary.nextAgentTaskAction] : [],
+    missionHandoffMilestones: agentTaskProjection?.operatorSurface?.openClawOperatorReviewHandoff?.milestones || [],
+    finalRouteTruth,
+  }), [agentTaskProjection, finalRouteTruth]);
+  const agentCommandQueue = useMemo(() => buildAgentCommandQueue({ agentTaskProjection }), [agentTaskProjection]);
 
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
   const resolvedTarget = resolveMissionConsoleTarget(targetId);
@@ -575,7 +586,38 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section">
-        <h4>OpenClaw Interaction + Visibility</h4>
+
+        <h4>Agent Command Console Mission Card</h4>
+        <ul className="paneList">
+          <li><strong>Current mission state:</strong> {agentCommandConsole.commandConsoleStatus}</li>
+          <li><strong>Active agent:</strong> {agentCommandConsole.activeAgent}</li>
+          <li><strong>Active packet id:</strong> {agentCommandConsole.activePacketId}</li>
+          <li><strong>Active stage:</strong> {agentCommandConsole.activeStage}</li>
+          <li><strong>Next best action:</strong> {agentCommandConsole.nextBestAction}</li>
+          <li><strong>Operator action required:</strong> {agentCommandConsole.operatorActionRequired ? 'yes' : 'no'}</li>
+          <li><strong>Execution allowed:</strong> no</li>
+          <li><strong>Safety posture:</strong> {agentCommandConsole.safetyPosture}</li>
+        </ul>
+
+        <h4>Agent Command Queue</h4>
+        <p><strong>queue status:</strong> {agentCommandQueue.queueStatus} · <strong>ready items:</strong> {agentCommandQueue.readyCount} / {agentCommandQueue.itemCount}</p>
+        <ul className="paneList">{agentCommandQueue.items.map((item) => (
+          <li key={item.itemId}><strong>{item.label}</strong> · {item.itemType} · {item.status} · next: {item.nextAction}</li>
+        ))}</ul>
+
+        <h4>Current Work Item Details</h4>
+        <ul className="paneList">
+          <li><strong>Proposal packet summary:</strong> {agentTaskProjection?.operatorSurface?.openClawProposalPacket?.proposalSummary || 'none'}</li>
+          <li><strong>Codex prompt export summary:</strong> {agentTaskProjection?.operatorSurface?.openClawCodexProposalExport?.summary || 'none'}</li>
+          <li><strong>Codex review result summary:</strong> {agentTaskProjection?.operatorSurface?.openClawCodexReviewResult?.summary || 'none'}</li>
+          <li><strong>Evidence request summary:</strong> {agentTaskProjection?.operatorSurface?.openClawEvidenceRequest?.requestSummary || 'none'}</li>
+          <li><strong>Implementation plan summary:</strong> {agentTaskProjection?.operatorSurface?.openClawImplementationPlan?.summary || 'none'}</li>
+          <li><strong>Approval readiness summary:</strong> {agentTaskProjection?.operatorSurface?.openClawApprovalGateReadiness?.summary || 'none'}</li>
+          <li><strong>Dry-run preview summary:</strong> {agentTaskProjection?.operatorSurface?.openClawDryRunPlan?.summary || 'none'}</li>
+          <li><strong>Codex mode:</strong> manual_prompt</li>
+        </ul>
+
+                <h4>OpenClaw Interaction + Visibility</h4>
         <ul>
           <li><strong>current OpenClaw mode:</strong> {OPENCLAW_MODE}</li>
           <li><strong>current authority posture:</strong> {OPENCLAW_AUTHORITY}</li>
