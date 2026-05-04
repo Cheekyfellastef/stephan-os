@@ -185,6 +185,19 @@ function normalizeAgentReadinessSummary(value) {
   };
 }
 
+
+function normalizeMindSupportSnapshot(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    discoveredMindCount: Number.isFinite(Number(source.discoveredMindCount)) ? Number(source.discoveredMindCount) : 0,
+    approvedMindCount: Number.isFinite(Number(source.approvedMindCount)) ? Number(source.approvedMindCount) : 0,
+    sandboxedMindCount: Number.isFinite(Number(source.sandboxedMindCount)) ? Number(source.sandboxedMindCount) : 0,
+    blockedMindCount: Number.isFinite(Number(source.blockedMindCount)) ? Number(source.blockedMindCount) : 0,
+    recommendedNextMindAction: String(source.recommendedNextMindAction || '').trim(),
+    currentMissionRecommendedMinds: Array.isArray(source.currentMissionRecommendedMinds) ? source.currentMissionRecommendedMinds : [],
+  };
+}
+
 function buildCanonicalSnapshot(runtimeStatusModel = {}) {
   const canonical = runtimeStatusModel?.canonicalRouteRuntimeTruth;
   const compatibility = runtimeStatusModel?.runtimeTruthSnapshot;
@@ -283,6 +296,11 @@ export function buildStephanosTileTruthProjection(project = {}) {
     && selectedRouteReachable === 'yes'
     && selectedRouteUsable === 'yes';
   const telemetrySummary = runtimeStatusModel?.telemetrySummary || project?.telemetrySummary || {};
+  const mindSupportSnapshot = normalizeMindSupportSnapshot({
+    ...(runtimeStatusModel?.aiMindRegistry?.supportSnapshot || {}),
+    recommendedNextMindAction: runtimeStatusModel?.aiMindRegistry?.recommendedNextMindAction,
+    currentMissionRecommendedMinds: runtimeStatusModel?.aiMindRegistry?.currentMissionRecommendedMinds,
+  });
   const promptBuilderSummary = runtimeStatusModel?.promptBuilderSummary || project?.promptBuilderSummary || {};
 
   const landingTileSummary = buildLandingTileSummary({
@@ -307,6 +325,7 @@ export function buildStephanosTileTruthProjection(project = {}) {
     selectedRouteUsable,
     agentTaskSummary,
     landingTileSummary,
+    mindSupportSnapshot,
     drift,
     driftFields,
     summary: landingTileSummary.summary,

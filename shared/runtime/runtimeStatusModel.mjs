@@ -25,6 +25,7 @@ import { STEPHANOS_PROVIDER_ROUTING_MARKER, STEPHANOS_ROUTE_ADOPTION_MARKER } fr
 import { normalizeBridgeTransportPreferences, normalizeBridgeTransportSelection, projectHomeBridgeTransportTruth } from './homeBridgeTransport.mjs';
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
+import { buildAIMindRegistry } from './aiMindRegistry.mjs';
 
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
 
@@ -2726,6 +2727,12 @@ export function createRuntimeStatusModel({
   });
   const preliminaryModel = { ...model, finalRouteTruth, dependencySummary };
   const guardrails = evaluateRuntimeGuardrails(preliminaryModel);
+  const aiMindRegistry = buildAIMindRegistry({
+    providerHealth: health,
+    runtimeContext: gatedRuntimeContext,
+    registry: normalizedRuntimeContext.aiMindRegistry,
+  });
+
   const runtimeAdjudication = adjudicateRuntimeTruth({
     runtimeContext: gatedRuntimeContext,
     finalRoute,
@@ -2757,6 +2764,8 @@ export function createRuntimeStatusModel({
       computedFromPersistence: false,
     },
     cognitiveAdjudication: runtimeAdjudication.cognitiveAdjudication,
+    aiMindRegistry,
+    aiMindRegistryProjection: aiMindRegistry,
     guardrails,
   };
 }

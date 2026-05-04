@@ -579,6 +579,9 @@ export function buildSupportSnapshot({
     return 'unknown';
   };
 
+  const mindRegistry = runtimeStatus?.aiMindRegistry || {};
+  const mindSupport = mindRegistry?.supportSnapshot || {};
+
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -628,6 +631,12 @@ export function buildSupportSnapshot({
     `Transport Compatibility Layer: ${asText(routeTruthView?.transportCompatibilityLayer, 'not-required')}`,
     `Local Available: ${asYesNoUnknown(runtimeStatus?.localAvailable)}`,
     `Cloud Available: ${asYesNoUnknown(runtimeStatus?.cloudAvailable)}`,
+    `AI Mind Registry Discovered Minds: ${asText(mindSupport?.discoveredMindCount, '0')}`,
+    `AI Mind Registry Approved Minds: ${asText(mindSupport?.approvedMindCount, '0')}`,
+    `AI Mind Registry Sandboxed Minds: ${asText(mindSupport?.sandboxedMindCount, '0')}`,
+    `AI Mind Registry Blocked Minds: ${asText(mindSupport?.blockedMindCount, '0')}`,
+    `AI Mind Registry Next Action: ${asText(mindRegistry?.recommendedNextMindAction, 'n/a')}`,
+    `AI Mind Registry Mission Recommended Minds: ${asText(Array.isArray(mindRegistry?.currentMissionRecommendedMinds) ? mindRegistry.currentMissionRecommendedMinds.join(', ') : 'n/a')}`,
     `Dependency Summary: ${asText(runtimeStatus?.dependencySummary)}`,
     `Backend Default Provider: ${asText(safeApiStatus?.backendDefaultProvider)}`,
     `Selected Provider Health: ${asText(statusSummary?.healthBadge || statusSummary?.healthState)}`,
