@@ -49,3 +49,17 @@ test('MissionConsoleTile routes agent-targeted submit through mission bridge and
   assert.equal(source.includes("Target: Stephanos → Assistant Router"), true);
   assert.equal(source.includes("responder: 'Stephanos'"), true);
 });
+
+
+test('MissionConsoleTile includes agent command console v1 non-executing workflow labels', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  [
+    'Agent Command Console Mission Card',
+    'Agent Command Queue',
+    'Current Work Item Details',
+    'Execution allowed:',
+    'Codex mode:',
+    'Proposal packet summary:',
+  ].forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+  assert.equal(source.includes('manual_prompt'), true);
+});
