@@ -18,3 +18,13 @@ test('agent command console projection selects proposal review when codex export
   assert.match(model.commandConsoleMode, /(proposal_review|blocked)/);
   assert.equal(typeof model.nextBestAction, 'string');
 });
+
+test('agent command console is ready when operator review queue is ready', ()=>{
+  const agentTaskProjection = buildAgentTaskProjection();
+  agentTaskProjection.operatorSurface.blockers = ['legacy adapter stub blocker'];
+  agentTaskProjection.operatorSurface.openClawOperatorReviewQueue = { queueStatus: 'ready_for_operator_review' };
+  agentTaskProjection.operatorSurface.openClawProposalPacket = { packetStatus: 'ready_for_operator_review' };
+  const model = buildAgentCommandConsoleProjection({ agentTaskProjection });
+  assert.equal(model.commandConsoleStatus, 'ready');
+  assert.equal(model.commandConsoleMode, 'proposal_review');
+});

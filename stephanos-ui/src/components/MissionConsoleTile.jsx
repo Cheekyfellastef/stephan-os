@@ -92,6 +92,13 @@ export default function MissionConsoleTile({
     const blockers = Array.isArray(summary.verificationReturnBlockers) ? summary.verificationReturnBlockers : [];
     const warnings = Array.isArray(summary.verificationReturnWarnings) ? summary.verificationReturnWarnings : [];
     const highestPriorityIssue = blockers[0] || warnings[0] || 'none';
+    const canonicalNextAction = operatorSurface.openClawOperatorReviewQueue?.nextAction
+      || operatorSurface.openClawOperatorReviewWorkflow?.nextAction
+      || operatorSurface.openClawCodexProposalExport?.nextAction
+      || operatorSurface.openClawHealthValidationNextAction
+      || summary.openClawNextAction
+      || operatorSurface.openClawNextAction
+      || 'not reported';
     return {
       verificationReturnStatus: summary.verificationReturnStatus || operatorSurface.verificationReturnStatus || 'unknown',
       verificationDecision: summary.verificationDecision || operatorSurface.verificationDecision || 'not_ready',
@@ -106,13 +113,13 @@ export default function MissionConsoleTile({
       openClawKillSwitchMode: summary.openClawKillSwitchMode || operatorSurface.openClawKillSwitchMode || 'unavailable',
       openClawExecutionAllowed: pickBoolean(summary.openClawExecutionAllowed, operatorSurface.openClawExecutionAllowed),
       openClawHighestPriorityBlocker: summary.openClawHighestPriorityBlocker || operatorSurface.openClawHighestPriorityBlocker || 'none',
-      openClawNextAction: summary.openClawNextAction || operatorSurface.openClawNextAction || 'not reported',
+      openClawNextAction: canonicalNextAction,
       openClawAdapterMode: summary.openClawAdapterMode || operatorSurface.openClawAdapterMode || 'design_only',
       openClawAdapterReadiness: summary.openClawAdapterReadiness || operatorSurface.openClawAdapterReadiness || 'needs_contract',
       openClawAdapterConnectionState: summary.openClawAdapterConnectionState || operatorSurface.openClawAdapterConnectionState || 'not_configured',
       openClawAdapterExecutionMode: summary.openClawAdapterExecutionMode || operatorSurface.openClawAdapterExecutionMode || 'disabled',
       openClawAdapterCanExecute: pickBoolean(summary.openClawAdapterCanExecute, operatorSurface.openClawAdapterCanExecute),
-      openClawAdapterNextAction: summary.openClawAdapterNextAction || operatorSurface.openClawAdapterNextAction || 'not reported',
+      openClawAdapterNextAction: canonicalNextAction,
       openClawAdapterStubStatus: summary.openClawAdapterStubStatus || operatorSurface.openClawAdapterStubStatus || 'unknown',
       openClawAdapterStubHealth: summary.openClawAdapterStubHealth || operatorSurface.openClawAdapterStubHealth || 'unknown',
       openClawAdapterStubConnectionState: summary.openClawAdapterStubConnectionState || operatorSurface.openClawAdapterStubConnectionState || 'unknown',
@@ -131,8 +138,8 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionConfigNextAction: summary.openClawAdapterConnectionConfigNextAction || operatorSurface.openClawAdapterConnectionConfigNextAction || 'not reported',
       openClawAdapterConnectionConfigTopBlocker: (summary.openClawAdapterConnectionConfigBlockers || operatorSurface.openClawAdapterConnectionConfigBlockers || [])[0] || 'none',
       openClawAdapterConnectionConfigTopWarning: (summary.openClawAdapterConnectionConfigWarnings || operatorSurface.openClawAdapterConnectionConfigWarnings || [])[0] || 'none',
-      openClawAdapterHealthCheckState: summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
-      openClawAdapterHandshakeState: summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
+      openClawAdapterHealthCheckState: summary.openClawHealthState || operatorSurface.openClawHealthState || summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
+      openClawAdapterHandshakeState: summary.openClawHandshakeState || operatorSurface.openClawHandshakeState || summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
       openClawHealthValidationStatus: summary.openClawHealthValidationStatus || operatorSurface.openClawHealthValidationStatus || 'idle',
       openClawHealthValidationMode: summary.openClawHealthValidationMode || operatorSurface.openClawHealthValidationMode || 'none',
       openClawHealthValidationNextAction: summary.openClawHealthValidationNextAction || operatorSurface.openClawHealthValidationNextAction || 'not reported',
@@ -142,6 +149,11 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionExecutionAllowed: pickBoolean(summary.openClawAdapterConnectionExecutionAllowed, operatorSurface.openClawAdapterConnectionExecutionAllowed),
       openClawAdapterConnectionHighestPriorityBlocker: summary.openClawAdapterConnectionHighestPriorityBlocker || operatorSurface.openClawAdapterConnectionHighestPriorityBlocker || 'none',
       openClawAdapterConnectionNextAction: summary.openClawAdapterConnectionNextAction || operatorSurface.openClawAdapterConnectionNextAction || 'not reported',
+      openClawCapabilityTrialStatus: operatorSurface.openClawCapabilityTrial?.trialStatus || 'unknown',
+      openClawProposalPacketStatus: operatorSurface.openClawProposalPacket?.packetStatus || 'unknown',
+      openClawOperatorReviewQueueStatus: operatorSurface.openClawOperatorReviewQueue?.queueStatus || 'unknown',
+      openClawCodexProposalExportStatus: operatorSurface.openClawCodexProposalExport?.exportStatus || 'unavailable',
+      openClawControlledExecutionStatus: operatorSurface.openClawControlledExecutionGate?.controlledExecutionStatus || 'future_gated',
     };
   }, [agentTaskProjection]);
 
@@ -532,6 +544,11 @@ export default function MissionConsoleTile({
           <li><strong>openclaw readonly validation status:</strong> {compactVerificationSummary.openClawHealthValidationStatus}</li>
           <li><strong>openclaw readonly validation mode:</strong> {compactVerificationSummary.openClawHealthValidationMode}</li>
           <li><strong>openclaw protocol compatible:</strong> {compactVerificationSummary.openClawProtocolCompatible ? 'yes' : 'no'}</li>
+          <li><strong>openclaw capability trial:</strong> {compactVerificationSummary.openClawCapabilityTrialStatus}</li>
+          <li><strong>openclaw proposal packet:</strong> {compactVerificationSummary.openClawProposalPacketStatus}</li>
+          <li><strong>openclaw review queue:</strong> {compactVerificationSummary.openClawOperatorReviewQueueStatus}</li>
+          <li><strong>openclaw codex export:</strong> {compactVerificationSummary.openClawCodexProposalExportStatus}</li>
+          <li><strong>openclaw controlled execution gate:</strong> {compactVerificationSummary.openClawControlledExecutionStatus}</li>
           <li><strong>openclaw readonly assurance:</strong> {compactVerificationSummary.openClawReadonlyAsserted ? 'asserted' : 'not asserted'}</li>
           <li><strong>openclaw validation next action:</strong> {compactVerificationSummary.openClawHealthValidationNextAction}</li>
           <li><strong>openclaw adapter connection ready:</strong> {compactVerificationSummary.openClawAdapterConnectionReady ? 'yes' : 'no'}</li>

@@ -9,20 +9,28 @@ export function buildAgentCommandConsoleProjection({agentTaskProjection=null, te
   const approval = surface.openClawApprovalGateReadiness || {};
   const dryRun = surface.openClawDryRunPlan || {};
   const evidenceRequest = surface.openClawEvidenceRequest || {};
+  const workflow = surface.openClawOperatorReviewWorkflow || {};
+  const reviewQueue = surface.openClawOperatorReviewQueue || {};
+  const proposalPacket = surface.openClawProposalPacket || {};
+  const canonicalReviewReady = proposalPacket.packetStatus === 'ready_for_operator_review'
+    || reviewQueue.queueStatus === 'ready_for_operator_review'
+    || workflow.workflowStatus === 'ready_for_operator_review';
+  const hasCanonicalBlockers = asArray(surface.blockers).length > 0;
+  const missingEvidence = asArray(evidenceRequest.missingEvidence);
 
   let commandConsoleMode = 'observer';
-  if (asArray(surface.blockers).length > 0) commandConsoleMode = 'blocked';
+  if (hasCanonicalBlockers && !canonicalReviewReady) commandConsoleMode = 'blocked';
   else if (dryRun.planStatus === 'ready_for_operator_preview') commandConsoleMode = 'dry_run_preview';
   else if (approval.readinessStatus === 'ready_for_operator_review') commandConsoleMode = 'approval_readiness';
   else if (implementation.planStatus === 'ready_for_operator_review') commandConsoleMode = 'implementation_planning';
   else if (codexResult.resultStatus && codexResult.resultStatus !== 'not_received') commandConsoleMode = 'codex_review';
-  else if (reviewDecision === 'ready_for_codex_review' || codexExport.exportStatus === 'generated') commandConsoleMode = 'proposal_review';
+  else if (canonicalReviewReady || reviewDecision === 'ready_for_codex_review' || codexExport.exportStatus === 'generated') commandConsoleMode = 'proposal_review';
 
   const activeAgent = commandConsoleMode === 'codex_review' || commandConsoleMode === 'implementation_planning' ? 'codex'
     : commandConsoleMode === 'proposal_review' ? 'openclaw' : 'stephanos';
 
   return {
-    commandConsoleStatus: asArray(surface.blockers).length > 0 ? 'blocked' : 'ready',
+    commandConsoleStatus: hasCanonicalBlockers && !canonicalReviewReady ? 'blocked' : 'ready',
     commandConsoleMode,
     activeAgent,
     activePacketId: codexExport.sourcePacketId || surface.openClawProposalPacket?.packetId || 'none',
@@ -30,7 +38,7 @@ export function buildAgentCommandConsoleProjection({agentTaskProjection=null, te
     activeStage: commandConsoleMode,
     nextBestAction: surface.openClawReviewDecisionNextAction || codexExport.nextAction || surface.nextAction?.title || 'Review mission workflow state.',
     operatorActionRequired: true,
-    blockers: [...asArray(surface.blockers), ...asArray(evidenceRequest.missingEvidence)].filter(Boolean),
+    blockers: [...asArray(surface.blockers), ...missingEvidence].filter(Boolean),
     warnings: asArray(surface.warnings),
     evidence: [
       ...(codexExport.includedEvidence || []),
