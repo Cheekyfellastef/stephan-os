@@ -140,10 +140,10 @@ export default function MissionConsoleTile({
       openClawAdapterConnectionConfigTopWarning: (summary.openClawAdapterConnectionConfigWarnings || operatorSurface.openClawAdapterConnectionConfigWarnings || [])[0] || 'none',
       openClawAdapterHealthCheckState: summary.openClawHealthState || operatorSurface.openClawHealthState || summary.openClawAdapterHealthCheckState || operatorSurface.openClawAdapterHealthCheckState || 'not_run',
       openClawAdapterHandshakeState: summary.openClawHandshakeState || operatorSurface.openClawHandshakeState || summary.openClawAdapterHandshakeState || operatorSurface.openClawAdapterHandshakeState || 'not_run',
-      openClawHealthValidationStatus: summary.openClawHealthValidationStatus || operatorSurface.openClawHealthValidationStatus || 'idle',
+      openClawHealthValidationStatus: operatorSurface.openClawHealthValidationStatus || summary.openClawHealthValidationStatus || 'idle',
       openClawHealthValidationMode: summary.openClawHealthValidationMode || operatorSurface.openClawHealthValidationMode || 'none',
       openClawHealthValidationNextAction: summary.openClawHealthValidationNextAction || operatorSurface.openClawHealthValidationNextAction || 'not reported',
-      openClawProtocolCompatible: pickBoolean(summary.openClawProtocolCompatible, operatorSurface.openClawProtocolCompatible),
+      openClawProtocolCompatible: pickBoolean(operatorSurface.openClawProtocolCompatible, summary.openClawProtocolCompatible),
       openClawReadonlyAsserted: pickBoolean(summary.openClawReadonlyAssurance?.readonlyOnly, operatorSurface.openClawReadonlyAssurance?.readonlyOnly),
       openClawAdapterConnectionReady: pickBoolean(summary.openClawAdapterConnectionReady, operatorSurface.openClawAdapterConnectionReady),
       openClawAdapterConnectionExecutionAllowed: pickBoolean(summary.openClawAdapterConnectionExecutionAllowed, operatorSurface.openClawAdapterConnectionExecutionAllowed),
@@ -152,7 +152,12 @@ export default function MissionConsoleTile({
       openClawCapabilityTrialStatus: operatorSurface.openClawCapabilityTrial?.trialStatus || 'unknown',
       openClawProposalPacketStatus: operatorSurface.openClawProposalPacket?.packetStatus || 'unknown',
       openClawOperatorReviewQueueStatus: operatorSurface.openClawOperatorReviewQueue?.queueStatus || 'unknown',
+      openClawOperatorReviewWorkflowStatus: operatorSurface.openClawOperatorReviewWorkflow?.workflowStatus || 'unknown',
       openClawCodexProposalExportStatus: operatorSurface.openClawCodexProposalExport?.exportStatus || 'unavailable',
+      openClawCodexReviewResultStatus: operatorSurface.openClawCodexReviewResult?.resultStatus || 'not_received',
+      openClawImplementationPlanStatus: operatorSurface.openClawImplementationPlan?.planStatus || 'not_ready',
+      openClawApprovalGateReadinessStatus: operatorSurface.openClawApprovalGateReadiness?.readinessStatus || 'not_ready',
+      openClawDryRunPlanStatus: operatorSurface.openClawDryRunPlan?.dryRunStatus || 'unavailable',
       openClawControlledExecutionStatus: operatorSurface.openClawControlledExecutionGate?.controlledExecutionStatus || 'future_gated',
     };
   }, [agentTaskProjection]);
@@ -212,8 +217,8 @@ export default function MissionConsoleTile({
 
   function buildStephanosResponse(content) {
     const normalizedPrompt = String(content || '').trim();
-    if (/who am i speaking to/i.test(normalizedPrompt)) {
-      return `You are speaking to Stephanos through the Mission Console. Current route target: ${resolvedTarget.label}. Operator authority is active. OpenClaw remains proposal-only and execution is disabled.`;
+    if (/who am i talking to|who am i speaking to|who are you|what is this console|what can you do here/i.test(normalizedPrompt)) {
+      return `You are speaking to Stephanos through the Agent Mission Console. Current route target is ${resolvedTarget.label}. I can route requests to Stephanos, Agents, or bounded OpenClaw analysis. OpenClaw is proposal-only, controlled execution stays future-gated, and execution is disabled.`;
     }
     return `Stephanos received: "${normalizedPrompt}". Mission Console route target is ${resolvedTarget.label}. Governed mode is active and approval remains required for destructive/high-risk actions.`;
   }
@@ -221,13 +226,18 @@ export default function MissionConsoleTile({
   function buildAgentsResponse(content, bridgeResult) {
     const availableAgents = visibleAgents.length > 0 ? visibleAgents.join(', ') : 'Intent Engine, Research Agent, Memory Agent, Execution Agent, Ideas Agent';
     const nextAction = bridgeResult?.nextRecommendedAction || 'Submit explicit operator intent.';
-    return `Mission Bridge accepted your request: "${content}". Available agents: ${availableAgents}. Approval boundaries remain active for execution/destructive actions. Next safe action: ${nextAction}`;
+    return `You are routed to Agents → Mission Bridge. Available agents right now: ${availableAgents}. They can analyze, plan, summarize, and prepare handoff packets under operator approval boundaries. They cannot execute destructive/system-mutating actions without explicit approved workflow. Next safe action: ${nextAction}`;
   }
 
   function buildOpenClawResponse() {
+    const validation = compactVerificationSummary.openClawHealthValidationStatus || 'unknown';
+    const health = compactVerificationSummary.openClawAdapterHealthCheckState || 'unknown';
+    const handshake = compactVerificationSummary.openClawAdapterHandshakeState || 'unknown';
     const trialStatus = compactVerificationSummary.openClawCapabilityTrialStatus || 'unknown';
     const packetStatus = compactVerificationSummary.openClawProposalPacketStatus || 'unknown';
-    return `OpenClaw is in bounded-analysis proposal-only mode. Readonly adapter status: ${compactVerificationSummary.openClawAdapterConnectionState}. Capability trial: ${trialStatus}. Proposal packet: ${packetStatus}. Allowed: observe/report/propose. Blocked: execute/edit/git/browser/autonomous actions.`;
+    const reviewQueue = compactVerificationSummary.openClawOperatorReviewQueueStatus || 'unknown';
+    const exportStatus = compactVerificationSummary.openClawCodexProposalExportStatus || 'unavailable';
+    return `You are routed to OpenClaw → Bounded Analysis. Readonly validation is ${validation}; health is ${health}; handshake is ${handshake}. Current packet state is ${packetStatus} with review queue ${reviewQueue} and Codex export ${exportStatus}. OpenClaw can safely observe, validate readonly status, and produce proposal packets. OpenClaw cannot execute commands, edit files, write Git, control browsers, or run autonomous actions.`;
   }
 
   function applyMissionBridgeResult(bridgeResult, { includeLedgerMessage = true } = {}) {

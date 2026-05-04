@@ -17,9 +17,10 @@ export function buildAgentCommandConsoleProjection({agentTaskProjection=null, te
     || workflow.workflowStatus === 'ready_for_operator_review';
   const hasCanonicalBlockers = asArray(surface.blockers).length > 0;
   const missingEvidence = asArray(evidenceRequest.missingEvidence);
+  const hasRealCurrentBlockers = hasCanonicalBlockers && !canonicalReviewReady && missingEvidence.length > 0;
 
   let commandConsoleMode = 'observer';
-  if (hasCanonicalBlockers && !canonicalReviewReady) commandConsoleMode = 'blocked';
+  if (hasRealCurrentBlockers) commandConsoleMode = 'blocked';
   else if (dryRun.planStatus === 'ready_for_operator_preview') commandConsoleMode = 'dry_run_preview';
   else if (approval.readinessStatus === 'ready_for_operator_review') commandConsoleMode = 'approval_readiness';
   else if (implementation.planStatus === 'ready_for_operator_review') commandConsoleMode = 'implementation_planning';
@@ -30,12 +31,12 @@ export function buildAgentCommandConsoleProjection({agentTaskProjection=null, te
     : commandConsoleMode === 'proposal_review' ? 'openclaw' : 'stephanos';
 
   return {
-    commandConsoleStatus: hasCanonicalBlockers && !canonicalReviewReady ? 'blocked' : 'ready',
+    commandConsoleStatus: hasRealCurrentBlockers ? 'blocked' : 'ready',
     commandConsoleMode,
     activeAgent,
     activePacketId: codexExport.sourcePacketId || surface.openClawProposalPacket?.packetId || 'none',
     activeMissionId: surface.handoffPacketSummary || 'none',
-    activeStage: commandConsoleMode,
+    activeStage: commandConsoleMode === 'proposal_review' ? 'operator_review' : commandConsoleMode,
     nextBestAction: surface.openClawReviewDecisionNextAction || codexExport.nextAction || surface.nextAction?.title || 'Review mission workflow state.',
     operatorActionRequired: true,
     blockers: [...asArray(surface.blockers), ...missingEvidence].filter(Boolean),
