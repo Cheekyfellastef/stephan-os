@@ -48,6 +48,9 @@ test('MissionConsoleTile routes agent-targeted submit through mission bridge and
   assert.equal(source.includes("Target: Agents → Mission Bridge"), true);
   assert.equal(source.includes("Target: Stephanos → Assistant Router"), true);
   assert.equal(source.includes("responder: 'Stephanos'"), true);
+  assert.equal(source.includes('You are speaking to Stephanos through the Mission Console.'), true);
+  assert.equal(source.includes('Mission Bridge accepted your request:'), true);
+  assert.equal(source.includes('OpenClaw is in bounded-analysis proposal-only mode.'), true);
 });
 
 

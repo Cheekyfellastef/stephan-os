@@ -210,6 +210,26 @@ export default function MissionConsoleTile({
     setMessages((previous) => appendMissionConsoleMessage(previous, message));
   }
 
+  function buildStephanosResponse(content) {
+    const normalizedPrompt = String(content || '').trim();
+    if (/who am i speaking to/i.test(normalizedPrompt)) {
+      return `You are speaking to Stephanos through the Mission Console. Current route target: ${resolvedTarget.label}. Operator authority is active. OpenClaw remains proposal-only and execution is disabled.`;
+    }
+    return `Stephanos received: "${normalizedPrompt}". Mission Console route target is ${resolvedTarget.label}. Governed mode is active and approval remains required for destructive/high-risk actions.`;
+  }
+
+  function buildAgentsResponse(content, bridgeResult) {
+    const availableAgents = visibleAgents.length > 0 ? visibleAgents.join(', ') : 'Intent Engine, Research Agent, Memory Agent, Execution Agent, Ideas Agent';
+    const nextAction = bridgeResult?.nextRecommendedAction || 'Submit explicit operator intent.';
+    return `Mission Bridge accepted your request: "${content}". Available agents: ${availableAgents}. Approval boundaries remain active for execution/destructive actions. Next safe action: ${nextAction}`;
+  }
+
+  function buildOpenClawResponse() {
+    const trialStatus = compactVerificationSummary.openClawCapabilityTrialStatus || 'unknown';
+    const packetStatus = compactVerificationSummary.openClawProposalPacketStatus || 'unknown';
+    return `OpenClaw is in bounded-analysis proposal-only mode. Readonly adapter status: ${compactVerificationSummary.openClawAdapterConnectionState}. Capability trial: ${trialStatus}. Proposal packet: ${packetStatus}. Allowed: observe/report/propose. Blocked: execute/edit/git/browser/autonomous actions.`;
+  }
+
   function applyMissionBridgeResult(bridgeResult, { includeLedgerMessage = true } = {}) {
     setMissionBridgeState((previous) => ({
       ...bridgeResult,
@@ -278,7 +298,7 @@ export default function MissionConsoleTile({
         role: 'assistant',
         responder: 'Stephanos',
         target: 'stephanos',
-        content: `Stephanos received your request in governed mode. Route truth source: ${openClawIntegration.connectedTo.routeTruthSource}.`,
+        content: buildStephanosResponse(content),
         status: 'ready',
       }));
       setInput('');
@@ -295,6 +315,14 @@ export default function MissionConsoleTile({
         providerExecutionGateStatus: finalRouteTruth?.providerExecutionGateStatus,
       });
       applyMissionBridgeResult(bridgeResult);
+      addMessage(createMissionConsoleMessage({
+        role: 'assistant',
+        responder: 'mission-bridge',
+        target: 'agents',
+        content: buildAgentsResponse(content, bridgeResult),
+        status: bridgeResult.pendingApproval ? 'approval-needed' : 'ready',
+        approvalNeeded: bridgeResult.pendingApproval,
+      }));
       setInput('');
       return;
     }
@@ -344,7 +372,7 @@ export default function MissionConsoleTile({
           role: 'assistant',
           responder: 'OpenClaw',
           target: 'openclaw',
-          content: `OpenClaw mode ${openClawIntegration.mode}; authority posture ${openClawIntegration.authority}; sandbox ${openClawIntegration.sandboxStatus}.`,
+          content: buildOpenClawResponse(),
           status: 'ready',
         }));
       }
