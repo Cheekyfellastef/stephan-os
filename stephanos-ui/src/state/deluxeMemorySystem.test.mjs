@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  adjudicateMemoryCandidateForPersistence,
   buildMemoryCandidatesFromTaskCompletion,
   buildMissionMemoryFromContext,
+  candidateRequiresDurableApproval,
   formatDeluxeMemoryClipboard,
   normalizeMemoryCandidates,
 } from './deluxeMemorySystem.js';
@@ -59,4 +61,26 @@ test('mission memory + clipboard formatter separates mission, proposals, and dur
   assert.match(snapshot, /Active Mission Memory/);
   assert.match(snapshot, /Memory Candidates/);
   assert.match(snapshot, /Durable Memory Summary/);
+});
+
+test('canon/preference/project-lesson candidates require explicit durable approval intent', () => {
+  assert.equal(candidateRequiresDurableApproval({ memoryCandidateType: 'architecture_canon_candidate' }), true);
+  assert.equal(candidateRequiresDurableApproval({ memoryCandidateType: 'durable_operator_preference' }), true);
+  assert.equal(candidateRequiresDurableApproval({ memoryCandidateType: 'project_lesson' }), true);
+  assert.equal(candidateRequiresDurableApproval({ memoryCandidateType: 'temporary_note' }), false);
+});
+
+test('adjudication promotion state reports pending/draft/saved/rejected without auto-promotion', () => {
+  const pending = normalizeMemoryCandidates([{ summary: 'Canon policy candidate', memoryCandidateType: 'architecture_canon_candidate' }])[0];
+  assert.equal(pending.promotionState, 'pending');
+
+  const approvedDurable = adjudicateMemoryCandidateForPersistence(pending, { decision: 'approve', now: '2026-05-04T00:00:00.000Z' });
+  assert.equal(approvedDurable.status, 'approved');
+  assert.equal(approvedDurable.promotionState, 'saved');
+
+  const revised = adjudicateMemoryCandidateForPersistence(pending, { decision: 'revise' });
+  assert.equal(revised.promotionState, 'draft');
+
+  const rejected = adjudicateMemoryCandidateForPersistence(pending, { decision: 'reject' });
+  assert.equal(rejected.promotionState, 'rejected');
 });

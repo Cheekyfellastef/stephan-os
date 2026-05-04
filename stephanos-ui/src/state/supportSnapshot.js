@@ -829,6 +829,8 @@ export function buildSupportSnapshot({
     `Memory Elevation Mode: ${asText(runtimeStatus?.lastMemoryElevationMode, 'bounded')}`,
     `Memory Truth Preserved: ${asText(runtimeStatus?.lastMemoryTruthPreserved, 'true')}`,
     `Memory Candidates Considered: ${asText(runtimeStatus?.lastMemoryCandidatesConsidered, '0')}`,
+    `Memory Candidate Status: ${asText(runtimeStatus?.lastMemoryCandidateStatus, 'pending')}`,
+    `Memory Candidate Promotion State: ${asText(runtimeStatus?.lastMemoryCandidatePromotionState, 'pending')}`,
     `Elevated Memory Count: ${asText(runtimeStatus?.lastElevatedMemoryCount, '0')}`,
     `Graph Linked Memory Count: ${asText(runtimeStatus?.lastGraphLinkedMemoryCount, '0')}`,
     `Deferred Graph Link Count: ${asText(runtimeStatus?.lastDeferredGraphLinkCount, '0')}`,

@@ -99,8 +99,10 @@ import {
   normalizeHostedIdeaStagingQueue,
 } from '../../../shared/runtime/hostedIdeaStaging.mjs';
 import {
+  adjudicateMemoryCandidateForPersistence,
   buildMemoryCandidatesFromTaskCompletion,
   buildMissionMemoryFromContext,
+  candidateRequiresDurableApproval,
   createDefaultMissionMemory,
   formatDeluxeMemoryClipboard,
   normalizeExecutionLog,
@@ -1746,7 +1748,9 @@ export function AIStoreProvider({ children }) {
     let promotedRecord = null;
     setMemoryCandidates((prev) => normalizeMemoryCandidates(prev.map((entry) => {
       if (entry.id !== candidateId) return entry;
-      if (decision === 'approve' && memoryRuntime?.saveRecord) {
+      const adjudicated = adjudicateMemoryCandidateForPersistence(entry, { decision, note, now });
+      const shouldWriteDurable = decision === 'approve' && candidateRequiresDurableApproval(adjudicated);
+      if (shouldWriteDurable && memoryRuntime?.saveRecord) {
         const normalizedId = String(entry.summary || candidateId).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 72) || candidateId;
         const durableId = `adjudicated-${entry.memoryClass}-${normalizedId}`;
         promotedRecord = memoryRuntime.saveRecord({
@@ -1769,12 +1773,7 @@ export function AIStoreProvider({ children }) {
           importance: entry.impactLevel === 'high' ? 'high' : 'normal',
         });
       }
-      return {
-        ...entry,
-        status: decision === 'approve' ? 'approved' : decision === 'revise' ? 'revise-requested' : 'rejected',
-        reviewedAt: now,
-        reviewNote: String(note || '').trim(),
-      };
+      return adjudicated;
     })));
     return { ok: true, promotedRecord };
   }, []);
