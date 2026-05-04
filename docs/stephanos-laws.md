@@ -58,6 +58,7 @@ Current law categories:
 - `diagnostics-boundary`
 - `compatibility`
 - `cross-device-architecture`
+- `reality-forge`
 
 ## Operator usage
 
@@ -112,3 +113,10 @@ Any coding agent editing launcher/runtime/routing/build-truth paths must:
 - Constitutional response: treat import-structure violations as law breaks and block with `npm run stephanos:guard:imports` during verify.
 
 If an edit changes invariant-sensitive behavior and no law/tests/docs changes accompany it, the pass is incomplete.
+
+## Reality Forge / Proof-of-Done law (v1)
+
+- **Law statement:** Done means the intended reality is observed, not merely that code was changed.
+- **Code completion vs reality completion:** build/verify indicates code-level integrity; visual and interactive tasks additionally require observed operator outcomes in runtime.
+- **Operator-visible proof requirement:** from intended entry point, confirm target surface visibility, interaction behavior, and absence of critical browser errors before marking complete.
+- **World Workspace example:** tile visible on launcher, workspace opens, 3D globe renders, rotate/zoom and layer toggles work, asset detail card opens, `three` module-specifier error absent, and demo/illustrative truth language is visible.

@@ -13,7 +13,7 @@ const REQUIRED_LAW_FIELDS = Object.freeze([
   'status',
 ]);
 
-export const STEPHANOS_LAWS_VERSION = '2026-04-25.guardrails-v5';
+export const STEPHANOS_LAWS_VERSION = '2026-05-04.reality-forge-v1';
 
 export const STEPHANOS_LAW_IDS = Object.freeze({
   UNIVERSAL_ENTRY: 'law-universal-entry-not-system-brain',
@@ -30,6 +30,7 @@ export const STEPHANOS_LAW_IDS = Object.freeze({
   DEVICE_EMBODIMENT: 'law-runtime-embodiment-can-vary-by-device',
   REALITY_SYNC: 'law-reality-sync-keeps-displayed-truth-current',
   SHARED_PANE_PLANE: 'law-shared-pane-plane-requires-non-overlap',
+  REALITY_FORGE_PROOF_OF_DONE: 'law-reality-forge-proof-of-done-requires-observed-outcome',
 });
 
 export const stephanosLaws = Object.freeze([
@@ -212,6 +213,20 @@ export const stephanosLaws = Object.freeze([
     engineeringImplication: 'Keep collision detection and non-overlap resolution in shared pane infrastructure (not tile-local hacks), and persist only resolved in-bounds positions.',
     relatedFiles: ['system/ui_renderer.js', 'shared/runtime/canonTilePanes.mjs', 'apps/music-tile/main.js', 'apps/music-tile/style.css', 'tests/panel-layout-state.test.mjs', 'tests/canon-tile-panes.test.mjs'],
     testCoverageHint: 'tests/panel-layout-state.test.mjs, tests/canon-tile-panes.test.mjs',
+    severity: 'high',
+    status: 'active',
+  },
+  {
+    id: STEPHANOS_LAW_IDS.REALITY_FORGE_PROOF_OF_DONE,
+    title: 'Reality Forge proof-of-done requires observed operator outcome',
+    shortStatement: 'Done means intended reality is observed, not merely that code was changed.',
+    fullDescription: 'For visual and interactive work, build/verify success is only code completion. Reality completion requires operator-visible proof from the intended entry point with expected surface behavior and absence of critical browser-runtime errors.',
+    category: 'reality-forge',
+    invariantType: 'hard',
+    operatorImplication: 'Treat visual features as incomplete until operator-visible acceptance criteria are observed in-browser from the correct launcher/runtime path.',
+    engineeringImplication: 'Include proof-of-done criteria in handoff packets and verification summaries; do not claim completion from build/test success alone for UI/runtime interactions.',
+    relatedFiles: ['docs/lessons-learned.md', 'shared/agents/proofOfDoneModel.mjs', 'shared/agents/agentTaskProjection.mjs', 'stephanos-ui/src/components/MissionConsoleTile.jsx'],
+    testCoverageHint: 'shared/agents/proofOfDoneModel.test.mjs + npm run stephanos:verify',
     severity: 'high',
     status: 'active',
   },

@@ -126,6 +126,7 @@ export function buildCodexHandoffPacket({ model = {}, approvalPending = [] } = {
       'Implement only the scoped task with doctrine-safe changes.',
       'Report all files changed and summarize why each change was needed.',
       'Provide test/build/verify command outcomes and any blockers.',
+      'For visual-ui/runtime features, include Proof-of-Done acceptance criteria with operator-visible runtime evidence from the intended entry point.',
     ],
     expectedReportFormat: [
       'Root cause and approach summary',

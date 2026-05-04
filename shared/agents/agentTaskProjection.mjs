@@ -20,6 +20,7 @@ import { buildOpenClawCodexReviewResult } from './openClawCodexReviewResult.mjs'
 import { buildOpenClawImplementationPlan } from './openClawImplementationPlan.mjs';
 import { buildOpenClawApprovalGateReadiness } from './openClawApprovalGateReadiness.mjs';
 import { buildOpenClawDryRunPlan } from './openClawDryRunPlan.mjs';
+import { adjudicateProofOfDone, WORLD_WORKSPACE_PROOF_OF_DONE } from './proofOfDoneModel.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -181,6 +182,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
   const dashboardCodexReadiness = mapCodexReadiness(adjudicated.codexReadiness);
   const dashboardVerificationStatus = mapVerificationReturnStatus(adjudicated.verificationReturn.verificationReturnStatus)
     || mapVerificationStatus(adjudicated.verification.status);
+  const realityForgeProof = adjudicateProofOfDone({
+    ...WORLD_WORKSPACE_PROOF_OF_DONE,
+    buildVerified: adjudicated.verification.status === 'passed',
+    runtimeVerified: adjudicated.verificationReturn.verificationReturnStatus === 'verified',
+    checksPassed: [],
+  });
   const adapter = adjudicated.openClawAdapterSummary || adjudicated.openClawPolicySummary?.openClawAdapter || {};
   const adapterTopBlocker = (Array.isArray(adapter.adapterBlockers) ? adapter.adapterBlockers[0] : '') || '';
   const adapterStub = adapter.adapterStub || {};
@@ -555,6 +562,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       returnedFilesChanged: asArray(adjudicated.verificationReturn.returnedFilesChanged),
       returnedChecksRun: asArray(adjudicated.verificationReturn.returnedChecksRun),
       missingRequiredChecks: asArray(adjudicated.verificationReturn.missingRequiredChecks),
+      realityForgeProofStatus: realityForgeProof.proofStatus,
+      realityForgeBuildVerified: realityForgeProof.buildVerified,
+      realityForgeRuntimeVerified: realityForgeProof.runtimeVerified,
+      realityForgeOperatorVisibleProofPending: realityForgeProof.operatorVisibleProofPending,
+      realityForgeManualVerificationRequired: realityForgeProof.manualVerificationRequired,
+      realityForgeWorldWorkspaceChecksPending: realityForgeProof.checksPending,
       nextAction: adjudicated.nextAction,
       blockers,
       warnings,
@@ -720,6 +733,12 @@ export function buildAgentTaskProjection({ model = {}, context = {} } = {}) {
       returnedFilesChanged: asArray(adjudicated.verificationReturn.returnedFilesChanged),
       returnedChecksRun: asArray(adjudicated.verificationReturn.returnedChecksRun),
       missingRequiredChecks: asArray(adjudicated.verificationReturn.missingRequiredChecks),
+      realityForgeProofStatus: realityForgeProof.proofStatus,
+      realityForgeBuildVerified: realityForgeProof.buildVerified,
+      realityForgeRuntimeVerified: realityForgeProof.runtimeVerified,
+      realityForgeOperatorVisibleProofPending: realityForgeProof.operatorVisibleProofPending,
+      realityForgeManualVerificationRequired: realityForgeProof.manualVerificationRequired,
+      realityForgeWorldWorkspaceChecksPending: realityForgeProof.checksPending,
     },
   };
   return result;

@@ -57,3 +57,11 @@ Purpose: convert solved pain into reusable guardrails for future passes.
 3. Prefer small, truth-preserving fixes with explicit diagnostics.
 4. Add or update guardrail tests whenever invariant-sensitive behavior changes.
 5. Document “why this failed before” in durable files, not only PR context.
+
+## 7) World Workspace proved that build success is not reality success (2026-05-04)
+
+- **What happened:** build/verify checks were green, yet World Workspace initially rendered browser error text instead of an interactive 3D globe.
+- **Why it happened:** task closure treated code/build completion as equivalent to operator-visible runtime completion.
+- **Missing guardrail/invariant:** a proof-of-done model requiring intended visual outcomes from the correct entry point.
+- **Permanent rule added:** **Reality Forge v1 law** — “Done means the intended reality is observed, not merely that code was changed.”
+- **What future passes should remember:** for visual-ui work, completion requires browser/runtime proof: route opens, surface appears, primary interaction works, console-critical errors are absent, and fallback states are not mislabeled as success.
