@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stephanos World Workspace</title>
+  <link rel="stylesheet" href="./world.css" />
+</head>
+<body>
+  <main class="world-shell">
+    <header class="world-header">
+      <h1>World Workspace</h1>
+      <p class="truth-banner">Demo World Workspace · Illustrative / simulated sample world data · Not live tracking.</p>
+      <div class="status-grid" id="statusGrid"></div>
+    </header>
+    <section class="world-main">
+      <aside class="world-controls">
+        <h2>Layers</h2>
+        <div id="layerControls"></div>
+        <h2>Details</h2>
+        <div id="detailCard" class="detail-card">Select an asset to inspect truth metadata.</div>
+      </aside>
+      <div class="world-canvas-wrap">
+        <canvas id="worldCanvas"></canvas>
+        <div id="fallback" class="fallback hidden">WebGL unavailable. World Workspace requires 3D rendering support.</div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="./world.js"></script>
+</body>
+</html>

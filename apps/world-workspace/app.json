@@ -1,0 +1,14 @@
+{
+  "name": "World Workspace",
+  "icon": "🌍",
+  "entry": "index.html",
+  "type": "system",
+  "packaging": "classic-static",
+  "description": "Demo World Workspace with a semi-realistic 3D globe, layered sample assets, and truth-aware illustrative metadata.",
+  "launcherBadges": [
+    "Prototype-ready",
+    "Illustrative mode",
+    "Sample assets"
+  ],
+  "launcherActionLabel": "Open World"
+}
