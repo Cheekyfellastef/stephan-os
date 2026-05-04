@@ -34,10 +34,10 @@ async function initWorld() {
   let THREE;
   let OrbitControls;
   try {
-    THREE = await import('https://unpkg.com/three@0.164.1/build/three.module.js');
-    ({ OrbitControls } = await import('https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js'));
+    THREE = await import('three');
+    ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
   } catch (error) {
-    setFallback(`3D runtime import failed (MVP CDN mode): ${error?.message || 'unknown error'}`);
+    setFallback(`3D runtime import failed (import-map mode): ${error?.message || 'unknown error'}`);
     return;
   }
 
