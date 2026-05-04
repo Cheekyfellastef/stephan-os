@@ -32,3 +32,41 @@ test('projection matches canonical model shape', () => {
   assert.equal(typeof registry.supportSnapshot.discoveredMindCount, 'number');
   assert.equal(registry.supportSnapshot.discoveredMindCount >= 1, true);
 });
+
+test('external sources default to not route-eligible and include seeded profiles', () => {
+  const registry = buildAIMindRegistry({});
+  assert.equal(Array.isArray(registry.externalMindSources), true);
+  assert.equal(registry.externalMindSources.length >= 6, true);
+  assert.equal(registry.externalMindSources.every((source) => source.routeEligible === false), true);
+});
+
+test('missing key sources cannot become sandboxed and secrets are masked in projection', () => {
+  const registry = buildAIMindRegistry({
+    runtimeContext: {
+      externalMindSources: [{
+        sourceId: 'x',
+        displayName: 'X',
+        providerType: 'openai-compatible',
+        apiKeyRequired: true,
+        connectionStatus: 'sandboxed',
+        approvalState: 'approved',
+        secretReference: '',
+      }],
+    },
+  });
+  const source = registry.externalMindSources.find((entry) => entry.sourceId === 'x');
+  assert.equal(source.secretStatus, 'missing');
+  assert.equal(source.routeEligible, false);
+  const projected = registry.externalMindSourcesProjection.find((entry) => entry.sourceId === 'x');
+  assert.equal(projected.secretReference, '');
+});
+
+test('blocked external source and OpenClaw gating stay denied without explicit approvals', () => {
+  const registry = buildAIMindRegistry({
+    runtimeContext: { externalMindSources: [{ sourceId: 'b', displayName: 'B', providerType: 'openai-compatible', approvalState: 'blocked', routeEligible: true, openClawAllowed: true }] },
+  });
+  const source = registry.externalMindSources.find((entry) => entry.sourceId === 'b');
+  assert.equal(source.routeEligible, false);
+  assert.equal(source.openClawAllowed, false);
+  assert.equal(registry.openClawApprovalGate, 'unapproved');
+});
