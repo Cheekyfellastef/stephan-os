@@ -82,6 +82,7 @@ export default function MissionConsoleTile({
     }),
   ]);
   const [missionBridgeState, setMissionBridgeState] = useState(() => createMissionBridgeState());
+  const [verificationReturnInput, setVerificationReturnInput] = useState('');
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
     const operatorSurface = agentTaskProjection?.operatorSurface || {};
@@ -169,6 +170,20 @@ export default function MissionConsoleTile({
     };
   }, [agentTaskProjection]);
 
+
+  const verificationReturnAdjudication = useMemo(() => {
+    const text = String(verificationReturnInput || '').toLowerCase();
+    const missionGoal = intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal || '';
+    return {
+      matchesMissionGoal: missionGoal && text.includes('mission') ? 'likely' : 'unknown',
+      changedFilesKnown: /files changed|changed files|\.js|\.mjs|\.jsx/.test(text) ? 'known' : 'unknown',
+      testsClaimedRun: /test|verify|build/.test(text) ? 'claimed' : 'not-claimed',
+      blockers: /blocker|fail|error/.test(text) ? 'reported' : 'none-reported',
+      mergeReadiness: /merge-ready|ready to merge/.test(text) ? 'candidate-ready' : 'pending-review',
+      nextAction: /blocker|fail|error/.test(text) ? 'Request fix + rerun verification.' : 'Review evidence and decide promotion.',
+      suggestedLessonCandidate: /lesson|root cause|regression/.test(text) ? 'project_lesson' : 'mission_history',
+    };
+  }, [intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal, verificationReturnInput]);
 
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
@@ -548,6 +563,11 @@ export default function MissionConsoleTile({
           <li><strong>allowed actions:</strong> {intentToBuild.missionSpec.approvalBoundary.allowedActions.join(', ')}</li>
           <li><strong>blocked actions requiring approval:</strong> {intentToBuild.missionSpec.approvalBoundary.blockedActions.join(', ')}</li>
           <li><strong>generated Codex prompt:</strong> {intentToBuild.generatedPromptAvailable ? 'available' : 'not generated'}</li>
+          <li><strong>intent categories:</strong> {(intentToBuild.missionSpec.intentClassifications || []).join(', ') || 'none'}</li>
+          <li><strong>Stephanos suggests remembering this as:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.memoryCandidateType || 'temporary_note'}</li>
+          <li><strong>requires approval before becoming project canon:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.requiresOperatorApproval ? 'yes' : 'no'}</li>
+          <li><strong>suggested durability:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.suggestedDurability || 'session'}</li>
+          <li><strong>possible capability gap:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.possibleCapabilityGap || 'none-detected'}</li>
           <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
@@ -562,6 +582,18 @@ export default function MissionConsoleTile({
           <li><strong>mission bridge next action:</strong> {missionBridgeState.nextRecommendedAction}</li>
           <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
           <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
+        </ul>
+        <p><em>Generated mission proposal, no code changed. OpenClaw remains parked unless explicitly in scope.</em></p>
+        <h5>Verification Return Input</h5>
+        <textarea className="paneTextarea paneControl" rows={4} value={verificationReturnInput} onChange={(event) => setVerificationReturnInput(event.target.value)} placeholder="Paste Codex return summary for adjudication." />
+        <ul>
+          <li><strong>matches mission goal:</strong> {verificationReturnAdjudication.matchesMissionGoal}</li>
+          <li><strong>changed files known/unknown:</strong> {verificationReturnAdjudication.changedFilesKnown}</li>
+          <li><strong>tests claimed/run:</strong> {verificationReturnAdjudication.testsClaimedRun}</li>
+          <li><strong>blockers:</strong> {verificationReturnAdjudication.blockers}</li>
+          <li><strong>merge readiness:</strong> {verificationReturnAdjudication.mergeReadiness}</li>
+          <li><strong>suggested lesson candidate:</strong> {verificationReturnAdjudication.suggestedLessonCandidate}</li>
+          <li><strong>next action:</strong> {verificationReturnAdjudication.nextAction}</li>
         </ul>
         <h5>Agent Task Verification Return (compact)</h5>
         <ul>

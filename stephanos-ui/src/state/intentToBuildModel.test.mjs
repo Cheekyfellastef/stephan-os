@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildMissionMemoryCandidate,
   INTENT_TO_BUILD_BOUNDARIES,
   buildCodexHandoffPrompt,
+  classifyOperatorIntent,
   buildMissionSpec,
   createIntentToBuildState,
 } from './intentToBuildModel.js';
@@ -24,6 +26,31 @@ test('mission spec generation keeps doctrine and verification boundaries', () =>
   assert.equal(missionSpec.doctrineConstraints.some((line) => line.includes('dist is generated output')), true);
   assert.equal(missionSpec.privacyBoundary.includes('No secrets committed'), true);
   assert.equal(missionSpec.costBoundary.includes('Zero-cost defaults remain active'), true);
+});
+
+test('intent classification is deterministic and tags memory/capability requests', () => {
+  const result = classifyOperatorIntent('Please remember this workflow preference and add mission memory capability.');
+  assert.equal(result.categories.includes('workflow_preference'), true);
+  assert.equal(result.categories.includes('memory_request'), true);
+  assert.equal(result.categories.includes('capability_request'), true);
+});
+
+test('durable and canon candidates require explicit operator approval', () => {
+  const candidate = buildMissionMemoryCandidate({
+    operatorIntentText: 'Architecture canon: launcher and mission runtime must remain separate.',
+    categories: ['architecture_rule'],
+  });
+  assert.equal(candidate.memoryCandidateType, 'architecture_canon_candidate');
+  assert.equal(candidate.requiresOperatorApproval, true);
+  assert.equal(candidate.promotionState, 'pending-operator-approval');
+});
+
+test('mission proposal retains blocked actions and codex handoff includes verification details', () => {
+  const missionSpec = buildMissionSpec({ rawIntent: 'Add mission memory', targetArea: 'mission-console' });
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('openclaw execution'), true);
+  assert.match(prompt, /PR Acceptance Criteria:/);
+  assert.match(prompt, /Verification Commands:/);
 });
 
 test('approval boundary classification keeps risky actions gated', () => {
