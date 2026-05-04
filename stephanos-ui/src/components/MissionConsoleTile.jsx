@@ -126,6 +126,12 @@ export default function MissionConsoleTile({
       openClawAdapterStubConnectionState: summary.openClawAdapterStubConnectionState || operatorSurface.openClawAdapterStubConnectionState || 'unknown',
       openClawAdapterStubCanExecute: pickBoolean(summary.openClawAdapterStubCanExecute, operatorSurface.openClawAdapterStubCanExecute),
       openClawAdapterStubNextAction: summary.openClawAdapterStubNextAction || operatorSurface.openClawAdapterStubNextAction || 'not reported',
+      realityForgeProofStatus: summary.realityForgeProofStatus || operatorSurface.realityForgeProofStatus || 'checklist_required',
+      realityForgeBuildVerified: pickBoolean(summary.realityForgeBuildVerified, operatorSurface.realityForgeBuildVerified),
+      realityForgeRuntimeVerified: pickBoolean(summary.realityForgeRuntimeVerified, operatorSurface.realityForgeRuntimeVerified),
+      realityForgeOperatorVisibleProofPending: pickBoolean(summary.realityForgeOperatorVisibleProofPending, operatorSurface.realityForgeOperatorVisibleProofPending),
+      realityForgeManualVerificationRequired: pickBoolean(summary.realityForgeManualVerificationRequired, operatorSurface.realityForgeManualVerificationRequired),
+      realityForgeWorldWorkspaceChecksPending: Array.isArray(summary.realityForgeWorldWorkspaceChecksPending) ? summary.realityForgeWorldWorkspaceChecksPending : (Array.isArray(operatorSurface.realityForgeWorldWorkspaceChecksPending) ? operatorSurface.realityForgeWorldWorkspaceChecksPending : []),
       openClawAdapterConnectionMode: summary.openClawAdapterConnectionMode || operatorSurface.openClawAdapterConnectionMode || 'readiness_only',
       openClawAdapterEndpointConfigured: pickBoolean(summary.openClawAdapterEndpointConfigured, operatorSurface.openClawAdapterEndpointConfigured),
       openClawAdapterEndpointScope: summary.openClawAdapterEndpointScope || operatorSurface.openClawAdapterEndpointScope || 'none',
@@ -565,6 +571,12 @@ export default function MissionConsoleTile({
           <li><strong>verification return next action:</strong> {compactVerificationSummary.verificationReturnNextAction}</li>
           <li><strong>highest priority blocker/warning:</strong> {compactVerificationSummary.highestPriorityIssue}</li>
           <li><strong>manual-only handoff:</strong> {compactVerificationSummary.manualOnly ? 'yes' : 'no'}</li>
+          <li><strong>reality forge proof status:</strong> {compactVerificationSummary.realityForgeProofStatus}</li>
+          <li><strong>build verified:</strong> {compactVerificationSummary.realityForgeBuildVerified ? 'yes' : 'no'}</li>
+          <li><strong>runtime verified:</strong> {compactVerificationSummary.realityForgeRuntimeVerified ? 'yes' : 'no'}</li>
+          <li><strong>operator-visible proof pending:</strong> {compactVerificationSummary.realityForgeOperatorVisibleProofPending ? 'yes' : 'no'}</li>
+          <li><strong>manual verification required:</strong> {compactVerificationSummary.realityForgeManualVerificationRequired ? 'yes' : 'no'}</li>
+          <li><strong>world workspace proof checks pending:</strong> {compactVerificationSummary.realityForgeWorldWorkspaceChecksPending.join(' | ') || 'none'}</li>
           <li><strong>openclaw readiness:</strong> {compactVerificationSummary.openClawReadiness}</li>
           <li><strong>openclaw integration mode:</strong> {compactVerificationSummary.openClawIntegrationMode}</li>
           <li><strong>openclaw safe-to-use:</strong> {compactVerificationSummary.openClawSafeToUse ? 'yes' : 'no'}</li>
