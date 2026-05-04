@@ -26,6 +26,7 @@ import { normalizeBridgeTransportPreferences, normalizeBridgeTransportSelection,
 import { evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
 import { adjudicateRuntimeTruth } from './runtimeAdjudicator.mjs';
 import { buildAIMindRegistry } from './aiMindRegistry.mjs';
+import { buildRealityUpgradeOrchestrator } from './realityUpgradeOrchestrator.mjs';
 
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
 
@@ -2732,6 +2733,10 @@ export function createRuntimeStatusModel({
     runtimeContext: gatedRuntimeContext,
     registry: normalizedRuntimeContext.aiMindRegistry,
   });
+  const realityUpgradeOrchestrator = buildRealityUpgradeOrchestrator({
+    runtimeContext: gatedRuntimeContext,
+    aiMindRegistry,
+  });
 
   const runtimeAdjudication = adjudicateRuntimeTruth({
     runtimeContext: gatedRuntimeContext,
@@ -2766,6 +2771,12 @@ export function createRuntimeStatusModel({
     cognitiveAdjudication: runtimeAdjudication.cognitiveAdjudication,
     aiMindRegistry,
     aiMindRegistryProjection: aiMindRegistry,
+    realityUpgradeOrchestrator,
+    realityUpgradeOrchestratorProjection: realityUpgradeOrchestrator.intentToMissionProjection,
+    supportSnapshot: {
+      ...(aiMindRegistry.supportSnapshot || {}),
+      ...(realityUpgradeOrchestrator.supportSnapshot || {}),
+    },
     guardrails,
   };
 }
