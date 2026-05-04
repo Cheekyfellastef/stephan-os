@@ -32,6 +32,10 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'Generate Mission Spec',
     'Copy Mission Spec',
     'Copy Codex Prompt',
+    'Mission Intelligence Brief',
+    'Current phase:',
+    'Recommended next mission:',
+    'Execution posture:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('responder'), true);
@@ -88,4 +92,5 @@ test('MissionConsoleTile includes agent command console v1 non-executing workflo
     'Proposal packet summary:',
   ].forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('manual_prompt'), true);
+  assert.equal(source.includes('buildMissionIntelligenceLayer'), true);
 });

@@ -21,6 +21,7 @@ import { createIntentToBuildState, INTENT_TO_BUILD_BOUNDARIES } from '../state/i
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
+import { buildMissionIntelligenceLayer } from '../../../shared/agents/missionIntelligenceLayer.mjs';
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -170,6 +171,16 @@ export default function MissionConsoleTile({
     finalRouteTruth,
   }), [agentTaskProjection, finalRouteTruth]);
   const agentCommandQueue = useMemo(() => buildAgentCommandQueue({ agentTaskProjection }), [agentTaskProjection]);
+
+  const missionIntelligence = useMemo(() => buildMissionIntelligenceLayer({
+    finalRouteTruth,
+    runtimeStatusModel,
+    agentTaskProjection,
+    missionBridgeState,
+    compactVerificationSummary,
+    agentCommandConsole,
+    agentCommandQueue,
+  }), [agentCommandConsole, agentCommandQueue, agentTaskProjection, compactVerificationSummary, finalRouteTruth, missionBridgeState, runtimeStatusModel]);
 
   const guardrails = useMemo(() => buildOpenClawGuardrailSnapshot(), []);
   const resolvedTarget = resolveMissionConsoleTarget(targetId);
@@ -612,6 +623,29 @@ export default function MissionConsoleTile({
           </button>
         </div>
         <pre className="openclaw-prompt-box">{intentToBuild.codexPrompt}</pre>
+      </section>
+
+
+      <section className="mission-console-section">
+        <h4>Mission Intelligence Brief</h4>
+        <p><strong>Current phase:</strong> {missionIntelligence.missionPhase}</p>
+        <p><strong>Situation summary:</strong> {missionIntelligence.currentSituationSummary}</p>
+        <p><strong>Recommended next mission:</strong> {missionIntelligence.recommendedNextMission}</p>
+        <p><strong>Recommended next action:</strong> {missionIntelligence.recommendedNextAction}</p>
+        <p><strong>Suggested agent route:</strong> {missionIntelligence.recommendedAgentRoute}</p>
+        <p><strong>Why:</strong> {missionIntelligence.reason}</p>
+        <p><strong>Risk:</strong> {missionIntelligence.riskLevel}</p>
+        <p><strong>Execution posture:</strong> {missionIntelligence.executionPosture}</p>
+        <p><strong>Confidence:</strong> {missionIntelligence.confidence}</p>
+        <p><strong>Operator decision needed:</strong> {missionIntelligence.operatorDecisionNeeded ? 'yes' : 'no'}</p>
+        <p><strong>Next checkpoint:</strong> {missionIntelligence.nextReviewCheckpoint}</p>
+        <ul>
+          <li><strong>Blockers:</strong> {missionIntelligence.blockers.join(' | ') || 'none'}</li>
+          <li><strong>Warnings:</strong> {missionIntelligence.warnings.join(' | ') || 'none'}</li>
+          <li><strong>Contradictions:</strong> {missionIntelligence.contradictionSignals.join(' | ') || 'none'}</li>
+          <li><strong>Stale signals:</strong> {missionIntelligence.staleSignals.join(' | ') || 'none'}</li>
+          <li><strong>Suggested operator actions:</strong> {missionIntelligence.suggestedOperatorActions.join(' | ') || 'none'}</li>
+        </ul>
       </section>
 
       <section className="mission-console-section">
