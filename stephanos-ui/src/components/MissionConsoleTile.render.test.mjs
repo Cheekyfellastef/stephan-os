@@ -48,9 +48,32 @@ test('MissionConsoleTile routes agent-targeted submit through mission bridge and
   assert.equal(source.includes("Target: Agents → Mission Bridge"), true);
   assert.equal(source.includes("Target: Stephanos → Assistant Router"), true);
   assert.equal(source.includes("responder: 'Stephanos'"), true);
-  assert.equal(source.includes('You are speaking to Stephanos through the Mission Console.'), true);
-  assert.equal(source.includes('Mission Bridge accepted your request:'), true);
-  assert.equal(source.includes('OpenClaw is in bounded-analysis proposal-only mode.'), true);
+  assert.equal(source.includes('You are speaking to Stephanos through the Agent Mission Console.'), true);
+  assert.equal(source.includes('You are routed to Agents → Mission Bridge.'), true);
+  assert.equal(source.includes('You are routed to OpenClaw → Bounded Analysis.'), true);
+});
+
+test('MissionConsoleTile canonical OpenClaw fields are surfaced in compact truth summary', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  [
+    'openClawHealthValidationStatus',
+    'openClawHealthState',
+    'openClawHandshakeState',
+    'openClawProtocolCompatible',
+    'openClawCapabilityTrial',
+    'openClawProposalPacket',
+    'openClawOperatorReviewQueue',
+    'openClawOperatorReviewWorkflow',
+    'openClawCodexProposalExport',
+    'openClawCodexReviewResult',
+    'openClawImplementationPlan',
+    'openClawApprovalGateReadiness',
+    'openClawDryRunPlan',
+    'openClawControlledExecutionGate',
+    'openClawExecutionAllowed',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing canonical token: ${token}`));
+  assert.equal(source.includes('openClawOperatorReviewWorkflowStatus'), true);
+  assert.equal(source.includes('openClawCodexReviewResultStatus'), true);
 });
 
 

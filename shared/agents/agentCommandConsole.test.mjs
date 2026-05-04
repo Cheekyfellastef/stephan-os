@@ -27,4 +27,17 @@ test('agent command console is ready when operator review queue is ready', ()=>{
   const model = buildAgentCommandConsoleProjection({ agentTaskProjection });
   assert.equal(model.commandConsoleStatus, 'ready');
   assert.equal(model.commandConsoleMode, 'proposal_review');
+  assert.equal(model.activeStage, 'operator_review');
+});
+
+test('agent command console does not report blocked when canonical review pipeline is ready', ()=>{
+  const agentTaskProjection = buildAgentTaskProjection();
+  agentTaskProjection.operatorSurface.blockers = ['legacy adapter stub blocker'];
+  agentTaskProjection.operatorSurface.openClawProposalPacket = { packetStatus: 'ready_for_operator_review' };
+  agentTaskProjection.operatorSurface.openClawOperatorReviewQueue = { queueStatus: 'ready_for_operator_review' };
+  agentTaskProjection.operatorSurface.openClawCodexProposalExport = { exportStatus: 'generated', nextAction: 'Copy Codex review prompt.' };
+  const model = buildAgentCommandConsoleProjection({ agentTaskProjection });
+  assert.equal(model.commandConsoleStatus, 'ready');
+  assert.equal(model.commandConsoleMode, 'proposal_review');
+  assert.equal(model.executionAllowed, false);
 });
