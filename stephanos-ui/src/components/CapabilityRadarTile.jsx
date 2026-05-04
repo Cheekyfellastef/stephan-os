@@ -6,7 +6,7 @@ import { buildCapabilityHandoff, scoreCapabilityCandidate } from '../../../share
 
 const FILTERS = ['all', 'high-fit', 'zero-cost', 'local-first', 'needs-review', 'risk-flagged', 'agent-related', 'memory-rag', 'openclaw-related', 'vr-xr-related'];
 
-export default function CapabilityRadarTile({ uiLayout, togglePanel }) {
+export default function CapabilityRadarTile({ uiLayout, togglePanel, runtimeStatusModel }) {
   const [filter, setFilter] = useState('all');
   const [copiedId, setCopiedId] = useState('');
   const scored = useMemo(() => CAPABILITY_RADAR_CANDIDATES.map((candidate) => ({ ...candidate, scoreSummary: scoreCapabilityCandidate(candidate) })), []);
@@ -27,6 +27,8 @@ export default function CapabilityRadarTile({ uiLayout, togglePanel }) {
     riskFlagged: scored.filter((item) => String(item.riskLevel).includes('high')).length,
     zeroCost: scored.filter((item) => item.costPosture === 'zero-cost').length,
   }), [scored]);
+  const externalMindSources = runtimeStatusModel?.aiMindRegistry?.externalMindSourcesProjection || [];
+  const externalSummary = runtimeStatusModel?.aiMindRegistry?.capabilityRadarSummary || {};
 
   function copyHandoff(candidate) {
     const text = buildCapabilityHandoff(candidate, candidate.scoreSummary);
@@ -41,6 +43,33 @@ export default function CapabilityRadarTile({ uiLayout, togglePanel }) {
     <section>
       <h4>Source Watchlist (Static seed mode)</h4>
       <ul className="capability-radar-watchlist">{CAPABILITY_RADAR_SOURCES.map((source) => <li key={source.id}><span>{source.name}</span><a href={source.url} target="_blank" rel="noreferrer">{source.ecosystem}</a></li>)}</ul>
+    </section>
+    <section>
+      <h4>External Mind Sources</h4>
+      <p className="muted">Discovery does not imply approval. Connected does not imply route eligibility. Route eligibility does not imply OpenClaw access.</p>
+      <ul className="capability-radar-watchlist">
+        <li><strong>Discovered:</strong> {externalSummary.discoveredSources ?? externalMindSources.length}</li>
+        <li><strong>Connected:</strong> {externalSummary.connectedSources ?? 0}</li>
+        <li><strong>Sandboxed:</strong> {externalSummary.sandboxedSources ?? 0}</li>
+        <li><strong>Pending approvals:</strong> {externalSummary.pendingApprovals ?? 0}</li>
+        <li><strong>Recommended next action:</strong> {externalSummary.recommendedNextAction || 'Review provider setup steps'}</li>
+      </ul>
+      {externalMindSources.map((source) => <article key={source.sourceId} className="capability-radar-card">
+        <h5>{source.displayName}</h5>
+        <ul>
+          <li><strong>Provider:</strong> {source.providerType}</li>
+          <li><strong>Connection:</strong> {source.connectionStatus}</li>
+          <li><strong>Approval:</strong> {source.approvalState}</li>
+          <li><strong>Workflow:</strong> {source.onboardingWorkflowState}</li>
+          <li><strong>Secret status:</strong> {source.secretStatus}</li>
+          <li><strong>Risk:</strong> {source.riskLevel}</li>
+          <li><strong>Route eligible:</strong> {source.routeEligible ? 'yes' : 'no'}</li>
+          <li><strong>OpenClaw allowed:</strong> {source.openClawAllowed ? 'yes' : 'no'}</li>
+        </ul>
+        <div className="capability-radar-filters">
+          {['View setup steps','Open provider setup page','Start guided onboarding','Add API key','Run sandbox test','Approve for selected roles','Block source','Remove stored key reference'].map((action) => <button key={action} type="button">{action}</button>)}
+        </div>
+      </article>)}
     </section>
     <section>
       <h4>Candidates</h4>
