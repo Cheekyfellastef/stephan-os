@@ -27,7 +27,7 @@ export default function CapabilityRadarTile({ uiLayout, togglePanel, runtimeStat
     riskFlagged: scored.filter((item) => String(item.riskLevel).includes('high')).length,
     zeroCost: scored.filter((item) => item.costPosture === 'zero-cost').length,
   }), [scored]);
-  const externalMindSources = runtimeStatusModel?.aiMindRegistry?.externalMindSourcesProjection || [];
+  const externalMindSources = runtimeStatusModel?.realityUpgradeOrchestrator?.candidateMindSources || runtimeStatusModel?.aiMindRegistry?.externalMindSourcesProjection || [];
   const externalSummary = runtimeStatusModel?.aiMindRegistry?.capabilityRadarSummary || {};
 
   function copyHandoff(candidate) {

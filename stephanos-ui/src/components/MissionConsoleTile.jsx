@@ -648,6 +648,18 @@ export default function MissionConsoleTile({
         </ul>
       </section>
 
+
+      <section className="mission-console-section">
+        <h4>Reality Upgrade Orchestrator v1</h4>
+        <p><strong>Upgrade intent:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.upgradeIntent || 'Awaiting intent'}</p>
+        <p><strong>Affected system area:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.affectedSystemArea || 'unknown'}</p>
+        <p><strong>Current stage:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.supportSnapshot?.activeMissionStage || 'none'}</p>
+        <p><strong>Recommended crew of minds:</strong> {(runtimeStatusModel?.realityUpgradeOrchestrator?.recommendedMinds || []).map((mind) => mind.displayName).join(' | ') || 'none yet'}</p>
+        <p><strong>Approval checkpoints:</strong> {(runtimeStatusModel?.realityUpgradeOrchestrator?.approvalCheckpoints || []).join(' | ') || 'none'}</p>
+        <p><strong>Verification contract:</strong> {(runtimeStatusModel?.realityUpgradeOrchestrator?.verificationContract?.checks || []).join(' | ') || 'none'}</p>
+        <button type="button" onClick={() => copyToClipboard(JSON.stringify(runtimeStatusModel?.realityUpgradeOrchestrator || {}, null, 2), setSpecCopyState)}>Generate Codex Handoff Packet</button>
+      </section>
+
       <section className="mission-console-section">
         <h4>Conversation Workspace</h4>
         <div className="mission-console-ledger">

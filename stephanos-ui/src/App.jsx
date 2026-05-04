@@ -1038,7 +1038,7 @@ export default function App() {
       id: 'skillForgePanel',
       title: 'Skill Forge',
       className: 'pane-span-2',
-      render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} />,
+      render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} />,
     },
     {
       id: 'openClawPanel',
