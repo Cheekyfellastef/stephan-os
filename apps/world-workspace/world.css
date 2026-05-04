@@ -1,0 +1,16 @@
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+body { margin: 0; background: radial-gradient(circle at top, #13233f, #03070f 60%); color: #e7eefc; }
+.world-shell { display: flex; flex-direction: column; gap: 12px; min-height: 100vh; padding: 14px; }
+.world-header h1 { margin: 0; }
+.truth-banner { color: #ffc166; margin: 6px 0; }
+.status-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+.status-grid span { background: #11233c; border: 1px solid #385f96; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+.world-main { display: grid; grid-template-columns: 300px 1fr; gap: 12px; min-height: 0; flex: 1; }
+.world-controls { background: rgba(10,17,29,.84); border: 1px solid #35537c; border-radius: 12px; padding: 10px; }
+.world-controls label { display: block; margin: 6px 0; }
+.world-canvas-wrap { position: relative; min-height: 540px; border: 1px solid #35537c; border-radius: 12px; overflow: hidden; }
+#worldCanvas { width: 100%; height: 100%; display: block; }
+.detail-card { font-size: 13px; line-height: 1.35; background: #0f1d33; border: 1px solid #2f4d78; border-radius: 10px; padding: 10px; min-height: 120px; }
+.fallback { position:absolute; inset:0; display:grid; place-items:center; background:#050910; }
+.hidden { display:none; }
+@media (max-width: 900px) { .world-main { grid-template-columns: 1fr; } }

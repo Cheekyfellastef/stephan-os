@@ -15,5 +15,6 @@ Core reference docs:
 - `docs/stephanos-guardrails-v2.md` — launcher/runtime/routing guardrail policy and hard invariants.
 - `docs/stephanos-laws.md` — constitutional law layer linking repo policy, runtime law model, and launcher law panel.
 - `docs/stephanos-surface-conventions.md` — style-bible conventions for promoted surfaces (shared panel controls, Mission Console layout, timeout plumbing).
+- `docs/world-workspace.md` — World Workspace v1 scope, truth policy, and expansion plan.
 
 Reports and point-in-time deep dives live under `docs/reports/`.

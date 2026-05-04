@@ -30,6 +30,7 @@ import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
 import SkillForgeTile from './components/SkillForgeTile.jsx';
+import WorldWorkspaceTile from './components/WorldWorkspaceTile.jsx';
 import StephanosSurfacePane from './components/StephanosSurfacePane.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
@@ -1039,6 +1040,12 @@ export default function App() {
       title: 'Skill Forge',
       className: 'pane-span-2',
       render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} />,
+    },
+    {
+      id: 'worldWorkspacePanel',
+      title: 'World Workspace',
+      className: 'pane-span-2',
+      render: () => <WorldWorkspaceTile />,
     },
     {
       id: 'openClawPanel',
