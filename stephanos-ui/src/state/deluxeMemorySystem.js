@@ -95,9 +95,39 @@ export function normalizeMemoryCandidates(entries = []) {
       createdAt: asText(entry.createdAt),
       reviewedAt: asText(entry.reviewedAt),
       reviewNote: asText(entry.reviewNote),
+      memoryCandidateType: asText(entry.memoryCandidateType, 'temporary_note'),
+      promotionTarget: asText(entry.promotionTarget, 'session'),
+      requiresOperatorApproval: entry.requiresOperatorApproval === true,
+      promotionState: asText(entry.promotionState, 'pending'),
+      durableApprovedAt: asText(entry.durableApprovedAt),
     }))
     .filter((entry) => entry.summary)
     .slice(-MAX_CANDIDATES);
+}
+
+export function candidateRequiresDurableApproval(candidate = {}) {
+  const type = asText(candidate.memoryCandidateType).toLowerCase();
+  return ['architecture_canon_candidate', 'durable_operator_preference', 'project_lesson'].includes(type);
+}
+
+export function adjudicateMemoryCandidateForPersistence(candidate = {}, { decision = 'reject', note = '', now = new Date().toISOString() } = {}) {
+  const normalizedDecision = asText(decision, 'reject').toLowerCase();
+  const requiresApproval = candidateRequiresDurableApproval(candidate) || candidate.requiresOperatorApproval === true;
+  const status = normalizedDecision === 'approve' ? 'approved' : normalizedDecision === 'revise' ? 'revise-requested' : 'rejected';
+  const promotionState = normalizedDecision === 'approve'
+    ? (requiresApproval ? 'saved' : 'draft')
+    : normalizedDecision === 'revise'
+      ? 'draft'
+      : 'rejected';
+  return {
+    ...candidate,
+    status,
+    reviewedAt: now,
+    reviewNote: asText(note),
+    requiresOperatorApproval: requiresApproval,
+    promotionState,
+    durableApprovedAt: normalizedDecision === 'approve' && requiresApproval ? now : asText(candidate.durableApprovedAt),
+  };
 }
 
 export function buildMissionMemoryFromContext({ packetTruth = {}, workingMemory = {}, now = new Date().toISOString() } = {}) {
@@ -138,6 +168,10 @@ export function buildMemoryCandidatesFromTaskCompletion({ action = '', packetTru
       evidenceRef,
       impactLevel: normalizedAction.includes('fail') || normalizedAction === 'rollback' ? 'high' : 'medium',
       createdAt: now,
+      memoryCandidateType: normalizedAction.includes('fail') || normalizedAction === 'rollback' ? 'project_lesson' : 'temporary_note',
+      promotionTarget: normalizedAction.includes('fail') || normalizedAction === 'rollback' ? 'durable' : 'session',
+      requiresOperatorApproval: normalizedAction.includes('fail') || normalizedAction === 'rollback',
+      promotionState: 'pending',
     },
   ];
 
