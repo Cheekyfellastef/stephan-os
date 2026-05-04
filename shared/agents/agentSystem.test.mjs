@@ -118,6 +118,13 @@ test('adjudicator separates enabled, eligible, active, and acting', () => {
   assert.equal(research.state, 'blocked');
 });
 
+test('mission-console is an allowed canonical surface for agent registry entries', () => {
+  const registry = buildAgentRegistry();
+  registry.forEach((entry) => {
+    assert.equal(entry.allowedSurfaces.includes('mission-console'), true, `${entry.agentId} missing mission-console surface`);
+  });
+});
+
 test('surface and session eligibility suppresses agents with reason strings', () => {
   const registry = buildAgentRegistry();
   const adjudicated = adjudicateAgents({
