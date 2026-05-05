@@ -22,6 +22,7 @@ import { buildPrEvidenceFromInput, parsePrEvidenceInput } from '../state/prEvide
 import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
 import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
 import { buildMissionEvidenceLedger } from '../state/missionEvidenceLedgerModel.js';
+import { buildMissionCommandPacket, buildMissionCommandPacketJson, buildMissionCommandPacketMarkdown } from '../state/missionCommandPacketModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -49,6 +50,8 @@ export default function MissionConsoleTile({
 }) {
   const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
+  const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
+  const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
   const [selectedAgentId, setSelectedAgentId] = useState('broadcast');
@@ -219,6 +222,19 @@ export default function MissionConsoleTile({
     taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || null,
     memoryLibrarianQueue: memoryLibrarian,
   }), [intentToBuild?.missionSpec, memoryLibrarian, prEvidenceParseResult, verificationReturnAdjudication, verificationReturnInput]);
+  const missionCommandPacket = useMemo(() => buildMissionCommandPacket({
+    missionSpec: intentToBuild?.missionSpec || {},
+    codexPrompt: intentToBuild?.codexPrompt || '',
+    missionEvidenceLedger,
+    operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+    verificationJudge: verificationReturnAdjudication,
+    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+    memoryLibrarianQueue: memoryLibrarian,
+    prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+    openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
+    finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
+    repoArchitectureContext: intentToBuild?.missionSpec?.repoArchitectureContext || {},
+  }), [intentToBuild?.missionSpec, intentToBuild?.codexPrompt, memoryLibrarian, missionEvidenceLedger, verificationReturnAdjudication]);
 
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
@@ -928,6 +944,24 @@ export default function MissionConsoleTile({
           <button type="button" onClick={() => copyToClipboard(intentToBuild.codexPrompt, setPromptCopyState)}>
             {promptCopyState === COPY_STATE.SUCCESS ? 'Codex Prompt Copied' : 'Copy Codex Prompt'}
           </button>
+          <button type="button" onClick={() => copyToClipboard(buildMissionCommandPacketMarkdown(missionCommandPacket), setPacketMarkdownCopyState)}>
+            {packetMarkdownCopyState === COPY_STATE.SUCCESS ? 'Packet Markdown Copied' : 'Copy Packet Markdown'}
+          </button>
+          <button type="button" onClick={() => copyToClipboard(buildMissionCommandPacketJson(missionCommandPacket), setPacketJsonCopyState)}>
+            {packetJsonCopyState === COPY_STATE.SUCCESS ? 'Packet JSON Copied' : 'Copy Packet JSON'}
+          </button>
+      </div>
+      <div className="paneSection">
+        <h5>Mission Command Packet</h5>
+        <ul>
+          <li><strong>packet version:</strong> {missionCommandPacket.packetVersion}</li>
+          <li><strong>mission id:</strong> {missionCommandPacket.missionId}</li>
+          <li><strong>created at:</strong> {missionCommandPacket.createdAt}</li>
+          <li><strong>status:</strong> {missionCommandPacket.missionStatus}</li>
+          <li><strong>warnings count:</strong> {missionCommandPacket.exportWarnings.length}</li>
+          <li><strong>next action:</strong> {missionCommandPacket.nextAction}</li>
+          <li><strong>included systems summary:</strong> memory, architecture, openclaw, finish-authority, pr-evidence, verification-judge, task-finisher, memory-librarian, evidence-ledger, operator-decision</li>
+        </ul>
       </div>
       <div className="paneSection">
         <h5>PR Evidence Input</h5>
