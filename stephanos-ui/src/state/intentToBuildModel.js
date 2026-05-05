@@ -5,6 +5,7 @@ import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.
 import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
 import { buildTaskFinisherPlan } from './taskFinisherModel.js';
 import { buildPrEvidenceIntake } from './prEvidenceIntakeModel.js';
+import { buildMissionEvidenceLedger } from './missionEvidenceLedgerModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -260,6 +261,16 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     taskFinisherPlan,
   };
 
+
+  const missionEvidenceLedger = buildMissionEvidenceLedger({
+    missionSpec,
+    verificationReturnText: asText(input.verificationReturnText, ''),
+    verificationJudge: input.verificationJudge || null,
+    taskFinisherPlan,
+    memoryLibrarianQueue: memoryLibrarian,
+  });
+  missionSpec.missionEvidenceLedger = missionEvidenceLedger;
+
   return missionSpec;
 }
 
@@ -449,6 +460,12 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- operator-visible proof evidence and any manual verification steps.',
     '- blockers/failures and unresolved risks.',
     '- explicit statement: no OpenClaw execution, no shell outside approved scope, no git push, no merge, no secrets access, no external-account action.',
+    '',
+    'Mission Evidence Ledger Expectations:',
+    '- Codex should return evidence in an ingestible, ledger-friendly format.',
+    '- Include changed files, tests, build/verify outputs, PR URL, blockers, proof-of-done evidence, and safety confirmation.',
+    '- Do not claim merge-ready without evidence.',
+    '- Do not auto-promote lessons/canon.',
     '',
     'PR Evidence Return (if metadata is available):',
     '- Operator may paste PR evidence back into Mission Console. Return compact PR metadata in a parseable format.',

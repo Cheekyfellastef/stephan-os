@@ -2021,3 +2021,11 @@ test('support snapshot projects memory librarian counts', () => {
   assert.match(snapshot, /Memory Librarian Approval Required Count: 2/);
   assert.match(snapshot, /Memory Librarian Conflict Count: 1/);
 });
+
+
+test('support snapshot projects mission evidence ledger fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { missionEvidenceLedgerEntryCount: '9', missionEvidenceLedgerWarningCount: '2', missionEvidenceLedgerBlockerCount: '1', missionEvidenceLedgerPendingReviewCount: '3', missionEvidenceCompleteness: 'partial', missionEvidenceLatestEvent: 'verification_judged', missionEvidenceNextRequired: 'operator_decision_required' } });
+  assert.match(snapshot, /Mission Evidence Ledger Entry Count: 9/);
+  assert.match(snapshot, /Mission Evidence Completeness: partial/);
+  assert.match(snapshot, /Mission Evidence Next Required: operator_decision_required/);
+});

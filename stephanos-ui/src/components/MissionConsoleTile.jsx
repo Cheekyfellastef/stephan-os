@@ -21,6 +21,7 @@ import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INT
 import { buildPrEvidenceFromInput, parsePrEvidenceInput } from '../state/prEvidenceConnectorModel.js';
 import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
 import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
+import { buildMissionEvidenceLedger } from '../state/missionEvidenceLedgerModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -210,6 +211,15 @@ export default function MissionConsoleTile({
     capabilitySignals: verificationReturnAdjudication.capabilityGapPending ? [{ summary: verificationReturnAdjudication.skillUpgradeSuggestion || 'Capability gap from verification return.' }] : [],
   }), [intentToBuild?.missionSpec?.missionMemoryCandidate, intentToBuild?.missionSpec?.missionMemoryContext?.memories, verificationReturnAdjudication]);
 
+  const missionEvidenceLedger = useMemo(() => buildMissionEvidenceLedger({
+    missionSpec: intentToBuild?.missionSpec || {},
+    prEvidenceConnector: prEvidenceParseResult || null,
+    verificationReturnText: verificationReturnInput,
+    verificationJudge: verificationReturnAdjudication,
+    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || null,
+    memoryLibrarianQueue: memoryLibrarian,
+  }), [intentToBuild?.missionSpec, memoryLibrarian, prEvidenceParseResult, verificationReturnAdjudication, verificationReturnInput]);
+
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
     projectProgressNextActions: agentTaskProjection?.readinessSummary?.nextAgentTaskAction ? [agentTaskProjection.readinessSummary.nextAgentTaskAction] : [],
@@ -333,8 +343,15 @@ export default function MissionConsoleTile({
       memoryLibrarianConflictCount: String(memoryLibrarian.counts.conflicts || 0),
       memoryLibrarianSavedCount: String(memoryLibrarian.counts.saved || 0),
       memoryLibrarianRejectedCount: String(memoryLibrarian.counts.rejected || 0),
+      missionEvidenceLedgerEntryCount: String(missionEvidenceLedger.summary.ledgerEntryCount || 0),
+      missionEvidenceLedgerWarningCount: String(missionEvidenceLedger.summary.warningCount || 0),
+      missionEvidenceLedgerBlockerCount: String(missionEvidenceLedger.summary.blockerCount || 0),
+      missionEvidenceLedgerPendingReviewCount: String(missionEvidenceLedger.summary.pendingOperatorReviewCount || 0),
+      missionEvidenceCompleteness: missionEvidenceLedger.summary.evidenceCompleteness || 'low',
+      missionEvidenceLatestEvent: missionEvidenceLedger.summary.latestEventType || 'none',
+      missionEvidenceNextRequired: missionEvidenceLedger.summary.nextRequiredEvidence || 'none',
     });
-  }, [intentToBuild, memoryLibrarian.counts, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
+  }, [intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
@@ -920,6 +937,22 @@ export default function MissionConsoleTile({
         )}
       </div>
       <div className="paneSection">
+        <h5>Mission Evidence Ledger</h5>
+        <ul className="mission-console__status-list">
+          <li><strong>evidence completeness:</strong> {missionEvidenceLedger.summary.evidenceCompleteness}</li>
+          <li><strong>latest event:</strong> {missionEvidenceLedger.summary.latestEventType}</li>
+          <li><strong>warnings / blockers:</strong> {missionEvidenceLedger.summary.warningCount} / {missionEvidenceLedger.summary.blockerCount}</li>
+          <li><strong>pending operator review:</strong> {missionEvidenceLedger.summary.pendingOperatorReviewCount}</li>
+          <li><strong>next required evidence:</strong> {missionEvidenceLedger.summary.nextRequiredEvidence}</li>
+          <li><strong>readiness narrative:</strong> {missionEvidenceLedger.summary.missionReadyNarrative}</li>
+        </ul>
+        <ul className="mission-console__status-list">
+          {(missionEvidenceLedger.entries || []).slice(0, 6).map((entry) => (
+            <li key={entry.entryId}><strong>{entry.eventType}</strong>: {entry.summary}</li>
+          ))}
+          {(missionEvidenceLedger.entries || []).length === 0 ? <li>none</li> : null}
+        </ul>
+
         <h5>PR Evidence Intake</h5>
         {!intentToBuild?.missionSpec?.prEvidenceIntake || intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus === 'no_pr_evidence' ? (
           <p>No PR evidence supplied yet.</p>

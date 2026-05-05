@@ -52,6 +52,8 @@ test('mission proposal retains blocked actions and codex handoff includes verifi
   assert.match(prompt, /PR Acceptance Criteria:/);
   assert.match(prompt, /Verification Commands:/);
   assert.match(prompt, /Verification Return Contract \(required in Codex return\):/);
+  assert.match(prompt, /Mission Evidence Ledger Expectations:/);
+  assert.match(prompt, /Do not claim merge-ready without evidence\./);
   assert.match(prompt, /PR Evidence Return \(if metadata is available\):/);
 });
 
@@ -304,4 +306,11 @@ test('codex handoff includes memory governance section', () => {
   const state = createIntentToBuildState({ rawIntent: 'add mission lesson memory governance', targetArea: 'mission-console' });
   assert.match(state.codexPrompt, /Memory Governance \(approval-gated\):/);
   assert.match(state.codexPrompt, /Pending memory candidates are not approved durable guidance\./);
+});
+
+
+test('mission spec includes mission evidence ledger model output', () => {
+  const missionSpec = buildMissionSpec({ rawIntent: 'Evidence ledger mission', targetArea: 'mission-console' });
+  assert.equal(Array.isArray(missionSpec.missionEvidenceLedger?.entries), true);
+  assert.equal(typeof missionSpec.missionEvidenceLedger?.summary?.evidenceCompleteness, 'string');
 });
