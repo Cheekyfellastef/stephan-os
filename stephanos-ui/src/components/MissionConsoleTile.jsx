@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { OPENCLAW_AUTHORITY, OPENCLAW_MODE, OPENCLAW_SCAN_MODES } from './openclaw/openclawTilePolicy.js';
 import { buildOpenClawGuardrailSnapshot } from './openclaw/openclawGuardrails.js';
@@ -304,6 +304,20 @@ export default function MissionConsoleTile({
   useEffect(() => {
     onOpenClawIntegrationUpdate(openClawIntegration);
   }, [onOpenClawIntegrationUpdate, openClawIntegration]);
+  const missionRoutingReadiness = useMemo(() => buildMissionRoutingReadiness({
+    missionSpec: intentToBuild?.missionSpec || {},
+    missionCommandPacket,
+    agentAssignmentMatrix,
+    operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+    missionEvidenceLedger,
+    verificationJudge: verificationReturnAdjudication,
+    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+    memoryLibrarianQueue: memoryLibrarian,
+    prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+    openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
+    finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
+  }), [agentAssignmentMatrix, intentToBuild?.missionSpec, memoryLibrarian, missionCommandPacket, missionEvidenceLedger, verificationReturnAdjudication]);
+
   useEffect(() => {
     const missionSpec = intentToBuild?.missionSpec || {};
     onIntentToBuildUpdate({
@@ -429,7 +443,7 @@ export default function MissionConsoleTile({
   function buildAgentsResponse(content, bridgeResult) {
     const availableAgents = visibleAgents.length > 0 ? visibleAgents.join(', ') : 'Intent Engine, Research Agent, Memory Agent, Execution Agent, Ideas Agent';
     const nextAction = bridgeResult?.nextRecommendedAction || 'Submit explicit operator intent.';
-    return `You are routed to Agents → Mission Bridge. Available agents right now: ${availableAgents}. They can analyze, plan, summarize, and prepare handoff packets under operator approval boundaries. They cannot execute destructive/system-mutating actions without explicit approved workflow. Next safe action: ${nextAction}`;
+    return `You are routed to Agents â†’ Mission Bridge. Available agents right now: ${availableAgents}. They can analyze, plan, summarize, and prepare handoff packets under operator approval boundaries. They cannot execute destructive/system-mutating actions without explicit approved workflow. Next safe action: ${nextAction}`;
   }
 
   function buildOpenClawResponse() {
@@ -440,7 +454,7 @@ export default function MissionConsoleTile({
     const packetStatus = compactVerificationSummary.openClawProposalPacketStatus || 'unknown';
     const reviewQueue = compactVerificationSummary.openClawOperatorReviewQueueStatus || 'unknown';
     const exportStatus = compactVerificationSummary.openClawCodexProposalExportStatus || 'unavailable';
-    return `You are routed to OpenClaw → Bounded Analysis. Readonly validation is ${validation}; health is ${health}; handshake is ${handshake}. Current packet state is ${packetStatus} with review queue ${reviewQueue} and Codex export ${exportStatus}. OpenClaw can safely observe, validate readonly status, and produce proposal packets. OpenClaw cannot execute commands, edit files, write Git, control browsers, or run autonomous actions.`;
+    return `You are routed to OpenClaw â†’ Bounded Analysis. Readonly validation is ${validation}; health is ${health}; handshake is ${handshake}. Current packet state is ${packetStatus} with review queue ${reviewQueue} and Codex export ${exportStatus}. OpenClaw can safely observe, validate readonly status, and produce proposal packets. OpenClaw cannot execute commands, edit files, write Git, control browsers, or run autonomous actions.`;
   }
 
   function applyMissionBridgeResult(bridgeResult, { includeLedgerMessage = true } = {}) {
@@ -718,8 +732,8 @@ export default function MissionConsoleTile({
           </label>
         ) : null}
         <p><strong>Active routing target before submit:</strong> {resolvedTarget.label}</p>
-        <p><strong>Target: Agents → Mission Bridge</strong></p>
-        <p><strong>Target: Stephanos → Assistant Router</strong></p>
+        <p><strong>Target: Agents â†’ Mission Bridge</strong></p>
+        <p><strong>Target: Stephanos â†’ Assistant Router</strong></p>
       </section>
 
       <section className="mission-console-section">
@@ -801,7 +815,7 @@ export default function MissionConsoleTile({
         </ul>
         <ul>
           {(intentToBuild.missionSpec.operatorDecisionConsole?.decisions || []).slice(0, 6).map((decision) => (
-            <li key={decision.decisionId}><strong>{decision.title}</strong> [{decision.sourceSystem}; risk {decision.riskLevel}] · recommend: {decision.recommendedAction} · allowed: {(decision.allowedActions || []).join(', ') || 'none'} · blocked: {(decision.blockedActions || []).join(', ') || 'none'} · reason: {decision.reason}</li>
+            <li key={decision.decisionId}><strong>{decision.title}</strong> [{decision.sourceSystem}; risk {decision.riskLevel}] Â· recommend: {decision.recommendedAction} Â· allowed: {(decision.allowedActions || []).join(', ') || 'none'} Â· blocked: {(decision.blockedActions || []).join(', ') || 'none'} Â· reason: {decision.reason}</li>
           ))}
         </ul>
 
@@ -878,7 +892,7 @@ export default function MissionConsoleTile({
           <li><strong>judgment:</strong> {verificationReturnAdjudication.judgment}</li>
           <li><strong>readiness level:</strong> {verificationReturnAdjudication.readinessLevel}</li>
           <li><strong>files scope:</strong> {verificationReturnAdjudication.changedFilesInScope ? 'in-scope' : 'review-needed'}</li>
-          <li><strong>tests / build / verify:</strong> tests={verificationReturnAdjudication.requiredTestsRun ? 'ok' : 'missing'} · build+verify={verificationReturnAdjudication.buildVerifySatisfied ? 'ok' : 'missing'}</li>
+          <li><strong>tests / build / verify:</strong> tests={verificationReturnAdjudication.requiredTestsRun ? 'ok' : 'missing'} Â· build+verify={verificationReturnAdjudication.buildVerifySatisfied ? 'ok' : 'missing'}</li>
           <li><strong>architecture checks:</strong> {verificationReturnAdjudication.architectureScopeSatisfied ? 'satisfied' : 'review-needed'}</li>
           <li><strong>finish authority checks:</strong> {verificationReturnAdjudication.finishAuthoritySatisfied ? 'satisfied' : 'not-authorized'}</li>
           <li><strong>openclaw boundary checks:</strong> {verificationReturnAdjudication.openClawBoundarySatisfied ? 'satisfied' : 'blocked'}</li>
@@ -911,7 +925,7 @@ export default function MissionConsoleTile({
         </ul>
         <ul>
           {(memoryLibrarian.queue || []).slice(0, 4).map((candidate) => (
-            <li key={candidate.candidateId}><strong>{candidate.memoryCandidateType}:</strong> {candidate.summary} <em>{candidate.influencePreview}</em> Suggested action: {candidate.suggestedAction}{candidate.duplicateOf ? ` · duplicate of ${candidate.duplicateOf}` : ''}{candidate.conflictWith?.length ? ` · conflicts: ${candidate.conflictWith.join(', ')}` : ''}</li>
+            <li key={candidate.candidateId}><strong>{candidate.memoryCandidateType}:</strong> {candidate.summary} <em>{candidate.influencePreview}</em> Suggested action: {candidate.suggestedAction}{candidate.duplicateOf ? ` Â· duplicate of ${candidate.duplicateOf}` : ''}{candidate.conflictWith?.length ? ` Â· conflicts: ${candidate.conflictWith.join(', ')}` : ''}</li>
           ))}
           {(memoryLibrarian.queue || []).length === 0 ? <li>none</li> : null}
         </ul>
@@ -1006,7 +1020,7 @@ export default function MissionConsoleTile({
         </ul>
         <ul className="mission-console__status-list">
           {(agentAssignmentMatrix.assignments || []).slice(0, 8).map((assignment) => (
-            <li key={assignment.assignmentId}><strong>{assignment.roleLabel}</strong> — {assignment.responsibility} | authority: {assignment.authorityLevel} | allow: {(assignment.allowedActions || []).join(', ') || 'none'} | block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'} | output: {assignment.outputExpected} | next: {assignment.nextAction}</li>
+            <li key={assignment.assignmentId}><strong>{assignment.roleLabel}</strong> â€” {assignment.responsibility} | authority: {assignment.authorityLevel} | allow: {(assignment.allowedActions || []).join(', ') || 'none'} | block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'} | output: {assignment.outputExpected} | next: {assignment.nextAction}</li>
           ))}
         </ul>
       </div>
@@ -1086,7 +1100,7 @@ export default function MissionConsoleTile({
           <ul>
             <li><strong>normalized status:</strong> {intentToBuild.missionSpec.prEvidenceIntake.normalizedStatus}</li>
             <li><strong>PR:</strong> #{intentToBuild.missionSpec.prEvidenceIntake.prNumber || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.prTitle || ''} {intentToBuild.missionSpec.prEvidenceIntake.prUrl || ''}</li>
-            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} → {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
+            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} â†’ {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
             <li><strong>changed files:</strong> {intentToBuild.missionSpec.prEvidenceIntake.changedFileCount || 0}</li>
             <li><strong>checks:</strong> {intentToBuild.missionSpec.prEvidenceIntake.checksStatus || 'unknown'} (required: {intentToBuild.missionSpec.prEvidenceIntake.requiredChecksStatus || 'unknown'})</li>
             <li><strong>auto-merge:</strong> {intentToBuild.missionSpec.prEvidenceIntake.autoMergeState || 'unknown'}</li>
@@ -1140,11 +1154,11 @@ export default function MissionConsoleTile({
           {messages.map((message) => (
             <article key={message.id} className={`mission-console-message mission-console-message-${message.role}`}>
               <header>
-                <strong>{message.responder}</strong> · target <strong>{message.target}</strong> · status <strong>{message.status}</strong>
+                <strong>{message.responder}</strong> Â· target <strong>{message.target}</strong> Â· status <strong>{message.status}</strong>
                 {message.approvalNeeded ? <span className="mission-console-pill">approval-needed</span> : null}
               </header>
               <p>{message.content}</p>
-              <small>{message.timestamp}{message.linkedProposalId ? ` · proposal ${message.linkedProposalId}` : ''}</small>
+              <small>{message.timestamp}{message.linkedProposalId ? ` Â· proposal ${message.linkedProposalId}` : ''}</small>
             </article>
           ))}
         </div>
@@ -1175,9 +1189,9 @@ export default function MissionConsoleTile({
         </ul>
 
         <h4>Agent Command Queue</h4>
-        <p><strong>queue status:</strong> {agentCommandQueue.queueStatus} · <strong>ready items:</strong> {agentCommandQueue.readyCount} / {agentCommandQueue.itemCount}</p>
+        <p><strong>queue status:</strong> {agentCommandQueue.queueStatus} Â· <strong>ready items:</strong> {agentCommandQueue.readyCount} / {agentCommandQueue.itemCount}</p>
         <ul className="paneList">{agentCommandQueue.items.map((item) => (
-          <li key={item.itemId}><strong>{item.label}</strong> · {item.itemType} · {item.status} · next: {item.nextAction}</li>
+          <li key={item.itemId}><strong>{item.label}</strong> Â· {item.itemType} Â· {item.status} Â· next: {item.nextAction}</li>
         ))}</ul>
 
         <h4>Current Work Item Details</h4>
@@ -1277,17 +1291,4 @@ export default function MissionConsoleTile({
     </CollapsiblePanel>
   );
 }
-  const missionRoutingReadiness = useMemo(() => buildMissionRoutingReadiness({
-    missionSpec: intentToBuild?.missionSpec || {},
-    missionCommandPacket,
-    agentAssignmentMatrix,
-    operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
-    missionEvidenceLedger,
-    verificationJudge: verificationReturnAdjudication,
-    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
-    memoryLibrarianQueue: memoryLibrarian,
-    prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
-    openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
-    finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
-  }), [agentAssignmentMatrix, intentToBuild?.missionSpec, memoryLibrarian, missionCommandPacket, missionEvidenceLedger, verificationReturnAdjudication]);
 
