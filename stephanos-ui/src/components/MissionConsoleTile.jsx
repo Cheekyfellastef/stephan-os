@@ -18,6 +18,7 @@ import {
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
+import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -172,28 +173,29 @@ export default function MissionConsoleTile({
 
 
   const verificationReturnAdjudication = useMemo(() => {
-    const text = String(verificationReturnInput || '').toLowerCase();
-    const missionGoal = intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal || '';
+    const judge = adjudicateMissionVerificationJudge({
+      missionSpec: intentToBuild?.missionSpec || {},
+      verificationReturnText: verificationReturnInput,
+    });
     const lessonCandidates = deriveVerificationReturnLessonCandidates({
       verificationReturnText: verificationReturnInput,
       missionSpec: intentToBuild?.missionSpec || {},
+      verificationJudge: judge,
     });
     const capabilityCandidate = lessonCandidates.find((candidate) => candidate.memoryCandidateType === 'capability_gap') || null;
-    const skillUpgradeSuggestion = capabilityCandidate ? `This mission suggests a missing capability: ${capabilityCandidate.summary}` : 'none';
     return {
-      matchesMissionGoal: missionGoal && text.includes('mission') ? 'likely' : 'unknown',
-      changedFilesKnown: /files changed|changed files|\.js|\.mjs|\.jsx/.test(text) ? 'known' : 'unknown',
-      testsClaimedRun: /test|verify|build/.test(text) ? 'claimed' : 'not-claimed',
-      blockers: /blocker|fail|error/.test(text) ? 'reported' : 'none-reported',
-      mergeReadiness: /merge-ready|ready to merge/.test(text) ? 'candidate-ready' : 'pending-review',
-      nextAction: /blocker|fail|error/.test(text) ? 'Request fix + rerun verification.' : 'Review evidence and decide promotion.',
-      suggestedLessonCandidate: lessonCandidates[0]?.memoryCandidateType || 'mission_history',
+      ...judge,
       lessonCandidates,
       lessonCandidatePending: lessonCandidates.length > 0,
       capabilityGapPending: Boolean(capabilityCandidate),
-      skillUpgradeSuggestion,
+      skillUpgradeSuggestion: capabilityCandidate ? `This mission suggests a missing capability: ${capabilityCandidate.summary}` : 'none',
+      suggestedLessonCandidate: lessonCandidates[0]?.memoryCandidateType || 'mission_history',
+      matchesMissionGoal: judge.goalMatched,
+      testsClaimedRun: judge.parsed.testsRun.length > 0 ? 'claimed' : 'not-claimed',
+      blockers: judge.blockers.join(' | ') || 'none',
+      mergeReadiness: judge.mergeReadyCandidate ? 'candidate-ready' : 'pending-review',
     };
-  }, [intentToBuild?.missionSpec, intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal, verificationReturnInput]);
+  }, [intentToBuild?.missionSpec, verificationReturnInput]);
 
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
@@ -276,6 +278,14 @@ export default function MissionConsoleTile({
       repoArchitectureGeneratedOutputTouched: (intentToBuild?.missionSpec?.repoArchitectureContext?.generatedOutputsLikelyTouched || []).length > 0 ? 'yes' : 'no',
       repoArchitectureSourceTruthWarning: (intentToBuild?.missionSpec?.repoArchitectureContext?.sourceTruthWarnings || [])[1] || 'none',
       repoArchitectureRiskLevel: (intentToBuild?.missionSpec?.repoArchitectureContext?.riskSummary || []).join('|') || 'none',
+      missionVerificationJudgment: verificationReturnAdjudication.judgment || 'no_return',
+      missionVerificationReadinessLevel: verificationReturnAdjudication.readinessLevel || 'not_ready',
+      missionVerificationMergeReadyCandidate: verificationReturnAdjudication.mergeReadyCandidate ? 'yes' : 'no',
+      missionVerificationBlockerCount: String((verificationReturnAdjudication.blockers || []).length || 0),
+      missionVerificationWarningCount: String((verificationReturnAdjudication.warnings || []).length || 0),
+      missionVerificationProofStatus: verificationReturnAdjudication.proofOfDoneStatus || 'pending',
+      missionVerificationChangedFilesInScope: verificationReturnAdjudication.changedFilesInScope ? 'yes' : 'no',
+      missionVerificationRequiredTestsRun: verificationReturnAdjudication.requiredTestsRun ? 'yes' : 'no',
     });
   }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
@@ -699,11 +709,18 @@ export default function MissionConsoleTile({
         <h5>Verification Return Input</h5>
         <textarea className="paneTextarea paneControl" rows={4} value={verificationReturnInput} onChange={(event) => setVerificationReturnInput(event.target.value)} placeholder="Paste Codex return summary for adjudication." />
         <ul>
-          <li><strong>matches mission goal:</strong> {verificationReturnAdjudication.matchesMissionGoal}</li>
-          <li><strong>changed files known/unknown:</strong> {verificationReturnAdjudication.changedFilesKnown}</li>
-          <li><strong>tests claimed/run:</strong> {verificationReturnAdjudication.testsClaimedRun}</li>
+          <li><strong>verification judge:</strong> Proof Marshal v2</li>
+          <li><strong>judgment:</strong> {verificationReturnAdjudication.judgment}</li>
+          <li><strong>readiness level:</strong> {verificationReturnAdjudication.readinessLevel}</li>
+          <li><strong>files scope:</strong> {verificationReturnAdjudication.changedFilesInScope ? 'in-scope' : 'review-needed'}</li>
+          <li><strong>tests / build / verify:</strong> tests={verificationReturnAdjudication.requiredTestsRun ? 'ok' : 'missing'} · build+verify={verificationReturnAdjudication.buildVerifySatisfied ? 'ok' : 'missing'}</li>
+          <li><strong>architecture checks:</strong> {verificationReturnAdjudication.architectureScopeSatisfied ? 'satisfied' : 'review-needed'}</li>
+          <li><strong>finish authority checks:</strong> {verificationReturnAdjudication.finishAuthoritySatisfied ? 'satisfied' : 'not-authorized'}</li>
+          <li><strong>openclaw boundary checks:</strong> {verificationReturnAdjudication.openClawBoundarySatisfied ? 'satisfied' : 'blocked'}</li>
+          <li><strong>proof-of-done status:</strong> {verificationReturnAdjudication.proofOfDoneStatus}</li>
           <li><strong>blockers:</strong> {verificationReturnAdjudication.blockers}</li>
-          <li><strong>merge readiness:</strong> {verificationReturnAdjudication.mergeReadiness}</li>
+          <li><strong>warnings:</strong> {(verificationReturnAdjudication.warnings || []).join(' | ') || 'none'}</li>
+          <li><strong>merge-ready candidate:</strong> {verificationReturnAdjudication.mergeReadyCandidate ? 'yes' : 'no'}</li>
           <li><strong>suggested lesson candidate:</strong> {verificationReturnAdjudication.suggestedLessonCandidate}</li>
           <li><strong>next action:</strong> {verificationReturnAdjudication.nextAction}</li>
         </ul>

@@ -96,6 +96,14 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       repoArchitectureGeneratedOutputTouched: 'yes',
       repoArchitectureSourceTruthWarning: 'apps/stephanos/dist is generated output, not source truth.',
       repoArchitectureRiskLevel: 'Mission Console:high|codex-handoff:medium',
+      missionVerificationJudgment: 'insufficient_evidence',
+      missionVerificationReadinessLevel: 'not_ready',
+      missionVerificationMergeReadyCandidate: 'no',
+      missionVerificationBlockerCount: '1',
+      missionVerificationWarningCount: '2',
+      missionVerificationProofStatus: 'pending',
+      missionVerificationChangedFilesInScope: 'yes',
+      missionVerificationRequiredTestsRun: 'no',
 
     },
     routeTruthView: {
@@ -1976,4 +1984,10 @@ test('buildSupportSnapshot snapshot: streaming completion state distinguishes fa
 test('support snapshot projects compact repo architecture context fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { repoArchitectureAffectedSubsystemCount: '3', repoArchitectureAffectedSubsystems: 'mission-console|intent-to-build|support-snapshot', repoArchitectureLikelyTestCount: '2', repoArchitectureGeneratedOutputTouched: 'yes', repoArchitectureSourceTruthWarning: 'apps/stephanos/dist is generated output, not source truth.', repoArchitectureRiskLevel: 'mission-console:high' } });
   assert.match(snapshot, /repoarchitectureaffectedsubsystemcount|Mission/i);
+});
+
+
+test('support snapshot projects mission verification judgment fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { missionVerificationJudgment: 'proof_pending' } });
+  assert.match(snapshot, /Mission Verification Judgment: proof_pending/);
 });
