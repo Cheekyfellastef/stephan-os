@@ -67,6 +67,8 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'Safe to Continue Routine Finish:',
     'Task Finisher / Routine Finish Plan:',
     'merge-ready candidate:',
+    'PR Evidence Intake',
+    'No PR evidence supplied yet.',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
   assert.equal(source.includes('responder'), true);
