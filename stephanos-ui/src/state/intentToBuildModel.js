@@ -80,6 +80,41 @@ function classifyApprovalBoundaries({
   };
 }
 
+
+function deriveMissionMemoryInfluence({ memoryContext = {}, intentCategories = [], rawIntent = '' } = {}) {
+  const candidates = Array.isArray(memoryContext?.memoryCandidates) ? memoryContext.memoryCandidates : [];
+  const durableApproved = candidates.filter((entry) => entry && entry.status === 'approved' && entry.promotionState === 'saved');
+  const allowedTypes = new Set(['architecture_canon_candidate', 'durable_operator_preference', 'project_lesson', 'capability_gap']);
+  const relevantApproved = durableApproved.filter((entry) => {
+    const type = asText(entry.memoryCandidateType || entry.type).toLowerCase();
+    if (allowedTypes.has(type)) return true;
+    return /(canon|preference|lesson|capability)/i.test(asText(entry.summary));
+  }).slice(0, 5);
+  const typeSet = new Set(relevantApproved.map((entry) => asText(entry.memoryCandidateType || entry.type || 'unknown')));
+  const draftContext = asText(memoryContext?.draftMissionContext || memoryContext?.missionDraft || '');
+  const memoriesUsed = relevantApproved.map((entry, index) => ({
+    id: asText(entry.id, `approved-memory-${index + 1}`),
+    type: asText(entry.memoryCandidateType || entry.type, 'unknown'),
+    summary: asText(entry.summary, 'Approved durable memory influence.'),
+    source: asText(entry.source, 'memory-bridge'),
+  }));
+  if (draftContext) {
+    memoriesUsed.push({ id: 'draft-mission-context', type: 'mission_draft_context', summary: draftContext, source: 'mission-bridge-draft' });
+    typeSet.add('mission_draft_context');
+  }
+  const canonNotes = memoriesUsed.filter((e) => /canon|architecture/i.test(e.type + ' ' + e.summary)).map((e) => e.summary);
+  const lessonNotes = memoriesUsed.filter((e) => /lesson|project_lesson|capability/i.test(e.type + ' ' + e.summary)).map((e) => e.summary);
+  return {
+    memoriesUsed,
+    missionMemoryInfluenceCount: memoriesUsed.length,
+    missionMemoryInfluenceTypes: [...typeSet],
+    missionMemoryLastAppliedAt: memoriesUsed.length ? new Date().toISOString() : '',
+    canonNotes,
+    lessonNotes,
+    operatorIntentProtected: asText(rawIntent).length > 0 && intentCategories.length > 0,
+  };
+}
+
 export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
   const rawIntent = asText(input.rawIntent, 'No operator intent supplied yet.');
   const targetArea = asText(input.targetArea, 'unspecified-area');
@@ -98,9 +133,13 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     allowedAutomation: input.allowedAutomation,
     requiresApprovalFlags: input.requiresApprovalFlags,
   });
-
   const missionId = `intent-build-${slugify(targetArea)}-${now.getTime()}`;
   const classifications = classifyOperatorIntent(rawIntent);
+  const memoryInfluence = deriveMissionMemoryInfluence({
+    memoryContext: input.memoryContext || {},
+    intentCategories: classifications.categories,
+    rawIntent,
+  });
   const memoryCandidate = buildMissionMemoryCandidate({ operatorIntentText: rawIntent, categories: classifications.categories });
   const missionSpec = {
     missionId,
@@ -123,6 +162,10 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     costBoundary: 'Zero-cost defaults remain active unless operator explicitly approves paid routes.',
     intentClassifications: classifications.categories,
     missionMemoryCandidate: memoryCandidate,
+    missionMemoryInfluence: memoryInfluence.memoriesUsed,
+    missionMemoryInfluenceCount: memoryInfluence.missionMemoryInfluenceCount,
+    missionMemoryInfluenceTypes: memoryInfluence.missionMemoryInfluenceTypes,
+    missionMemoryLastAppliedAt: memoryInfluence.missionMemoryLastAppliedAt,
   };
 
   return missionSpec;
@@ -180,6 +223,7 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     'stephanos-ui/src/state/intentToBuildModel.js',
     'stephanos-ui/src/state/supportSnapshot.js',
   ]);
+  const memoryInfluence = Array.isArray(spec.missionMemoryInfluence) ? spec.missionMemoryInfluence : [];
   const lines = [
     'Codex Mission Handoff',
     `Mission ID: ${asText(spec.missionId, 'n/a')}`,
@@ -211,6 +255,17 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '',
     'PR Acceptance Criteria:',
     ...asList(spec.successCriteria).map((entry) => `- ${entry}`),
+    '',
+    'Memory Influence (approved durable + relevant draft context only):',
+    ...(memoryInfluence.length ? memoryInfluence.map((entry) => `- [${asText(entry.type, 'unknown')}] ${asText(entry.summary, 'n/a')}`) : ['- none']),
+    '',
+    'Safety Doctrine (mandatory):',
+    '- No destructive actions.',
+    '- No git push.',
+    '- No secrets handling or persistence.',
+    '- No external account actions.',
+    '- Build + verify required before merge-ready posture.',
+    '- Operator final authority; no autonomous execution.',
   ];
 
   return lines.join('\n');

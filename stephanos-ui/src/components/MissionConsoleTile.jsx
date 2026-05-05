@@ -237,6 +237,9 @@ export default function MissionConsoleTile({
       approvalRequired: intentToBuild?.approvalRequired === true ? 'yes' : 'no',
       generatedPromptAvailable: intentToBuild?.generatedPromptAvailable === true ? 'yes' : 'no',
       verificationStatus: intentToBuild?.verificationEvidence?.verificationStatus || 'pending',
+      missionMemoryInfluenceCount: String(intentToBuild?.missionSpec?.missionMemoryInfluenceCount || 0),
+      missionMemoryInfluenceTypes: (intentToBuild?.missionSpec?.missionMemoryInfluenceTypes || []).join('|') || 'none',
+      missionMemoryLastAppliedAt: intentToBuild?.missionSpec?.missionMemoryLastAppliedAt || 'n/a',
     });
   }, [intentToBuild, onIntentToBuildUpdate]);
   useEffect(() => {
@@ -427,8 +430,16 @@ export default function MissionConsoleTile({
     setIntentInput((previous) => ({ ...previous, [field]: value }));
   }
 
+  const missionMemoryContext = useMemo(() => ({
+    memoryCandidates: agentTaskProjection?.memoryCandidates || [],
+    draftMissionContext: missionBridgeState?.missionPacket?.missionTitle || '',
+  }), [agentTaskProjection?.memoryCandidates, missionBridgeState?.missionPacket?.missionTitle]);
+
   function generateIntentToBuildSpec() {
-    const next = createIntentToBuildState(intentInput);
+    const next = createIntentToBuildState({
+      ...intentInput,
+      memoryContext: missionMemoryContext,
+    });
     setIntentToBuild(next);
   }
 
@@ -569,6 +580,8 @@ export default function MissionConsoleTile({
           <li><strong>suggested durability:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.suggestedDurability || 'session'}</li>
           <li><strong>possible capability gap:</strong> {intentToBuild.missionSpec.missionMemoryCandidate?.possibleCapabilityGap || 'none-detected'}</li>
           <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
+          <li><strong>memory influence count:</strong> {intentToBuild.missionSpec.missionMemoryInfluenceCount || 0}</li>
+          <li><strong>memory influence types:</strong> {(intentToBuild.missionSpec.missionMemoryInfluenceTypes || []).join(', ') || 'none'}</li>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
           <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>
@@ -582,6 +595,13 @@ export default function MissionConsoleTile({
           <li><strong>mission bridge next action:</strong> {missionBridgeState.nextRecommendedAction}</li>
           <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
           <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
+        </ul>
+        <h5>Memory used for this mission</h5>
+        <ul>
+          {(intentToBuild.missionSpec.missionMemoryInfluence || []).map((entry) => (
+            <li key={entry.id}><strong>{entry.type}:</strong> {entry.summary}</li>
+          ))}
+          {(!intentToBuild.missionSpec.missionMemoryInfluence || intentToBuild.missionSpec.missionMemoryInfluence.length === 0) ? <li>none</li> : null}
         </ul>
         <p><em>Generated mission proposal, no code changed. OpenClaw remains parked unless explicitly in scope.</em></p>
         <h5>Verification Return Input</h5>
