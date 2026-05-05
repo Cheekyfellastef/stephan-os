@@ -306,6 +306,15 @@ export default function MissionConsoleTile({
       missionVerificationProofStatus: verificationReturnAdjudication.proofOfDoneStatus || 'pending',
       missionVerificationChangedFilesInScope: verificationReturnAdjudication.changedFilesInScope ? 'yes' : 'no',
       missionVerificationRequiredTestsRun: verificationReturnAdjudication.requiredTestsRun ? 'yes' : 'no',
+      prEvidenceStatus: intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus || 'no_pr_evidence',
+      prEvidenceNumber: String(intentToBuild?.missionSpec?.prEvidenceIntake?.prNumber || 'n/a'),
+      prEvidenceChecksStatus: intentToBuild?.missionSpec?.prEvidenceIntake?.checksStatus || 'unknown',
+      prEvidenceMerged: intentToBuild?.missionSpec?.prEvidenceIntake?.merged ? 'yes' : 'no',
+      prEvidenceMergedBy: intentToBuild?.missionSpec?.prEvidenceIntake?.mergedBy || 'unknown',
+      prEvidenceAutoMergeState: intentToBuild?.missionSpec?.prEvidenceIntake?.autoMergeState || 'unknown',
+      prEvidenceChangedFileCount: String(intentToBuild?.missionSpec?.prEvidenceIntake?.changedFileCount || 0),
+      prEvidenceWarningCount: String((intentToBuild?.missionSpec?.prEvidenceIntake?.evidenceWarnings || []).length || 0),
+      prEvidenceCodexTaskPresent: (intentToBuild?.missionSpec?.prEvidenceIntake?.codexTaskUrl || intentToBuild?.missionSpec?.prEvidenceIntake?.codexTaskId) ? 'yes' : 'no',
       memoryLibrarianPendingCount: String(memoryLibrarian.counts.pending || 0),
       memoryLibrarianApprovalRequiredCount: String(memoryLibrarian.counts.approvalRequired || 0),
       memoryLibrarianCanonCandidateCount: String(memoryLibrarian.counts.canonCandidates || 0),
@@ -860,7 +869,25 @@ export default function MissionConsoleTile({
           <button type="button" onClick={() => copyToClipboard(intentToBuild.codexPrompt, setPromptCopyState)}>
             {promptCopyState === COPY_STATE.SUCCESS ? 'Codex Prompt Copied' : 'Copy Codex Prompt'}
           </button>
-        </div>
+      </div>
+      <div className="paneSection">
+        <h5>PR Evidence Intake</h5>
+        {!intentToBuild?.missionSpec?.prEvidenceIntake || intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus === 'no_pr_evidence' ? (
+          <p>No PR evidence supplied yet.</p>
+        ) : (
+          <ul>
+            <li><strong>normalized status:</strong> {intentToBuild.missionSpec.prEvidenceIntake.normalizedStatus}</li>
+            <li><strong>PR:</strong> #{intentToBuild.missionSpec.prEvidenceIntake.prNumber || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.prTitle || ''} {intentToBuild.missionSpec.prEvidenceIntake.prUrl || ''}</li>
+            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} → {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
+            <li><strong>changed files:</strong> {intentToBuild.missionSpec.prEvidenceIntake.changedFileCount || 0}</li>
+            <li><strong>checks:</strong> {intentToBuild.missionSpec.prEvidenceIntake.checksStatus || 'unknown'} (required: {intentToBuild.missionSpec.prEvidenceIntake.requiredChecksStatus || 'unknown'})</li>
+            <li><strong>auto-merge:</strong> {intentToBuild.missionSpec.prEvidenceIntake.autoMergeState || 'unknown'}</li>
+            <li><strong>merged:</strong> {intentToBuild.missionSpec.prEvidenceIntake.merged ? 'yes' : 'no'} by {intentToBuild.missionSpec.prEvidenceIntake.mergedBy || 'unknown'} at {intentToBuild.missionSpec.prEvidenceIntake.mergedAt || 'n/a'}</li>
+            <li><strong>codex task:</strong> {intentToBuild.missionSpec.prEvidenceIntake.codexTaskId || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.codexTaskUrl || ''}</li>
+            <li><strong>warnings:</strong> {(intentToBuild.missionSpec.prEvidenceIntake.evidenceWarnings || []).join(' | ') || 'none'}</li>
+          </ul>
+        )}
+      </div>
         <pre className="openclaw-prompt-box">{intentToBuild.codexPrompt}</pre>
       </section>
 

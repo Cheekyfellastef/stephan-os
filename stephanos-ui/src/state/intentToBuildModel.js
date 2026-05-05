@@ -4,6 +4,7 @@ import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
 import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.js';
 import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
 import { buildTaskFinisherPlan } from './taskFinisherModel.js';
+import { buildPrEvidenceIntake } from './prEvidenceIntakeModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -202,6 +203,11 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
   });
 
 
+  const prEvidenceIntake = buildPrEvidenceIntake({
+    prMetadata: input.prMetadata || null,
+    missionSpec: { finishAuthority, repoArchitectureContext },
+  });
+
   const taskFinisherPlan = buildTaskFinisherPlan({
     missionSpec: { missionId },
     verificationJudge: input.verificationJudge || {},
@@ -210,6 +216,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     memoryLibrarianQueue: memoryLibrarian,
     openClawDelegation,
     prMetadata: input.prMetadata || {},
+    prEvidenceIntake,
   });
 
   const missionSpec = {
@@ -247,6 +254,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     nextBestAction: memoryContextWarnings.length ? 'Resolve surfaced memory/intent conflicts before handoff execution.' : 'Generate Codex-safe implementation handoff and run required verification.',
     openClawDelegation,
     finishAuthority,
+    prEvidenceIntake,
     repoArchitectureContext,
     memoryLibrarian,
     taskFinisherPlan,
@@ -441,6 +449,17 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- operator-visible proof evidence and any manual verification steps.',
     '- blockers/failures and unresolved risks.',
     '- explicit statement: no OpenClaw execution, no shell outside approved scope, no git push, no merge, no secrets access, no external-account action.',
+    '',
+    'PR Evidence Return (if metadata is available):',
+    '- PR number and PR URL.',
+    '- branch name (head) and base branch.',
+    '- changed files and changed file count.',
+    '- checks status and required checks status.',
+    '- build + verify status summary.',
+    '- merge status, merged by/at (if known).',
+    '- whether auto-merge was enabled/armed.',
+    '- Codex task link/id (if known).',
+    '- explicit safety statement: no GitHub write/merge action was performed unless mission authority explicitly included it.',
     '',
     'Safety Doctrine (mandatory):',
     '- No destructive actions.',

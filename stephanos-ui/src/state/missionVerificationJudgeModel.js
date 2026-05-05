@@ -42,6 +42,7 @@ export function adjudicateMissionVerificationJudge({
   const expectedTests = asList(missionSpec?.repoArchitectureContext?.testsLikelyRequired);
   const generatedOutputs = asList(missionSpec?.repoArchitectureContext?.generatedOutputsLikelyTouched);
   const finishAuthority = missionSpec?.finishAuthority || {};
+  const prEvidence = missionSpec?.prEvidenceIntake || {};
   const openClawDelegation = missionSpec?.openClawDelegation || {};
 
   const seenFiles = asList(changedFiles || parsed.changedFiles);
@@ -73,6 +74,8 @@ export function adjudicateMissionVerificationJudge({
   if (parsed.mergedClaim && !finishAuthoritySatisfied) warnings.push('merge_authority_gap');
   if (parsed.githubWriteClaim) warnings.push('github_write_claim_requires_operator_review');
   if (generatedOutputs.length > 0 && parsed.distTouched && !parsed.distRebuiltClaim) warnings.push('generated_dist_without_rebuild_evidence');
+  if (prEvidence.normalizedStatus === 'checks_failed') warnings.push('pr_evidence_checks_failed');
+  if (prEvidence.normalizedStatus === 'merged' && !(finishAuthority.mergeAuthorityIncluded && finishAuthority.operatorApprovalRecorded)) warnings.push('pr_merged_without_recorded_authority');
 
   let judgment = 'merge_ready_candidate';
   if (!parsed.hasReturn) judgment = 'no_return';
@@ -108,5 +111,6 @@ export function adjudicateMissionVerificationJudge({
     nextAction: mergeReadyCandidate ? 'Operator review for finish authority decision.' : 'Request fix/evidence update before considering merge-ready candidate.',
     mergeReadyCandidate,
     parsed,
+    prEvidenceStatus: asText(prEvidence.normalizedStatus, 'no_pr_evidence'),
   };
 }

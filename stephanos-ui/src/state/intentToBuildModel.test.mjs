@@ -52,6 +52,7 @@ test('mission proposal retains blocked actions and codex handoff includes verifi
   assert.match(prompt, /PR Acceptance Criteria:/);
   assert.match(prompt, /Verification Commands:/);
   assert.match(prompt, /Verification Return Contract \(required in Codex return\):/);
+  assert.match(prompt, /PR Evidence Return \(if metadata is available\):/);
 });
 
 test('approval boundary classification keeps risky actions gated', () => {

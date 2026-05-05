@@ -24,6 +24,7 @@ export function buildTaskFinisherPlan({
   memoryLibrarianQueue = {},
   openClawDelegation = {},
   prMetadata = {},
+  prEvidenceIntake = {},
 } = {}) {
   const routineTasks = [];
   const requiredOperatorDecisions = [];
@@ -63,6 +64,8 @@ export function buildTaskFinisherPlan({
   if (!mergeAuthorityIncluded || !verificationPass) {
     routineTasks.push('request_operator_merge_decision');
   }
+  if (prEvidenceIntake?.normalizedStatus === 'checks_failed') routineTasks.push('request_checks_repair_before_finish');
+  if (prEvidenceIntake?.normalizedStatus === 'merged' && !mergeAuthorityIncluded) requiredOperatorDecisions.push('merged_without_mission_merge_authority_review');
 
   if (openClawDelegation && verificationJudge.openClawBoundarySatisfied === false) {
     requiredOperatorDecisions.push('openclaw boundary review required');
@@ -83,6 +86,7 @@ export function buildTaskFinisherPlan({
 
   if (!routineFinishAllowed) warnings.push('Routine finish: recommendations only');
   if (mergeStillOperatorControlled) warnings.push('Merge: operator-controlled');
+  if (Array.isArray(prEvidenceIntake?.evidenceWarnings) && prEvidenceIntake.evidenceWarnings.length > 0) warnings.push(`PR evidence warnings: ${prEvidenceIntake.evidenceWarnings.join(' | ')}`);
   warnings.push('No shell/GitHub execution is performed by Stephanos UI.');
 
   const warningLevel = requiredOperatorDecisions.length > 0 ? 'high' : codexRepairNeeded ? 'medium' : 'low';
