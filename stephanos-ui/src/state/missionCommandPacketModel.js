@@ -1,3 +1,5 @@
+
+import { buildMissionRoutingReadiness } from './missionRoutingReadinessModel.js';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -31,6 +33,19 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
   const repoArchitectureContext = input.repoArchitectureContext || {};
   const agentAssignmentMatrix = input.agentAssignmentMatrix || {};
   const codexPrompt = asText(input.codexPrompt || missionSpec.codexPrompt || missionSpec.codexHandoffPrompt);
+  const missionRouting = buildMissionRoutingReadiness({
+    missionSpec,
+    missionCommandPacket: input.missionCommandPacket || {},
+    agentAssignmentMatrix,
+    operatorDecisionConsole,
+    missionEvidenceLedger,
+    verificationJudge,
+    taskFinisherPlan,
+    memoryLibrarianQueue,
+    prEvidenceIntake,
+    openClawDelegation,
+    finishAuthority,
+  });
 
   const blockedActions = asList(missionSpec?.approvalBoundary?.blockedActions, ['deploy', 'merge-without-operator-approval']);
   const allowedScope = asText(missionSpec.implementationScope, 'Scoped changes only; no autonomous execution.');
@@ -67,6 +82,8 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
     memoryLibrarianSummary: compactSummary({ status: memoryLibrarianQueue.queueStatus || 'idle', count: memoryLibrarianQueue.pendingCount || 0, warnings: memoryLibrarianQueue.conflicts, nextAction: memoryLibrarianQueue.nextAction || 'Await operator memory decisions.' }),
     evidenceLedgerSummary: compactSummary({ status: missionEvidenceLedger.completeness || 'unknown', count: missionEvidenceLedger.entries?.length || 0, warnings: missionEvidenceLedger.warnings, nextAction: missionEvidenceLedger.nextRequired || 'Collect missing evidence.' }),
     operatorDecisionSummary: compactSummary({ status: operatorDecisionConsole.status || 'pending', count: operatorDecisionConsole.pendingCount || operatorDecisionConsole.decisions?.length || 0, warnings: operatorDecisionConsole.warnings, nextAction: operatorDecisionConsole.nextAction || 'Resolve queued decisions.' }),
+    missionRoutingSummary: missionRouting.routeSummary,
+    missionRoutingReadiness: missionRouting,
     agentAssignmentSummary: {
       assignedRoles: asList(agentAssignmentMatrix.assignments?.map((entry) => entry.roleId), []),
       leadRole: asText(agentAssignmentMatrix.summary?.recommendedLeadRole, 'operator'),
@@ -127,6 +144,14 @@ export function buildMissionCommandPacketMarkdown(packet = {}) {
     `- ${asText(packet.evidenceLedgerSummary?.status, 'unknown')}`,
     '## Operator Decisions',
     `- ${asText(packet.operatorDecisionSummary?.status, 'unknown')}`,
+    '## Mission Routing / Delegation Readiness',
+    `- Route Status: ${asText(packet.missionRoutingSummary?.routeStatus, 'draft')}`,
+    `- Recommended Route: ${asText(packet.missionRoutingSummary?.recommendedRoute, 'operator_decision')}`,
+    `- Readiness Level: ${asText(packet.missionRoutingSummary?.readinessLevel, 'not_ready')}`,
+    `- Lead Role: ${asText(packet.missionRoutingSummary?.assignedLeadRole, 'operator')}`,
+    `- Blockers: ${packet.missionRoutingSummary?.blockerCount || 0}, Warnings: ${packet.missionRoutingSummary?.warningCount || 0}`,
+    `- Required Before Route: ${packet.missionRoutingSummary?.requiredBeforeRouteCount || 0}`,
+    `- Next Action: ${asText(packet.missionRoutingSummary?.nextAction, 'Await operator decision.')}`,
     '## Agent Assignment',
     `- Assigned Roles: ${asList(packet.agentAssignmentSummary?.assignedRoles, ['none']).join(', ')}`,
     `- Lead Role: ${asText(packet.agentAssignmentSummary?.leadRole, 'operator')}`,

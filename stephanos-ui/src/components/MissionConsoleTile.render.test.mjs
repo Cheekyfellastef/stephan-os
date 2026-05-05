@@ -32,6 +32,7 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'Generate Mission Spec',
     'Copy Mission Spec',
     'Copy Codex Prompt',
+    'Mission Routing / Delegation Readiness',
     'Mission Command Packet',
     'Agent Assignment Matrix',
     'Copy Packet Markdown',
