@@ -112,6 +112,7 @@ test('approved durable memory influences mission proposal while rejected/unsaved
         { id: 'm4', status: 'approved', promotionState: 'draft', memoryCandidateType: 'durable_operator_preference', summary: 'Unsaved draft must not be used.' },
       ],
       draftMissionContext: 'Current draft: mission bridge requires explicit approval gate.',
+      includeDraftMissionContext: true,
     },
   });
 
@@ -134,10 +135,109 @@ test('codex handoff includes safety doctrine and memory influence section and ke
     },
   });
   const prompt = buildCodexHandoffPrompt({ missionSpec });
-  assert.match(prompt, /Memory Influence \(approved durable \+ relevant draft context only\):/);
+  assert.match(prompt, /Memory Context \(approved durable \+ explicitly marked draft context only\):/);
   assert.match(prompt, /Safety Doctrine \(mandatory\):/);
   assert.match(prompt, /No git push\./);
   assert.match(prompt, /Operator final authority/);
   assert.match(prompt, /no autonomous execution/i);
   assert.equal(missionSpec.missionMemoryInfluenceTypes.includes('capability_gap'), true);
+});
+
+test('mission memory orchestrator groups approved memory and excludes rejected or unsaved durable guidance', async () => {
+  const { buildMissionMemoryContext } = await import('./missionMemoryOrchestrator.js');
+  const context = buildMissionMemoryContext({
+    operatorIntent: 'Improve Mission Console memory with verification and operator approval.',
+    missionSpec: { targetArea: 'mission-console', intentClassifications: ['memory_request'] },
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'canon-1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'architecture_canon_candidate', summary: 'apps/stephanos/dist is generated output, never source truth.' },
+        { id: 'lesson-1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'project_lesson', summary: 'Verification checks must be visible in mission handoffs.' },
+        { id: 'rejected-1', status: 'rejected', promotionState: 'rejected', memoryCandidateType: 'project_lesson', summary: 'Rejected memory must not be used.' },
+        { id: 'draft-1', status: 'approved', promotionState: 'draft', memoryCandidateType: 'durable_operator_preference', summary: 'Unsaved durable memory must not be used.' },
+      ],
+      draftMissionContext: 'Explicit draft context can be visible but not durable guidance.',
+      includeDraftMissionContext: true,
+    },
+  });
+
+  assert.equal(context.summary.count, 3);
+  assert.equal(context.groups.architecture_canon.length, 1);
+  assert.equal(context.groups.project_lesson.length, 1);
+  assert.equal(context.groups.mission_history.length, 1);
+  assert.equal(context.memories.some((memory) => /Rejected memory/.test(memory.summary)), false);
+  assert.equal(context.memories.some((memory) => /Unsaved durable/.test(memory.summary)), false);
+  assert.equal(context.memories.some((memory) => memory.influenceLevel === 'draft_context'), true);
+});
+
+test('mission memory context influences proposal while preserving current operator intent', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Add mission memory orchestrator but keep operator intent primary and skip verification only if memory says so.',
+    targetArea: 'mission-console',
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'canon-1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'architecture_canon_candidate', summary: 'Operator remains final authority and build plus verify are required.' },
+        { id: 'lesson-1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'project_lesson', summary: 'Mission handoff should list acceptance criteria and risks.' },
+      ],
+    },
+  });
+
+  assert.match(missionSpec.rawIntent, /skip verification only if memory says so/);
+  assert.equal(missionSpec.successCriteria.includes('Mission Memory Context is visible, grouped, and cannot override current operator intent.'), true);
+  assert.equal(missionSpec.missionMemoryContext.groups.architecture_canon.length, 1);
+  assert.equal(missionSpec.missionMemoryInfluenceLevels.includes('critical_canon'), true);
+  assert.equal(missionSpec.missionMemoryConflicts.some((conflict) => conflict.conflictType === 'verification_required_by_canon'), true);
+});
+
+test('mission memory conflict detection surfaces autonomy openclaw destructive dist and verification conflicts', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Autonomous OpenClaw execute, delete stale files, edit dist-only, and skip verification without approval.',
+    targetArea: 'openclaw',
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'canon-approval', status: 'approved', promotionState: 'saved', memoryCandidateType: 'architecture_canon_candidate', summary: 'Operator approval is required; OpenClaw remains parked and readonly; dist is generated output; build and verify required; no destructive actions.' },
+      ],
+    },
+  });
+  const types = missionSpec.missionMemoryConflicts.map((conflict) => conflict.conflictType);
+  assert.equal(types.includes('autonomy_requires_operator_approval'), true);
+  assert.equal(types.includes('openclaw_parked_execution_requested'), true);
+  assert.equal(types.includes('destructive_action_blocked_by_doctrine'), true);
+  assert.equal(types.includes('dist_not_source_truth'), true);
+  assert.equal(types.includes('verification_required_by_canon'), true);
+});
+
+test('verification return creates approval-gated lesson candidates without auto-saving', async () => {
+  const { deriveVerificationReturnLessonCandidates } = await import('./intentToBuildModel.js');
+  const candidates = deriveVerificationReturnLessonCandidates({
+    verificationReturnText: 'Build failed due to stale dist metadata. Root cause found. Missing automatic stale-dist detection capability. Add verify command. Do not repeat this regression.',
+    missionSpec: { missionId: 'mission-1' },
+  });
+  const types = candidates.map((candidate) => candidate.memoryCandidateType);
+  assert.equal(types.includes('project_lesson'), true);
+  assert.equal(types.includes('verification_rule'), true);
+  assert.equal(types.includes('capability_gap'), true);
+  assert.equal(types.includes('do_not_repeat_warning'), true);
+  assert.equal(candidates.every((candidate) => candidate.status === 'draft'), true);
+  assert.equal(candidates.every((candidate) => candidate.promotionState === 'pending-operator-approval'), true);
+});
+
+test('repeated capability gaps surface compact Skill Forge candidate but no execution permissions', async () => {
+  const { buildMissionMemoryContext } = await import('./missionMemoryOrchestrator.js');
+  const context = buildMissionMemoryContext({
+    operatorIntent: 'Improve automatic stale-dist metadata detection capability.',
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'gap-1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'capability_gap', summary: 'Missing capability: automatic stale-dist metadata detection.' },
+        { id: 'gap-2', status: 'approved', promotionState: 'saved', memoryCandidateType: 'capability_gap', summary: 'Capability gap repeated: stale-dist metadata checks need automation.' },
+      ],
+    },
+  });
+  assert.equal(context.skillForgeCandidate?.candidateType, 'skill_forge_capability_gap');
+  assert.equal(context.skillForgeCandidate?.requiresOperatorApproval, true);
+  assert.equal(context.skillForgeCandidate?.status, 'suggested-not-built');
+
+  const missionSpec = buildMissionSpec({ rawIntent: 'Use OpenClaw analysis only.', targetArea: 'openclaw' });
+  assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('openclaw execution'), true);
+  assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('shell/file/git/browser actions'), true);
+  assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('git push'), true);
 });
