@@ -98,3 +98,46 @@ test('createIntentToBuildState preserves privacy/cost doctrine and prompt availa
   assert.equal(state.missionSpec.privacyBoundary.includes('No secrets'), true);
   assert.equal(state.missionSpec.costBoundary.includes('Zero-cost'), true);
 });
+
+
+test('approved durable memory influences mission proposal while rejected/unsaved do not', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Create mission envelope for memory loop while keeping operator intent primary.',
+    targetArea: 'mission-console',
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'm1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'architecture_canon_candidate', summary: 'Keep launcher and mission runtime separate.', source: 'operator' },
+        { id: 'm2', status: 'approved', promotionState: 'saved', memoryCandidateType: 'project_lesson', summary: 'Add verify checks in every mission handoff.', source: 'operator' },
+        { id: 'm3', status: 'rejected', promotionState: 'rejected', memoryCandidateType: 'project_lesson', summary: 'This rejected lesson must never be used.' },
+        { id: 'm4', status: 'approved', promotionState: 'draft', memoryCandidateType: 'durable_operator_preference', summary: 'Unsaved draft must not be used.' },
+      ],
+      draftMissionContext: 'Current draft: mission bridge requires explicit approval gate.',
+    },
+  });
+
+  assert.equal(missionSpec.missionMemoryInfluenceCount >= 3, true);
+  assert.equal(missionSpec.missionMemoryInfluence.some((entry) => /rejected lesson/.test(entry.summary.toLowerCase())), false);
+  assert.equal(missionSpec.missionMemoryInfluence.some((entry) => /unsaved draft/.test(entry.summary.toLowerCase())), false);
+  assert.equal(missionSpec.missionMemoryInfluence.some((entry) => /launcher and mission runtime separate/i.test(entry.summary)), true);
+  assert.equal(missionSpec.missionMemoryInfluence.some((entry) => /verify checks/i.test(entry.summary)), true);
+  assert.equal(missionSpec.rawIntent.includes('operator intent primary'), true);
+});
+
+test('codex handoff includes safety doctrine and memory influence section and keeps OpenClaw parked', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Generate handoff only; no execution.',
+    targetArea: 'mission-console',
+    memoryContext: {
+      memoryCandidates: [
+        { id: 'm1', status: 'approved', promotionState: 'saved', memoryCandidateType: 'capability_gap', summary: 'Mission memory loop needs visible influence projection.' },
+      ],
+    },
+  });
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.match(prompt, /Memory Influence \(approved durable \+ relevant draft context only\):/);
+  assert.match(prompt, /Safety Doctrine \(mandatory\):/);
+  assert.match(prompt, /No git push\./);
+  assert.match(prompt, /Operator final authority/);
+  assert.match(prompt, /no autonomous execution/i);
+  assert.equal(missionSpec.missionMemoryInfluenceTypes.includes('capability_gap'), true);
+});
