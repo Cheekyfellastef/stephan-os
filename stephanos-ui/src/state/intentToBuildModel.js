@@ -1,5 +1,6 @@
 import { buildMissionMemoryContext, deriveVerificationReturnLessonCandidates } from './missionMemoryOrchestrator.js';
 import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
+import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -158,6 +159,31 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     missionScope: `Mission scope in ${targetArea}: ${asText(input.implementationScope, `Implement scoped changes in ${targetArea} without violating Stephanos doctrine.`)}` ,
   });
 
+  const finishAuthority = adjudicateMissionFinishAuthority({
+    missionId,
+    finishAuthorityStatus: asText(input.finishAuthorityStatus, 'not_granted'),
+    finishAuthorityLevel: asText(input.finishAuthorityLevel, 'none'),
+    routineFinishAllowed: input.routineFinishAllowed === true,
+    retryChecksAllowed: input.retryChecksAllowed === true,
+    rebuildDistAllowed: input.rebuildDistAllowed === true,
+    updatePrAllowed: input.updatePrAllowed === true,
+    mergeAuthorityIncluded: input.mergeAuthorityIncluded === true,
+    autoMergeArmed: asText(input.autoMergeArmed, 'unknown'),
+    operatorApprovalRecorded: input.operatorApprovalRecorded === true,
+    approvedBy: asText(input.approvedBy, ''),
+    approvedAt: asText(input.approvedAt, ''),
+    prNumber: asText(input.prNumber, 'n/a'),
+    prUrl: asText(input.prUrl, ''),
+    merged: input.merged === true,
+    mergedBy: asText(input.mergedBy, ''),
+    mergedAt: asText(input.mergedAt, ''),
+    mergeCommitSha: asText(input.mergeCommitSha, ''),
+    mergeSource: asText(input.mergeSource, 'unknown'),
+    checksStatus: asText(input.checksStatus, 'unknown'),
+    verificationStatus: asText(input.verificationStatus, 'unknown'),
+    scopeStatus: asText(input.scopeStatus, 'in_scope'),
+  });
+
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -192,6 +218,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     risks: [...asList(input.risks, []), ...memoryContextWarnings],
     nextBestAction: memoryContextWarnings.length ? 'Resolve surfaced memory/intent conflicts before handoff execution.' : 'Generate Codex-safe implementation handoff and run required verification.',
     openClawDelegation,
+    finishAuthority,
   };
 
   return missionSpec;
@@ -295,6 +322,27 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     ...(memoryConflicts.length ? memoryConflicts.map((conflict) => `- ${asText(conflict.severity)} ${asText(conflict.conflictType)} from ${asText(conflict.memorySource)}: ${asText(conflict.suggestedResolution)}`) : ['- none surfaced']),
     '- Memory cannot override operator authority or silently rewrite current operator intent.',
     '',
+
+    '',
+    'Mission Finish Authority:',
+    `- finish_authority_status: ${asText(spec.finishAuthority?.finishAuthorityStatus, 'not_granted')}`,
+    `- finish_authority_level: ${asText(spec.finishAuthority?.finishAuthorityLevel, 'none')}`,
+    `- routine_finish_allowed: ${spec.finishAuthority?.routineFinishAllowed ? 'yes' : 'no'}`,
+    `- retry_checks_allowed: ${spec.finishAuthority?.retryChecksAllowed ? 'yes' : 'no'}`,
+    `- rebuild_dist_allowed: ${spec.finishAuthority?.rebuildDistAllowed ? 'yes' : 'no'}`,
+    `- update_pr_allowed: ${spec.finishAuthority?.updatePrAllowed ? 'yes' : 'no'}`,
+    `- merge_authority_included: ${spec.finishAuthority?.mergeAuthorityIncluded ? 'yes' : 'no'}`,
+    `- auto_merge_armed: ${asText(spec.finishAuthority?.autoMergeArmed, 'unknown')}`,
+    `- operator_approval_recorded: ${spec.finishAuthority?.operatorApprovalRecorded ? 'yes' : 'no'}`,
+    `- merged: ${spec.finishAuthority?.merged ? 'yes' : 'no'}`,
+    `- merged_by: ${asText(spec.finishAuthority?.mergedBy, 'unknown')}`,
+    `- scope_status: ${asText(spec.finishAuthority?.scopeStatus, 'in_scope')}`,
+    `- warnings: ${(spec.finishAuthority?.warnings || []).join(' | ') || 'none'}`,
+    `- next_action: ${asText(spec.finishAuthority?.nextAction, 'Merge is not authorized by this mission.')}`,
+    '- Merge is not authorized by this mission.',
+    '- Scope expansion is blocked.',
+    '- Operator-only: destructive actions, secrets, external accounts, GitHub settings changes, and OpenClaw execution.',
+
     'OpenClaw Delegation Envelope:',
     `- delegated_to: ${asText(spec.openClawDelegation?.delegatedTo, 'openclaw')}`,
     `- authority_level: ${asText(spec.openClawDelegation?.authorityLevel, 'research_and_plan')}`,
@@ -304,6 +352,10 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- self-authority escalation blocked: true',
     '- OpenClaw may not grant itself powers.',
     '- OpenClaw may help design controls but not bypass them.',
+    '- OpenClaw may not merge.',
+    '- OpenClaw may not grant itself finish authority.',
+    '- OpenClaw may not expand mission scope.',
+    '- OpenClaw may prepare finish-readiness reports only unless future authority is explicitly granted.',
     '- Operator final authority.',
     '',
     'Safety Doctrine (mandatory):',

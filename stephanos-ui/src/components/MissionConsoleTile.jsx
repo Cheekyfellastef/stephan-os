@@ -260,6 +260,16 @@ export default function MissionConsoleTile({
       openClawDelegationMutationAllowed: intentToBuild?.missionSpec?.openClawDelegation?.mutationAllowed ? 'yes' : 'no',
       openClawDelegationSelfAuthorityBlocked: intentToBuild?.missionSpec?.openClawDelegation?.selfAuthorityEscalationAllowed ? 'no' : 'yes',
       openClawDelegationFinishAuthority: intentToBuild?.missionSpec?.openClawDelegation?.finishAuthority || 'plan_only',
+      missionFinishAuthorityStatus: intentToBuild?.missionSpec?.finishAuthority?.finishAuthorityStatus || 'not_granted',
+      missionFinishAuthorityLevel: intentToBuild?.missionSpec?.finishAuthority?.finishAuthorityLevel || 'none',
+      missionRoutineFinishAllowed: intentToBuild?.missionSpec?.finishAuthority?.routineFinishAllowed ? 'yes' : 'no',
+      missionMergeAuthorityIncluded: intentToBuild?.missionSpec?.finishAuthority?.mergeAuthorityIncluded ? 'yes' : 'no',
+      missionAutoMergeArmed: intentToBuild?.missionSpec?.finishAuthority?.autoMergeArmed || 'unknown',
+      missionOperatorApprovalRecorded: intentToBuild?.missionSpec?.finishAuthority?.operatorApprovalRecorded ? 'yes' : 'no',
+      missionMerged: intentToBuild?.missionSpec?.finishAuthority?.merged ? 'yes' : 'no',
+      missionMergedBy: intentToBuild?.missionSpec?.finishAuthority?.mergedBy || 'unknown',
+      missionFinishWarningLevel: intentToBuild?.missionSpec?.finishAuthority?.warningLevel || 'none',
+      missionFinishNextAction: intentToBuild?.missionSpec?.finishAuthority?.nextAction || 'Merge is not authorized by this mission.',
     });
   }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
@@ -606,6 +616,15 @@ export default function MissionConsoleTile({
           <li><strong>memory influence strength:</strong> {(intentToBuild.missionSpec.missionMemoryInfluenceLevels || []).join(', ') || 'none'}</li>
           <li><strong>memory conflict count:</strong> {intentToBuild.missionSpec.missionMemoryConflicts?.length || 0}</li>
           <li><strong>next best action:</strong> {intentToBuild.missionSpec.nextBestAction || 'n/a'}</li>
+          <li><strong>Mission Finish Authority:</strong> {intentToBuild.missionSpec.finishAuthority?.finishAuthorityStatus || 'not_granted'} ({intentToBuild.missionSpec.finishAuthority?.finishAuthorityLevel || 'none'})</li>
+          <li><strong>Routine finish allowed:</strong> {intentToBuild.missionSpec.finishAuthority?.routineFinishAllowed ? 'yes' : 'no'}</li>
+          <li><strong>Retry/Rebuild allowed:</strong> {(intentToBuild.missionSpec.finishAuthority?.retryChecksAllowed || intentToBuild.missionSpec.finishAuthority?.rebuildDistAllowed) ? 'yes' : 'no'}</li>
+          <li><strong>Merge authority:</strong> {intentToBuild.missionSpec.finishAuthority?.mergeAuthorityIncluded ? 'granted' : 'not granted'}</li>
+          <li><strong>Auto-merge state:</strong> {intentToBuild.missionSpec.finishAuthority?.autoMergeArmed || 'unknown'}</li>
+          <li><strong>Operator Approval Recorded:</strong> {intentToBuild.missionSpec.finishAuthority?.operatorApprovalRecorded ? 'yes' : 'no'}</li>
+          <li><strong>Actual Merge State:</strong> {intentToBuild.missionSpec.finishAuthority?.merged ? `merged by ${intentToBuild.missionSpec.finishAuthority?.mergedBy || 'unknown'}` : 'not merged'}</li>
+          <li><strong>Finish Warnings:</strong> {(intentToBuild.missionSpec.finishAuthority?.warnings || []).join(' | ') || 'none'}</li>
+          <li><strong>Finish Next Action:</strong> {intentToBuild.missionSpec.finishAuthority?.nextAction || 'Merge is not authorized by this mission.'}</li>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
           <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>
@@ -632,7 +651,7 @@ export default function MissionConsoleTile({
           <li><strong>what it may inspect:</strong> {intentToBuild.missionSpec.openClawDelegation?.repoInspectionAllowed ? 'yes' : 'no'}</li>
           <li><strong>what it may draft:</strong> {intentToBuild.missionSpec.openClawDelegation?.codexHandoffDraftAllowed ? 'yes' : 'no'}</li>
           <li><strong>whether routine finish steps are allowed:</strong> {['finish_routine_checks', 'merge_authorized'].includes(intentToBuild.missionSpec.openClawDelegation?.finishAuthority) ? 'yes' : 'no'}</li>
-          <li><strong>whether merge authority is included:</strong> {intentToBuild.missionSpec.openClawDelegation?.mergeAllowed ? 'yes' : 'no'}</li>
+          <li><strong>whether merge authority is included:</strong> no (OpenClaw may not merge)</li>
           <li><strong>whether operator approval is required:</strong> {intentToBuild.missionSpec.openClawDelegation?.requiredOperatorApproval ? 'yes' : 'no'}</li>
           <li><strong>Self-Authority Escalation:</strong> blocked</li>
         </ul>

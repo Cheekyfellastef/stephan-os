@@ -255,3 +255,20 @@ test('openclaw mission intents produce delegation preview and keep operator inte
   assert.equal(missionSpec.rawIntent.includes('Delegate OpenClaw'), true);
   assert.equal(missionSpec.openClawDelegation.selfAuthorityEscalationAllowed, false);
 });
+
+
+test('codex handoff includes mission finish authority section and explicit merge denial when not granted', () => {
+  const missionSpec = buildMissionSpec({ rawIntent: 'Prepare routine finish only.', targetArea: 'mission-console', routineFinishAllowed: true, finishAuthorityLevel: 'routine_finish_allowed' });
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.match(prompt, /Mission Finish Authority:/);
+  assert.match(prompt, /Merge is not authorized by this mission\./);
+});
+
+test('openclaw cannot grant itself finish authority or execution permissions', () => {
+  const missionSpec = buildMissionSpec({ rawIntent: 'OpenClaw should merge this PR automatically', targetArea: 'openclaw' });
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.equal(missionSpec.openClawDelegation.mergeAllowed, false);
+  assert.equal(missionSpec.openClawDelegation.selfAuthorityEscalationAllowed, false);
+  assert.match(prompt, /OpenClaw may not merge\./);
+  assert.match(prompt, /OpenClaw may not grant itself finish authority\./);
+});
