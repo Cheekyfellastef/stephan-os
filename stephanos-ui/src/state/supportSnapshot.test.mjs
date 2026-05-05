@@ -105,6 +105,17 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       missionVerificationChangedFilesInScope: 'yes',
       missionVerificationRequiredTestsRun: 'no',
 
+      taskFinisherPlanStatus: 'ready_for_routine_finish',
+      taskFinisherSafeToContinue: 'yes',
+      taskFinisherRoutineTaskCount: '4',
+      taskFinisherBlockedTaskCount: '9',
+      taskFinisherCodexRepairNeeded: 'no',
+      taskFinisherRebuildDistNeeded: 'yes',
+      taskFinisherMemoryReviewNeeded: 'yes',
+      taskFinisherMergeOperatorControlled: 'yes',
+      taskFinisherWarningLevel: 'medium',
+      taskFinisherNextAction: 'rebuild generated dist and rerun stephanos verify',
+
     },
     routeTruthView: {
       routeKind: 'cloud',
@@ -238,6 +249,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Surface Device Class: tablet/);
   assert.match(snapshot, /Surface Embodiment Profile: field-tablet/);
   assert.match(snapshot, /Surface Active Protocols: touch-first-input, stacked-panels/);
+  assert.match(snapshot, /Task Finisher Plan Status: ready_for_routine_finish/);
+  assert.match(snapshot, /Task Finisher Merge Operator Controlled: yes/);
   assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) confidence=0.66/);
   assert.match(snapshot, /Surface Friction Pattern Count: 1/);
   assert.match(snapshot, /Surface Friction Pattern Latest: panel-dragging strength=emerging recurrence=3/);

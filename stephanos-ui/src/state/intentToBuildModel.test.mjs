@@ -147,6 +147,20 @@ test('codex handoff includes safety doctrine and memory influence section and ke
   assert.equal(missionSpec.missionMemoryInfluenceTypes.includes('capability_gap'), true);
 });
 
+
+test('task finisher is attached and codex handoff includes routine finish section', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Add routine finish model visibility.',
+    targetArea: 'mission-console',
+    verificationJudge: { judgment: 'needs_fix', blockers: ['verify failed'], requiredTestsRun: false },
+  });
+  assert.equal(Array.isArray(missionSpec.taskFinisherPlan.routineTasks), true);
+  assert.equal(missionSpec.taskFinisherPlan.routineTasks.includes('request_codex_narrow_fix'), true);
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.match(prompt, /Task Finisher \/ Routine Finish Plan:/);
+  assert.match(prompt, /no shell\/GitHub execution is performed by Stephanos UI/);
+});
+
 test('mission memory orchestrator groups approved memory and excludes rejected or unsaved durable guidance', async () => {
   const { buildMissionMemoryContext } = await import('./missionMemoryOrchestrator.js');
   const context = buildMissionMemoryContext({
