@@ -51,6 +51,7 @@ test('mission proposal retains blocked actions and codex handoff includes verifi
   assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('openclaw execution'), true);
   assert.match(prompt, /PR Acceptance Criteria:/);
   assert.match(prompt, /Verification Commands:/);
+  assert.match(prompt, /Verification Return Contract \(required in Codex return\):/);
 });
 
 test('approval boundary classification keeps risky actions gated', () => {
@@ -84,6 +85,7 @@ test('codex prompt generation includes scope, tests, and no-dist-truth doctrine'
   assert.match(prompt, /Implementation Scope:/);
   assert.match(prompt, /Non-Goals:/);
   assert.match(prompt, /Verification Commands:/);
+  assert.match(prompt, /Verification Return Contract \(required in Codex return\):/);
   assert.match(prompt, /dist is generated output, never source truth/);
 });
 

@@ -251,7 +251,7 @@ export function buildMissionMemoryContext({ operatorIntent = '', missionSpec = {
   };
 }
 
-export function deriveVerificationReturnLessonCandidates({ verificationReturnText = '', missionSpec = {} } = {}) {
+export function deriveVerificationReturnLessonCandidates({ verificationReturnText = '', missionSpec = {}, verificationJudge = null } = {}) {
   const text = asText(verificationReturnText);
   if (!text) return [];
   const lower = text.toLowerCase();
@@ -277,6 +277,27 @@ export function deriveVerificationReturnLessonCandidates({ verificationReturnTex
   }
   if (/canon|architecture|invariant|source of truth|truth boundary/.test(lower)) {
     candidates.push({ ...base, id: `${base.missionId}-canon-candidate`, memoryCandidateType: 'architecture_canon_candidate', summary: 'Architecture canon candidate suggested from verification return.' });
+  }
+
+  const judgeWarnings = Array.isArray(verificationJudge?.warnings) ? verificationJudge.warnings : [];
+  const judgeBlockers = Array.isArray(verificationJudge?.blockers) ? verificationJudge.blockers : [];
+  if (judgeWarnings.includes('missing_test_evidence')) {
+    candidates.push({ ...base, id: `${base.missionId}-missing-test-evidence`, memoryCandidateType: 'verification_rule', summary: 'missing_test_evidence lesson candidate (draft/pending approval).' });
+  }
+  if (judgeWarnings.includes('source_truth_warning') || judgeWarnings.includes('generated_dist_without_rebuild_evidence')) {
+    candidates.push({ ...base, id: `${base.missionId}-source-truth-warning`, memoryCandidateType: 'architecture_canon_candidate', summary: 'source_truth_warning lesson candidate (draft/pending approval).' });
+  }
+  if (judgeWarnings.includes('out_of_scope_change')) {
+    candidates.push({ ...base, id: `${base.missionId}-out-of-scope-change`, memoryCandidateType: 'project_lesson', summary: 'out_of_scope_change lesson candidate (draft/pending approval).' });
+  }
+  if ((verificationJudge?.proofOfDoneRequired === true) && verificationJudge?.proofOfDoneStatus !== 'reported') {
+    candidates.push({ ...base, id: `${base.missionId}-proof-gap`, memoryCandidateType: 'verification_rule', summary: 'proof_of_done_gap lesson candidate (draft/pending approval).' });
+  }
+  if (judgeWarnings.includes('merge_authority_gap')) {
+    candidates.push({ ...base, id: `${base.missionId}-merge-authority-gap`, memoryCandidateType: 'workflow_preference', summary: 'merge_authority_gap lesson candidate (draft/pending approval).' });
+  }
+  if (judgeBlockers.includes('openclaw_boundary_violation')) {
+    candidates.push({ ...base, id: `${base.missionId}-openclaw-boundary`, memoryCandidateType: 'do_not_repeat_warning', summary: 'openclaw_boundary_violation lesson candidate (draft/pending approval).' });
   }
   if (candidates.length === 0) {
     candidates.push({ ...base, id: `${base.missionId}-history`, memoryCandidateType: 'mission_history', summary: `Mission history candidate from verification return: ${text.slice(0, 220)}` });
