@@ -138,6 +138,8 @@ test('codex handoff includes safety doctrine and memory influence section and ke
   assert.match(prompt, /Memory Context \(approved durable \+ explicitly marked draft context only\):/);
   assert.match(prompt, /Safety Doctrine \(mandatory\):/);
   assert.match(prompt, /No git push\./);
+  assert.match(prompt, /OpenClaw Delegation Envelope:/);
+  assert.match(prompt, /self-authority escalation blocked: true/);
   assert.match(prompt, /Operator final authority/);
   assert.match(prompt, /no autonomous execution/i);
   assert.equal(missionSpec.missionMemoryInfluenceTypes.includes('capability_gap'), true);
@@ -240,4 +242,16 @@ test('repeated capability gaps surface compact Skill Forge candidate but no exec
   assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('openclaw execution'), true);
   assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('shell/file/git/browser actions'), true);
   assert.equal(missionSpec.missionMemoryCandidate.suggestedBlockedActions.includes('git push'), true);
+});
+
+
+test('openclaw mission intents produce delegation preview and keep operator intent primary', () => {
+  const missionSpec = buildMissionSpec({
+    rawIntent: 'Delegate OpenClaw to research control-system options and prepare codex handoff only.',
+    targetArea: 'mission-console',
+  });
+  assert.equal(missionSpec.openClawDelegation.status, 'delegation-preview-ready');
+  assert.equal(missionSpec.openClawDelegation.authorityLevel, 'prepare_codex_handoff');
+  assert.equal(missionSpec.rawIntent.includes('Delegate OpenClaw'), true);
+  assert.equal(missionSpec.openClawDelegation.selfAuthorityEscalationAllowed, false);
 });

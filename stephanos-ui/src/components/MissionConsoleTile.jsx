@@ -255,6 +255,11 @@ export default function MissionConsoleTile({
       missionMemoryLessonCandidatePending: verificationReturnAdjudication.lessonCandidatePending ? 'yes' : 'no',
       missionMemoryCapabilityGapPending: verificationReturnAdjudication.capabilityGapPending ? 'yes' : 'no',
       missionMemoryLastAppliedAt: intentToBuild?.missionSpec?.missionMemoryLastAppliedAt || 'n/a',
+      openClawDelegationStatus: intentToBuild?.missionSpec?.openClawDelegation?.status || 'inactive',
+      openClawDelegationAuthorityLevel: intentToBuild?.missionSpec?.openClawDelegation?.authorityLevel || 'plan_only',
+      openClawDelegationMutationAllowed: intentToBuild?.missionSpec?.openClawDelegation?.mutationAllowed ? 'yes' : 'no',
+      openClawDelegationSelfAuthorityBlocked: intentToBuild?.missionSpec?.openClawDelegation?.selfAuthorityEscalationAllowed ? 'no' : 'yes',
+      openClawDelegationFinishAuthority: intentToBuild?.missionSpec?.openClawDelegation?.finishAuthority || 'plan_only',
     });
   }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
@@ -615,6 +620,23 @@ export default function MissionConsoleTile({
           <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
           <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
         </ul>
+
+        <h5>OpenClaw Delegation Preview</h5>
+        <ul>
+          <li><strong>Delegated Authority Level:</strong> {intentToBuild.missionSpec.openClawDelegation?.authorityLevel || 'plan_only'}</li>
+          <li><strong>Finish Authority:</strong> {intentToBuild.missionSpec.openClawDelegation?.finishAuthority || 'plan_only'} (not granted unless explicitly included)</li>
+          <li><strong>Allowed OpenClaw Work:</strong> {(intentToBuild.missionSpec.openClawDelegation?.allowedCapabilities || []).join(', ') || 'none'}</li>
+          <li><strong>Blocked OpenClaw Work:</strong> {(intentToBuild.missionSpec.openClawDelegation?.blockedCapabilities || []).join(', ') || 'none'}</li>
+          <li><strong>what OpenClaw is being asked to do:</strong> {intentToBuild.missionSpec.openClawDelegation?.missionScope || 'n/a'}</li>
+          <li><strong>what it may research:</strong> {intentToBuild.missionSpec.openClawDelegation?.researchAllowed ? 'yes' : 'no'}</li>
+          <li><strong>what it may inspect:</strong> {intentToBuild.missionSpec.openClawDelegation?.repoInspectionAllowed ? 'yes' : 'no'}</li>
+          <li><strong>what it may draft:</strong> {intentToBuild.missionSpec.openClawDelegation?.codexHandoffDraftAllowed ? 'yes' : 'no'}</li>
+          <li><strong>whether routine finish steps are allowed:</strong> {['finish_routine_checks', 'merge_authorized'].includes(intentToBuild.missionSpec.openClawDelegation?.finishAuthority) ? 'yes' : 'no'}</li>
+          <li><strong>whether merge authority is included:</strong> {intentToBuild.missionSpec.openClawDelegation?.mergeAllowed ? 'yes' : 'no'}</li>
+          <li><strong>whether operator approval is required:</strong> {intentToBuild.missionSpec.openClawDelegation?.requiredOperatorApproval ? 'yes' : 'no'}</li>
+          <li><strong>Self-Authority Escalation:</strong> blocked</li>
+        </ul>
+
         <h5>Memory Context Used</h5>
         <ul>
           {(intentToBuild.missionSpec.missionMemoryInfluence || []).map((entry) => (
