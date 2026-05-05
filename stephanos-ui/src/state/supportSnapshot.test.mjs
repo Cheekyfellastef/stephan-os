@@ -1991,3 +1991,11 @@ test('support snapshot projects mission verification judgment fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { missionVerificationJudgment: 'proof_pending' } });
   assert.match(snapshot, /Mission Verification Judgment: proof_pending/);
 });
+
+
+test('support snapshot projects memory librarian counts', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { memoryLibrarianPendingCount: '3', memoryLibrarianApprovalRequiredCount: '2', memoryLibrarianConflictCount: '1' } });
+  assert.match(snapshot, /Memory Librarian Pending Count: 3/);
+  assert.match(snapshot, /Memory Librarian Approval Required Count: 2/);
+  assert.match(snapshot, /Memory Librarian Conflict Count: 1/);
+});
