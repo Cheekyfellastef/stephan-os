@@ -53,6 +53,8 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'Source Truth Warnings:',
     'Architecture Risk Notes:',
     'verification judge:',
+    'Memory Librarian / Canon Curator',
+    'pending memory candidates:',
     'judgment:',
     'proof-of-done status:',
     'merge-ready candidate:',

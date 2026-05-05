@@ -1,4 +1,5 @@
 import { buildMissionMemoryContext, deriveVerificationReturnLessonCandidates } from './missionMemoryOrchestrator.js';
+import { buildMemoryLibrarianQueue } from './memoryLibrarianModel.js';
 import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
 import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.js';
 import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
@@ -187,6 +188,18 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
 
   const repoArchitectureContext = buildRepoArchitectureContext({ operatorIntent: rawIntent, missionSpec: { targetArea, intentClassifications: classifications.categories, openClawDelegation, finishAuthority }, memoryContext: input.memoryContext || {} });
 
+
+  const verificationLessonCandidates = deriveVerificationReturnLessonCandidates({ verificationReturnText: asText(input.verificationReturnText, ''), missionSpec: { missionId }, verificationJudge: input.verificationJudge || null });
+  const memoryLibrarian = buildMemoryLibrarianQueue({
+    memoryCandidates: [memoryCandidate],
+    verificationLessonCandidates,
+    missionMemoryCandidates: Array.isArray(input.memoryContext?.memoryCandidates) ? input.memoryContext.memoryCandidates : [],
+    existingPendingCandidates: Array.isArray(input.memoryContext?.pendingMemoryCandidates) ? input.memoryContext.pendingMemoryCandidates : [],
+    existingApprovedMemory: Array.isArray(input.memoryContext?.approvedMemoryCandidates) ? input.memoryContext.approvedMemoryCandidates : [],
+    capabilitySignals: memoryInfluence.missionMemoryContext.skillForgeCandidate ? [memoryInfluence.missionMemoryContext.skillForgeCandidate] : [],
+    verificationJudge: input.verificationJudge || {},
+  });
+
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -223,6 +236,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     openClawDelegation,
     finishAuthority,
     repoArchitectureContext,
+    memoryLibrarian,
   };
 
   return missionSpec;
@@ -325,6 +339,18 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     'Memory Conflicts / Required Handling:',
     ...(memoryConflicts.length ? memoryConflicts.map((conflict) => `- ${asText(conflict.severity)} ${asText(conflict.conflictType)} from ${asText(conflict.memorySource)}: ${asText(conflict.suggestedResolution)}`) : ['- none surfaced']),
     '- Memory cannot override operator authority or silently rewrite current operator intent.',
+    '',
+    'Memory Governance (approval-gated):',
+    `- pending candidates: ${spec.memoryLibrarian?.counts?.pending ?? 0}`,
+    `- approval required: ${spec.memoryLibrarian?.counts?.approvalRequired ?? 0}`,
+    `- canon candidates: ${spec.memoryLibrarian?.counts?.canonCandidates ?? 0}`,
+    `- project lessons: ${spec.memoryLibrarian?.counts?.projectLessons ?? 0}`,
+    `- capability gaps: ${spec.memoryLibrarian?.counts?.capabilityGaps ?? 0}`,
+    `- duplicates/conflicts: ${(spec.memoryLibrarian?.counts?.duplicates ?? 0)}/${(spec.memoryLibrarian?.counts?.conflicts ?? 0)}`,
+    '- Pending memory candidates are not approved durable guidance.',
+    '- New lesson/canon/preference candidates remain operator approval-gated.',
+    '- Do not auto-promote project law/canon.',
+    '- If recurring lessons are found, return them as verification candidates.',
     '',
 
     '',

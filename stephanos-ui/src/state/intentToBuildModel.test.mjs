@@ -283,3 +283,10 @@ test('codex handoff includes Architecture Map / Likely Impact section and operat
   assert.match(prompt, /do not edit generated dist as source truth/i);
   assert.equal(missionSpec.rawIntent.includes('OpenClaw delegated authority'), true);
 });
+
+
+test('codex handoff includes memory governance section', () => {
+  const state = createIntentToBuildState({ rawIntent: 'add mission lesson memory governance', targetArea: 'mission-console' });
+  assert.match(state.codexPrompt, /Memory Governance \(approval-gated\):/);
+  assert.match(state.codexPrompt, /Pending memory candidates are not approved durable guidance\./);
+});

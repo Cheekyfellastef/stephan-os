@@ -18,6 +18,7 @@ import {
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
+import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
 import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
@@ -197,6 +198,15 @@ export default function MissionConsoleTile({
     };
   }, [intentToBuild?.missionSpec, verificationReturnInput]);
 
+  const memoryLibrarian = useMemo(() => buildMemoryLibrarianQueue({
+    memoryCandidates: intentToBuild?.missionSpec?.missionMemoryCandidate ? [intentToBuild.missionSpec.missionMemoryCandidate] : [],
+    verificationLessonCandidates: verificationReturnAdjudication.lessonCandidates || [],
+    missionMemoryCandidates: intentToBuild?.missionSpec?.missionMemoryContext?.memories || [],
+    existingApprovedMemory: [],
+    verificationJudge: verificationReturnAdjudication,
+    capabilitySignals: verificationReturnAdjudication.capabilityGapPending ? [{ summary: verificationReturnAdjudication.skillUpgradeSuggestion || 'Capability gap from verification return.' }] : [],
+  }), [intentToBuild?.missionSpec?.missionMemoryCandidate, intentToBuild?.missionSpec?.missionMemoryContext?.memories, verificationReturnAdjudication]);
+
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
     projectProgressNextActions: agentTaskProjection?.readinessSummary?.nextAgentTaskAction ? [agentTaskProjection.readinessSummary.nextAgentTaskAction] : [],
@@ -286,8 +296,17 @@ export default function MissionConsoleTile({
       missionVerificationProofStatus: verificationReturnAdjudication.proofOfDoneStatus || 'pending',
       missionVerificationChangedFilesInScope: verificationReturnAdjudication.changedFilesInScope ? 'yes' : 'no',
       missionVerificationRequiredTestsRun: verificationReturnAdjudication.requiredTestsRun ? 'yes' : 'no',
+      memoryLibrarianPendingCount: String(memoryLibrarian.counts.pending || 0),
+      memoryLibrarianApprovalRequiredCount: String(memoryLibrarian.counts.approvalRequired || 0),
+      memoryLibrarianCanonCandidateCount: String(memoryLibrarian.counts.canonCandidates || 0),
+      memoryLibrarianProjectLessonCount: String(memoryLibrarian.counts.projectLessons || 0),
+      memoryLibrarianCapabilityGapCount: String(memoryLibrarian.counts.capabilityGaps || 0),
+      memoryLibrarianDuplicateCount: String(memoryLibrarian.counts.duplicates || 0),
+      memoryLibrarianConflictCount: String(memoryLibrarian.counts.conflicts || 0),
+      memoryLibrarianSavedCount: String(memoryLibrarian.counts.saved || 0),
+      memoryLibrarianRejectedCount: String(memoryLibrarian.counts.rejected || 0),
     });
-  }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
+  }, [intentToBuild, memoryLibrarian.counts, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
@@ -733,6 +752,24 @@ export default function MissionConsoleTile({
         </ul>
         <h5>Suggested Capability / Skill Upgrade</h5>
         <p>{verificationReturnAdjudication.skillUpgradeSuggestion}</p>
+
+        <h5>Memory Librarian / Canon Curator</h5>
+        <ul>
+          <li><strong>pending memory candidates:</strong> {memoryLibrarian.counts.pending}</li>
+          <li><strong>requires approval:</strong> {memoryLibrarian.counts.approvalRequired}</li>
+          <li><strong>canon candidates:</strong> {memoryLibrarian.counts.canonCandidates}</li>
+          <li><strong>project lessons:</strong> {memoryLibrarian.counts.projectLessons}</li>
+          <li><strong>capability gaps:</strong> {memoryLibrarian.counts.capabilityGaps}</li>
+          <li><strong>duplicates / conflicts:</strong> {memoryLibrarian.counts.duplicates} / {memoryLibrarian.counts.conflicts}</li>
+          <li><strong>saved / rejected / draft:</strong> {memoryLibrarian.counts.saved} / {memoryLibrarian.counts.rejected} / {memoryLibrarian.counts.pending}</li>
+        </ul>
+        <ul>
+          {(memoryLibrarian.queue || []).slice(0, 4).map((candidate) => (
+            <li key={candidate.candidateId}><strong>{candidate.memoryCandidateType}:</strong> {candidate.summary} <em>{candidate.influencePreview}</em> Suggested action: {candidate.suggestedAction}{candidate.duplicateOf ? ` · duplicate of ${candidate.duplicateOf}` : ''}{candidate.conflictWith?.length ? ` · conflicts: ${candidate.conflictWith.join(', ')}` : ''}</li>
+          ))}
+          {(memoryLibrarian.queue || []).length === 0 ? <li>none</li> : null}
+        </ul>
+
         <h5>Agent Task Verification Return (compact)</h5>
         <ul>
           <li><strong>verification return status:</strong> {compactVerificationSummary.verificationReturnStatus}</li>
