@@ -2029,3 +2029,10 @@ test('support snapshot projects mission evidence ledger fields', () => {
   assert.match(snapshot, /Mission Evidence Completeness: partial/);
   assert.match(snapshot, /Mission Evidence Next Required: operator_decision_required/);
 });
+
+test('support snapshot projects mission command packet fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { missionCommandPacketVersion: 'v1', missionCommandPacketCreated: '2026-05-05T00:00:00.000Z', missionCommandPacketIncludedSystems: 'memory|architecture|verification', missionCommandPacketWarningCount: '2', missionCommandPacketNextAction: 'Resolve operator decisions.', missionCommandPacketReady: 'yes' } });
+  assert.match(snapshot, /Mission Command Packet Version: v1/);
+  assert.match(snapshot, /Mission Command Packet Included Systems: memory\|architecture\|verification/);
+  assert.match(snapshot, /Mission Command Packet Ready: yes/);
+});
