@@ -1,3 +1,4 @@
+import { buildMissionMemoryContext, deriveVerificationReturnLessonCandidates } from './missionMemoryOrchestrator.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -81,33 +82,32 @@ function classifyApprovalBoundaries({
 }
 
 
-function deriveMissionMemoryInfluence({ memoryContext = {}, intentCategories = [], rawIntent = '' } = {}) {
-  const candidates = Array.isArray(memoryContext?.memoryCandidates) ? memoryContext.memoryCandidates : [];
-  const durableApproved = candidates.filter((entry) => entry && entry.status === 'approved' && entry.promotionState === 'saved');
-  const allowedTypes = new Set(['architecture_canon_candidate', 'durable_operator_preference', 'project_lesson', 'capability_gap']);
-  const relevantApproved = durableApproved.filter((entry) => {
-    const type = asText(entry.memoryCandidateType || entry.type).toLowerCase();
-    if (allowedTypes.has(type)) return true;
-    return /(canon|preference|lesson|capability)/i.test(asText(entry.summary));
-  }).slice(0, 5);
-  const typeSet = new Set(relevantApproved.map((entry) => asText(entry.memoryCandidateType || entry.type || 'unknown')));
-  const draftContext = asText(memoryContext?.draftMissionContext || memoryContext?.missionDraft || '');
-  const memoriesUsed = relevantApproved.map((entry, index) => ({
-    id: asText(entry.id, `approved-memory-${index + 1}`),
-    type: asText(entry.memoryCandidateType || entry.type, 'unknown'),
-    summary: asText(entry.summary, 'Approved durable memory influence.'),
-    source: asText(entry.source, 'memory-bridge'),
+function deriveMissionMemoryInfluence({ memoryContext = {}, intentCategories = [], rawIntent = '', targetArea = '' } = {}) {
+  const missionMemoryContext = buildMissionMemoryContext({
+    operatorIntent: rawIntent,
+    missionSpec: { intentClassifications: intentCategories, targetArea },
+    memoryContext,
+  });
+  const memoriesUsed = missionMemoryContext.memories.map((entry) => ({
+    id: entry.memoryId,
+    memoryId: entry.memoryId,
+    type: entry.type,
+    summary: entry.summary,
+    source: entry.source,
+    relevanceScore: entry.relevanceScore,
+    influenceLevel: entry.influenceLevel,
+    reason: entry.reason,
+    appliedTo: entry.appliedTo,
+    requiresOperatorVisibility: entry.requiresOperatorVisibility,
   }));
-  if (draftContext) {
-    memoriesUsed.push({ id: 'draft-mission-context', type: 'mission_draft_context', summary: draftContext, source: 'mission-bridge-draft' });
-    typeSet.add('mission_draft_context');
-  }
   const canonNotes = memoriesUsed.filter((e) => /canon|architecture/i.test(e.type + ' ' + e.summary)).map((e) => e.summary);
-  const lessonNotes = memoriesUsed.filter((e) => /lesson|project_lesson|capability/i.test(e.type + ' ' + e.summary)).map((e) => e.summary);
+  const lessonNotes = memoriesUsed.filter((e) => /lesson|project_lesson|capability|do_not_repeat/i.test(e.type + ' ' + e.summary)).map((e) => e.summary);
   return {
+    missionMemoryContext,
     memoriesUsed,
     missionMemoryInfluenceCount: memoriesUsed.length,
-    missionMemoryInfluenceTypes: [...typeSet],
+    missionMemoryInfluenceTypes: [...new Set(memoriesUsed.map((entry) => entry.type))],
+    missionMemoryInfluenceLevels: missionMemoryContext.summary.influenceLevels,
     missionMemoryLastAppliedAt: memoriesUsed.length ? new Date().toISOString() : '',
     canonNotes,
     lessonNotes,
@@ -139,8 +139,18 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     memoryContext: input.memoryContext || {},
     intentCategories: classifications.categories,
     rawIntent,
+    targetArea,
   });
   const memoryCandidate = buildMissionMemoryCandidate({ operatorIntentText: rawIntent, categories: classifications.categories });
+  const memoryContextWarnings = memoryInfluence.missionMemoryContext.conflicts.map((conflict) => `${conflict.severity}:${conflict.conflictType} — ${conflict.suggestedResolution}`);
+  const memoryVerificationCommands = memoryInfluence.memoriesUsed.some((entry) => entry.type === 'verification_rule')
+    ? ['node --test stephanos-ui/src/state/intentToBuildModel.test.mjs']
+    : [];
+  const strengthenedVerificationCommands = [...new Set([...verificationCommands, ...memoryVerificationCommands])];
+  const strengthenedSuccessCriteria = [...successCriteria];
+  if (memoryInfluence.memoriesUsed.length) {
+    strengthenedSuccessCriteria.push('Mission Memory Context is visible, grouped, and cannot override current operator intent.');
+  }
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -155,8 +165,8 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
       'Do not treat dist output as source-of-truth code.',
     ]),
     doctrineConstraints: [...DOCTRINE_CONSTRAINTS],
-    verificationCommands,
-    successCriteria,
+    verificationCommands: strengthenedVerificationCommands,
+    successCriteria: strengthenedSuccessCriteria,
     approvalBoundary: boundaries,
     privacyBoundary: 'No secrets committed. No cloud durable memory writes without explicit approval.',
     costBoundary: 'Zero-cost defaults remain active unless operator explicitly approves paid routes.',
@@ -165,7 +175,15 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     missionMemoryInfluence: memoryInfluence.memoriesUsed,
     missionMemoryInfluenceCount: memoryInfluence.missionMemoryInfluenceCount,
     missionMemoryInfluenceTypes: memoryInfluence.missionMemoryInfluenceTypes,
+    missionMemoryInfluenceLevels: memoryInfluence.missionMemoryInfluenceLevels,
+    missionMemoryContext: memoryInfluence.missionMemoryContext,
+    missionMemoryConflicts: memoryInfluence.missionMemoryContext.conflicts,
+    missionMemorySkillForgeCandidate: memoryInfluence.missionMemoryContext.skillForgeCandidate,
     missionMemoryLastAppliedAt: memoryInfluence.missionMemoryLastAppliedAt,
+    likelyAffectedSystems: [...new Set([targetArea, ...memoryInfluence.memoriesUsed.flatMap((entry) => entry.appliedTo.includes('likely_affected_systems') ? [entry.type] : [])])],
+    allowedScope: `Operator intent remains primary; memory may strengthen scope but cannot silently rewrite: ${asText(input.implementationScope, `Implement scoped changes in ${targetArea} without violating Stephanos doctrine.`)}`,
+    risks: [...asList(input.risks, []), ...memoryContextWarnings],
+    nextBestAction: memoryContextWarnings.length ? 'Resolve surfaced memory/intent conflicts before handoff execution.' : 'Generate Codex-safe implementation handoff and run required verification.',
   };
 
   return missionSpec;
@@ -224,6 +242,8 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     'stephanos-ui/src/state/supportSnapshot.js',
   ]);
   const memoryInfluence = Array.isArray(spec.missionMemoryInfluence) ? spec.missionMemoryInfluence : [];
+  const memoryConflicts = Array.isArray(spec.missionMemoryConflicts) ? spec.missionMemoryConflicts : [];
+  const groupedMemory = spec.missionMemoryContext?.groups && typeof spec.missionMemoryContext.groups === 'object' ? spec.missionMemoryContext.groups : {};
   const lines = [
     'Codex Mission Handoff',
     `Mission ID: ${asText(spec.missionId, 'n/a')}`,
@@ -256,8 +276,16 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     'PR Acceptance Criteria:',
     ...asList(spec.successCriteria).map((entry) => `- ${entry}`),
     '',
-    'Memory Influence (approved durable + relevant draft context only):',
-    ...(memoryInfluence.length ? memoryInfluence.map((entry) => `- [${asText(entry.type, 'unknown')}] ${asText(entry.summary, 'n/a')}`) : ['- none']),
+    'Memory Context (approved durable + explicitly marked draft context only):',
+    ...(Object.entries(groupedMemory).length ? Object.entries(groupedMemory).flatMap(([group, entries]) => entries.length ? [`- ${group}:`, ...entries.map((entry) => `  - [${asText(entry.influenceLevel, 'weak_context')}; ${asText(entry.relevanceScore, 'n/a')}] ${asText(entry.summary, 'n/a')}`)] : []) : []),
+    ...(memoryInfluence.length ? [] : ['- none']),
+    '',
+    'Applied Canon/Lessons:',
+    ...(memoryInfluence.length ? memoryInfluence.map((entry) => `- [${asText(entry.type, 'unknown')}] applies to ${(entry.appliedTo || []).join(', ') || 'mission context'}: ${asText(entry.summary, 'n/a')}`) : ['- none']),
+    '',
+    'Memory Conflicts / Required Handling:',
+    ...(memoryConflicts.length ? memoryConflicts.map((conflict) => `- ${asText(conflict.severity)} ${asText(conflict.conflictType)} from ${asText(conflict.memorySource)}: ${asText(conflict.suggestedResolution)}`) : ['- none surfaced']),
+    '- Memory cannot override operator authority or silently rewrite current operator intent.',
     '',
     'Safety Doctrine (mandatory):',
     '- No destructive actions.',
@@ -265,7 +293,7 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- No secrets handling or persistence.',
     '- No external account actions.',
     '- Build + verify required before merge-ready posture.',
-    '- Operator final authority; no autonomous execution.',
+    '- Operator final authority; memory cannot override operator authority; no autonomous execution.',
   ];
 
   return lines.join('\n');
@@ -285,6 +313,8 @@ export function buildVerificationEvidence({ missionSpec = {}, commands = null } 
     prReviewStatus: 'pending-review',
   };
 }
+
+export { deriveVerificationReturnLessonCandidates };
 
 export function createIntentToBuildState(input = {}, options = {}) {
   const missionSpec = buildMissionSpec(input, options);

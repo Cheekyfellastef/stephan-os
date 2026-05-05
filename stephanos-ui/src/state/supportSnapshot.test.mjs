@@ -85,6 +85,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       approvalRequired: 'yes',
       generatedPromptAvailable: 'yes',
       verificationStatus: 'pending',
+      missionMemoryContextCount: '2',
+      missionMemoryInfluenceLevels: 'critical_canon|relevant_lesson',
+      missionMemoryConflictCount: '1',
+      missionMemoryLessonCandidatePending: 'yes',
+      missionMemoryCapabilityGapPending: 'no',
 
     },
     routeTruthView: {
@@ -278,6 +283,11 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Elevated Memory Count: 5/);
   assert.match(snapshot, /Graph Linked Memory Count: 2/);
   assert.match(snapshot, /Memory Informed Recommendation: Prioritize mission-critical continuity memory first\./);
+  assert.match(snapshot, /Mission Memory Context Count: 2/);
+  assert.match(snapshot, /Mission Memory Influence Levels: critical_canon\|relevant_lesson/);
+  assert.match(snapshot, /Mission Memory Conflict Count: 1/);
+  assert.match(snapshot, /Mission Memory Lesson Candidate Pending: yes/);
+  assert.match(snapshot, /Mission Memory Capability Gap Pending: no/);
   assert.match(snapshot, /Route Winner Kind: home-node/);
   assert.match(snapshot, /Route Winner Transport Kind: tailscale/);
   assert.match(snapshot, /Route Auto Selection Source: runtime-truth-adjudication/);

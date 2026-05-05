@@ -17,7 +17,7 @@ import {
 } from '../state/missionConsoleMessageLedger.js';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
-import { createIntentToBuildState, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
+import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -174,6 +174,12 @@ export default function MissionConsoleTile({
   const verificationReturnAdjudication = useMemo(() => {
     const text = String(verificationReturnInput || '').toLowerCase();
     const missionGoal = intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal || '';
+    const lessonCandidates = deriveVerificationReturnLessonCandidates({
+      verificationReturnText: verificationReturnInput,
+      missionSpec: intentToBuild?.missionSpec || {},
+    });
+    const capabilityCandidate = lessonCandidates.find((candidate) => candidate.memoryCandidateType === 'capability_gap') || null;
+    const skillUpgradeSuggestion = capabilityCandidate ? `This mission suggests a missing capability: ${capabilityCandidate.summary}` : 'none';
     return {
       matchesMissionGoal: missionGoal && text.includes('mission') ? 'likely' : 'unknown',
       changedFilesKnown: /files changed|changed files|\.js|\.mjs|\.jsx/.test(text) ? 'known' : 'unknown',
@@ -181,9 +187,13 @@ export default function MissionConsoleTile({
       blockers: /blocker|fail|error/.test(text) ? 'reported' : 'none-reported',
       mergeReadiness: /merge-ready|ready to merge/.test(text) ? 'candidate-ready' : 'pending-review',
       nextAction: /blocker|fail|error/.test(text) ? 'Request fix + rerun verification.' : 'Review evidence and decide promotion.',
-      suggestedLessonCandidate: /lesson|root cause|regression/.test(text) ? 'project_lesson' : 'mission_history',
+      suggestedLessonCandidate: lessonCandidates[0]?.memoryCandidateType || 'mission_history',
+      lessonCandidates,
+      lessonCandidatePending: lessonCandidates.length > 0,
+      capabilityGapPending: Boolean(capabilityCandidate),
+      skillUpgradeSuggestion,
     };
-  }, [intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal, verificationReturnInput]);
+  }, [intentToBuild?.missionSpec, intentToBuild?.missionSpec?.missionMemoryCandidate?.suggestedMissionGoal, verificationReturnInput]);
 
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
@@ -239,9 +249,14 @@ export default function MissionConsoleTile({
       verificationStatus: intentToBuild?.verificationEvidence?.verificationStatus || 'pending',
       missionMemoryInfluenceCount: String(intentToBuild?.missionSpec?.missionMemoryInfluenceCount || 0),
       missionMemoryInfluenceTypes: (intentToBuild?.missionSpec?.missionMemoryInfluenceTypes || []).join('|') || 'none',
+      missionMemoryContextCount: String(intentToBuild?.missionSpec?.missionMemoryContext?.summary?.count || 0),
+      missionMemoryInfluenceLevels: (intentToBuild?.missionSpec?.missionMemoryInfluenceLevels || []).join('|') || 'none',
+      missionMemoryConflictCount: String(intentToBuild?.missionSpec?.missionMemoryConflicts?.length || 0),
+      missionMemoryLessonCandidatePending: verificationReturnAdjudication.lessonCandidatePending ? 'yes' : 'no',
+      missionMemoryCapabilityGapPending: verificationReturnAdjudication.capabilityGapPending ? 'yes' : 'no',
       missionMemoryLastAppliedAt: intentToBuild?.missionSpec?.missionMemoryLastAppliedAt || 'n/a',
     });
-  }, [intentToBuild, onIntentToBuildUpdate]);
+  }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
@@ -433,6 +448,7 @@ export default function MissionConsoleTile({
   const missionMemoryContext = useMemo(() => ({
     memoryCandidates: agentTaskProjection?.memoryCandidates || [],
     draftMissionContext: missionBridgeState?.missionPacket?.missionTitle || '',
+    includeDraftMissionContext: Boolean(missionBridgeState?.missionPacket?.missionTitle),
   }), [agentTaskProjection?.memoryCandidates, missionBridgeState?.missionPacket?.missionTitle]);
 
   function generateIntentToBuildSpec() {
@@ -582,6 +598,9 @@ export default function MissionConsoleTile({
           <li><strong>verification checklist:</strong> {intentToBuild.verificationEvidence.checks.map((entry) => entry.command).join(' | ')}</li>
           <li><strong>memory influence count:</strong> {intentToBuild.missionSpec.missionMemoryInfluenceCount || 0}</li>
           <li><strong>memory influence types:</strong> {(intentToBuild.missionSpec.missionMemoryInfluenceTypes || []).join(', ') || 'none'}</li>
+          <li><strong>memory influence strength:</strong> {(intentToBuild.missionSpec.missionMemoryInfluenceLevels || []).join(', ') || 'none'}</li>
+          <li><strong>memory conflict count:</strong> {intentToBuild.missionSpec.missionMemoryConflicts?.length || 0}</li>
+          <li><strong>next best action:</strong> {intentToBuild.missionSpec.nextBestAction || 'n/a'}</li>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
           <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>
@@ -596,13 +615,29 @@ export default function MissionConsoleTile({
           <li><strong>mission bridge blockers:</strong> {missionBridgeState.missionPacket?.blockers?.join(' | ') || 'none'}</li>
           <li><strong>mission bridge warnings:</strong> {missionBridgeState.missionPacket?.warnings?.join(' | ') || 'none'}</li>
         </ul>
-        <h5>Memory used for this mission</h5>
+        <h5>Memory Context Used</h5>
         <ul>
           {(intentToBuild.missionSpec.missionMemoryInfluence || []).map((entry) => (
-            <li key={entry.id}><strong>{entry.type}:</strong> {entry.summary}</li>
+            <li key={entry.id}><strong>{entry.type}</strong> [{entry.influenceLevel}; score {entry.relevanceScore}]: {entry.summary}</li>
           ))}
           {(!intentToBuild.missionSpec.missionMemoryInfluence || intentToBuild.missionSpec.missionMemoryInfluence.length === 0) ? <li>none</li> : null}
         </ul>
+        <h5>Memory Influence Strength</h5>
+        <ul>
+          {Object.entries(intentToBuild.missionSpec.missionMemoryContext?.summary?.groupCounts || {}).filter(([, count]) => count > 0).map(([group, count]) => (
+            <li key={group}><strong>{group}:</strong> {count}</li>
+          ))}
+          {(!intentToBuild.missionSpec.missionMemoryContext?.summary?.count) ? <li>none</li> : null}
+        </ul>
+        <h5>Memory Conflicts / Warnings</h5>
+        <ul>
+          {(intentToBuild.missionSpec.missionMemoryConflicts || []).map((conflict) => (
+            <li key={`${conflict.conflictType}-${conflict.memorySource}`}><strong>{conflict.severity} {conflict.conflictType}:</strong> {conflict.suggestedResolution}</li>
+          ))}
+          {(!intentToBuild.missionSpec.missionMemoryConflicts || intentToBuild.missionSpec.missionMemoryConflicts.length === 0) ? <li>none</li> : null}
+        </ul>
+        <h5>Suggested Capability / Skill Upgrade</h5>
+        <p>{intentToBuild.missionSpec.missionMemorySkillForgeCandidate?.title || 'none'}</p>
         <p><em>Generated mission proposal, no code changed. OpenClaw remains parked unless explicitly in scope.</em></p>
         <h5>Verification Return Input</h5>
         <textarea className="paneTextarea paneControl" rows={4} value={verificationReturnInput} onChange={(event) => setVerificationReturnInput(event.target.value)} placeholder="Paste Codex return summary for adjudication." />
@@ -615,6 +650,15 @@ export default function MissionConsoleTile({
           <li><strong>suggested lesson candidate:</strong> {verificationReturnAdjudication.suggestedLessonCandidate}</li>
           <li><strong>next action:</strong> {verificationReturnAdjudication.nextAction}</li>
         </ul>
+        <h5>Suggested Lesson From Return</h5>
+        <ul>
+          {(verificationReturnAdjudication.lessonCandidates || []).map((candidate) => (
+            <li key={candidate.id}><strong>{candidate.memoryCandidateType}:</strong> {candidate.summary} <em>Requires approval before durable memory. Generated from verification return.</em></li>
+          ))}
+          {(!verificationReturnAdjudication.lessonCandidates || verificationReturnAdjudication.lessonCandidates.length === 0) ? <li>none pasted</li> : null}
+        </ul>
+        <h5>Suggested Capability / Skill Upgrade</h5>
+        <p>{verificationReturnAdjudication.skillUpgradeSuggestion}</p>
         <h5>Agent Task Verification Return (compact)</h5>
         <ul>
           <li><strong>verification return status:</strong> {compactVerificationSummary.verificationReturnStatus}</li>
