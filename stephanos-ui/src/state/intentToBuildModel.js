@@ -1,6 +1,7 @@
 import { buildMissionMemoryContext, deriveVerificationReturnLessonCandidates } from './missionMemoryOrchestrator.js';
 import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
 import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.js';
+import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -184,6 +185,8 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     scopeStatus: asText(input.scopeStatus, 'in_scope'),
   });
 
+  const repoArchitectureContext = buildRepoArchitectureContext({ operatorIntent: rawIntent, missionSpec: { targetArea, intentClassifications: classifications.categories, openClawDelegation, finishAuthority }, memoryContext: input.memoryContext || {} });
+
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -219,6 +222,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     nextBestAction: memoryContextWarnings.length ? 'Resolve surfaced memory/intent conflicts before handoff execution.' : 'Generate Codex-safe implementation handoff and run required verification.',
     openClawDelegation,
     finishAuthority,
+    repoArchitectureContext,
   };
 
   return missionSpec;
@@ -357,6 +361,21 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- OpenClaw may not expand mission scope.',
     '- OpenClaw may prepare finish-readiness reports only unless future authority is explicitly granted.',
     '- Operator final authority.',
+    '',
+    'Architecture Map / Likely Impact:',
+    `- affected subsystems: ${(spec.repoArchitectureContext?.affectedSubsystems || []).join(', ') || 'none'}`,
+    ...asList(spec.repoArchitectureContext?.sourceFilesLikelyTouched).map((entry) => `- likely source file: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.testsLikelyRequired).map((entry) => `- likely test: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.generatedOutputsLikelyTouched).map((entry) => `- generated output: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.docsLikelyTouched).map((entry) => `- likely doc: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.sourceTruthWarnings).map((entry) => `- source-truth warning: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.commonFailureModes).map((entry) => `- common failure mode: ${entry}`),
+    ...asList(spec.repoArchitectureContext?.verificationCommandsLikelyRequired).map((entry) => `- architecture verify command: ${entry}`),
+    '- do not edit generated dist as source truth.',
+    '- update dist only through npm run stephanos:build when required.',
+    '- update support snapshot fields when new mission truth is added.',
+    '- preserve Mission Console / launcher separation.',
+    '- preserve operator final authority.',
     '',
     'Safety Doctrine (mandatory):',
     '- No destructive actions.',

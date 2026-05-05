@@ -270,6 +270,12 @@ export default function MissionConsoleTile({
       missionMergedBy: intentToBuild?.missionSpec?.finishAuthority?.mergedBy || 'unknown',
       missionFinishWarningLevel: intentToBuild?.missionSpec?.finishAuthority?.warningLevel || 'none',
       missionFinishNextAction: intentToBuild?.missionSpec?.finishAuthority?.nextAction || 'Merge is not authorized by this mission.',
+      repoArchitectureAffectedSubsystemCount: String(intentToBuild?.missionSpec?.repoArchitectureContext?.affectedSubsystems?.length || 0),
+      repoArchitectureAffectedSubsystems: (intentToBuild?.missionSpec?.repoArchitectureContext?.affectedSubsystems || []).join('|') || 'none',
+      repoArchitectureLikelyTestCount: String(intentToBuild?.missionSpec?.repoArchitectureContext?.testsLikelyRequired?.length || 0),
+      repoArchitectureGeneratedOutputTouched: (intentToBuild?.missionSpec?.repoArchitectureContext?.generatedOutputsLikelyTouched || []).length > 0 ? 'yes' : 'no',
+      repoArchitectureSourceTruthWarning: (intentToBuild?.missionSpec?.repoArchitectureContext?.sourceTruthWarnings || [])[1] || 'none',
+      repoArchitectureRiskLevel: (intentToBuild?.missionSpec?.repoArchitectureContext?.riskSummary || []).join('|') || 'none',
     });
   }, [intentToBuild, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
@@ -654,6 +660,16 @@ export default function MissionConsoleTile({
           <li><strong>whether merge authority is included:</strong> no (OpenClaw may not merge)</li>
           <li><strong>whether operator approval is required:</strong> {intentToBuild.missionSpec.openClawDelegation?.requiredOperatorApproval ? 'yes' : 'no'}</li>
           <li><strong>Self-Authority Escalation:</strong> blocked</li>
+        </ul>
+
+        <h5>Architecture Map / Likely Impact</h5>
+        <ul>
+          <li><strong>Affected Subsystems:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.affectedSubsystems || []).join(', ') || 'none'}</li>
+          <li><strong>Likely Source Files:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.sourceFilesLikelyTouched || []).join(', ') || 'none'}</li>
+          <li><strong>Likely Tests:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.testsLikelyRequired || []).join(', ') || 'none'}</li>
+          <li><strong>Generated Outputs:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.generatedOutputsLikelyTouched || []).join(', ') || 'none'}</li>
+          <li><strong>Source Truth Warnings:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.sourceTruthWarnings || []).join(' | ') || 'none'}</li>
+          <li><strong>Architecture Risk Notes:</strong> {(intentToBuild.missionSpec.repoArchitectureContext?.riskSummary || []).join(' | ') || 'none'}</li>
         </ul>
 
         <h5>Memory Context Used</h5>

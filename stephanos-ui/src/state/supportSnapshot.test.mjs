@@ -90,6 +90,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       missionMemoryConflictCount: '1',
       missionMemoryLessonCandidatePending: 'yes',
       missionMemoryCapabilityGapPending: 'no',
+      repoArchitectureAffectedSubsystemCount: '4',
+      repoArchitectureAffectedSubsystems: 'mission-console|intent-to-build|support-snapshot|codex-handoff',
+      repoArchitectureLikelyTestCount: '2',
+      repoArchitectureGeneratedOutputTouched: 'yes',
+      repoArchitectureSourceTruthWarning: 'apps/stephanos/dist is generated output, not source truth.',
+      repoArchitectureRiskLevel: 'Mission Console:high|codex-handoff:medium',
 
     },
     routeTruthView: {
@@ -1964,4 +1970,10 @@ test('buildSupportSnapshot snapshot: streaming completion state distinguishes fa
     statusSummary: {},
   });
   assert.match(finalizedSnapshot, /Streaming Completion State: fully-finalized/);
+});
+
+
+test('support snapshot projects compact repo architecture context fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { repoArchitectureAffectedSubsystemCount: '3', repoArchitectureAffectedSubsystems: 'mission-console|intent-to-build|support-snapshot', repoArchitectureLikelyTestCount: '2', repoArchitectureGeneratedOutputTouched: 'yes', repoArchitectureSourceTruthWarning: 'apps/stephanos/dist is generated output, not source truth.', repoArchitectureRiskLevel: 'mission-console:high' } });
+  assert.match(snapshot, /repoarchitectureaffectedsubsystemcount|Mission/i);
 });
