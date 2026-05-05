@@ -22,6 +22,6 @@ test('mission command packet exports stable json and markdown sections', () => {
   const parsed = JSON.parse(json);
   assert.equal(parsed.missionId, 'm2');
   const markdown = buildMissionCommandPacketMarkdown(packet);
-  ['## Mission', '## Operator Intent', '## Safety Doctrine', '## Blocked Actions', '## OpenClaw Delegation', '## Finish Authority', '## Evidence Ledger', '## Operator Decisions', '## Codex Handoff', '## Next Action']
+  ['## Mission', '## Operator Intent', '## Safety Doctrine', '## Blocked Actions', '## OpenClaw Delegation', '## Finish Authority', '## Evidence Ledger', '## Operator Decisions', '## Agent Assignment', '## Codex Handoff', '## Next Action']
     .forEach((label) => assert.equal(markdown.includes(label), true, `missing ${label}`));
 });
