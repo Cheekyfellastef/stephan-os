@@ -272,3 +272,12 @@ test('openclaw cannot grant itself finish authority or execution permissions', (
   assert.match(prompt, /OpenClaw may not merge\./);
   assert.match(prompt, /OpenClaw may not grant itself finish authority\./);
 });
+
+
+test('codex handoff includes Architecture Map / Likely Impact section and operator intent remains primary', () => {
+  const missionSpec = buildMissionSpec({ rawIntent: 'OpenClaw delegated authority with merge authority caution and memory context.', targetArea: 'mission-console' });
+  const prompt = buildCodexHandoffPrompt({ missionSpec });
+  assert.match(prompt, /Architecture Map \/ Likely Impact:/);
+  assert.match(prompt, /do not edit generated dist as source truth/i);
+  assert.equal(missionSpec.rawIntent.includes('OpenClaw delegated authority'), true);
+});
