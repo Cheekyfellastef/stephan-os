@@ -3,6 +3,7 @@ import { buildMemoryLibrarianQueue } from './memoryLibrarianModel.js';
 import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
 import { adjudicateMissionFinishAuthority } from './missionFinishAuthorityModel.js';
 import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
+import { buildTaskFinisherPlan } from './taskFinisherModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -200,6 +201,17 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     verificationJudge: input.verificationJudge || {},
   });
 
+
+  const taskFinisherPlan = buildTaskFinisherPlan({
+    missionSpec: { missionId },
+    verificationJudge: input.verificationJudge || {},
+    finishAuthority,
+    repoArchitectureContext,
+    memoryLibrarianQueue: memoryLibrarian,
+    openClawDelegation,
+    prMetadata: input.prMetadata || {},
+  });
+
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -237,6 +249,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     finishAuthority,
     repoArchitectureContext,
     memoryLibrarian,
+    taskFinisherPlan,
   };
 
   return missionSpec;
@@ -388,6 +401,22 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- OpenClaw may prepare finish-readiness reports only unless future authority is explicitly granted.',
     '- Operator final authority.',
     '',
+
+    'Task Finisher / Routine Finish Plan:',
+    `- plan_status: ${asText(spec.taskFinisherPlan?.finishPlanStatus, 'unknown')}`,
+    `- plan_level: ${asText(spec.taskFinisherPlan?.finishPlanLevel, 'recommendations_only')}`,
+    `- safe_to_continue: ${spec.taskFinisherPlan?.safeToContinueRoutineFinish ? 'yes' : 'no'}`,
+    `- routine_tasks: ${(spec.taskFinisherPlan?.routineTasks || []).join(', ') || 'none'}`,
+    `- blocked_tasks: ${(spec.taskFinisherPlan?.blockedTasks || []).join(', ') || 'none'}`,
+    `- codex_may_fix: ${spec.taskFinisherPlan?.codexRepairNeeded ? 'yes (narrow fix only)' : 'not required'}`,
+    `- rebuild_dist_expected: ${spec.taskFinisherPlan?.rebuildDistNeeded ? 'yes' : 'no'}`,
+    `- rerun_tests_expected: ${spec.taskFinisherPlan?.rerunTestsNeeded ? 'yes' : 'no'}`,
+    `- merge_operator_controlled: ${spec.taskFinisherPlan?.mergeStillOperatorControlled ? 'yes' : 'no'}`,
+    `- required_operator_decisions: ${(spec.taskFinisherPlan?.requiredOperatorDecisions || []).join(' | ') || 'none'}`,
+    `- warnings: ${(spec.taskFinisherPlan?.warnings || []).join(' | ') || 'none'}`,
+    '- no shell/GitHub execution is performed by Stephanos UI.',
+    '',
+
     'Architecture Map / Likely Impact:',
     `- affected subsystems: ${(spec.repoArchitectureContext?.affectedSubsystems || []).join(', ') || 'none'}`,
     ...asList(spec.repoArchitectureContext?.sourceFilesLikelyTouched).map((entry) => `- likely source file: ${entry}`),

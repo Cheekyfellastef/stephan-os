@@ -282,6 +282,16 @@ export default function MissionConsoleTile({
       missionMergedBy: intentToBuild?.missionSpec?.finishAuthority?.mergedBy || 'unknown',
       missionFinishWarningLevel: intentToBuild?.missionSpec?.finishAuthority?.warningLevel || 'none',
       missionFinishNextAction: intentToBuild?.missionSpec?.finishAuthority?.nextAction || 'Merge is not authorized by this mission.',
+      taskFinisherPlanStatus: intentToBuild?.missionSpec?.taskFinisherPlan?.finishPlanStatus || 'unknown',
+      taskFinisherSafeToContinue: intentToBuild?.missionSpec?.taskFinisherPlan?.safeToContinueRoutineFinish ? 'yes' : 'no',
+      taskFinisherRoutineTaskCount: String(intentToBuild?.missionSpec?.taskFinisherPlan?.routineTasks?.length || 0),
+      taskFinisherBlockedTaskCount: String(intentToBuild?.missionSpec?.taskFinisherPlan?.blockedTasks?.length || 0),
+      taskFinisherCodexRepairNeeded: intentToBuild?.missionSpec?.taskFinisherPlan?.codexRepairNeeded ? 'yes' : 'no',
+      taskFinisherRebuildDistNeeded: intentToBuild?.missionSpec?.taskFinisherPlan?.rebuildDistNeeded ? 'yes' : 'no',
+      taskFinisherMemoryReviewNeeded: intentToBuild?.missionSpec?.taskFinisherPlan?.memoryReviewNeeded ? 'yes' : 'no',
+      taskFinisherMergeOperatorControlled: intentToBuild?.missionSpec?.taskFinisherPlan?.mergeStillOperatorControlled ? 'yes' : 'no',
+      taskFinisherWarningLevel: intentToBuild?.missionSpec?.taskFinisherPlan?.warningLevel || 'none',
+      taskFinisherNextAction: intentToBuild?.missionSpec?.taskFinisherPlan?.nextAction || 'not reported',
       repoArchitectureAffectedSubsystemCount: String(intentToBuild?.missionSpec?.repoArchitectureContext?.affectedSubsystems?.length || 0),
       repoArchitectureAffectedSubsystems: (intentToBuild?.missionSpec?.repoArchitectureContext?.affectedSubsystems || []).join('|') || 'none',
       repoArchitectureLikelyTestCount: String(intentToBuild?.missionSpec?.repoArchitectureContext?.testsLikelyRequired?.length || 0),
@@ -660,6 +670,16 @@ export default function MissionConsoleTile({
           <li><strong>Actual Merge State:</strong> {intentToBuild.missionSpec.finishAuthority?.merged ? `merged by ${intentToBuild.missionSpec.finishAuthority?.mergedBy || 'unknown'}` : 'not merged'}</li>
           <li><strong>Finish Warnings:</strong> {(intentToBuild.missionSpec.finishAuthority?.warnings || []).join(' | ') || 'none'}</li>
           <li><strong>Finish Next Action:</strong> {intentToBuild.missionSpec.finishAuthority?.nextAction || 'Merge is not authorized by this mission.'}</li>
+          <li><strong>Task Finisher / Routine Finish Plan:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.finishPlanLevel === 'recommendations_only' ? 'Routine finish: recommendations only' : 'Routine finish: enabled'}</li>
+          <li><strong>Safe to Continue Routine Finish:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.safeToContinueRoutineFinish ? 'yes' : 'no'}</li>
+          <li><strong>Recommended Routine Tasks:</strong> {(intentToBuild.missionSpec.taskFinisherPlan?.routineTasks || []).join(', ') || 'none'}</li>
+          <li><strong>Blocked Tasks:</strong> {(intentToBuild.missionSpec.taskFinisherPlan?.blockedTasks || []).join(', ') || 'none'}</li>
+          <li><strong>Required Operator Decisions:</strong> {(intentToBuild.missionSpec.taskFinisherPlan?.requiredOperatorDecisions || []).join(' | ') || 'none'}</li>
+          <li><strong>Codex Repair Needed:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.codexRepairNeeded ? 'yes' : 'no'}</li>
+          <li><strong>Rebuild / Verify Needed:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.rebuildDistNeeded || intentToBuild.missionSpec.taskFinisherPlan?.rerunTestsNeeded ? 'suggested' : 'not suggested'}</li>
+          <li><strong>Memory Review Needed:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.memoryReviewNeeded ? 'yes' : 'no'}</li>
+          <li><strong>Merge Still Operator Controlled:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.mergeStillOperatorControlled ? 'yes' : 'no'}</li>
+          <li><strong>Next Action:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.nextAction || 'not reported'}</li>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
           <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>

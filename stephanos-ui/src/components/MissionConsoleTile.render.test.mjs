@@ -57,6 +57,15 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'pending memory candidates:',
     'judgment:',
     'proof-of-done status:',
+    'Merge Still Operator Controlled:',
+    'Memory Review Needed:',
+    'Rebuild / Verify Needed:',
+    'Codex Repair Needed:',
+    'Required Operator Decisions:',
+    'Blocked Tasks:',
+    'Recommended Routine Tasks:',
+    'Safe to Continue Routine Finish:',
+    'Task Finisher / Routine Finish Plan:',
     'merge-ready candidate:',
   ];
   requiredLabels.forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
