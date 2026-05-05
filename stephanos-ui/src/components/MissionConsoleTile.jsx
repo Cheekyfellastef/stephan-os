@@ -23,6 +23,7 @@ import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
 import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
 import { buildMissionEvidenceLedger } from '../state/missionEvidenceLedgerModel.js';
 import { buildMissionCommandPacket, buildMissionCommandPacketJson, buildMissionCommandPacketMarkdown } from '../state/missionCommandPacketModel.js';
+import { buildAgentAssignmentMatrix } from '../state/agentAssignmentMatrixModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -234,7 +235,29 @@ export default function MissionConsoleTile({
     openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
     finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
     repoArchitectureContext: intentToBuild?.missionSpec?.repoArchitectureContext || {},
+    agentAssignmentMatrix: buildAgentAssignmentMatrix({
+      missionSpec: intentToBuild?.missionSpec || {},
+      missionCommandPacket: {},
+      operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+      taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+      verificationJudge: verificationReturnAdjudication,
+      memoryLibrarianQueue: memoryLibrarian,
+      repoArchitectureContext: intentToBuild?.missionSpec?.repoArchitectureContext || {},
+      openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
+      prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+    }),
   }), [intentToBuild?.missionSpec, intentToBuild?.codexPrompt, memoryLibrarian, missionEvidenceLedger, verificationReturnAdjudication]);
+  const agentAssignmentMatrix = useMemo(() => buildAgentAssignmentMatrix({
+    missionCommandPacket,
+    missionSpec: intentToBuild?.missionSpec || {},
+    operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+    verificationJudge: verificationReturnAdjudication,
+    memoryLibrarianQueue: memoryLibrarian,
+    repoArchitectureContext: intentToBuild?.missionSpec?.repoArchitectureContext || {},
+    openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
+    prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+  }), [intentToBuild?.missionSpec, memoryLibrarian, missionCommandPacket, verificationReturnAdjudication]);
 
   const agentCommandConsole = useMemo(() => buildAgentCommandConsoleProjection({
     agentTaskProjection,
@@ -366,8 +389,16 @@ export default function MissionConsoleTile({
       missionEvidenceCompleteness: missionEvidenceLedger.summary.evidenceCompleteness || 'low',
       missionEvidenceLatestEvent: missionEvidenceLedger.summary.latestEventType || 'none',
       missionEvidenceNextRequired: missionEvidenceLedger.summary.nextRequiredEvidence || 'none',
+      agentAssignmentCount: String(agentAssignmentMatrix.summary.assignmentCount || 0),
+      agentAssignmentActiveRoles: String(agentAssignmentMatrix.summary.activeRoleCount || 0),
+      agentAssignmentLeadRole: agentAssignmentMatrix.summary.recommendedLeadRole || 'operator',
+      agentAssignmentOpenClawAssigned: agentAssignmentMatrix.summary.openClawAssigned ? 'yes' : 'no',
+      agentAssignmentCodexAssigned: agentAssignmentMatrix.summary.codexAssigned ? 'yes' : 'no',
+      agentAssignmentOperatorApprovalRequired: agentAssignmentMatrix.summary.operatorApprovalRequired ? 'yes' : 'no',
+      agentAssignmentHighRiskCount: String(agentAssignmentMatrix.summary.highRiskAssignmentCount || 0),
+      agentAssignmentBlockedCount: String(agentAssignmentMatrix.summary.blockedAssignmentCount || 0),
     });
-  }, [intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
+  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
   useEffect(() => {
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
@@ -950,6 +981,23 @@ export default function MissionConsoleTile({
           <button type="button" onClick={() => copyToClipboard(buildMissionCommandPacketJson(missionCommandPacket), setPacketJsonCopyState)}>
             {packetJsonCopyState === COPY_STATE.SUCCESS ? 'Packet JSON Copied' : 'Copy Packet JSON'}
           </button>
+      </div>
+      <div className="paneSection">
+        <h5>Agent Assignment Matrix</h5>
+        <ul>
+          <li><strong>assignment count:</strong> {agentAssignmentMatrix.summary.assignmentCount}</li>
+          <li><strong>active roles:</strong> {agentAssignmentMatrix.summary.activeRoleCount}</li>
+          <li><strong>recommended lead role:</strong> {agentAssignmentMatrix.summary.recommendedLeadRole}</li>
+          <li><strong>openclaw assigned:</strong> {agentAssignmentMatrix.summary.openClawAssigned ? 'yes' : 'no'}</li>
+          <li><strong>codex assigned:</strong> {agentAssignmentMatrix.summary.codexAssigned ? 'yes' : 'no'}</li>
+          <li><strong>operator approval required:</strong> {agentAssignmentMatrix.summary.operatorApprovalRequired ? 'yes' : 'no'}</li>
+          <li><strong>high-risk count:</strong> {agentAssignmentMatrix.summary.highRiskAssignmentCount}</li>
+        </ul>
+        <ul className="mission-console__status-list">
+          {(agentAssignmentMatrix.assignments || []).slice(0, 8).map((assignment) => (
+            <li key={assignment.assignmentId}><strong>{assignment.roleLabel}</strong> — {assignment.responsibility} | authority: {assignment.authorityLevel} | allow: {(assignment.allowedActions || []).join(', ') || 'none'} | block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'} | output: {assignment.outputExpected} | next: {assignment.nextAction}</li>
+          ))}
+        </ul>
       </div>
       <div className="paneSection">
         <h5>Mission Command Packet</h5>

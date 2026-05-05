@@ -29,6 +29,7 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
   const openClawDelegation = input.openClawDelegation || {};
   const finishAuthority = input.finishAuthority || {};
   const repoArchitectureContext = input.repoArchitectureContext || {};
+  const agentAssignmentMatrix = input.agentAssignmentMatrix || {};
   const codexPrompt = asText(input.codexPrompt || missionSpec.codexPrompt || missionSpec.codexHandoffPrompt);
 
   const blockedActions = asList(missionSpec?.approvalBoundary?.blockedActions, ['deploy', 'merge-without-operator-approval']);
@@ -66,6 +67,17 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
     memoryLibrarianSummary: compactSummary({ status: memoryLibrarianQueue.queueStatus || 'idle', count: memoryLibrarianQueue.pendingCount || 0, warnings: memoryLibrarianQueue.conflicts, nextAction: memoryLibrarianQueue.nextAction || 'Await operator memory decisions.' }),
     evidenceLedgerSummary: compactSummary({ status: missionEvidenceLedger.completeness || 'unknown', count: missionEvidenceLedger.entries?.length || 0, warnings: missionEvidenceLedger.warnings, nextAction: missionEvidenceLedger.nextRequired || 'Collect missing evidence.' }),
     operatorDecisionSummary: compactSummary({ status: operatorDecisionConsole.status || 'pending', count: operatorDecisionConsole.pendingCount || operatorDecisionConsole.decisions?.length || 0, warnings: operatorDecisionConsole.warnings, nextAction: operatorDecisionConsole.nextAction || 'Resolve queued decisions.' }),
+    agentAssignmentSummary: {
+      assignedRoles: asList(agentAssignmentMatrix.assignments?.map((entry) => entry.roleId), []),
+      leadRole: asText(agentAssignmentMatrix.summary?.recommendedLeadRole, 'operator'),
+      authorityBoundaries: [
+        'No automatic merge authority.',
+        'No secrets or external account access.',
+        'No scope expansion without operator decision.',
+      ],
+      openClawDelegatedStatus: agentAssignmentMatrix.summary?.openClawAssigned === true ? 'assigned' : 'not_assigned',
+      operatorApprovalsRequired: agentAssignmentMatrix.summary?.operatorApprovalRequired === true ? 'yes' : 'no',
+    },
     codexHandoffText: asText(codexPrompt, 'No Codex handoff text available yet.'),
     exportWarnings: warnings,
     nextAction: asText(taskFinisherPlan.nextAction || verificationJudge.nextAction || missionEvidenceLedger.nextRequired, 'Await operator decision.'),
@@ -115,6 +127,11 @@ export function buildMissionCommandPacketMarkdown(packet = {}) {
     `- ${asText(packet.evidenceLedgerSummary?.status, 'unknown')}`,
     '## Operator Decisions',
     `- ${asText(packet.operatorDecisionSummary?.status, 'unknown')}`,
+    '## Agent Assignment',
+    `- Assigned Roles: ${asList(packet.agentAssignmentSummary?.assignedRoles, ['none']).join(', ')}`,
+    `- Lead Role: ${asText(packet.agentAssignmentSummary?.leadRole, 'operator')}`,
+    `- OpenClaw Delegated: ${asText(packet.agentAssignmentSummary?.openClawDelegatedStatus, 'not_assigned')}`,
+    `- Operator Approval Required: ${asText(packet.agentAssignmentSummary?.operatorApprovalsRequired, 'yes')}`,
     '## Codex Handoff',
     'This Mission Command Packet is the bounded context. Do not expand scope beyond it without returning a decision request.',
     asText(packet.codexHandoffText, 'n/a'),

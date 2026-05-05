@@ -2036,3 +2036,10 @@ test('support snapshot projects mission command packet fields', () => {
   assert.match(snapshot, /Mission Command Packet Included Systems: memory\|architecture\|verification/);
   assert.match(snapshot, /Mission Command Packet Ready: yes/);
 });
+
+test('support snapshot projects agent assignment matrix fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { agentAssignmentCount: '8', agentAssignmentActiveRoles: '8', agentAssignmentLeadRole: 'codex_builder', agentAssignmentOpenClawAssigned: 'no', agentAssignmentCodexAssigned: 'yes', agentAssignmentOperatorApprovalRequired: 'yes', agentAssignmentHighRiskCount: '1', agentAssignmentBlockedCount: '2' } });
+  assert.match(snapshot, /Agent Assignment Count: 8/);
+  assert.match(snapshot, /Agent Assignment Lead Role: codex_builder/);
+  assert.match(snapshot, /Agent Assignment Operator Approval Required: yes/);
+});
