@@ -447,6 +447,16 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- Operator final authority.',
     '',
 
+
+    'Mission Routing / Delegation Readiness:',
+    '- current route: draft (computed in Mission Command Packet routing summary).',
+    '- codex recommended recipient: only when route status is ready_for_codex.',
+    '- openclaw research allowed: only when research-only delegation is explicitly ready.',
+    '- evidence must be returned before verification/finish claims.',
+    '- blocked remains blocked: shell execution, GitHub write/merge automation, OpenClaw execution, secrets, external accounts, memory auto-promotion.',
+    '- operator decision required before merge/authority transitions.',
+    '- if route is not ready_for_codex, Codex should not proceed until blockers are resolved.',
+    '',
     'Task Finisher / Routine Finish Plan:',
     `- plan_status: ${asText(spec.taskFinisherPlan?.finishPlanStatus, 'unknown')}`,
     `- plan_level: ${asText(spec.taskFinisherPlan?.finishPlanLevel, 'recommendations_only')}`,

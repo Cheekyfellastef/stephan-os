@@ -2043,3 +2043,10 @@ test('support snapshot projects agent assignment matrix fields', () => {
   assert.match(snapshot, /Agent Assignment Lead Role: codex_builder/);
   assert.match(snapshot, /Agent Assignment Operator Approval Required: yes/);
 });
+
+
+test('support snapshot projects mission routing readiness fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { missionRoutingStatus: 'ready_for_codex', missionRoutingRecommendedRoute: 'codex_handoff', missionRoutingReadinessLevel: 'ready', missionRoutingLeadRole: 'codex_builder', missionRoutingCodexReady: 'yes', missionRoutingOpenClawResearchReady: 'no', missionRoutingOperatorDecisionRequired: 'no', missionRoutingBlockerCount: '0', missionRoutingWarningCount: '1', missionRoutingNextAction: 'Send bounded handoff.' } });
+  assert.match(snapshot, /Mission Routing Status: ready_for_codex/);
+  assert.match(snapshot, /Mission Routing Recommended Route: codex_handoff/);
+});

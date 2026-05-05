@@ -24,6 +24,7 @@ import { adjudicateMissionVerificationJudge } from '../state/missionVerification
 import { buildMissionEvidenceLedger } from '../state/missionEvidenceLedgerModel.js';
 import { buildMissionCommandPacket, buildMissionCommandPacketJson, buildMissionCommandPacketMarkdown } from '../state/missionCommandPacketModel.js';
 import { buildAgentAssignmentMatrix } from '../state/agentAssignmentMatrixModel.js';
+import { buildMissionRoutingReadiness } from '../state/missionRoutingReadinessModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -397,8 +398,18 @@ export default function MissionConsoleTile({
       agentAssignmentOperatorApprovalRequired: agentAssignmentMatrix.summary.operatorApprovalRequired ? 'yes' : 'no',
       agentAssignmentHighRiskCount: String(agentAssignmentMatrix.summary.highRiskAssignmentCount || 0),
       agentAssignmentBlockedCount: String(agentAssignmentMatrix.summary.blockedAssignmentCount || 0),
+      missionRoutingStatus: missionRoutingReadiness.routeStatus || 'draft',
+      missionRoutingRecommendedRoute: missionRoutingReadiness.recommendedRoute || 'operator_decision',
+      missionRoutingReadinessLevel: missionRoutingReadiness.readinessLevel || 'not_ready',
+      missionRoutingLeadRole: missionRoutingReadiness.assignedLeadRole || 'operator',
+      missionRoutingCodexReady: missionRoutingReadiness.codexReady ? 'yes' : 'no',
+      missionRoutingOpenClawResearchReady: missionRoutingReadiness.openClawResearchReady ? 'yes' : 'no',
+      missionRoutingOperatorDecisionRequired: missionRoutingReadiness.operatorDecisionRequired ? 'yes' : 'no',
+      missionRoutingBlockerCount: String((missionRoutingReadiness.blockers || []).length || 0),
+      missionRoutingWarningCount: String((missionRoutingReadiness.warnings || []).length || 0),
+      missionRoutingNextAction: missionRoutingReadiness.nextAction || 'Await operator decision.',
     });
-  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending]);
+  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
   useEffect(() => {
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
@@ -1000,6 +1011,20 @@ export default function MissionConsoleTile({
         </ul>
       </div>
       <div className="paneSection">
+        <h5>Mission Routing / Delegation Readiness</h5>
+        <ul>
+          <li><strong>route status:</strong> {missionRoutingReadiness.routeStatus}</li>
+          <li><strong>recommended route:</strong> {missionRoutingReadiness.recommendedRoute}</li>
+          <li><strong>readiness level:</strong> {missionRoutingReadiness.readinessLevel}</li>
+          <li><strong>assigned lead role:</strong> {missionRoutingReadiness.assignedLeadRole}</li>
+          <li><strong>Codex ready:</strong> {missionRoutingReadiness.codexReady ? 'yes' : 'no'}</li>
+          <li><strong>OpenClaw research ready:</strong> {missionRoutingReadiness.openClawResearchReady ? 'yes' : 'no'}</li>
+          <li><strong>operator decision required:</strong> {missionRoutingReadiness.operatorDecisionRequired ? 'yes' : 'no'}</li>
+          <li><strong>blockers / warnings:</strong> {(missionRoutingReadiness.blockers || []).length} / {(missionRoutingReadiness.warnings || []).length}</li>
+          <li><strong>required before route:</strong> {(missionRoutingReadiness.requiredBeforeRoute || []).join(' | ') || 'none'}</li>
+          <li><strong>next action:</strong> {missionRoutingReadiness.nextAction}</li>
+        </ul>
+
         <h5>Mission Command Packet</h5>
         <ul>
           <li><strong>packet version:</strong> {missionCommandPacket.packetVersion}</li>
@@ -1252,3 +1277,17 @@ export default function MissionConsoleTile({
     </CollapsiblePanel>
   );
 }
+  const missionRoutingReadiness = useMemo(() => buildMissionRoutingReadiness({
+    missionSpec: intentToBuild?.missionSpec || {},
+    missionCommandPacket,
+    agentAssignmentMatrix,
+    operatorDecisionConsole: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+    missionEvidenceLedger,
+    verificationJudge: verificationReturnAdjudication,
+    taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+    memoryLibrarianQueue: memoryLibrarian,
+    prEvidenceIntake: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+    openClawDelegation: intentToBuild?.missionSpec?.openClawDelegation || {},
+    finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
+  }), [agentAssignmentMatrix, intentToBuild?.missionSpec, memoryLibrarian, missionCommandPacket, missionEvidenceLedger, verificationReturnAdjudication]);
+

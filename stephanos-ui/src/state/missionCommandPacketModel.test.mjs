@@ -22,6 +22,13 @@ test('mission command packet exports stable json and markdown sections', () => {
   const parsed = JSON.parse(json);
   assert.equal(parsed.missionId, 'm2');
   const markdown = buildMissionCommandPacketMarkdown(packet);
-  ['## Mission', '## Operator Intent', '## Safety Doctrine', '## Blocked Actions', '## OpenClaw Delegation', '## Finish Authority', '## Evidence Ledger', '## Operator Decisions', '## Agent Assignment', '## Codex Handoff', '## Next Action']
+  ['## Mission', '## Operator Intent', '## Safety Doctrine', '## Blocked Actions', '## OpenClaw Delegation', '## Finish Authority', '## Evidence Ledger', '## Operator Decisions', '## Mission Routing / Delegation Readiness', '## Agent Assignment', '## Codex Handoff', '## Next Action']
     .forEach((label) => assert.equal(markdown.includes(label), true, `missing ${label}`));
+});
+
+
+test('mission command packet includes mission routing summary fields', () => {
+  const packet = buildMissionCommandPacket({ missionSpec: { missionId: 'm3', rawIntent: 'Route me' }, agentAssignmentMatrix: { assignments: [{ roleId: 'codex_builder' }], summary: {} }, missionEvidenceLedger: { entries: [] } });
+  assert.equal(Boolean(packet.missionRoutingSummary), true);
+  assert.equal(packet.missionRoutingSummary.routeStatus, 'ready_for_codex');
 });
