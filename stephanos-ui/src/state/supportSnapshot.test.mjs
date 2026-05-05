@@ -105,6 +105,13 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       missionVerificationChangedFilesInScope: 'yes',
       missionVerificationRequiredTestsRun: 'no',
 
+      prEvidenceInputDetected: 'yes',
+      prEvidenceParseConfidence: 'high',
+      prEvidenceParsedPrNumber: '77',
+      prEvidenceParsedRepo: 'acme/stephan-os',
+      prEvidenceParseWarningCount: '1',
+      prEvidenceConnectorSource: 'manual_text_intake',
+
       taskFinisherPlanStatus: 'ready_for_routine_finish',
       taskFinisherSafeToContinue: 'yes',
       taskFinisherRoutineTaskCount: '4',
@@ -251,6 +258,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Surface Active Protocols: touch-first-input, stacked-panels/);
   assert.match(snapshot, /Task Finisher Plan Status: ready_for_routine_finish/);
   assert.match(snapshot, /Task Finisher Merge Operator Controlled: yes/);
+  assert.match(snapshot, /PR Evidence Parse Confidence: high/);
+  assert.match(snapshot, /PR Evidence Parsed Repo: acme\/stephan-os/);
   assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) confidence=0.66/);
   assert.match(snapshot, /Surface Friction Pattern Count: 1/);
   assert.match(snapshot, /Surface Friction Pattern Latest: panel-dragging strength=emerging recurrence=3/);

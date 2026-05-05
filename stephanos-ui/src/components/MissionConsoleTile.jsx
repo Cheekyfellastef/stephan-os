@@ -18,6 +18,7 @@ import {
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
+import { buildPrEvidenceFromInput, parsePrEvidenceInput } from '../state/prEvidenceConnectorModel.js';
 import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
 import { adjudicateMissionVerificationJudge } from '../state/missionVerificationJudgeModel.js';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
@@ -85,6 +86,8 @@ export default function MissionConsoleTile({
   ]);
   const [missionBridgeState, setMissionBridgeState] = useState(() => createMissionBridgeState());
   const [verificationReturnInput, setVerificationReturnInput] = useState('');
+  const [prEvidenceInput, setPrEvidenceInput] = useState('');
+  const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
     const operatorSurface = agentTaskProjection?.operatorSurface || {};
@@ -298,6 +301,12 @@ export default function MissionConsoleTile({
       repoArchitectureGeneratedOutputTouched: (intentToBuild?.missionSpec?.repoArchitectureContext?.generatedOutputsLikelyTouched || []).length > 0 ? 'yes' : 'no',
       repoArchitectureSourceTruthWarning: (intentToBuild?.missionSpec?.repoArchitectureContext?.sourceTruthWarnings || [])[1] || 'none',
       repoArchitectureRiskLevel: (intentToBuild?.missionSpec?.repoArchitectureContext?.riskSummary || []).join('|') || 'none',
+      prEvidenceInputDetected: prEvidenceInput.trim() ? 'yes' : 'no',
+      prEvidenceParseConfidence: prEvidenceParseResult?.parseConfidence || 'none',
+      prEvidenceParsedPrNumber: String(prEvidenceParseResult?.detectedPrNumber || 'n/a'),
+      prEvidenceParsedRepo: prEvidenceParseResult?.detectedRepo || 'unknown',
+      prEvidenceParseWarningCount: String(prEvidenceParseResult?.parseWarnings?.length || 0),
+      prEvidenceConnectorSource: prEvidenceParseResult?.evidenceSource || 'none',
       missionVerificationJudgment: verificationReturnAdjudication.judgment || 'no_return',
       missionVerificationReadinessLevel: verificationReturnAdjudication.readinessLevel || 'not_ready',
       missionVerificationMergeReadyCandidate: verificationReturnAdjudication.mergeReadyCandidate ? 'yes' : 'no',
@@ -521,11 +530,25 @@ export default function MissionConsoleTile({
   }), [agentTaskProjection?.memoryCandidates, missionBridgeState?.missionPacket?.missionTitle]);
 
   function generateIntentToBuildSpec() {
+    const parsedEvidence = buildPrEvidenceFromInput({
+      rawPrInput: prEvidenceInput,
+      missionSpec: {
+        finishAuthority: {},
+        repoArchitectureContext: {},
+      },
+    });
+    setPrEvidenceParseResult(parsedEvidence.parseResult);
     const next = createIntentToBuildState({
       ...intentInput,
       memoryContext: missionMemoryContext,
+      prMetadata: parsedEvidence.parseResult.normalizedPrMetadata,
     });
     setIntentToBuild(next);
+  }
+
+  function handleParsePrEvidence() {
+    const parsedEvidence = parsePrEvidenceInput(prEvidenceInput);
+    setPrEvidenceParseResult(parsedEvidence);
   }
 
   function submitOperatorIntentToBridge() {
@@ -869,6 +892,32 @@ export default function MissionConsoleTile({
           <button type="button" onClick={() => copyToClipboard(intentToBuild.codexPrompt, setPromptCopyState)}>
             {promptCopyState === COPY_STATE.SUCCESS ? 'Codex Prompt Copied' : 'Copy Codex Prompt'}
           </button>
+      </div>
+      <div className="paneSection">
+        <h5>PR Evidence Input</h5>
+        <textarea
+          className="paneTextarea paneControl"
+          rows={5}
+          value={prEvidenceInput}
+          onChange={(event) => setPrEvidenceInput(event.target.value)}
+          placeholder="Paste GitHub PR URL, PR summary, Codex PR summary, or metadata block."
+        />
+        <button type="button" onClick={handleParsePrEvidence}>Parse PR Evidence</button>
+        <h6>Parsed PR Evidence Preview</h6>
+        {!prEvidenceInput.trim() ? <p>No PR evidence supplied yet.</p> : (
+          <ul>
+            <li><strong>parse confidence:</strong> {prEvidenceParseResult.parseConfidence || 'none'}</li>
+            <li><strong>PR number:</strong> {prEvidenceParseResult.detectedPrNumber || 'n/a'}</li>
+            <li><strong>PR URL:</strong> {prEvidenceParseResult.detectedPrUrl || 'n/a'}</li>
+            <li><strong>repository:</strong> {prEvidenceParseResult.detectedRepo || 'unknown'}</li>
+            <li><strong>checks status:</strong> {prEvidenceParseResult.detectedChecksStatus || 'unknown'}</li>
+            <li><strong>merged status:</strong> {prEvidenceParseResult.detectedMergeStatus || 'unknown'}</li>
+            <li><strong>changed file count:</strong> {(prEvidenceParseResult.detectedChangedFiles || []).length}</li>
+            <li><strong>codex task present:</strong> {prEvidenceParseResult.detectedCodexTaskId || prEvidenceParseResult.detectedCodexTaskUrl ? 'yes' : 'no'}</li>
+            <li><strong>warnings:</strong> {(prEvidenceParseResult.parseWarnings || []).join(' | ') || 'none'}</li>
+            <li><strong>normalized PR status:</strong> {intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus || 'no_pr_evidence'}</li>
+          </ul>
+        )}
       </div>
       <div className="paneSection">
         <h5>PR Evidence Intake</h5>
