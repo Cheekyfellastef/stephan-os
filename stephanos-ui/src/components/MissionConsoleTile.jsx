@@ -729,6 +729,25 @@ export default function MissionConsoleTile({
           <li><strong>Memory Review Needed:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.memoryReviewNeeded ? 'yes' : 'no'}</li>
           <li><strong>Merge Still Operator Controlled:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.mergeStillOperatorControlled ? 'yes' : 'no'}</li>
           <li><strong>Next Action:</strong> {intentToBuild.missionSpec.taskFinisherPlan?.nextAction || 'not reported'}</li>
+        </ul>
+
+        <h5>Operator Decision Console</h5>
+        <ul>
+          <li><strong>pending decision count:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.pendingDecisionCount ?? 0}</li>
+          <li><strong>recommended next decision:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.recommendedNextDecision || 'none'}</li>
+          <li><strong>approval required count:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.approvalRequiredCount ?? 0}</li>
+          <li><strong>high-risk count:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.highRiskDecisionCount ?? 0}</li>
+          <li><strong>blocked count:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.blockedDecisionCount ?? 0}</li>
+          <li><strong>operator can finish mission:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.operatorCanFinishMission ? 'yes' : 'no'}</li>
+          <li><strong>merge decision required:</strong> {intentToBuild.missionSpec.operatorDecisionConsole?.summary?.operatorMergeDecisionRequired ? 'yes' : 'no'}</li>
+        </ul>
+        <ul>
+          {(intentToBuild.missionSpec.operatorDecisionConsole?.decisions || []).slice(0, 6).map((decision) => (
+            <li key={decision.decisionId}><strong>{decision.title}</strong> [{decision.sourceSystem}; risk {decision.riskLevel}] · recommend: {decision.recommendedAction} · allowed: {(decision.allowedActions || []).join(', ') || 'none'} · blocked: {(decision.blockedActions || []).join(', ') || 'none'} · reason: {decision.reason}</li>
+          ))}
+        </ul>
+
+        <ul>
           <li><strong>mission bridge mission id:</strong> {missionBridgeState.missionPacket?.missionId || 'n/a'}</li>
           <li><strong>mission bridge target agents:</strong> {missionBridgeState.missionPacket?.agentAssignments?.map((assignment) => assignment.roleId).filter(Boolean).join(', ') || selectedAgentId || 'broadcast'}</li>
           <li><strong>mission bridge approval-needed:</strong> {missionBridgeState.pendingApproval ? 'yes' : 'no'}</li>

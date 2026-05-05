@@ -6,6 +6,7 @@ import { buildRepoArchitectureContext } from './repoArchitectureMapModel.js';
 import { buildTaskFinisherPlan } from './taskFinisherModel.js';
 import { buildPrEvidenceIntake } from './prEvidenceIntakeModel.js';
 import { buildMissionEvidenceLedger } from './missionEvidenceLedgerModel.js';
+import { buildOperatorDecisionQueue } from './operatorDecisionConsoleModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -270,6 +271,31 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     memoryLibrarianQueue: memoryLibrarian,
   });
   missionSpec.missionEvidenceLedger = missionEvidenceLedger;
+  missionSpec.operatorDecisionConsole = buildOperatorDecisionQueue({
+    missionSpec,
+    missionEvidenceLedger,
+    memoryLibrarianQueue: memoryLibrarian,
+    verificationJudge: input.verificationJudge || {},
+    taskFinisherPlan,
+    finishAuthority,
+    prEvidenceIntake,
+    openClawDelegation,
+    repoArchitectureContext,
+  });
+
+  missionSpec.supportSnapshot = {
+    ...(missionSpec.supportSnapshot || {}),
+    operatorDecisionPendingCount: missionSpec.operatorDecisionConsole.summary.pendingDecisionCount,
+    operatorDecisionApprovalRequiredCount: missionSpec.operatorDecisionConsole.summary.approvalRequiredCount,
+    operatorDecisionHighRiskCount: missionSpec.operatorDecisionConsole.summary.highRiskDecisionCount,
+    operatorDecisionBlockedCount: missionSpec.operatorDecisionConsole.summary.blockedDecisionCount,
+    operatorDecisionRecommendedNext: missionSpec.operatorDecisionConsole.summary.recommendedNextDecision,
+    operatorDecisionCanFinishMission: missionSpec.operatorDecisionConsole.summary.operatorCanFinishMission,
+    operatorDecisionMergeRequired: missionSpec.operatorDecisionConsole.summary.operatorMergeDecisionRequired,
+    operatorDecisionMemoryApprovalRequired: missionSpec.operatorDecisionConsole.summary.memoryApprovalRequired,
+    operatorDecisionCodexFixRecommended: missionSpec.operatorDecisionConsole.summary.codexFixRecommended,
+    operatorDecisionProofReviewRequired: missionSpec.operatorDecisionConsole.summary.proofReviewRequired,
+  };
 
   return missionSpec;
 }
@@ -461,6 +487,16 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     '- blockers/failures and unresolved risks.',
     '- explicit statement: no OpenClaw execution, no shell outside approved scope, no git push, no merge, no secrets access, no external-account action.',
     '',
+    '',
+    'Operator Decision Awareness (required):',
+    `- pending decision count: ${spec.operatorDecisionConsole?.summary?.pendingDecisionCount ?? 0}`,
+    `- recommended next decision: ${asText(spec.operatorDecisionConsole?.summary?.recommendedNextDecision, 'none')}`,
+    '- Return evidence that supports each operator decision.',
+    '- Do not assume approval; call out decisions requiring explicit operator review.',
+    '- Do not auto-promote memory/canon candidates.',
+    '- Do not merge unless merge authority is explicitly included.',
+    '- Identify any outstanding operator decision before claiming completion.',
+
     'Mission Evidence Ledger Expectations:',
     '- Codex should return evidence in an ingestible, ledger-friendly format.',
     '- Include changed files, tests, build/verify outputs, PR URL, blockers, proof-of-done evidence, and safety confirmation.',
