@@ -1,4 +1,5 @@
 import { buildMissionMemoryContext, deriveVerificationReturnLessonCandidates } from './missionMemoryOrchestrator.js';
+import { buildOpenClawDelegatedMission } from './openClawDelegationModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -151,6 +152,12 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
   if (memoryInfluence.memoriesUsed.length) {
     strengthenedSuccessCriteria.push('Mission Memory Context is visible, grouped, and cannot override current operator intent.');
   }
+  const openClawDelegation = buildOpenClawDelegatedMission({
+    missionId,
+    operatorIntent: rawIntent,
+    missionScope: `Mission scope in ${targetArea}: ${asText(input.implementationScope, `Implement scoped changes in ${targetArea} without violating Stephanos doctrine.`)}` ,
+  });
+
   const missionSpec = {
     missionId,
     status: 'draft',
@@ -184,6 +191,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     allowedScope: `Operator intent remains primary; memory may strengthen scope but cannot silently rewrite: ${asText(input.implementationScope, `Implement scoped changes in ${targetArea} without violating Stephanos doctrine.`)}`,
     risks: [...asList(input.risks, []), ...memoryContextWarnings],
     nextBestAction: memoryContextWarnings.length ? 'Resolve surfaced memory/intent conflicts before handoff execution.' : 'Generate Codex-safe implementation handoff and run required verification.',
+    openClawDelegation,
   };
 
   return missionSpec;
@@ -286,6 +294,17 @@ export function buildCodexHandoffPrompt({ missionSpec = {}, repoPath = '/workspa
     'Memory Conflicts / Required Handling:',
     ...(memoryConflicts.length ? memoryConflicts.map((conflict) => `- ${asText(conflict.severity)} ${asText(conflict.conflictType)} from ${asText(conflict.memorySource)}: ${asText(conflict.suggestedResolution)}`) : ['- none surfaced']),
     '- Memory cannot override operator authority or silently rewrite current operator intent.',
+    '',
+    'OpenClaw Delegation Envelope:',
+    `- delegated_to: ${asText(spec.openClawDelegation?.delegatedTo, 'openclaw')}`,
+    `- authority_level: ${asText(spec.openClawDelegation?.authorityLevel, 'research_and_plan')}`,
+    `- finish_authority: ${asText(spec.openClawDelegation?.finishAuthority, 'plan_only')}`,
+    `- allowed_capabilities: ${asList(spec.openClawDelegation?.allowedCapabilities).join(', ') || 'none'}`,
+    `- blocked_capabilities: ${asList(spec.openClawDelegation?.blockedCapabilities).join(', ') || 'none'}`,
+    '- self-authority escalation blocked: true',
+    '- OpenClaw may not grant itself powers.',
+    '- OpenClaw may help design controls but not bypass them.',
+    '- Operator final authority.',
     '',
     'Safety Doctrine (mandatory):',
     '- No destructive actions.',
