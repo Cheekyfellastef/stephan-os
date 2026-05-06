@@ -1727,6 +1727,7 @@ export function useAIConsole() {
     uiLayout,
     paneLayout,
     runtimeStatusModel,
+    setUiDiagnostics,
     debugData,
     reportSurfaceFriction,
     setSurfaceOverride,
