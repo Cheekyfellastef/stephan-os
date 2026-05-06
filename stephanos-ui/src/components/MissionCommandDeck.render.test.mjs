@@ -7,93 +7,37 @@ import { fileURLToPath } from 'node:url';
 const componentPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'MissionCommandDeck.jsx');
 const stylesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../styles.css');
 
-test('Command Deck renders required shell, strip, rail, hero, and matrix sections', async () => {
+test('MissionCommandDeck uses one canonical bounded root and scan-first grid sections', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  [
-    'mission-command-deck-fullwidth',
-    'mission-command-deck-layout',
-    'Mission Console / Command Deck',
-    'mission-deck-strip',
-    'mission-deck-rail',
-    'Mission Routing / Delegation Readiness',
-    'aria-label="readiness ring"',
-    'Agent Assignment Matrix',
-    'mission-deck-matrix-wrap',
-    'mission-deck-matrix-row',
-    'matrix-label',
-  ].forEach((token) => assert.equal(source.includes(token), true, `missing token: ${token}`));
+  ['className="mission-command-deck mission-command-deck-canvas"', 'mission-command-deck-grid', 'mission-deck-grid-status-strip', 'mission-deck-grid-readiness-hero', 'mission-deck-grid-agent-assignment', 'mission-deck-grid-pr-repair', 'mission-deck-grid-operator-decision'].forEach((token) => {
+    assert.equal(source.includes(token), true, `missing token: ${token}`);
+  });
 });
 
-test('Command Deck renders repair contract, operator cards, runtime snapshot, activity feed, and secondary cards', async () => {
+test('legacy lane/rail/table wrappers are removed from MissionCommandDeck', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  [
-    'Codex PR Repair Contract',
-    'Retry Checks',
-    'Repair PR',
-    'Recreate PR',
-    'Operator Decision Console',
-    'Operator chooses the path',
-    'Support Snapshot / Runtime Truth',
-    'Activity Feed',
-    'Skill Forge',
-    'Capability Radar',
-    'Memory Librarian',
-    'OpenClaw Policy State',
-    'Verification Judge',
-  ].forEach((token) => assert.equal(source.includes(token), true, `missing token: ${token}`));
+  ['mission-deck-rail', 'mission-deck-nav-button', 'mission-deck-table-wrap', 'mission-deck-matrix-wrap'].forEach((token) => {
+    assert.equal(source.includes(token), false, `legacy token present: ${token}`);
+  });
 });
 
-test('Missing data fallback and preview controls are safe and explicit', async () => {
+test('Agent assignment and PR repair actions remain bounded and safe', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  ['no evidence yet / unavailable', 'preview-only control', '(Preview)', 'disabled aria-disabled="true"'].forEach((token) => {
+  ['mission-deck-assignment-row', 'mission-deck-assignment-grid', 'mission-deck-actions', 'preview-only control', 'disabled aria-disabled="true"'].forEach((token) => {
     assert.equal(source.includes(token), true, `missing safety token: ${token}`);
   });
 });
 
-test('Static style guard enforces full-width, min-width, wrapping, responsive grid, and accessibility cues', async () => {
-  const css = await fs.readFile(stylesPath, 'utf8');
-  [
-    'app-shell-root.mission-console-surface-mode',
-    'app-shell-root.mission-console-command-deck-mode',
-    'mission-console-surface-stage',
-    'mission-console-workspace-wide',
-    'stephanos-workspace-canvas',
-    'stephanos-workspace-lane',
-    'stephanos-workspace-gutter',
-    'stephanos-workspace-surface--mission',
-    'width: 100%',
-    'max-width:100%',
-    'max-width', 'none',
-    'min-width:0',
-    'minmax(0, 1fr)',
-    'minmax(0, 1fr)',
-    '--workspace-shell-lane-nav-min',
-    '--workspace-shell-lane-main-min',
-    '--workspace-shell-lane-rail-min',
-    '@media (max-width: 1580px)',
-    '@media (max-width: 1220px)',
-    'minmax(min(240px,100%),1fr)',
-    'mission-deck-matrix-grid',
-    'flex-wrap:wrap',
-    'mission-command-deck-layout',
-    'mission-command-deck-canvas',
-    'overflow-x: hidden',
-    'overflow-wrap:anywhere',
-    'cursor:pointer',
-    'cursor:not-allowed',
-    'box-shadow: inset 3px 0 0',
-    ':focus-visible',
-  ].forEach((token) => assert.equal(css.includes(token), true, `missing style token: ${token}`));
+test('Missing/unknown data fallback is explicit and safe', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  ['unknown', 'pending', 'no evidence yet / unavailable'].forEach((token) => {
+    assert.equal(source.includes(token), true, `missing fallback token: ${token}`);
+  });
 });
 
-
-
-test('Deck navigation and decision controls are safe semantics', async () => {
-  const source = await fs.readFile(componentPath, 'utf8');
-  [
-    'mission-deck-nav-button',
-    'type="button"',
-    'decision-card',
-    'disabled aria-disabled="true"',
-  ].forEach((token) => assert.equal(source.includes(token), true, `missing button token: ${token}`));
+test('Card grid and bounded card CSS guardrails are explicit', async () => {
+  const css = await fs.readFile(stylesPath, 'utf8');
+  ['.mission-command-deck-grid', 'grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));', '.mission-deck-card, .mission-deck-chip, .mission-deck-metric', 'min-width:0', 'max-width:100%', 'overflow-wrap:anywhere', '.mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap;', '.mission-deck-preview-button', 'white-space:normal'].forEach((token) => {
+    assert.equal(css.includes(token), true, `missing style token: ${token}`);
+  });
 });
