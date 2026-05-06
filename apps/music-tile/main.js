@@ -6,6 +6,8 @@ import { applyArtistSearchContext, createDiscoveryQueries } from './engine/music
 import { createMediaProviderAdapters } from './providers/mediaProviderAdapters.js';
 import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import { getMediaPlaybackLinkState, sanitizeVideoId } from './utils/youtubeLinkResolver.js';
+import { toSpotifyEmbedUrl, parseSpotifyReference } from './utils/spotifyEmbed.js';
+import { SEEDED_TASTE_TRACKS, MUSIC_LANES } from './data/musicTasteSeeds.js';
 import { createCanonTilePaneManager } from '../../shared/runtime/canonTilePanes.mjs';
 import {
   DEFAULT_SELECTION,
@@ -140,6 +142,19 @@ const playbackController = createMusicTilePlaybackController({
   getMediaItemById: (id) => state.memory?.mediaItems?.[id] || null,
 });
 
+
+const SIGNAL_ORDER = ['fantastic','liked','good','interesting','nearly','reject','unknown'];
+
+function ensureTasteMemory() {
+  if (!state.memory.tasteTracks) state.memory.tasteTracks = SEEDED_TASTE_TRACKS.map((track) => ({ ...track, feedbackReasons: track.feedbackReasons || [], positiveTags: track.positiveTags || [], negativeTags: track.negativeTags || [], playback: { spotifyEmbedAvailable: Boolean(toSpotifyEmbedUrl(track.spotifyUrl || track.spotifyUri)), youtubeEmbedLikely: 'unknown', canonicalPlaybackSource: track.canonicalSource === 'spotify' ? 'spotify' : 'manual', fallbackPlaybackSource: 'youtube' } }));
+}
+
+function buildTasteSummary() {
+  ensureTasteMemory();
+  const counts = Object.fromEntries(SIGNAL_ORDER.map((signal) => [signal, 0]));
+  for (const track of state.memory.tasteTracks) counts[track.signal || 'unknown'] = (counts[track.signal || 'unknown'] || 0) + 1;
+  return counts;
+}
 function getYouTubeApiKey() {
   return window.STEPHANOS_YOUTUBE_API_KEY || window.localStorage.getItem('stephanos.youtubeApiKey') || '';
 }
@@ -310,6 +325,16 @@ function renderSummary() {
       <span>${value}</span>
     </article>
   `).join('');
+}
+
+function renderTasteCards() {
+  ensureTasteMemory();
+  const cards = state.memory.tasteTracks.map((track) => {
+    const embed = toSpotifyEmbedUrl(track.spotifyUrl || track.spotifyUri);
+    const fallbackUrl = parseSpotifyReference(track.spotifyUrl || track.spotifyUri)?.openUrl || '#';
+    return `<li class="journey-item"><article><strong>${track.artist} — ${track.title}</strong><p class="muted">Lane: ${track.lane} • Signal: ${track.signal}</p>${embed ? `<iframe src="${embed}" width="100%" height="152" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<p class="muted">Spotify embed unavailable; metadata-only fallback active.</p>'}<div class="action-row"><a class="inline-btn button-link" href="${fallbackUrl}" target="_blank" rel="noopener noreferrer">Open in Spotify</a></div></article></li>`;
+  }).join('');
+  return `<li class="journey-section-label">Taste Cockpit (Spotify-first)</li>${cards}`;
 }
 
 function renderQueue() {
