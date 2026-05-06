@@ -50,6 +50,7 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
   const css = await fs.readFile(stylesPath, 'utf8');
   [
     'app-shell-root.mission-console-surface-mode',
+    'app-shell-root.mission-console-command-deck-mode',
     'mission-console-surface-stage',
     'mission-console-workspace-wide',
     'width: 100%',
@@ -63,3 +64,14 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
   ].forEach((token) => assert.equal(css.includes(token), true, `missing style token: ${token}`));
 });
 
+
+
+test('Deck navigation and decision controls are real button semantics', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  [
+    'mission-deck-nav-button',
+    'type="button"',
+    'decision-card',
+    'disabled aria-disabled="true"',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing button token: ${token}`));
+});

@@ -15,3 +15,10 @@ test('App registers Mission Console pane and keeps OpenClaw tile present', async
   assert.equal(source.includes("id: 'openClawPanel'"), true);
   assert.equal(source.includes('<OpenClawTile'), true);
 });
+
+
+test('App default shell promotes mission console command deck mode to remove width caps', async () => {
+  const source = await fs.readFile(appPath, 'utf8');
+  assert.equal(source.includes('missionConsoleWideShellMode'), true);
+  assert.equal(source.includes('mission-console-command-deck-mode'), true);
+});
