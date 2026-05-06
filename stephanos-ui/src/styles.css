@@ -389,6 +389,14 @@ body {
   align-items: center;
 }
 
+.operator-pane-slot.pane-collapsed .collapsible-panel {
+  padding-bottom: 0.7rem;
+}
+
+.operator-pane-slot.pane-collapsed .panel-body {
+  margin-top: 0;
+}
+
 .provider-dock {
   margin-bottom: 1rem;
   position: relative;
@@ -2879,6 +2887,8 @@ pre {
 
 .openclaw-tile-layout {
   display: grid;
+  grid-auto-flow: row dense;
+
   grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 0.85rem;
   width: 100%;
@@ -2895,7 +2905,7 @@ pre {
 }
 
 .openclaw-card {
-  min-inline-size: min(100%, 280px);
+  min-inline-size: 0;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
@@ -2911,6 +2921,15 @@ pre {
   overflow-wrap: anywhere;
 }
 
+
+.openclaw-primary-details {
+  grid-column: 1 / -1;
+}
+
+.openclaw-primary-details > .openclaw-details-grid {
+  width: 100%;
+  min-width: 0;
+}
 .openclaw-status-card {
   border: 1px solid rgba(118, 154, 216, 0.3);
   border-radius: 10px;

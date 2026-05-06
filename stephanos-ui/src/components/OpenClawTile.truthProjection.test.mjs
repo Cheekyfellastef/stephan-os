@@ -149,7 +149,7 @@ test('OpenClawTile mission primary operator action follows canonical current sta
 test('OpenClawTile applies local containment root and wraps action rows', async () => {
   const source = await fs.readFile(tilePath, 'utf8');
   assert.equal(source.includes('openclaw-section openclaw-tile-root openclaw-card'), true);
-  assert.equal(source.includes('className="openclaw-tile-layout"'), true);
+  assert.equal(source.includes('className="openclaw-tile-layout openclaw-tile-root"'), true);
   assert.equal(source.includes('className="openclaw-details-grid"'), true);
   assert.equal(source.includes('openclaw-status-card'), true);
   const wraps = source.match(/className="openclaw-button-row"/g) || [];
@@ -163,4 +163,11 @@ test('OpenClaw styles avoid viewport-width escapes and enforce safe authority gr
   assert.equal(styles.includes('repeat(auto-fit, minmax(min(280px, 100%), 1fr))'), true);
   assert.equal(styles.includes('.openclaw-status-card'), true);
   assert.equal(styles.includes('.openclaw-button-row {\n  display: flex;\n  flex-wrap: wrap;'), true);
+});
+
+
+test('OpenClaw tile avoids unsafe viewport width rules and keeps details pane as bounded full-width card', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('openclaw-primary-details'), true);
+  assert.equal(source.includes('100vw'), false);
 });

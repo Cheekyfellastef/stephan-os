@@ -332,7 +332,7 @@ export default function OpenClawTile({
       isOpen={uiLayout.openClawPanel !== false}
       onToggle={() => togglePanel('openClawPanel')}
     >
-      <div className="openclaw-tile-layout">
+      <div className="openclaw-tile-layout openclaw-tile-root">
       <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Mission Card</h4>
         <ul>
@@ -357,7 +357,7 @@ export default function OpenClawTile({
           );
         })}
       </section>
-      <details className="openclaw-section openclaw-tile-root openclaw-card">
+      <details className="openclaw-section openclaw-tile-root openclaw-card openclaw-primary-details">
         <summary>Details</summary>
       <div className="openclaw-details-grid">
       <section className="openclaw-section openclaw-card">
