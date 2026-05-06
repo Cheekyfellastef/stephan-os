@@ -2597,15 +2597,22 @@ pre {
 .workspace-content {
   display: grid;
   grid-template-columns:
-    minmax(var(--workspace-shell-lane-nav-min), 320px)
-    minmax(var(--workspace-shell-lane-main-min), 1fr)
-    minmax(var(--workspace-shell-lane-rail-min), 360px);
+    minmax(0, minmax(var(--workspace-shell-lane-nav-min), 320px))
+    minmax(0, minmax(var(--workspace-shell-lane-main-min), 1fr))
+    minmax(0, minmax(var(--workspace-shell-lane-rail-min), 360px));
   gap: 0.85rem;
   align-items: start;
-  overflow-x: clip;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .workspace-content > * { min-width: 0; }
+.workspace-content > .panel,
+.workspace-content > section,
+.workspace-content > div {
+  min-width: 0;
+  max-width: 100%;
+}
 
 .mission-console-workspace .panel,
 .mission-console-workspace-wide .panel,
@@ -2988,8 +2995,10 @@ pre {
 }
 
 .mission-console-workspace .mission-command-deck-layout,
+.mission-console-workspace .mission-command-deck-canvas,
 .mission-console-workspace .mission-deck-main {
   min-width: 0;
+  max-width: 100%;
 }
 
 .mission-console-workspace .mission-deck-main {
@@ -3113,8 +3122,9 @@ pre {
 
 .mission-command-deck { margin-bottom: 16px; width:100%; max-width:100%; min-width:0; overflow-x: clip; }
 .mission-command-deck-fullwidth { width:100%; max-width:100%; min-width:0; }
-.mission-command-deck-layout { display:grid; grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); gap: 14px; width:100%; max-width:100%; min-width:0; align-items:start; }
-.mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:260px; box-shadow: 0 16px 32px #04102199; position: sticky; top: 12px; }
+.mission-command-deck-layout { display:grid; grid-template-columns: minmax(0, minmax(240px, 300px)) minmax(0, 1fr); gap: 14px; width:100%; max-width:100%; min-width:0; align-items:start; }
+.mission-command-deck-canvas { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+.mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:0; max-width:100%; box-shadow: 0 16px 32px #04102199; position: sticky; top: 12px; }
 .mission-deck-rail ul { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:6px; min-width:0; }
 .mission-deck-rail li { min-width:0; }
 .mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.82rem; padding:6px 8px; border-radius:10px; border:1px solid #17486b33; background:#091423; cursor:pointer; display:flex; align-items:center; gap:8px; min-width:0; overflow-wrap:anywhere; user-select:none; -webkit-user-select:none; }
@@ -3163,7 +3173,7 @@ pre {
 .mission-deck-card:nth-of-type(3) { grid-column: span 3; }
 .mission-deck-card:nth-of-type(4) { grid-column: span 6; }
 .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; }
-@media (max-width: 1460px) { .mission-command-deck-layout { grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); } .mission-deck-main { min-width: 0; } }
+@media (max-width: 1460px) { .mission-command-deck-layout { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); } .mission-deck-main { min-width: 0; } }
 @media (max-width: 1280px) { .mission-command-deck-layout { grid-template-columns: minmax(0,1fr); } .mission-deck-rail { position: static; min-width: 0; } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); min-width:0; } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } }
 @media (max-width: 980px) { .mission-deck-main { grid-template-columns:minmax(0,1fr); } .mission-deck-hero, .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(4), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column:1 / -1; } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
 
@@ -3171,7 +3181,7 @@ pre {
   .workspace-content {
     grid-template-columns:
       minmax(240px, 300px)
-      minmax(560px, 1fr);
+      minmax(0, 1fr);
   }
 }
 
