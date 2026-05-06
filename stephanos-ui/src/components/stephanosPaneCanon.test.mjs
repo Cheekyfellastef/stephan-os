@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const appSource = fs.readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
 const surfacePaneSource = fs.readFileSync(new URL('./StephanosSurfacePane.jsx', import.meta.url), 'utf8');
+const openClawSource = fs.readFileSync(new URL('./OpenClawTile.jsx', import.meta.url), 'utf8');
+const collapsiblePanelSource = fs.readFileSync(new URL('./CollapsiblePanel.jsx', import.meta.url), 'utf8');
 
 test('drag gate remains canonical-handle only in App logic', () => {
   assert.equal(appSource.includes("const PANE_DRAG_HANDLE_SELECTOR = '[data-pane-drag-handle=\"true\"]';"), true);
@@ -18,9 +20,35 @@ test('OpenClaw and Agents tile/pane surfaces remain separate in App pane registr
 });
 
 test('OpenClaw execution stays disabled in tile copy', () => {
-  const src = fs.readFileSync(new URL('./OpenClawTile.jsx', import.meta.url), 'utf8');
-  assert.equal(src.includes('Execution disabled:'), true);
-  assert.equal(src.includes('no (disabled)'), true);
+  assert.equal(openClawSource.includes('Execution disabled:'), true);
+  assert.equal(openClawSource.includes('no (disabled)'), true);
+});
+
+test('OpenClaw pane uses canonical collapse path and does not implement local one-off collapse', () => {
+  assert.equal(openClawSource.includes('<CollapsiblePanel'), true);
+  assert.equal(openClawSource.includes('panelId="openClawPanel"'), true);
+  assert.equal(openClawSource.includes('isOpen={uiLayout.openClawPanel !== false}'), true);
+  assert.equal(openClawSource.includes("onToggle={() => togglePanel('openClawPanel')}"), true);
+  assert.equal(openClawSource.includes('PaneCollapseDial'), false);
+  assert.equal(openClawSource.includes('aria-expanded='), false);
+  assert.equal(openClawSource.includes('keepMountedWhenClosed={true}'), false);
+});
+
+test('canonical collapse control reduces footprint and avoids dead empty panel area', () => {
+  assert.equal(collapsiblePanelSource.includes('className="stephanos-canon-rotating-chevron-button panel-collapse-button"'), true);
+  assert.equal(collapsiblePanelSource.includes('<PaneCollapseDial isOpen={isOpen} />'), true);
+  assert.equal(collapsiblePanelSource.includes('hidden={!isOpen}'), true);
+  assert.equal(collapsiblePanelSource.includes('aria-hidden={!isOpen}'), true);
+  assert.equal(collapsiblePanelSource.includes('const shouldRenderBody = isOpen || keepMountedWhenClosed;'), true);
+  assert.equal(collapsiblePanelSource.includes('{shouldRenderBody ? children : null}'), true);
+});
+
+test('pane canon keeps move controls and collapse state persistence surfaces intact', () => {
+  assert.equal(surfacePaneSource.includes('className="pane-order-controls"'), true);
+  assert.equal(surfacePaneSource.includes('onClick={onMoveUp}'), true);
+  assert.equal(surfacePaneSource.includes('onClick={onMoveDown}'), true);
+  assert.equal(surfacePaneSource.includes('data-pane-collapsed={paneCollapsed ? \'true\' : \'false\'}'), true);
+  assert.equal(appSource.includes('togglePanel('), true);
 });
 
 test('wide panes mount through canonical workspace shell, lane, and gutters', () => {

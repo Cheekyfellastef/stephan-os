@@ -148,7 +148,10 @@ test('OpenClawTile mission primary operator action follows canonical current sta
 
 test('OpenClawTile applies local containment root and wraps action rows', async () => {
   const source = await fs.readFile(tilePath, 'utf8');
-  assert.equal(source.includes('openclaw-section openclaw-tile-root'), true);
+  assert.equal(source.includes('openclaw-section openclaw-tile-root openclaw-card'), true);
+  assert.equal(source.includes('className="openclaw-tile-layout"'), true);
+  assert.equal(source.includes('className="openclaw-details-grid"'), true);
+  assert.equal(source.includes('openclaw-status-card'), true);
   const wraps = source.match(/className="openclaw-button-row"/g) || [];
   assert.equal(wraps.length >= 4, true);
 });
@@ -156,8 +159,8 @@ test('OpenClawTile applies local containment root and wraps action rows', async 
 test('OpenClaw styles avoid viewport-width escapes and enforce safe authority grid min sizing', async () => {
   const stylesPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../styles.css');
   const styles = await fs.readFile(stylesPath, 'utf8');
-  assert.equal(styles.includes('.openclaw-tile-root'), true);
-  assert.equal(styles.includes('minmax(min(240px, 100%), 1fr)'), true);
-  assert.equal(styles.includes('openclaw-tile-root .openclaw-button-row > *'), true);
-  assert.equal(styles.includes('width: 100vw'), false);
+  assert.equal(styles.includes('.openclaw-tile-layout'), true);
+  assert.equal(styles.includes('repeat(auto-fit, minmax(min(280px, 100%), 1fr))'), true);
+  assert.equal(styles.includes('.openclaw-status-card'), true);
+  assert.equal(styles.includes('.openclaw-button-row {\n  display: flex;\n  flex-wrap: wrap;'), true);
 });
