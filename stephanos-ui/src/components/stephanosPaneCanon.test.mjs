@@ -12,11 +12,16 @@ test('drag gate remains canonical-handle only in App logic', () => {
   assert.equal(appSource.includes('return !target.closest(PANE_DRAG_BLOCK_SELECTOR);'), true);
 });
 
-test('OpenClaw and Agents tile/pane surfaces remain separate in App pane registry', () => {
+test('OpenClaw landing tile layout and Stephanos pane layout stay distinct in App surfaces', () => {
   assert.equal(appSource.includes("id: 'openClawPanel'"), true);
   assert.equal(appSource.includes("id: 'agentsPanel'"), true);
   assert.equal(appSource.includes('<OpenClawTile'), true);
   assert.equal(appSource.includes('<AgentsTile'), true);
+
+  assert.equal(appSource.includes('openclaw-landing-stage'), true);
+  assert.equal(appSource.includes('data-workspace-shell="openclaw-landing"'), true);
+  const openClawSurfaceSegment = appSource.split('if (openClawSurfaceMode) {')[1]?.split('if (skillForgeSurfaceMode) {')[0] || '';
+  assert.equal(openClawSurfaceSegment.includes('className="workspace-canvas"'), false);
 });
 
 test('OpenClaw execution stays disabled in tile copy', () => {
@@ -24,7 +29,7 @@ test('OpenClaw execution stays disabled in tile copy', () => {
   assert.equal(openClawSource.includes('no (disabled)'), true);
 });
 
-test('OpenClaw pane uses canonical collapse path and does not implement local one-off collapse', () => {
+test('OpenClaw Stephanos pane layout uses canonical collapse path and does not implement local one-off collapse', () => {
   assert.equal(openClawSource.includes('<CollapsiblePanel'), true);
   assert.equal(openClawSource.includes('panelId="openClawPanel"'), true);
   assert.equal(openClawSource.includes('isOpen={uiLayout.openClawPanel !== false}'), true);
