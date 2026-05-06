@@ -76,3 +76,8 @@ test('music tile debug pane is canon-mounted and hidden by default until explici
   assert.match(musicMainSource, /function setDebugPaneVisibility\(isVisible\)[\s\S]*tilePaneManager\.setPaneVisible\('debug-pane', state\.debugVisible\);/);
   assert.match(musicMainSource, /setDebugPaneVisibility\(state\.debugVisible\);/);
 });
+
+
+test('music tile seeds canonical default desktop pane slots in preferred order', () => {
+  assert.match(musicMainSource, /tilePaneManager\.applyDefaultPaneLayout\(\[\s*\{ paneId:\s*'results-journey-pane', x:\s*24, y:\s*140 \},[\s\S]*\{ paneId:\s*'search-build-journey-pane', x:\s*620, y:\s*140 \},[\s\S]*\{ paneId:\s*'session-summary-pane', x:\s*620, y:\s*430 \},[\s\S]*\{ paneId:\s*'flow-now-playing-pane', x:\s*620, y:\s*650 \},[\s\S]*\{ paneId:\s*'debug-pane', x:\s*620, y:\s*870 \}/);
+});

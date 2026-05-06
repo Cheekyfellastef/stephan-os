@@ -66,6 +66,33 @@ export function clearCanonTilePaneLayout({ appId, paneIds = [], storage = global
   }, storage);
 }
 
+
+
+function readPanelPositionsFromMemory(storage = globalThis.localStorage) {
+  const memory = readPersistedStephanosSessionMemory(storage);
+  const uiLayout = memory?.session?.ui?.uiLayout || {};
+  return uiLayout[PANEL_POSITION_KEY] && typeof uiLayout[PANEL_POSITION_KEY] === 'object'
+    ? { ...uiLayout[PANEL_POSITION_KEY] }
+    : {};
+}
+
+function writePanelPositionsToMemory(positions, storage = globalThis.localStorage) {
+  const memory = readPersistedStephanosSessionMemory(storage);
+  const uiLayout = memory?.session?.ui?.uiLayout || {};
+  persistStephanosSessionMemory({
+    ...memory,
+    session: {
+      ...memory?.session,
+      ui: {
+        ...memory?.session?.ui,
+        uiLayout: {
+          ...uiLayout,
+          [PANEL_POSITION_KEY]: positions,
+        },
+      },
+    },
+  }, storage);
+}
 /**
  * Canon tile pane manager for movable/collapsible/persisted tile panes.
  *
@@ -232,6 +259,30 @@ export function createCanonTilePaneManager({
     mountPane,
     mountPaneFromSection,
     resetLayout,
+    applyDefaultPaneLayout(defaultEntries = []) {
+      const persistedPositions = readPanelPositionsFromMemory(storage);
+      let hasUpdates = false;
+
+      defaultEntries.forEach((entry) => {
+        const normalizedPaneId = slugifySegment(entry?.paneId);
+        if (!normalizedPaneId) return;
+        const domId = toCanonTilePaneDomId(normalizedAppId, normalizedPaneId);
+        if (persistedPositions[domId]) return;
+        const panel = globalThis.document?.getElementById(domId);
+        if (!panel) return;
+        const x = Number(entry?.x);
+        const y = Number(entry?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        panel.style.left = `${x}px`;
+        panel.style.top = `${y}px`;
+        persistedPositions[domId] = { x, y };
+        hasUpdates = true;
+      });
+
+      if (hasUpdates) {
+        writePanelPositionsToMemory(persistedPositions, storage);
+      }
+    },
     setPaneVisible(paneId, isVisible = true) {
       const domId = toCanonTilePaneDomId(normalizedAppId, paneId);
       if (typeof uiRenderer?.setPanelVisible === 'function') {
