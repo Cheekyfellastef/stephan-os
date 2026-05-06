@@ -2967,7 +2967,10 @@ pre {
   align-items: stretch;
   gap: 10px;
   width: 100%;
+  max-width: 100%;
   max-height: min(86vh, 1280px);
+  min-width: 0;
+  overflow-x: clip;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2989,20 +2992,23 @@ pre {
 .stephanos-wide-scroll-gutter:hover { border-color: rgba(103, 184, 255, 0.44); color: rgba(204, 236, 255, 0.92); }
 .stephanos-wide-content { width: 100%; min-width: 0; }
 
-.mission-command-deck { display:grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 14px; margin-bottom: 16px; width:100%; max-width:none; min-width:0; }
-.mission-command-deck-fullwidth { width:100%; max-width:none; min-width:0; }
+.mission-command-deck { margin-bottom: 16px; width:100%; max-width:100%; min-width:0; overflow-x: clip; }
+.mission-command-deck-fullwidth { width:100%; max-width:100%; min-width:0; }
+.mission-command-deck-layout { display:grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 14px; width:100%; max-width:100%; min-width:0; }
 .mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:0; box-shadow: 0 16px 32px #04102199; }
 .mission-deck-rail ul { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:6px; min-width:0; }
 .mission-deck-rail li { min-width:0; }
-.mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.82rem; padding:6px 8px; border-radius:10px; border:1px solid #17486b33; background:#091423; cursor:pointer; display:flex; align-items:center; gap:8px; min-width:0; }
+.mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.82rem; padding:6px 8px; border-radius:10px; border:1px solid #17486b33; background:#091423; cursor:pointer; display:flex; align-items:center; gap:8px; min-width:0; overflow-wrap:anywhere; user-select:none; -webkit-user-select:none; }
 .mission-deck-nav-dot { width:18px; height:18px; border-radius:50%; display:grid; place-items:center; background:#13314b; color:#7ce8ff; font-size:.7rem; flex:0 0 auto; }
-.mission-deck-nav-button.active { background:#10385f; color:#71e7ff; border-color:#2bc5f4aa; }
+.mission-deck-nav-button:hover { color:#d8f7ff; border-color:#2bc5f477; background:#0d2948; }
+.mission-deck-nav-button.active { background:#10385f; color:#71e7ff; border-color:#2bc5f4aa; box-shadow: inset 3px 0 0 #71e7ff; }
 .mission-deck-nav-button:focus-visible, .mission-deck-preview-button:focus-visible, .decision-card:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
 .mission-deck-main { display:grid; gap:10px; grid-template-columns:repeat(12,minmax(0,1fr)); min-width:0; }
 .mission-deck-header, .mission-deck-strip { grid-column:1 / -1; }
 .mission-deck-header { background: linear-gradient(130deg,#0b1628,#090f1b); border:1px solid #1db4de55; border-radius: 12px; padding: 12px; }
 .mission-deck-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr)); gap:8px; min-width:0; }
 .mission-deck-chip, .mission-deck-card, .mission-deck-metric, .decision-card, .mission-deck-feed li { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.mission-deck-chip *, .mission-deck-card *, .mission-deck-metric *, .decision-card *, .mission-deck-feed li * { max-width:100%; overflow-wrap:anywhere; }
 .mission-deck-chip { background:#07111f; border:1px solid #18476b; border-radius:10px; padding:8px; display:flex; flex-direction:column; }
 .mission-deck-chip-ok { border-color:#1dd16f; } .mission-deck-chip-warn { border-color:#ffb347; } .mission-deck-chip-bad { border-color:#ff5f72; } .mission-deck-chip-info { border-color:#42c9ff; } .mission-deck-chip-agent { border-color:#b780ff; }
 .mission-deck-card { background:linear-gradient(160deg,#0b1321,#090f19); border:1px solid #1db4de40; border-radius:12px; padding:10px; box-shadow: 0 12px 24px #060b1585; }
@@ -3017,7 +3023,8 @@ pre {
 .status-chip { padding:2px 7px; border-radius:99px; font-size:.72rem; border:1px solid #2c6f96; display:inline-block; }
 .status-ok { border-color:#1dd16f; } .status-warn { border-color:#ffb347; } .status-bad { border-color:#ff5f72; }
 .mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-.mission-deck-preview-button { background:#0e2942; color:#b5e9ff; border:1px solid #2ebeff66; border-radius:8px; padding:6px 8px; cursor:pointer; }
+.mission-deck-preview-button { background:#0e2942; color:#b5e9ff; border:1px solid #2ebeff66; border-radius:8px; padding:6px 8px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+.mission-deck-preview-button:not([disabled]):hover { background:#12395b; border-color:#2ebeffaa; color:#e3f8ff; }
 .mission-deck-preview-button[disabled], .decision-card[disabled] { cursor:not-allowed; opacity:.65; }
 .mission-deck-decisions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr)); gap:8px; min-width:0; }
 .decision-card { border:1px solid #244f6d; background:#0b1a2b; border-radius:12px; padding:10px; text-align:left; display:grid; gap:6px; }
@@ -3029,7 +3036,7 @@ pre {
 .mission-deck-card:nth-of-type(3) { grid-column: span 3; }
 .mission-deck-card:nth-of-type(4) { grid-column: span 6; }
 .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; }
-@media (max-width: 1280px) { .mission-command-deck { grid-template-columns: minmax(0,1fr); } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } .stephanos-wide-scroll-shell { grid-template-columns: minmax(16px, 2vw) minmax(0, 1fr) minmax(16px, 2vw); } }
+@media (max-width: 1280px) { .mission-command-deck-layout { grid-template-columns: minmax(0,1fr); } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } .stephanos-wide-scroll-shell { grid-template-columns: minmax(16px, 2vw) minmax(0, 1fr) minmax(16px, 2vw); } }
 @media (max-width: 980px) { .stephanos-wide-scroll-shell { max-height: none; overflow-y: visible; grid-template-columns: minmax(0,1fr); } .stephanos-wide-scroll-gutter { display: none; } }
 @media (max-width: 980px) { .mission-deck-main { grid-template-columns:minmax(0,1fr); } .mission-deck-hero, .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(4), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column:1 / -1; } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
 
