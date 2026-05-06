@@ -320,3 +320,29 @@ test('renderProjectRegistry shows explicit diagnostic when Stephanos canonical l
     globalThis.document = originalDocument;
   }
 });
+
+test('landing music tile renders compact Spotify-first Taste Cockpit summary without duplicate tile injection', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = createDocumentFixture();
+
+  const projects = [{
+    id: 'music-tile',
+    folder: 'music-tile',
+    name: 'Music Tile',
+    icon: '🎛️',
+    entry: 'apps/music-tile/index.html',
+    validationState: 'healthy',
+    launcherDescription: 'Legacy summary',
+  }];
+
+  try {
+    renderProjectRegistry(projects, { workspace: { open() {} } }, { enableSecondaryStatusSurfaces: false });
+    const tiles = globalThis.document.getElementById('project-registry').children;
+    assert.equal(tiles.length, 1);
+    assert.match(String(tiles[0].innerHTML || ''), /Spotify-first Taste Cockpit/i);
+    assert.match(String(tiles[0].innerHTML || ''), /Spotify canonical/i);
+    assert.match(String(tiles[0].innerHTML || ''), /YouTube discovery\/fallback/i);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
