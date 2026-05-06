@@ -2560,11 +2560,11 @@ pre {
 }
 
 .workspace-shell {
-  --workspace-shell-max: 1700px;
+  --workspace-shell-max: 1720px;
   --workspace-shell-padding: clamp(10px, 1.8vw, 22px);
   --workspace-shell-lane-nav-min: 260px;
-  --workspace-shell-lane-main-min: 640px;
-  --workspace-shell-lane-rail-min: 280px;
+  --workspace-shell-lane-main-min: 760px;
+  --workspace-shell-lane-rail-min: 320px;
   max-width: var(--workspace-shell-max);
   margin: 0 auto;
   border-radius: 18px;
@@ -2602,7 +2602,10 @@ pre {
     minmax(var(--workspace-shell-lane-rail-min), 360px);
   gap: 0.85rem;
   align-items: start;
+  overflow-x: clip;
 }
+
+.workspace-content > * { min-width: 0; }
 
 .mission-console-workspace .panel,
 .mission-console-workspace-wide .panel,
@@ -3106,41 +3109,12 @@ pre {
   min-width: 0;
 }
 
-.stephanos-wide-scroll-shell {
-  display: grid;
-  grid-template-columns: minmax(24px, 3.5vw) minmax(0, 1fr) minmax(24px, 3.5vw);
-  align-items: stretch;
-  gap: 10px;
-  width: 100%;
-  max-width: 100%;
-  max-height: none;
-  min-width: 0;
-  overflow-x: clip;
-  overflow-y: visible;
-  overscroll-behavior: auto;
-}
-
-.stephanos-wide-scroll-gutter {
-  border-radius: 14px;
-  border: 1px solid rgba(75, 119, 180, 0.2);
-  background: linear-gradient(180deg, rgba(17, 31, 53, 0.35), rgba(7, 15, 30, 0.2));
-  color: rgba(160, 210, 255, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: ns-resize;
-}
-
-.stephanos-wide-scroll-gutter span { writing-mode: vertical-rl; letter-spacing: 0.16em; font-size: 0.62rem; text-transform: uppercase; }
-.stephanos-wide-scroll-gutter:hover { border-color: rgba(103, 184, 255, 0.44); color: rgba(204, 236, 255, 0.92); }
-.stephanos-wide-content { width: 100%; min-width: 0; }
+ .stephanos-wide-content { width: 100%; min-width: 0; }
 
 .mission-command-deck { margin-bottom: 16px; width:100%; max-width:100%; min-width:0; overflow-x: clip; }
 .mission-command-deck-fullwidth { width:100%; max-width:100%; min-width:0; }
-.mission-command-deck-layout { display:grid; grid-template-columns: minmax(260px, 320px) minmax(680px, 1fr); gap: 14px; width:100%; max-width:100%; min-width:0; align-items:start; }
-.mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:0; box-shadow: 0 16px 32px #04102199; }
+.mission-command-deck-layout { display:grid; grid-template-columns: minmax(260px, 300px) minmax(860px, 1fr); gap: 14px; width:100%; max-width:100%; min-width:0; align-items:start; }
+.mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:260px; box-shadow: 0 16px 32px #04102199; position: sticky; top: 12px; }
 .mission-deck-rail ul { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:6px; min-width:0; }
 .mission-deck-rail li { min-width:0; }
 .mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.82rem; padding:6px 8px; border-radius:10px; border:1px solid #17486b33; background:#091423; cursor:pointer; display:flex; align-items:center; gap:8px; min-width:0; overflow-wrap:anywhere; user-select:none; -webkit-user-select:none; }
@@ -3148,11 +3122,12 @@ pre {
 .mission-deck-nav-button:hover { color:#d8f7ff; border-color:#2bc5f477; background:#0d2948; }
 .mission-deck-nav-button.active { background:#10385f; color:#71e7ff; border-color:#2bc5f4aa; box-shadow: inset 3px 0 0 #71e7ff; }
 .mission-deck-nav-button:focus-visible, .mission-deck-preview-button:focus-visible, .decision-card:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
-.mission-deck-main { display:grid; gap:10px; grid-template-columns:repeat(12,minmax(0,1fr)); min-width:0; overflow-wrap:anywhere; word-break:normal; }
+.mission-deck-main { display:grid; gap:10px; grid-template-columns:repeat(12,minmax(0,1fr)); min-width:760px; overflow-wrap:anywhere; word-break:normal; }
 .mission-deck-header, .mission-deck-strip { grid-column:1 / -1; }
 .mission-deck-header { background: linear-gradient(130deg,#0b1628,#090f1b); border:1px solid #1db4de55; border-radius: 12px; padding: 12px; }
 .mission-deck-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr)); gap:8px; min-width:0; }
 .mission-deck-chip, .mission-deck-card, .mission-deck-metric, .decision-card, .mission-deck-feed li { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.mission-deck-card { min-inline-size: clamp(260px, 32vw, 480px); }
 .mission-deck-chip *, .mission-deck-card *, .mission-deck-metric *, .decision-card *, .mission-deck-feed li * { max-width:100%; overflow-wrap:anywhere; }
 .mission-deck-chip { background:#07111f; border:1px solid #18476b; border-radius:10px; padding:8px; display:flex; flex-direction:column; }
 .mission-deck-chip-ok { border-color:#1dd16f; } .mission-deck-chip-warn { border-color:#ffb347; } .mission-deck-chip-bad { border-color:#ff5f72; } .mission-deck-chip-info { border-color:#42c9ff; } .mission-deck-chip-agent { border-color:#b780ff; }
@@ -3181,8 +3156,8 @@ pre {
 .mission-deck-card:nth-of-type(3) { grid-column: span 3; }
 .mission-deck-card:nth-of-type(4) { grid-column: span 6; }
 .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; }
-@media (max-width: 1280px) { .mission-command-deck-layout { grid-template-columns: minmax(0,1fr); } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } .stephanos-wide-scroll-shell { grid-template-columns: minmax(16px, 2vw) minmax(0, 1fr) minmax(16px, 2vw); } }
-@media (max-width: 980px) { .stephanos-wide-scroll-shell { max-height: none; overflow-y: visible; grid-template-columns: minmax(0,1fr); } .stephanos-wide-scroll-gutter { display: none; } }
+@media (max-width: 1460px) { .mission-command-deck-layout { grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); } .mission-deck-main { min-width: 0; } }
+@media (max-width: 1280px) { .mission-command-deck-layout { grid-template-columns: minmax(0,1fr); } .mission-deck-rail { position: static; min-width: 0; } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); min-width:0; } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } }
 @media (max-width: 980px) { .mission-deck-main { grid-template-columns:minmax(0,1fr); } .mission-deck-hero, .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(4), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column:1 / -1; } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
 
 @media (max-width: 1580px) {
