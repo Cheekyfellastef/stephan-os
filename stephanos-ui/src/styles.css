@@ -174,12 +174,7 @@ body {
   grid-column: 1 / -1;
 }
 
-.stephanos-workspace-pane-shell > .stephanos-workspace-canvas {
-  --stephanos-workspace-gutter: clamp(14px, 2.2vw, 56px);
-  --stephanos-workspace-lane-max: 1760px;
-}
-
-.stephanos-workspace-pane-shell .stephanos-workspace-lane > .panel {
+.stephanos-workspace-pane-shell.stephanos-tile--wide-active > .panel {
   width: 100%;
   max-width: none;
   min-width: 0;

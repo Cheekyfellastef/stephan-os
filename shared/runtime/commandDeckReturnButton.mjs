@@ -14,6 +14,10 @@ export function ensureCommandDeckReturnButtonStyles(documentRef = globalThis.doc
   styleNode.id = CONTROL_STYLE_ID;
   styleNode.textContent = `
     .${BUTTON_CLASS} {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       min-height: 44px;
       padding: 10px 16px;
       border-radius: 10px;
@@ -30,6 +34,10 @@ export function ensureCommandDeckReturnButtonStyles(documentRef = globalThis.doc
     .${BUTTON_CLASS}:hover {
       background: linear-gradient(180deg, #2380f0, #165ab5);
       border-color: #96d6ff9e;
+    }
+    .${BUTTON_CLASS}:focus-visible {
+      outline: 2px solid rgba(150, 214, 255, 0.92);
+      outline-offset: 2px;
     }
   `;
   documentRef.head.appendChild(styleNode);
