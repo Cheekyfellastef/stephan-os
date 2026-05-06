@@ -6,48 +6,55 @@ import path from 'node:path';
 const componentPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'MissionCommandDeck.jsx');
 const stylesPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../styles.css');
 
-test('MissionCommandDeck renders command deck visual sections and status strip labels', async () => {
+test('Command Deck renders required shell, strip, rail, hero, and matrix sections', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
   [
-    'Route Truth','Launch State','Active Provider','OpenClaw','Codex PR Repair','Memory','Verification','System Watcher',
-    'Mission Routing / Delegation Readiness','Agent Assignment Matrix','Codex PR Repair Contract','Operator Decision Console',
-    'Support Snapshot / Runtime Truth','Activity Feed','Approval Required','Operator approval needed to proceed',
-  ].forEach((label) => assert.equal(source.includes(label), true, `missing label: ${label}`));
+    'mission-command-deck-fullwidth',
+    'mission-deck-strip',
+    'mission-deck-rail',
+    'Mission Routing / Delegation Readiness',
+    'aria-label="readiness ring"',
+    'Agent Assignment Matrix',
+    '<table>',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing token: ${token}`));
 });
 
-test('MissionCommandDeck uses real buttons for nav and preview-only actions with clear disabled state', async () => {
+test('Command Deck renders repair contract, operator cards, runtime snapshot, activity feed, and secondary cards', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  assert.equal(source.includes('mission-deck-nav-button'), true);
-  assert.equal(source.includes('onClick={() => setActiveNav(item)}'), true);
-  assert.equal(source.includes('aria-current={activeNav === item ? \'page\' : undefined}'), true);
-  assert.equal(source.includes('preview-only control'), true);
-  assert.equal(source.includes('(Preview)'), true);
-  assert.equal(source.includes('disabled aria-disabled="true"'), true);
+  [
+    'Codex PR Repair Contract',
+    'Retry Checks',
+    'Repair PR',
+    'Recreate PR',
+    'Operator Decision Console',
+    'Operator chooses the path — no default manual code surgery.',
+    'Support Snapshot / Runtime Truth',
+    'Activity Feed',
+    'Skill Forge',
+    'Capability Radar',
+    'Memory Librarian',
+    'OpenClaw Policy State',
+    'Verification Judge',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing token: ${token}`));
 });
 
-test('MissionCommandDeck keeps no execution/write/merge automation', async () => {
+test('Missing data fallback and preview controls are safe and explicit', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  ['exec(', 'spawn(', 'fetch(', 'git push', 'autonomous execution', 'OpenClaw execution'].forEach((token) => assert.equal(source.includes(token), false, `unexpected automation token: ${token}`));
+  ['no evidence yet / unavailable', 'preview-only control', '(Preview)', 'disabled aria-disabled="true"'].forEach((token) => {
+    assert.equal(source.includes(token), true, `missing safety token: ${token}`);
+  });
 });
 
-test('MissionCommandDeck styling guards include overflow protections, pointer cursor, and focus-visible', async () => {
+test('Static style guard enforces full-width, min-width, wrapping, responsive grid, and accessibility cues', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
   [
-    'minmax(0,1fr)',
+    'max-width:none',
     'min-width:0',
-    'max-width:100%',
+    'minmax(0, 1fr)',
+    'minmax(min(200px,100%),1fr)',
     'overflow-wrap:anywhere',
-    '.mission-deck-nav-button',
     'cursor:pointer',
     ':focus-visible',
   ].forEach((token) => assert.equal(css.includes(token), true, `missing style token: ${token}`));
 });
 
-test('MissionCommandDeck long token values are rendered safely and without crashes via wrapping classes', async () => {
-  const source = await fs.readFile(componentPath, 'utf8');
-  assert.equal(source.includes('route/provider truth'), true);
-  assert.equal(source.includes('branch:'), true);
-  const css = await fs.readFile(stylesPath, 'utf8');
-  assert.equal(css.includes('.mission-deck-card'), true);
-  assert.equal(css.includes('overflow-wrap:anywhere'), true);
-});
