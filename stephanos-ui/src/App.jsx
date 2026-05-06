@@ -1356,7 +1356,13 @@ export default function App() {
         <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
           OPENCLAW SURFACE · <strong>{ignitionModeBanner.mode}</strong> · {agentSurfaceProjection.launcherSummary.summaryLabel} · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
-        <section className="mission-console-surface-stage mission-console-workspace">
+        <section className="workspace-shell mission-console-surface-stage mission-console-workspace" data-workspace-shell="canonical">
+          <header className="workspace-header workspace-header--compact">
+            <p>OpenClaw + Mission Console workspace stage</p>
+          </header>
+          <div className="workspace-stage">
+            <div className="workspace-canvas">
+              <div className="workspace-content">
           <OpenClawTile
             uiLayout={{ ...safeUiLayout, openClawPanel: true }}
             togglePanel={() => {}}
@@ -1410,6 +1416,9 @@ export default function App() {
           />
           <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} />
           <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
+              </div>
+            </div>
+          </div>
         </section>
         <DebugConsole />
       </main>
