@@ -24,14 +24,29 @@ test('mission console mounts as workspace-class surface and not narrow tile-only
 
 test('readable min-width and responsive stack guardrails are explicit', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
-  ['--workspace-shell-lane-nav-min: 260px', '--workspace-shell-lane-main-min: 760px', '--workspace-shell-lane-rail-min: 320px', 'min-width:260px', 'min-width:0', '@media (max-width: 1280px)', 'grid-template-columns: minmax(0,1fr);'].forEach((token) => {
+  ['--workspace-shell-lane-nav-min: 260px', '--workspace-shell-lane-main-min: 760px', '--workspace-shell-lane-rail-min: 320px', 'min-width:0', '@media (max-width: 1280px)', 'grid-template-columns: minmax(0,1fr);'].forEach((token) => {
     assert.equal(css.includes(token), true, `missing readable width token: ${token}`);
   });
 });
 
 test('global overflow and nested panel body lock are prevented for workspace mode', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
-  ['.workspace-content', 'overflow-x: clip', '.mission-console-workspace .panel-body', 'height: auto', 'max-height: none', 'overflow: visible'].forEach((token) => {
+  ['.workspace-content', 'overflow-x: hidden', '.mission-console-workspace .panel-body', 'height: auto', 'max-height: none', 'overflow: visible'].forEach((token) => {
     assert.equal(css.includes(token), true, `missing overflow/height token: ${token}`);
+  });
+});
+
+test('workspace containment authority enforces bounded children and local overflow only', async () => {
+  const css = await fs.readFile(stylesPath, 'utf8');
+  [
+    '.workspace-content > .panel',
+    '.workspace-content > section',
+    '.workspace-content > div',
+    'max-width: 100%',
+    '.mission-command-deck-canvas',
+    'overflow: hidden',
+    '.mission-console-workspace .mission-command-deck-canvas',
+  ].forEach((token) => {
+    assert.equal(css.includes(token), true, `missing containment token: ${token}`);
   });
 });

@@ -52,7 +52,7 @@ export default function MissionCommandDeck(props) {
 
   return (
     <section className="mission-command-deck mission-command-deck-fullwidth stephanos-wide-content" aria-label="Mission Command Deck">
-      <div className="mission-command-deck-layout workspace-canvas">
+      <div className="mission-command-deck-layout mission-command-deck-canvas">
       <aside className="mission-deck-rail" aria-label="Mission navigation rail">
         <h4>Mission Console / Command Deck</h4>
         <ul>{navItems.map((item) => <li key={item}><button type="button" className={`mission-deck-nav-button ${activeNav === item ? 'active' : ''}`} onClick={() => setActiveNav(item)} aria-current={activeNav === item ? 'page' : undefined}><span className="mission-deck-nav-dot" aria-hidden="true">{item[0]}</span>{item}</button></li>)}</ul>
