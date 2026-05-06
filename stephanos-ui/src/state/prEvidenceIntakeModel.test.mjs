@@ -31,3 +31,17 @@ test('changed file scope warning with architecture context', () => {
   const r = buildPrEvidenceIntake({ prMetadata: { files: ['random/file.js'] }, missionSpec: { repoArchitectureContext: { sourceFilesLikelyTouched: ['stephanos-ui/src/state/intentToBuildModel.js'] } } });
   assert.equal(r.evidenceWarnings.some((w) => w.startsWith('changed_files_outside_likely_scope:')), true);
 });
+
+test('direct main commit metadata normalizes as mission evidence', () => {
+  const r = buildPrEvidenceIntake({
+    prMetadata: {
+      directMainCommitDetected: true,
+      directMainCommitAt: '2026-05-06T11:22:33Z',
+      directMainCommitSha: 'abc1234',
+    },
+    missionSpec: { finishAuthority: {} },
+  });
+  assert.equal(r.normalizedStatus, 'direct_main_commit');
+  assert.equal(r.directMainCommitDetected, true);
+  assert.equal(r.evidenceWarnings.includes('direct_main_commit_without_recorded_mission_authority'), true);
+});

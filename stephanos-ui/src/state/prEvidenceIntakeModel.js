@@ -45,8 +45,11 @@ export function buildPrEvidenceIntake({ prMetadata = null, missionSpec = {} } = 
   const closedState = asText(prMetadata.prState || prMetadata.state, '').toLowerCase() === 'closed';
   const merged = prMetadata.merged === true;
   const mergedAt = asText(prMetadata.mergedAt || prMetadata.merged_at, '');
+  const directMainCommitDetected = prMetadata.directMainCommitDetected === true || prMetadata.direct_main_commit_detected === true;
+  const directMainCommitAt = asText(prMetadata.directMainCommitAt || prMetadata.direct_main_commit_at || prMetadata.commitAt || '', '');
   let normalizedStatus = 'stale_or_unknown';
   if (merged && mergedAt) normalizedStatus = 'merged';
+  else if (directMainCommitDetected && directMainCommitAt) normalizedStatus = 'direct_main_commit';
   else if (closedState && !merged) normalizedStatus = 'closed_unmerged';
   else if (checksStatus === 'failed' || requiredChecksStatus === 'failed') normalizedStatus = 'checks_failed';
   else if (checksStatus === 'pending' || requiredChecksStatus === 'pending') normalizedStatus = 'checks_pending';
@@ -58,6 +61,9 @@ export function buildPrEvidenceIntake({ prMetadata = null, missionSpec = {} } = 
   if (autoMergeState.toLowerCase() === 'unknown') warnings.push('auto_merge_state_unknown');
   if (merged && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) {
     warnings.push('merged_without_recorded_mission_authority');
+  }
+  if (directMainCommitDetected && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) {
+    warnings.push('direct_main_commit_without_recorded_mission_authority');
   }
   if (unexpectedFiles.length > 0) warnings.push(`changed_files_outside_likely_scope:${unexpectedFiles.slice(0, 3).join(',')}`);
   if (generatedDistFiles.length > 0) warnings.push(`generated_dist_files_detected:${generatedDistFiles.length}`);
@@ -79,6 +85,10 @@ export function buildPrEvidenceIntake({ prMetadata = null, missionSpec = {} } = 
     mergedAt,
     merged,
     mergedBy: asText(prMetadata.mergedBy || '', ''),
+    directMainCommitDetected,
+    directMainCommitSha: asText(prMetadata.directMainCommitSha || prMetadata.direct_main_commit_sha || prMetadata.commitSha || '', ''),
+    directMainCommitAt,
+    directMainCommitBy: asText(prMetadata.directMainCommitBy || prMetadata.direct_main_commit_by || prMetadata.commitBy || '', ''),
     mergeSource: asText(prMetadata.mergeSource || 'unknown', 'unknown'),
     autoMergeState,
     checksStatus,

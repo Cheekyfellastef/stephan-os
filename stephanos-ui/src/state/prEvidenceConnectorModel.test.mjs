@@ -26,3 +26,10 @@ test('parsed metadata feeds existing prEvidenceIntakeModel', () => {
   assert.equal(result.prEvidenceIntake.prNumber, 19);
   assert.equal(result.prEvidenceIntake.checksStatus, 'passed');
 });
+
+test('direct main commits and ignition fetch evidence are parsed into metadata', () => {
+  const parsed = parsePrEvidenceInput('Direct main commit: detected\nCommit SHA: a1b2c3d4\nCommit at: 2026-05-06T01:02:03Z\nIgnition fetch evidence: refreshed');
+  assert.equal(parsed.normalizedPrMetadata.directMainCommitDetected, true);
+  assert.equal(parsed.normalizedPrMetadata.directMainCommitSha, 'a1b2c3d4');
+  assert.equal(parsed.normalizedPrMetadata.fetchEvidenceStatus, 'refreshed');
+});
