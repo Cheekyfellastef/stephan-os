@@ -2,6 +2,7 @@ import { SEEDED_TASTE_TRACKS } from './musicTasteSeeds.js';
 
 export const MUSIC_TASTE_TARGET = 'Dark Courtyard / Ghost Vocal / Serious Trance DNA';
 export const MUSIC_TASTE_LEARNING_LINE = 'Learning: serious hypnotic trance architecture + echo-heavy ghost vocals + dark club pressure.';
+export const MUSIC_LANDING_TARGET = 'Dark Courtyard / Ghost Vocal';
 
 export function buildMusicTasteCockpitSummary(tracks = SEEDED_TASTE_TRACKS) {
   const safeTracks = Array.isArray(tracks) ? tracks : [];
@@ -40,13 +41,26 @@ export function buildMusicTasteCockpitSummary(tracks = SEEDED_TASTE_TRACKS) {
   };
 }
 
-export function buildMusicLandingSummaryLines(summary = buildMusicTasteCockpitSummary()) {
+export function buildMusicWorkspaceSummary(tracks = SEEDED_TASTE_TRACKS) {
+  return buildMusicTasteCockpitSummary(tracks);
+}
+
+export function buildMusicLandingSummary(summary = buildMusicWorkspaceSummary()) {
+  return {
+    title: summary.title,
+    target: MUSIC_LANDING_TARGET,
+    playbackStance: 'Spotify canonical · YouTube fallback',
+    stateLine: 'Taste map active',
+    compactCounts: 'Anchors 8 · Interesting 6 · Rejects tracked',
+  };
+}
+
+export function buildMusicLandingSummaryLines(summary = buildMusicLandingSummary()) {
   return [
     summary.title,
-    `Target: ${summary.target}`,
-    `Anchors L/G/F ${summary.counts.likedGoodFantastic} · Interesting ${summary.counts.interesting} · Nearly ${summary.counts.nearly} · Rejects ${summary.counts.rejects}`,
-    `Anchor: ${summary.strongestAnchor} (${summary.strongestAnchorHint})`,
+    summary.target,
     summary.playbackStance,
-    summary.learningLine,
+    summary.stateLine,
+    summary.compactCounts,
   ];
 }

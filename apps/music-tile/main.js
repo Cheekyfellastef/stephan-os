@@ -8,6 +8,7 @@ import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import { getMediaPlaybackLinkState, sanitizeVideoId } from './utils/youtubeLinkResolver.js';
 import { toSpotifyEmbedUrl, parseSpotifyReference } from './utils/spotifyEmbed.js';
 import { SEEDED_TASTE_TRACKS, MUSIC_LANES } from './data/musicTasteSeeds.js';
+import { buildTasteCockpitMarkup } from './ui/tasteCockpitView.js';
 import { createCanonTilePaneManager } from '../../shared/runtime/canonTilePanes.mjs';
 import {
   DEFAULT_SELECTION,
@@ -329,17 +330,12 @@ function renderSummary() {
 
 function renderTasteCards() {
   ensureTasteMemory();
-  const cards = state.memory.tasteTracks.map((track) => {
-    const embed = toSpotifyEmbedUrl(track.spotifyUrl || track.spotifyUri);
-    const fallbackUrl = parseSpotifyReference(track.spotifyUrl || track.spotifyUri)?.openUrl || '#';
-    return `<li class="journey-item"><article><strong>${track.artist} — ${track.title}</strong><p class="muted">Lane: ${track.lane} • Signal: ${track.signal}</p>${embed ? `<iframe src="${embed}" width="100%" height="152" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<p class="muted">Spotify embed unavailable; metadata-only fallback active.</p>'}<div class="action-row"><a class="inline-btn button-link" href="${fallbackUrl}" target="_blank" rel="noopener noreferrer">Open in Spotify</a></div></article></li>`;
-  }).join('');
-  return `<li class="journey-section-label">Taste Cockpit (Spotify-first)</li>${cards}`;
+  return buildTasteCockpitMarkup(state.memory.tasteTracks);
 }
 
 function renderQueue() {
   if (!state.queue.length) {
-    elements.queue.innerHTML = '<li class="journey-item">No discovery results yet. Press Build Journey.</li>';
+    elements.queue.innerHTML = `${renderTasteCards()}<li class="journey-item">No discovery results yet. Press Build Journey.</li>`;
     return;
   }
 
@@ -352,7 +348,7 @@ function renderQueue() {
   }, {});
 
   let lastSection = '';
-  elements.queue.innerHTML = state.queue.map((item, index) => {
+  const discoveryMarkup = state.queue.map((item, index) => {
     const latestRating = currentRatingsByMediaId[item.id]?.rating;
     const persistedRating = Number.isFinite(Number(item.userRating)) ? Number(item.userRating) : latestRating;
     const rankScore = resolveItemRankScore(item);
@@ -411,6 +407,8 @@ function renderQueue() {
     </li>
   `;
   }).join('');
+
+  elements.queue.innerHTML = `${renderTasteCards()}${discoveryMarkup}`;
 
   elements.queue.querySelectorAll('[data-thumb-image]').forEach((img) => {
     if (img.dataset.thumbErrorBound === 'true') return;
