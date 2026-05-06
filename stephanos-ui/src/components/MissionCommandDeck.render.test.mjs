@@ -10,6 +10,7 @@ test('Command Deck renders required shell, strip, rail, hero, and matrix section
   const source = await fs.readFile(componentPath, 'utf8');
   [
     'mission-command-deck-fullwidth',
+    'Mission Console / Command Deck',
     'mission-deck-strip',
     'mission-deck-rail',
     'Mission Routing / Delegation Readiness',
@@ -48,6 +49,10 @@ test('Missing data fallback and preview controls are safe and explicit', async (
 test('Static style guard enforces full-width, min-width, wrapping, responsive grid, and accessibility cues', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
   [
+    'app-shell-root.mission-console-surface-mode',
+    'mission-console-surface-stage',
+    'mission-console-workspace-wide',
+    'width: 100%',
     'max-width:none',
     'min-width:0',
     'minmax(0, 1fr)',

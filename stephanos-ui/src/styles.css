@@ -28,6 +28,14 @@ body {
   background: linear-gradient(180deg, rgba(1, 8, 18, 0.92), rgba(2, 6, 14, 0.96));
 }
 
+.app-shell-root.mission-console-surface-mode {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+
 .ignition-mode-banner {
   margin: 0 0 14px;
   padding: 10px 12px;
@@ -2441,6 +2449,28 @@ pre {
   border: 1px solid rgba(84, 132, 218, 0.45);
   border-radius: 14px;
   background: rgba(4, 11, 24, 0.9);
+}
+
+.mission-console-surface-stage,
+.mission-console-workspace,
+.mission-console-workspace-wide {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.mission-console-surface-stage {
+  margin: 0;
+}
+
+.mission-console-workspace .panel,
+.mission-console-workspace-wide .panel,
+.mission-console-workspace .panel-body,
+.mission-console-workspace-wide .panel-body {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .power-shell-merge-panel .panel-body {
