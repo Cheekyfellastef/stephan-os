@@ -27,7 +27,7 @@ function ensureControlStyles(documentRef = globalThis.document) {
       margin: 12px auto;
       width: min(1180px, calc(100% - 24px));
       display: flex;
-      justify-content: flex-start;
+      justify-content: stretch;
       pointer-events: auto;
     }
   `;

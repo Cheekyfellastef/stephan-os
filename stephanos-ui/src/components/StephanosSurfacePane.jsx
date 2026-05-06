@@ -39,15 +39,7 @@ export default function StephanosSurfacePane({
         <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
         <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
       </div>
-      {pane.wideSurface && !paneCollapsed ? (
-        <div className="stephanos-workspace-canvas" data-workspace-shell-role="canvas">
-          <div className="stephanos-workspace-gutter stephanos-workspace-gutter--left" aria-hidden="true" />
-          <div className="stephanos-workspace-lane" data-workspace-shell-role="lane">
-            {renderedPane}
-          </div>
-          <div className="stephanos-workspace-gutter stephanos-workspace-gutter--right" aria-hidden="true" />
-        </div>
-      ) : renderedPane}
+      {renderedPane}
     </div>
   );
 }

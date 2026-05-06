@@ -27,11 +27,14 @@ test('wide panes mount through canonical workspace shell, lane, and gutters', ()
   [
     'stephanos-workspace-pane-shell',
     'data-workspace-shell={pane.wideSurface ? \'canonical\' : undefined}',
+  ].forEach((token) => assert.equal(surfacePaneSource.includes(token), true, `missing workspace shell token: ${token}`));
+
+  [
     'stephanos-workspace-canvas',
     'stephanos-workspace-gutter stephanos-workspace-gutter--left',
     'stephanos-workspace-lane',
     'stephanos-workspace-gutter stephanos-workspace-gutter--right',
-  ].forEach((token) => assert.equal(surfacePaneSource.includes(token), true, `missing workspace shell token: ${token}`));
+  ].forEach((legacyNestedToken) => assert.equal(surfacePaneSource.includes(legacyNestedToken), false, `legacy nested workspace token remains in pane shell: ${legacyNestedToken}`));
 
   [
     'stephanos-app-workspace-canvas',
