@@ -29,6 +29,7 @@ import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBri
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
 import { buildMissionIntelligenceLayer } from '../../../shared/agents/missionIntelligenceLayer.mjs';
+import MissionCommandDeck from './MissionCommandDeck';
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -684,6 +685,21 @@ export default function MissionConsoleTile({
       isOpen={uiLayout.missionConsolePanel !== false}
       onToggle={() => togglePanel('missionConsolePanel')}
     >
+      <MissionCommandDeck
+        missionRoutingReadiness={missionRoutingReadiness}
+        agentAssignmentMatrix={agentAssignmentMatrix}
+        codexPrRepairContract={missionCommandPacket?.codexPrRepairContract || intentToBuild?.missionSpec?.codexPrRepairContract}
+        missionCommandPacket={missionCommandPacket}
+        supportSnapshot={runtimeStatusModel?.realityUpgradeOrchestrator?.supportSnapshot || {}}
+        missionEvidenceLedger={missionEvidenceLedger}
+        memoryLibrarian={memoryLibrarian}
+        operatorDecisionConsole={intentToBuild.missionSpec.operatorDecisionConsole || {}}
+        openClawDelegation={intentToBuild.missionSpec.openClawDelegation || {}}
+        verificationJudge={verificationReturnAdjudication}
+        finalRouteTruth={finalRouteTruth}
+        runtimeStatusModel={runtimeStatusModel}
+        compactVerificationSummary={compactVerificationSummary}
+      />
       <section className="mission-console-section">
         <h4>Workspace Header / Command Authority</h4>
         <ul>
@@ -1291,4 +1307,3 @@ export default function MissionConsoleTile({
     </CollapsiblePanel>
   );
 }
-
