@@ -1411,8 +1411,10 @@ export default function App() {
   markStartupStage('app-provider-controls-render-start');
   markStartupStage('app-provider-controls-render-complete');
 
+  const missionConsoleWideShellMode = safeUiLayout.missionConsolePanel !== false;
+
   return (
-    <main className="app-shell-root">
+    <main className={`app-shell-root ${missionConsoleWideShellMode ? 'mission-console-command-deck-mode' : ''}`.trim()}>
       <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
         IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
       </div>
