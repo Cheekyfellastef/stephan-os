@@ -341,7 +341,8 @@ test('landing music tile renders compact Spotify-first Taste Cockpit summary wit
     assert.equal(tiles.length, 1);
     assert.match(String(tiles[0].innerHTML || ''), /Spotify-first Taste Cockpit/i);
     assert.match(String(tiles[0].innerHTML || ''), /Spotify canonical/i);
-    assert.match(String(tiles[0].innerHTML || ''), /YouTube discovery\/fallback/i);
+    assert.match(String(tiles[0].innerHTML || ''), /Taste map active/i);
+    assert.doesNotMatch(String(tiles[0].innerHTML || ''), /Learning: serious hypnotic trance architecture/i);
   } finally {
     globalThis.document = originalDocument;
   }
