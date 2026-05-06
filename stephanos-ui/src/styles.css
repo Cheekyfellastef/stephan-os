@@ -2893,34 +2893,47 @@ pre {
   margin: 0.15rem 0;
 }
 
-.mission-command-deck { display:grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); gap: 12px; margin-bottom: 16px; width:100%; max-width:100%; }
-.mission-deck-rail { background: linear-gradient(180deg,#0a1225,#090d1b); border:1px solid #1ec8ff55; border-radius: 12px; padding:10px; min-width:0; }
-.mission-deck-rail ul { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
+
+.mission-command-deck { display:grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: 14px; margin-bottom: 16px; width:100%; max-width:none; min-width:0; }
+.mission-command-deck-fullwidth { width:100%; max-width:none; min-width:0; }
+.mission-deck-rail { background: linear-gradient(180deg,#070f1f,#060a15); border:1px solid #1ec8ff55; border-radius: 14px; padding:12px; min-width:0; box-shadow: 0 16px 32px #04102199; }
+.mission-deck-rail ul { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:6px; min-width:0; }
 .mission-deck-rail li { min-width:0; }
-.mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.8rem; padding:4px 6px; border-radius:8px; border:1px solid transparent; background:transparent; cursor:pointer; }
-.mission-deck-nav-button.active { background:#10385f; color:#71e7ff; }
-.mission-deck-nav-button:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
-.mission-deck-active-state { margin:8px 0 0; color:#9fb2d0; font-size:.75rem; overflow-wrap:anywhere; }
-.mission-deck-main { display:grid; gap:10px; grid-template-columns: repeat(auto-fit,minmax(0,1fr)); min-width:0; }
-.mission-deck-strip { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; min-width:0; }
-.mission-deck-chip { background:#07111f; border:1px solid #18476b; border-radius:10px; padding:8px; display:flex; flex-direction:column; min-width:0; max-width:100%; overflow-wrap:anywhere; }
-.mission-deck-chip strong { color:#d7e6ff; }
-.mission-deck-chip-ok { border-color:#1dd16f; }
-.mission-deck-chip-warn { border-color:#ffb347; }
-.mission-deck-chip-bad { border-color:#ff5f72; }
-.mission-deck-chip-info { border-color:#42c9ff; }
-.mission-deck-chip-agent { border-color:#b780ff; }
-.mission-deck-card { background:linear-gradient(160deg,#0b1321,#090f19); border:1px solid #1db4de40; border-radius:12px; padding:10px; min-width:0; max-width:100%; overflow-wrap:anywhere; }
-.mission-deck-hero .ring { width:88px; height:88px; border-radius:50%; border:5px solid #39e6ff; display:grid; place-items:center; font-weight:700; color:#39e6ff; margin-bottom:8px; }
-.mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap; }
-.mission-deck-actions button { background:#0e2942; color:#b5e9ff; border:1px solid #2ebeff66; border-radius:8px; padding:6px 8px; cursor:pointer; }
-.mission-deck-actions button[disabled] { cursor:not-allowed; opacity:.65; }
-.mission-deck-actions button:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
-.mission-deck-decisions { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; min-width:0; }
-.decision-card { border:1px solid #245176; border-radius:10px; padding:8px; background:#081220; text-align:left; max-width:100%; overflow-wrap:anywhere; }
-.decision-card:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
-.decision-bad { border-color:#ff5f72; }
-.decision-warn { border-color:#ffb347; }
-.decision-ok { border-color:#1dd16f; }
-@media (max-width: 1200px) { .mission-command-deck { grid-template-columns: minmax(0,1fr); } .mission-deck-main { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-@media (max-width: 980px) { .mission-deck-main { grid-template-columns: minmax(0,1fr); } }
+.mission-deck-nav-button { width:100%; text-align:left; color:#9fb2d0; font-size:.82rem; padding:6px 8px; border-radius:10px; border:1px solid #17486b33; background:#091423; cursor:pointer; display:flex; align-items:center; gap:8px; min-width:0; }
+.mission-deck-nav-dot { width:18px; height:18px; border-radius:50%; display:grid; place-items:center; background:#13314b; color:#7ce8ff; font-size:.7rem; flex:0 0 auto; }
+.mission-deck-nav-button.active { background:#10385f; color:#71e7ff; border-color:#2bc5f4aa; }
+.mission-deck-nav-button:focus-visible, .mission-deck-preview-button:focus-visible, .decision-card:focus-visible { outline:2px solid #71e7ff; outline-offset:2px; }
+.mission-deck-main { display:grid; gap:10px; grid-template-columns:repeat(12,minmax(0,1fr)); min-width:0; }
+.mission-deck-header, .mission-deck-strip { grid-column:1 / -1; }
+.mission-deck-header { background: linear-gradient(130deg,#0b1628,#090f1b); border:1px solid #1db4de55; border-radius: 12px; padding: 12px; }
+.mission-deck-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr)); gap:8px; min-width:0; }
+.mission-deck-chip, .mission-deck-card, .mission-deck-metric, .decision-card, .mission-deck-feed li { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.mission-deck-chip { background:#07111f; border:1px solid #18476b; border-radius:10px; padding:8px; display:flex; flex-direction:column; }
+.mission-deck-chip-ok { border-color:#1dd16f; } .mission-deck-chip-warn { border-color:#ffb347; } .mission-deck-chip-bad { border-color:#ff5f72; } .mission-deck-chip-info { border-color:#42c9ff; } .mission-deck-chip-agent { border-color:#b780ff; }
+.mission-deck-card { background:linear-gradient(160deg,#0b1321,#090f19); border:1px solid #1db4de40; border-radius:12px; padding:10px; box-shadow: 0 12px 24px #060b1585; }
+.mission-deck-hero { grid-column: span 6; }
+.mission-deck-hero-layout { display:grid; grid-template-columns:minmax(120px,140px) minmax(0,1fr); gap:10px; align-items:center; }
+.mission-deck-hero .ring { width:110px; height:110px; border-radius:50%; border:6px solid #39e6ff; display:grid; place-items:center; font-weight:700; color:#39e6ff; background: radial-gradient(circle,#0b1e33,#08101e); }
+.mission-deck-hero-grid, .mission-deck-metrics { display:grid; gap:8px; grid-template-columns: repeat(auto-fit,minmax(min(180px,100%),1fr)); }
+.mission-deck-metric { border:1px solid #1b3856; border-radius:8px; padding:7px; background:#081120; display:grid; gap:2px; }
+.mission-deck-table-wrap { overflow:auto; max-width:100%; }
+.mission-deck-table-wrap table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.mission-deck-table-wrap th, .mission-deck-table-wrap td { border-bottom:1px solid #19324a; padding:6px; text-align:left; vertical-align:top; }
+.status-chip { padding:2px 7px; border-radius:99px; font-size:.72rem; border:1px solid #2c6f96; display:inline-block; }
+.status-ok { border-color:#1dd16f; } .status-warn { border-color:#ffb347; } .status-bad { border-color:#ff5f72; }
+.mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.mission-deck-preview-button { background:#0e2942; color:#b5e9ff; border:1px solid #2ebeff66; border-radius:8px; padding:6px 8px; cursor:pointer; }
+.mission-deck-preview-button[disabled], .decision-card[disabled] { cursor:not-allowed; opacity:.65; }
+.mission-deck-decisions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr)); gap:8px; min-width:0; }
+.decision-card { border:1px solid #244f6d; background:#0b1a2b; border-radius:12px; padding:10px; text-align:left; display:grid; gap:6px; }
+.decision-icon { width:22px; height:22px; border-radius:6px; display:grid; place-items:center; background:#1b3d5c; color:#9fefff; }
+.mission-deck-feed { list-style:none; margin:0; padding:0; display:grid; gap:7px; }
+.mission-deck-feed li { border:1px solid #17354e; border-radius:8px; padding:7px; background:#08101d; display:grid; grid-template-columns:86px minmax(0,1fr); gap:8px; }
+.mission-deck-footnote { margin-top:8px; color:#9fb2d0; font-size:.78rem; }
+.mission-deck-card:nth-of-type(2) { grid-column: span 3; }
+.mission-deck-card:nth-of-type(3) { grid-column: span 3; }
+.mission-deck-card:nth-of-type(4) { grid-column: span 6; }
+.mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; }
+@media (max-width: 1280px) { .mission-command-deck { grid-template-columns: minmax(0,1fr); } .mission-deck-main { grid-template-columns:repeat(6,minmax(0,1fr)); } .mission-deck-hero, .mission-deck-card:nth-of-type(4) { grid-column: span 6; } .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column: span 3; } }
+@media (max-width: 980px) { .mission-deck-main { grid-template-columns:minmax(0,1fr); } .mission-deck-hero, .mission-deck-card:nth-of-type(2), .mission-deck-card:nth-of-type(3), .mission-deck-card:nth-of-type(4), .mission-deck-card:nth-of-type(5), .mission-deck-card:nth-of-type(6), .mission-deck-card:nth-of-type(7) { grid-column:1 / -1; } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
+

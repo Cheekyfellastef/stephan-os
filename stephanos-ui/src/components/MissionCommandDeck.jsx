@@ -13,36 +13,51 @@ function Chip({ label, value }) {
   return <div className={`mission-deck-chip mission-deck-chip-${statusTone(value)}`}><span>{label}</span><strong>{value || 'unknown'}</strong></div>;
 }
 
-export default function MissionCommandDeck({
-  missionRoutingReadiness,
-  agentAssignmentMatrix,
-  codexPrRepairContract,
-  missionCommandPacket,
-  supportSnapshot,
-  missionEvidenceLedger,
-  memoryLibrarian,
-  operatorDecisionConsole,
-  openClawDelegation,
-  verificationJudge,
-  finalRouteTruth,
-  runtimeStatusModel,
-  compactVerificationSummary,
-}) {
+function Metric({ label, value }) {
+  return <div className="mission-deck-metric"><span>{label}</span><strong>{value || 'unknown'}</strong></div>;
+}
+
+export default function MissionCommandDeck(props) {
+  const {
+    missionRoutingReadiness,
+    agentAssignmentMatrix,
+    codexPrRepairContract,
+    missionCommandPacket,
+    supportSnapshot,
+    missionEvidenceLedger,
+    memoryLibrarian,
+    operatorDecisionConsole,
+    openClawDelegation,
+    verificationJudge,
+    finalRouteTruth,
+    runtimeStatusModel,
+    compactVerificationSummary,
+  } = props;
+
   const [activeNav, setActiveNav] = useState('Command Deck');
   const decisions = (operatorDecisionConsole?.decisions || []).slice(0, 5);
   const activity = (missionEvidenceLedger?.entries || []).slice(0, 8);
-  const readinessScore = missionRoutingReadiness?.readinessScore ?? missionRoutingReadiness?.readinessPercent ?? 0;
+  const readinessScore = Math.max(0, Math.min(100, missionRoutingReadiness?.readinessScore ?? missionRoutingReadiness?.readinessPercent ?? 0));
   const navItems = ['Command Deck', 'Routing', 'Agents', 'Decisions', 'Evidence', 'Memory', 'Codex PR', 'Verification', 'Guardrails', 'Skill Forge', 'Settings'];
-  const actionButtons = [
-    { label: 'Retry Checks', wired: false },
-    { label: 'Repair PR', wired: false },
-    { label: 'Recreate PR', wired: false },
-    { label: 'Hold', wired: false },
+  const matrixRows = ['Codex', 'OpenClaw', 'Verification Judge', 'Memory Librarian', 'Task Finisher', 'Operator'];
+  const assignments = (agentAssignmentMatrix?.assignments || []);
+  const actionButtons = ['Retry Checks', 'Repair PR', 'Recreate PR', 'Hold'];
+  const fallbackDecisions = [
+    { decisionId: 'retry', title: 'Retry', reason: 'Re-run checks with current branch state.', riskLevel: 'low', approvalRequired: false },
+    { decisionId: 'recreate', title: 'Recreate PR', reason: 'Open a fresh PR after controlled repair.', riskLevel: 'medium', approvalRequired: true },
+    { decisionId: 'hold', title: 'Hold', reason: 'Pause execution while collecting evidence.', riskLevel: 'low', approvalRequired: true },
+    { decisionId: 'abandon', title: 'Abandon', reason: 'Stop this route due to blockers.', riskLevel: 'high', approvalRequired: true },
+    { decisionId: 'review', title: 'Review Blocker', reason: 'Inspect highest impact failed evidence.', riskLevel: 'medium', approvalRequired: true },
   ];
+
   return (
-    <section className="mission-command-deck" aria-label="Mission Command Deck">
-      <aside className="mission-deck-rail"><h4>Command Deck</h4><ul>{navItems.map((item) => <li key={item}><button type="button" className={`mission-deck-nav-button ${activeNav === item ? 'active' : ''}`} onClick={() => setActiveNav(item)} aria-current={activeNav === item ? 'page' : undefined}>{item}</button></li>)}</ul><p className="mission-deck-active-state">selected: {activeNav}</p></aside>
+    <section className="mission-command-deck mission-command-deck-fullwidth" aria-label="Mission Command Deck">
+      <aside className="mission-deck-rail" aria-label="Mission navigation rail">
+        <h4>Mission Console / Command Deck</h4>
+        <ul>{navItems.map((item) => <li key={item}><button type="button" className={`mission-deck-nav-button ${activeNav === item ? 'active' : ''}`} onClick={() => setActiveNav(item)} aria-current={activeNav === item ? 'page' : undefined}><span className="mission-deck-nav-dot" aria-hidden="true">{item[0]}</span>{item}</button></li>)}</ul>
+      </aside>
       <div className="mission-deck-main">
+        <header className="mission-deck-header"><h3>Stephanos · Mission Console / Command Deck</h3><p>Scan-first operator surface for routing, readiness, decisions, and evidence.</p></header>
         <div className="mission-deck-strip">
           <Chip label="Route Truth" value={finalRouteTruth?.routeUsableState || 'unavailable'} />
           <Chip label="Launch State" value={runtimeStatusModel?.launchState || 'pending'} />
@@ -54,21 +69,62 @@ export default function MissionCommandDeck({
           <Chip label="System Watcher" value={supportSnapshot?.watcherStatus || 'nominal'} />
         </div>
 
-        <article className="mission-deck-card mission-deck-hero"><h4>Mission Routing / Delegation Readiness</h4><div className="ring">{readinessScore}%</div><ul><li>route status: {missionRoutingReadiness?.routeStatus || 'draft'}</li><li>recommended route: {missionRoutingReadiness?.recommendedRoute || 'operator decision'}</li><li>readiness level: {missionRoutingReadiness?.readinessLevel || 'approval-gated'}</li><li>blockers: {(missionRoutingReadiness?.blockers || []).join(' | ') || 'none'}</li><li>warnings: {(missionRoutingReadiness?.warnings || []).join(' | ') || 'none'}</li><li>next action: {missionRoutingReadiness?.nextAction || 'pending'}</li></ul></article>
+        <article className="mission-deck-card mission-deck-hero" aria-label="Mission Routing / Delegation Readiness">
+          <h4>Mission Routing / Delegation Readiness</h4>
+          <div className="mission-deck-hero-layout">
+            <div className="ring" role="img" aria-label="readiness ring">{readinessScore}%</div>
+            <div className="mission-deck-hero-grid">
+              <Metric label="route status" value={missionRoutingReadiness?.routeStatus || 'draft'} />
+              <Metric label="recommended route" value={missionRoutingReadiness?.recommendedRoute || 'operator decision'} />
+              <Metric label="readiness level" value={missionRoutingReadiness?.readinessLevel || 'approval-gated'} />
+              <Metric label="blockers" value={(missionRoutingReadiness?.blockers || []).length || 0} />
+              <Metric label="warnings" value={(missionRoutingReadiness?.warnings || []).length || 0} />
+              <Metric label="next action" value={missionRoutingReadiness?.nextAction || 'pending'} />
+            </div>
+          </div>
+        </article>
 
-        <article className="mission-deck-card"><h4>Agent Assignment Matrix</h4><table><thead><tr><th>role</th><th>authority</th><th>allowed actions</th><th>blocked actions</th><th>status / next action</th></tr></thead><tbody>{(agentAssignmentMatrix?.assignments || []).slice(0, 6).map((row) => <tr key={row.roleId || row.role}><td>{row.role || row.roleId}</td><td>{row.authorityLevel || 'unknown'}</td><td>{(row.allowedActions || []).join(', ') || 'none'}</td><td>{(row.blockedActions || []).join(', ') || 'none'}</td><td>{row.nextAction || row.status || 'pending'}</td></tr>)}</tbody></table></article>
+        <article className="mission-deck-card" aria-label="Agent Assignment Matrix">
+          <h4>Agent Assignment Matrix</h4>
+          <div className="mission-deck-table-wrap"><table><thead><tr><th>role</th><th>authority</th><th>allowed</th><th>blocked</th><th>status / next action</th></tr></thead><tbody>{matrixRows.map((role) => {
+            const row = assignments.find((item) => (item.role || item.roleId || '').toLowerCase() === role.toLowerCase()) || {};
+            return <tr key={role}><td>{role}</td><td><span className={`status-chip status-${statusTone(row.authorityLevel || 'unknown')}`}>{row.authorityLevel || 'unknown'}</span></td><td>{(row.allowedActions || []).join(' · ') || 'none'}</td><td>{(row.blockedActions || []).join(' · ') || 'none'}</td><td>{row.nextAction || row.status || 'pending'}</td></tr>;
+          })}</tbody></table></div>
+        </article>
 
-        <article className="mission-deck-card"><h4>Codex PR Repair Contract</h4><p><strong>Approval Required</strong> · Operator approval needed to proceed · No default manual code surgery</p><ul><li>target PR: {codexPrRepairContract?.targetPr || 'unavailable'}</li><li>failed check evidence: {codexPrRepairContract?.failedCheckEvidence || 'pending'}</li><li>branch: {codexPrRepairContract?.branch || 'unknown'}</li><li>repair completeness: {codexPrRepairContract?.repairCompleteness || 'pending'}</li><li>next action: {codexPrRepairContract?.nextAction || 'operator decision required'}</li></ul><div className="mission-deck-actions">{actionButtons.map((action)=><button key={action.label} type="button" className="mission-deck-preview-button" disabled aria-disabled="true" aria-label={`${action.label} preview-only control`}>{action.label} (Preview)</button>)}</div></article>
+        <article className="mission-deck-card">
+          <h4>Codex PR Repair Contract</h4>
+          <p><strong>Approval Required</strong> · preview-only controls · no default manual code surgery.</p>
+          <div className="mission-deck-metrics">
+            <Metric label="target PR" value={codexPrRepairContract?.targetPr || 'unavailable'} />
+            <Metric label="failed check evidence" value={codexPrRepairContract?.failedCheckEvidence || 'pending'} />
+            <Metric label="branch" value={codexPrRepairContract?.branch || 'unknown'} />
+            <Metric label="head changed" value={codexPrRepairContract?.headChanged || 'unknown'} />
+            <Metric label="remote checks" value={codexPrRepairContract?.remoteChecks || 'pending'} />
+            <Metric label="pushability" value={codexPrRepairContract?.pushability || 'approval required'} />
+            <Metric label="repair completeness" value={codexPrRepairContract?.repairCompleteness || 'pending'} />
+            <Metric label="next action" value={codexPrRepairContract?.nextAction || 'operator decision required'} />
+          </div>
+          <div className="mission-deck-actions">{actionButtons.map((label) => <button key={label} type="button" className="mission-deck-preview-button" disabled aria-disabled="true" aria-label={`${label} preview-only control`}>{label} (Preview)</button>)}</div>
+        </article>
 
-        <article className="mission-deck-card"><h4>Operator Decision Console</h4><div className="mission-deck-decisions">{decisions.map((decision) => <button key={decision.decisionId} type="button" className={`decision-card decision-${statusTone(decision.riskLevel || decision.recommendedAction)}`} disabled aria-disabled="true" aria-label={`${decision.title || 'Operator decision'} preview-only control`}><strong>{decision.title}</strong><p>{decision.reason || 'No summary provided.'}</p><small>{decision.sourceSystem || 'source unknown'} · {decision.approvalRequired ? 'requires approval' : 'allowed'} · preview-only</small></button>)}</div></article>
+        <article className="mission-deck-card">
+          <h4>Operator Decision Console</h4>
+          <div className="mission-deck-decisions">{(decisions.length ? decisions : fallbackDecisions).map((decision) => <button key={decision.decisionId || decision.title} type="button" className={`decision-card decision-${statusTone(decision.riskLevel || decision.recommendedAction)}`} disabled aria-disabled="true" aria-label={`${decision.title || 'Operator decision'} preview-only control`}><span className="decision-icon" aria-hidden="true">{(decision.title || 'D').slice(0, 1)}</span><strong>{decision.title}</strong><p>{decision.reason || 'No summary provided.'}</p><small>{decision.approvalRequired ? 'requires approval' : 'allowed'} · preview-only</small></button>)}</div>
+          <p className="mission-deck-footnote">Operator chooses the path — no default manual code surgery.</p>
+        </article>
 
-        <article className="mission-deck-card"><h4>Mission Command Packet</h4><ul><li>mission id: {missionCommandPacket?.missionId || 'unknown'}</li><li>lead role: {missionCommandPacket?.leadRole || 'operator'}</li><li>risk level: {missionCommandPacket?.riskLevel || 'unknown'}</li><li>delegation state: {missionCommandPacket?.delegationState || 'pending'}</li><li>operator approval state: {missionCommandPacket?.operatorApprovalState || 'required'}</li></ul></article>
+        <article className="mission-deck-card"><h4>Mission Command Packet</h4><div className="mission-deck-metrics"><Metric label="mission id" value={missionCommandPacket?.missionId || 'unknown'} /><Metric label="lead role" value={missionCommandPacket?.leadRole || 'operator'} /><Metric label="risk level" value={missionCommandPacket?.riskLevel || 'unknown'} /><Metric label="delegation state" value={missionCommandPacket?.delegationState || 'pending'} /><Metric label="operator approval state" value={missionCommandPacket?.operatorApprovalState || 'required'} /></div></article>
 
-        <article className="mission-deck-card"><h4>Support Snapshot / Runtime Truth</h4><ul><li>source truth: {supportSnapshot?.sourceTruth || 'unknown'}</li><li>dist parity: {supportSnapshot?.distParity || 'unknown'}</li><li>runtime marker: {runtimeStatusModel?.runtimeMarker || 'unavailable'}</li><li>build fingerprint: {runtimeStatusModel?.buildFingerprint || 'unavailable'}</li><li>route/provider truth: {finalRouteTruth?.routeKind || 'unknown'} / {finalRouteTruth?.provider || 'unknown'}</li><li>last verify: {supportSnapshot?.lastVerify || 'pending'}</li></ul></article>
+        <article className="mission-deck-card"><h4>Support Snapshot / Runtime Truth</h4><div className="mission-deck-metrics"><Metric label="source truth" value={supportSnapshot?.sourceTruth || 'unknown'} /><Metric label="dist parity" value={supportSnapshot?.distParity || 'unknown'} /><Metric label="runtime marker" value={runtimeStatusModel?.runtimeMarker || 'unavailable'} /><Metric label="build fingerprint" value={runtimeStatusModel?.buildFingerprint || 'unavailable'} /><Metric label="route/provider truth" value={`${finalRouteTruth?.routeKind || 'unknown'} / ${finalRouteTruth?.provider || 'unknown'}`} /><Metric label="last verify" value={supportSnapshot?.lastVerify || 'pending'} /></div></article>
 
-        <article className="mission-deck-card"><h4>Activity Feed</h4><ul>{activity.map((entry, index) => <li key={`${entry.id || 'entry'}-${index}`}>{entry.label || entry.event || 'pending evidence'}</li>)}{activity.length === 0 ? <li>No mission activity feed available yet.</li> : null}</ul></article>
+        <article className="mission-deck-card"><h4>Activity Feed</h4><ul className="mission-deck-feed">{activity.map((entry, index) => <li key={`${entry.id || 'entry'}-${index}`}><span>{entry.timestamp || entry.time || 'pending'}</span><p>{entry.label || entry.event || 'pending evidence'}</p></li>)}{activity.length === 0 ? <li><span>pending</span><p>no evidence yet / unavailable</p></li> : null}</ul></article>
 
-        <article className="mission-deck-card"><h4>Secondary Systems</h4><ul><li>Skill Forge: active skills / code repair / context engineering / test generation / repo navigation</li><li>Capability Radar: code repair / reasoning / testing / planning / context</li><li>Memory Librarian: pending {memoryLibrarian?.counts?.pending ?? 'unknown'} / approved durable memory only</li><li>OpenClaw Policy State: authority {openClawDelegation?.authorityLevel || 'unknown'} / approval gates {openClawDelegation?.requiredOperatorApproval ? 'required' : 'not declared'}</li><li>Verification Judge: {verificationJudge?.judgment || 'pending'} / warnings {(verificationJudge?.warnings || []).length}</li></ul></article>
+        <article className="mission-deck-card"><h4>Skill Forge</h4><p>Context engineering · scoped code repair · test shaping.</p></article>
+        <article className="mission-deck-card"><h4>Capability Radar</h4><p>Reasoning, patch discipline, verification confidence, mission readiness.</p></article>
+        <article className="mission-deck-card"><h4>Memory Librarian</h4><p>Pending: {memoryLibrarian?.counts?.pending ?? 'unknown'} · durable memory review remains operator-governed.</p></article>
+        <article className="mission-deck-card"><h4>OpenClaw Policy State</h4><p>Authority: {openClawDelegation?.authorityLevel || 'unknown'} · approval gates: {openClawDelegation?.requiredOperatorApproval ? 'required' : 'not declared'}.</p></article>
+        <article className="mission-deck-card"><h4>Verification Judge</h4><p>{verificationJudge?.judgment || 'pending'} · warnings {(verificationJudge?.warnings || []).length}.</p></article>
       </div>
     </section>
   );
