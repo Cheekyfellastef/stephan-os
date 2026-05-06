@@ -254,9 +254,17 @@ test("workspace launch does not recreate iframe for duplicate open requests", as
     assert.equal(debugState.repeatedLaunchCount, 1);
     assert.equal(debugState.chromeHideCount, 1);
     assert.equal(iframeCount, 1);
+    assert.equal(documentRef.nodes.workspace.classList.contains("stephanos-root-workspace-shell"), true);
+    assert.equal(documentRef.nodes.workspace.getAttribute("data-workspace-shell"), "canonical");
+    assert.equal(documentRef.nodes["workspace-content"].classList.contains("stephanos-root-workspace-canvas"), true);
+    assert.equal(documentRef.nodes["workspace-content"].getAttribute("data-workspace-shell-role"), "canvas");
+    assert.equal(
+      documentRef.nodes["workspace-content"].children.some((node) => node.classList?.contains?.("stephanos-root-workspace-lane")),
+      true,
+    );
     assert.deepEqual(
       emitted.map((event) => event.name),
-      ["workspace:opened"],
+      ["tile.focused", "workspace:opened", "tile.opened"],
     );
   } finally {
     globals.restore();
@@ -311,7 +319,7 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
     assert.equal(documentRef.nodes.projects.style.display, "none");
     assert.equal(documentRef.nodes.workspace.style.display, "block");
     assert.equal(iframeCount, 1);
-    assert.deepEqual(emitted, ["workspace:opened", "workspace:closed", "workspace:opened"]);
+    assert.deepEqual(emitted, ["tile.focused", "workspace:opened", "tile.opened", "workspace:closed", "tile.closed", "tile.focused", "workspace:opened", "tile.opened"]);
   } finally {
     globals.restore();
   }
@@ -347,7 +355,9 @@ test("workspace stephanos launch uses validated launch target for tile-click run
       .flatMap((node) => node.children || [])
       .filter((node) => node.tagName === "iframe").length;
 
-    assert.deepEqual(assigned, ["http://localhost:5173/"]);
+    assert.equal(assigned.length, 1);
+    assert.equal(assigned[0].startsWith("http://localhost:5173/"), true);
+    assert.match(assigned[0], /stephanosLauncherShellUrl=/);
     assert.equal(iframeCount, 0);
     assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
   } finally {

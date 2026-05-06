@@ -350,6 +350,8 @@ function appendWorkspaceReturnControls(documentRef, contentNode) {
 
 function buildWorkspaceFrameContainer(documentRef) {
   const container = documentRef.createElement("div");
+  container.classList?.add?.("stephanos-root-workspace-lane");
+  container.setAttribute?.("data-workspace-shell-role", "lane");
   container.style.display = "flex";
   container.style.flexDirection = "column";
   container.style.gap = "8px";
@@ -380,6 +382,11 @@ export const workspace = {
       console.error("Workspace UI is missing required elements");
       return;
     }
+
+    workspacePanel.classList?.add?.("stephanos-root-workspace-shell");
+    workspacePanel.setAttribute?.("data-workspace-shell", "canonical");
+    content.classList?.add?.("stephanos-root-workspace-canvas");
+    content.setAttribute?.("data-workspace-shell-role", "canvas");
 
     const launch = beginWorkspaceSession(project);
     if (launch.isRepeatedLaunch) {

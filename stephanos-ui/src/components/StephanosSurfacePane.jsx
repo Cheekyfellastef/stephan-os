@@ -16,12 +16,15 @@ export default function StephanosSurfacePane({
   const paneCollapsed = resolvePaneCollapsedState(pane, uiLayout);
   const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
   const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
+  const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
+  const renderedPane = pane.render();
   return (
     <div
-      className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
+      className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass}${workspaceShellClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
       draggable
       data-pane-id={pane.id}
       data-pane-collapsed={paneCollapsed ? 'true' : 'false'}
+      data-workspace-shell={pane.wideSurface ? 'canonical' : undefined}
       onDragStart={(event) => {
         if (!shouldStartPaneDrag(event.target)) {
           event.preventDefault();
@@ -36,7 +39,15 @@ export default function StephanosSurfacePane({
         <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
         <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
       </div>
-      {pane.render()}
+      {pane.wideSurface && !paneCollapsed ? (
+        <div className="stephanos-workspace-canvas" data-workspace-shell-role="canvas">
+          <div className="stephanos-workspace-gutter stephanos-workspace-gutter--left" aria-hidden="true" />
+          <div className="stephanos-workspace-lane" data-workspace-shell-role="lane">
+            {renderedPane}
+          </div>
+          <div className="stephanos-workspace-gutter stephanos-workspace-gutter--right" aria-hidden="true" />
+        </div>
+      ) : renderedPane}
     </div>
   );
 }

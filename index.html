@@ -114,6 +114,39 @@ gap:20px;
 pointer-events:none;
 }
 
+#workspace {
+width:100%;
+max-width:none;
+box-sizing:border-box;
+}
+
+#workspace.stephanos-root-workspace-shell {
+padding-inline:clamp(16px,4vw,72px);
+}
+
+#workspace-content.stephanos-root-workspace-canvas {
+display:grid;
+grid-template-columns:minmax(18px,clamp(20px,4vw,88px)) minmax(0,min(100%,1840px)) minmax(18px,clamp(20px,4vw,88px));
+gap:clamp(10px,1.2vw,18px);
+width:100%;
+max-width:100%;
+min-width:0;
+box-sizing:border-box;
+overflow-x:clip;
+}
+
+#workspace-content.stephanos-root-workspace-canvas > * {
+grid-column:2;
+min-width:0;
+max-width:100%;
+}
+
+#workspace-content.stephanos-root-workspace-canvas .stephanos-root-workspace-lane {
+width:100%;
+max-width:100%;
+min-width:0;
+}
+
 .app-tile {
 
 background:#222;
@@ -449,6 +482,18 @@ font-weight: 700;
 }
 
 @media (max-width: 820px) {
+  #workspace.stephanos-root-workspace-shell {
+    padding-inline:14px;
+  }
+
+  #workspace-content.stephanos-root-workspace-canvas {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  #workspace-content.stephanos-root-workspace-canvas > * {
+    grid-column:1;
+  }
+
   #project-registry {
     grid-template-columns: 1fr;
     gap: 14px;

@@ -1120,6 +1120,7 @@ export default function App() {
     title: pane.title || pane.id,
     layoutKey: pane.layoutKey || pane.id,
     usesCanonicalWrapper: true,
+    usesCanonicalWorkspaceShell: pane.wideSurface === true ? true : pane.usesCanonicalWorkspaceShell,
     hasCollapseSupport: true,
     hasCanonicalDragHandle: true,
     bodyTextSelectable: true,
@@ -1491,29 +1492,33 @@ export default function App() {
       </CollapsiblePanel>
       <HomeBridgePanel />
 
-      <section className="operator-pane-wall" onDragOver={(event) => event.preventDefault()}>
-        {orderedPanes.map((pane) => {
-          const moveState = getPaneMoveAvailability(safePaneOrder, pane.id);
-          return (
-            <StephanosSurfacePane
-              key={pane.id}
-              pane={pane}
-              uiLayout={safeUiLayout}
-              dragPaneId={dragPaneId}
-              shouldStartPaneDrag={shouldStartPaneDrag}
-              onDragStart={() => setDragPaneId(pane.id)}
-              onDragEnd={() => setDragPaneId('')}
-              onDrop={() => {
-                reorderPanes(dragPaneId, pane.id);
-                setDragPaneId('');
-              }}
-              onMoveUp={() => nudgePane(pane.id, -1)}
-              onMoveDown={() => nudgePane(pane.id, 1)}
-              canMoveUp={moveState.canMoveUp}
-              canMoveDown={moveState.canMoveDown}
-            />
-          );
-        })}
+      <section className="stephanos-workspace-canvas stephanos-app-workspace-canvas" data-workspace-shell="canonical" onDragOver={(event) => event.preventDefault()}>
+        <div className="stephanos-workspace-gutter stephanos-workspace-gutter--left" aria-hidden="true" />
+        <div className="operator-pane-wall stephanos-workspace-lane" data-workspace-shell-role="lane">
+          {orderedPanes.map((pane) => {
+            const moveState = getPaneMoveAvailability(safePaneOrder, pane.id);
+            return (
+              <StephanosSurfacePane
+                key={pane.id}
+                pane={pane}
+                uiLayout={safeUiLayout}
+                dragPaneId={dragPaneId}
+                shouldStartPaneDrag={shouldStartPaneDrag}
+                onDragStart={() => setDragPaneId(pane.id)}
+                onDragEnd={() => setDragPaneId('')}
+                onDrop={() => {
+                  reorderPanes(dragPaneId, pane.id);
+                  setDragPaneId('');
+                }}
+                onMoveUp={() => nudgePane(pane.id, -1)}
+                onMoveDown={() => nudgePane(pane.id, 1)}
+                canMoveUp={moveState.canMoveUp}
+                canMoveDown={moveState.canMoveDown}
+              />
+            );
+          })}
+        </div>
+        <div className="stephanos-workspace-gutter stephanos-workspace-gutter--right" aria-hidden="true" />
       </section>
 
       <footer className="runtime-diagnostic" aria-label="runtime diagnostic">

@@ -30,6 +30,7 @@ export const STEPHANOS_LAW_IDS = Object.freeze({
   DEVICE_EMBODIMENT: 'law-runtime-embodiment-can-vary-by-device',
   REALITY_SYNC: 'law-reality-sync-keeps-displayed-truth-current',
   SHARED_PANE_PLANE: 'law-shared-pane-plane-requires-non-overlap',
+  CANONICAL_WORKSPACE_PRESENTATION: 'law-canonical-workspace-presentation-shell',
   REALITY_FORGE_PROOF_OF_DONE: 'law-reality-forge-proof-of-done-requires-observed-outcome',
 });
 
@@ -213,6 +214,20 @@ export const stephanosLaws = Object.freeze([
     engineeringImplication: 'Keep collision detection and non-overlap resolution in shared pane infrastructure (not tile-local hacks), and persist only resolved in-bounds positions.',
     relatedFiles: ['system/ui_renderer.js', 'shared/runtime/canonTilePanes.mjs', 'apps/music-tile/main.js', 'apps/music-tile/style.css', 'tests/panel-layout-state.test.mjs', 'tests/canon-tile-panes.test.mjs'],
     testCoverageHint: 'tests/panel-layout-state.test.mjs, tests/canon-tile-panes.test.mjs',
+    severity: 'high',
+    status: 'active',
+  },
+  {
+    id: STEPHANOS_LAW_IDS.CANONICAL_WORKSPACE_PRESENTATION,
+    title: 'Workspace surfaces share one shell language',
+    shortStatement: 'Wide workspace panes and launcher workspace sessions use canonical shell, lane, and gutter presentation.',
+    fullDescription: 'Stephanos workspace-style surfaces must not solve width, side breathing room, and scroll comfort with tile-local CSS patches. First-class wide panes and root workspace sessions use a shared shell/lane/gutter vocabulary so Mission Console, World Workspace, OpenClaw, and other wide surfaces present as workspaces rather than narrow tiles or edge-to-edge slabs.',
+    category: 'ui-layout-truth',
+    invariantType: 'hard',
+    operatorImplication: 'If a workspace feels cramped, clipped, or edge-to-edge, treat it as a shared workspace-shell regression, not a single tile styling issue.',
+    engineeringImplication: 'Enforce workspace presentation at canonical wrappers such as StephanosSurfacePane and system/workspace.js; keep tile-local CSS limited to inner content rhythm.',
+    relatedFiles: ['stephanos-ui/src/components/StephanosSurfacePane.jsx', 'stephanos-ui/src/styles.css', 'system/workspace.js', 'index.html'],
+    testCoverageHint: 'stephanos-ui/src/components/stephanosPaneCanon.test.mjs, stephanos-ui/src/utils/stephanosPaneContract.test.mjs, system/workspace.test.js, tests/root-launcher-guardrails.test.mjs',
     severity: 'high',
     status: 'active',
   },

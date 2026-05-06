@@ -7,6 +7,8 @@ export function buildStephanosPaneContract(pane = {}) {
     title,
     layoutKey,
     isRegistered: id.length > 0,
+    workspaceSurface: pane.wideSurface === true,
+    usesCanonicalWorkspaceShell: pane.wideSurface === true ? pane.usesCanonicalWorkspaceShell !== false : true,
     usesCanonicalWrapper: pane.usesCanonicalWrapper !== false,
     hasCollapseSupport: pane.hasCollapseSupport !== false,
     hasCanonicalDragHandle: pane.hasCanonicalDragHandle !== false,
@@ -27,6 +29,7 @@ export function auditStephanosTilePanes(panes = []) {
     ];
     const booleans = [
       contract.isRegistered,
+      contract.usesCanonicalWorkspaceShell,
       contract.usesCanonicalWrapper,
       contract.hasCollapseSupport,
       contract.hasCanonicalDragHandle,

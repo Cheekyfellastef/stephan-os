@@ -21,3 +21,10 @@ test('tile-first launcher path remains isolated from diagnostics surfaces', () =
   assert.match(launcherHtml, /id="launcher-diagnostics-mount"/);
   assert.match(launcherHtml, /Guardrail: product launcher tiles render first; diagnostics can only appear inside this isolated mount/);
 });
+
+test('root workspace sessions use canonical shell, lane, and side breathing room', () => {
+  assert.match(launcherHtml, /stephanos-root-workspace-shell/);
+  assert.match(launcherHtml, /stephanos-root-workspace-canvas/);
+  assert.match(launcherHtml, /grid-template-columns:minmax\(18px,clamp\(20px,4vw,88px\)\) minmax\(0,min\(100%,1840px\)\) minmax\(18px,clamp\(20px,4vw,88px\)\)/);
+  assert.match(launcherHtml, /#workspace-content\.stephanos-root-workspace-canvas > \*/);
+});

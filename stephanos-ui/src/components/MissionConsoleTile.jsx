@@ -681,7 +681,7 @@ export default function MissionConsoleTile({
       panelId="missionConsolePanel"
       title="Agent Mission Console"
       description="Mission Router workspace for agent mission packets, target routing, and bounded OpenClaw interaction."
-      className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-wide-surface stephanos-wide-surface-stage"
+      className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-workspace-surface stephanos-workspace-surface--mission"
       isOpen={uiLayout.missionConsolePanel !== false}
       onToggle={() => togglePanel('missionConsolePanel')}
     >

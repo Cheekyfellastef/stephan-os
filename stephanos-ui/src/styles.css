@@ -34,7 +34,7 @@ body {
   max-width: none;
   min-width: 0;
   margin: 0;
-  padding-inline: 0.75rem;
+  padding-inline: clamp(16px, 4vw, 72px);
   box-sizing: border-box;
 }
 
@@ -101,6 +101,10 @@ body {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-auto-flow: row dense;
   gap: 1rem;
+  width: 100%;
+  max-width: 1840px;
+  min-width: 0;
+  margin-inline: auto;
 }
 
 .operator-pane-slot {
@@ -118,6 +122,66 @@ body {
 
 .operator-pane-slot.dragging {
   opacity: 0.7;
+}
+
+.stephanos-workspace-canvas {
+  --stephanos-workspace-gutter: clamp(18px, 3.5vw, 88px);
+  --stephanos-workspace-lane-max: 1840px;
+  display: grid;
+  grid-template-columns:
+    minmax(12px, var(--stephanos-workspace-gutter))
+    minmax(0, min(100%, var(--stephanos-workspace-lane-max)))
+    minmax(12px, var(--stephanos-workspace-gutter));
+  gap: clamp(10px, 1.2vw, 18px);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: clip;
+}
+
+.stephanos-app-workspace-canvas {
+  --stephanos-workspace-lane-max: 1840px;
+  margin: 0 auto 1rem;
+}
+
+.stephanos-workspace-lane {
+  grid-column: 2;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.stephanos-workspace-gutter {
+  min-width: 0;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(24, 44, 72, 0.2), rgba(7, 17, 32, 0.08));
+  border: 1px solid rgba(95, 151, 218, 0.12);
+  pointer-events: none;
+}
+
+.stephanos-workspace-gutter--left {
+  grid-column: 1;
+}
+
+.stephanos-workspace-gutter--right {
+  grid-column: 3;
+}
+
+.stephanos-workspace-pane-shell.stephanos-tile--wide-active {
+  grid-column: 1 / -1;
+}
+
+.stephanos-workspace-pane-shell > .stephanos-workspace-canvas {
+  --stephanos-workspace-gutter: clamp(14px, 2.2vw, 56px);
+  --stephanos-workspace-lane-max: 1760px;
+}
+
+.stephanos-workspace-pane-shell .stephanos-workspace-lane > .panel {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .pane-order-controls {
@@ -1350,6 +1414,18 @@ pre {
 @media (max-width: 900px) {
   .app-shell-root {
     padding: 1rem;
+  }
+
+  .stephanos-workspace-canvas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stephanos-workspace-lane {
+    grid-column: 1;
+  }
+
+  .stephanos-workspace-gutter {
+    display: none;
   }
 
   .operator-pane-wall {
@@ -2949,14 +3025,17 @@ pre {
   min-width: 0;
 }
 
+.stephanos-workspace-surface,
 .stephanos-wide-surface {
   width: 100%;
   max-width: none;
   min-width: 0;
 }
 
+.stephanos-workspace-surface--mission,
 .stephanos-wide-surface-stage {
-  width: min(100%, clamp(1180px, 92vw, 1840px));
+  width: 100%;
+  max-width: none;
   margin-inline: auto;
   min-width: 0;
 }
