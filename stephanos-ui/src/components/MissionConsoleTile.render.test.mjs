@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const componentPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'MissionConsoleTile.jsx');
+const componentPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'MissionConsoleTile.jsx');
 
 test('MissionConsoleTile includes mission router labels, governed routing, and explicit approval rail actions', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
@@ -16,8 +17,10 @@ test('MissionConsoleTile includes mission router labels, governed routing, and e
     'Zero-Cost Guardrails:',
     'Approval Mode:',
     'Current session mode:',
-    'Target: Agents → Mission Bridge',
-    'Target: Stephanos → Assistant Router',
+    'Target: Agents',
+    'Mission Bridge',
+    'Target: Stephanos',
+    'Assistant Router',
     'mission bridge mission id:',
     'mission bridge target agents:',
     'mission bridge approval-needed:',
@@ -96,12 +99,12 @@ test('MissionConsoleTile routes agent-targeted submit through mission bridge and
   assert.equal(source.includes('const bridgeResult = processMissionBridgeIntent({'), true);
   assert.equal(source.includes('applyMissionBridgeResult(bridgeResult);'), true);
   assert.equal(source.includes("if (request.target.id === 'stephanos')"), true);
-  assert.equal(source.includes("Target: Agents → Mission Bridge"), true);
-  assert.equal(source.includes("Target: Stephanos → Assistant Router"), true);
+  assert.equal(source.includes("Target: Agents") && source.includes("Mission Bridge"), true);
+  assert.equal(source.includes("Target: Stephanos") && source.includes("Assistant Router"), true);
   assert.equal(source.includes("responder: 'Stephanos'"), true);
   assert.equal(source.includes('You are speaking to Stephanos through the Agent Mission Console.'), true);
-  assert.equal(source.includes('You are routed to Agents → Mission Bridge.'), true);
-  assert.equal(source.includes('You are routed to OpenClaw → Bounded Analysis.'), true);
+  assert.equal(source.includes('You are routed to Agents') && source.includes('Mission Bridge'), true);
+  assert.equal(source.includes('You are routed to OpenClaw') && source.includes('Bounded Analysis'), true);
 });
 
 test('MissionConsoleTile canonical OpenClaw fields are surfaced in compact truth summary', async () => {

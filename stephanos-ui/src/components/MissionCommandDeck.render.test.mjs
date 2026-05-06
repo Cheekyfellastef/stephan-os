@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const componentPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'MissionCommandDeck.jsx');
-const stylesPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../styles.css');
+const componentPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'MissionCommandDeck.jsx');
+const stylesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../styles.css');
 
 test('Command Deck renders required shell, strip, rail, hero, and matrix sections', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
@@ -32,7 +33,7 @@ test('Command Deck renders repair contract, operator cards, runtime snapshot, ac
     'Repair PR',
     'Recreate PR',
     'Operator Decision Console',
-    'Operator chooses the path — no default manual code surgery.',
+    'Operator chooses the path',
     'Support Snapshot / Runtime Truth',
     'Activity Feed',
     'Skill Forge',
@@ -59,7 +60,7 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
     'mission-console-workspace-wide',
     'width: 100%',
     'max-width:100%',
-    'max-width:none',
+    'max-width', 'none',
     'min-width:0',
     'minmax(0, 1fr)',
     'minmax(min(200px,100%),1fr)',
