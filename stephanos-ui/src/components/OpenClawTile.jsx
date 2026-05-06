@@ -332,7 +332,8 @@ export default function OpenClawTile({
       isOpen={uiLayout.openClawPanel !== false}
       onToggle={() => togglePanel('openClawPanel')}
     >
-      <section className="openclaw-section">
+      <div className="openclaw-tile-layout">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Mission Card</h4>
         <ul>
           <li><strong>Current stage:</strong> {currentStage}</li>
@@ -343,7 +344,7 @@ export default function OpenClawTile({
           <li><strong>Primary operator action:</strong> {primaryOperatorAction}</li>
         </ul>
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Current Stage Progression</h4>
         {OPENCLAW_STAGE_ORDER.map((stageId, index) => {
           const stageState = index < currentStageIndex ? 'completed' : (stageId === currentStage ? 'current' : 'future');
@@ -356,9 +357,10 @@ export default function OpenClawTile({
           );
         })}
       </section>
-      <details className="openclaw-section openclaw-tile-root">
+      <details className="openclaw-section openclaw-tile-root openclaw-card">
         <summary>Details</summary>
-      <section className="openclaw-section">
+      <div className="openclaw-details-grid">
+      <section className="openclaw-section openclaw-card">
         <h4>Endpoint Configuration (session-only v1)</h4>
         <p className="muted"><strong>session-only, no secrets stored</strong></p>
         <p className="muted"><strong>endpoint configuration only: no health check, no handshake, no connection, no live automation</strong></p>
@@ -404,7 +406,7 @@ export default function OpenClawTile({
           <li><strong>OpenClaw adapter config warning:</strong> {operatorTask?.openClawAdapterConnectionConfigWarnings?.[0] || 'none'}</li>
         </ul>
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Readonly Health / Handshake Validation v1</h4>
         <p className="muted"><strong>readonly validation only:</strong> no commands, no file edits, no browser control, no Git writes, no execution.</p>
         <ul>
@@ -450,7 +452,7 @@ export default function OpenClawTile({
           {validationButtonEnabled ? (validationSucceeded ? 'Re-check readonly health/handshake' : 'Validate readonly health/handshake') : 'Validation unavailable: missing safe readonly validation endpoint or config readiness'}
         </button>
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Capability Trial</h4>
         <ul>
           <li><strong>Trial status:</strong> {trialStatus}</li>
@@ -478,7 +480,7 @@ export default function OpenClawTile({
         ) : null}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Oversight Proposal</h4>
         <p className="muted"><strong>OpenClaw can help design oversight, but cannot approve or apply its own power increase.</strong></p>
         <ul>
@@ -497,7 +499,7 @@ export default function OpenClawTile({
       </section>
 
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Proposal Packet</h4>
         <p className="muted"><strong>Review packet only.</strong> OpenClaw may contribute readonly observations, but cannot approve or apply its own packet.</p>
         <p className="muted">This packet is for operator review and future ChatGPT/Codex workflow. Execution remains unavailable.</p>
@@ -519,7 +521,7 @@ export default function OpenClawTile({
         </ul>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Operator Review Queue</h4>
         <p className="muted">This queue is for human/ChatGPT/Codex review only. It does not approve or execute packets.</p>
         <ul>
@@ -551,7 +553,7 @@ export default function OpenClawTile({
         {packetCopyStatus === 'copied' ? <p className="muted">Review packet copied.</p> : null}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Operator Review Workflow</h4>
         <ul>
           <li><strong>Workflow status:</strong> {operatorReviewWorkflow?.workflowStatus || 'awaiting_packet'}</li>
@@ -575,7 +577,7 @@ export default function OpenClawTile({
       </section>
 
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Evidence Requests</h4>
         <ul>
           <li><strong>Evidence request status:</strong> {evidenceRequest?.requestStatus || 'none'}</li>
@@ -599,7 +601,7 @@ export default function OpenClawTile({
         </div>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Codex Proposal Export</h4>
         <p className="muted">Manual prompt export only. OpenClaw does not execute, approve, commit, or create PRs.</p>
         <ul>
@@ -632,7 +634,7 @@ export default function OpenClawTile({
         {codexExportCopyStatus === 'copied' ? <p className="muted">Codex prompt copied.</p> : null}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Codex Review Result Intake</h4>
         <p className="muted">Review evidence only. Planning only. Preview only. Execution disabled. Operator approval required.</p>
         <p className="muted">Pasted Codex result is review evidence only. It cannot execute, edit files, write Git, or approve OpenClaw actions.</p>
@@ -643,7 +645,7 @@ export default function OpenClawTile({
         <button type="button" onClick={clearCodexReviewResult}>Clear Codex review result</button>
         </div>
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Codex Review Result</h4>
         <ul>
           <li><strong>Status:</strong> {effectiveCodexReviewResult?.resultStatus || 'not_received'}</li>
@@ -659,7 +661,7 @@ export default function OpenClawTile({
         <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(effectiveCodexReviewResult || {}, null, 2)); setCodexReviewCopyStatus('copied'); }}>Copy imported Codex review summary</button>
         {codexReviewCopyStatus === 'copied' ? <p className="muted">Codex review summary copied.</p> : null}
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Implementation Planning Packet</h4>
         <ul>
           <li><strong>Plan status:</strong> {operatorTask?.openClawImplementationPlan?.planStatus || 'unavailable'}</li>
@@ -675,7 +677,7 @@ export default function OpenClawTile({
         <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(operatorTask?.openClawImplementationPlan || {}, null, 2)); setImplementationPlanCopyStatus('copied'); }}>Copy implementation planning packet</button>
         {implementationPlanCopyStatus === 'copied' ? <p className="muted">Implementation planning packet copied.</p> : null}
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Approval Gate Readiness</h4>
         <ul>
           <li><strong>Readiness status:</strong> {operatorTask?.openClawApprovalGateReadiness?.approvalReadinessStatus || 'not_ready'}</li>
@@ -685,7 +687,7 @@ export default function OpenClawTile({
           <li><strong>Execution allowed:</strong> no</li>
         </ul>
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Dry-run Action Planning Preview</h4>
         <ul>
           <li><strong>Dry-run status:</strong> {operatorTask?.openClawDryRunPlan?.dryRunStatus || 'unavailable'}</li>
@@ -700,7 +702,7 @@ export default function OpenClawTile({
         <button type="button" onClick={async () => { await navigator.clipboard.writeText(JSON.stringify(operatorTask?.openClawDryRunPlan || {}, null, 2)); setDryRunCopyStatus('copied'); }}>Copy dry-run preview</button>
         {dryRunCopyStatus === 'copied' ? <p className="muted">Dry-run preview copied.</p> : null}
       </section>
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Controlled Execution Gate</h4>
         <ul>
           <li><strong>Status:</strong> {operatorTask?.openClawControlledExecutionGate?.controlledExecutionStatus || 'future_gated'}</li>
@@ -709,7 +711,7 @@ export default function OpenClawTile({
         </ul>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>OpenClaw Control Harness</h4>
         <p className="muted">Governance scaffolding only for future operator-reviewed stages; no execution machinery is enabled in this stage.</p>
         <ul>
@@ -741,7 +743,7 @@ export default function OpenClawTile({
         ) : null}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card openclaw-status-card">
         <h4>Control Plane Safety Lifecycle</h4>
         <ul>
           <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
@@ -772,7 +774,7 @@ export default function OpenClawTile({
         </div>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Status / Governance</h4>
         <ul>
           <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
@@ -802,7 +804,7 @@ export default function OpenClawTile({
       </section>
 
       {integrationSnapshot.warnings.length > 0 ? (
-        <section className="openclaw-section">
+        <section className="openclaw-section openclaw-card">
           <h4>Trust Posture Warnings</h4>
           <ul>
           <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
@@ -815,7 +817,7 @@ export default function OpenClawTile({
         </section>
       ) : null}
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Integration Topology</h4>
         <p>{integrationSnapshot.topology.map((entry) => entry.label).join(' → ')}</p>
         <ul>
@@ -830,7 +832,7 @@ export default function OpenClawTile({
         </ul>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Authority Model</h4>
         <ul className="openclaw-authority-grid">
           {OPENCLAW_AUTHORITY_MODEL.map((entry) => (
@@ -842,7 +844,7 @@ export default function OpenClawTile({
         </ul>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Scan Controls</h4>
         <div className="openclaw-scan-controls">
           {OPENCLAW_SCAN_MODES.map((mode) => (
@@ -861,7 +863,7 @@ export default function OpenClawTile({
         <button type="button" onClick={runScan}>Run bounded scan</button>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Findings / Evidence</h4>
         {!scanReport ? <p>No scan yet.</p> : (
           <>
@@ -900,7 +902,7 @@ export default function OpenClawTile({
         )}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Candidate Prompt Cards</h4>
         {candidatePrompts.length === 0 ? <p>No prompt cards yet. Run Candidate Codex Prompt Generation scan.</p> : (
           <div className="openclaw-findings-grid">
@@ -934,7 +936,7 @@ export default function OpenClawTile({
         )}
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Catastrophic-Safety Blocks</h4>
         <p>Hard blocks active for catastrophic actions in shadow mode. These actions are structurally disallowed, not only warned.</p>
         <ul>
@@ -951,7 +953,7 @@ export default function OpenClawTile({
         </ul>
       </section>
 
-      <section className="openclaw-section">
+      <section className="openclaw-section openclaw-card">
         <h4>Trace / Audit</h4>
         <ul>
           <li><strong>Configured host:</strong> {endpointDraft.endpointHost || 'none'}</li>
@@ -966,7 +968,9 @@ export default function OpenClawTile({
           ))}
         </ul>
       </section>
+      </div>
       </details>
+      </div>
     </CollapsiblePanel>
   );
 }

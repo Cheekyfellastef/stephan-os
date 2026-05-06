@@ -2876,6 +2876,48 @@ pre {
   overflow: auto;
 }
 
+
+.openclaw-tile-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-items: start;
+}
+
+.openclaw-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.openclaw-card {
+  min-inline-size: min(100%, 280px);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-card ul,
+.openclaw-card p,
+.openclaw-card li,
+.openclaw-card code {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-status-card {
+  border: 1px solid rgba(118, 154, 216, 0.3);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(6, 16, 30, 0.52);
+}
+
 .openclaw-section {
   margin-bottom: 1rem;
   overflow-wrap: anywhere;
