@@ -18,7 +18,9 @@ test('Command Deck renders required shell, strip, rail, hero, and matrix section
     'Mission Routing / Delegation Readiness',
     'aria-label="readiness ring"',
     'Agent Assignment Matrix',
-    '<table>',
+    'mission-deck-matrix-wrap',
+    'mission-deck-matrix-row',
+    'matrix-label',
   ].forEach((token) => assert.equal(source.includes(token), true, `missing token: ${token}`));
 });
 
@@ -64,13 +66,15 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
     'max-width', 'none',
     'min-width:0',
     'minmax(0, 1fr)',
-    'minmax(860px, 1fr)',
+    'minmax(0, 1fr)',
     '--workspace-shell-lane-nav-min',
     '--workspace-shell-lane-main-min',
     '--workspace-shell-lane-rail-min',
     '@media (max-width: 1580px)',
     '@media (max-width: 1220px)',
-    'minmax(min(200px,100%),1fr)',
+    'minmax(min(240px,100%),1fr)',
+    'mission-deck-matrix-grid',
+    'flex-wrap:wrap',
     'mission-command-deck-layout',
     'overflow-x: clip',
     'overflow-wrap:anywhere',

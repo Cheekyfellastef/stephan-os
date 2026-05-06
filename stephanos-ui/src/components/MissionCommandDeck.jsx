@@ -87,10 +87,10 @@ export default function MissionCommandDeck(props) {
 
         <article className="mission-deck-card" aria-label="Agent Assignment Matrix">
           <h4>Agent Assignment Matrix</h4>
-          <div className="mission-deck-table-wrap"><table><thead><tr><th>role</th><th>authority</th><th>allowed</th><th>blocked</th><th>status / next action</th></tr></thead><tbody>{matrixRows.map((role) => {
+          <div className="mission-deck-table-wrap mission-deck-matrix-wrap" role="list" aria-label="Agent Assignment Matrix responsive rows">{matrixRows.map((role) => {
             const row = assignments.find((item) => (item.role || item.roleId || '').toLowerCase() === role.toLowerCase()) || {};
-            return <tr key={role}><td>{role}</td><td><span className={`status-chip status-${statusTone(row.authorityLevel || 'unknown')}`}>{row.authorityLevel || 'unknown'}</span></td><td>{(row.allowedActions || []).join(' · ') || 'none'}</td><td>{(row.blockedActions || []).join(' · ') || 'none'}</td><td>{row.nextAction || row.status || 'pending'}</td></tr>;
-          })}</tbody></table></div>
+            return <section key={role} className="mission-deck-matrix-row" role="listitem"><h5>{role}</h5><div className="mission-deck-matrix-grid"><div><span className="matrix-label">authority</span><span className={`status-chip status-${statusTone(row.authorityLevel || 'unknown')}`}>{row.authorityLevel || 'unknown'}</span></div><div><span className="matrix-label">allowed</span><p>{(row.allowedActions || []).join(' · ') || 'none'}</p></div><div><span className="matrix-label">blocked</span><p>{(row.blockedActions || []).join(' · ') || 'none'}</p></div><div><span className="matrix-label">status / next action</span><p>{row.nextAction || row.status || 'pending'}</p></div></div></section>;
+          })}</div>
         </article>
 
         <article className="mission-deck-card">

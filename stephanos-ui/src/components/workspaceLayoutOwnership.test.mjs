@@ -24,7 +24,7 @@ test('mission console mounts as workspace-class surface and not narrow tile-only
 
 test('readable min-width and responsive stack guardrails are explicit', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
-  ['--workspace-shell-lane-nav-min: 260px', '--workspace-shell-lane-main-min: 760px', '--workspace-shell-lane-rail-min: 320px', 'min-width:260px', 'min-width:760px', '@media (max-width: 1280px)', 'grid-template-columns: minmax(0,1fr);'].forEach((token) => {
+  ['--workspace-shell-lane-nav-min: 260px', '--workspace-shell-lane-main-min: 760px', '--workspace-shell-lane-rail-min: 320px', 'min-width:260px', 'min-width:0', '@media (max-width: 1280px)', 'grid-template-columns: minmax(0,1fr);'].forEach((token) => {
     assert.equal(css.includes(token), true, `missing readable width token: ${token}`);
   });
 });
