@@ -1356,13 +1356,10 @@ export default function App() {
         <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
           OPENCLAW SURFACE · <strong>{ignitionModeBanner.mode}</strong> · {agentSurfaceProjection.launcherSummary.summaryLabel} · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
-        <section className="workspace-shell mission-console-surface-stage mission-console-workspace" data-workspace-shell="canonical">
+        <section className="mission-console-surface-stage openclaw-landing-stage" data-workspace-shell="openclaw-landing">
           <header className="workspace-header workspace-header--compact">
             <p>OpenClaw + Mission Console workspace stage</p>
           </header>
-          <div className="workspace-stage">
-            <div className="workspace-canvas">
-              <div className="workspace-content">
           <OpenClawTile
             uiLayout={{ ...safeUiLayout, openClawPanel: true }}
             togglePanel={() => {}}
@@ -1399,26 +1396,7 @@ export default function App() {
             submitPrompt={submitPrompt}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
-            onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
-            onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
-              endpointLabel: 'Local OpenClaw Adapter',
-              endpointHost: '',
-              endpointPort: '',
-              endpointScope: 'local_only',
-              expectedProtocolVersion: 'v1',
-              expectedAdapterIdentity: '',
-              allowedProbeTypes: 'health_and_handshake',
-              configPersistenceMode: 'session_only',
-              endpointMode: 'model_only',
-            })}
-            telemetryEntries={telemetryEntries}
-            actionHints={actionHints}
           />
-          <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} />
-          <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} />
-              </div>
-            </div>
-          </div>
         </section>
         <DebugConsole />
       </main>

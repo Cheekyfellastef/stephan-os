@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const tilePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'OpenClawTile.jsx');
 
-test('OpenClawTile uses canonical pane surface and responsive card layout', async () => {
+test('OpenClaw landing tile layout uses responsive card surface without nested workspace canvas', async () => {
   const source = await fs.readFile(tilePath, 'utf8');
   assert.equal(source.includes('<CollapsiblePanel'), true);
   assert.equal(source.includes('className="openclaw-tile-layout openclaw-tile-root"'), true);
