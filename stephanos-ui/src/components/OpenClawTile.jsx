@@ -356,7 +356,7 @@ export default function OpenClawTile({
           );
         })}
       </section>
-      <details className="openclaw-section">
+      <details className="openclaw-section openclaw-tile-root">
         <summary>Details</summary>
       <section className="openclaw-section">
         <h4>Endpoint Configuration (session-only v1)</h4>
@@ -565,11 +565,13 @@ export default function OpenClawTile({
         <label className="openclaw-field">Review note
           <input className="openclaw-input" value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
         </label>
-        <button type="button" onClick={() => updateReviewDecision('needs_more_evidence')}>Mark needs more evidence</button>
-        <button type="button" onClick={() => updateReviewDecision('ready_for_codex_review')}>Mark ready for Codex review</button>
-        <button type="button" onClick={() => updateReviewDecision('rejected')}>Reject packet</button>
-        <button type="button" onClick={() => updateReviewDecision('archived')}>Archive packet</button>
-        <button type="button" onClick={() => { clearOpenClawReviewDecision({ packetId: activePacketId }); setLocalReviewDecision(null); }}>Clear review decision</button>
+        <div className="openclaw-button-row">
+          <button type="button" onClick={() => updateReviewDecision('needs_more_evidence')}>Mark needs more evidence</button>
+          <button type="button" onClick={() => updateReviewDecision('ready_for_codex_review')}>Mark ready for Codex review</button>
+          <button type="button" onClick={() => updateReviewDecision('rejected')}>Reject packet</button>
+          <button type="button" onClick={() => updateReviewDecision('archived')}>Archive packet</button>
+          <button type="button" onClick={() => { clearOpenClawReviewDecision({ packetId: activePacketId }); setLocalReviewDecision(null); }}>Clear review decision</button>
+        </div>
       </section>
 
 
@@ -588,11 +590,13 @@ export default function OpenClawTile({
         <label className="openclaw-field">Operator evidence note
           <textarea className="openclaw-input" value={evidenceNote} onChange={(event) => setEvidenceNote(event.target.value)} rows={4} />
         </label>
-        <button type="button" onClick={attachOperatorEvidenceNote}>Attach operator note</button>
-        <button type="button">Add evidence request</button>
-        <button type="button">Mark evidence request satisfied</button>
-        <button type="button">Mark evidence insufficient</button>
-        <button type="button">Clear evidence request</button>
+        <div className="openclaw-button-row">
+          <button type="button" onClick={attachOperatorEvidenceNote}>Attach operator note</button>
+          <button type="button">Add evidence request</button>
+          <button type="button">Mark evidence request satisfied</button>
+          <button type="button">Mark evidence insufficient</button>
+          <button type="button">Clear evidence request</button>
+        </div>
       </section>
 
       <section className="openclaw-section">
@@ -761,9 +765,11 @@ export default function OpenClawTile({
         ) : validationSucceeded ? (
           <p className="muted">Readonly validation ready. Execution remains disabled.</p>
         ) : null}
-        <button type="button" onClick={() => setKillSwitchEngagedUi(true)}>Engage Kill Switch</button>
-        <button type="button" onClick={() => setPauseStateUi('paused')}>Pause OpenClaw control plane</button>
-        <button type="button" onClick={() => setPauseStateUi('resumed')}>Resume readonly validation/control plane</button>
+        <div className="openclaw-button-row">
+          <button type="button" onClick={() => setKillSwitchEngagedUi(true)}>Engage Kill Switch</button>
+          <button type="button" onClick={() => setPauseStateUi('paused')}>Pause OpenClaw control plane</button>
+          <button type="button" onClick={() => setPauseStateUi('resumed')}>Resume readonly validation/control plane</button>
+        </div>
       </section>
 
       <section className="openclaw-section">

@@ -144,3 +144,20 @@ test('OpenClawTile mission primary operator action follows canonical current sta
   assert.equal(source.includes("if (currentStage === 'approval_readiness') return 'Review approval gate readiness.';"), true);
   assert.equal(source.includes("if (currentStage === 'dry_run_preview') return 'Review dry-run preview.';"), true);
 });
+
+
+test('OpenClawTile applies local containment root and wraps action rows', async () => {
+  const source = await fs.readFile(tilePath, 'utf8');
+  assert.equal(source.includes('openclaw-section openclaw-tile-root'), true);
+  const wraps = source.match(/className="openclaw-button-row"/g) || [];
+  assert.equal(wraps.length >= 4, true);
+});
+
+test('OpenClaw styles avoid viewport-width escapes and enforce safe authority grid min sizing', async () => {
+  const stylesPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../styles.css');
+  const styles = await fs.readFile(stylesPath, 'utf8');
+  assert.equal(styles.includes('.openclaw-tile-root'), true);
+  assert.equal(styles.includes('minmax(min(240px, 100%), 1fr)'), true);
+  assert.equal(styles.includes('openclaw-tile-root .openclaw-button-row > *'), true);
+  assert.equal(styles.includes('width: 100vw'), false);
+});

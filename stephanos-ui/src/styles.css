@@ -2881,6 +2881,32 @@ pre {
   overflow-wrap: anywhere;
 }
 
+
+.openclaw-tile-root,
+.openclaw-tile-root > * {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.openclaw-tile-root ul,
+.openclaw-tile-root li,
+.openclaw-tile-root p,
+.openclaw-tile-root label,
+.openclaw-tile-root code,
+.openclaw-tile-root strong,
+.openclaw-tile-root button {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+.openclaw-tile-root .openclaw-button-row > * {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 180px;
+}
 .openclaw-field {
   display: grid;
   gap: 0.35rem;
@@ -2932,7 +2958,7 @@ pre {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 0.5rem;
 }
 
@@ -4146,7 +4172,7 @@ pre {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 0.5rem;
 }
 
