@@ -14,9 +14,11 @@ export default function StephanosSurfacePane({
   canMoveDown,
 }) {
   const paneCollapsed = resolvePaneCollapsedState(pane, uiLayout);
+  const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
+  const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
   return (
     <div
-      className={`operator-pane-slot ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
+      className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
       draggable
       data-pane-id={pane.id}
       data-pane-collapsed={paneCollapsed ? 'true' : 'false'}

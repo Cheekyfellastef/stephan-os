@@ -891,6 +891,7 @@ export default function App() {
     { id: 'cockpitPanel', className: 'pane-span-2', render: () => <CockpitPanel telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} /> },
     {
       id: 'agentsPanel',
+      wideSurface: true,
       className: 'pane-span-2',
       render: () => {
         markStartupStage('app-agents-panel-render-start');
@@ -1004,6 +1005,7 @@ export default function App() {
     },
     {
       id: 'missionConsolePanel',
+      wideSurface: true,
       title: 'Mission Console',
       className: 'pane-span-2',
       render: () => (
@@ -1025,6 +1027,7 @@ export default function App() {
     },
     {
       id: 'capabilityRadarPanel',
+      wideSurface: true,
       title: 'Capability Radar',
       className: 'pane-span-2',
       render: () => (
@@ -1037,18 +1040,21 @@ export default function App() {
     },
     {
       id: 'skillForgePanel',
+      wideSurface: true,
       title: 'Skill Forge',
       className: 'pane-span-2',
       render: () => <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} />,
     },
     {
       id: 'worldWorkspacePanel',
+      wideSurface: true,
       title: 'World Workspace',
       className: 'pane-span-2',
       render: () => <WorldWorkspaceTile />,
     },
     {
       id: 'openClawPanel',
+      wideSurface: true,
       title: 'OpenClaw Control',
       className: 'pane-span-2',
       render: () => (
