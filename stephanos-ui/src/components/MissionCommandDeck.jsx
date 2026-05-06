@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 function statusTone(value = '') {
   const normalized = String(value).toLowerCase();
@@ -42,15 +42,6 @@ export default function MissionCommandDeck(props) {
   const matrixRows = ['Codex', 'OpenClaw', 'Verification Judge', 'Memory Librarian', 'Task Finisher', 'Operator'];
   const assignments = (agentAssignmentMatrix?.assignments || []);
   const actionButtons = ['Retry Checks', 'Repair PR', 'Recreate PR', 'Hold'];
-  const wideScrollShellRef = useRef(null);
-
-  function handleWideGutterWheel(event) {
-    const shell = wideScrollShellRef.current;
-    if (!shell) return;
-    event.preventDefault();
-    shell.scrollTop += event.deltaY;
-  }
-
   const fallbackDecisions = [
     { decisionId: 'retry', title: 'Retry', reason: 'Re-run checks with current branch state.', riskLevel: 'low', approvalRequired: false },
     { decisionId: 'recreate', title: 'Recreate PR', reason: 'Open a fresh PR after controlled repair.', riskLevel: 'medium', approvalRequired: true },
@@ -61,15 +52,7 @@ export default function MissionCommandDeck(props) {
 
   return (
     <section className="mission-command-deck mission-command-deck-fullwidth stephanos-wide-content" aria-label="Mission Command Deck">
-      <div className="stephanos-wide-scroll-shell" ref={wideScrollShellRef}>
-        <div
-          className="stephanos-wide-scroll-gutter stephanos-wide-scroll-gutter-left"
-          aria-label="Scroll Mission Command Deck left gutter"
-          onWheel={handleWideGutterWheel}
-        >
-          <span aria-hidden="true">scroll</span>
-        </div>
-        <div className="mission-command-deck-layout">
+      <div className="mission-command-deck-layout workspace-canvas">
       <aside className="mission-deck-rail" aria-label="Mission navigation rail">
         <h4>Mission Console / Command Deck</h4>
         <ul>{navItems.map((item) => <li key={item}><button type="button" className={`mission-deck-nav-button ${activeNav === item ? 'active' : ''}`} onClick={() => setActiveNav(item)} aria-current={activeNav === item ? 'page' : undefined}><span className="mission-deck-nav-dot" aria-hidden="true">{item[0]}</span>{item}</button></li>)}</ul>
@@ -144,14 +127,6 @@ export default function MissionCommandDeck(props) {
         <article className="mission-deck-card"><h4>OpenClaw Policy State</h4><p>Authority: {openClawDelegation?.authorityLevel || 'unknown'} · approval gates: {openClawDelegation?.requiredOperatorApproval ? 'required' : 'not declared'}.</p></article>
         <article className="mission-deck-card"><h4>Verification Judge</h4><p>{verificationJudge?.judgment || 'pending'} · warnings {(verificationJudge?.warnings || []).length}.</p></article>
       </div>
-        </div>
-        <div
-          className="stephanos-wide-scroll-gutter stephanos-wide-scroll-gutter-right"
-          aria-label="Scroll Mission Command Deck right gutter"
-          onWheel={handleWideGutterWheel}
-        >
-          <span aria-hidden="true">scroll</span>
-        </div>
       </div>
     </section>
   );

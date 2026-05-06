@@ -11,10 +11,7 @@ test('Command Deck renders required shell, strip, rail, hero, and matrix section
   const source = await fs.readFile(componentPath, 'utf8');
   [
     'mission-command-deck-fullwidth',
-    'stephanos-wide-scroll-shell',
-    'stephanos-wide-scroll-gutter-left',
     'mission-command-deck-layout',
-    'stephanos-wide-scroll-gutter-right',
     'Mission Console / Command Deck',
     'mission-deck-strip',
     'mission-deck-rail',
@@ -67,7 +64,7 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
     'max-width', 'none',
     'min-width:0',
     'minmax(0, 1fr)',
-    'minmax(680px, 1fr)',
+    'minmax(860px, 1fr)',
     '--workspace-shell-lane-nav-min',
     '--workspace-shell-lane-main-min',
     '--workspace-shell-lane-rail-min',
@@ -76,7 +73,6 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
     'minmax(min(200px,100%),1fr)',
     'mission-command-deck-layout',
     'overflow-x: clip',
-    'overflow-y: visible',
     'overflow-wrap:anywhere',
     'cursor:pointer',
     'cursor:not-allowed',
@@ -87,14 +83,12 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
 
 
 
-test('Deck navigation, wide gutters, and decision controls are safe semantics', async () => {
+test('Deck navigation and decision controls are safe semantics', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
   [
     'mission-deck-nav-button',
     'type="button"',
     'decision-card',
     'disabled aria-disabled="true"',
-    'aria-label="Scroll Mission Command Deck left gutter"',
-    'onWheel={handleWideGutterWheel}',
   ].forEach((token) => assert.equal(source.includes(token), true, `missing button token: ${token}`));
 });
