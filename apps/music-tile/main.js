@@ -1045,6 +1045,15 @@ function initializePaneLayout() {
   });
 
   elements.debugPanel.hidden = false;
+
+  tilePaneManager.applyDefaultPaneLayout([
+    { paneId: 'results-journey-pane', x: 24, y: 140 },
+    { paneId: 'search-build-journey-pane', x: 620, y: 140 },
+    { paneId: 'session-summary-pane', x: 620, y: 430 },
+    { paneId: 'flow-now-playing-pane', x: 620, y: 650 },
+    { paneId: 'debug-pane', x: 620, y: 870 },
+    { paneId: 'command-console-pane', x: 24, y: 720 },
+  ]);
   setDebugPaneVisibility(state.debugVisible);
 }
 
