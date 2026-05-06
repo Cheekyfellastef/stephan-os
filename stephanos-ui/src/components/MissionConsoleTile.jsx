@@ -443,7 +443,7 @@ export default function MissionConsoleTile({
   function buildAgentsResponse(content, bridgeResult) {
     const availableAgents = visibleAgents.length > 0 ? visibleAgents.join(', ') : 'Intent Engine, Research Agent, Memory Agent, Execution Agent, Ideas Agent';
     const nextAction = bridgeResult?.nextRecommendedAction || 'Submit explicit operator intent.';
-    return `You are routed to Agents -> Mission Bridge. Available agents right now: ${availableAgents}. They can analyze, plan, summarize, and prepare handoff packets under operator approval boundaries. They cannot execute destructive/system-mutating actions without explicit approved workflow. Next safe action: ${nextAction}`;
+    return `You are routed to Agents → Mission Bridge. Available agents right now: ${availableAgents}. They can analyze, plan, summarize, and prepare handoff packets under operator approval boundaries. They cannot execute destructive/system-mutating actions without explicit approved workflow. Next safe action: ${nextAction}`;
   }
 
   function buildOpenClawResponse() {
@@ -454,7 +454,7 @@ export default function MissionConsoleTile({
     const packetStatus = compactVerificationSummary.openClawProposalPacketStatus || 'unknown';
     const reviewQueue = compactVerificationSummary.openClawOperatorReviewQueueStatus || 'unknown';
     const exportStatus = compactVerificationSummary.openClawCodexProposalExportStatus || 'unavailable';
-    return `You are routed to OpenClaw -> Bounded Analysis. Readonly validation is ${validation}; health is ${health}; handshake is ${handshake}. Current packet state is ${packetStatus} with review queue ${reviewQueue} and Codex export ${exportStatus}. OpenClaw can safely observe, validate readonly status, and produce proposal packets. OpenClaw cannot execute commands, edit files, write Git, control browsers, or run autonomous actions.`;
+    return `You are routed to OpenClaw → Bounded Analysis. Readonly validation is ${validation}; health is ${health}; handshake is ${handshake}. Current packet state is ${packetStatus} with review queue ${reviewQueue} and Codex export ${exportStatus}. OpenClaw can safely observe, validate readonly status, and produce proposal packets. OpenClaw cannot execute commands, edit files, write Git, control browsers, or run autonomous actions.`;
   }
 
   function applyMissionBridgeResult(bridgeResult, { includeLedgerMessage = true } = {}) {
@@ -732,8 +732,8 @@ export default function MissionConsoleTile({
           </label>
         ) : null}
         <p><strong>Active routing target before submit:</strong> {resolvedTarget.label}</p>
-        <p><strong>Target: Agents -> Mission Bridge</strong></p>
-        <p><strong>Target: Stephanos -> Assistant Router</strong></p>
+        <p><strong>Target: Agents → Mission Bridge</strong></p>
+        <p><strong>Target: Stephanos → Assistant Router</strong></p>
       </section>
 
       <section className="mission-console-section">
@@ -1100,7 +1100,7 @@ export default function MissionConsoleTile({
           <ul>
             <li><strong>normalized status:</strong> {intentToBuild.missionSpec.prEvidenceIntake.normalizedStatus}</li>
             <li><strong>PR:</strong> #{intentToBuild.missionSpec.prEvidenceIntake.prNumber || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.prTitle || ''} {intentToBuild.missionSpec.prEvidenceIntake.prUrl || ''}</li>
-            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} -> {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
+            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} {' → '} {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
             <li><strong>changed files:</strong> {intentToBuild.missionSpec.prEvidenceIntake.changedFileCount || 0}</li>
             <li><strong>checks:</strong> {intentToBuild.missionSpec.prEvidenceIntake.checksStatus || 'unknown'} (required: {intentToBuild.missionSpec.prEvidenceIntake.requiredChecksStatus || 'unknown'})</li>
             <li><strong>auto-merge:</strong> {intentToBuild.missionSpec.prEvidenceIntake.autoMergeState || 'unknown'}</li>

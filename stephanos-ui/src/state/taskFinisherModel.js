@@ -25,6 +25,7 @@ export function buildTaskFinisherPlan({
   openClawDelegation = {},
   prMetadata = {},
   prEvidenceIntake = {},
+  codexPrRepairContract = {},
 } = {}) {
   const routineTasks = [];
   const requiredOperatorDecisions = [];
@@ -64,7 +65,12 @@ export function buildTaskFinisherPlan({
   if (!mergeAuthorityIncluded || !verificationPass) {
     routineTasks.push('request_operator_merge_decision');
   }
-  if (prEvidenceIntake?.normalizedStatus === 'checks_failed') routineTasks.push('request_checks_repair_before_finish');
+  if (prEvidenceIntake?.normalizedStatus === 'checks_failed') {
+    routineTasks.push('request_checks_repair_before_finish', 'request_codex_pr_repair_contract');
+  }
+  if (codexPrRepairContract.repairCompleteness && codexPrRepairContract.repairCompleteness !== 'repair_complete') {
+    routineTasks.push('request_codex_pr_repair_contract');
+  }
   if (prEvidenceIntake?.normalizedStatus === 'merged' && !mergeAuthorityIncluded) requiredOperatorDecisions.push('merged_without_mission_merge_authority_review');
 
   if (openClawDelegation && verificationJudge.openClawBoundarySatisfied === false) {
@@ -91,6 +97,7 @@ export function buildTaskFinisherPlan({
 
   const warningLevel = requiredOperatorDecisions.length > 0 ? 'high' : codexRepairNeeded ? 'medium' : 'low';
   const safeToContinueRoutineFinish = requiredOperatorDecisions.length === 0 && judgment !== 'unsafe' && judgment !== 'blocked';
+  if (codexPrRepairContract.repairCompleteness === 'blocked_codex_cannot_push') requiredOperatorDecisions.push('choose abandon/retry/new task/manual emergency intervention');
   const nextAction = codexRepairNeeded
     ? 'request Codex narrow fix and rerun verify'
     : rebuildDistNeeded

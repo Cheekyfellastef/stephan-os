@@ -44,6 +44,7 @@ export function adjudicateMissionVerificationJudge({
   const finishAuthority = missionSpec?.finishAuthority || {};
   const prEvidence = missionSpec?.prEvidenceIntake || {};
   const openClawDelegation = missionSpec?.openClawDelegation || {};
+  const codexPrRepairContract = missionSpec?.codexPrRepairContract || {};
 
   const seenFiles = asList(changedFiles || parsed.changedFiles);
   const seenTests = asList(testsRun || parsed.testsRun);
@@ -75,6 +76,10 @@ export function adjudicateMissionVerificationJudge({
   if (parsed.githubWriteClaim) warnings.push('github_write_claim_requires_operator_review');
   if (generatedOutputs.length > 0 && parsed.distTouched && !parsed.distRebuiltClaim) warnings.push('generated_dist_without_rebuild_evidence');
   if (prEvidence.normalizedStatus === 'checks_failed') warnings.push('pr_evidence_checks_failed');
+  if (codexPrRepairContract.remoteChecksVerified === false) blockers.push('codex_pr_remote_checks_unverified');
+  if (codexPrRepairContract.repairCompleteness && codexPrRepairContract.repairCompleteness !== 'repair_complete') blockers.push('codex_pr_repair_incomplete');
+  if (codexPrRepairContract.livePrHeadChanged === false) blockers.push('codex_pr_head_unchanged');
+  if (codexPrRepairContract.sourceFixRequired && codexPrRepairContract.sourceFilesChanged?.length === 0 && codexPrRepairContract.distFilesChanged?.length > 0) blockers.push('codex_pr_dist_only_mismatch');
   if (prEvidence.normalizedStatus === 'merged' && !(finishAuthority.mergeAuthorityIncluded && finishAuthority.operatorApprovalRecorded)) warnings.push('pr_merged_without_recorded_authority');
 
   let judgment = 'merge_ready_candidate';

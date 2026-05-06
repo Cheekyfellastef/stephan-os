@@ -31,6 +31,7 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
   const openClawDelegation = input.openClawDelegation || {};
   const finishAuthority = input.finishAuthority || {};
   const repoArchitectureContext = input.repoArchitectureContext || {};
+  const codexPrRepairContract = input.codexPrRepairContract || missionSpec.codexPrRepairContract || {};
   const agentAssignmentMatrix = input.agentAssignmentMatrix || {};
   const codexPrompt = asText(input.codexPrompt || missionSpec.codexPrompt || missionSpec.codexHandoffPrompt);
   const missionRouting = buildMissionRoutingReadiness({
@@ -77,6 +78,7 @@ export function buildMissionCommandPacket(input = {}, { now = new Date() } = {})
     openClawDelegationSummary: compactSummary({ status: openClawDelegation.delegationStatus || 'not_configured', count: openClawDelegation.boundaries?.length || 0, warnings: openClawDelegation.warnings, nextAction: openClawDelegation.nextAction || 'Delegation preview only; no execution.' }),
     finishAuthoritySummary: compactSummary({ status: finishAuthority.finishAuthorityStatus || 'not_granted', count: finishAuthority.blockers?.length || 0, warnings: finishAuthority.warnings, nextAction: finishAuthority.nextAction || 'Await explicit operator authority.' }),
     prEvidenceSummary: compactSummary({ status: prEvidenceIntake.status || 'no_pr_evidence', count: prEvidenceIntake.changedFiles?.length || 0, warnings: prEvidenceIntake.warnings, nextAction: prEvidenceIntake.nextAction || 'Attach PR evidence artifacts.' }),
+    codexPrRepairSummary: { targetPr: codexPrRepairContract.targetPrNumber || null, repairCompleteness: asText(codexPrRepairContract.repairCompleteness, 'no_contract'), failedCheck: asText(codexPrRepairContract.failedCheckNames?.[0], 'none'), rootCauseEvidenceStatus: asText(codexPrRepairContract.rootCauseSupportedByEvidence, 'unknown'), livePrHeadChanged: codexPrRepairContract.livePrHeadChanged === true ? 'yes' : codexPrRepairContract.livePrHeadChanged === false ? 'no' : 'unknown', remoteChecksVerified: codexPrRepairContract.remoteChecksVerified ? 'yes' : 'no', nextAction: asText(codexPrRepairContract.nextAction, 'none') },
     verificationJudgeSummary: compactSummary({ status: verificationJudge.judgment || 'no_return', count: verificationJudge.blockers?.length || 0, warnings: verificationJudge.warnings, nextAction: verificationJudge.nextAction || 'Resolve verification blockers.' }),
     taskFinisherSummary: compactSummary({ status: taskFinisherPlan.planStatus || 'unknown', count: taskFinisherPlan.tasks?.length || 0, warnings: taskFinisherPlan.warnings, nextAction: taskFinisherPlan.nextAction || 'Complete remaining operator-approved tasks.' }),
     memoryLibrarianSummary: compactSummary({ status: memoryLibrarianQueue.queueStatus || 'idle', count: memoryLibrarianQueue.pendingCount || 0, warnings: memoryLibrarianQueue.conflicts, nextAction: memoryLibrarianQueue.nextAction || 'Await operator memory decisions.' }),
@@ -134,6 +136,13 @@ export function buildMissionCommandPacketMarkdown(packet = {}) {
     `- ${asText(packet.finishAuthoritySummary?.status, 'unknown')}`,
     '## PR Evidence',
     `- ${asText(packet.prEvidenceSummary?.status, 'unknown')}`,
+    '## Codex PR Repair Contract',
+    `- PR: ${asText(packet.codexPrRepairSummary?.targetPr, 'n/a')}`,
+    `- Completeness: ${asText(packet.codexPrRepairSummary?.repairCompleteness, 'no_contract')}`,
+    `- Failed Check: ${asText(packet.codexPrRepairSummary?.failedCheck, 'none')}`,
+    `- Head Changed: ${asText(packet.codexPrRepairSummary?.livePrHeadChanged, 'unknown')}`,
+    `- Remote Checks Verified: ${asText(packet.codexPrRepairSummary?.remoteChecksVerified, 'no')}`,
+    `- Next Action: ${asText(packet.codexPrRepairSummary?.nextAction, 'none')}`,
     '## Verification Judge',
     `- ${asText(packet.verificationJudgeSummary?.status, 'unknown')}`,
     '## Task Finisher',
