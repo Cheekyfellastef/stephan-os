@@ -48,6 +48,11 @@ export function parsePrEvidenceInput(rawInput = '') {
   const baseBranchMatch = rawPrInput.match(/(?:base|target)\s*[:=-]\s*([\w./-]+)/i);
   const mergedByMatch = rawPrInput.match(/merged\s*by\s*[:=-]?\s*([\w.-]+)/i);
   const mergedAtMatch = rawPrInput.match(/merged\s*at\s*[:=-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)/i);
+  const directMainCommitMatch = rawPrInput.match(/(?:direct\s+)?main(?:line)?\s+commit(?:\s+detected)?\s*[:=-]?\s*(yes|true|detected|present)?/i);
+  const commitShaMatch = rawPrInput.match(/(?:main(?:line)?\s+)?commit\s*(?:sha|hash)?\s*[:=-]\s*([a-f0-9]{7,40})/i);
+  const commitAtMatch = rawPrInput.match(/(?:main(?:line)?\s+)?commit\s*(?:at|date|time)\s*[:=-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)/i);
+  const commitByMatch = rawPrInput.match(/(?:main(?:line)?\s+)?commit\s*(?:by|author)\s*[:=-]?\s*([\w.-]+)/i);
+  const fetchEvidenceMatch = rawPrInput.match(/(?:ignition|git)\s*(?:pull|fetch)\s*(?:evidence|status|truth)?\s*[:=-]?\s*([^\n]+)/i);
   const autoMergeMatch = rawPrInput.match(/auto-?merge\s*[:=-]\s*(enabled|disabled|armed|off|on|unknown)/i);
   const checksMatch = rawPrInput.match(/checks?\s*[:=-]\s*([^\n]+)/i);
 
@@ -60,6 +65,7 @@ export function parsePrEvidenceInput(rawInput = '') {
 
   const detectedChecksStatus = normalizeChecksStatus(checksMatch?.[1] || rawPrInput);
   const merged = /\bmerged\b/i.test(rawPrInput) && !/not\s+merged/i.test(rawPrInput);
+  const directMainCommitDetected = Boolean(directMainCommitMatch || /\bdirect\s+to\s+main\b/i.test(rawPrInput) || /\bcommit(?:ted)?\s+to\s+main\b/i.test(rawPrInput));
   const prState = asText(stateMatch?.[1], merged ? 'merged' : (detectedChecksStatus === 'unknown' ? 'unknown' : 'open'));
   const detectedMergeStatus = deriveMergeStatus({ merged, state: prState });
 
@@ -83,6 +89,11 @@ export function parsePrEvidenceInput(rawInput = '') {
     checksStatus: detectedChecksStatus,
     mergedBy: asText(mergedByMatch?.[1], ''),
     mergedAt: asText(mergedAtMatch?.[1], ''),
+    directMainCommitDetected,
+    directMainCommitSha: asText(commitShaMatch?.[1], ''),
+    directMainCommitAt: asText(commitAtMatch?.[1], ''),
+    directMainCommitBy: asText(commitByMatch?.[1], ''),
+    fetchEvidenceStatus: asText(fetchEvidenceMatch?.[1], ''),
     autoMergeState: asText(autoMergeMatch?.[1], 'unknown'),
     codexTaskUrl,
     codexTaskId: codexTaskId,
