@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 function statusTone(value = '') {
   const normalized = String(value).toLowerCase();
   if (/(ready|pass|live|online|healthy|nominal|verified)/.test(normalized)) return 'ok';
@@ -26,12 +28,20 @@ export default function MissionCommandDeck({
   runtimeStatusModel,
   compactVerificationSummary,
 }) {
+  const [activeNav, setActiveNav] = useState('Command Deck');
   const decisions = (operatorDecisionConsole?.decisions || []).slice(0, 5);
   const activity = (missionEvidenceLedger?.entries || []).slice(0, 8);
   const readinessScore = missionRoutingReadiness?.readinessScore ?? missionRoutingReadiness?.readinessPercent ?? 0;
+  const navItems = ['Command Deck', 'Routing', 'Agents', 'Decisions', 'Evidence', 'Memory', 'Codex PR', 'Verification', 'Guardrails', 'Skill Forge', 'Settings'];
+  const actionButtons = [
+    { label: 'Retry Checks', wired: false },
+    { label: 'Repair PR', wired: false },
+    { label: 'Recreate PR', wired: false },
+    { label: 'Hold', wired: false },
+  ];
   return (
     <section className="mission-command-deck" aria-label="Mission Command Deck">
-      <aside className="mission-deck-rail"><h4>Command Deck</h4><ul>{['Command Deck','Routing','Agents','Decisions','Evidence','Memory','Codex PR','Verification','Guardrails','Skill Forge','Settings'].map((item) => <li key={item} className={item === 'Command Deck' ? 'active' : ''}>{item}</li>)}</ul></aside>
+      <aside className="mission-deck-rail"><h4>Command Deck</h4><ul>{navItems.map((item) => <li key={item}><button type="button" className={`mission-deck-nav-button ${activeNav === item ? 'active' : ''}`} onClick={() => setActiveNav(item)} aria-current={activeNav === item ? 'page' : undefined}>{item}</button></li>)}</ul><p className="mission-deck-active-state">selected: {activeNav}</p></aside>
       <div className="mission-deck-main">
         <div className="mission-deck-strip">
           <Chip label="Route Truth" value={finalRouteTruth?.routeUsableState || 'unavailable'} />
@@ -48,9 +58,9 @@ export default function MissionCommandDeck({
 
         <article className="mission-deck-card"><h4>Agent Assignment Matrix</h4><table><thead><tr><th>role</th><th>authority</th><th>allowed actions</th><th>blocked actions</th><th>status / next action</th></tr></thead><tbody>{(agentAssignmentMatrix?.assignments || []).slice(0, 6).map((row) => <tr key={row.roleId || row.role}><td>{row.role || row.roleId}</td><td>{row.authorityLevel || 'unknown'}</td><td>{(row.allowedActions || []).join(', ') || 'none'}</td><td>{(row.blockedActions || []).join(', ') || 'none'}</td><td>{row.nextAction || row.status || 'pending'}</td></tr>)}</tbody></table></article>
 
-        <article className="mission-deck-card"><h4>Codex PR Repair Contract</h4><p><strong>Approval Required</strong> · Operator approval needed to proceed · No default manual code surgery</p><ul><li>target PR: {codexPrRepairContract?.targetPr || 'unavailable'}</li><li>failed check evidence: {codexPrRepairContract?.failedCheckEvidence || 'pending'}</li><li>branch: {codexPrRepairContract?.branch || 'unknown'}</li><li>repair completeness: {codexPrRepairContract?.repairCompleteness || 'pending'}</li><li>next action: {codexPrRepairContract?.nextAction || 'operator decision required'}</li></ul><div className="mission-deck-actions">{['Retry Checks','Repair PR','Recreate PR','Hold'].map((a)=><button key={a} type="button">{a}</button>)}</div></article>
+        <article className="mission-deck-card"><h4>Codex PR Repair Contract</h4><p><strong>Approval Required</strong> · Operator approval needed to proceed · No default manual code surgery</p><ul><li>target PR: {codexPrRepairContract?.targetPr || 'unavailable'}</li><li>failed check evidence: {codexPrRepairContract?.failedCheckEvidence || 'pending'}</li><li>branch: {codexPrRepairContract?.branch || 'unknown'}</li><li>repair completeness: {codexPrRepairContract?.repairCompleteness || 'pending'}</li><li>next action: {codexPrRepairContract?.nextAction || 'operator decision required'}</li></ul><div className="mission-deck-actions">{actionButtons.map((action)=><button key={action.label} type="button" className="mission-deck-preview-button" disabled aria-disabled="true" aria-label={`${action.label} preview-only control`}>{action.label} (Preview)</button>)}</div></article>
 
-        <article className="mission-deck-card"><h4>Operator Decision Console</h4><div className="mission-deck-decisions">{decisions.map((decision) => <div key={decision.decisionId} className={`decision-card decision-${statusTone(decision.riskLevel || decision.recommendedAction)}`}><strong>{decision.title}</strong><p>{decision.reason || 'No summary provided.'}</p><small>{decision.sourceSystem || 'source unknown'} · {decision.approvalRequired ? 'requires approval' : 'allowed'}</small></div>)}</div></article>
+        <article className="mission-deck-card"><h4>Operator Decision Console</h4><div className="mission-deck-decisions">{decisions.map((decision) => <button key={decision.decisionId} type="button" className={`decision-card decision-${statusTone(decision.riskLevel || decision.recommendedAction)}`} disabled aria-disabled="true" aria-label={`${decision.title || 'Operator decision'} preview-only control`}><strong>{decision.title}</strong><p>{decision.reason || 'No summary provided.'}</p><small>{decision.sourceSystem || 'source unknown'} · {decision.approvalRequired ? 'requires approval' : 'allowed'} · preview-only</small></button>)}</div></article>
 
         <article className="mission-deck-card"><h4>Mission Command Packet</h4><ul><li>mission id: {missionCommandPacket?.missionId || 'unknown'}</li><li>lead role: {missionCommandPacket?.leadRole || 'operator'}</li><li>risk level: {missionCommandPacket?.riskLevel || 'unknown'}</li><li>delegation state: {missionCommandPacket?.delegationState || 'pending'}</li><li>operator approval state: {missionCommandPacket?.operatorApprovalState || 'required'}</li></ul></article>
 
