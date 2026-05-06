@@ -10,6 +10,9 @@ test('Command Deck renders required shell, strip, rail, hero, and matrix section
   const source = await fs.readFile(componentPath, 'utf8');
   [
     'mission-command-deck-fullwidth',
+    'stephanos-wide-scroll-shell',
+    'stephanos-wide-scroll-gutter-left',
+    'stephanos-wide-scroll-gutter-right',
     'Mission Console / Command Deck',
     'mission-deck-strip',
     'mission-deck-rail',
@@ -66,12 +69,14 @@ test('Static style guard enforces full-width, min-width, wrapping, responsive gr
 
 
 
-test('Deck navigation and decision controls are real button semantics', async () => {
+test('Deck navigation, wide gutters, and decision controls are safe semantics', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
   [
     'mission-deck-nav-button',
     'type="button"',
     'decision-card',
     'disabled aria-disabled="true"',
+    'aria-label="Scroll Mission Command Deck left gutter"',
+    'onWheel={handleWideGutterWheel}',
   ].forEach((token) => assert.equal(source.includes(token), true, `missing button token: ${token}`));
 });
