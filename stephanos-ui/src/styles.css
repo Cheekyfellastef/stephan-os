@@ -3167,16 +3167,19 @@ pre {
 .mission-command-deck { margin-bottom:16px; width:100%; max-width:100%; min-width:0; overflow-x:hidden; }
 .mission-command-deck-canvas { width:100%; max-width:100%; min-width:0; overflow:hidden; }
 .mission-command-deck-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); gap:12px; width:100%; max-width:100%; min-width:0; align-items:start; }
+.mission-deck-grid-activity-feed { grid-column:1 / -1; }
+.mission-deck-secondary-grid { grid-column:1 / -1; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); width:100%; max-width:100%; min-width:0; }
 .mission-deck-grid-status-strip, .mission-deck-grid-readiness-hero { grid-column:1 / -1; }
 .mission-deck-grid-agent-assignment,
 .mission-deck-grid-pr-repair,
 .mission-deck-grid-operator-decision { min-inline-size:min(100%, 300px); }
-.mission-deck-card, .mission-deck-chip, .mission-deck-metric, .mission-deck-feed li, .mission-deck-assignment-row, .mission-deck-assignment-grid > div, .decision-card { min-width:0; max-width:100%; overflow-wrap:anywhere; word-break:normal; }
+.mission-deck-card, .mission-deck-chip, .mission-deck-metric, .mission-deck-feed li, .mission-deck-assignment-row, .mission-deck-assignment-grid > div, .decision-card { min-width:0; min-inline-size:min(100%, 280px); max-inline-size:100%; max-width:100%; overflow-wrap:anywhere; word-break:normal; box-sizing:border-box; }
 .mission-deck-header { background: linear-gradient(130deg,#0b1628,#090f1b); border:1px solid #1db4de55; border-radius: 12px; padding: 12px; }
 .mission-deck-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr)); gap:8px; min-width:0; }
 .mission-deck-chip { background:#07111f; border:1px solid #18476b; border-radius:10px; padding:8px; display:flex; flex-direction:column; }
 .mission-deck-chip-ok { border-color:#1dd16f; } .mission-deck-chip-warn { border-color:#ffb347; } .mission-deck-chip-bad { border-color:#ff5f72; } .mission-deck-chip-info { border-color:#42c9ff; } .mission-deck-chip-agent { border-color:#b780ff; }
-.mission-deck-card { background:linear-gradient(160deg,#0b1321,#090f19); border:1px solid #1db4de40; border-radius:12px; padding:10px; box-shadow: 0 12px 24px #060b1585; width:100%; max-width:100%; overflow:hidden; }
+.mission-deck-card { background:linear-gradient(160deg,#0b1321,#090f19); border:1px solid #1db4de40; border-radius:12px; padding:10px; box-shadow: 0 12px 24px #060b1585; width:100%; min-inline-size:min(100%, 280px); max-inline-size:100%; max-width:100%; overflow:hidden; box-sizing:border-box; }
+.mission-deck-secondary-card { min-inline-size:min(100%, 280px); max-inline-size:100%; }
 .mission-deck-hero-layout { display:grid; grid-template-columns:minmax(120px,140px) minmax(0,1fr); gap:10px; align-items:center; }
 .mission-deck-hero .ring { width:110px; height:110px; border-radius:50%; border:6px solid #39e6ff; display:grid; place-items:center; font-weight:700; color:#39e6ff; background: radial-gradient(circle,#0b1e33,#08101e); }
 .mission-deck-hero-grid, .mission-deck-metrics, .mission-deck-assignment-grid, .mission-deck-decisions { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); }
@@ -3190,7 +3193,7 @@ pre {
 .mission-deck-feed { list-style:none; margin:0; padding:0; display:grid; gap:7px; }
 .mission-deck-feed li { border:1px solid #17354e; border-radius:8px; padding:7px; background:#08101d; display:grid; grid-template-columns:86px minmax(0,1fr); gap:8px; }
 .mission-deck-footnote { margin-top:8px; color:#9fb2d0; font-size:.78rem; }
-@media (max-width: 980px) { .mission-command-deck-grid { grid-template-columns:minmax(0,1fr); } .mission-deck-grid-agent-assignment, .mission-deck-grid-pr-repair, .mission-deck-grid-operator-decision { grid-column:1 / -1; min-inline-size:0; } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
+@media (max-width: 980px) { .mission-command-deck-grid { grid-template-columns:minmax(0,1fr); } .mission-deck-grid-agent-assignment, .mission-deck-grid-pr-repair, .mission-deck-grid-operator-decision, .mission-deck-grid-activity-feed, .mission-deck-secondary-grid { grid-column:1 / -1; min-inline-size:0; } .mission-deck-secondary-grid { grid-template-columns:minmax(0,1fr); } .mission-deck-hero-layout { grid-template-columns:minmax(0,1fr); } }
 
 @media (max-width: 820px) {
   .mission-summary-strip {
