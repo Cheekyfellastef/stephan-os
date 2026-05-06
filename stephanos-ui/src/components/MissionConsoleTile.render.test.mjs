@@ -141,3 +141,11 @@ test('MissionConsoleTile includes agent command console v1 non-executing workflo
   assert.equal(source.includes('manual_prompt'), true);
   assert.equal(source.includes('buildMissionIntelligenceLayer'), true);
 });
+
+
+test('MissionConsoleTile renders dedicated wide workspace classes for command deck surface', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  ['mission-console-workspace', 'mission-console-workspace-wide'].forEach((token) => {
+    assert.equal(source.includes(token), true, `missing workspace width token: ${token}`);
+  });
+});
