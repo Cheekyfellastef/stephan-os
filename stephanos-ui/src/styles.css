@@ -3,13 +3,23 @@
   color-scheme: dark;
   color: #dff4ff;
   background: #02060d;
+  overflow-x: clip;
 }
 
 /* LIVE SOURCE OF TRUTH: this stylesheet drives the served Stephanos Mission Console theme.
    The production UI in apps/stephanos/dist is generated from stephanos-ui/src/styles.css. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 body {
   margin: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 100vh;
+  overflow-x: clip;
   background:
     radial-gradient(circle at top, rgba(29, 90, 170, 0.28), transparent 38%),
     radial-gradient(circle at right top, rgba(0, 174, 255, 0.12), transparent 28%),
@@ -18,13 +28,21 @@ body {
 }
 
 #root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 .app-shell-root {
-  padding: 1rem 2rem 2rem;
+  width: 100%;
   max-width: 1280px;
+  min-width: 0;
+  padding: 1rem 2rem 2rem;
   margin: 0 auto;
+  box-sizing: border-box;
+  overflow-x: clip;
   background: linear-gradient(180deg, rgba(1, 8, 18, 0.92), rgba(2, 6, 14, 0.96));
 }
 
@@ -2560,8 +2578,13 @@ pre {
   --workspace-shell-lane-nav-min: 260px;
   --workspace-shell-lane-main-min: 760px;
   --workspace-shell-lane-rail-min: 320px;
-  max-width: var(--workspace-shell-max);
+  width: 100%;
+  max-width: min(100%, var(--workspace-shell-max));
+  min-width: 0;
+  max-inline-size: 100%;
   margin: 0 auto;
+  box-sizing: border-box;
+  overflow-x: clip;
   border-radius: 18px;
   border: 1px solid rgba(91, 152, 228, 0.24);
   background: linear-gradient(180deg, rgba(3, 12, 24, 0.82), rgba(2, 8, 18, 0.92));
@@ -3769,8 +3792,13 @@ pre {
   --workspace-shell-lane-nav-min: 260px;
   --workspace-shell-lane-main-min: 760px;
   --workspace-shell-lane-rail-min: 320px;
-  max-width: var(--workspace-shell-max);
+  width: 100%;
+  max-width: min(100%, var(--workspace-shell-max));
+  min-width: 0;
+  max-inline-size: 100%;
   margin: 0 auto;
+  box-sizing: border-box;
+  overflow-x: clip;
   border-radius: 18px;
   border: 1px solid rgba(91, 152, 228, 0.24);
   background: linear-gradient(180deg, rgba(3, 12, 24, 0.82), rgba(2, 8, 18, 0.92));

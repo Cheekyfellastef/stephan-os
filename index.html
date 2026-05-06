@@ -103,6 +103,20 @@
 <meta name="apple-mobile-web-app-title" content="Stephanos OS">
 
 <style>
+html,
+body {
+width: 100%;
+max-width: 100%;
+min-width: 0;
+margin: 0;
+overflow-x: clip;
+}
+
+*,
+*::before,
+*::after {
+box-sizing: border-box;
+}
 
 #project-registry{
 display:grid;
@@ -117,7 +131,9 @@ pointer-events:none;
 #workspace {
 width:100%;
 max-width:none;
+min-width:0;
 box-sizing:border-box;
+overflow-x:clip;
 }
 
 #workspace.stephanos-root-workspace-shell {
@@ -139,6 +155,7 @@ overflow-x:clip;
 grid-column:2;
 min-width:0;
 max-width:100%;
+max-inline-size:100%;
 }
 
 #workspace-content.stephanos-root-workspace-canvas .stephanos-root-workspace-lane {
