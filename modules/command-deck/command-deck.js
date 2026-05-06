@@ -3,6 +3,7 @@ import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegi
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
+import { buildMusicLandingSummaryLines } from '../../apps/music-tile/data/musicTasteSummary.js';
 
 function normaliseProject(project) {
   if (typeof project === 'string') {
@@ -19,6 +20,7 @@ function normaliseProject(project) {
   }
 
   return {
+    id: project?.id || '',
     name: project?.name || 'Unnamed Project',
     icon: project?.icon || '🧩',
     entry: project?.entry || '',
@@ -473,10 +475,13 @@ export function renderProjectRegistry(projects, context, options = {}) {
     const compatibilityRuntimeDetail = safeProject.runtimeStatusModel?.preferredTarget
       ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
       : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
+    const musicLandingLines = safeProject.id === 'music-tile' ? buildMusicLandingSummaryLines() : null;
     const runtimeDetail = isStephanos
       ? stephanosTruth?.summary || compatibilityRuntimeDetail
-      : compatibilityRuntimeDetail;
-    const launcherDescription = String(safeProject.launcherDescription || '').trim();
+      : (musicLandingLines ? musicLandingLines.join(' · ') : compatibilityRuntimeDetail);
+    const launcherDescription = safeProject.id === 'music-tile'
+      ? buildMusicLandingSummaryLines()[0]
+      : String(safeProject.launcherDescription || '').trim();
     const badgeMarkup = safeProject.launcherBadges.length > 0
       ? `<div class="app-tile-badges">${safeProject.launcherBadges.map((badge) => `<span class="app-tile-badge">${badge}</span>`).join('')}</div>`
       : '';
@@ -487,9 +492,11 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
       : stephanosTruth?.drift
         ? `<div class="app-tile-issue">${stephanosTruth.diagnosticLabel}</div><div class="app-tile-detail">${runtimeDetail}</div>`
-        : runtimeDetail
-          ? `<div class="app-tile-detail">${runtimeDetail}</div>`
-          : '';
+        : (musicLandingLines
+          ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
+          : runtimeDetail
+            ? `<div class="app-tile-detail">${runtimeDetail}</div>`
+            : '');
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
