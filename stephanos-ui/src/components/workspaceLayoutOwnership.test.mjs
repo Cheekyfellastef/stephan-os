@@ -26,7 +26,7 @@ test('mission console mounts as workspace-class surface and not narrow tile-only
 test('workspace containment authority enforces one deck child canvas and bounded overflow', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
   const source = await fs.readFile(missionDeckPath, 'utf8');
-  ['className="mission-command-deck mission-command-deck-canvas"', '.mission-command-deck-canvas { width:100%; max-width:100%; min-width:0; overflow:hidden; }', '.mission-command-deck-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));'].forEach((token) => {
+  ['className="mission-command-deck mission-command-deck-canvas"', '.mission-command-deck-canvas { width:100%; max-width:100%; min-width:0; overflow:hidden; }', '.mission-command-deck-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));', '@media (max-width: 980px) { .mission-command-deck-grid { grid-template-columns:minmax(0,1fr); }'].forEach((token) => {
     assert.equal((source + css).includes(token), true, `missing containment token: ${token}`);
   });
 });

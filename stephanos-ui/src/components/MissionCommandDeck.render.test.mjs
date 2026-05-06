@@ -37,7 +37,18 @@ test('Missing/unknown data fallback is explicit and safe', async () => {
 
 test('Card grid and bounded card CSS guardrails are explicit', async () => {
   const css = await fs.readFile(stylesPath, 'utf8');
-  ['.mission-command-deck-grid', 'grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));', '.mission-deck-card, .mission-deck-chip, .mission-deck-metric', 'min-width:0', 'max-width:100%', 'overflow-wrap:anywhere', '.mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap;', '.mission-deck-preview-button', 'white-space:normal'].forEach((token) => {
+  ['.mission-command-deck-grid', 'grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));', '.mission-deck-grid-agent-assignment,', 'min-inline-size:min(100%, 300px);', 'grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));', '.mission-deck-card, .mission-deck-chip, .mission-deck-metric', 'word-break:normal', '.mission-deck-actions { display:flex; gap:8px; flex-wrap:wrap;', '.mission-deck-preview-button', 'white-space:normal'].forEach((token) => {
     assert.equal(css.includes(token), true, `missing style token: ${token}`);
+  });
+});
+
+
+test('MissionCommandDeck avoids unsafe vertical text/secondary squeeze patterns', async () => {
+  const css = await fs.readFile(stylesPath, 'utf8');
+  ['grid-template-columns:1fr auto', 'writing-mode:vertical', 'writing-mode: vertical'].forEach((token) => {
+    assert.equal(css.includes(token), false, `unsafe token present: ${token}`);
+  });
+  ['@media (max-width: 980px) { .mission-command-deck-grid { grid-template-columns:minmax(0,1fr); }', '.mission-deck-grid-agent-assignment, .mission-deck-grid-pr-repair, .mission-deck-grid-operator-decision { grid-column:1 / -1;'].forEach((token) => {
+    assert.equal(css.includes(token), true, `missing stack token: ${token}`);
   });
 });
