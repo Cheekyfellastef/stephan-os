@@ -7,6 +7,7 @@ import { buildTaskFinisherPlan } from './taskFinisherModel.js';
 import { buildPrEvidenceIntake } from './prEvidenceIntakeModel.js';
 import { buildMissionEvidenceLedger } from './missionEvidenceLedgerModel.js';
 import { buildOperatorDecisionQueue } from './operatorDecisionConsoleModel.js';
+import { buildCodexPrRepairContract } from './codexPrRepairContractModel.js';
 const DEFAULT_AUTOMATION_ALLOWED = Object.freeze([
   'edit-source-files',
   'add-tests',
@@ -271,6 +272,7 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     memoryLibrarianQueue: memoryLibrarian,
   });
   missionSpec.missionEvidenceLedger = missionEvidenceLedger;
+  missionSpec.codexPrRepairContract = buildCodexPrRepairContract({ missionSpec, prEvidenceIntake, codexReturnText: asText(input.verificationReturnText, '') });
   missionSpec.operatorDecisionConsole = buildOperatorDecisionQueue({
     missionSpec,
     missionEvidenceLedger,
@@ -295,6 +297,16 @@ export function buildMissionSpec(input = {}, { now = new Date() } = {}) {
     operatorDecisionMemoryApprovalRequired: missionSpec.operatorDecisionConsole.summary.memoryApprovalRequired,
     operatorDecisionCodexFixRecommended: missionSpec.operatorDecisionConsole.summary.codexFixRecommended,
     operatorDecisionProofReviewRequired: missionSpec.operatorDecisionConsole.summary.proofReviewRequired,
+    codexPrRepairStatus: missionSpec.codexPrRepairContract.repairCompleteness,
+    codexPrRepairTargetPr: String(missionSpec.codexPrRepairContract.targetPrNumber || 'n/a'),
+    codexPrRepairTargetBranch: missionSpec.codexPrRepairContract.targetBranch || 'unknown',
+    codexPrRepairHeadChanged: missionSpec.codexPrRepairContract.livePrHeadChanged === null ? 'unknown' : (missionSpec.codexPrRepairContract.livePrHeadChanged ? 'yes' : 'no'),
+    codexPrRepairFailedCheck: (missionSpec.codexPrRepairContract.failedCheckNames || [])[0] || 'none',
+    codexPrRepairRemoteChecksVerified: missionSpec.codexPrRepairContract.remoteChecksVerified ? 'yes' : 'no',
+    codexPrRepairCanPush: missionSpec.codexPrRepairContract.codexEnvironmentCanPush || 'unknown',
+    codexPrRepairBlocked: (missionSpec.codexPrRepairContract.blockers || []).join(' | ') || 'none',
+    codexPrRepairWarningLevel: missionSpec.codexPrRepairContract.warningLevel || 'none',
+    codexPrRepairNextAction: missionSpec.codexPrRepairContract.nextAction || 'not reported',
   };
 
   return missionSpec;
