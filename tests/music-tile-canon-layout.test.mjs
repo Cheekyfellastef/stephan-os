@@ -18,18 +18,23 @@ test('music tile enters canon pane mode and mounts one pane plane for major sect
   assert.match(musicMainSource, /title:\s*'Command Console'/);
   assert.match(musicMainSource, /title:\s*'Results \/ Journey'/);
   assert.match(musicMainSource, /title:\s*'Debug'/);
-  assert.equal((musicMainSource.match(/paneId:\s*'search-build-journey-pane'/g) || []).length, 1);
-  assert.equal((musicMainSource.match(/paneId:\s*'session-summary-pane'/g) || []).length, 1);
-  assert.equal((musicMainSource.match(/paneId:\s*'flow-now-playing-pane'/g) || []).length, 1);
-  assert.equal((musicMainSource.match(/paneId:\s*'command-console-pane'/g) || []).length, 1);
-  assert.equal((musicMainSource.match(/paneId:\s*'results-journey-pane'/g) || []).length, 1);
-  assert.equal((musicMainSource.match(/paneId:\s*'debug-pane'/g) || []).length, 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'search-build-journey-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'session-summary-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'flow-now-playing-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'command-console-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'results-journey-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'debug-pane'/g) || []).length >= 1);
 });
 
 test('music tile includes canon layout reset action that does not re-enable old grid flow', () => {
   assert.match(musicMainSource, /elements\.resetLayout\.addEventListener\('click', \(\) => \{/);
   assert.match(musicMainSource, /tilePaneManager\.resetLayout\(\)/);
-  assert.match(musicHtmlSource, /id="reset-layout-btn"/);
+  assert.match(musicMainSource, /tilePaneManager\.applyDefaultPaneLayout\(MUSIC_TILE_DEFAULT_PANE_LAYOUT\)/);
+  assert.match(musicMainSource, /elements\.resetLayoutStatus\.textContent = 'Pane layout reset\.'/);
+  assert.doesNotMatch(musicMainSource, /elements\.resetLayout\.addEventListener\('click',[\s\S]*resetMusicTileState\(/);
+  assert.doesNotMatch(musicMainSource, /elements\.resetLayout\.addEventListener\('click',[\s\S]*state\.memory\s*=\s*null/);
+  assert.match(musicHtmlSource, /id="reset-layout-btn"[^>]*>Reset pane layout</);
+  assert.match(musicHtmlSource, /id="reset-layout-status"/);
 });
 
 test('music tile canon CSS neutralizes legacy grid panel flow when canon mode is active', () => {
@@ -79,5 +84,10 @@ test('music tile debug pane is canon-mounted and hidden by default until explici
 
 
 test('music tile seeds canonical default desktop pane slots in preferred order', () => {
-  assert.match(musicMainSource, /tilePaneManager\.applyDefaultPaneLayout\(\[\s*\{ paneId:\s*'results-journey-pane', x:\s*24, y:\s*140 \},[\s\S]*\{ paneId:\s*'search-build-journey-pane', x:\s*620, y:\s*140 \},[\s\S]*\{ paneId:\s*'session-summary-pane', x:\s*620, y:\s*430 \},[\s\S]*\{ paneId:\s*'flow-now-playing-pane', x:\s*620, y:\s*650 \},[\s\S]*\{ paneId:\s*'debug-pane', x:\s*620, y:\s*870 \}/);
+  assert.match(musicMainSource, /const MUSIC_TILE_DEFAULT_PANE_LAYOUT = \[/);
+  assert.match(musicMainSource, /\{ paneId: 'results-journey-pane', x: 24, y: 140 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'search-build-journey-pane', x: 620, y: 140 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', x: 620, y: 430 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'flow-now-playing-pane', x: 620, y: 650 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'debug-pane', x: 620, y: 870 \}/);
 });

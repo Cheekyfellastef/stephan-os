@@ -44,6 +44,17 @@ const RATING_TEXT = {
 const TRUSTED_DURATION_SOURCES = new Set(['youtube-contentDetails', 'provider-metadata', 'manual']);
 const DURATION_UNKNOWN_TEXT = 'Duration unknown';
 
+
+const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
+  { paneId: 'results-journey-pane', x: 24, y: 140 },
+  { paneId: 'search-build-journey-pane', x: 620, y: 140 },
+  { paneId: 'session-summary-pane', x: 620, y: 430 },
+  { paneId: 'flow-now-playing-pane', x: 620, y: 650 },
+  { paneId: 'debug-pane', x: 620, y: 870 },
+  { paneId: 'command-console-pane', x: 24, y: 720 },
+];
+
+
 const elements = {
   root: document.getElementById('music-tile-root'),
   era: document.getElementById('era-select'),
@@ -66,6 +77,7 @@ const elements = {
   flowMode: document.getElementById('flow-mode-btn'),
   reset: document.getElementById('reset-btn'),
   resetLayout: document.getElementById('reset-layout-btn'),
+  resetLayoutStatus: document.getElementById('reset-layout-status'),
   summary: document.getElementById('summary-grid'),
   queue: document.getElementById('journey-list'),
   commandInput: document.getElementById('command-input'),
@@ -1046,14 +1058,7 @@ function initializePaneLayout() {
 
   elements.debugPanel.hidden = false;
 
-  tilePaneManager.applyDefaultPaneLayout([
-    { paneId: 'results-journey-pane', x: 24, y: 140 },
-    { paneId: 'search-build-journey-pane', x: 620, y: 140 },
-    { paneId: 'session-summary-pane', x: 620, y: 430 },
-    { paneId: 'flow-now-playing-pane', x: 620, y: 650 },
-    { paneId: 'debug-pane', x: 620, y: 870 },
-    { paneId: 'command-console-pane', x: 24, y: 720 },
-  ]);
+  tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
   setDebugPaneVisibility(state.debugVisible);
 }
 
@@ -1133,7 +1138,16 @@ function bindControls() {
   elements.reset.addEventListener('click', resetAll);
   elements.resetLayout.addEventListener('click', () => {
     tilePaneManager.resetLayout();
+    tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
     setDebugPaneVisibility(state.debugVisible);
+    if (elements.resetLayoutStatus) {
+      elements.resetLayoutStatus.textContent = 'Pane layout reset.';
+      globalThis.setTimeout(() => {
+        if (elements.resetLayoutStatus.textContent === 'Pane layout reset.') {
+          elements.resetLayoutStatus.textContent = '';
+        }
+      }, 2200);
+    }
   });
   elements.commandRun.addEventListener('click', executeCommand);
   elements.queue.addEventListener('click', (event) => {
