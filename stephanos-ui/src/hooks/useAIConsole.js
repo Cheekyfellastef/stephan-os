@@ -16,6 +16,7 @@ import {
   validateStephanosBackendTargetUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import { createRuntimeStatusModel } from '../../../shared/runtime/runtimeStatusModel.mjs';
+import { createRuntimeWorkGovernor } from '../../../shared/runtime/runtimeWorkGovernor.mjs';
 import { useAIStore } from '../state/aiStore';
 import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView.js';
@@ -1726,6 +1727,7 @@ export function useAIConsole() {
     uiLayout,
     paneLayout,
     runtimeStatusModel,
+    setUiDiagnostics,
     debugData,
     reportSurfaceFriction,
     setSurfaceOverride,
@@ -1762,6 +1764,11 @@ export function useAIConsole() {
     backendOnlySecrets: true,
   }), [hostedCloudCognition]);
   const startupOllamaSyncAttemptedRef = useRef(false);
+
+  const healthRefreshInFlightRef = useRef(false);
+  const healthRefreshBackoffUntilMsRef = useRef(0);
+  const runtimeGovernorRef = useRef(null);
+  const runtimeGovernorStateRef = useRef({ mode: 'passive', leader: false, hidden: false, reason: 'startup', duplicateTabDetected: false, lastGovernorHeartbeat: '' });
   const activePromptRequestRef = useRef(null);
   const providerHealthRef = useRef(providerHealth);
   const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
@@ -2009,7 +2016,13 @@ export function useAIConsole() {
   }, [homeNodeLastKnown, homeNodePreference, ollamaConnection.lastSuccessfulHost, ollamaConnection.recentHosts, setHomeNodeLastKnown, setHomeNodeStatus, disableHomeNodeForLocalSession, hostedCloudConfigOverlay]);
 
 
-  const refreshHealth = useCallback(async () => {
+  const refreshHealth = useCallback(async ({ force = false } = {}) => {
+    const governor = runtimeGovernorStateRef.current;
+    const nowMs = Date.now();
+    if (!force && (governor.mode === 'standby' || governor.mode === 'hidden')) return;
+    if (!force && nowMs < healthRefreshBackoffUntilMsRef.current) return;
+    if (healthRefreshInFlightRef.current) return;
+    healthRefreshInFlightRef.current = true;
     let resolvedRuntimeContext = runtimeConfig;
 
     try {
@@ -2063,6 +2076,7 @@ export function useAIConsole() {
         },
       });
     } catch (error) {
+      healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error);
       const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealthRef.current, false);
       setApiStatus({
@@ -2081,11 +2095,35 @@ export function useAIConsole() {
         lastCheckedAt: new Date().toISOString(),
         meta: null,
       });
+    } finally {
+      healthRefreshInFlightRef.current = false;
     }
   }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth, hostedCloudCognition?.lastHealth]);
 
+
   useEffect(() => {
-    void refreshHealth();
+    if (typeof window === 'undefined') return undefined;
+    const governor = createRuntimeWorkGovernor({
+      onStateChange: (nextState) => {
+        runtimeGovernorStateRef.current = nextState;
+        setUiDiagnostics((previous) => ({
+          ...previous,
+          runtimeGovernorMode: nextState.mode,
+          runtimeGovernorLeader: nextState.leader,
+          runtimeGovernorReason: nextState.reason,
+          duplicateTabDetected: nextState.duplicateTabDetected,
+          hiddenTabThrottleActive: nextState.hidden,
+          lastGovernorHeartbeat: nextState.lastGovernorHeartbeat,
+        }));
+      },
+    });
+    runtimeGovernorRef.current = governor;
+    governor.start();
+    return () => governor.stop();
+  }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    void refreshHealth({ force: true });
     // Intentionally execute only once at mount; interval and visibility handlers perform subsequent refreshes.
     // This prevents dependency churn from creating refresh feedback loops.
   }, []);
@@ -2097,7 +2135,7 @@ export function useAIConsole() {
 
     let intervalId = null;
     const runRefresh = () => {
-      void refreshHealth();
+      void refreshHealth({ force: false });
     };
     const restartPolling = () => {
       if (intervalId != null) {
@@ -3012,6 +3050,7 @@ export function useAIConsole() {
         continuity_context_records: continuityContext?.records || [],
       });
     } catch (error) {
+      healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error, {
         routeDecision: activeRouteDecision,
       });
@@ -3251,6 +3290,7 @@ export function useAIConsole() {
       });
       return { ok: true, output: data.output_text, missingContext };
     } catch (error) {
+      healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error);
       setAiActionState({
         mode,
