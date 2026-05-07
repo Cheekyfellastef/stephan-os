@@ -28,6 +28,33 @@ function appendContentToPanelContainer(panel, contentNode) {
   }
 }
 
+function normalizeClassTokens(value) {
+  if (value == null || value === false) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => normalizeClassTokens(entry));
+  }
+  return String(value)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function safeAddClassTokens(node, classValues, context = {}) {
+  if (!node?.classList || typeof node.classList.add !== 'function') return;
+  const tokens = normalizeClassTokens(classValues);
+  if (!tokens.length) return;
+  try {
+    node.classList.add(...tokens);
+  } catch (error) {
+    console.error('[CANON TILE PANES] failed to apply class tokens', {
+      ...context,
+      classValues,
+      tokens,
+      error: error?.message || String(error),
+    });
+  }
+}
+
 export function toCanonTilePaneDomId(appId, paneId) {
   const app = slugifySegment(appId);
   const pane = slugifySegment(paneId);
@@ -158,7 +185,11 @@ export function createCanonTilePaneManager({
       if (contentNode) {
         const existingHost = getMountedHostId(contentNode);
         if (!existingHost || existingHost === domId) {
-          contentNode.classList.add('canon-tile-pane-content');
+          safeAddClassTokens(contentNode, 'canon-tile-pane-content', {
+            appId: normalizedAppId,
+            paneId: normalizedPaneId,
+            target: 'content-node-existing-panel',
+          });
           contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
           contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
           appendContentToPanelContainer(existingPanel, contentNode);
@@ -170,12 +201,18 @@ export function createCanonTilePaneManager({
     panel.dataset.canonTilePane = 'true';
     panel.dataset.canonTilePaneAppId = normalizedAppId;
     panel.dataset.canonTilePaneId = normalizedPaneId;
-    if (panelClassName) {
-      panel.classList.add(panelClassName);
-    }
+    safeAddClassTokens(panel, panelClassName, {
+      appId: normalizedAppId,
+      paneId: normalizedPaneId,
+      target: 'panel',
+    });
 
     if (contentNode) {
-      contentNode.classList.add('canon-tile-pane-content');
+      safeAddClassTokens(contentNode, 'canon-tile-pane-content', {
+        appId: normalizedAppId,
+        paneId: normalizedPaneId,
+        target: 'content-node-new-panel',
+      });
       contentNode.setAttribute(CANON_MOUNTED_ATTR, 'true');
       contentNode.setAttribute(CANON_MOUNT_HOST_ATTR, domId);
       appendContentToPanelContainer(panel, contentNode);
@@ -247,12 +284,36 @@ export function createCanonTilePaneManager({
 
     section.hidden = false;
     section.classList.remove('panel');
-    section.classList.add('canon-tile-pane-section');
+    safeAddClassTokens(section, 'canon-tile-pane-section', {
+      appId: normalizedAppId,
+      paneId: normalizedPaneId,
+      target: 'section',
+    });
     section.setAttribute(CANON_MOUNTED_ATTR, 'true');
     section.setAttribute(CANON_MOUNT_HOST_ATTR, toCanonTilePaneDomId(normalizedAppId, normalizedPaneId));
     const heading = section.querySelector('h2');
     const resolvedTitle = title || heading?.textContent?.trim() || 'Pane';
-    const panel = mountPane({ paneId: normalizedPaneId, title: resolvedTitle, contentNode: section, panelClassName });
+    let panel = null;
+    try {
+      panel = mountPane({ paneId: normalizedPaneId, title: resolvedTitle, contentNode: section, panelClassName });
+    } catch (error) {
+      console.error('[CANON TILE PANES] pane mount failed', {
+        appId: normalizedAppId,
+        paneId: normalizedPaneId,
+        sectionId: section.id || null,
+        error: error?.message || String(error),
+      });
+      if (globalThis.window?.isDeveloperModeEnabled?.() === true) {
+        const diagnostic = globalThis.document?.createElement?.('div');
+        if (diagnostic) {
+          diagnostic.className = 'canon-tile-pane-mount-error';
+          diagnostic.setAttribute('role', 'alert');
+          diagnostic.textContent = `Pane mount failed (${normalizedPaneId}): ${error?.message || 'Unknown error.'}`;
+          section.prepend?.(diagnostic);
+        }
+      }
+      return null;
+    }
     sectionToPaneId.set(section, normalizedPaneId);
     return panel;
   }
