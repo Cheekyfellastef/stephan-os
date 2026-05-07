@@ -112,6 +112,10 @@ function readPanelCollapsedFromMemory(storage = globalThis.localStorage) {
     : {};
 }
 
+function isValidGridSlotValue(value, { min = 1, max = 64 } = {}) {
+  return Number.isFinite(value) && value >= min && value <= max;
+}
+
 function writePanelPositionsToMemory(positions, storage = globalThis.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);
   const uiLayout = memory?.session?.ui?.uiLayout || {};
@@ -162,13 +166,14 @@ export function createCanonTilePaneManager({
       const panel = globalThis.document?.getElementById(domId);
       if (!panel) return;
       const persisted = panelPositions[domId];
-      const gridX = Number(persisted?.gridX ?? entry?.gridX);
-      const gridY = Number(persisted?.gridY ?? entry?.gridY);
-      const gridW = Number(persisted?.gridW ?? entry?.gridW ?? 3);
-      const gridH = Number(persisted?.gridH ?? entry?.gridH ?? 1);
-      const order = Number(persisted?.order ?? entry?.order ?? 0);
+      const hasGridSchema = persisted && ['gridX', 'gridY', 'gridW', 'gridH'].every((key) => Number.isFinite(Number(persisted?.[key])));
+      const gridX = Number((hasGridSchema ? persisted?.gridX : entry?.gridX));
+      const gridY = Number((hasGridSchema ? persisted?.gridY : entry?.gridY));
+      const gridW = Number((hasGridSchema ? persisted?.gridW : entry?.gridW) ?? 3);
+      const gridH = Number((hasGridSchema ? persisted?.gridH : entry?.gridH) ?? 1);
+      const order = Number((hasGridSchema ? persisted?.order : entry?.order) ?? 0);
       const collapsed = Boolean(panelCollapsed[domId] ?? persisted?.collapsed);
-      if (!Number.isFinite(gridX) || !Number.isFinite(gridY)) return;
+      if (!isValidGridSlotValue(gridX, { min: 1, max: GRID_COLUMNS }) || !isValidGridSlotValue(gridY, { min: 1, max: 64 })) return;
       panel.classList.add('stephanos-panel-grid-slot');
       panel.dataset.layoutMode = 'grid-slot';
       panel.dataset.gridX = String(gridX);
@@ -181,9 +186,12 @@ export function createCanonTilePaneManager({
       panel.style.width = '';
       panel.style.height = '';
       panel.style.maxHeight = '';
+      panel.style.transform = '';
       panel.style.gridColumn = `${Math.max(1, gridX)} / span ${Math.max(1, Math.min(GRID_COLUMNS, gridW))}`;
       panel.style.gridRow = `${Math.max(1, gridY)} / span ${collapsed ? 1 : Math.max(1, gridH)}`;
       panel.style.order = String(order);
+      const header = panel.querySelector('.stephanos-panel-header');
+      if (header) header.setAttribute('data-no-drag', 'true');
       panelPositions[domId] = { gridX, gridY, gridW, gridH, order, collapsed };
       hasUpdates = true;
     });

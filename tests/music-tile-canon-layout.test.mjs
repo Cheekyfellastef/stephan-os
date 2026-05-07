@@ -6,6 +6,7 @@ const musicMainSource = readFileSync(new URL('../apps/music-tile/main.js', impor
 const musicCssSource = readFileSync(new URL('../apps/music-tile/style.css', import.meta.url), 'utf8');
 const sharedPaneCssSource = readFileSync(new URL('../shared/styles/stephanos-panels.css', import.meta.url), 'utf8');
 const musicHtmlSource = readFileSync(new URL('../apps/music-tile/index.html', import.meta.url), 'utf8');
+const canonTilePaneSource = readFileSync(new URL('../shared/runtime/canonTilePanes.mjs', import.meta.url), 'utf8');
 
 test('music tile enters canon pane mode and mounts one pane plane for major sections', () => {
   assert.match(musicMainSource, /elements\.root\.classList\.add\('music-tile--canon-panes'\)/);
@@ -98,6 +99,20 @@ test('music tile seeds canonical default desktop pane slots in preferred order',
 
 test('shared canon grid-slot mode compacts collapsed panels and keeps internal scroll behavior', () => {
   assert.match(sharedPaneCssSource, /#stephanos-panel-stack\.stephanos-panel-stack-grid-slot\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(sharedPaneCssSource, /#stephanos-panel-stack\.stephanos-panel-stack-grid-slot\s*\{[\s\S]*align-content:\s*start;/);
   assert.match(sharedPaneCssSource, /\.stephanos-panel\.stephanos-panel-collapsed\s*\{[\s\S]*max-height:\s*56px;/);
   assert.match(sharedPaneCssSource, /\.stephanos-panel-content\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;/);
+  assert.match(sharedPaneCssSource, /#stephanos-panel-stack\.stephanos-panel-stack-grid-slot \.stephanos-panel \.stephanos-panel-header\s*\{[\s\S]*cursor:\s*default;[\s\S]*touch-action:\s*auto;/);
+});
+
+test('grid-slot pane layout ignores legacy freeform position schema and strips pixel transforms', () => {
+  assert.match(canonTilePaneSource, /const hasGridSchema = persisted && \['gridX', 'gridY', 'gridW', 'gridH'\]/);
+  assert.match(canonTilePaneSource, /panel\.style\.left = '';/);
+  assert.match(canonTilePaneSource, /panel\.style\.top = '';/);
+  assert.match(canonTilePaneSource, /panel\.style\.transform = '';/);
+  assert.match(canonTilePaneSource, /header\.setAttribute\('data-no-drag', 'true'\)/);
+});
+
+test('music tile hides duplicate bottom command-deck return control', () => {
+  assert.match(musicCssSource, /body \[data-command-deck-return-control='bottom'\]\s*\{\s*display:\s*none !important;/);
 });
