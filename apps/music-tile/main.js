@@ -46,13 +46,13 @@ const DURATION_UNKNOWN_TEXT = 'Duration unknown';
 
 
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
-  { paneId: 'taste-cockpit-pane', x: 24, y: 140 },
-  { paneId: 'results-journey-pane', x: 24, y: 460 },
-  { paneId: 'search-build-journey-pane', x: 620, y: 140 },
-  { paneId: 'session-summary-pane', x: 620, y: 430 },
-  { paneId: 'flow-now-playing-pane', x: 620, y: 650 },
-  { paneId: 'debug-pane', x: 620, y: 870 },
-  { paneId: 'command-console-pane', x: 24, y: 720 },
+  { paneId: 'taste-cockpit-pane', gridX: 1, gridY: 1, gridW: 6, gridH: 2, order: 1 },
+  { paneId: 'search-build-pane', gridX: 7, gridY: 1, gridW: 3, gridH: 1, order: 2 },
+  { paneId: 'session-summary-pane', gridX: 10, gridY: 1, gridW: 3, gridH: 1, order: 3 },
+  { paneId: 'journey-pane', gridX: 1, gridY: 3, gridW: 6, gridH: 2, order: 4 },
+  { paneId: 'flow-now-playing-pane', gridX: 7, gridY: 2, gridW: 3, gridH: 1, order: 5 },
+  { paneId: 'debug-pane', gridX: 10, gridY: 2, gridW: 3, gridH: 1, order: 6 },
+  { paneId: 'command-console-pane', gridX: 1, gridY: 5, gridW: 12, gridH: 1, order: 7 },
 ];
 
 
@@ -150,7 +150,7 @@ const sessionStore = createMusicTileSessionStore({
   },
 });
 
-const tilePaneManager = createCanonTilePaneManager({ appId: 'music-tile' });
+const tilePaneManager = createCanonTilePaneManager({ appId: 'music-tile', layoutMode: 'grid-slot' });
 
 const playbackController = createMusicTilePlaybackController({
   flowController,
@@ -349,7 +349,14 @@ function renderTasteCards() {
 }
 
 function renderTasteCockpit() {
-  elements.tasteCockpitList.innerHTML = renderTasteCards();
+  try {
+    const markup = renderTasteCards();
+    elements.tasteCockpitList.innerHTML = String(markup || '').trim()
+      ? markup
+      : '<li class="journey-item"><article><strong>Taste Cockpit diagnostic</strong><p class="muted">No taste cards were rendered from the current seed memory.</p></article></li>';
+  } catch (error) {
+    elements.tasteCockpitList.innerHTML = `<li class="journey-item"><article><strong>Taste Cockpit render error</strong><p class="muted">${error?.message || 'Unknown render failure.'}</p></article></li>`;
+  }
 }
 
 function renderQueue() {
@@ -1028,7 +1035,7 @@ function initializePaneLayout() {
     panelClassName: 'music-tile-pane',
   });
   tilePaneManager.mountPaneFromSection({
-    paneId: 'search-build-journey-pane',
+    paneId: 'search-build-pane',
     title: 'Search / Build Journey',
     section: elements.controlsPane,
     panelClassName: 'music-tile-pane',
@@ -1058,7 +1065,7 @@ function initializePaneLayout() {
     panelClassName: 'music-tile-pane',
   });
   tilePaneManager.mountPaneFromSection({
-    paneId: 'results-journey-pane',
+    paneId: 'journey-pane',
     title: 'Results / Journey',
     section: elements.resultsPane,
     panelClassName: 'music-tile-pane',
@@ -1202,6 +1209,7 @@ function initialize() {
 
   bindControls();
   initializePaneLayout();
+  renderTasteCockpit();
 }
 
 initialize();

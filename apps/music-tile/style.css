@@ -263,10 +263,29 @@ button.ghost,
 
 .stephanos-panel-content > .canon-tile-pane-section {
   display: block;
+  height: 100%;
+  min-height: 0;
 }
 
 .stephanos-panel-content > .canon-tile-pane-section.panel {
   grid-column: auto !important;
+}
+
+.stephanos-panel-content > .canon-tile-pane-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.stephanos-panel-content > .canon-tile-pane-section > h2 {
+  flex: 0 0 auto;
+}
+
+.stephanos-panel-content > .canon-tile-pane-section > .journey-list,
+.stephanos-panel-content > .canon-tile-pane-section > #debug-output,
+.stephanos-panel-content > .canon-tile-pane-section > .summary-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .music-tile-pane {
