@@ -50,6 +50,10 @@ body {
   overflow-y: auto;
 }
 
+body [data-command-deck-return-control='bottom'] {
+  display: none !important;
+}
+
 .music-tile.music-tile--canon-panes > .panel {
   display: none;
 }
