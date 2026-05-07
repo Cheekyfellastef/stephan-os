@@ -6,6 +6,31 @@ import { createCommandDeckReturnButton } from "../shared/runtime/commandDeckRetu
 import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
 import { withCommandDeckDestination } from "../shared/runtime/commandDeckDestination.mjs";
 
+
+const CANON_MUSIC_TILE_ID = 'music-tile';
+const CANON_MUSIC_TILE_ENTRY = 'apps/music-tile/index.html';
+const MUSIC_TILE_ALIASES = new Set(['music', 'music tile', 'music-tile']);
+
+function isMusicTileProject(project) {
+  const identifier = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
+  return MUSIC_TILE_ALIASES.has(identifier);
+}
+
+function resolveMusicTileWorkspaceEntry(project) {
+  const launchEntry = String(project?.launchEntry || '').trim();
+  const runtimeEntry = String(project?.runtimeEntry || '').trim();
+  const compatibilityEntry = String(project?.entry || '').trim();
+  const requested = launchEntry || runtimeEntry || compatibilityEntry || CANON_MUSIC_TILE_ENTRY;
+  if (requested !== CANON_MUSIC_TILE_ENTRY) {
+    logWorkspaceEvent('Music workspace canonical route enforced', {
+      appId: CANON_MUSIC_TILE_ID,
+      requested,
+      canonical: CANON_MUSIC_TILE_ENTRY,
+      source: 'workspace.open',
+    });
+  }
+  return CANON_MUSIC_TILE_ENTRY;
+}
 function renderAppLoadError(container, message) {
   const error = document.createElement("div");
   error.style.color = "red";
@@ -388,7 +413,10 @@ export const workspace = {
     content.classList?.add?.("stephanos-root-workspace-canvas");
     content.setAttribute?.("data-workspace-shell-role", "canvas");
 
-    const launch = beginWorkspaceSession(project);
+    const musicWorkspaceEntry = isMusicTileProject(project) ? resolveMusicTileWorkspaceEntry(project) : '';
+    const effectiveProject = musicWorkspaceEntry ? { ...project, id: CANON_MUSIC_TILE_ID, folder: CANON_MUSIC_TILE_ID, entry: musicWorkspaceEntry } : project;
+
+    const launch = beginWorkspaceSession(effectiveProject);
     if (launch.isRepeatedLaunch) {
       return;
     }
@@ -396,14 +424,14 @@ export const workspace = {
     clearWorkspaceLoadTimeout();
 
     setActiveTileContextHint({
-      tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
-      tileTitle: project?.name || "Workspace",
+      tileId: String(effectiveProject?.folder || effectiveProject?.id || effectiveProject?.name || "").trim().toLowerCase(),
+      tileTitle: effectiveProject?.name || "Workspace",
       tileType: project?.type || "workspace",
       source: "workspace",
     });
     context?.eventBus?.emit("tile.focused", {
       tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
-      tileTitle: project?.name || "Workspace",
+      tileTitle: effectiveProject?.name || "Workspace",
       source: "workspace",
       summary: `Focused ${project?.name || "workspace tile"}.`,
     });
@@ -411,16 +439,16 @@ export const workspace = {
     workspacePanel.style.display = "block";
     projectsPanel.style.display = "none";
     setWorkspaceChromeVisibility(true);
-    title.textContent = project?.name || "Workspace";
+    title.textContent = effectiveProject?.name || "Workspace";
     content.innerHTML = "";
     workspaceRuntimeState.activeIframe = null;
 
-    const stephanosLaunchTarget = isStephanosProject(project)
-      ? resolveStephanosLaunchTarget(project)
+    const stephanosLaunchTarget = isStephanosProject(effectiveProject)
+      ? resolveStephanosLaunchTarget(effectiveProject)
       : "";
     const resolvedEntryUrl = resolveProjectEntryUrl({
-      ...project,
-      entry: stephanosLaunchTarget || project?.entry,
+      ...effectiveProject,
+      entry: stephanosLaunchTarget || effectiveProject?.entry,
     });
 
     if (isStephanosProject(project) && resolvedEntryUrl) {
@@ -467,8 +495,8 @@ export const workspace = {
       return;
     }
 
-    if (project?.entry && project.entry.endsWith(".md")) {
-      const response = await fetch(project.entry);
+    if (effectiveProject?.entry && effectiveProject.entry.endsWith(".md")) {
+      const response = await fetch(effectiveProject.entry);
       if (!isWorkspaceSessionCurrent(launch.sessionId)) {
         return;
       }
@@ -497,14 +525,14 @@ export const workspace = {
       context?.eventBus?.emit("workspace:opened", project);
       context?.eventBus?.emit("tile.opened", {
         tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
-        tileTitle: project?.name || "Workspace",
+        tileTitle: effectiveProject?.name || "Workspace",
         source: "workspace",
         summary: `Opened ${project?.name || "workspace tile"}.`,
       });
       return;
     }
 
-    if (project?.entry) {
+    if (effectiveProject?.entry) {
       const container = buildWorkspaceFrameContainer(document);
       const { bottomReturnButton } = appendWorkspaceReturnControls(document, content);
       content.appendChild(container);
@@ -516,7 +544,7 @@ export const workspace = {
           return;
         }
 
-        const entryResponse = await fetch(project.entry, { method: "HEAD" });
+        const entryResponse = await fetch(effectiveProject.entry, { method: "HEAD" });
         if (!entryResponse.ok) {
           throw new Error(`Entry file unavailable (${entryResponse.status})`);
         }
@@ -535,7 +563,7 @@ export const workspace = {
       }
 
       const iframe = document.createElement("iframe");
-      iframe.src = project.entry;
+      iframe.src = effectiveProject.entry;
       iframe.style.width = "100%";
       iframe.style.height = "700px";
       iframe.style.border = "none";
@@ -595,10 +623,19 @@ export const workspace = {
       }, WORKSPACE_EMBED_TIMEOUT_MS);
 
       container.appendChild(iframe);
+      if (isMusicTileProject(effectiveProject)) {
+        logWorkspaceEvent("Music tile workspace opened", {
+          appId: CANON_MUSIC_TILE_ID,
+          entry: effectiveProject.entry,
+          mountMode: "iframe",
+          routeRestoreDetected: false,
+          activeProjectKey: workspaceRuntimeState.activeProjectKey,
+        });
+      }
       context?.eventBus?.emit("workspace:opened", project);
       context?.eventBus?.emit("tile.opened", {
         tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
-        tileTitle: project?.name || "Workspace",
+        tileTitle: effectiveProject?.name || "Workspace",
         source: "workspace",
         summary: `Opened ${project?.name || "workspace tile"}.`,
       });
@@ -609,7 +646,7 @@ export const workspace = {
     context?.eventBus?.emit("workspace:opened", project);
     context?.eventBus?.emit("tile.opened", {
       tileId: String(project?.folder || project?.id || project?.name || "").trim().toLowerCase(),
-      tileTitle: project?.name || "Workspace",
+      tileTitle: effectiveProject?.name || "Workspace",
       source: "workspace",
       summary: `Opened ${project?.name || "workspace tile"}.`,
     });

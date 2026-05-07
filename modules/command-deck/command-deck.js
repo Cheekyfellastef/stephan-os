@@ -5,6 +5,32 @@ import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDest
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
 import { buildMusicLandingSummaryLines } from '../../apps/music-tile/data/musicTasteSummary.js';
 
+
+const CANON_MUSIC_TILE_ID = 'music-tile';
+const CANON_MUSIC_TILE_ENTRY = 'apps/music-tile/index.html';
+const MUSIC_TILE_ALIASES = new Set(['music', 'music tile', 'music-tile']);
+
+function isMusicTileProject(project) {
+  const id = String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
+  return MUSIC_TILE_ALIASES.has(id);
+}
+
+function resolveMusicTileLaunchTarget(project) {
+  const launchEntry = String(project?.launchEntry || '').trim();
+  const runtimeEntry = String(project?.runtimeEntry || '').trim();
+  const compatibilityEntry = String(project?.entry || '').trim();
+  const resolved = launchEntry || runtimeEntry || compatibilityEntry || CANON_MUSIC_TILE_ENTRY;
+
+  if (resolved !== CANON_MUSIC_TILE_ENTRY) {
+    console.warn('[CommandDeck][music-tile] Canonical launcher route override applied.', {
+      requested: resolved,
+      canonical: CANON_MUSIC_TILE_ENTRY,
+      projectId: project?.id || project?.folder || project?.name || 'unknown',
+    });
+  }
+
+  return CANON_MUSIC_TILE_ENTRY;
+}
 function normaliseProject(project) {
   if (typeof project === 'string') {
     return {
@@ -20,10 +46,10 @@ function normaliseProject(project) {
   }
 
   return {
-    id: project?.id || '',
+    id: isMusicTileProject(project) ? CANON_MUSIC_TILE_ID : (project?.id || ''),
     name: project?.name || 'Unnamed Project',
     icon: project?.icon || '🧩',
-    entry: project?.entry || '',
+    entry: isMusicTileProject(project) ? CANON_MUSIC_TILE_ENTRY : (project?.entry || ''),
     disabled: Boolean(project?.disabled),
     validationState: project?.validationState || (project?.disabled ? 'error' : 'healthy'),
     statusMessage: project?.statusMessage || '',
@@ -82,6 +108,10 @@ function resolveStephanosLaunchTarget(project) {
   }
 
   return resolved;
+}
+
+export function resolveMusicTileLaunchTargetForTest(project) {
+  return resolveMusicTileLaunchTarget(project);
 }
 
 export function resolveStephanosLaunchTargetForTest(project) {
@@ -147,7 +177,10 @@ function hardenProjectRegistryHitTargets(container) {
 function launchProject(project, context, trigger = {}) {
   const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
   const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
-  const chosenTarget = isStephanos ? resolveStephanosLaunchTarget(project) : String(project?.entry || '').trim();
+  const isMusicTile = isMusicTileProject(project);
+  const chosenTarget = isStephanos
+    ? resolveStephanosLaunchTarget(project)
+    : (isMusicTile ? resolveMusicTileLaunchTarget(project) : String(project?.entry || '').trim());
   const launcherEntry = String(project?.launcherEntry || '').trim();
   const runtimeEntry = String(project?.runtimeEntry || '').trim();
   const launchEntry = String(project?.launchEntry || '').trim();
@@ -168,6 +201,7 @@ function launchProject(project, context, trigger = {}) {
     project: project?.name || projectId || 'unknown',
     launchStrategy: project.launchStrategy || 'workspace',
     isStephanos,
+    isMusicTile,
     rawEntry: chosenTarget,
     resolvedEntry,
     trigger,
@@ -250,6 +284,18 @@ function launchProject(project, context, trigger = {}) {
     });
     window.location.assign(navigationTarget);
     return;
+  }
+
+
+  if (isMusicTile) {
+    console.info('[CommandDeck][music-tile] Launch diagnostics', {
+      appId: CANON_MUSIC_TILE_ID,
+      launchStrategy: project.launchStrategy || 'workspace',
+      chosenTarget,
+      resolvedEntry,
+      routeRestoreDetected: false,
+      mountMode: project.launchStrategy === 'navigate' ? 'direct-navigation' : 'workspace-iframe',
+    });
   }
 
   if (project.launchStrategy === 'navigate') {
