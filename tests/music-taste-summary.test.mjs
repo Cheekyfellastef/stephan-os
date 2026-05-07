@@ -12,8 +12,8 @@ test('taste seed includes spotify-first canonical with youtube fallback policy r
 test('taste summary projection includes target lane and seeded counts', () => {
   const summary = buildMusicWorkspaceSummary(SEEDED_TASTE_TRACKS);
   assert.equal(summary.target, 'Dark Courtyard / Ghost Vocal / Serious Trance DNA');
-  assert.equal(summary.counts.likedGoodFantastic, 3);
-  assert.equal(summary.counts.interesting, 0);
+  assert.equal(summary.counts.likedGoodFantastic, 5);
+  assert.equal(summary.counts.interesting, 1);
   assert.equal(summary.counts.nearly, 0);
   assert.equal(summary.counts.rejects, 1);
 });

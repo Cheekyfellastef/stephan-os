@@ -42,6 +42,13 @@ test('feedback controls render for each track card', () => {
   });
 });
 
+test('track cards render positive and reject reason tag buttons', () => {
+  const markup = buildTasteCockpitMarkup(SEEDED_TASTE_TRACKS.slice(0, 1));
+  ['reverb vocal', 'Universal Nation spine', 'too cheesy', 'no club pressure'].forEach((label) => {
+    assert.match(markup, new RegExp(`>${label}<`));
+  });
+});
+
 test('music seed list remains single-source and avoids duplicate workspace/tile model', () => {
   assert.ok(Array.isArray(SEEDED_TASTE_TRACKS));
   const uniqueIds = new Set(SEEDED_TASTE_TRACKS.map((track) => track.id));
