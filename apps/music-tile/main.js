@@ -90,7 +90,7 @@ function trackRootVisibilitySnapshots() {
 
 
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
-  { paneId: 'taste-cockpit-pane', x: 24, y: 72 },
+  { paneId: 'taste-cockpit-pane', x: 760, y: 20, width: 480, height: 520 },
   { paneId: 'search-build-pane', x: 448, y: 72 },
   { paneId: 'session-summary-pane', x: 872, y: 72 },
   { paneId: 'journey-pane', x: 24, y: 388 },
@@ -98,6 +98,8 @@ const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
   { paneId: 'debug-pane', x: 872, y: 388 },
   { paneId: 'command-console-pane', x: 448, y: 612 },
 ];
+const MUSIC_PANE_LAYOUT_VERSION = 2;
+const MUSIC_PANE_LAYOUT_VERSION_KEY = 'stephanos.musicTile.paneLayoutVersion';
 
 
 const elements = {
@@ -1184,8 +1186,32 @@ function initializePaneLayout() {
   elements.debugPanel.hidden = false;
 
   tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  applyDefaultPaneSizes(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  migrateMusicPaneLayoutIfNeeded();
   musicTileTracer.log('pane manager mount end', { paneCount: elements.root?.querySelectorAll?.('[data-canon-pane-mounted="true"]')?.length || 0 });
   setDebugPaneVisibility(state.debugVisible);
+}
+
+function applyDefaultPaneSizes(defaultEntries = []) {
+  defaultEntries.forEach((entry) => {
+    const width = Number(entry?.width);
+    const height = Number(entry?.height);
+    if (!Number.isFinite(width) && !Number.isFinite(height)) return;
+    const domId = tilePaneManager.toPaneDomId(entry?.paneId || '');
+    const panel = domId ? document.getElementById(domId) : null;
+    if (!panel) return;
+    if (Number.isFinite(width)) panel.style.width = `${width}px`;
+    if (Number.isFinite(height)) panel.style.height = `${height}px`;
+  });
+}
+
+function migrateMusicPaneLayoutIfNeeded() {
+  const storedVersion = Number(window.localStorage.getItem(MUSIC_PANE_LAYOUT_VERSION_KEY) || 0);
+  if (storedVersion >= MUSIC_PANE_LAYOUT_VERSION) return;
+  tilePaneManager.resetLayout();
+  tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  applyDefaultPaneSizes(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  window.localStorage.setItem(MUSIC_PANE_LAYOUT_VERSION_KEY, String(MUSIC_PANE_LAYOUT_VERSION));
 }
 
 
@@ -1367,7 +1393,8 @@ function bindControls() {
   elements.resetLayout.addEventListener('click', () => {
     tilePaneManager.resetLayout();
     tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
-  musicTileTracer.log('pane manager mount end', { paneCount: elements.root?.querySelectorAll?.('[data-canon-pane-mounted="true"]')?.length || 0 });
+    applyDefaultPaneSizes(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+    window.localStorage.setItem(MUSIC_PANE_LAYOUT_VERSION_KEY, String(MUSIC_PANE_LAYOUT_VERSION));
     setDebugPaneVisibility(state.debugVisible);
     if (elements.resetLayoutStatus) {
       elements.resetLayoutStatus.textContent = 'Pane layout reset.';

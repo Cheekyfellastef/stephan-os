@@ -88,7 +88,7 @@ test('music tile debug pane is canon-mounted and hidden by default until explici
 
 test('music tile seeds canonical default desktop pane positions in preferred order', () => {
   assert.match(musicMainSource, /const MUSIC_TILE_DEFAULT_PANE_LAYOUT = \[/);
-  assert.match(musicMainSource, /\{ paneId: 'taste-cockpit-pane', x: 24, y: 72 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'taste-cockpit-pane', x: 760, y: 20, width: 480, height: 520 \}/);
   assert.match(musicMainSource, /\{ paneId: 'search-build-pane', x: 448, y: 72 \}/);
   assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', x: 872, y: 72 \}/);
   assert.match(musicMainSource, /\{ paneId: 'journey-pane', x: 24, y: 388 \}/);
