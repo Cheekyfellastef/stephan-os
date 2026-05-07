@@ -43,6 +43,7 @@ const RATING_TEXT = {
 };
 const TRUSTED_DURATION_SOURCES = new Set(['youtube-contentDetails', 'provider-metadata', 'manual']);
 const DURATION_UNKNOWN_TEXT = 'Duration unknown';
+const MUSIC_TILE_SINGLETON_KEY = '__STEPHANOS_MUSIC_TILE_CANON_STARTUP__';
 
 
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
@@ -1188,6 +1189,19 @@ function bindControls() {
 }
 
 function initialize() {
+  const mountRootCount = document.querySelectorAll('#music-tile-root').length;
+  if (mountRootCount !== 1) {
+    console.warn('[music-tile][startup-guard] Expected exactly one #music-tile-root container.', { mountRootCount });
+  }
+  const startupState = (globalThis[MUSIC_TILE_SINGLETON_KEY] ||= { count: 0 });
+  startupState.count += 1;
+  if (startupState.count > 1) {
+    console.warn('[music-tile][startup-guard] Duplicate startup prevented; canonical startup already completed.', {
+      startupCount: startupState.count,
+    });
+    return;
+  }
+
   loadMusicTileState().then((persisted) => {
     state.selection = persisted.selection;
     state.memory = persisted.memory;
@@ -1207,9 +1221,9 @@ function initialize() {
     });
   });
 
-  bindControls();
   initializePaneLayout();
   renderTasteCockpit();
+  bindControls();
 }
 
 initialize();
