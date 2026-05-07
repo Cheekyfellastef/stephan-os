@@ -90,13 +90,13 @@ function trackRootVisibilitySnapshots() {
 
 
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
-  { paneId: 'taste-cockpit-pane', gridX: 1, gridY: 1, gridW: 6, gridH: 2, order: 1 },
-  { paneId: 'search-build-pane', gridX: 7, gridY: 1, gridW: 3, gridH: 1, order: 2 },
-  { paneId: 'session-summary-pane', gridX: 10, gridY: 1, gridW: 3, gridH: 1, order: 3 },
-  { paneId: 'journey-pane', gridX: 1, gridY: 3, gridW: 6, gridH: 2, order: 4 },
-  { paneId: 'flow-now-playing-pane', gridX: 7, gridY: 2, gridW: 3, gridH: 1, order: 5 },
-  { paneId: 'debug-pane', gridX: 10, gridY: 2, gridW: 3, gridH: 1, order: 6 },
-  { paneId: 'command-console-pane', gridX: 1, gridY: 5, gridW: 12, gridH: 1, order: 7 },
+  { paneId: 'taste-cockpit-pane', x: 24, y: 72 },
+  { paneId: 'search-build-pane', x: 448, y: 72 },
+  { paneId: 'session-summary-pane', x: 872, y: 72 },
+  { paneId: 'journey-pane', x: 24, y: 388 },
+  { paneId: 'flow-now-playing-pane', x: 448, y: 388 },
+  { paneId: 'debug-pane', x: 872, y: 388 },
+  { paneId: 'command-console-pane', x: 448, y: 612 },
 ];
 
 
@@ -216,7 +216,7 @@ const sessionStore = createMusicTileSessionStore({
   },
 });
 
-const tilePaneManager = createCanonTilePaneManager({ appId: 'music-tile', layoutMode: 'grid-slot' });
+const tilePaneManager = createCanonTilePaneManager({ appId: 'music-tile', layoutMode: 'freeform' });
 
 const playbackController = createMusicTilePlaybackController({
   flowController,

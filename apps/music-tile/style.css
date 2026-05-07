@@ -301,12 +301,12 @@ button.ghost,
 }
 
 .music-tile-pane {
-  min-width: 360px;
-  max-width: min(720px, calc(100vw - 32px));
+  min-width: 0;
+  max-width: 100%;
 }
 
 .music-tile-pane-debug {
-  min-width: 420px;
+  min-width: 0;
 }
 .track-duration-chip {
   position: absolute;
