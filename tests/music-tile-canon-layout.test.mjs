@@ -13,12 +13,14 @@ test('music tile enters canon pane mode and mounts one pane plane for major sect
   assert.match(musicHtmlSource, /id="music-title-pane"/);
   assert.match(musicMainSource, /title:\s*'Stephanos Music Journey'/);
   assert.match(musicMainSource, /title:\s*'Search \/ Build Journey'/);
+  assert.match(musicMainSource, /title:\s*'Taste Cockpit'/);
   assert.match(musicMainSource, /title:\s*'Session Summary'/);
   assert.match(musicMainSource, /title:\s*'Flow \/ Now Playing'/);
   assert.match(musicMainSource, /title:\s*'Command Console'/);
   assert.match(musicMainSource, /title:\s*'Results \/ Journey'/);
   assert.match(musicMainSource, /title:\s*'Debug'/);
   assert.ok((musicMainSource.match(/paneId:\s*'search-build-journey-pane'/g) || []).length >= 1);
+  assert.ok((musicMainSource.match(/paneId:\s*'taste-cockpit-pane'/g) || []).length >= 1);
   assert.ok((musicMainSource.match(/paneId:\s*'session-summary-pane'/g) || []).length >= 1);
   assert.ok((musicMainSource.match(/paneId:\s*'flow-now-playing-pane'/g) || []).length >= 1);
   assert.ok((musicMainSource.match(/paneId:\s*'command-console-pane'/g) || []).length >= 1);
@@ -85,7 +87,8 @@ test('music tile debug pane is canon-mounted and hidden by default until explici
 
 test('music tile seeds canonical default desktop pane slots in preferred order', () => {
   assert.match(musicMainSource, /const MUSIC_TILE_DEFAULT_PANE_LAYOUT = \[/);
-  assert.match(musicMainSource, /\{ paneId: 'results-journey-pane', x: 24, y: 140 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'taste-cockpit-pane', x: 24, y: 140 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'results-journey-pane', x: 24, y: 460 \}/);
   assert.match(musicMainSource, /\{ paneId: 'search-build-journey-pane', x: 620, y: 140 \}/);
   assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', x: 620, y: 430 \}/);
   assert.match(musicMainSource, /\{ paneId: 'flow-now-playing-pane', x: 620, y: 650 \}/);

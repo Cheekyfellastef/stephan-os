@@ -46,7 +46,8 @@ const DURATION_UNKNOWN_TEXT = 'Duration unknown';
 
 
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
-  { paneId: 'results-journey-pane', x: 24, y: 140 },
+  { paneId: 'taste-cockpit-pane', x: 24, y: 140 },
+  { paneId: 'results-journey-pane', x: 24, y: 460 },
   { paneId: 'search-build-journey-pane', x: 620, y: 140 },
   { paneId: 'session-summary-pane', x: 620, y: 430 },
   { paneId: 'flow-now-playing-pane', x: 620, y: 650 },
@@ -72,6 +73,8 @@ const elements = {
   flowPane: document.getElementById('music-flow-pane'),
   resultsPane: document.getElementById('music-results-pane'),
   summaryPane: document.getElementById('music-summary-pane'),
+  tasteCockpitPane: document.getElementById('music-taste-cockpit-pane'),
+  tasteCockpitList: document.getElementById('taste-cockpit-list'),
   commandPane: document.getElementById('music-command-pane'),
   smartRefresh: document.getElementById('smart-refresh-btn'),
   flowMode: document.getElementById('flow-mode-btn'),
@@ -345,9 +348,13 @@ function renderTasteCards() {
   return buildTasteCockpitMarkup(state.memory.tasteTracks);
 }
 
+function renderTasteCockpit() {
+  elements.tasteCockpitList.innerHTML = renderTasteCards();
+}
+
 function renderQueue() {
   if (!state.queue.length) {
-    elements.queue.innerHTML = `${renderTasteCards()}<li class="journey-item">No discovery results yet. Press Build Journey.</li>`;
+    elements.queue.innerHTML = '<li class="journey-item">No discovery results yet. Press Build Journey.</li>';
     return;
   }
 
@@ -420,7 +427,7 @@ function renderQueue() {
   `;
   }).join('');
 
-  elements.queue.innerHTML = `${renderTasteCards()}${discoveryMarkup}`;
+  elements.queue.innerHTML = discoveryMarkup;
 
   elements.queue.querySelectorAll('[data-thumb-image]').forEach((img) => {
     if (img.dataset.thumbErrorBound === 'true') return;
@@ -825,6 +832,7 @@ async function smartRefreshDiscovery() {
   rebuildFlowQueue();
   persistState();
   renderSummary();
+  renderTasteCockpit();
   renderQueue();
   renderPlaybackPanel();
   renderDebug();
@@ -1029,6 +1037,12 @@ function initializePaneLayout() {
     paneId: 'session-summary-pane',
     title: 'Session Summary',
     section: elements.summaryPane,
+    panelClassName: 'music-tile-pane',
+  });
+  tilePaneManager.mountPaneFromSection({
+    paneId: 'taste-cockpit-pane',
+    title: 'Taste Cockpit',
+    section: elements.tasteCockpitPane,
     panelClassName: 'music-tile-pane',
   });
   tilePaneManager.mountPaneFromSection({
