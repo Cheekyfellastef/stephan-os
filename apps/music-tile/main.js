@@ -1,10 +1,12 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { SEEDED_TASTE_TRACKS } from './data/musicTasteSeeds.js';
 import { buildSpotifySearchUrl, buildYouTubeSearchUrl, parseSpotifyReference, toSpotifyEmbedUrl } from './utils/spotifyEmbed.js';
+import { buildTasteWeights, rankCandidatesByTaste, topSignals } from './engine/tasteLearning.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
-const REASON_TAGS = ['serious trance DNA', 'ghost vocal fit', 'dark courtyard energy', 'too commercial', 'flat energy'];
+const POSITIVE_REASON_TAGS = ['reverb vocal','echo vocal','haunting female vocal','processed vocal','wide club pressure','emotional lift','serious trance DNA'];
+const REJECT_REASON_TAGS = ['boring','flat','too cheesy','too harsh','too Goa / psy','no ghost'];
 const ANYMA_SEEDED_CANDIDATES = [
   { id:'anyma-syth', title:'Say Yes To Heaven remix', artist:'Anyma', reason:'Anyma anchor match', lane:'Ghost Vocal / Reverb Female Voice' },
   { id:'anyma-samsara', title:'Samsara', artist:'Anyma & Sevdaliza', reason:'Sevdaliza ghost vocal branch', lane:'Ghost Vocal / Reverb Female Voice' },
@@ -30,6 +32,7 @@ const ui = {
   positiveAnchors: document.getElementById('positive-anchors'),
   rejectPatterns: document.getElementById('reject-patterns'),
   ratingCounts: document.getElementById('rating-counts'),
+  learningSignals: document.getElementById('learning-signals'),
   candidateList: document.getElementById('candidate-list'),
   listeningDeck: document.getElementById('listening-deck'),
 };
@@ -52,7 +55,7 @@ function buildJourney() {
   }
   const term = artists[0];
   ui.status.textContent = `Building journey for: ${term}`;
-  state.candidates = buildSeededCandidates(term);
+  state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeights(state));
   if (!state.listeningDeck.length && state.candidates.length) state.listeningDeck = [state.candidates[0]];
   ui.status.textContent = `Built ${state.candidates.length} candidates for ${term}.`;
   saveState();
@@ -66,7 +69,7 @@ function startJourney() {
     return;
   }
   const term = artists[0];
-  if (!state.candidates.length) state.candidates = buildSeededCandidates(term);
+  if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeights(state));
   if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3);
   ui.status.textContent = `Starting journey for: ${term}.`;
   saveState();
@@ -98,11 +101,15 @@ function renderTasteDNA() {
   const counts = RATING_VALUES.reduce((acc, val) => ({ ...acc, [val]: 0 }), {});
   for (const value of Object.values(state.ratings)) counts[value] = (counts[value] || 0) + 1;
   ui.ratingCounts.innerHTML = `<h3>Rating counts</h3><div class="card">${Object.entries(counts).map(([k,v]) => `<div>${k}: ${v}</div>`).join('')}</div>`;
+  const weights = buildTasteWeights(state);
+  const topPositive = topSignals(weights.positiveWeights);
+  const topReject = topSignals(weights.rejectWeights);
+  ui.learningSignals.innerHTML = `<h3>Taste Weights</h3><div class="card"><strong>Positive</strong>${topPositive.length ? topPositive.map(([k,v]) => `<div>${k}: +${v.toFixed(2)}</div>`).join('') : '<div>None yet</div>'}<strong>Reject</strong>${topReject.length ? topReject.map(([k,v]) => `<div>${k}: -${v.toFixed(2)}</div>`).join('') : '<div>None yet</div>'}</div>`;
 }
 
 function renderCandidates() {
   ui.candidateList.innerHTML = state.candidates.length
-    ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="meta">${track.reason || 'Taste profile candidate'} · ${track.lane || 'Unassigned lane'}</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button>${mediaActionLinks(track, true)}</div></article>`).join('')
+    ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="meta">${track.reason || 'Taste profile candidate'} · ${track.lane || 'Unassigned lane'}</div><div class="meta">Taste score: ${(track.tasteScore ?? 0).toFixed(2)}${track.why ? ` · Why: +[${track.why.positiveHits.join(', ') || 'none'}] -[${track.why.rejectHits.join(', ') || 'none'}]` : ''}</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button>${mediaActionLinks(track, true)}</div></article>`).join('')
     : '<div class="card">No candidates yet. Press Build Journey.</div>';
 
   ui.candidateList.querySelectorAll('[data-action="enqueue"]').forEach((btn) => {
@@ -115,9 +122,11 @@ function renderCandidates() {
       } else {
         ui.status.textContent = `${found?.title || 'Track'} is already in Listening Deck.`;
       }
+      state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeights(state));
       saveState();
       renderListeningDeck();
       renderTasteDNA();
+      renderCandidates();
     });
   });
 }
@@ -130,9 +139,11 @@ function renderListeningDeck() {
   ui.listeningDeck.querySelectorAll('[data-rate]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.ratings[btn.dataset.id] = Number(btn.dataset.rate);
+      state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeights(state));
       saveState();
       renderListeningDeck();
       renderTasteDNA();
+      renderCandidates();
     });
   });
 
@@ -142,8 +153,11 @@ function renderListeningDeck() {
       const list = new Set(state.tags[id] || []);
       list.has(tag) ? list.delete(tag) : list.add(tag);
       state.tags[id] = Array.from(list);
+      state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeights(state));
       saveState();
       renderListeningDeck();
+      renderTasteDNA();
+      renderCandidates();
     });
   });
 }
@@ -152,7 +166,7 @@ function listeningCardMarkup(track) {
   const embed = toSpotifyEmbedUrl(track.spotifyUrl || track.spotifyUri || '');
   const rating = state.ratings[track.id];
   const tags = state.tags[track.id] || [];
-  return `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<div class="meta">Needs Spotify link</div>'}<div class="actions media-controls">${mediaActionLinks(track, false)}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${REASON_TAGS.map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div></article>`;
+  return `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<div class="meta">Needs Spotify link</div>'}<div class="actions media-controls">${mediaActionLinks(track, false)}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${POSITIVE_REASON_TAGS.concat(REJECT_REASON_TAGS).map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div></article>`;
 }
 
 function mediaActionLinks(track, compact = false) {
