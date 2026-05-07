@@ -125,6 +125,7 @@ const elements = {
   reset: document.getElementById('reset-btn'),
   resetLayout: document.getElementById('reset-layout-btn'),
   resetLayoutStatus: document.getElementById('reset-layout-status'),
+  discoveryStatus: document.getElementById('discovery-status'),
   summary: document.getElementById('summary-grid'),
   queue: document.getElementById('journey-list'),
   commandInput: document.getElementById('command-input'),
@@ -150,6 +151,10 @@ const elements = {
 };
 
 const flowController = createMusicTileFlowController();
+
+const controlBindingState = {
+  discoveryDelegatedBound: false,
+};
 
 const startupLifecycle = {
   paneMountComplete: false,
@@ -813,7 +818,12 @@ function rebuildFlowQueue() {
 
 async function smartRefreshDiscovery() {
   state.selection = readSelectionFromUI();
-  state.artists = elements.artists.value.split(',').map((value) => value.trim()).filter(Boolean);
+  const artistInputValue = readArtistInputValue();
+  if (!artistInputValue) {
+    setDiscoveryStatus('Enter at least one artist before building a journey.', { isError: true });
+    return;
+  }
+  state.artists = artistInputValue.split(',').map((value) => value.trim()).filter(Boolean);
 
   const artistObjects = state.artists.map((name) => ({ id: name.toLowerCase(), name }));
   const queries = artistObjects.flatMap((artist) => createDiscoveryQueries(artist));
@@ -897,7 +907,10 @@ async function smartRefreshDiscovery() {
   renderQueue();
   renderPlaybackPanel();
   renderDebug();
+  setDiscoveryStatus(`Journey updated for: ${state.artists.join(', ')}`);
+  musicTileTracer.log('journey render target found', { hasJourneyList: Boolean(elements.queue) });
 }
+
 
 function executeCommand() {
   const parsed = parseMusicCommand(elements.commandInput.value);
@@ -997,6 +1010,7 @@ function handleExternalOpenForCurrentItem() {
   renderDebug();
 }
 
+
 async function handleQueueAction(event) {
   const actionTarget = event.target.closest('[data-action]');
   if (!actionTarget) return;
@@ -1050,6 +1064,7 @@ async function handleQueueAction(event) {
   renderDebug();
 }
 
+
 function resetAll() {
   const reset = resetMusicTileState();
   state.selection = reset.selection;
@@ -1073,6 +1088,7 @@ function resetAll() {
   renderPlaybackPanel();
   renderDebug();
 }
+
 
 function setDebugPaneVisibility(isVisible) {
   state.debugVisible = Boolean(isVisible);
@@ -1163,16 +1179,60 @@ function initializePaneLayout() {
   setDebugPaneVisibility(state.debugVisible);
 }
 
-function bindControls() {
-  elements.smartRefresh.addEventListener('click', smartRefreshDiscovery);
-  elements.flowMode.addEventListener('click', () => {
-    state.sessionMode = 'flow';
-    elements.mode.value = 'flow';
-    rebuildFlowQueue();
-    renderSummary();
-    renderQueue();
-    playFlowFromCurrentQueue();
+
+function setDiscoveryStatus(message, { isError = false } = {}) {
+  if (!elements.discoveryStatus) return;
+  elements.discoveryStatus.textContent = String(message || '').trim();
+  elements.discoveryStatus.dataset.status = isError ? 'error' : 'info';
+}
+
+function readArtistInputValue() {
+  const value = String(elements.artists?.value || '').trim();
+  musicTileTracer.log('discovery input value captured', { value });
+  return value;
+}
+
+function ensureDiscoveryControlBindings() {
+  if (controlBindingState.discoveryDelegatedBound) return;
+  const scope = elements.controlsPane;
+  if (!scope) return;
+  musicTileTracer.log('discovery controls binding start');
+  scope.addEventListener('click', (event) => {
+    const trigger = event.target?.closest?.('#smart-refresh-btn, #flow-mode-btn');
+    if (!trigger || !scope.contains(trigger)) return;
+
+    const artistInputValue = readArtistInputValue();
+    if (!artistInputValue) {
+      setDiscoveryStatus('Enter at least one artist before building or starting a journey.', { isError: true });
+      musicTileTracer.log('discovery controls empty input', { triggerId: trigger.id });
+      return;
+    }
+
+    if (trigger.id === 'smart-refresh-btn') {
+      musicTileTracer.log('build journey clicked', { triggerId: trigger.id });
+      setDiscoveryStatus(`Building journey for: ${artistInputValue}`);
+      void smartRefreshDiscovery();
+      return;
+    }
+
+    if (trigger.id === 'flow-mode-btn') {
+      musicTileTracer.log('start journey clicked', { triggerId: trigger.id });
+      setDiscoveryStatus(`Starting journey for: ${artistInputValue}`);
+      state.sessionMode = 'flow';
+      elements.mode.value = 'flow';
+      rebuildFlowQueue();
+      renderSummary();
+      renderQueue();
+      playFlowFromCurrentQueue();
+    }
   });
+
+  controlBindingState.discoveryDelegatedBound = true;
+  musicTileTracer.log('discovery controls binding end', { scopeId: scope.id || '' });
+}
+
+function bindControls() {
+  ensureDiscoveryControlBindings();
 
   elements.playBtn.addEventListener('click', () => {
     state.playbackError = '';
@@ -1208,6 +1268,7 @@ function bindControls() {
   });
   elements.artists.addEventListener('input', () => {
     state.artists = elements.artists.value.split(',').map((value) => value.trim()).filter(Boolean);
+    if (elements.discoveryStatus?.textContent) setDiscoveryStatus('');
     rebuildFlowQueue();
     renderSummary();
     renderQueue();
@@ -1314,6 +1375,9 @@ async function initialize() {
   startupLifecycle.tasteCockpitRendered = true;
   finalizeWorkspaceReadyIfComplete();
   bindControls();
+  elements.smartRefresh.disabled = false;
+  elements.flowMode.disabled = false;
+  setDiscoveryStatus('Ready. Enter an artist to build or start a journey.');
   trackRootVisibilitySnapshots();
   musicTileTracer.log('initialize completed');
 }
