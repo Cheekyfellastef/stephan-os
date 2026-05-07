@@ -8,7 +8,7 @@ import { createMusicTileSessionStore } from './state/musicTileSessionStore.js';
 import { getMediaPlaybackLinkState, sanitizeVideoId } from './utils/youtubeLinkResolver.js';
 import { toSpotifyEmbedUrl, parseSpotifyReference } from './utils/spotifyEmbed.js';
 import { SEEDED_TASTE_TRACKS, MUSIC_LANES } from './data/musicTasteSeeds.js';
-import { buildTasteCockpitMarkup } from './ui/tasteCockpitView.js';
+import { buildTasteProfileMarkup, buildListeningCardsMarkup } from './ui/tasteCockpitView.js';
 import { createCanonTilePaneManager } from '../../shared/runtime/canonTilePanes.mjs';
 import {
   DEFAULT_SELECTION,
@@ -120,7 +120,8 @@ const elements = {
   resultsPane: document.getElementById('music-results-pane'),
   summaryPane: document.getElementById('music-summary-pane'),
   tasteCockpitPane: document.getElementById('music-taste-cockpit-pane'),
-  tasteCockpitList: document.getElementById('taste-cockpit-list'),
+  tasteProfileList: document.getElementById('taste-profile-list'),
+  listeningList: document.getElementById('listening-list'),
   commandPane: document.getElementById('music-command-pane'),
   smartRefresh: document.getElementById('smart-refresh-btn'),
   flowMode: document.getElementById('flow-mode-btn'),
@@ -411,22 +412,11 @@ function renderSummary() {
   `).join('');
 }
 
-function renderTasteCards() {
-  ensureTasteMemory();
-  return buildTasteCockpitMarkup(state.memory.tasteTracks);
-}
-
 function renderTasteCockpit() {
-  musicTileTracer.log('renderTasteCockpit start', { targetFound: Boolean(elements.tasteCockpitList) });
-  try {
-    const markup = renderTasteCards();
-    elements.tasteCockpitList.innerHTML = String(markup || '').trim()
-      ? markup
-      : '<li class="journey-item"><article><strong>Taste Cockpit diagnostic</strong><p class="muted">No taste cards were rendered from the current seed memory.</p></article></li>';
-    musicTileTracer.log('renderTasteCockpit end', { cardCount: elements.tasteCockpitList?.querySelectorAll?.('.taste-track-card')?.length || 0 });
-  } catch (error) {
-    elements.tasteCockpitList.innerHTML = `<li class="journey-item"><article><strong>Taste Cockpit render error</strong><p class="muted">${error?.message || 'Unknown render failure.'}</p></article></li>`;
-  }
+  ensureTasteMemory();
+  elements.tasteProfileList.innerHTML = buildTasteProfileMarkup(state.memory.tasteTracks);
+  elements.listeningList.innerHTML = buildListeningCardsMarkup(state.memory.tasteTracks);
+  musicTileTracer.log('renderTasteCockpit end', { cardCount: elements.listeningList?.querySelectorAll?.('.taste-track-card')?.length || 0 });
 }
 
 function renderQueue() {
