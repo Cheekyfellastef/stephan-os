@@ -33,7 +33,7 @@ test('search URLs are encoded', () => {
 });
 
 test('spotify embed still parses valid refs', () => {
-  assert.equal(toSpotifyEmbedUrl('spotify:track:abc123'), 'https://open.spotify.com/embed/track/abc123');
+  assert.equal(toSpotifyEmbedUrl('spotify:track:1lXzvA8rQwRz4t5Lwz4M8W'), 'https://open.spotify.com/embed/track/1lXzvA8rQwRz4t5Lwz4M8W');
 });
 
 test('start journey and duplicate-avoid status strings present', () => {
