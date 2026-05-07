@@ -100,6 +100,7 @@ function writePanelPositionsToMemory(positions, storage = globalThis.localStorag
  */
 export function createCanonTilePaneManager({
   appId,
+  layoutMode = 'freeform',
   storage = globalThis.localStorage,
   uiRenderer = createUIRenderer(),
 } = {}) {
@@ -110,6 +111,34 @@ export function createCanonTilePaneManager({
 
   const registeredPanes = new Map();
   const sectionToPaneId = new WeakMap();
+  const isGridSlotMode = layoutMode === 'grid-slot';
+
+  function applyGridLayout(defaultEntries = []) {
+    const panelPositions = readPanelPositionsFromMemory(storage);
+    let hasUpdates = false;
+    defaultEntries.forEach((entry) => {
+      const normalizedPaneId = slugifySegment(entry?.paneId);
+      if (!normalizedPaneId) return;
+      const domId = toCanonTilePaneDomId(normalizedAppId, normalizedPaneId);
+      const panel = globalThis.document?.getElementById(domId);
+      if (!panel) return;
+      const persisted = panelPositions[domId];
+      const gridX = Number(persisted?.gridX ?? entry?.gridX);
+      const gridY = Number(persisted?.gridY ?? entry?.gridY);
+      const gridW = Number(persisted?.gridW ?? entry?.gridW ?? 3);
+      const gridH = Number(persisted?.gridH ?? entry?.gridH ?? 1);
+      const order = Number(persisted?.order ?? entry?.order ?? 0);
+      if (!Number.isFinite(gridX) || !Number.isFinite(gridY)) return;
+      panel.style.left = `${24 + ((gridX - 1) * 120)}px`;
+      panel.style.top = `${140 + ((gridY - 1) * 220)}px`;
+      panel.style.width = `${Math.max(300, (gridW * 120) - 16)}px`;
+      panel.style.height = `${Math.max(200, (gridH * 220) - 18)}px`;
+      panel.style.maxHeight = `${Math.max(200, (gridH * 220) - 18)}px`;
+      panelPositions[domId] = { gridX, gridY, gridW, gridH, order, collapsed: Boolean(persisted?.collapsed) };
+      hasUpdates = true;
+    });
+    if (hasUpdates) writePanelPositionsToMemory(panelPositions, storage);
+  }
 
   function getMountedHostId(node) {
     return String(node?.getAttribute?.(CANON_MOUNT_HOST_ATTR) || '').trim();
@@ -260,6 +289,10 @@ export function createCanonTilePaneManager({
     mountPaneFromSection,
     resetLayout,
     applyDefaultPaneLayout(defaultEntries = []) {
+      if (isGridSlotMode) {
+        applyGridLayout(defaultEntries);
+        return;
+      }
       const persistedPositions = readPanelPositionsFromMemory(storage);
       let hasUpdates = false;
 
