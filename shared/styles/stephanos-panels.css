@@ -6,6 +6,17 @@
   pointer-events: none;
 }
 
+#stephanos-panel-stack.stephanos-panel-stack-grid-slot {
+  position: relative;
+  inset: auto;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: minmax(56px, 180px);
+  gap: 12px;
+  padding: 12px;
+  pointer-events: auto;
+}
+
 .stephanos-panel {
   position: absolute;
   width: min(360px, calc(100vw - 20px));
@@ -21,6 +32,36 @@
   overflow: hidden;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
+}
+
+#stephanos-panel-stack.stephanos-panel-stack-grid-slot .stephanos-panel {
+  position: relative;
+  width: auto;
+  max-width: none;
+  max-height: none;
+}
+
+#stephanos-panel-stack.stephanos-panel-stack-grid-slot .stephanos-panel.stephanos-panel-collapsed {
+  min-height: 56px;
+  max-height: 56px;
+}
+
+#stephanos-panel-stack.stephanos-panel-stack-grid-slot .stephanos-panel.stephanos-panel-collapsed .stephanos-panel-header {
+  margin-bottom: 0;
+}
+
+#stephanos-panel-stack.stephanos-panel-stack-grid-slot .stephanos-panel.stephanos-panel-collapsed .stephanos-panel-content {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  #stephanos-panel-stack.stephanos-panel-stack-grid-slot {
+    grid-template-columns: 1fr;
+  }
+  #stephanos-panel-stack.stephanos-panel-stack-grid-slot .stephanos-panel {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
 }
 
 .stephanos-panel-header {

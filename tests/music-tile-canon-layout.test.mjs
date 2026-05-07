@@ -93,4 +93,11 @@ test('music tile seeds canonical default desktop pane slots in preferred order',
   assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', gridX: 10, gridY: 1, gridW: 3, gridH: 1, order: 3 \}/);
   assert.match(musicMainSource, /\{ paneId: 'flow-now-playing-pane', gridX: 7, gridY: 2, gridW: 3, gridH: 1, order: 5 \}/);
   assert.match(musicMainSource, /\{ paneId: 'debug-pane', gridX: 10, gridY: 2, gridW: 3, gridH: 1, order: 6 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'command-console-pane', gridX: 1, gridY: 5, gridW: 12, gridH: 1, order: 7 \}/);
+});
+
+test('shared canon grid-slot mode compacts collapsed panels and keeps internal scroll behavior', () => {
+  assert.match(sharedPaneCssSource, /#stephanos-panel-stack\.stephanos-panel-stack-grid-slot\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel\.stephanos-panel-collapsed\s*\{[\s\S]*max-height:\s*56px;/);
+  assert.match(sharedPaneCssSource, /\.stephanos-panel-content\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;/);
 });
