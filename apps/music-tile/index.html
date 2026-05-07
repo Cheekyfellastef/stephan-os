@@ -9,40 +9,44 @@
 <body>
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
-  <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern" data-music-screen="spotify-taste-cockpit" data-workspace-ready="false" aria-busy="true">
-    <section class="panel music-header" id="music-title-pane">
-      <h1>Music Taste Cockpit</h1>
-      <p>Dark Courtyard / Ghost Vocal / Serious Trance DNA</p>
-      <p class="muted">Spotify canonical · YouTube discovery/fallback</p>
-      <div class="action-row"><button id="reset-layout-btn" type="button" class="ghost">Reset session</button><p id="reset-layout-status" class="muted" aria-live="polite"></p></div>
-    </section>
-    <section class="panel controls-panel" id="music-controls-pane">
-      <h2>Discovery Controls</h2>
-      <div class="control-grid">
-        <label>Artist input<input id="artist-input" placeholder="Anyma, Tale Of Us, Layla Benitez" /></label>
-        <label>Origin Era<select id="era-select"><option value="cream-courtyard">Cream Courtyard</option><option value="uplifting-trance">Uplifting Trance</option><option value="progressive-bridge">Progressive Bridge</option><option value="afterlife-modern">Afterlife / Modern</option></select></label>
-        <label>Energy Curve<select id="energy-select"><option value="flat">Flat</option><option value="rising">Rising</option><option value="peaks">Peaks</option></select></label>
-        <label>Emotion Vector<select id="emotion-select"><option value="euphoric">Euphoric</option><option value="dark">Dark</option><option value="reflective">Reflective</option><option value="transcendent">Transcendent</option></select></label>
-        <label>Density<select id="density-select"><option value="minimal">Minimal</option><option value="layered">Layered</option><option value="full-festival">Full Festival</option></select></label>
+  <main class="music-cockpit" id="music-cockpit-root">
+    <header class="cockpit-header">
+      <div>
+        <h1>Music Taste Cockpit</h1>
+        <p>Dark Courtyard / Ghost Vocal / Serious Trance DNA</p>
       </div>
-      <div class="toggle-row"><label><input type="checkbox" id="include-seen-toggle" /> Include seen content</label><label><input type="checkbox" id="unseen-only-toggle" /> Unseen only</label><label><input type="checkbox" id="hide-broken-toggle" checked /> Hide broken items</label><label><input type="checkbox" id="show-external-only-toggle" checked /> Show external-only items</label></div>
-      <div class="action-row"><button id="smart-refresh-btn" type="button">Build Journey</button><button id="flow-mode-btn" type="button">Start Journey</button><button id="reset-btn" type="button" class="ghost">Reset Journey</button></div>
-      <p id="discovery-status" class="muted" aria-live="polite"></p><p id="discovery-debug-status" class="muted" aria-live="polite"></p>
-    </section>
-    <section class="music-workspace" id="music-workspace">
-      <section class="panel music-column" id="music-taste-cockpit-pane"><h2>Taste Profile</h2><div id="taste-profile-list" class="summary-grid"></div></section>
-      <section class="panel music-column" id="music-results-pane"><h2>Discovery Results / Journey Queue</h2><ol id="journey-list" class="journey-list"></ol></section>
-      <section class="panel music-column" id="music-flow-pane"><h2>Listening / Test Queue</h2><ol id="listening-list" class="journey-list"></ol></section>
+      <a class="return-link" href="../../index.html">Return to Command Deck</a>
+    </header>
+
+    <section class="top-controls">
+      <label>
+        Artist input
+        <input id="artist-input" placeholder="Anyma, Tale Of Us, Layla Benitez" />
+      </label>
+      <button id="build-journey-btn" type="button">Build Journey</button>
+      <button id="start-journey-btn" type="button">Start Journey</button>
+      <button id="reset-btn" type="button" class="ghost">Reset</button>
+      <p id="status-text" aria-live="polite">Ready. Build a journey to generate candidates.</p>
     </section>
 
-    <section class="panel summary-panel" id="music-summary-pane" hidden><h2>Session Summary</h2><div class="summary-grid" id="summary-grid"></div></section>
-    <section class="panel command-panel" id="music-command-pane" hidden><h2>Command Console (text-first)</h2><div class="command-row"><input id="command-input" placeholder="show unseen Anyma sets" /><button id="command-run-btn">Run</button></div><p class="muted" id="command-output">Intent: explain</p></section>
-    <section class="panel debug-panel" id="debug-panel" hidden><h2>Debug</h2><pre id="debug-output"></pre></section>
-    <button id="debug-toggle" class="debug-toggle" title="Toggle debug panel" aria-controls="music-tile-debug-pane" aria-pressed="false">Debug</button>
-    <select id="session-mode-select" hidden><option value="discovery">Discovery</option><option value="flow">Flow</option><option value="deep-dive">Deep Dive</option></select>
-    <a id="open-in-youtube-btn" class="ghost button-link" hidden href="https://www.youtube.com">Open in YouTube</a>
-    <button id="playback-play-btn" hidden>Play</button><button id="playback-flow-btn" hidden>Flow</button><button id="playback-next-btn" hidden>Next</button><button id="playback-prev-btn" hidden>Prev</button><button id="player-resume-flow-btn" hidden>Resume</button>
-    <p id="playback-status" hidden></p><p id="playback-now-playing" hidden></p><p id="playback-channel" hidden></p><span id="playback-mode-badge" hidden></span><span id="playback-flow-badge" hidden></span><span id="playback-resume-badge" hidden></span><p id="playback-session-state" hidden></p><p id="playback-continuity-note" hidden></p>
+    <section class="dashboard-grid">
+      <section class="col" id="taste-col">
+        <h2>Taste DNA</h2>
+        <div id="positive-anchors"></div>
+        <div id="reject-patterns"></div>
+        <div id="rating-counts"></div>
+      </section>
+
+      <section class="col" id="journey-col">
+        <h2>Discovery Journey</h2>
+        <div id="candidate-list" class="stack"></div>
+      </section>
+
+      <section class="col" id="deck-col">
+        <h2>Listening Deck</h2>
+        <div id="listening-deck" class="stack"></div>
+      </section>
+    </section>
   </main>
   <script type="module" src="./main.js"></script>
 </body>
