@@ -123,6 +123,33 @@ function createClassList() {
   };
 }
 
+function createDomTokenListLike() {
+  const values = new Set();
+  return {
+    add(...entries) {
+      entries.forEach((entry) => {
+        const token = String(entry);
+        if (!token || /\s/.test(token)) {
+          throw new DOMException(
+            `Failed to execute 'add' on 'DOMTokenList': The token provided ('${token}') contains HTML space characters, which are not valid in tokens.`,
+            'InvalidCharacterError',
+          );
+        }
+        values.add(token);
+      });
+    },
+    remove(...entries) {
+      entries.forEach((entry) => values.delete(entry));
+    },
+    contains(entry) {
+      return values.has(entry);
+    },
+    values() {
+      return Array.from(values);
+    },
+  };
+}
+
 function createMockSection(id) {
   const attributes = {};
   return {
@@ -319,6 +346,63 @@ test('mountPaneFromSection prevents section from mounting into multiple pane hos
   assert.equal(duplicateHostAttempt, existingHostPanel);
   assert.equal(panelById.size, 0);
   globalThis.document = originalDocument;
+});
+
+test('mountPane supports single, multi-class string, array, and empty class values without crashing', () => {
+  const section = createMockSection('music-debug-pane');
+  section.classList = createDomTokenListLike();
+  const manager = createCanonTilePaneManager({
+    appId: 'music-tile',
+    uiRenderer: {
+      createPanel(id) {
+        return {
+          id,
+          dataset: {},
+          classList: createDomTokenListLike(),
+          appendChild() {},
+        };
+      },
+      removePanel() {},
+    },
+    storage: createStorage(),
+  });
+
+  const singleClassPanel = manager.mountPane({
+    paneId: 'single-pane',
+    contentNode: createMockSection('single-pane-section'),
+    panelClassName: 'music-tile-pane',
+  });
+  assert.equal(singleClassPanel.classList.contains('music-tile-pane'), true);
+
+  const multiClassPanel = manager.mountPaneFromSection({
+    paneId: 'debug-pane',
+    section,
+    panelClassName: 'music-tile-pane music-tile-pane-debug',
+  });
+  assert.ok(multiClassPanel);
+  assert.equal(multiClassPanel.classList.contains('music-tile-pane'), true);
+  assert.equal(multiClassPanel.classList.contains('music-tile-pane-debug'), true);
+
+  const arrayClassPanel = manager.mountPane({
+    paneId: 'array-pane',
+    contentNode: createMockSection('array-pane-section'),
+    panelClassName: ['music-tile-pane', 'music-tile-pane-debug'],
+  });
+  assert.equal(arrayClassPanel.classList.contains('music-tile-pane'), true);
+  assert.equal(arrayClassPanel.classList.contains('music-tile-pane-debug'), true);
+
+  assert.doesNotThrow(() => {
+    manager.mountPane({
+      paneId: 'empty-pane',
+      contentNode: createMockSection('empty-pane-section'),
+      panelClassName: null,
+    });
+    manager.mountPane({
+      paneId: 'empty-pane-2',
+      contentNode: createMockSection('empty-pane-section-2'),
+      panelClassName: '   ',
+    });
+  });
 });
 
 test('setPaneVisible delegates to shared panel visibility API for one-layer interaction rules', () => {
