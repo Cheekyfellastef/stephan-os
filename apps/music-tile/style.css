@@ -277,6 +277,7 @@ button.ghost,
   display: block;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .stephanos-panel-content > .canon-tile-pane-section.panel {
@@ -298,6 +299,23 @@ button.ghost,
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#taste-cockpit-list,
+#journey-list,
+#debug-output {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.taste-track-card iframe {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 152px;
+  border: 0;
 }
 
 .music-tile-pane {
