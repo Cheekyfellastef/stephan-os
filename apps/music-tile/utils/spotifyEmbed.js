@@ -39,3 +39,15 @@ export function toSpotifyEmbedUrl(input = '') {
   if (!parsed) return '';
   return `${SPOTIFY_OPEN}/embed/${parsed.type}/${parsed.id}`;
 }
+
+function trackSearchQuery(track = {}) {
+  return `${track.artist || ''} ${track.title || track.name || ''}`.trim();
+}
+
+export function buildSpotifySearchUrl(track = {}) {
+  return `${SPOTIFY_OPEN}/search/${encodeURIComponent(trackSearchQuery(track))}`;
+}
+
+export function buildYouTubeSearchUrl(track = {}) {
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(trackSearchQuery(track))}`;
+}

@@ -1,10 +1,25 @@
 import { TRACK_LIBRARY } from './data/trackLibrary.js';
 import { SEEDED_TASTE_TRACKS } from './data/musicTasteSeeds.js';
-import { toSpotifyEmbedUrl } from './utils/spotifyEmbed.js';
+import { buildSpotifySearchUrl, buildYouTubeSearchUrl, parseSpotifyReference, toSpotifyEmbedUrl } from './utils/spotifyEmbed.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
 const REASON_TAGS = ['serious trance DNA', 'ghost vocal fit', 'dark courtyard energy', 'too commercial', 'flat energy'];
+const ANYMA_SEEDED_CANDIDATES = [
+  { id:'anyma-syth', title:'Say Yes To Heaven remix', artist:'Anyma', reason:'Anyma anchor match', lane:'Ghost Vocal / Reverb Female Voice' },
+  { id:'anyma-samsara', title:'Samsara', artist:'Anyma & Sevdaliza', reason:'Sevdaliza ghost vocal branch', lane:'Ghost Vocal / Reverb Female Voice' },
+  { id:'anyma-welcome-opera', title:'Welcome To The Opera', artist:'Anyma & Grimes', reason:'Dark melodic club pressure', lane:'Dark Courtyard / Serious Trance DNA' },
+  { id:'anyma-pictures', title:'Pictures Of You', artist:'Anyma', reason:'Late-night Courtyard architecture', lane:'Dark Courtyard / Serious Trance DNA' },
+  { id:'anyma-eternity', title:'Eternity', artist:'Anyma', reason:'Echo/reverb vocal candidate', lane:'Lana Ghost / Slow-Burn Club Lift' },
+  { id:'anyma-explore', title:'Explore Your Future', artist:'Anyma', reason:'Interesting branch track', lane:'Interesting Complexity' },
+  { id:'anyma-hypnotized', title:'Hypnotized', artist:'Anyma', reason:'Dark melodic club pressure', lane:'Club Engine But Missing Ghost' },
+  { id:'sevdaliza-save-me', title:'Save Me', artist:'Sevdaliza', spotifyUrl:'https://open.spotify.com/track/2GQfQw0f9M8e8P3G2NL8eN', reason:'Sevdaliza ghost vocal branch', lane:'Ghost Vocal / Reverb Female Voice' },
+  { id:'hunger-law', title:'Hunger & Law', artist:'Hunger & Law', reason:'Interesting branch track', lane:'Interesting Complexity' },
+  { id:'pico-close-eyes', title:'Close Your Eyes', artist:'Pico Boulevard', reason:'Echo/reverb vocal candidate', lane:'Lana Ghost / Slow-Burn Club Lift' },
+  { id:'push-universal', title:'Universal Nation', artist:'Push', spotifyUrl:'https://open.spotify.com/track/1lXzvA8rQwRz4t5Lwz4M8W', reason:'Universal Nation serious trance spine', lane:'Dark Courtyard / Serious Trance DNA' },
+  { id:'binary-1999', title:'1999', artist:'Binary Finary', spotifyUri:'spotify:track:0R2evcrs4W4lR5vbhwA2Q4', reason:'Universal Nation serious trance spine', lane:'Dark Courtyard / Serious Trance DNA' },
+  { id:'three-greece', title:'Greece 2000', artist:'Three Drives', reason:'Late-night Courtyard architecture', lane:'Dark Courtyard / Serious Trance DNA' },
+];
 
 const ui = {
   artistInput: document.getElementById('artist-input'),
@@ -31,19 +46,29 @@ function wireEvents() {
 
 function buildJourney() {
   const artists = parseArtists(ui.artistInput?.value || '');
-  const fallbackArtists = SEEDED_TASTE_TRACKS.map((t) => t.artist);
-  const pool = artists.length ? artists : fallbackArtists;
-  state.candidates = TRACK_LIBRARY.filter((track) => pool.some((artist) => `${track.artist}`.toLowerCase().includes(artist.toLowerCase()))).slice(0, 18);
-  if (!state.candidates.length) state.candidates = TRACK_LIBRARY.slice(0, 12);
-  ui.status.textContent = `Journey built for ${artists.length ? artists.join(', ') : 'seed taste DNA'} · ${state.candidates.length} candidates ready.`;
+  if (!artists.length) {
+    ui.status.textContent = 'Enter an artist to build a journey.';
+    return;
+  }
+  const term = artists[0];
+  ui.status.textContent = `Building journey for: ${term}`;
+  state.candidates = buildSeededCandidates(term);
+  if (!state.listeningDeck.length && state.candidates.length) state.listeningDeck = [state.candidates[0]];
+  ui.status.textContent = `Built ${state.candidates.length} candidates for ${term}.`;
   saveState();
   renderAll();
 }
 
 function startJourney() {
-  if (!state.candidates.length) buildJourney();
-  state.listeningDeck = state.candidates.slice(0, 5);
-  ui.status.textContent = `Journey started · ${state.listeningDeck.length} tracks loaded into Listening Deck.`;
+  const artists = parseArtists(ui.artistInput?.value || '');
+  if (!artists.length) {
+    ui.status.textContent = 'Enter an artist to build a journey.';
+    return;
+  }
+  const term = artists[0];
+  if (!state.candidates.length) state.candidates = buildSeededCandidates(term);
+  if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3);
+  ui.status.textContent = `Starting journey for: ${term}.`;
   saveState();
   renderAll();
 }
@@ -77,15 +102,19 @@ function renderTasteDNA() {
 
 function renderCandidates() {
   ui.candidateList.innerHTML = state.candidates.length
-    ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button></div></article>`).join('')
+    ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="meta">${track.reason || 'Taste profile candidate'} · ${track.lane || 'Unassigned lane'}</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button>${mediaActionLinks(track, true)}</div></article>`).join('')
     : '<div class="card">No candidates yet. Press Build Journey.</div>';
 
   ui.candidateList.querySelectorAll('[data-action="enqueue"]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-id');
       const found = state.candidates.find((t) => `${t.id}` === `${id}`);
-      if (found && !state.listeningDeck.some((t) => t.id === found.id)) state.listeningDeck.push(found);
-      ui.status.textContent = `Queued ${found?.title || 'track'} in Listening Deck.`;
+      if (found && !state.listeningDeck.some((t) => t.id === found.id)) {
+        state.listeningDeck.push(found);
+        ui.status.textContent = `Added ${found?.title || 'track'} to Listening Deck.`;
+      } else {
+        ui.status.textContent = `${found?.title || 'Track'} is already in Listening Deck.`;
+      }
       saveState();
       renderListeningDeck();
       renderTasteDNA();
@@ -123,7 +152,34 @@ function listeningCardMarkup(track) {
   const embed = toSpotifyEmbedUrl(track.spotifyUrl || track.spotifyUri || '');
   const rating = state.ratings[track.id];
   const tags = state.tags[track.id] || [];
-  return `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div>${embed ? `<iframe src="${embed}" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<div class="meta">No Spotify URI/URL yet</div>'}<div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${REASON_TAGS.map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div></article>`;
+  return `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : '<div class="meta">Needs Spotify link</div>'}<div class="actions media-controls">${mediaActionLinks(track, false)}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${REASON_TAGS.map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div></article>`;
+}
+
+function mediaActionLinks(track, compact = false) {
+  const spotifyOpenUrl = parseSpotifyReference(track.spotifyUrl || track.spotifyUri || '')?.openUrl || '';
+  const youtubeUrl = track.youtubeUrl || '';
+  const spotifyLabel = spotifyOpenUrl ? 'Open in Spotify' : 'Find on Spotify';
+  const youtubeLabel = youtubeUrl ? 'Open in YouTube' : 'Find on YouTube';
+  const spotifyHref = spotifyOpenUrl || buildSpotifySearchUrl(track);
+  const youtubeHref = youtubeUrl || buildYouTubeSearchUrl(track);
+  return `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${spotifyHref}">${spotifyLabel}</a><a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${youtubeHref}">${youtubeLabel}</a>${compact ? '' : ''}`;
+}
+
+function buildSeededCandidates(term) {
+  const q = String(term || '').toLowerCase();
+  const fromLibrary = TRACK_LIBRARY.filter((track) => `${track.artist} ${track.title}`.toLowerCase().includes(q)).map((track) => ({ ...track, reason: 'Exact artist/title match', lane: 'Library match' }));
+  const seeded = ANYMA_SEEDED_CANDIDATES.filter((track) => `${track.artist} ${track.title}`.toLowerCase().includes(q) || q.includes('anyma'));
+  const anchors = SEEDED_TASTE_TRACKS.map((track) => ({ ...track, reason: 'Related taste anchor', lane: track.lane || 'Taste anchor' }));
+  const merged = [...seeded, ...fromLibrary, ...anchors, ...ANYMA_SEEDED_CANDIDATES];
+  const unique = [];
+  const ids = new Set();
+  for (const track of merged) {
+    if (ids.has(track.id)) continue;
+    ids.add(track.id);
+    unique.push(track);
+    if (unique.length >= 12) break;
+  }
+  return unique.slice(0, Math.max(8, unique.length));
 }
 
 function parseArtists(raw) {
