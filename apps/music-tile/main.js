@@ -46,6 +46,49 @@ const DURATION_UNKNOWN_TEXT = 'Duration unknown';
 const MUSIC_TILE_SINGLETON_KEY = '__STEPHANOS_MUSIC_TILE_CANON_STARTUP__';
 
 
+const MUSIC_TILE_RENDER_DIAGNOSTIC_KEY = '__STEPHANOS_MUSIC_TILE_RENDER_DIAGNOSTIC__';
+
+function createMusicTileLifecycleTracer() {
+  const tracerState = (globalThis[MUSIC_TILE_RENDER_DIAGNOSTIC_KEY] ||= { seq: 0, events: [] });
+  function log(event, details = {}) {
+    tracerState.seq += 1;
+    const entry = { seq: tracerState.seq, ts: new Date().toISOString(), event, details };
+    tracerState.events.push(entry);
+    if (tracerState.events.length > 200) tracerState.events = tracerState.events.slice(-200);
+    console.info(`[music-tile][lifecycle#${entry.seq}] ${event}`, details);
+    return entry;
+  }
+  return { log, getEvents: () => tracerState.events.slice() };
+}
+
+const musicTileTracer = createMusicTileLifecycleTracer();
+musicTileTracer.log('main.js script evaluated', { href: globalThis.location?.href || '' });
+document.addEventListener('DOMContentLoaded', () => musicTileTracer.log('DOMContentLoaded event')); 
+globalThis.addEventListener?.('load', () => musicTileTracer.log('load event'));
+
+function trackRootVisibilitySnapshots() {
+  const root = elements.root;
+  if (!root) return;
+  [0, 500, 1500].forEach((delayMs) => {
+    globalThis.setTimeout(() => {
+      const children = Array.from(root.children || []).map((node) => ({
+        id: node.id || '',
+        tag: node.tagName || '',
+        marker: node.getAttribute?.('data-music-screen') || '',
+        hidden: Boolean(node.hidden),
+        display: globalThis.getComputedStyle ? globalThis.getComputedStyle(node).display : '',
+      }));
+      const visibleChildren = children.filter((child) => child.display != 'none' && !child.hidden);
+      musicTileTracer.log(`root visibility snapshot ${delayMs}ms`, {
+        rootMarker: root.getAttribute('data-music-screen') || '',
+        childCount: children.length,
+        visibleChildren,
+      });
+    }, delayMs);
+  });
+}
+
+
 const MUSIC_TILE_DEFAULT_PANE_LAYOUT = [
   { paneId: 'taste-cockpit-pane', gridX: 1, gridY: 1, gridW: 6, gridH: 2, order: 1 },
   { paneId: 'search-build-pane', gridX: 7, gridY: 1, gridW: 3, gridH: 1, order: 2 },
@@ -350,11 +393,13 @@ function renderTasteCards() {
 }
 
 function renderTasteCockpit() {
+  musicTileTracer.log('renderTasteCockpit start', { targetFound: Boolean(elements.tasteCockpitList) });
   try {
     const markup = renderTasteCards();
     elements.tasteCockpitList.innerHTML = String(markup || '').trim()
       ? markup
       : '<li class="journey-item"><article><strong>Taste Cockpit diagnostic</strong><p class="muted">No taste cards were rendered from the current seed memory.</p></article></li>';
+    musicTileTracer.log('renderTasteCockpit end', { cardCount: elements.tasteCockpitList?.querySelectorAll?.('.taste-track-card')?.length || 0 });
   } catch (error) {
     elements.tasteCockpitList.innerHTML = `<li class="journey-item"><article><strong>Taste Cockpit render error</strong><p class="muted">${error?.message || 'Unknown render failure.'}</p></article></li>`;
   }
@@ -1028,6 +1073,7 @@ function setDebugPaneVisibility(isVisible) {
 }
 
 function initializePaneLayout() {
+  musicTileTracer.log('pane manager mount start');
   elements.root.classList.add('music-tile--canon-panes');
   tilePaneManager.mountPaneFromSection({
     paneId: 'music-title-pane',
@@ -1081,6 +1127,7 @@ function initializePaneLayout() {
   elements.debugPanel.hidden = false;
 
   tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  musicTileTracer.log('pane manager mount end', { paneCount: elements.root?.querySelectorAll?.('[data-canon-pane-mounted="true"]')?.length || 0 });
   setDebugPaneVisibility(state.debugVisible);
 }
 
@@ -1161,6 +1208,7 @@ function bindControls() {
   elements.resetLayout.addEventListener('click', () => {
     tilePaneManager.resetLayout();
     tilePaneManager.applyDefaultPaneLayout(MUSIC_TILE_DEFAULT_PANE_LAYOUT);
+  musicTileTracer.log('pane manager mount end', { paneCount: elements.root?.querySelectorAll?.('[data-canon-pane-mounted="true"]')?.length || 0 });
     setDebugPaneVisibility(state.debugVisible);
     if (elements.resetLayoutStatus) {
       elements.resetLayoutStatus.textContent = 'Pane layout reset.';
@@ -1189,6 +1237,7 @@ function bindControls() {
 }
 
 function initialize() {
+  musicTileTracer.log('initialize start');
   const mountRootCount = document.querySelectorAll('#music-tile-root').length;
   if (mountRootCount !== 1) {
     console.warn('[music-tile][startup-guard] Expected exactly one #music-tile-root container.', { mountRootCount });
@@ -1196,6 +1245,7 @@ function initialize() {
   const startupState = (globalThis[MUSIC_TILE_SINGLETON_KEY] ||= { count: 0 });
   startupState.count += 1;
   if (startupState.count > 1) {
+    musicTileTracer.log('initialize aborted duplicate startup', { startupCount: startupState.count });
     console.warn('[music-tile][startup-guard] Duplicate startup prevented; canonical startup already completed.', {
       startupCount: startupState.count,
     });
@@ -1203,6 +1253,7 @@ function initialize() {
   }
 
   loadMusicTileState().then((persisted) => {
+    musicTileTracer.log('state hydrate start');
     state.selection = persisted.selection;
     state.memory = persisted.memory;
     elements.hideBroken.checked = state.hideBroken;
@@ -1214,6 +1265,7 @@ function initialize() {
     renderPlaybackPanel();
     renderDebug();
 
+    musicTileTracer.log('state hydrate end', { source: persisted?.__tileDataMeta?.source || 'unknown' });
     console.info('[TILE DATA][music-tile] hydrate', {
       appId: 'music-tile',
       sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
@@ -1224,6 +1276,8 @@ function initialize() {
   initializePaneLayout();
   renderTasteCockpit();
   bindControls();
+  trackRootVisibilitySnapshots();
+  musicTileTracer.log('initialize continued');
 }
 
 initialize();
