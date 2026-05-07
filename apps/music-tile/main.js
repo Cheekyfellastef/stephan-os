@@ -151,6 +151,14 @@ const elements = {
 
 const flowController = createMusicTileFlowController();
 
+const startupLifecycle = {
+  paneMountComplete: false,
+  hydrationComplete: false,
+  tasteCockpitRendered: false,
+  paneBodiesRendered: false,
+  rootReady: false,
+};
+
 const state = {
   selection: { ...DEFAULT_SELECTION },
   memory: null,
@@ -1072,6 +1080,30 @@ function setDebugPaneVisibility(isVisible) {
   tilePaneManager.setPaneVisible('debug-pane', state.debugVisible);
 }
 
+
+function setWorkspaceReady(isReady, reason = '') {
+  const ready = Boolean(isReady);
+  startupLifecycle.rootReady = ready;
+  elements.root.dataset.workspaceReady = ready ? 'true' : 'false';
+  elements.root.setAttribute('aria-busy', ready ? 'false' : 'true');
+  if (ready) elements.root.classList.add('music-tile--ready');
+  else elements.root.classList.remove('music-tile--ready');
+  musicTileTracer.log('workspace ready state', { ready, reason });
+}
+
+function markPaneBodiesRendered() {
+  startupLifecycle.paneBodiesRendered = true;
+}
+
+function finalizeWorkspaceReadyIfComplete() {
+  const isComplete = startupLifecycle.paneMountComplete
+    && startupLifecycle.hydrationComplete
+    && startupLifecycle.tasteCockpitRendered
+    && startupLifecycle.paneBodiesRendered;
+  if (!isComplete || startupLifecycle.rootReady) return;
+  setWorkspaceReady(true, 'pane-mount + hydration + cockpit + pane-body renders complete');
+}
+
 function initializePaneLayout() {
   musicTileTracer.log('pane manager mount start');
   elements.root.classList.add('music-tile--canon-panes');
@@ -1236,7 +1268,7 @@ function bindControls() {
   });
 }
 
-function initialize() {
+async function initialize() {
   musicTileTracer.log('initialize start');
   const mountRootCount = document.querySelectorAll('#music-tile-root').length;
   if (mountRootCount !== 1) {
@@ -1252,32 +1284,38 @@ function initialize() {
     return;
   }
 
-  loadMusicTileState().then((persisted) => {
-    musicTileTracer.log('state hydrate start');
-    state.selection = persisted.selection;
-    state.memory = persisted.memory;
-    elements.hideBroken.checked = state.hideBroken;
-    elements.showExternalOnly.checked = state.showExternalOnly;
-    writeSelectionToUI(state.selection);
-    rebuildFlowQueue();
-    renderSummary();
-    renderQueue();
-    renderPlaybackPanel();
-    renderDebug();
+  setWorkspaceReady(false, 'startup');
+  initializePaneLayout();
+  startupLifecycle.paneMountComplete = true;
 
-    musicTileTracer.log('state hydrate end', { source: persisted?.__tileDataMeta?.source || 'unknown' });
-    console.info('[TILE DATA][music-tile] hydrate', {
-      appId: 'music-tile',
-      sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
-      backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null,
-    });
+  const persisted = await loadMusicTileState();
+  musicTileTracer.log('state hydrate start');
+  state.selection = persisted.selection;
+  state.memory = persisted.memory;
+  elements.hideBroken.checked = state.hideBroken;
+  elements.showExternalOnly.checked = state.showExternalOnly;
+  writeSelectionToUI(state.selection);
+  rebuildFlowQueue();
+  renderSummary();
+  renderQueue();
+  renderPlaybackPanel();
+  renderDebug();
+  markPaneBodiesRendered();
+
+  startupLifecycle.hydrationComplete = true;
+  musicTileTracer.log('state hydrate end', { source: persisted?.__tileDataMeta?.source || 'unknown' });
+  console.info('[TILE DATA][music-tile] hydrate', {
+    appId: 'music-tile',
+    sourceUsedOnLoad: persisted?.__tileDataMeta?.source || 'unknown',
+    backendDiagnostics: persisted?.__tileDataMeta?.diagnostics || null,
   });
 
-  initializePaneLayout();
   renderTasteCockpit();
+  startupLifecycle.tasteCockpitRendered = true;
+  finalizeWorkspaceReadyIfComplete();
   bindControls();
   trackRootVisibilitySnapshots();
-  musicTileTracer.log('initialize continued');
+  musicTileTracer.log('initialize completed');
 }
 
-initialize();
+void initialize();

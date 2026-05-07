@@ -7,7 +7,7 @@ const musicHtmlSource = readFileSync(new URL('../apps/music-tile/index.html', im
 const workspaceSource = readFileSync(new URL('../system/workspace.js', import.meta.url), 'utf8');
 
 function bodyOf(fnName) {
-  return musicMainSource.match(new RegExp(`function ${fnName}\\(\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] || '';
+  return musicMainSource.match(new RegExp(`function ${fnName}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] || '';
 }
 
 test('music tile render sequence instrumentation markers are present', () => {
@@ -26,17 +26,32 @@ test('only one canonical top-level music screen marker is defined', () => {
   assert.equal((musicHtmlSource.match(/data-music-screen="legacy-music"/g) || []).length, 0);
 });
 
-test('initialize mounts panes before rendering cockpit and does not replace root html', () => {
+test('initialize follows canonical mount → hydrate → pane render → cockpit render → ready order', () => {
   const init = bodyOf('initialize');
   assert.ok(init.indexOf('initializePaneLayout();') >= 0);
-  assert.ok(init.indexOf('renderTasteCockpit();') > init.indexOf('initializePaneLayout();'));
-  const afterRender = init.slice(init.indexOf('renderTasteCockpit();'));
-  assert.doesNotMatch(afterRender, /elements\.root\.innerHTML\s*=/);
-  assert.doesNotMatch(afterRender, /replaceChildren\(/);
+  assert.ok(init.indexOf('const persisted = await loadMusicTileState();') > init.indexOf('initializePaneLayout();'));
+  assert.ok(init.indexOf('renderSummary();') > init.indexOf('const persisted = await loadMusicTileState();'));
+  assert.ok(init.indexOf('renderQueue();') > init.indexOf('renderSummary();'));
+  assert.ok(init.indexOf('renderPlaybackPanel();') > init.indexOf('renderQueue();'));
+  assert.ok(init.indexOf('renderDebug();') > init.indexOf('renderPlaybackPanel();'));
+  assert.ok(init.indexOf('renderTasteCockpit();') > init.indexOf('renderDebug();'));
+  assert.ok(init.indexOf('finalizeWorkspaceReadyIfComplete();') > init.indexOf('renderTasteCockpit();'));
 });
 
-test('taste cockpit content and rating controls remain in canonical markup source', () => {
-  assert.match(musicMainSource, /taste-track-card/);
-  assert.match(musicMainSource, /renderTasteCards/);
-  assert.match(musicMainSource, /renderTasteCockpit\(\)/);
+test('post-hydration render functions are container-scoped and never replace root', () => {
+  ['renderSummary', 'renderQueue', 'renderPlaybackPanel', 'renderDebug'].forEach((fnName) => {
+    const body = bodyOf(fnName);
+    assert.doesNotMatch(body, /elements\.root\.innerHTML\s*=/);
+    assert.doesNotMatch(body, /elements\.root\.replaceChildren\(/);
+  });
+  assert.match(musicMainSource, /elements\.summary\.innerHTML\s*=/);
+  assert.match(musicMainSource, /elements\.queue\.innerHTML\s*=/);
+  assert.match(musicMainSource, /elements\.debugOutput\.textContent\s*=/);
+});
+
+test('workspace readiness and scaffold gating remain explicit', () => {
+  assert.match(musicMainSource, /function setWorkspaceReady\(/);
+  assert.match(musicMainSource, /workspaceReady/);
+  assert.match(musicHtmlSource, /data-workspace-ready="false"/);
+  assert.match(musicHtmlSource, /data-music-scaffold="true"/);
 });
