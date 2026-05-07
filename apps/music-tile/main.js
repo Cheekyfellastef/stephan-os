@@ -154,6 +154,15 @@ const flowController = createMusicTileFlowController();
 
 const controlBindingState = {
   discoveryDelegatedBound: false,
+  discoveryDirectBound: false,
+};
+
+const discoveryControlRefs = {
+  controlsPane: null,
+  artistInput: null,
+  buildButton: null,
+  startButton: null,
+  debugStatus: null,
 };
 
 const startupLifecycle = {
@@ -1186,45 +1195,102 @@ function setDiscoveryStatus(message, { isError = false } = {}) {
   elements.discoveryStatus.dataset.status = isError ? 'error' : 'info';
 }
 
+function setDiscoveryDebugStatus(message) {
+  const debugNode = discoveryControlRefs.debugStatus || document.getElementById('discovery-debug-status');
+  if (!debugNode) return;
+  debugNode.textContent = String(message || '').trim();
+}
+
+function isVisibleDiscoveryControl(node) {
+  if (!node) return false;
+  if (node.hidden) return false;
+  const style = globalThis.getComputedStyle?.(node);
+  if (style?.display === 'none' || style?.visibility === 'hidden' || style?.pointerEvents === 'none') return false;
+  return true;
+}
+
+function resolveVisibleDiscoveryControls() {
+  const controlsPane = elements.root?.querySelector?.('#music-controls-pane') || elements.controlsPane;
+  const artistInput = controlsPane?.querySelector?.('#artist-input') || elements.artists;
+  const buildButton = controlsPane?.querySelector?.('#smart-refresh-btn') || elements.smartRefresh;
+  const startButton = controlsPane?.querySelector?.('#flow-mode-btn') || elements.flowMode;
+  const debugStatus = controlsPane?.querySelector?.('#discovery-debug-status') || document.getElementById('discovery-debug-status');
+  discoveryControlRefs.controlsPane = controlsPane;
+  discoveryControlRefs.artistInput = artistInput;
+  discoveryControlRefs.buildButton = buildButton;
+  discoveryControlRefs.startButton = startButton;
+  discoveryControlRefs.debugStatus = debugStatus;
+  setDiscoveryDebugStatus(`controls bound | artist:${isVisibleDiscoveryControl(artistInput)} build:${isVisibleDiscoveryControl(buildButton)} start:${isVisibleDiscoveryControl(startButton)}`);
+}
+
 function readArtistInputValue() {
-  const value = String(elements.artists?.value || '').trim();
+  const inputNode = discoveryControlRefs.artistInput || elements.artists;
+  const value = String(inputNode?.value || '').trim();
   musicTileTracer.log('discovery input value captured', { value });
+  setDiscoveryDebugStatus(`input value captured: ${value || '(empty)'}`);
   return value;
 }
 
+function handleDiscoveryAction(triggerId, event) {
+  if (event) event.preventDefault();
+  setDiscoveryDebugStatus(`handler entered: ${triggerId}`);
+  const artistInputValue = readArtistInputValue();
+  if (!artistInputValue) {
+    setDiscoveryStatus('Enter at least one artist before building or starting a journey.', { isError: true });
+    musicTileTracer.log('discovery controls empty input', { triggerId });
+    setDiscoveryDebugStatus(`empty input blocked: ${triggerId}`);
+    return;
+  }
+  if (triggerId === 'smart-refresh-btn') {
+    musicTileTracer.log('build journey clicked', { triggerId });
+    setDiscoveryStatus(`Building journey for: ${artistInputValue}`);
+    setDiscoveryDebugStatus(`Build Journey clicked: ${artistInputValue}`);
+    void smartRefreshDiscovery().then(() => setDiscoveryDebugStatus(`journey state updated: build for ${artistInputValue}`))
+      .catch((error) => setDiscoveryDebugStatus(`error: ${error?.message || error}`));
+    return;
+  }
+  if (triggerId === 'flow-mode-btn') {
+    musicTileTracer.log('start journey clicked', { triggerId });
+    setDiscoveryStatus(`Starting journey for: ${artistInputValue}`);
+    setDiscoveryDebugStatus(`Start Journey clicked: ${artistInputValue}`);
+    state.sessionMode = 'flow';
+    elements.mode.value = 'flow';
+    rebuildFlowQueue();
+    renderSummary();
+    renderQueue();
+    playFlowFromCurrentQueue();
+    setDiscoveryDebugStatus(`journey state updated: start for ${artistInputValue}`);
+  }
+}
+
 function ensureDiscoveryControlBindings() {
-  if (controlBindingState.discoveryDelegatedBound) return;
-  const scope = elements.controlsPane;
+  resolveVisibleDiscoveryControls();
+  const scope = discoveryControlRefs.controlsPane || elements.controlsPane;
   if (!scope) return;
+  if (!controlBindingState.discoveryDirectBound) {
+    if (discoveryControlRefs.buildButton) {
+      discoveryControlRefs.buildButton.type = 'button';
+      discoveryControlRefs.buildButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        handleDiscoveryAction('smart-refresh-btn', event);
+      });
+    }
+    if (discoveryControlRefs.startButton) {
+      discoveryControlRefs.startButton.type = 'button';
+      discoveryControlRefs.startButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        handleDiscoveryAction('flow-mode-btn', event);
+      });
+    }
+    controlBindingState.discoveryDirectBound = true;
+  }
+  if (controlBindingState.discoveryDelegatedBound) return;
   musicTileTracer.log('discovery controls binding start');
   scope.addEventListener('click', (event) => {
     const trigger = event.target?.closest?.('#smart-refresh-btn, #flow-mode-btn');
     if (!trigger || !scope.contains(trigger)) return;
-
-    const artistInputValue = readArtistInputValue();
-    if (!artistInputValue) {
-      setDiscoveryStatus('Enter at least one artist before building or starting a journey.', { isError: true });
-      musicTileTracer.log('discovery controls empty input', { triggerId: trigger.id });
-      return;
-    }
-
-    if (trigger.id === 'smart-refresh-btn') {
-      musicTileTracer.log('build journey clicked', { triggerId: trigger.id });
-      setDiscoveryStatus(`Building journey for: ${artistInputValue}`);
-      void smartRefreshDiscovery();
-      return;
-    }
-
-    if (trigger.id === 'flow-mode-btn') {
-      musicTileTracer.log('start journey clicked', { triggerId: trigger.id });
-      setDiscoveryStatus(`Starting journey for: ${artistInputValue}`);
-      state.sessionMode = 'flow';
-      elements.mode.value = 'flow';
-      rebuildFlowQueue();
-      renderSummary();
-      renderQueue();
-      playFlowFromCurrentQueue();
-    }
+    setDiscoveryDebugStatus(`delegated click received: ${trigger.id}`);
+    handleDiscoveryAction(trigger.id, event);
   });
 
   controlBindingState.discoveryDelegatedBound = true;
