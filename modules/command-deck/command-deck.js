@@ -288,6 +288,15 @@ function launchProject(project, context, trigger = {}) {
 
 
   if (isMusicTile) {
+    console.info('[music-tile][sequence] command deck click', {
+      tileId: projectId,
+      projectId: project?.id || project?.folder || '',
+      launchEntry,
+      runtimeEntry,
+      compatibilityEntry: String(project?.entry || '').trim(),
+      resolvedEntry,
+      triggerType: trigger?.type || 'unknown',
+    });
     console.info('[CommandDeck][music-tile] Launch diagnostics', {
       appId: CANON_MUSIC_TILE_ID,
       launchStrategy: project.launchStrategy || 'workspace',

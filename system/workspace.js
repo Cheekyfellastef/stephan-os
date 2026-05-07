@@ -414,6 +414,14 @@ export const workspace = {
     content.setAttribute?.("data-workspace-shell-role", "canvas");
 
     const musicWorkspaceEntry = isMusicTileProject(project) ? resolveMusicTileWorkspaceEntry(project) : '';
+    if (isMusicTileProject(project)) {
+      console.info('[music-tile][sequence] workspace open request', {
+        incomingId: project?.id || project?.folder || '',
+        incomingEntry: String(project?.entry || '').trim(),
+        canonicalId: CANON_MUSIC_TILE_ID,
+        canonicalEntry: musicWorkspaceEntry || CANON_MUSIC_TILE_ENTRY,
+      });
+    }
     const effectiveProject = musicWorkspaceEntry ? { ...project, id: CANON_MUSIC_TILE_ID, folder: CANON_MUSIC_TILE_ID, entry: musicWorkspaceEntry } : project;
 
     const launch = beginWorkspaceSession(effectiveProject);
@@ -564,6 +572,9 @@ export const workspace = {
 
       const iframe = document.createElement("iframe");
       iframe.src = effectiveProject.entry;
+      if (isMusicTileProject(effectiveProject)) {
+        console.info('[music-tile][sequence] iframe src assigned', { src: iframe.src });
+      }
       iframe.style.width = "100%";
       iframe.style.height = "700px";
       iframe.style.border = "none";
@@ -588,6 +599,9 @@ export const workspace = {
       };
 
       iframe.addEventListener("load", () => {
+        if (isMusicTileProject(effectiveProject)) {
+          console.info('[music-tile][sequence] iframe load event', { src: iframe.src, activeProjectKey: workspaceRuntimeState.activeProjectKey });
+        }
         if (!isWorkspaceSessionCurrent(launch.sessionId)) {
           return;
         }
