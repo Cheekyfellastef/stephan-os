@@ -6,6 +6,7 @@ import { createUIRenderer } from '../../system/ui_renderer.js';
 
 const PANEL_POSITION_KEY = 'panelPositions';
 const PANEL_COLLAPSE_KEY = 'panelCollapsed';
+const GRID_COLUMNS = 12;
 const CANON_MOUNTED_ATTR = 'data-canon-pane-mounted';
 const CANON_MOUNT_HOST_ATTR = 'data-canon-pane-host';
 
@@ -103,6 +104,14 @@ function readPanelPositionsFromMemory(storage = globalThis.localStorage) {
     : {};
 }
 
+function readPanelCollapsedFromMemory(storage = globalThis.localStorage) {
+  const memory = readPersistedStephanosSessionMemory(storage);
+  const uiLayout = memory?.session?.ui?.uiLayout || {};
+  return uiLayout[PANEL_COLLAPSE_KEY] && typeof uiLayout[PANEL_COLLAPSE_KEY] === 'object'
+    ? { ...uiLayout[PANEL_COLLAPSE_KEY] }
+    : {};
+}
+
 function writePanelPositionsToMemory(positions, storage = globalThis.localStorage) {
   const memory = readPersistedStephanosSessionMemory(storage);
   const uiLayout = memory?.session?.ui?.uiLayout || {};
@@ -142,7 +151,10 @@ export function createCanonTilePaneManager({
 
   function applyGridLayout(defaultEntries = []) {
     const panelPositions = readPanelPositionsFromMemory(storage);
+    const panelCollapsed = readPanelCollapsedFromMemory(storage);
     let hasUpdates = false;
+    const container = globalThis.document?.getElementById?.('stephanos-panel-stack');
+    if (container) container.classList.add('stephanos-panel-stack-grid-slot');
     defaultEntries.forEach((entry) => {
       const normalizedPaneId = slugifySegment(entry?.paneId);
       if (!normalizedPaneId) return;
@@ -155,13 +167,24 @@ export function createCanonTilePaneManager({
       const gridW = Number(persisted?.gridW ?? entry?.gridW ?? 3);
       const gridH = Number(persisted?.gridH ?? entry?.gridH ?? 1);
       const order = Number(persisted?.order ?? entry?.order ?? 0);
+      const collapsed = Boolean(panelCollapsed[domId] ?? persisted?.collapsed);
       if (!Number.isFinite(gridX) || !Number.isFinite(gridY)) return;
-      panel.style.left = `${24 + ((gridX - 1) * 120)}px`;
-      panel.style.top = `${140 + ((gridY - 1) * 220)}px`;
-      panel.style.width = `${Math.max(300, (gridW * 120) - 16)}px`;
-      panel.style.height = `${Math.max(200, (gridH * 220) - 18)}px`;
-      panel.style.maxHeight = `${Math.max(200, (gridH * 220) - 18)}px`;
-      panelPositions[domId] = { gridX, gridY, gridW, gridH, order, collapsed: Boolean(persisted?.collapsed) };
+      panel.classList.add('stephanos-panel-grid-slot');
+      panel.dataset.layoutMode = 'grid-slot';
+      panel.dataset.gridX = String(gridX);
+      panel.dataset.gridY = String(gridY);
+      panel.dataset.gridW = String(gridW);
+      panel.dataset.gridH = String(gridH);
+      panel.dataset.gridCollapsedH = '1';
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.width = '';
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+      panel.style.gridColumn = `${Math.max(1, gridX)} / span ${Math.max(1, Math.min(GRID_COLUMNS, gridW))}`;
+      panel.style.gridRow = `${Math.max(1, gridY)} / span ${collapsed ? 1 : Math.max(1, gridH)}`;
+      panel.style.order = String(order);
+      panelPositions[domId] = { gridX, gridY, gridW, gridH, order, collapsed };
       hasUpdates = true;
     });
     if (hasUpdates) writePanelPositionsToMemory(panelPositions, storage);
