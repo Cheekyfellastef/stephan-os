@@ -5,35 +5,26 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../apps/music-tile/index.html', import.meta.url), 'utf8');
 
-test('discovery controls bind after pane mount/hydration readiness path', () => {
-  assert.match(source, /startupLifecycle\.paneMountComplete = true;[\s\S]*startupLifecycle\.hydrationComplete = true;[\s\S]*bindControls\(\);/);
-  assert.match(source, /function bindControls\(\) \{[\s\S]*ensureDiscoveryControlBindings\(\);/);
+test('discovery controls are wired directly to fixed cockpit controls', () => {
+  assert.match(source, /function wireEvents\(\) \{[\s\S]*buildBtn\?\.addEventListener\('click', buildJourney\);[\s\S]*startBtn\?\.addEventListener\('click', startJourney\);/);
+  assert.match(source, /const ui = \{[\s\S]*buildBtn: document\.getElementById\('build-journey-btn'\),[\s\S]*startBtn: document\.getElementById\('start-journey-btn'\),/);
 });
 
-test('build/start handlers read visible artist input and validate empty input', () => {
-  assert.match(source, /const artistInputValue = readArtistInputValue\(\);/);
-  assert.match(source, /Enter at least one artist before building or starting a journey/);
-  assert.match(source, /Building journey for: \$\{artistInputValue\}/);
-  assert.match(source, /Starting journey for: \$\{artistInputValue\}/);
+test('build/start handlers read artist input and enforce visible empty-input status', () => {
+  assert.match(source, /const artists = parseArtists\(ui\.artistInput\?\.value \|\| ''\);/);
+  assert.match(source, /Enter an artist to build a journey\./);
+  assert.match(source, /Building journey for: \$\{term\}/);
+  assert.match(source, /Starting journey for: \$\{term\}\./);
 });
 
-test('discovery controls use delegated click binding in canonical controls pane and avoid double bind', () => {
-  assert.match(source, /const controlBindingState = \{[\s\S]*discoveryDelegatedBound: false/);
-  assert.match(source, /discoveryDirectBound: false/);
-  assert.match(source, /if \(controlBindingState\.discoveryDelegatedBound\) return;/);
-  assert.match(source, /const scope = discoveryControlRefs\.controlsPane \|\| elements\.controlsPane;/);
-  assert.match(source, /discoveryControlRefs\.buildButton\.addEventListener\('click'/);
-  assert.match(source, /discoveryControlRefs\.startButton\.addEventListener\('click'/);
-  assert.match(source, /scope\.addEventListener\('click'/);
+test('discovery controls expose queue and media actions from fixed cockpit cards', () => {
+  assert.match(source, /Add to listening queue/);
+  assert.match(source, /const spotifyLabel = spotifyOpenUrl \? 'Open in Spotify' : 'Find on Spotify';/);
+  assert.match(source, /const youtubeLabel = youtubeUrl \? 'Open in YouTube' : 'Find on YouTube';/);
 });
 
-test('workspace readiness + inline status + taste cockpit are preserved', () => {
-  assert.match(source, /setWorkspaceReady\(true, 'pane-mount \+ hydration \+ cockpit \+ pane-body renders complete'\)/);
-  assert.match(source, /setDiscoveryStatus\('Ready\. Enter an artist to build or start a journey\.'\)/);
-  assert.match(source, /setDiscoveryDebugStatus\(`controls bound/);
-  assert.match(source, /renderTasteCockpit\(\);\s*startupLifecycle\.tasteCockpitRendered = true;/);
-  assert.match(html, /id="discovery-status"/);
-  assert.match(html, /id="discovery-debug-status"/);
-  assert.match(html, /id="smart-refresh-btn\" type=\"button\"/);
-  assert.match(html, /id="flow-mode-btn\" type=\"button\"/);
+test('fixed cockpit status surface exists and obsolete pane-era debug controls are not required', () => {
+  assert.match(html, /id="status-text"/);
+  assert.doesNotMatch(html, /id="discovery-status"/);
+  assert.doesNotMatch(html, /id="discovery-debug-status"/);
 });
