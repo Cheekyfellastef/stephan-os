@@ -10,7 +10,7 @@ const canonTilePaneSource = readFileSync(new URL('../shared/runtime/canonTilePan
 
 test('music tile enters canon pane mode and mounts one pane plane for major sections', () => {
   assert.match(musicMainSource, /elements\.root\.classList\.add\('music-tile--canon-panes'\)/);
-  assert.match(musicMainSource, /const tilePaneManager = createCanonTilePaneManager\(\{ appId: 'music-tile', layoutMode: 'grid-slot' \}\)/);
+  assert.match(musicMainSource, /const tilePaneManager = createCanonTilePaneManager\(\{ appId: 'music-tile', layoutMode: 'freeform' \}\)/);
   assert.match(musicHtmlSource, /id="music-title-pane"/);
   assert.match(musicMainSource, /title:\s*'Stephanos Music Journey'/);
   assert.match(musicMainSource, /title:\s*'Search \/ Build Journey'/);
@@ -86,15 +86,15 @@ test('music tile debug pane is canon-mounted and hidden by default until explici
 });
 
 
-test('music tile seeds canonical default desktop pane slots in preferred order', () => {
+test('music tile seeds canonical default desktop pane positions in preferred order', () => {
   assert.match(musicMainSource, /const MUSIC_TILE_DEFAULT_PANE_LAYOUT = \[/);
-  assert.match(musicMainSource, /\{ paneId: 'taste-cockpit-pane', gridX: 1, gridY: 1, gridW: 6, gridH: 2, order: 1 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'journey-pane', gridX: 1, gridY: 3, gridW: 6, gridH: 2, order: 4 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'search-build-pane', gridX: 7, gridY: 1, gridW: 3, gridH: 1, order: 2 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', gridX: 10, gridY: 1, gridW: 3, gridH: 1, order: 3 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'flow-now-playing-pane', gridX: 7, gridY: 2, gridW: 3, gridH: 1, order: 5 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'debug-pane', gridX: 10, gridY: 2, gridW: 3, gridH: 1, order: 6 \}/);
-  assert.match(musicMainSource, /\{ paneId: 'command-console-pane', gridX: 1, gridY: 5, gridW: 12, gridH: 1, order: 7 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'taste-cockpit-pane', x: 24, y: 72 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'search-build-pane', x: 448, y: 72 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'session-summary-pane', x: 872, y: 72 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'journey-pane', x: 24, y: 388 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'flow-now-playing-pane', x: 448, y: 388 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'debug-pane', x: 872, y: 388 \}/);
+  assert.match(musicMainSource, /\{ paneId: 'command-console-pane', x: 448, y: 612 \}/);
 });
 
 test('shared canon grid-slot mode compacts collapsed panels and keeps internal scroll behavior', () => {
@@ -105,12 +105,9 @@ test('shared canon grid-slot mode compacts collapsed panels and keeps internal s
   assert.match(sharedPaneCssSource, /#stephanos-panel-stack\.stephanos-panel-stack-grid-slot \.stephanos-panel \.stephanos-panel-header\s*\{[\s\S]*cursor:\s*default;[\s\S]*touch-action:\s*auto;/);
 });
 
-test('grid-slot pane layout ignores legacy freeform position schema and strips pixel transforms', () => {
-  assert.match(canonTilePaneSource, /const hasGridSchema = persisted && \['gridX', 'gridY', 'gridW', 'gridH'\]/);
-  assert.match(canonTilePaneSource, /panel\.style\.left = '';/);
-  assert.match(canonTilePaneSource, /panel\.style\.top = '';/);
-  assert.match(canonTilePaneSource, /panel\.style\.transform = '';/);
-  assert.match(canonTilePaneSource, /header\.setAttribute\('data-no-drag', 'true'\)/);
+test('freeform pane layout keeps canonical drag behavior intact for music panels', () => {
+  assert.doesNotMatch(musicMainSource, /layoutMode:\s*'grid-slot'/);
+  assert.match(musicMainSource, /layoutMode:\s*'freeform'/);
 });
 
 test('music tile hides duplicate bottom command-deck return control', () => {
