@@ -44,3 +44,5 @@ body [data-command-deck-return-control='bottom'] { display:none !important; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .col { max-height: 44vh; }
 }
+
+.feedback-input{width:100%;min-height:64px;}
