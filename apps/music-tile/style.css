@@ -31,6 +31,14 @@ body {
   background: radial-gradient(circle at top, #0a1d40 0%, #02060f 60%);
 }
 
+
+.music-tile[data-workspace-ready='false'] > [data-music-scaffold='true'] {
+  visibility: hidden;
+}
+
+.music-tile.music-tile--canon-panes[data-workspace-ready='false'] > [data-music-scaffold='true'] {
+  display: none;
+}
 .music-tile.music-tile--canon-panes {
   display: block;
   min-height: 100vh;

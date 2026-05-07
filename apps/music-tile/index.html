@@ -9,8 +9,8 @@
 <body>
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
-  <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern" data-music-screen="spotify-taste-cockpit">
-    <section
+  <main class="music-tile" id="music-tile-root" data-theme="afterlife-modern" data-music-screen="spotify-taste-cockpit" data-workspace-ready="false" aria-busy="true">
+    <section data-music-scaffold="true"
       class="panel header-panel"
       id="music-title-pane"
     >
@@ -18,7 +18,7 @@
       <p>YouTube provides content. Stephanos builds memory, taste, trust, and guided discovery.</p>
     </section>
 
-    <section class="panel controls-panel" id="music-controls-pane">
+    <section data-music-scaffold="true" class="panel controls-panel" id="music-controls-pane">
       <h2>Discovery Controls</h2>
       <div class="control-grid">
         <label>Artists (comma separated)
@@ -85,17 +85,17 @@
       <p id="reset-layout-status" class="muted" aria-live="polite"></p>
     </section>
 
-    <section class="panel summary-panel" id="music-summary-pane">
+    <section data-music-scaffold="true" class="panel summary-panel" id="music-summary-pane">
       <h2>Session Summary</h2>
       <div class="summary-grid" id="summary-grid"></div>
     </section>
 
-    <section class="panel journey-panel" id="music-taste-cockpit-pane">
+    <section data-music-scaffold="true" class="panel journey-panel" id="music-taste-cockpit-pane">
       <h2>Taste Cockpit</h2>
       <ol id="taste-cockpit-list" class="journey-list"></ol>
     </section>
 
-    <section class="panel playback-panel" id="music-flow-pane">
+    <section data-music-scaffold="true" class="panel playback-panel" id="music-flow-pane">
       <h2>Playback Route</h2>
       <p id="playback-status" class="muted">Route: YouTube external open</p>
       <p id="playback-now-playing" class="playback-now-playing">No item selected yet.</p>
@@ -121,7 +121,7 @@
       </div>
     </section>
 
-    <section class="panel command-panel" id="music-command-pane">
+    <section data-music-scaffold="true" class="panel command-panel" id="music-command-pane">
       <h2>Command Console (text-first)</h2>
       <div class="command-row">
         <input id="command-input" placeholder="show unseen Anyma sets" />
@@ -130,7 +130,7 @@
       <p class="muted" id="command-output">Intent: explain</p>
     </section>
 
-    <section class="panel journey-panel" id="music-results-pane">
+    <section data-music-scaffold="true" class="panel journey-panel" id="music-results-pane">
       <h2>Journey Queue</h2>
       <ol id="journey-list" class="journey-list"></ol>
     </section>
