@@ -61,6 +61,57 @@ function classifyAiFailure(error = null) {
   return 'request failed';
 }
 
+function extractJsonFromCodeFence(text = '') {
+  const match = String(text).match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match ? match[1].trim() : '';
+}
+
+function extractFirstJsonObject(text = '') {
+  const source = String(text || '');
+  const start = source.indexOf('{');
+  if (start < 0) return '';
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < source.length; i += 1) {
+    const char = source[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (char === '\\') escape = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return '';
+}
+
+export function parseAiJsonResponse(text = '') {
+  const raw = String(text || '').trim();
+  if (!raw) return { parsed: null, mode: 'text-fallback' };
+  try {
+    return { parsed: JSON.parse(raw), mode: 'structured-json' };
+  } catch {}
+  const fenced = extractJsonFromCodeFence(raw);
+  if (fenced) {
+    try {
+      return { parsed: JSON.parse(fenced), mode: 'structured-json' };
+    } catch {}
+  }
+  const objectLike = extractFirstJsonObject(raw);
+  if (objectLike) {
+    try {
+      return { parsed: JSON.parse(objectLike), mode: 'structured-json' };
+    } catch {}
+  }
+  return { parsed: null, mode: 'text-fallback' };
+}
+
 export async function askMusicAi(task, payload = {}) {
   const allowLiveVerification = payload.allowLiveVerification === true;
   const tasteDNA = payload.tasteDNA || null;
@@ -69,17 +120,13 @@ export async function askMusicAi(task, payload = {}) {
   const diagnostics = getMusicAiRuntimeDiagnostics();
   try {
     const response = await queryStephanosAI({
-    messages: [{ role: 'user', content: `Return JSON only. Task: ${task}\nPayload:\n${JSON.stringify(payload, null, 2)}` }],
+    messages: [{ role: 'user', content: `Task: ${task}\n${payload.promptInstructions || 'Return strict JSON only.'}\nPayload:\n${JSON.stringify(payload, null, 2)}` }],
     context: { tile: 'music-tile', task, allowLiveVerification, tasteDNA, ...payload },
     runtimeContext: context,
   });
     const text = String(response?.data?.reply || response?.reply || response?.text || '').trim();
-    try {
-      const parsed = JSON.parse(text);
-      return { ok: true, parsed, text, diagnostics: { ...diagnostics, requestReachedBackend: true, backendResponded: true, responseKind: 'structured-json', lastStatus: 200 } };
-    } catch {
-      return { ok: true, parsed: null, text, diagnostics: { ...diagnostics, requestReachedBackend: true, backendResponded: true, responseKind: 'text-fallback', lastStatus: 200 } };
-    }
+    const parsedResponse = parseAiJsonResponse(text);
+    return { ok: true, parsed: parsedResponse.parsed, text, diagnostics: { ...diagnostics, requestReachedBackend: true, backendResponded: true, responseKind: parsedResponse.mode, lastStatus: 200 } };
   } catch (error) {
     return { ok: false, message: classifyAiFailure(error), error: String(error?.message || 'Unknown AI error'), diagnostics: { ...diagnostics, requestReachedBackend: error?.status ? true : false, backendResponded: Boolean(error?.status), lastStatus: Number(error?.status || 0), lastError: String(error?.message || 'Unknown AI error') } };
   }
