@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { getMusicAiRuntimeDiagnostics, testMusicAiRoute } from '../apps/music-tile/engine/musicAiBridge.js';
+const musicTileJs = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 
 test('Music AI bridge preserves canonical /api/ai/chat path', () => {
   const diag = getMusicAiRuntimeDiagnostics();
@@ -26,4 +28,11 @@ test('AI route test handles success, 404, and fetch failure', async () => {
   const fail = await testMusicAiRoute({ fetchImpl: async () => { throw new Error('Failed to fetch'); } });
   assert.equal(fail.ok, false);
   assert.equal(fail.status, 0);
+});
+
+test('status messaging keeps rule fallback without declaring 200 as unavailable', () => {
+  assert.match(musicTileJs, /AI transport ready\./);
+  assert.match(musicTileJs, /Rule-based parser remains available\./);
+  assert.match(musicTileJs, /AI route missing\./);
+  assert.match(musicTileJs, /AI backend unreachable\/network error\./);
 });

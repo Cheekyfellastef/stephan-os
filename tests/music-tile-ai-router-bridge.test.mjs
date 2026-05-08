@@ -7,7 +7,12 @@ const js = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 
 const bridge = readFileSync(new URL('../apps/music-tile/engine/musicAiBridge.js', import.meta.url), 'utf8');
 
 test('Music Tile renders AI router status section', () => { assert.match(html, /id="ai-status-card"/); });
-test('AI unavailable fallback message exists', () => { assert.match(js, /AI router unavailable; rule-based interpretation active/); });
+test('AI status classifies transport/provider/response separately', () => {
+  assert.match(js, /AI transport ready\./);
+  assert.match(js, /Provider metadata unavailable\./);
+  assert.match(js, /Text fallback mode active\./);
+  assert.doesNotMatch(js, /AI router unavailable; rule-based interpretation active/);
+});
 test('Ask AI to interpret feedback button exists', () => { assert.match(js, /ai-interpret-feedback/); });
 test('AI feedback prompt includes track feedback and tasteDNA', () => { assert.match(js, /interpret-feedback/); assert.match(bridge, /tasteDNA/); });
 test('Structured AI trait suggestion renders in approval panel', () => { assert.match(js, /AI suggested trait changes/); });
