@@ -1,5 +1,7 @@
 import { queryStephanosAI, resolveStephanosAiBackendBaseUrl } from '../../../shared/ai/stephanosClient.mjs';
 
+const CANONICAL_AI_ENDPOINT_PATH = '/api/ai/chat';
+
 function parentRuntimeStatus() {
   const status = globalThis.parent?.runtimeStatusModel || globalThis.runtimeStatusModel || null;
   return status && typeof status === 'object' ? status : null;
@@ -37,8 +39,8 @@ export function getMusicAiRuntimeDiagnostics() {
   const status = getMusicAiStatus();
   const backendBaseUrl = resolveStephanosAiBackendBaseUrl(context);
   return {
-    endpointPath: '/api/ai/chat',
-    endpointUrl: `${backendBaseUrl.replace(/\/$/, '')}/api/ai/chat`,
+    endpointPath: CANONICAL_AI_ENDPOINT_PATH,
+    endpointUrl: `${backendBaseUrl.replace(/\/$/, '')}${CANONICAL_AI_ENDPOINT_PATH}`,
     backendBaseUrl,
     routeKind: status.routeKind,
     provider: status.provider,
@@ -83,3 +85,20 @@ export async function askMusicAi(task, payload = {}) {
   }
 }
 
+
+
+export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
+  const diagnostics = getMusicAiRuntimeDiagnostics();
+  try {
+    const res = await fetchImpl(diagnostics.endpointUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'health probe', provider: 'ollama', providerConfig: {}, runtimeContext: { tileContext: { tile: 'music-tile', task: 'probe' } } }),
+    });
+    const text = await res.text();
+    const snippet = String(text || '').slice(0, 180);
+    return { ok: res.ok, status: res.status, snippet, diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response' } };
+  } catch (error) {
+    return { ok: false, status: 0, snippet: String(error?.message || 'fetch failed'), diagnostics: { ...diagnostics, lastStatus: 0, backendResponded: false, requestReachedBackend: false, responseKind: 'network-failure', lastError: String(error?.message || 'fetch failed') } };
+  }
+}
