@@ -90,24 +90,65 @@ function updateAiStatus(extra = {}) {
 }
 function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textContent = text; updateAiStatus(diagnostics || {}); }
 async function askAiInterpretFeedback(track, feedback) {
- const res = await askMusicAi('interpret-feedback', { track, feedback, tasteDNA: state.tasteDNA });
+ const promptInstructions = `Return strict JSON only. No markdown. Schema:
+{
+  "summary": "short explanation",
+  "positiveTraits": [{ "name": "serious trance DNA", "weightDelta": 1, "reason": "..." }],
+  "negativeTraits": [{ "name": "too cheesy", "weightDelta": 1, "reason": "..." }],
+  "confidence": "low|medium|high",
+  "suggestedAction": "apply|review|ignore",
+  "plainEnglish": "human readable explanation"
+}`;
+ const res = await askMusicAi('interpret-feedback', { track, feedback, tasteDNA: state.tasteDNA, promptInstructions });
  if (!res.ok) { setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); return; }
- const parsed = res.parsed || {};
- renderAiSuggestion(parsed, track?.id);
- setAiAction('AI interpreted feedback. Review and approve suggestions before applying.', res.diagnostics);
+ if (res.parsed && typeof res.parsed === 'object') {
+   emitPresenceEvent({ kind: 'music.ai_response_structured', severity: 'info', summary: 'Music AI response parsed as structured JSON', impact: 'Structured trait suggestions are ready for review.', suggestedAction: 'Review and apply selected suggestions.' });
+   renderAiSuggestion(res.parsed, track?.id, { fallbackText: '' });
+   setAiAction('AI interpreted feedback. Review and approve suggestions before applying.', res.diagnostics);
+ } else {
+   emitPresenceEvent({ kind: 'music.ai_response_text_fallback', severity: 'notice', summary: 'Music AI response fell back to text mode', impact: 'Structured suggestions unavailable.', suggestedAction: 'Use rule-based parser or retry AI interpretation.' });
+   renderAiSuggestion({}, track?.id, { fallbackText: res.text || '' });
+   setAiAction('AI interpreted feedback in text fallback mode.', res.diagnostics);
+ }
 }
 async function askAiTrackTask(trackId, task, successPrefix){ const track=state.listeningDeck.find((t)=>`${t.id}`===`${trackId}`); if(!track){ setAiAction('Track not found for AI request.'); return; } setAiAction('Contacting Stephanos AI…'); const res=await askMusicAi(task,{ track, tasteDNA: state.tasteDNA, feedback: state.trackFeedback[trackId] || '' }); if(!res.ok){ setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); return; } const summary = res.parsed?.summary || res.text || 'AI response returned.'; ui.aiSuggestionPanel.innerHTML = `<h3>${successPrefix}</h3><div class="meta">${summary}</div>`; setAiAction(`${successPrefix} completed.`, res.diagnostics); }
-function renderAiSuggestion(parsed, trackId) {
+function renderAiSuggestion(parsed, trackId, options = {}) {
   const plus = Array.isArray(parsed.positiveTraits) ? parsed.positiveTraits : [];
   const minus = Array.isArray(parsed.negativeTraits) ? parsed.negativeTraits : [];
-  state.pendingAiSuggestion = { parsed, trackId };
-  ui.aiSuggestionPanel.innerHTML = `<h3>AI suggested trait changes</h3><div class="meta">${parsed.summary || 'No structured summary returned.'}</div><div>${plus.map((p)=>`<label><input type="checkbox" data-ai-kind="plus" data-ai-name="${p.name}" checked /> + ${p.name} (${p.weightDelta || 1})</label>`).join('') || '<div class="meta">No positive trait changes.</div>'}</div><div>${minus.map((p)=>`<label><input type="checkbox" data-ai-kind="minus" data-ai-name="${p.name}" checked /> - ${p.name} (${p.weightDelta || 1})</label>`).join('') || '<div class="meta">No negative trait changes.</div>'}</div><div class="actions"><button id="apply-ai-all-btn" type="button">Apply all</button><button id="apply-ai-selected-btn" type="button" class="ghost">Apply selected</button><button id="reject-ai-btn" type="button" class="ghost">Reject suggestion</button></div>`;
+  const confidence = parsed.confidence || 'unknown';
+  const summary = parsed.summary || '';
+  const fallbackText = String(options.fallbackText || '').trim();
+  const structured = plus.length > 0 || minus.length > 0 || summary;
+  state.pendingAiSuggestion = structured ? { parsed, trackId } : null;
+  if (!structured) {
+    ui.aiSuggestionPanel.innerHTML = `<h3>AI interpretation</h3><div class="meta">${fallbackText || 'No AI text response returned.'}</div><div class="meta">Structured suggestions unavailable.</div><div class="meta">Rule-based parser remains available.</div>`;
+    return;
+  }
+  ui.aiSuggestionPanel.innerHTML = `<h3>AI suggested trait changes</h3><div class="meta"><strong>Summary:</strong> ${summary || 'No structured summary returned.'}</div><div class="meta"><strong>Confidence:</strong> ${confidence}</div><div class="meta">${parsed.plainEnglish || ''}</div><div><strong>Positive trait suggestions</strong>${plus.map((p)=>`<label><input type="checkbox" data-ai-kind="plus" data-ai-name="${p.name}" data-ai-delta="${Number(p.weightDelta || 1)}" checked /> + ${p.name} (${Number(p.weightDelta || 1)}) — ${p.reason || ''}</label>`).join('') || '<div class="meta">No positive trait changes.</div>'}</div><div><strong>Negative trait suggestions</strong>${minus.map((p)=>`<label><input type="checkbox" data-ai-kind="minus" data-ai-name="${p.name}" data-ai-delta="${Number(p.weightDelta || 1)}" checked /> - ${p.name} (${Number(p.weightDelta || 1)}) — ${p.reason || ''}</label>`).join('') || '<div class="meta">No negative trait changes.</div>'}</div><div class="actions"><button id="apply-ai-all-btn" type="button">Apply all</button><button id="apply-ai-selected-btn" type="button" class="ghost">Apply selected</button><button id="reject-ai-btn" type="button" class="ghost">Reject suggestion</button></div>`;
   document.getElementById('apply-ai-all-btn')?.addEventListener('click', () => applyAiSuggestion(false));
   document.getElementById('apply-ai-selected-btn')?.addEventListener('click', () => applyAiSuggestion(true));
   document.getElementById('reject-ai-btn')?.addEventListener('click', rejectAiSuggestion);
 }
-function applyAiSuggestion(selectedOnly=true) { const sug=state.pendingAiSuggestion?.parsed||{}; const pick=(kind)=>Array.from(ui.aiSuggestionPanel.querySelectorAll(`[data-ai-kind="${kind}"]`)).filter((n)=>!selectedOnly||n.checked).map((n)=>n.dataset.aiName); pick('plus').forEach((name)=>ensureTrait(name,'positive',1,'ai-suggested')); pick('minus').forEach((name)=>ensureTrait(name,'negative',1,'ai-suggested')); pick('plus').forEach((n)=>{state.tasteDNA[n].weight=Number((state.tasteDNA[n].weight+0.6).toFixed(2));}); pick('minus').forEach((n)=>{state.tasteDNA[n].weight=Number((state.tasteDNA[n].weight+0.8).toFixed(2));}); state.pendingAiSuggestion=null; saveState(); renderAll(); setAiAction('AI suggestion applied with approval.'); }
-function rejectAiSuggestion(){ state.pendingAiSuggestion=null; ui.aiSuggestionPanel.innerHTML='<h3>AI suggested trait changes</h3><div class="meta">Suggestion rejected.</div>'; setAiAction('AI suggestion rejected.'); }
+function applyAiSuggestion(selectedOnly=true) {
+  const selected = Array.from(ui.aiSuggestionPanel.querySelectorAll('[data-ai-kind]')).filter((n)=>!selectedOnly || n.checked);
+  const applyEntry = (entry, polarity) => {
+    const name = String(entry.dataset.aiName || '').trim();
+    if (!name) return;
+    const delta = Number(entry.dataset.aiDelta || 1) || 1;
+    ensureTrait(name, polarity, 1, 'ai-suggested');
+    state.tasteDNA[name].weight = Number((state.tasteDNA[name].weight + delta).toFixed(2));
+    state.tasteDNA[name].contributions = Number(state.tasteDNA[name].contributions || 0) + 1;
+    state.tasteDNA[name].updatedAt = new Date().toISOString();
+  };
+  selected.filter((n)=>n.dataset.aiKind==='plus').forEach((entry)=>applyEntry(entry, 'positive'));
+  selected.filter((n)=>n.dataset.aiKind==='minus').forEach((entry)=>applyEntry(entry, 'negative'));
+  state.pendingAiSuggestion=null;
+  state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+  saveState(); renderAll();
+  emitPresenceEvent({ kind: 'music.ai_suggestion_applied', severity: 'info', summary: 'Music AI suggestions applied', impact: `Applied ${selected.length} AI suggestion(s) to Taste DNA.`, suggestedAction: 'Review Learning Signals and reranked journey candidates.' });
+  setAiAction('AI suggestion applied with approval.');
+}
+function rejectAiSuggestion(){ state.pendingAiSuggestion=null; ui.aiSuggestionPanel.innerHTML='<h3>AI suggested trait changes</h3><div class="meta">Suggestion rejected.</div>'; emitPresenceEvent({ kind: 'music.ai_suggestion_rejected', severity: 'notice', summary: 'Music AI suggestion rejected', impact: 'No Taste DNA changes were applied.', suggestedAction: 'Retry AI interpretation or apply rule-based feedback.' }); setAiAction('AI suggestion rejected.'); }
 function wireEvents() { ui.buildBtn?.addEventListener('click', buildJourney); ui.startBtn?.addEventListener('click', startJourney); ui.resetBtn?.addEventListener('click', resetAll); ui.resolveAllBtn?.addEventListener('click', resolveAllMissingLinks); ui.resolveAllAiBtn?.addEventListener('click', resolveAllMissingLinksAiAssisted); ui.addTraitBtn?.addEventListener('click', addCustomTrait); ui.aiBtn?.addEventListener('click', () => { ui.status.textContent = 'AI interpretation not connected yet. Rule-based interpretation applied.'; }); ui.aiBuildJourneyBtn?.addEventListener('click', buildJourneyAiAssisted); ui.aiSummariseDnaBtn?.addEventListener('click', summariseDnaWithAi); ui.aiSuggestTraitsBtn?.addEventListener('click', suggestTraitsWithAi); ui.testAiRouteBtn?.addEventListener('click', testAiRouteAction); ui.promoteMemoryBtn?.addEventListener('click', promoteTasteMemory); ui.addTrackBtn?.addEventListener('click', addTrackByUrl); }
 function ensureTrait(trait, polarity = 'positive', weight = 1, category = 'experimental') { const normalized = String(trait || '').trim(); if (!normalized) return; if (!state.tasteDNA[normalized]) state.tasteDNA[normalized] = { weight: Number(weight) || 1, polarity, category, contributions: 0, custom: true, updatedAt: new Date().toISOString() }; }
 function addCustomTrait() { const name = ui.addTraitName?.value?.trim(); if (!name) return; const polarity = ui.addTraitType?.value === 'negative' ? 'negative' : 'positive'; ensureTrait(name, polarity, Number(ui.addTraitWeight?.value || 1), 'experimental'); ui.addTraitName.value = ''; saveState(); renderAll(); }
@@ -159,7 +200,13 @@ function resolveYouTubeLink(trackId) { const track = state.listeningDeck.find((i
 }
 function resolveAllMissingLinks() { state.listeningDeck.forEach((track) => { const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); if (!spotify.valid || spotify.type !== 'track') resolveSpotifyLink(track.id); const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (!youtubeUrl) resolveYouTubeLink(track.id); }); }
 async function resolveAllMissingLinksAiAssisted(){ setAiAction('Contacting Stephanos AI…'); try { for (const track of state.listeningDeck){ const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (spotify.valid && spotify.type==='track' && youtubeUrl) continue; const res = await askMusicAi('resolve-links', { track, tasteDNA: state.tasteDNA, allowLiveVerification: getMusicAiStatus().freshWeb }); const parsed = res.parsed || {}; if (!res.ok) { state.linkMessages[track.id] = `AI router unavailable: ${res.message}. Open Spotify search or paste confirmed track URL.`; if (!spotify.valid || spotify.type!=='track') window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); continue; } const candidateUrl = parsed.spotifyCandidates?.[0]?.url || ''; const candidateRef = resolveSpotifyReference(candidateUrl); if (parsed.status === 'candidate-found' && candidateRef.valid && candidateRef.type === 'track') { track.spotifyUrl = candidateRef.openUrl; track.spotifyUri = candidateRef.uri; state.linkMessages[track.id] = 'Spotify candidate confirmed by AI response and saved as track URL.'; } else if (!spotify.valid || spotify.type!=='track') { state.linkMessages[track.id] = 'Spotify catalog search not configured; use Open Spotify search or paste track URL.'; window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); } if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); } setAiAction('AI-assisted link resolution completed.'); saveState(); renderAll(); } catch (error) { setAiAction('AI router unavailable: request failed. Rule-based mode remains active.', { lastError: String(error?.message || error) }); } }
-async function buildJourneyAiAssisted(){ const artists=parseArtists(ui.artistInput?.value || ''); if(!artists.length){ ui.status.textContent='Enter an artist to build a journey.'; return; } setAiAction('Contacting Stephanos AI…'); const payload={ artist: artists[0], controls:{}, tasteDNA: state.tasteDNA, ratings: state.ratings, candidateBank: state.candidates }; const res=await askMusicAi('build-journey', payload); if(!res.ok){ buildJourney(); setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); return; } const p=res.parsed||{}; state.aiJourney=p; if(Array.isArray(p.candidateHints)){ state.candidates = rankCandidatesByTaste(p.candidateHints.map((h,ix)=>({ id:`ai-${Date.now()}-${ix}`, title:h.title, artist:h.artist, why:{positiveHits:h.expectedTraits||[],rejectHits:[]}, aiSuggested:true, aiReason:h.reason })), buildTasteWeightsForState()); } saveState(); renderAll(); setAiAction('AI built a smarter journey.', res.diagnostics); }
+async function buildJourneyAiAssisted(){ const artists=parseArtists(ui.artistInput?.value || ''); if(!artists.length){ ui.status.textContent='Enter an artist to build a journey.'; return; } setAiAction('Contacting Stephanos AI…'); const promptInstructions = `Return strict JSON only. No markdown. Schema:
+{
+  "journeySummary": "...",
+  "candidateHints": [{"title":"...","artist":"...","reason":"...","matchedTraits":["dark club pressure"],"avoidanceNotes":["not vocal trance cheese"],"spotifySearchQuery":"...","youtubeSearchQuery":"..."}],
+  "avoid": ["cheesy vocal trance", "Goa / psy"],
+  "confidence": "low|medium|high"
+}`; const payload={ artist: artists[0], controls:{}, tasteDNA: state.tasteDNA, ratings: state.ratings, candidateBank: state.candidates, promptInstructions }; const res=await askMusicAi('build-journey', payload); if(!res.ok){ buildJourney(); setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); return; } const p=res.parsed||{}; state.aiJourney=p; if(Array.isArray(p.candidateHints)){ state.candidates = rankCandidatesByTaste(p.candidateHints.map((h,ix)=>({ id:`ai-${Date.now()}-${ix}`, title:h.title, artist:h.artist, why:{positiveHits:h.matchedTraits||[],rejectHits:h.avoidanceNotes||[]}, aiSuggested:true, aiReason:h.reason, spotifySearchQuery: h.spotifySearchQuery || '', youtubeSearchQuery: h.youtubeSearchQuery || '' })), buildTasteWeightsForState()); } saveState(); renderAll(); setAiAction('AI built a smarter journey.', res.diagnostics); }
 async function summariseDnaWithAi(){ setAiAction('Contacting Stephanos AI…'); const res=await askMusicAi('summarise-taste-dna',{ tasteDNA: state.tasteDNA, feedbackHistory: state.feedbackHistory }); if(!res.ok){ setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); return; } setAiAction(res.parsed?.summary || res.text || 'AI summary returned.', res.diagnostics); }
 async function suggestTraitsWithAi(){ setAiAction('Contacting Stephanos AI…'); const res=await askMusicAi('suggest-traits',{ tasteDNA: state.tasteDNA, history: state.feedbackHistory }); if(res.ok){ renderAiSuggestion(res.parsed||{}, null); setAiAction('AI trait suggestions ready for review.', res.diagnostics); } else setAiAction(`AI router unavailable: ${res.message}. Rule-based mode remains active.`, res.diagnostics || { lastError: res.error, reason: res.message }); }
 function promoteTasteMemory(){ const summary='User strongly likes echo-heavy haunting female vocals; rejects cheesy vocal trance; Universal Nation / Cream Courtyard serious trance architecture core anchor.'; if(!window.confirm('Promote strong Taste DNA to Stephanos memory?')) return; if(!tileMemoryBridge){ ui.memoryStatus.textContent='Durable memory promotion not connected yet; local Music Tile memory is active.'; return; } const result = tileMemoryBridge.submitMemoryCandidate({ key:'music.taste_dna.core', value:summary, type:'preference', tags:['music','taste-dna'], sourceRef:'apps/music-tile/main.js', memoryReason:'Operator approved strong Taste DNA promotion from Music Tile.' }); ui.memoryStatus.textContent = result.promoted ? 'Taste DNA promoted to Stephanos memory.' : 'Memory promotion rejected by guardrails.'; }
