@@ -53,6 +53,9 @@ export function getMusicAiRuntimeDiagnostics() {
 function classifyAiFailure(error = null) {
   if (!error) return 'request failed';
   if (error?.status === 404) return 'endpoint returned 404';
+  if (error?.status === 405) return 'method mismatch (expected POST)';
+  if (error?.status === 400) return 'payload invalid';
+  if (error?.status >= 500) return 'backend/provider error';
   if (error?.code === 'backend-timeout') return 'backend unreachable';
   if (/fetch|network|failed to fetch|cors|origin/i.test(String(error?.message || ''))) return 'backend unreachable';
   return 'request failed';
@@ -63,9 +66,6 @@ export async function askMusicAi(task, payload = {}) {
   const tasteDNA = payload.tasteDNA || null;
   const context = aiRouteContext();
   const status = getMusicAiStatus();
-  if (!status.available) {
-    return { ok: false, unavailable: true, message: 'AI router unavailable; rule-based interpretation active.' };
-  }
   const diagnostics = getMusicAiRuntimeDiagnostics();
   try {
     const response = await queryStephanosAI({
@@ -89,16 +89,25 @@ export async function askMusicAi(task, payload = {}) {
 
 export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
   const diagnostics = getMusicAiRuntimeDiagnostics();
+  const payload = {
+    prompt: 'Reply with: MUSIC_AI_ROUTE_OK',
+    provider: diagnostics.provider === 'unknown' ? 'ollama' : diagnostics.provider,
+    providerConfig: {},
+    providerConfigs: {},
+    runtimeContext: { ...aiRouteContext(), tileContext: { tile: 'music-tile', task: 'echo-test' } },
+  };
   try {
     const res = await fetchImpl(diagnostics.endpointUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: 'health probe', provider: 'ollama', providerConfig: {}, runtimeContext: { tileContext: { tile: 'music-tile', task: 'probe' } } }),
+      body: JSON.stringify(payload),
     });
     const text = await res.text();
     const snippet = String(text || '').slice(0, 180);
-    return { ok: res.ok, status: res.status, snippet, diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response' } };
+    let parsedText = '';
+    try { const parsed = JSON.parse(text); parsedText = String(parsed?.reply || parsed?.text || parsed?.data?.reply || ''); } catch {}
+    return { ok: res.ok, status: res.status, snippet, parsedText, requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: res.ok ? '' : classifyAiFailure({ status: res.status }), diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response' } };
   } catch (error) {
-    return { ok: false, status: 0, snippet: String(error?.message || 'fetch failed'), diagnostics: { ...diagnostics, lastStatus: 0, backendResponded: false, requestReachedBackend: false, responseKind: 'network-failure', lastError: String(error?.message || 'fetch failed') } };
+    return { ok: false, status: 0, snippet: String(error?.message || 'fetch failed'), parsedText: '', requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: classifyAiFailure(error), diagnostics: { ...diagnostics, lastStatus: 0, backendResponded: false, requestReachedBackend: false, responseKind: 'network-failure', lastError: String(error?.message || 'fetch failed') } };
   }
 }

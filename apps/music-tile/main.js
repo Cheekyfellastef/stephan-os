@@ -7,6 +7,7 @@ import { askMusicAi, getMusicAiStatus, getMusicAiRuntimeDiagnostics, testMusicAi
 import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
 import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismissPresenceItem, approvePresenceAction } from '../../shared/runtime/stephanosPresenceModel.mjs';
+import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
@@ -22,8 +23,8 @@ let presenceState = { status: 'idle', voiceMessages: [], awarenessQueue: [], rec
 const tileMemoryBridge = (() => { try { return createTileMemoryBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 
 function emitPresenceEvent(event = {}) {
-  const payload = { sourceTile: 'music', ...event };
-  window.dispatchEvent(new CustomEvent('stephanos:presence-event', { detail: payload }));
+  const payload = { sourceTile: 'music', kind: event.kind?.startsWith('music.') ? event.kind : `music.${event.kind || 'event'}`, ...event };
+  emitGlobalPresenceEvent(payload);
   tileEventBridge?.emitEvent?.({ type: `music.${payload.kind || 'event'}`, payload });
   presenceState = reducePresenceState(presenceState, payload);
   renderPresencePanel();
@@ -45,10 +46,10 @@ async function testAiRouteAction() {
   const result = await testMusicAiRoute();
   if (result.ok) {
     setAiAction(`AI router ready. Test AI route succeeded (${result.status}).`, result.diagnostics);
-    emitPresenceEvent({ kind: 'ai_route_ready', severity: 'info', summary: 'Music Tile AI router ready', impact: `AI transport reachable: status ${result.status}.`, suggestedAction: 'Use AI journey tools.' });
+    emitPresenceEvent({ kind: 'music.ai_route_ready', severity: 'info', summary: 'Music Tile AI router ready', impact: `AI transport reachable: status ${result.status}.`, suggestedAction: 'Use AI journey tools.' });
   } else {
-    setAiAction(`AI transport failed: ${result.status || result.snippet}. Rule-based mode active.`, result.diagnostics);
-    emitPresenceEvent({ kind: 'ai_route_unavailable', severity: 'warning', summary: 'Music Tile AI router unavailable', impact: 'AI journey building and interpretation degraded; rule-based mode remains active.', suggestedAction: 'Test or repair the Music AI bridge.' });
+    setAiAction(`AI transport failed: ${result.failureReason || result.status || result.snippet}. Rule-based mode active.`, result.diagnostics);
+    emitPresenceEvent({ kind: 'music.ai_route_unavailable', severity: 'warning', summary: 'Music Tile AI router unavailable', impact: 'AI journey building and interpretation degraded; rule-based mode remains active.', suggestedAction: 'Test or repair the Music AI bridge.' });
   }
 }
 
