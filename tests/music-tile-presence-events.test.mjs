@@ -7,6 +7,7 @@ test('Music tile emits presence events for key interactions', () => {
   assert.match(js, /Track rated:/);
   assert.match(js, /feedback_applied/);
   assert.match(js, /journey_built/);
+  assert.match(js, /music\.ai_transport_ready/);
   assert.match(js, /kind: 'music\.ai_route_unavailable'/);
   assert.match(js, /emitGlobalPresenceEvent/);
 });

@@ -46,7 +46,7 @@ async function testAiRouteAction() {
   const result = await testMusicAiRoute();
   if (result.ok) {
     setAiAction(`AI router ready. Test AI route succeeded (${result.status}).`, result.diagnostics);
-    emitPresenceEvent({ kind: 'music.ai_route_ready', severity: 'info', summary: 'Music Tile AI router ready', impact: `AI transport reachable: status ${result.status}.`, suggestedAction: 'Use AI journey tools.' });
+    emitPresenceEvent({ kind: 'music.ai_transport_ready', severity: 'info', summary: 'Music Tile AI router ready', impact: `AI transport reachable: status ${result.status}.`, suggestedAction: 'Use AI journey tools.' });
   } else {
     setAiAction(`AI transport failed: ${result.failureReason || result.status || result.snippet}. Rule-based mode active.`, result.diagnostics);
     emitPresenceEvent({ kind: 'music.ai_route_unavailable', severity: 'warning', summary: 'Music Tile AI router unavailable', impact: 'AI journey building and interpretation degraded; rule-based mode remains active.', suggestedAction: 'Test or repair the Music AI bridge.' });
@@ -59,10 +59,23 @@ function updateAiStatus(extra = {}) {
   const status = getMusicAiStatus();
   const runtime = getMusicAiRuntimeDiagnostics();
   if (!ui.aiStatusText) return;
-  const line = status.available ? 'AI router ready' : 'AI router unavailable; rule-based interpretation active';
+  const normalizedStatus = Number(extra.lastStatus || 0);
+  const backendResponded = extra.backendResponded === true;
+  const transportReady = normalizedStatus === 200 && backendResponded;
+  const providerMetadataUnavailable = status.routeKind === 'unknown' || status.provider === 'unknown';
+  const responseMode = String(extra.responseKind || '').toLowerCase();
+  let transportStatusLine = 'AI transport unknown.';
+  if (transportReady) transportStatusLine = 'AI transport ready.';
+  else if (normalizedStatus === 404) transportStatusLine = 'AI route missing.';
+  else if (normalizedStatus === 400) transportStatusLine = 'AI payload invalid.';
+  else if (normalizedStatus === 405) transportStatusLine = 'AI method mismatch.';
+  else if (normalizedStatus >= 500) transportStatusLine = 'AI backend/provider error.';
+  else if (normalizedStatus === 0 || extra.requestReachedBackend === false || extra.lastError) transportStatusLine = 'AI backend unreachable/network error.';
+  const providerLine = providerMetadataUnavailable ? 'Provider metadata unavailable.' : `Route=${status.routeKind}; Provider=${status.provider}.`;
+  const responseModeLine = responseMode === 'text-fallback' ? 'Text fallback mode active.' : '';
   const freshness = status.freshWeb ? '' : ' Fresh web unavailable; AI can suggest searches but not verify live links.';
   const reason = extra.reason ? ` Reason=${extra.reason}.` : '';
-  ui.aiStatusText.textContent = `${line}. ${status.modeLabel}. Route=${status.routeKind}; Provider=${status.provider}.${freshness}${reason}`;
+  ui.aiStatusText.textContent = `${transportStatusLine} ${providerLine} ${responseModeLine} Rule-based parser remains available. ${status.modeLabel}.${freshness}${reason}`.replace(/\s+/g, ' ').trim();
   const diagnostics = [
     `Endpoint: ${runtime.endpointUrl}`,
     `Backend base: ${runtime.backendBaseUrl}`,
