@@ -32,16 +32,20 @@
       </label>
       <button id="add-track-url-btn" type="button">Add Track</button>
       <button id="resolve-all-links-btn" type="button" class="ghost">Resolve All Missing Links</button>
+      <button id="resolve-all-links-ai-btn" type="button" class="ghost">Resolve All Missing Links, AI-assisted</button>
+      <button id="ask-ai-build-journey-btn" type="button">Ask AI to build smarter journey</button>
+      <button id="ask-ai-summarise-dna-btn" type="button" class="ghost">Ask AI to summarise Taste DNA</button>
+      <button id="ask-ai-suggest-traits-btn" type="button" class="ghost">Ask AI to suggest new traits</button>
       <p id="status-text" aria-live="polite">Ready. Build a journey to generate candidates.</p>
     </section>
 
     <section class="dashboard-grid">
       <section class="col" id="taste-col">
         <h2>Taste DNA</h2>
-        <div id="positive-anchors"></div>
+        <div id="ai-status-card" class="card"><h3>Stephanos AI</h3><div id="ai-status-text">AI status unknown.</div><div id="ai-last-action" class="meta">No AI actions yet.</div><div class="meta">Rule-based parser always active.</div></div><div id="positive-anchors"></div>
         <div id="reject-patterns"></div>
         <div id="rating-counts"></div>
-        <div id="taste-dna-editor" class="card"><h3>Taste DNA Editor</h3><div class="actions"><input id="trait-name-input" placeholder="trait name input" /><input id="trait-weight-input" type="number" step="0.2" value="1" placeholder="optional weight input" /><select id="trait-polarity-input"><option value="positive">Add positive trait</option><option value="negative">Add negative trait</option></select><button id="save-trait-btn" type="button">save trait button</button></div><button id="ask-ai-feedback-btn" type="button" disabled>Ask AI to interpret feedback</button><div id="taste-dna-traits" class="stack"></div></div><div id="learning-signals"></div>
+        <div id="taste-dna-editor" class="card"><h3>Taste DNA Editor</h3><div class="actions"><input id="trait-name-input" placeholder="trait name input" /><input id="trait-weight-input" type="number" step="0.2" value="1" placeholder="optional weight input" /><select id="trait-polarity-input"><option value="positive">Add positive trait</option><option value="negative">Add negative trait</option></select><button id="save-trait-btn" type="button">save trait button</button></div><button id="ask-ai-feedback-btn" type="button" disabled>Ask AI to interpret feedback</button><div id="taste-dna-traits" class="stack"></div></div><div id="ai-suggestion-panel" class="card"></div><div id="learning-signals"></div><div id="memory-promotion-card" class="card"><h3>Stephanos Memory</h3><button id="promote-memory-btn" type="button" class="ghost">Promote strong Taste DNA to Stephanos memory</button><div id="memory-promotion-status" class="meta">Durable memory promotion not connected yet; local Music Tile memory is active.</div></div>
       </section>
 
       <section class="col" id="journey-col">
