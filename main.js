@@ -34,6 +34,15 @@ import {
   markRootLandingLoaded,
   markStartupSettled
 } from "./shared/runtime/startupLaunchDiagnostics.mjs";
+import {
+  emitPresenceEvent as emitGlobalPresenceEvent,
+  getPresenceState,
+  subscribePresenceEvents,
+  getPresenceState as getSharedPresenceState,
+  acknowledgePresenceItem as acknowledgeSharedPresenceItem,
+  dismissPresenceItem as dismissSharedPresenceItem,
+  approvePresenceAction as approveSharedPresenceAction,
+} from "./shared/runtime/stephanosPresenceBridge.mjs";
 
 console.log("Stephanos OS booting");
 console.info("[Stephanos Early Bootstrap] launcher main.js module evaluated", { href: globalThis.location?.href || "", readyState: document.readyState });
@@ -109,12 +118,42 @@ function ensureLauncherDiagnosticsMount() {
         <div>Collecting launcher fingerprint…</div>
       </aside>
       <section id="launcher-truth-panel-mount" aria-live="polite"></section>
+      <section id="launcher-presence-panel" class="runtime-diagnostics-card secondary" aria-live="polite"></section>
       <pre id="runtime-diagnostics-json"></pre>
     </details>
   `;
 
   return mount.querySelector("#launcher-diagnostics-panel");
 }
+
+function renderSharedPresencePanel() {
+  const panel = document.getElementById("launcher-presence-panel");
+  if (!panel) return;
+  const presence = getSharedPresenceState() || getPresenceState() || {};
+  const queue = Array.isArray(presence.awarenessQueue) ? presence.awarenessQueue.slice(0, 5) : [];
+  const events = Array.isArray(presence.recentEvents) ? presence.recentEvents.slice(0, 5) : [];
+  const summary = presence.lastSpokenSummary || queue[0]?.summary || "Stephanos presence idle.";
+  panel.innerHTML = `
+    <h4>Stephanos says</h4>
+    <p>${summary}</p>
+    <h5>Awareness Queue</h5>
+    <div>${queue.map((item) => `<div><strong>${item.summary || item.kind}</strong> — ${item.impact || ''} <button data-presence-action="ack" data-id="${item.id}">Acknowledge</button> <button data-presence-action="dismiss" data-id="${item.id}">Dismiss</button>${item.requiresApproval ? ` <button data-presence-action="approve" data-id="${item.id}">Approve</button>` : ''}</div>`).join("") || "<div>No queued awareness items.</div>"}</div>
+    <h5>Recent Events</h5>
+    <div>${events.map((item) => `<div>${item.kind}</div>`).join("") || "<div>No events yet.</div>"}</div>
+  `;
+  panel.querySelectorAll("[data-presence-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.getAttribute("data-id") || "";
+      const action = button.getAttribute("data-presence-action");
+      if (action === "ack") acknowledgeSharedPresenceItem(id);
+      if (action === "dismiss") dismissSharedPresenceItem(id);
+      if (action === "approve") approveSharedPresenceAction(id);
+      renderSharedPresencePanel();
+    });
+  });
+}
+
+subscribePresenceEvents(() => renderSharedPresencePanel());
 
 function persistLauncherSurfacePreferences() {
   const currentMemory = readPersistedStephanosSessionMemory();
@@ -237,6 +276,18 @@ function applyLauncherSurfaceVisibility() {
   }
 
   updateTruthPanel({ projects: getRuntimeProjects(window.__stephanosRuntime?.context || {}), workspace: window.__stephanosRuntime?.context?.workspace || null });
+  renderSharedPresencePanel();
+  if (buildTruthSignals.servedDistTruthAvailable === false) {
+    emitGlobalPresenceEvent({
+      sourceTile: "system",
+      kind: "system.backend_degraded",
+      severity: "warning",
+      summary: "Backend reachable checks degraded",
+      impact: "Build/runtime transport truth is degraded; verify backend route and provider availability.",
+      suggestedAction: "Run stephanos:verify and inspect route truth diagnostics.",
+      requiresApproval: false,
+    });
+  }
 }
 
 window.applyLauncherSurfaceVisibility = function applyLauncherSurfaceVisibilityFromSystemPanel(nextState = {}) {
