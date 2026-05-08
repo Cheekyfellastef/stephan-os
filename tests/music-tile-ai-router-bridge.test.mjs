@@ -19,3 +19,10 @@ test('Link resolution without search route prepares actions not fake link', () =
 test('Search URLs are not saved as spotifyUrl', () => { assert.match(js, /Spotify search link or invalid link/); });
 test('Resolve all missing links AI-assisted is resilient', () => { assert.match(js, /resolveAllMissingLinksAiAssisted/); });
 test('Promote to Stephanos memory requires approval + fallback', () => { assert.match(js, /Promote strong Taste DNA to Stephanos memory/); assert.match(js, /Durable memory promotion not connected yet/); });
+
+
+test('AI diagnostics show endpoint and backend base details', () => { assert.match(js, /Endpoint:/); assert.match(js, /Backend base:/); assert.match(bridge, /endpointUrl/); });
+test('AI buttons show immediate contacting status', () => { assert.match(js, /Contacting Stephanos AI…/); });
+test('AI failures are visible with explicit fallback reason', () => { assert.match(js, /AI router unavailable:/); assert.match(bridge, /endpoint returned 404/); });
+test('Music Tile AI bridge uses shared backend resolver path', () => { assert.match(bridge, /resolveStephanosAiBackendBaseUrl/); assert.match(bridge, /\/api\/ai\/chat/); });
+test('Spotify not configured message is honest fallback language', () => { assert.match(js, /Spotify catalog search not configured/); assert.match(js, /paste track URL/); });
