@@ -27,7 +27,7 @@ test('listening/discovery cards use open url for Open in Spotify and search fall
   assert.match(js, />Open in Spotify</);
   assert.match(js, /spotifyHref = spotifyOpenUrl \|\| buildSpotifySearchUrl\(track\)/);
   assert.match(js, />Find on Spotify</);
-  assert.match(js, /Needs Spotify link/);
+  assert.match(js, /Needs verified Spotify link/);
 });
 
 test('spotify search refs are rejected from open/embed card paths', () => {
