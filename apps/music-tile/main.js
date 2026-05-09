@@ -63,40 +63,35 @@ async function testAiRouteAction() {
   }
 }
 
+
+function buildMusicAiStatusView(diagnostics = {}) {
+  const status = getMusicAiStatus();
+  const runtime = getMusicAiRuntimeDiagnostics();
+  const lastStatus = diagnostics.lastStatus == null ? null : Number(diagnostics.lastStatus);
+  const lastError = String(diagnostics.lastError || '').trim();
+  const reached = diagnostics.requestReachedBackend;
+  const responded = diagnostics.backendResponded;
+  const responseMode = diagnostics.responseKind || 'n/a';
+  const providerUnknown = status.routeKind === 'unknown' || status.provider === 'unknown';
+  let statusKind = 'unknown'; let headline = 'AI transport status unknown. Press Test AI route.'; let badge='music-badge';
+  if ((lastStatus == null || Number.isNaN(lastStatus) || lastStatus <= 0) && reached !== true && !lastError) { statusKind='not-tested'; headline='AI transport not tested yet. Press Test AI route.'; badge='music-badge'; }
+  else if (lastError && (reached === false || lastStatus === 0)) { statusKind='network-error'; headline=`AI backend unreachable/network error. ${lastError}`; badge='music-badge music-badge--warning'; }
+  else if (lastStatus === 404) { statusKind='route-missing'; headline='AI route missing. 404 /api/ai/chat.'; badge='music-badge music-badge--warning'; }
+  else if (lastStatus === 405) { statusKind='method-mismatch'; headline='AI method mismatch: 405.'; badge='music-badge music-badge--warning'; }
+  else if (lastStatus === 400) { statusKind='payload-invalid'; headline='AI payload invalid: 400.'; badge='music-badge music-badge--warning'; }
+  else if (lastStatus >= 500) { statusKind='backend-error'; headline=`AI backend/provider error: ${lastStatus}.`; badge='music-badge music-badge--warning'; }
+  else if (lastStatus === 200 && responded === true) { statusKind = providerUnknown ? 'degraded' : 'ready'; headline = providerUnknown ? 'AI transport ready. Provider metadata unavailable.' : 'AI transport ready.'; badge='music-badge music-badge--success'; }
+  if (responseMode === 'text-fallback') headline += ' Text fallback mode active.';
+  return { statusKind, headline, details:'Rule-based parser remains available.', badge, shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
+}
+
 const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel();
 
 function updateAiStatus(extra = {}) {
-  const status = getMusicAiStatus();
-  const runtime = getMusicAiRuntimeDiagnostics();
   if (!ui.aiStatusText) return;
-  const normalizedStatus = Number(extra.lastStatus || 0);
-  const backendResponded = extra.backendResponded === true;
-  const transportReady = normalizedStatus === 200 && backendResponded;
-  const providerMetadataUnavailable = status.routeKind === 'unknown' || status.provider === 'unknown';
-  const responseMode = String(extra.responseKind || '').toLowerCase();
-  let transportStatusLine = 'AI transport unknown.';
-  if (transportReady) transportStatusLine = 'AI transport ready.';
-  else if (normalizedStatus === 404) transportStatusLine = 'AI route missing.';
-  else if (normalizedStatus === 400) transportStatusLine = 'AI payload invalid.';
-  else if (normalizedStatus === 405) transportStatusLine = 'AI method mismatch.';
-  else if (normalizedStatus >= 500) transportStatusLine = 'AI backend/provider error.';
-  else if (normalizedStatus === 0 || extra.requestReachedBackend === false || extra.lastError) transportStatusLine = 'AI backend unreachable/network error.';
-  const providerLine = providerMetadataUnavailable ? 'Provider metadata unavailable.' : `Route=${status.routeKind}; Provider=${status.provider}.`;
-  const responseModeLine = responseMode === 'text-fallback' ? 'Text fallback mode active.' : '';
-  const freshness = status.freshWeb ? '' : ' Fresh web unavailable; AI can suggest searches but not verify live links.';
-  const reason = extra.reason ? ` Reason=${extra.reason}.` : '';
-  ui.aiStatusText.textContent = `${transportStatusLine} ${providerLine} ${responseModeLine} Rule-based parser remains available. ${status.modeLabel}.${freshness}${reason}`.replace(/\s+/g, ' ').trim();
-  const diagnostics = [
-    `Endpoint: ${runtime.endpointUrl}`,
-    `Backend base: ${runtime.backendBaseUrl}`,
-    `Last status: ${extra.lastStatus ?? 'n/a'}`,
-    `Last error: ${extra.lastError || 'none'}`,
-    `Route/provider: ${status.routeKind}/${status.provider}`,
-    `Request reached backend: ${extra.requestReachedBackend === true ? 'yes' : extra.requestReachedBackend === false ? 'no' : 'unknown'}`,
-    `Backend responded: ${extra.backendResponded === true ? 'yes' : extra.backendResponded === false ? 'no' : 'unknown'}`,
-    `Response mode: ${extra.responseKind || 'n/a'}`,
-  ];
-  if (ui.aiLastAction) ui.aiLastAction.innerHTML = diagnostics.map((lineText) => `<div>${lineText}</div>`).join('');
+  const view = buildMusicAiStatusView(extra);
+  ui.aiStatusText.innerHTML = `<span class="${view.badge}">${view.statusKind}</span> ${view.headline} ${view.details}`;
+  if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${lineText}</div>`).join('')}</details>`;
 }
 function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textContent = text; updateAiStatus(diagnostics || {}); }
 async function askAiInterpretFeedback(track, feedback) {
@@ -295,7 +290,7 @@ function renderAiResultPanel({title, sourceLabel, status='Structured', summary='
 function renderAiSuggestions(){ if (!ui.aiSuggestionsList) return; const list = state.aiSuggestions || []; ui.aiSuggestionsList.innerHTML = list.length ? list.slice().reverse().map((s)=>`<article class="card"><strong>${s.title || 'AI suggestion'}</strong><div class="meta">${s.summary || s.plainText || 'No summary.'}</div><div class="meta">${s.type || 'unknown'} · ${s.status || 'pending'}</div></article>`).join('') : '<div class="meta">No AI suggestions yet. Ask Stephanos to build a smarter journey or interpret feedback.</div>'; }
 function renderPendingTasteDnaChanges(){ if (!ui.pendingTasteChanges) return; const rows = (state.pendingTasteDnaChanges || []).filter((x)=>x.status==='pending'); ui.pendingTasteChanges.innerHTML = `<h3>Pending Taste DNA Changes</h3>${rows.length ? rows.map((c)=>`<div class="meta">${c.traitName} ${c.currentWeight} → ${c.proposedWeight} (${c.weightDelta >= 0 ? '+' : ''}${c.weightDelta})</div>`).join('') : '<div class="meta">No pending suggestions.</div>'}`; }
 function renderAppliedTasteDnaChanges(){ if (!ui.appliedTasteChanges) return; const rows = state.appliedTasteDnaChanges || []; ui.appliedTasteChanges.innerHTML = `<h3>Recently Applied Taste DNA Changes</h3>${rows.length ? rows.slice(-8).reverse().map((c)=>`<div class="meta">${c.traitName}: ${c.oldWeight} → ${c.newWeight} (${c.reason || 'applied'})</div>`).join('') : '<div class="meta">No AI Taste DNA changes applied yet.</div>'}`; }
-function renderImmersionSession(){ if (!ui.immersionSessionPanel) return; const session = state.immersionSession || state.aiImmersionSession; if (!session) { ui.immersionSessionPanel.innerHTML = '<h3>Immersion Session</h3><div class="meta">No immersion session yet. Build one from the current Taste DNA.</div>'; return; } ui.immersionSessionPanel.innerHTML = `<h3>Immersion Session</h3><div class="meta">${session.title || 'Session'}</div><div class="meta">${session.intent || ''}</div>${(session.phases||[]).map((p)=>`<div class="card"><strong>${p.name}</strong><div class="meta">${p.description || ''}</div></div>`).join('')}`; }
+function renderImmersionSession(){ if (!ui.immersionSessionPanel) return; const session = state.immersionSession || state.aiImmersionSession; if (!session) { ui.immersionSessionPanel.innerHTML = '<h3>Immersion Session</h3><div class="music-empty-state">No immersion session yet. Build one from current Taste DNA.</div>'; return; } ui.immersionSessionPanel.innerHTML = `<h3>Immersion Session</h3><div class="music-card"><div class="music-card-title">${session.title || 'Session'}</div><div class="music-card-meta">${session.intent || ''}</div></div>${(session.phases||[]).map((p)=>`<article class="music-card"><div class="music-card-title">${p.name}</div><div class="music-card-meta">${p.description || ''}</div><div class="tags">${(p.traits||[]).map((t)=>`<span class='music-chip music-chip--positive'>${t}</span>`).join('')}</div></article>`).join('')}`; }
 function renderJourneyQueue(){ if (!ui.journeyQueue) return; const rows = state.candidates || []; ui.journeyQueue.innerHTML = rows.length ? rows.slice(0,8).map((t)=>`<article class="card"><strong>${t.title || 'Unknown'}</strong><div class="meta">${t.artist || 'Unknown'} · ${(t.tasteScore ?? 0).toFixed(2)} · ${t.aiSuggested ? 'AI suggested' : 'seeded'}</div></article>`).join('') : '<div class="meta">No journey candidates yet. Build a journey or add AI suggestions.</div>'; }
-function renderDiscoveryResults(){ if (!ui.discoveryResults) return; ui.discoveryResults.innerHTML = (state.candidates || []).length ? (state.candidates || []).slice(0,8).map((track)=>`<article class="card"><strong>${track.title || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown'} · lane ${track.lane || 'unassigned'}</div><div class="meta">Matched traits: ${track.why?.positiveHits?.join(', ') || 'none'}</div><div class="meta">Avoid notes: ${track.why?.rejectHits?.join(', ') || 'none'}</div><div class="meta">Local ${Number(track.tasteScore || 0).toFixed(2)} · AI ${Number(track.aiFitScore || 0).toFixed(0)}</div></article>`).join('') : '<div class="meta">No discovery results yet.</div>'; }
+function renderDiscoveryResults(){ if (!ui.discoveryResults) return; ui.discoveryResults.innerHTML = (state.candidates || []).length ? (state.candidates || []).slice(0,8).map((track)=>`<article class="music-card"><div class="music-card-header"><div><div class="music-card-title">${track.title || 'Unknown'}</div><div class="music-card-meta">${track.artist || 'Unknown'}</div></div><span class="music-badge music-badge--ai">${track.aiSuggested ? 'AI' : 'seeded'}</span></div><div class="music-card-meta">Lane: ${track.lane || 'unassigned'} · fit ${(track.tasteScore||0)>1?'strong':'promising'}</div><div class="tags">${(track.why?.positiveHits||[]).map((t)=>`<span class='music-chip music-chip--positive'>${t}</span>`).join('')}</div><div class="tags">${(track.why?.rejectHits||[]).map((t)=>`<span class='music-chip music-chip--negative'>${t}</span>`).join('')}</div><div><span class="music-badge">Local ${Number(track.tasteScore || 0).toFixed(2)}</span> <span class="music-badge">AI ${Number(track.aiFitScore || 0).toFixed(0)}</span></div></article>`).join('') : '<div class="music-empty-state">No discovery results yet.</div>'; }
 function renderActiveJourneySummary(){ if (!ui.activeJourneySummary) return; ui.activeJourneySummary.textContent = state.candidates?.length ? `${state.candidates.length} journey candidates · ${state.listeningDeck?.length || 0} in listening deck.` : 'No active journey yet.'; }
