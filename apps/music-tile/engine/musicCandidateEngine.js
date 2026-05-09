@@ -3,6 +3,8 @@ import { SEEDED_TASTE_TRACKS } from '../data/musicTasteSeeds.js';
 
 const AVOID_TAGS = ['too cheesy','too Goa / psy','too harsh','too miserable / down','boring','flat','wrong rock / industrial lane','no ghost','no lift','no complexity'];
 const CAUTION_TERMS = ['emma hewitt','susana','ferry corsten','root level','vakhtang','eyes','blume','clouds','philomena','tataki','u2c','australiens'];
+export const DEFAULT_DISCOVERY_RESULT_TARGET = 10;
+export const MIN_DISCOVERY_RESULT_TARGET = 8;
 const ALIASES = {
   anyma: ['anyma', 'afterlife', 'genesys'],
   sevdaliza: ['sevdaliza', 'save me', 'samsara'],
@@ -69,7 +71,7 @@ export function buildArtistAwareCandidates({artistInput='', tasteDNA={}, include
   const interesting = SEEDED_TASTE_TRACKS.slice(8,12).map((t)=>mkCandidate(t.title,t.artist,lane||'generic-dark-melodic-techno','interesting-branch',['off-kilter rhythm','complex riff'],[]));
   const fallback = TRACK_LIBRARY.slice(0,10).map((t)=>mkCandidate(t.title,t.artist,'broad-fallback','fallback',['club engine'],['flat']));
 
-  const pools = exact.length ? [exact, related, taste, interesting] : (related.length ? [related, taste, interesting, fallback] : [taste, fallback]);
+  const pools = exact.length ? [exact, related, taste, interesting, fallback] : (related.length ? [related, taste, interesting, fallback] : [taste, interesting, fallback]);
   const merged=[]; const seen=new Set();
   pools.flat().forEach((c)=>{ const text=`${c.artist} ${c.title}`.toLowerCase(); if (CAUTION_TERMS.some((t)=>text.includes(t))) { c.sourceKind='caution'; c.avoidTraits=[...new Set([...c.avoidTraits,'too cheesy'])]; return; } if (!seen.has(c.id)){seen.add(c.id); merged.push(c);} });
   const rotated = merged.sort((a,b)=>{
@@ -78,7 +80,10 @@ export function buildArtistAwareCandidates({artistInput='', tasteDNA={}, include
     return ah - bh;
   });
   const filtered = rotated.filter((c)=>includeSeen || !recent.has(c.id)).filter((c)=>c.sourceKind!=='caution');
-  return { query, candidates: filtered.slice(0, Math.max(8, Math.min(12, filtered.length))), usedFallbackOnly: !exact.length && !related.length, sourceKinds: pools.map((p)=>p[0]?.sourceKind).filter(Boolean) };
+  const topUps = includeSeen ? [] : rotated.filter((c)=>!filtered.some((f)=>f.id===c.id)).filter((c)=>c.sourceKind!=='caution');
+  const targetCount = Math.min(DEFAULT_DISCOVERY_RESULT_TARGET, Math.max(MIN_DISCOVERY_RESULT_TARGET, filtered.length));
+  const candidates = filtered.length >= MIN_DISCOVERY_RESULT_TARGET ? filtered.slice(0, targetCount) : filtered.concat(topUps).slice(0, targetCount);
+  return { query, candidates, usedFallbackOnly: !exact.length && !related.length, sourceKinds: pools.map((p)=>p[0]?.sourceKind).filter(Boolean), targetCount, minimumCount: MIN_DISCOVERY_RESULT_TARGET, limitedByFilters: candidates.length < MIN_DISCOVERY_RESULT_TARGET };
 }
 
 export { AVOID_TAGS };
