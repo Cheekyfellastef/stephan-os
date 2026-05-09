@@ -31,3 +31,17 @@ test('query aliases normalize', () => {
   assert.equal(normalizeArtistQuery('cream courtyard').lane, 'serious-trance-spine');
   assert.equal(normalizeArtistQuery('layla benitez').lane, 'layla-benitez');
 });
+
+
+test('y do i normalizes to known artist alias', () => {
+  const normalized = normalizeArtistQuery('y do i');
+  assert.equal(normalized.lane, 'y-do-i');
+  assert.equal(normalized.canonicalArtistName, 'Y do I');
+});
+
+test('y do i builds without weird-input fallback and has candidates', () => {
+  const result = buildArtistAwareCandidates({ artistInput: 'y do i', tasteDNA: {}, sessionCounter: 1 });
+  assert.equal(result.query.lane, 'y-do-i');
+  assert.ok(result.candidates.length > 0);
+  assert.equal(result.usedFallbackOnly, false);
+});

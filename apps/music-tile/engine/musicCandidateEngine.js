@@ -7,7 +7,8 @@ const ALIASES = {
   anyma: ['anyma', 'afterlife', 'genesys'],
   sevdaliza: ['sevdaliza', 'save me', 'samsara'],
   'layla-benitez': ['layla', 'layla benitez'],
-  'serious-trance-spine': ['push','universal nation','binary finary','1999','greece 2000','three drives','oakenfold','cream','courtyard']
+  'serious-trance-spine': ['push','universal nation','binary finary','1999','greece 2000','three drives','oakenfold','cream','courtyard'],
+  'y-do-i': ['y do i', 'ydoi']
 };
 
 const BANKS = {
@@ -36,6 +37,10 @@ const BANKS = {
     ['1999','Binary Finary',['serious trance DNA','slow-build payoff']],
     ['Greece 2000','Three Drives',['serious trance DNA','Universal Nation spine']],
     ['What It Feels Like For A Girl','Madonna, Above & Beyond',['serious trance DNA','slow-build payoff']]
+  ],
+  'y-do-i': [
+    ['Mirage Placeholder','Y do I',['dark club pressure','processed vocal','off-kilter rhythm','ghost in the track']],
+    ['Neon Ghost Placeholder','Y do I',['ghost engine','reverb vocal','slow-build payoff']]
   ]
 };
 
@@ -43,7 +48,7 @@ function slug(s=''){return s.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').rep
 export function normalizeArtistQuery(raw=''){
   const q=String(raw||'').toLowerCase().trim();
   const hit = Object.entries(ALIASES).find(([,vals])=>vals.some((v)=>q.includes(v)));
-  return {raw, normalized: slug(q), lane: hit?.[0] || (q.includes('anyma')?'anyma':''), matchedAlias: hit?.[1]?.[0] || ''};
+  return {raw, normalized: slug(q), lane: hit?.[0] || (q.includes('anyma')?'anyma':''), matchedAlias: hit?.[1]?.[0] || '', canonicalArtistName: hit?.[0] === 'y-do-i' ? 'Y do I' : ''};
 }
 
 function mkCandidate(title, artist, lane, sourceKind, traits=[], avoidTraits=[]){
