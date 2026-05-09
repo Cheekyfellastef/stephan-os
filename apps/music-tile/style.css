@@ -64,3 +64,11 @@ body [data-command-deck-return-control='bottom'] { display:none !important; }
 .music-diagnostics{margin-top:6px}
 .music-diagnostics summary{cursor:pointer;color:#bcd4f3;font-size:.82rem}
 .rating-group{display:flex;flex-wrap:wrap;gap:6px;padding:6px;background:#0b1322;border-radius:8px;border:1px solid #223957}
+
+.player-deck-card{padding:12px;gap:10px;border-color:#34557a;background:linear-gradient(180deg,#111e33,#0b1424);box-shadow:0 10px 24px rgba(0,0,0,.32), inset 0 0 0 1px rgba(114,173,255,.12)}
+.player-deck-card .links-editor{display:grid;gap:6px;background:#0a1120;border:1px solid #223957;border-radius:8px;padding:8px}
+.player-deck-card .actions{gap:7px}
+.dna-grid{gap:10px}
+.dna-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border:1px solid #2a4463;border-radius:8px;margin-top:5px;background:#0c1729}
+.dna-row--positive{border-color:#2d7f56;background:#0d1f1a}
+.dna-row--negative{border-color:#8d3a41;background:#221117}
