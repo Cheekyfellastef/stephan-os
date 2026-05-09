@@ -22,7 +22,7 @@ test('discovery cards include queue + spotify/youtube actions', () => {
 test('listening deck keeps ratings/tags and spotify iframe contract', () => {
   assert.match(js, /loading="lazy"/);
   assert.match(js, /encrypted-media/);
-  assert.match(js, /Needs Spotify link/);
+  assert.match(js, /Needs verified Spotify link/);
   assert.match(js, /data-rate/);
   assert.match(js, /data-tag/);
 });

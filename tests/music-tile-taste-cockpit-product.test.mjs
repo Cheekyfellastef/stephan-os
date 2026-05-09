@@ -28,7 +28,7 @@ test('spotify iframe contract + missing link fallback', () => {
   assert.match(markup, /allow="[^"]*encrypted-media[^"]*"/);
   assert.match(markup, /width="100%"/);
   assert.match(markup, /height="152"/);
-  assert.match(markup, /Needs Spotify link/);
+  assert.match(markup, /Needs verified Spotify link/);
 });
 
 test('column scroll contract exists in fixed cockpit grid', () => {
