@@ -46,3 +46,21 @@ body [data-command-deck-return-control='bottom'] { display:none !important; }
 }
 
 .feedback-input{width:100%;min-height:64px;}
+
+.music-card{border:1px solid #2a4568;border-radius:12px;padding:10px;background:linear-gradient(180deg,#0d1728,#0a1220);display:grid;gap:8px;box-shadow:0 0 0 1px rgba(77,163,255,.08),0 6px 18px rgba(0,0,0,.25)}
+.music-card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.music-card-title{font-weight:700}
+.music-card-meta{font-size:.8rem;color:var(--muted)}
+.music-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:.72rem;border:1px solid var(--line);background:#132035;color:#d8e8ff}
+.music-badge--spotify{border-color:#1f8a58;background:#0f3f2a;color:#d8ffe8}
+.music-badge--youtube{border-color:#a12a2e;background:#4b1517;color:#ffe4e6}
+.music-badge--ai{border-color:#4da3ff;background:#142b47}
+.music-badge--warning{border-color:#c68a23;background:#3b2a10;color:#ffeac2}
+.music-badge--success{border-color:#1f8a58;background:#0f3f2a;color:#d8ffe8}
+.music-chip{border-radius:999px;border:1px solid #365278;padding:3px 8px;font-size:.72rem;color:#c6daf8}
+.music-chip--positive{border-color:#2d7f56;color:#c7ffe3}
+.music-chip--negative{border-color:#8d3a41;color:#ffd0d4}
+.music-empty-state{border:1px dashed #355372;border-radius:10px;padding:10px;color:var(--muted);font-size:.84rem}
+.music-diagnostics{margin-top:6px}
+.music-diagnostics summary{cursor:pointer;color:#bcd4f3;font-size:.82rem}
+.rating-group{display:flex;flex-wrap:wrap;gap:6px;padding:6px;background:#0b1322;border-radius:8px;border:1px solid #223957}
