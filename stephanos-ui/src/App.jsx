@@ -1020,6 +1020,11 @@ export default function App() {
           onIntentToBuildUpdate={setIntentToBuildTruth}
           onMissionBridgeUpdate={setMissionBridgeTruth}
           submitPrompt={submitPrompt}
+          sharedConsoleInput={input}
+          setSharedConsoleInput={setInput}
+          sharedCommandHistory={commandHistory}
+          cancelActivePrompt={cancelActivePrompt}
+          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
           orchestrationTruth={orchestrationTruth}
           agentTaskProjection={agentTaskProjection}
         />
@@ -1311,6 +1316,11 @@ export default function App() {
             onIntentToBuildUpdate={setIntentToBuildTruth}
             onMissionBridgeUpdate={setMissionBridgeTruth}
             submitPrompt={submitPrompt}
+            sharedConsoleInput={input}
+            setSharedConsoleInput={setInput}
+            sharedCommandHistory={commandHistory}
+            cancelActivePrompt={cancelActivePrompt}
+            emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
@@ -1394,6 +1404,11 @@ export default function App() {
             onIntentToBuildUpdate={setIntentToBuildTruth}
             onMissionBridgeUpdate={setMissionBridgeTruth}
             submitPrompt={submitPrompt}
+            sharedConsoleInput={input}
+            setSharedConsoleInput={setInput}
+            sharedCommandHistory={commandHistory}
+            cancelActivePrompt={cancelActivePrompt}
+            emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
           />
