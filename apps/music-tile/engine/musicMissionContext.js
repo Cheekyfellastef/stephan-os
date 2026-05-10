@@ -31,6 +31,14 @@ export function buildMusicMissionContext(state = {}) {
   if (verification.searchOnly > verification.verified) blockers.push('Most candidates are still search leads.');
   if (verification.hallucinated > 0) blockers.push('Some AI candidates appear hallucinated.');
   if (spotifyVerifiedPlayableCount === 0 && listeningDeck.length > 0) blockers.push('Listening Deck has no verified Spotify links yet.');
+  const setupStatus = asObject(next.integrationSetupSnapshot);
+  const spotifySetup = {
+    configured: Boolean(setupStatus.configured),
+    status: setupStatus.status || 'unknown',
+    missingSecrets: asArray(setupStatus.missingSecrets),
+    nextAction: setupStatus.nextAction || 'Open Assisted Setup and retest Spotify resolver.',
+    missionPacket: 'Enable Spotify Catalogue Search for Music Tile',
+  };
   return {
     tile: 'music',
     title: 'Music Taste Cockpit',
@@ -77,6 +85,7 @@ export function buildMusicMissionContext(state = {}) {
       verifiedPlayableCount: spotifyVerifiedPlayableCount,
       missingLinkCount: Math.max(0, listeningDeck.length - spotifyVerifiedPlayableCount),
       searchOnlyCount: verification.searchOnly,
+      setup: spotifySetup,
     },
     presence: {
       recentStephanosSays: recentEvents.slice(-6),

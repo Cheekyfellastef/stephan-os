@@ -8,6 +8,7 @@ import memoryRouter from './routes/memory.js';
 import tileStateRouter from './routes/tile-state.js';
 import localShellRouter from './routes/local-shell.js';
 import musicRouter from './routes/music.js';
+import setupRouter from './routes/setup.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -66,6 +67,7 @@ app.use('/api/memory', memoryRouter);
 app.use('/api/tile-state', tileStateRouter);
 app.use('/api/local', localShellRouter);
 app.use('/api/music', musicRouter);
+app.use('/api/setup', setupRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
