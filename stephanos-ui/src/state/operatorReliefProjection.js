@@ -40,7 +40,7 @@ export function deriveOperatorReliefProjection({
   const testsRequired = asList(missionSpec?.repoArchitectureContext?.testsLikelyRequired);
   const testsPassed = parsed.testsRun?.length || 0;
   const testsFailed = parsed.hasFailure ? 1 : 0;
-  const browserRequired = ['tile opens', 'Build Journey works', 'no console red errors', 'expected panels visible', 'Spotify link behaviour verified', 'AI action does not spin forever', 'output is visible in correct panel'];
+  const browserRequired = ['Mission Console opens from landing tile', 'Operator Relief panel visible', 'idle state renders', 'active/fixture state renders', 'merge safety verdict visible', 'browser proof gaps visible', 'repair prompt visible/copyable', 'no red console errors', 'no broken chevron/collapse', 'existing Mission Console controls still work'];
   const browserObserved = asList(proofOfDoneModel?.browserChecksObserved);
   const browserMissing = browserRequired.filter((item) => !browserObserved.includes(item));
   const consoleErrors = asList(proofOfDoneModel?.consoleErrors);
@@ -75,30 +75,54 @@ export function deriveOperatorReliefProjection({
     approvalRequired: true,
   }));
 
-  if (verdict === 'needs-browser-proof') {
-    lessonCandidates.push({ id: 'music-browser-proof-required', title: 'Browser proof required for Music Tile UI tasks', reason: 'Tests passed while UI remained broken in prior incidents.', source: 'music-failure-pack', approvalRequired: true });
-  }
+  const defaultLessonCandidates = [
+    'Browser proof is required for visual UI tasks.',
+    'AI-generated music candidates remain unverified until catalogue/source validation.',
+    'Spotify search URLs must never become playable refs.',
+    'AI/UI actions need terminal states, timeout, fallback, and visible proof.',
+    'Canon means extract from working surface first.',
+    'Unusual artist names must be verified before being treated as invalid.',
+    'Interactive controls need browser proof, not only unit tests.',
+    'State/model completion is not product completion unless projection is visible.',
+  ].map((title, index) => ({ id: `operator-relief-lesson-${index + 1}`, title, reason: 'Candidate lesson surfaced by Operator Relief evidence synthesis.', source: 'operator_relief_defaults', approvalRequired: true }));
+
+  const allLessonCandidates = [...lessonCandidates, ...defaultLessonCandidates];
 
   const nextActions = [];
   if (verdict === 'needs-tests' || verdict === 'not-safe') nextActions.push({ id: 'rerun-tests', label: 'Run required tests/build/verify', type: 'test', priority: 'high', reason: 'Required test/build evidence missing or failing.' });
   if (verdict === 'needs-browser-proof') nextActions.push({ id: 'run-browser-smoke', label: 'Run browser smoke proof', type: 'browser-proof', priority: 'high', reason: 'Browser proof missing. Run UI smoke test before merge.' });
   if (verdict === 'needs-repair' || verdict === 'not-safe') nextActions.push({ id: 'request-codex-repair', label: 'Request Codex repair', type: 'codex-repair', priority: 'high', reason: 'Runtime or test evidence indicates repair is required.' });
   if (asList(operatorDecisionQueue.decisions).length > 0) nextActions.push({ id: 'resolve-operator-decision', label: 'Resolve operator decision queue', type: 'operator-decision', priority: 'medium', reason: 'Operator remains final approver.' });
-  if (lessonCandidates.length > 0) nextActions.push({ id: 'review-lessons', label: 'Review lesson candidates', type: 'memory-review', priority: 'low', reason: 'Memory promotion remains operator-approved only.' });
+  if (allLessonCandidates.length > 0) nextActions.push({ id: 'review-lessons', label: 'Review lesson candidates', type: 'memory-review', priority: 'low', reason: 'Memory promotion remains operator-approved only.' });
+
+  const mission = {
+    title: asText(missionSpec.title, asText(missionSpec.rawIntent, 'Awaiting mission intent')),
+    objective: asText(missionSpec.objective, asText(missionSpec.rawIntent, 'Not provided')),
+    currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft'),
+  };
+  const codex = {
+    prTitle: asText(prEvidenceModel.prTitle, 'unknown'),
+    branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'),
+    task: asText(missionSpec.rawIntent, 'unknown'),
+    deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceSummary.missionReadyNarrative, 'Codex delta pending PR evidence.'),
+    changedFilesSummary: asList(prEvidenceModel.changedFiles || prEvidenceModel.files).slice(0, 12),
+  };
 
   return {
     status: verdict === 'safe-to-merge' ? 'merge-candidate' : (blockerList.length > 0 ? 'blocked' : 'active'),
-    missionTitle: asText(missionSpec.title, asText(missionSpec.rawIntent, 'Awaiting mission intent')),
-    missionObjective: asText(missionSpec.objective, asText(missionSpec.rawIntent, 'Not provided')),
-    currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft'),
-    codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceSummary.missionReadyNarrative, 'Codex delta pending PR evidence.'),
+    mission,
+    codex,
+    missionTitle: mission.title,
+    missionObjective: mission.objective,
+    currentPhase: mission.currentPhase,
+    codexDeltaSummary: codex.deltaSummary,
     tests: { required: testsRequired, passed: testsPassed, failed: testsFailed, unknown: testsRequired.length === 0 ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true },
     browserProof: { required: browserRequired, observed: browserObserved, missing: browserMissing, blockers: browserMissing.length ? ['Browser proof missing. Run UI smoke test before merge.'] : [] },
     runtimeEvidence: { consoleErrors, routeStatus: asText(supportSnapshot.routeStatus || supportSnapshot.runtimeStatus?.routeStatus, 'unknown'), providerStatus: asText(supportSnapshot.providerStatus || supportSnapshot.runtimeStatus?.providerStatus, 'unknown'), tileStatus: asText(supportSnapshot.tileStatus || supportSnapshot.runtimeStatus?.tileStatus, 'unknown'), warnings: warningList },
     mergeSafety: { verdict, confidence: verdict === 'safe-to-merge' ? 'high' : 'medium', reasons: blockerList.length ? blockerList : ['Evidence synthesized from mission systems.'], blockers: blockerList, requiredApprovals: ['Operator approval required for merge.'] },
     nextActions,
     repairPrompt: { available: repairAvailable, title: repairAvailable ? 'Codex Repair Prompt' : 'No repair prompt required', prompt: repairAvailable ? repairPromptText : '', sourceEvidence: { verificationBlockers: verification.blockers || [], consoleErrors } },
-    lessonCandidates,
+    lessonCandidates: allLessonCandidates,
     operatorDecision: { required: true, options: ['merge', 'defer', 'request-repair', 'reject', 'promote-lesson'], recommendedOption: verdict === 'safe-to-merge' ? 'merge' : 'request-repair', reason: verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required.' : 'Evidence gaps remain; resolve before merge.' },
   };
 }
