@@ -38,7 +38,7 @@ function aliasPlugin(aliases) {
   };
 }
 
-export async function importBundledModule(entryPoint, aliases = {}, testLabel = 'render-test') {
+export async function importBundledModule(entryPoint, aliases = {}, testLabel = 'render-test', defineOverrides = {}) {
   const outfile = path.join(
     os.tmpdir(),
     `stephanos-${testLabel}-${Date.now()}-${Math.random().toString(36).slice(2)}.cjs`,
@@ -51,7 +51,10 @@ export async function importBundledModule(entryPoint, aliases = {}, testLabel = 
     format: 'cjs',
     platform: 'node',
     outfile,
-    define: buildDefine,
+    define: {
+      ...buildDefine,
+      ...defineOverrides,
+    },
     jsx: 'automatic',
     plugins: [aliasPlugin(aliases)],
   });

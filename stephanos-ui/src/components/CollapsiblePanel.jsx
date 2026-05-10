@@ -21,7 +21,12 @@ export default function CollapsiblePanel({
   const toggleLabel = `${isOpen ? 'Collapse' : 'Expand'} ${title}`;
 
 
-  const isDevMode = typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production';
+  const viteEnvFromGlobal = typeof globalThis !== 'undefined' ? globalThis.__STEPHANOS_IMPORT_META_ENV__ : undefined;
+  const viteEnvFromImportMeta = typeof import.meta !== 'undefined' ? import.meta.env : undefined;
+  const viteEnv = viteEnvFromGlobal || viteEnvFromImportMeta;
+  const isViteDev = Boolean(viteEnv && viteEnv.DEV);
+  const isNodeDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production';
+  const isDevMode = Boolean(isViteDev || isNodeDev);
   if (isDevMode) {
     if (!panelId || !String(panelId).trim()) {
       console.warn('[Stephanos Collapse Canon] Missing panelId for collapse target.', { title });
