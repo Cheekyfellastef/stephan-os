@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { resolveSpotifyReference } from '../apps/music-tile/utils/spotifyEmbed.js';
+import { resolveSpotifyReference, getSpotifyLinkState } from '../apps/music-tile/utils/spotifyEmbed.js';
 
 const js = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 
@@ -49,4 +49,16 @@ test('invalid spotify refs cannot generate playable iframe/open url', () => {
   const search = resolveSpotifyReference('https://open.spotify.com/search/Anyma%20Pictures%20Of%20You');
   assert.equal(search.embedUrl, null);
   assert.equal(search.openUrl, null);
+});
+
+test('spotify link state only opens for verified track refs', () => {
+  const verified = getSpotifyLinkState({ artist: 'Anyma', title: 'Pictures', spotifyUrl: 'https://open.spotify.com/track/abc123' });
+  const searchOnly = getSpotifyLinkState({ artist: 'Anyma', title: 'Pictures', spotifyUrl: 'https://open.spotify.com/search/Anyma' });
+  const missing = getSpotifyLinkState({ artist: 'Anyma', title: 'Pictures' });
+  assert.equal(verified.state, 'verified');
+  assert.equal(verified.canOpenSpotify, true);
+  assert.equal(searchOnly.state, 'search-only');
+  assert.equal(searchOnly.canOpenSpotify, false);
+  assert.equal(missing.state, 'needs-link');
+  assert.equal(missing.canEmbedSpotify, false);
 });

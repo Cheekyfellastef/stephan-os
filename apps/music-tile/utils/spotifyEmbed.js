@@ -70,3 +70,49 @@ export function buildSpotifySearchUrl(track = {}) {
 export function buildYouTubeSearchUrl(track = {}) {
   return `https://www.youtube.com/results?search_query=${encodeURIComponent(trackSearchQuery(track))}`;
 }
+
+function spotifyWarningForReason(reason = '') {
+  const map = {
+    missing: 'Needs verified Spotify link.',
+    'search-url': 'Spotify search URLs are not playable track links.',
+    'unsupported-type': 'Spotify link is not a track URL/URI.',
+    'invalid-id': 'Spotify link appears invalid.',
+    'non-spotify-url': 'URL is not a Spotify link.',
+    'malformed-url': 'Malformed Spotify URL.',
+  };
+  return map[reason] || 'Needs verified Spotify link.';
+}
+
+export function getSpotifyLinkState(track = {}) {
+  const rawRef = track.spotifyUrl || track.spotifyUri || '';
+  const resolved = resolveSpotifyReference(rawRef);
+  const searchUrl = buildSpotifySearchUrl(track);
+  if (resolved.valid && resolved.type === TRACK_TYPE) {
+    return {
+      state: 'verified',
+      canOpenSpotify: true,
+      canEmbedSpotify: true,
+      openUrl: resolved.openUrl,
+      embedUrl: resolved.embedUrl,
+      searchUrl,
+      label: 'Verified Spotify link',
+      warning: '',
+    };
+  }
+  let state = 'needs-link';
+  if (!rawRef) state = 'needs-link';
+  else if (resolved.reason === 'search-url') state = 'search-only';
+  else if (track.candidateVerificationStatus === 'not_found') state = 'not-found';
+  else if (track.candidateVerificationStatus === 'likely_hallucinated') state = 'hallucinated';
+  else state = 'invalid';
+  return {
+    state,
+    canOpenSpotify: false,
+    canEmbedSpotify: false,
+    openUrl: '',
+    embedUrl: '',
+    searchUrl,
+    label: 'Needs verified Spotify link',
+    warning: spotifyWarningForReason(resolved.reason),
+  };
+}

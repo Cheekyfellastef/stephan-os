@@ -22,12 +22,12 @@ test('search URLs are encoded', () => {
 });
 
 test('listening/discovery cards use open url for Open in Spotify and search fallback for Find', () => {
-  assert.match(js, /spotifyRef\.valid && spotifyRef\.type === 'track'/);
+  assert.match(js, /getSpotifyLinkState\(track\)/);
   assert.match(js, /<iframe src="\$\{embed\}"/);
   assert.match(js, />Open in Spotify</);
-  assert.match(js, /spotifyHref = spotifyOpenUrl \|\| buildSpotifySearchUrl\(track\)/);
-  assert.match(js, />Find on Spotify</);
   assert.match(js, /Needs verified Spotify link/);
+  assert.match(js, />Find on Spotify</);
+  assert.match(js, /Resolve Spotify Link/);
 });
 
 test('spotify search refs are rejected from open/embed card paths', () => {
