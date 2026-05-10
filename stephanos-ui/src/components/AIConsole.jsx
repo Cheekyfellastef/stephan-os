@@ -3,8 +3,9 @@ import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
-import CommandResultCard from './CommandResultCard';
 import CollapsiblePanel from './CollapsiblePanel';
+import CanonicalAnswerPane from './CanonicalAnswerPane';
+import CanonicalPaneStack from './CanonicalPaneStack';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
@@ -143,20 +144,25 @@ export default function AIConsole({
             </span>
           </div>
         ) : null}
-        <div
-          ref={containerRef}
-          onScroll={handleScroll}
-          className="output-panel ai-console-messages"
-        >
+        <CanonicalPaneStack
+          scope="mission-console"
+          panes={[
+            {
+              paneId: 'answer-history',
+              title: 'Answer History',
+              body: (
+                <div
+                  ref={containerRef}
+                  onScroll={handleScroll}
+                  className="output-panel ai-console-messages mission-console__history"
+                >
           {showStartupPlaceholder ? (
             <div className="api-banner degraded" role="status" aria-live="polite">
               <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
               <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
             </div>
           ) : null}
-          {safeCommandHistory.length === 0 ? (
-            <p className="muted">Ready. Stephanos now supports auto, local-first, cloud-first, and explicit provider routing. Try “Explain current AI mode” or /status.</p>
-          ) : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
+          <CanonicalAnswerPane commandHistory={safeCommandHistory} />
           {latestCommand?.continuity_context ? (
             <details>
               <summary>Continuity Context Used ({continuityRecords.length})</summary>
@@ -166,8 +172,12 @@ export default function AIConsole({
               </ul>
             </details>
           ) : null}
-        </div>
-        <form className="command-form mission-console-input paneFormLayout" onSubmit={onSubmit}>
+                </div>
+              ),
+            },
+          ]}
+        />
+        <form className="command-form mission-console-input paneFormLayout mission-console__composer" onSubmit={onSubmit}>
           <input
             className="paneInput paneControl"
             ref={inputRef}

@@ -4515,3 +4515,13 @@ pre {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.canonical-pane-stack { display:flex; flex-direction:column; gap:10px; min-height:0; flex:1 1 auto; }
+.canonical-pane { border:1px solid var(--panel-border, #344); border-radius:10px; background:var(--panel-bg, rgba(10,14,24,.5)); min-height:0; }
+.canonical-pane__header { display:flex; align-items:center; gap:8px; padding:8px 10px; }
+.canonical-pane__chevron { transform: rotate(90deg); transition: transform .18s ease; }
+.canonical-pane--collapsed .canonical-pane__chevron { transform: rotate(0deg); }
+.canonical-pane__move-controls { margin-left:auto; display:flex; gap:6px; }
+.canonical-pane__body { padding: 0 10px 10px; min-height:0; }
+.mission-console__history { min-height: 260px; max-height: none; overflow-y: auto; }
+.mission-console__composer { position: sticky; bottom: 0; background: inherit; }
