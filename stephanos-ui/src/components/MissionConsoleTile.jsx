@@ -109,31 +109,6 @@ export default function MissionConsoleTile({
   const [prEvidenceInput, setPrEvidenceInput] = useState('');
   const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
 
-  const operatorReliefProjection = useMemo(() => deriveOperatorReliefProjection({
-    intentToBuildModel: intentToBuild,
-    taskFinisherModel: intentToBuild?.missionSpec?.taskFinisherPlan || {},
-    missionEvidenceLedgerModel: missionEvidenceLedger || {},
-    prEvidenceModel: intentToBuild?.missionSpec?.prEvidenceIntake || {},
-    proofOfDoneModel: { verificationJudge: verificationReturnAdjudication, browserChecksObserved: verificationReturnAdjudication?.parsed?.proofClaim ? ['tile opens'] : [], consoleErrors: verificationReturnAdjudication?.parsed?.hasFailure ? ['Verification return reports failure/error.'] : [] },
-    operatorDecisionQueue: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
-    memoryLibrarianQueue: memoryLibrarian || {},
-    supportSnapshot: runtimeStatusModel || {},
-  }), [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
-
-  useEffect(() => {
-    const verdict = operatorReliefProjection?.mergeSafety?.verdict;
-    if (!verdict) return;
-    const summary = verdict === 'safe-to-merge'
-      ? 'Build and verify passed. Operator browser smoke test remains.'
-      : verdict === 'needs-browser-proof'
-        ? 'This PR is not merge-safe yet because browser proof is missing.'
-        : 'A repair prompt is available from console error evidence.';
-    emitPresenceEvent({ kind: `operator_relief.${operatorReliefProjection.status === 'merge-candidate' ? 'merge_candidate' : operatorReliefProjection.status === 'blocked' ? 'blocked' : 'ready'}`, summary, impact: operatorReliefProjection?.missionTitle || 'Operator Relief update.' });
-    if (verdict === 'needs-browser-proof') emitPresenceEvent({ kind: 'operator_relief.browser_proof_missing', summary: 'Browser proof missing. Run UI smoke test before merge.' });
-    if (operatorReliefProjection?.repairPrompt?.available) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
-    if ((operatorReliefProjection?.lessonCandidates || []).length > 0) emitPresenceEvent({ kind: 'operator_relief.lesson_candidate_available', summary: 'I found a project lesson candidate from this failure.' });
-  }, [operatorReliefProjection]);
-
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
     const operatorSurface = agentTaskProjection?.operatorSurface || {};
@@ -264,6 +239,31 @@ export default function MissionConsoleTile({
     taskFinisherPlan: intentToBuild?.missionSpec?.taskFinisherPlan || null,
     memoryLibrarianQueue: memoryLibrarian,
   }), [intentToBuild?.missionSpec, memoryLibrarian, prEvidenceParseResult, verificationReturnAdjudication, verificationReturnInput]);
+
+  const operatorReliefProjection = useMemo(() => deriveOperatorReliefProjection({
+    intentToBuildModel: intentToBuild,
+    taskFinisherModel: intentToBuild?.missionSpec?.taskFinisherPlan || {},
+    missionEvidenceLedgerModel: missionEvidenceLedger || {},
+    prEvidenceModel: intentToBuild?.missionSpec?.prEvidenceIntake || {},
+    proofOfDoneModel: { verificationJudge: verificationReturnAdjudication, browserChecksObserved: verificationReturnAdjudication?.parsed?.proofClaim ? ['tile opens'] : [], consoleErrors: verificationReturnAdjudication?.parsed?.hasFailure ? ['Verification return reports failure/error.'] : [] },
+    operatorDecisionQueue: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
+    memoryLibrarianQueue: memoryLibrarian || {},
+    supportSnapshot: runtimeStatusModel || {},
+  }), [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
+
+  useEffect(() => {
+    const verdict = operatorReliefProjection?.mergeSafety?.verdict;
+    if (!verdict) return;
+    const summary = verdict === 'safe-to-merge'
+      ? 'Build and verify passed. Operator browser smoke test remains.'
+      : verdict === 'needs-browser-proof'
+        ? 'This PR is not merge-safe yet because browser proof is missing.'
+        : 'A repair prompt is available from console error evidence.';
+    emitPresenceEvent({ kind: `operator_relief.${operatorReliefProjection.status === 'merge-candidate' ? 'merge_candidate' : operatorReliefProjection.status === 'blocked' ? 'blocked' : 'ready'}`, summary, impact: operatorReliefProjection?.missionTitle || 'Operator Relief update.' });
+    if (verdict === 'needs-browser-proof') emitPresenceEvent({ kind: 'operator_relief.browser_proof_missing', summary: 'Browser proof missing. Run UI smoke test before merge.' });
+    if (operatorReliefProjection?.repairPrompt?.available) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
+    if ((operatorReliefProjection?.lessonCandidates || []).length > 0) emitPresenceEvent({ kind: 'operator_relief.lesson_candidate_available', summary: 'I found a project lesson candidate from this failure.' });
+  }, [operatorReliefProjection]);
   const missionCommandPacket = useMemo(() => buildMissionCommandPacket({
     missionSpec: intentToBuild?.missionSpec || {},
     codexPrompt: intentToBuild?.codexPrompt || '',
