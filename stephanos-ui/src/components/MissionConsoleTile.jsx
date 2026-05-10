@@ -30,6 +30,10 @@ import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agent
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
 import { buildMissionIntelligenceLayer } from '../../../shared/agents/missionIntelligenceLayer.mjs';
 import MissionCommandDeck from './MissionCommandDeck';
+import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
+import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
+
+registerTileMissionContext('music', ({ state }) => buildMusicMissionContext(state));
 
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
@@ -57,6 +61,7 @@ export default function MissionConsoleTile({
   const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
+  const [contextScope, setContextScope] = useState('whole-stephanos');
   const [selectedAgentId, setSelectedAgentId] = useState('broadcast');
   const [openClawIntentType, setOpenClawIntentType] = useState('run-scan');
   const [proposalCards, setProposalCards] = useState([]);
@@ -433,8 +438,25 @@ export default function MissionConsoleTile({
     setMessages((previous) => appendMissionConsoleMessage(previous, message));
   }
 
+  const musicTileContext = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('stephanos.musicTile.state.v2') || '{}');
+      const contextBundle = buildMissionConsoleContext({
+        targetTile: 'music',
+        payloadByTile: { music: { state: saved } },
+      });
+      return contextBundle.contexts[0] || null;
+    } catch {
+      return null;
+    }
+  }, [messages.length]);
+
   function buildStephanosResponse(content) {
     const normalizedPrompt = String(content || '').trim();
+    if (/music tile|taste dna|spotify|verified|search leads|hallucinated|build journey|listen to next/i.test(normalizedPrompt) && musicTileContext) {
+      return `${musicTileContext.plainEnglishSummary} Verified: ${musicTileContext.verification.verified}; search-only: ${musicTileContext.verification.searchOnly}; hallucinated: ${musicTileContext.verification.hallucinated}. Recommended next: ${(musicTileContext.recommendedNextActions || []).slice(0, 2).join(' ')}`;
+    }
     if (/who am i talking to|who am i speaking to|who are you|what is this console|what can you do here/i.test(normalizedPrompt)) {
       return `You are speaking to Stephanos through the Agent Mission Console. Current route target is ${resolvedTarget.label}. I can route requests to Stephanos, Agents, or bounded OpenClaw analysis. OpenClaw is proposal-only, controlled execution stays future-gated, and execution is disabled.`;
     }
@@ -712,6 +734,28 @@ export default function MissionConsoleTile({
           <li><strong>Approval Mode:</strong> Required for OpenClaw proposals and destructive/high-risk actions</li>
           <li><strong>Current session mode:</strong> {sessionMode}</li>
         </ul>
+      </section>
+
+      <section className="mission-console-section">
+        <h4>Connected Tile Contexts</h4>
+        <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
+        <p><strong>Current artist/vibe:</strong> {musicTileContext?.currentArtistInput || 'not set'} · {musicTileContext?.currentTasteTarget || 'unknown'}</p>
+        <p><strong>Counts:</strong> verified {musicTileContext?.verification?.verified || 0} / search {musicTileContext?.verification?.searchOnly || 0} / fallback {musicTileContext?.discoveryPipeline?.fallbackCount || 0}</p>
+        <p><strong>Taste DNA:</strong> {(musicTileContext?.tasteDNA?.strongestPositiveTraits || []).slice(0,3).map((row)=>row.name).join(', ') || 'no strong positives yet'}</p>
+        <button type="button" onClick={() => setInput('What is happening in the Music Tile right now?')}>Ask about Music Tile</button>
+        <button type="button" onClick={() => { if (typeof window !== 'undefined') window.open('../music-tile/index.html', '_blank', 'noopener,noreferrer'); }}>Open Music Tile</button>
+      </section>
+
+      <section className="mission-console-section">
+        <h4>Quick Chat Context Selector</h4>
+        <select className="paneSelect paneControl" value={contextScope} onChange={(event) => setContextScope(event.target.value)}>
+          <option value="whole-stephanos">Whole Stephanos</option>
+          <option value="music">Music Tile</option>
+          <option value="openclaw">OpenClaw</option>
+          <option value="codex">Codex/PRs</option>
+          <option value="route-health">Route Health</option>
+          <option value="runtime-diagnostics">Runtime Diagnostics</option>
+        </select>
       </section>
 
       <section className="mission-console-section">
