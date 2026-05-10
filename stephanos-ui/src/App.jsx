@@ -857,13 +857,24 @@ export default function App() {
             <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
           </div>
         ) : null}
-        <AIConsole
-          input={input}
-          setInput={setInput}
-          submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { telemetryEntries, orchestrationTruth })}
+        <MissionConsoleTile
+          uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}
+          togglePanel={togglePanel}
+          runtimeStatusModel={runtimeStatusModel}
+          finalRouteTruth={routeTruthView}
+          finalAgentView={displayAgentView}
+          branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+          onOpenClawIntegrationUpdate={setOpenClawIntegration}
+          onIntentToBuildUpdate={setIntentToBuildTruth}
+          onMissionBridgeUpdate={setMissionBridgeTruth}
+          submitPrompt={submitPrompt}
+          sharedConsoleInput={input}
+          setSharedConsoleInput={setInput}
+          sharedCommandHistory={commandHistory}
           cancelActivePrompt={cancelActivePrompt}
           emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
-          commandHistory={commandHistory}
+          orchestrationTruth={orchestrationTruth}
+          agentTaskProjection={agentTaskProjection}
         />
         <PowerShellMergeConsolePanel />
       </div>

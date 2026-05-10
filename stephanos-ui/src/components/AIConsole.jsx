@@ -4,8 +4,7 @@ import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import CollapsiblePanel from './CollapsiblePanel';
-import CanonicalAnswerPane from './CanonicalAnswerPane';
-import CanonicalPaneStack from './CanonicalPaneStack';
+import CommandResultCard from './CommandResultCard';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
@@ -144,25 +143,22 @@ export default function AIConsole({
             </span>
           </div>
         ) : null}
-        <CanonicalPaneStack
-          scope="mission-console"
-          panes={[
-            {
-              paneId: 'answer-history',
-              title: 'Answer History',
-              body: (
-                <div
-                  ref={containerRef}
-                  onScroll={handleScroll}
-                  className="output-panel ai-console-messages mission-console__history"
-                >
+        <section className="mission-console-pane" data-pane-id="answer-history">
+          <header className="mission-console-pane__header">
+            <strong>Answer History</strong>
+          </header>
+          <div
+            ref={containerRef}
+            onScroll={handleScroll}
+            className="output-panel ai-console-messages mission-console__history mission-console-pane__body"
+          >
           {showStartupPlaceholder ? (
             <div className="api-banner degraded" role="status" aria-live="polite">
               <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
               <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
             </div>
           ) : null}
-          <CanonicalAnswerPane commandHistory={safeCommandHistory} />
+          {safeCommandHistory.length === 0 ? <p className="muted">Ready. Ask Stephanos anything.</p> : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
           {latestCommand?.continuity_context ? (
             <details>
               <summary>Continuity Context Used ({continuityRecords.length})</summary>
@@ -172,11 +168,8 @@ export default function AIConsole({
               </ul>
             </details>
           ) : null}
-                </div>
-              ),
-            },
-          ]}
-        />
+          </div>
+        </section>
         <form className="command-form mission-console-input paneFormLayout mission-console__composer" onSubmit={onSubmit}>
           <input
             className="paneInput paneControl"
