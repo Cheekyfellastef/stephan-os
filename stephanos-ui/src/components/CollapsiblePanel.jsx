@@ -20,6 +20,17 @@ export default function CollapsiblePanel({
   const bodyId = `${panelId}-body`;
   const toggleLabel = `${isOpen ? 'Collapse' : 'Expand'} ${title}`;
 
+
+  const isDevMode = typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production';
+  if (isDevMode) {
+    if (!panelId || !String(panelId).trim()) {
+      console.warn('[Stephanos Collapse Canon] Missing panelId for collapse target.', { title });
+    }
+    if (typeof onToggle !== 'function') {
+      console.warn('[Stephanos Collapse Canon] Chevron rendered without a valid onToggle handler.', { panelId, title });
+    }
+  }
+
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
