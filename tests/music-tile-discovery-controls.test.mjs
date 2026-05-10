@@ -19,7 +19,10 @@ test('build/start handlers read artist input and enforce visible empty-input sta
 
 test('discovery controls expose queue and media actions from fixed cockpit cards', () => {
   assert.match(source, /Add to listening queue/);
-  assert.match(source, /const spotifyLabel = spotifyOpenUrl \? 'Open in Spotify' : 'Find on Spotify';/);
+  assert.match(source, /Needs verified Spotify link/);
+  assert.match(source, /Find on Spotify/);
+  assert.match(source, /Resolve Spotify Link/);
+  assert.match(source, /Open in Spotify/);
   assert.match(source, /const youtubeLabel = youtubeUrl \? 'Open in YouTube' : 'Find on YouTube';/);
 });
 
