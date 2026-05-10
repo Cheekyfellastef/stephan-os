@@ -67,6 +67,7 @@ export default function MissionConsoleTile({
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
   const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
   const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
+  const { copyState: repairPromptCopyState, setCopyState: setRepairPromptCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
   const [contextScope, setContextScope] = useState('whole-stephanos');
@@ -793,19 +794,37 @@ export default function MissionConsoleTile({
 
       <section className="mission-console-section">
         <CollapsiblePanel title="Operator Relief v1" defaultOpen={false}>
-        <h5>Current Mission</h5>
-        <p><strong>{operatorReliefProjection.missionTitle}</strong></p>
-        <p>{operatorReliefProjection.missionObjective}</p>
-        <h5>Merge Safety Verdict</h5>
-        <p>{operatorReliefProjection.mergeSafety.verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required' : operatorReliefProjection.mergeSafety.verdict}</p>
-        <h5>Next Actions</h5>
-        <ul>{operatorReliefProjection.nextActions.map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
-        <h5>Repair Prompt</h5>
-        <button type="button">Copy Repair Prompt</button>
-        <pre>{operatorReliefProjection.repairPrompt.prompt}</pre>
-        <h5>Lesson Candidates</h5>
-        <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title}</li>)}</ul>
-      </CollapsiblePanel>
+          <h5>Current Mission Summary</h5>
+          <p><strong>{operatorReliefProjection.mission.title}</strong></p>
+          <p>{operatorReliefProjection.mission.objective}</p>
+          <p><strong>Phase:</strong> {operatorReliefProjection.mission.currentPhase}</p>
+          <h5>Codex Change Summary</h5>
+          <p><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
+          <p>{operatorReliefProjection.codex.deltaSummary}</p>
+          <h5>Tests / Build / Verify Evidence</h5>
+          <p>Required tests: {operatorReliefProjection.tests.required.length} · Passed: {operatorReliefProjection.tests.passed} · Failed: {operatorReliefProjection.tests.failed}</p>
+          <p>Build: {operatorReliefProjection.tests.buildPassed ? 'passed' : 'not-passed'} · Verify: {operatorReliefProjection.tests.verifyPassed ? 'passed' : 'not-passed'}</p>
+          <h5>Browser Proof Gaps</h5>
+          <p>Missing proof count: {operatorReliefProjection.browserProof.missing.length}</p>
+          <ul>{operatorReliefProjection.browserProof.missing.map((item) => <li key={item}>{item}</li>)}</ul>
+          <h5>Runtime Evidence and Warnings</h5>
+          <p>Route: {operatorReliefProjection.runtimeEvidence.routeStatus} · Provider: {operatorReliefProjection.runtimeEvidence.providerStatus} · Tile readiness: {operatorReliefProjection.runtimeEvidence.tileStatus}</p>
+          <ul>{operatorReliefProjection.runtimeEvidence.warnings.map((warn) => <li key={warn}>{warn}</li>)}</ul>
+          <h5>Merge Safety Verdict</h5>
+          <p>{operatorReliefProjection.mergeSafety.verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required' : operatorReliefProjection.mergeSafety.verdict}</p>
+          <h5>Next Actions</h5>
+          <ul>{operatorReliefProjection.nextActions.map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
+          <h5>Repair Prompt</h5>
+          <button type="button" onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState)}>
+            {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : 'Copy Repair Prompt'}
+          </button>
+          <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
+          <h5>Lesson Candidates</h5>
+          <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}</ul>
+          <h5>Operator Decision Queue</h5>
+          <p>Decision required: {operatorReliefProjection.operatorDecision.required ? 'yes' : 'no'}</p>
+          <p>Available actions: {operatorReliefProjection.operatorDecision.options.join(', ')}</p>
+        </CollapsiblePanel>
 
       <AIConsole
           input={sharedConsoleInput}

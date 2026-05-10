@@ -6,10 +6,12 @@ test('Projection composes mission objective, codex delta, and test/build/verify 
   const r = deriveOperatorReliefProjection({
     intentToBuildModel: { missionSpec: { title: 'Music tile fix', objective: 'Fix panel', repoArchitectureContext: { testsLikelyRequired: ['node --test tests/a.test.mjs'] } } },
     prEvidenceModel: { prTitle: 'Fix panel routing', normalizedStatus: 'merge_ready_candidate' },
-    proofOfDoneModel: { verificationJudge: { parsed: { testsRun: ['node --test tests/a.test.mjs'], buildRun: true, verifyRun: true }, mergeReadyCandidate: true, proofOfDoneStatus: 'reported' }, browserChecksObserved: ['tile opens','Build Journey works','no console red errors','expected panels visible','Spotify link behaviour verified','AI action does not spin forever','output is visible in correct panel'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { testsRun: ['node --test tests/a.test.mjs'], buildRun: true, verifyRun: true }, mergeReadyCandidate: true, proofOfDoneStatus: 'reported' }, browserChecksObserved: ['Mission Console opens from landing tile','Operator Relief panel visible','idle state renders','active/fixture state renders','merge safety verdict visible','browser proof gaps visible','repair prompt visible/copyable','no red console errors','no broken chevron/collapse','existing Mission Console controls still work'] },
   });
   assert.equal(r.missionObjective, 'Fix panel');
   assert.equal(r.codexDeltaSummary, 'Fix panel routing');
   assert.equal(r.tests.buildPassed, true);
   assert.equal(r.tests.verifyPassed, true);
+  assert.equal(r.mission.title, 'Music tile fix');
+  assert.equal(r.codex.prTitle, 'Fix panel routing');
 });
