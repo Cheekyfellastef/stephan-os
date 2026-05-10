@@ -285,16 +285,30 @@ function findSpotifyCandidate(track) { const identity = normalizeTrackIdentity(t
   const first = matches[0];
   return { openUrl: first.parsed.openUrl, uri: first.parsed.uri, title: first.item.title || track.title, artist: first.item.artist || track.artist, confidence: matches.length === 1 ? 0.99 : 0.85 };
 }
-function resolveSpotifyLink(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return;
+
+async function searchSpotifyCatalogForTrack(track) { const query = `${track.artist || ''} ${track.title || track.name || ''}`.trim(); const response = await fetch(`/api/music/spotify/search?q=${encodeURIComponent(query)}&type=track&limit=10`); const payload = await response.json(); return { query, payload }; }
+function applyResolvedSpotifyTrack(track, candidate) { const parsed = resolveSpotifyReference(candidate.url || candidate.uri || ''); if (!parsed.valid || parsed.type !== 'track') return false; track.spotifyUrl = parsed.openUrl; track.spotifyUri = parsed.uri; track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified; return true; }
+async function resolveSpotifyLink(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return;
   state.linkMessages = state.linkMessages || {};
   const existing = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
   if (existing.valid && existing.type === 'track') { state.linkMessages[trackId] = 'Spotify link already present.'; saveState(); renderListeningDeck(); return; }
-  const candidate = findSpotifyCandidate(track);
-  if (!candidate) { window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); state.linkMessages[trackId] = 'Spotify catalog search is not configured. Use Spotify search and paste a confirmed track URL.'; saveState(); renderListeningDeck(); return; }
-  const prompt = `Found Spotify match: ${candidate.artist} - ${candidate.title}. Use this?`;
-  const approved = candidate.confidence >= 0.995 ? true : window.confirm(prompt);
-  if (!approved) { state.linkMessages[trackId] = 'Spotify match not applied. Use manual paste fallback or Find on Spotify.'; saveState(); renderListeningDeck(); return; }
-  track.spotifyUrl = candidate.openUrl; track.spotifyUri = candidate.uri; track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified; state.linkMessages[trackId] = 'Spotify track verified. Listening Deck card updated.'; saveState(); renderListeningDeck();
+  try {
+    const { payload } = await searchSpotifyCatalogForTrack(track);
+    if (!payload?.configured) { state.linkMessages[trackId] = 'Spotify catalog search not configured. Open Spotify search and paste the exact track URL.'; saveState(); renderListeningDeck(); return; }
+    if (payload?.error) { state.linkMessages[trackId] = payload.error; saveState(); renderListeningDeck(); return; }
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    if (!results.length) { state.linkMessages[trackId] = 'No Spotify match found. Try search manually or paste URL.'; saveState(); renderListeningDeck(); return; }
+    const top = results[0];
+    const approved = window.confirm(`Use this Spotify track? ${top.artist} - ${top.title} (${top.confidence})`);
+    if (!approved) { state.linkMessages[trackId] = 'Spotify match not applied. Use manual paste fallback or Find on Spotify.'; saveState(); renderListeningDeck(); return; }
+    const applied = applyResolvedSpotifyTrack(track, top);
+    state.linkMessages[trackId] = applied ? 'Spotify track verified. Listening Deck card updated.' : 'Resolver result was not a playable Spotify track URL.';
+    saveState(); renderListeningDeck();
+  } catch (error) {
+    window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer');
+    state.linkMessages[trackId] = 'Spotify catalog search failed. Use search/paste fallback.';
+    saveState(); renderListeningDeck();
+  }
 }
 function resolveYouTubeLink(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return;
   const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || '');
@@ -303,7 +317,7 @@ function resolveYouTubeLink(trackId) { const track = state.listeningDeck.find((i
   window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer');
   state.linkMessages[trackId] = 'Opened YouTube search in a new tab. Paste URL if you pick one.'; saveState(); renderListeningDeck();
 }
-function resolveAllMissingLinks() { state.listeningDeck.forEach((track) => { const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); if (!spotify.valid || spotify.type !== 'track') resolveSpotifyLink(track.id); const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (!youtubeUrl) resolveYouTubeLink(track.id); }); }
+async function resolveAllMissingLinks() { const summary = { searched: 0, candidatesFound: 0, noMatch: 0, notConfigured: 0, errors: 0 }; for (const track of state.listeningDeck) { const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); if (!spotify.valid || spotify.type !== 'track') { summary.searched += 1; try { const { payload } = await searchSpotifyCatalogForTrack(track); if (!payload?.configured) { summary.notConfigured += 1; continue; } if (payload?.error) { summary.errors += 1; continue; } if ((payload.results || []).length) summary.candidatesFound += 1; else summary.noMatch += 1; } catch { summary.errors += 1; } await resolveSpotifyLink(track.id); } const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (!youtubeUrl) resolveYouTubeLink(track.id); } ui.status.textContent = `Resolve all summary: searched ${summary.searched}, candidates ${summary.candidatesFound}, no match ${summary.noMatch}, not configured ${summary.notConfigured}, errors ${summary.errors}.`; }
 async function resolveAllMissingLinksAiAssisted(){ setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions(); try { for (const track of state.listeningDeck){ const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (spotify.valid && spotify.type==='track' && youtubeUrl) continue; const res = await askMusicAi('resolve-links', { track, tasteDNA: state.tasteDNA, allowLiveVerification: getMusicAiStatus().freshWeb }); const parsed = res.parsed || {}; if (!res.ok) { state.linkMessages[track.id] = `AI router unavailable: ${res.message}. Open Spotify search or paste confirmed track URL.`; if (!spotify.valid || spotify.type!=='track') window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); continue; } const candidateUrl = parsed.spotifyCandidates?.[0]?.url || ''; const candidateRef = resolveSpotifyReference(candidateUrl); if (parsed.status === 'candidate-found' && candidateRef.valid && candidateRef.type === 'track') { track.spotifyUrl = candidateRef.openUrl; track.spotifyUri = candidateRef.uri; state.linkMessages[track.id] = 'Spotify track verified. Listening Deck card updated.'; } else if (!spotify.valid || spotify.type!=='track') { state.linkMessages[track.id] = 'Spotify catalog search is not configured. Use Spotify search and paste a confirmed track URL.'; window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); } if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); } setAiAction('AI-assisted link resolution completed.'); saveState(); renderAll(); } catch (error) { setAiAction('AI router unavailable: request failed. Rule-based mode remains active.', { lastError: String(error?.message || error) }); } }
 async function buildJourneyAiAssisted(){ const artists=parseArtists(ui.artistInput?.value || ''); if(!artists.length){ ui.status.textContent='Enter an artist to build a journey.'; return; } setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions(); const promptInstructions = `Return strict JSON only. No markdown. Do not invent track titles. If unsure a track exists, provide it as a search query or candidate idea rather than a verified track. Only mark a track as verified if a real Spotify/YouTube/source URL is provided. Schema:
 {
