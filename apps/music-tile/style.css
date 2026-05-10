@@ -72,3 +72,6 @@ body [data-command-deck-return-control='bottom'] { display:none !important; }
 .dna-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border:1px solid #2a4463;border-radius:8px;margin-top:5px;background:#0c1729}
 .dna-row--positive{border-color:#2d7f56;background:#0d1f1a}
 .dna-row--negative{border-color:#8d3a41;background:#221117}
+
+.music-highlight-pulse{animation:musicPulse 1.2s ease-out 1;outline:2px solid #4da3ff;outline-offset:2px}
+@keyframes musicPulse{0%{box-shadow:0 0 0 0 rgba(77,163,255,.55)}100%{box-shadow:0 0 0 14px rgba(77,163,255,0)}}

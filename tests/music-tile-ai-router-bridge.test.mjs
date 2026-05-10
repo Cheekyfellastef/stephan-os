@@ -9,7 +9,7 @@ const bridge = readFileSync(new URL('../apps/music-tile/engine/musicAiBridge.js'
 test('Music Tile renders AI router status section', () => { assert.match(html, /id="ai-status-card"/); });
 test('AI status classifies transport/provider/response separately', () => {
   assert.match(js, /AI transport ready\./);
-  assert.match(js, /Provider metadata unavailable\./);
+  assert.match(js, /Provider details unavailable in this tile\./);
   assert.match(js, /Text fallback mode active\./);
   assert.doesNotMatch(js, /AI router unavailable; rule-based interpretation active/);
 });
@@ -27,7 +27,7 @@ test('Promote to Stephanos memory requires approval + fallback', () => { assert.
 
 
 test('AI diagnostics show endpoint and backend base details', () => { assert.match(js, /Endpoint:/); assert.match(js, /Backend base:/); assert.match(bridge, /endpointUrl/); });
-test('AI buttons show immediate contacting status', () => { assert.match(js, /Contacting Stephanos AI…/); });
+test('AI buttons show immediate contacting status', () => { assert.match(js, /Contacting Stephanos AI for smarter journey…/); });
 test('AI failures are visible with explicit fallback reason', () => { assert.match(js, /AI router unavailable:/); assert.match(bridge, /endpoint returned 404/); });
 test('Music Tile AI bridge uses shared backend resolver path', () => { assert.match(bridge, /resolveStephanosAiBackendBaseUrl/); assert.match(bridge, /\/api\/ai\/chat/); });
 test('Spotify not configured message is honest fallback language', () => { assert.match(js, /Spotify catalog search not configured/); assert.match(js, /paste track URL/); });
