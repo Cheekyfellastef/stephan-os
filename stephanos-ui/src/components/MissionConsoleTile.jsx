@@ -30,6 +30,7 @@ import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agent
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
 import { buildMissionIntelligenceLayer } from '../../../shared/agents/missionIntelligenceLayer.mjs';
 import MissionCommandDeck from './MissionCommandDeck';
+import AIConsole from './AIConsole';
 import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
 import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
 
@@ -52,6 +53,11 @@ export default function MissionConsoleTile({
   onIntentToBuildUpdate = () => {},
   onMissionBridgeUpdate = () => {},
   submitPrompt = null,
+  sharedConsoleInput = '',
+  setSharedConsoleInput = () => {},
+  sharedCommandHistory = [],
+  cancelActivePrompt = null,
+  emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
 }) {
@@ -640,6 +646,22 @@ export default function MissionConsoleTile({
     draftMissionContext: missionBridgeState?.missionPacket?.missionTitle || '',
     includeDraftMissionContext: Boolean(missionBridgeState?.missionPacket?.missionTitle),
   }), [agentTaskProjection?.memoryCandidates, missionBridgeState?.missionPacket?.missionTitle]);
+  const executionReadiness = useMemo(() => {
+    const chatInputReady = typeof setSharedConsoleInput === 'function';
+    const submitRouteReady = typeof submitPrompt === 'function';
+    const answerPaneReady = Array.isArray(sharedCommandHistory);
+    const aiRouteStatus = finalRouteTruth?.routeUsableState || 'unknown';
+    const aiRouteReady = aiRouteStatus === 'ready' || aiRouteStatus === 'degraded';
+    const musicContextAvailable = Boolean(musicTileContext);
+    return {
+      chatInputReady,
+      submitRouteReady,
+      answerPaneReady,
+      aiRouteStatus: aiRouteReady ? aiRouteStatus : 'unavailable',
+      musicContextAvailable,
+      ready: chatInputReady && submitRouteReady && answerPaneReady && aiRouteReady,
+    };
+  }, [setSharedConsoleInput, submitPrompt, sharedCommandHistory, finalRouteTruth?.routeUsableState, musicTileContext]);
 
   function generateIntentToBuildSpec() {
     const parsedEvidence = buildPrEvidenceFromInput({
@@ -722,6 +744,36 @@ export default function MissionConsoleTile({
         runtimeStatusModel={runtimeStatusModel}
         compactVerificationSummary={compactVerificationSummary}
       />
+      <section className="mission-console-section">
+        <h4>Canonical Mission Chat Surface</h4>
+        <p><strong>Opened route:</strong> mission-console</p>
+        <p><strong>Canonical route:</strong> mission-console</p>
+        <p><strong>Workspace source:</strong> stephanos-ui/src/components/MissionConsoleTile.jsx</p>
+        <p><strong>Chat surface mounted:</strong> yes</p>
+        <p><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</p>
+        <ul>
+          <li>Chat input: {executionReadiness.chatInputReady ? 'yes' : 'no'}</li>
+          <li>Submit route: {executionReadiness.submitRouteReady ? 'yes' : 'no'}</li>
+          <li>Answer pane: {executionReadiness.answerPaneReady ? 'yes' : 'no'}</li>
+          <li>AI route: {executionReadiness.aiRouteStatus}</li>
+          <li>Music context: {executionReadiness.musicContextAvailable ? 'available' : 'unavailable'}</li>
+        </ul>
+        {!executionReadiness.musicContextAvailable ? (
+          <p>Music Tile context unavailable. Open Music Tile or rebuild context.</p>
+        ) : null}
+      </section>
+
+      <section className="mission-console-section">
+        <AIConsole
+          input={sharedConsoleInput}
+          setInput={setSharedConsoleInput}
+          submitPrompt={(rawPrompt) => submitPrompt?.(rawPrompt, { orchestrationTruth, submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router' })}
+          cancelActivePrompt={cancelActivePrompt}
+          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
+          commandHistory={sharedCommandHistory}
+        />
+      </section>
+
       <section className="mission-console-section">
         <h4>Workspace Header / Command Authority</h4>
         <ul>
