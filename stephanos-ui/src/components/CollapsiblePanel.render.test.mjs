@@ -41,3 +41,89 @@ test('CollapsiblePanel collapse toggle is marked as non-draggable and controls i
   assert.match(rendered, /class="pane-collapse-dial chevron-dial"/);
   assert.match(rendered, /class="chevron open"/);
 });
+
+test('CollapsiblePanel emits missing panelId and missing onToggle diagnostics in Vite-style dev mode', async () => {
+  const originalWarn = console.warn;
+  const originalImportMetaEnv = globalThis.__STEPHANOS_IMPORT_META_ENV__;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  globalThis.__STEPHANOS_IMPORT_META_ENV__ = { DEV: true };
+
+  try {
+    const { renderCollapsiblePanel } = await importBundledModule(
+      path.join(srcRoot, 'test/renderCollapsiblePanelEntry.jsx'),
+      {},
+      'collapsible-panel-vite-dev-diagnostics',
+      {
+        'process.env.NODE_ENV': '"production"',
+      },
+    );
+
+    renderCollapsiblePanel({ panelId: '   ', onToggle: null });
+
+    const warningMessages = warnings.map(([message]) => String(message));
+    assert.ok(
+      warningMessages.some((message) => message.includes('Missing panelId for collapse target.')),
+      'expected missing panelId diagnostic in Vite dev mode',
+    );
+    assert.ok(
+      warningMessages.some((message) => message.includes('Chevron rendered without a valid onToggle handler.')),
+      'expected missing onToggle diagnostic in Vite dev mode',
+    );
+  } finally {
+    globalThis.__STEPHANOS_IMPORT_META_ENV__ = originalImportMetaEnv;
+    console.warn = originalWarn;
+  }
+});
+
+test('CollapsiblePanel emits diagnostics in Node/test mode when NODE_ENV is not production', async () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const { renderCollapsiblePanel } = await importBundledModule(
+      path.join(srcRoot, 'test/renderCollapsiblePanelEntry.jsx'),
+      {},
+      'collapsible-panel-node-dev-diagnostics',
+      {
+        'process.env.NODE_ENV': '"test"',
+      },
+    );
+
+    renderCollapsiblePanel({ panelId: '', onToggle: null });
+
+    const warningMessages = warnings.map(([message]) => String(message));
+    assert.ok(warningMessages.some((message) => message.includes('Missing panelId for collapse target.')));
+    assert.ok(
+      warningMessages.some((message) => message.includes('Chevron rendered without a valid onToggle handler.')),
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('CollapsiblePanel diagnostics stay disabled in production mode', async () => {
+  const originalWarn = console.warn;
+  const originalImportMetaEnv = globalThis.__STEPHANOS_IMPORT_META_ENV__;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  globalThis.__STEPHANOS_IMPORT_META_ENV__ = { DEV: false };
+
+  try {
+    const { renderCollapsiblePanel } = await importBundledModule(
+      path.join(srcRoot, 'test/renderCollapsiblePanelEntry.jsx'),
+      {},
+      'collapsible-panel-production-diagnostics-off',
+      {
+        'process.env.NODE_ENV': '"production"',
+      },
+    );
+
+    renderCollapsiblePanel({ panelId: '', onToggle: null });
+    assert.equal(warnings.length, 0);
+  } finally {
+    globalThis.__STEPHANOS_IMPORT_META_ENV__ = originalImportMetaEnv;
+    console.warn = originalWarn;
+  }
+});
