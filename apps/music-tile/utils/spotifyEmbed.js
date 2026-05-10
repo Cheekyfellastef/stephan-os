@@ -32,7 +32,14 @@ export function resolveSpotifyReference(input = '') {
   try {
     const url = new URL(raw);
     if (!/spotify\.com$/i.test(url.hostname)) return { valid: false, reason: 'non-spotify-url', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
-    const [type, id = ''] = String(url.pathname || '').split('/').filter(Boolean);
+    const parts = String(url.pathname || '').split('/').filter(Boolean);
+    if (parts[0] === 'embed') {
+      const [, embedType, embedId = ''] = parts;
+      if (embedType !== TRACK_TYPE) return { valid: false, reason: 'unsupported-type', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
+      if (!isValidSpotifyId(embedId)) return { valid: false, reason: 'invalid-id', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
+      return buildResult(embedType, embedId);
+    }
+    const [type, id = ''] = parts;
     if (type === 'search') return { valid: false, reason: 'search-url', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
     if (!ALLOWED_TYPES.has(type)) return { valid: false, reason: 'unsupported-type', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
     if (!isValidSpotifyId(id)) return { valid: false, reason: 'invalid-id', type: null, id: null, uri: null, embedUrl: null, openUrl: null };
