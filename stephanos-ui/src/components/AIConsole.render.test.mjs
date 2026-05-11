@@ -43,6 +43,9 @@ test('AIConsole renders mission console shell with internal message region and a
   assert.match(rendered, /mission-console-shell/);
   assert.match(rendered, /output-panel ai-console-messages/);
   assert.match(rendered, /command-form mission-console-input/);
+  assert.match(rendered, /mission-console__input-row/);
+  assert.match(rendered, /mission-console__action-row/);
+  assert.match(rendered, /mission-console__safety-row/);
 });
 
 test('AIConsole avoids viewport-targeting scrollIntoView calls for message updates', async () => {
