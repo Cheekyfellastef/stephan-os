@@ -89,6 +89,7 @@ import {
 import { explainStephanosMemory } from '../system/friction/memoryExplanation.js';
 import {
   buildBridgeRevalidationAttemptedConfigKey,
+  shouldSkipBridgeAutoRevalidationWhileInFlight,
   shouldTreatBridgeHealthProbeAsReachable,
 } from './bridgeAutoRevalidation.mjs';
 import { recordStartupRenderStage } from '../../../shared/runtime/startupLaunchDiagnostics.mjs';
@@ -2240,6 +2241,16 @@ export function AIStoreProvider({ children }) {
     });
     const attemptedConfigKey = buildBridgeRevalidationAttemptedConfigKey(plan, bridgeMemory);
     const attemptCount = Number(bridgeAutoRevalidation?.attemptCount || 0);
+    if (shouldSkipBridgeAutoRevalidationWhileInFlight({
+      bridgeRevalidationNonce,
+      attemptedConfigKey,
+      currentAttemptedConfigKey: bridgeAutoRevalidation?.attemptedConfigKey,
+      currentState: bridgeAutoRevalidation?.state,
+    })) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const terminalStates = new Set(['skipped', 'validation-failed', 'unreachable', 'revalidated', 'execution-incompatible', 'blocked-by-policy', 'backoff']);
     const alreadyAttemptedCurrentConfig = bridgeRevalidationNonce === 0
       && bridgeAutoRevalidation.attemptedConfigKey === attemptedConfigKey
