@@ -36,3 +36,23 @@ export function shouldTreatBridgeHealthProbeAsReachable(probe = {}) {
   }
   return hasEndpointShape;
 }
+
+export function shouldSkipBridgeAutoRevalidationWhileInFlight({
+  bridgeRevalidationNonce = 0,
+  attemptedConfigKey = '',
+  currentAttemptedConfigKey = '',
+  currentState = '',
+} = {}) {
+  if (Number(bridgeRevalidationNonce || 0) > 0) {
+    return false;
+  }
+  const normalizedAttemptedConfigKey = String(attemptedConfigKey || '').trim();
+  if (!normalizedAttemptedConfigKey) {
+    return false;
+  }
+  if (String(currentAttemptedConfigKey || '').trim() !== normalizedAttemptedConfigKey) {
+    return false;
+  }
+  const normalizedState = String(currentState || '').trim().toLowerCase();
+  return normalizedState === 'validating' || normalizedState === 'probing';
+}

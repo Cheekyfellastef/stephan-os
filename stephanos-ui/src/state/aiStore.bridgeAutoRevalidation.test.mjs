@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBridgeRevalidationAttemptedConfigKey,
+  shouldSkipBridgeAutoRevalidationWhileInFlight,
   shouldTreatBridgeHealthProbeAsReachable,
 } from './bridgeAutoRevalidation.mjs';
 
@@ -34,4 +35,19 @@ test('shouldTreatBridgeHealthProbeAsReachable accepts successful health JSON wit
   };
 
   assert.equal(shouldTreatBridgeHealthProbeAsReachable(probe), true);
+});
+
+test('shouldSkipBridgeAutoRevalidationWhileInFlight blocks duplicate auto polling for same config while validating', () => {
+  assert.equal(shouldSkipBridgeAutoRevalidationWhileInFlight({
+    bridgeRevalidationNonce: 0,
+    attemptedConfigKey: 'tailscale::https://example',
+    currentAttemptedConfigKey: 'tailscale::https://example',
+    currentState: 'validating',
+  }), true);
+  assert.equal(shouldSkipBridgeAutoRevalidationWhileInFlight({
+    bridgeRevalidationNonce: 1,
+    attemptedConfigKey: 'tailscale::https://example',
+    currentAttemptedConfigKey: 'tailscale::https://example',
+    currentState: 'validating',
+  }), false);
 });
