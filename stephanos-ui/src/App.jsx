@@ -661,7 +661,22 @@ export default function App() {
   }, [continuitySnapshot.recentActivityActive, continuitySnapshot.recentContinuityEvents.length, metricsTick, safeUiLayout, telemetryEntries]);
 
   useEffect(() => {
-    setUiDiagnostics((prev) => ({ ...prev, runtimeDiagnostics }));
+    setUiDiagnostics((prev) => {
+      const previousDiagnostics = prev?.runtimeDiagnostics || null;
+      const unchanged = previousDiagnostics
+        && previousDiagnostics.activeTimerCount === runtimeDiagnostics.activeTimerCount
+        && previousDiagnostics.activeListenerCount === runtimeDiagnostics.activeListenerCount
+        && previousDiagnostics.telemetryHistoryLength === runtimeDiagnostics.telemetryHistoryLength
+        && previousDiagnostics.continuityEventCount === runtimeDiagnostics.continuityEventCount
+        && previousDiagnostics.activePanels === runtimeDiagnostics.activePanels
+        && previousDiagnostics.totalPanels === runtimeDiagnostics.totalPanels
+        && previousDiagnostics.animationActiveCount === runtimeDiagnostics.animationActiveCount
+        && previousDiagnostics.eventRatePerSecond === runtimeDiagnostics.eventRatePerSecond;
+      if (unchanged) {
+        return prev;
+      }
+      return { ...prev, runtimeDiagnostics };
+    });
   }, [runtimeDiagnostics, setUiDiagnostics]);
 
   useEffect(() => {

@@ -111,6 +111,9 @@ export default function MissionConsoleTile({
   const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
 
   const operatorReliefPresenceSignatureRef = useRef('');
+  const intentUpdateSignatureRef = useRef('');
+  const openClawIntegrationSignatureRef = useRef('');
+  const missionBridgeSignatureRef = useRef('');
 
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
@@ -355,6 +358,16 @@ export default function MissionConsoleTile({
   }), [branchName, finalRouteTruth, openClawIntentType, proposalCards, resolvedTarget.label, runtimeStatusModel, lastScanReport]);
 
   useEffect(() => {
+    const signature = JSON.stringify({
+      sessionState: openClawIntegration?.sessionState || '',
+      currentActivity: openClawIntegration?.currentActivity || '',
+      readiness: openClawIntegration?.readiness || '',
+      approvalRequired: openClawIntegration?.approvalRequired === true,
+      warnings: Array.isArray(openClawIntegration?.warnings) ? openClawIntegration.warnings.join('|') : '',
+      sandboxStatus: openClawIntegration?.sandboxStatus || '',
+    });
+    if (openClawIntegrationSignatureRef.current === signature) return;
+    openClawIntegrationSignatureRef.current = signature;
     onOpenClawIntegrationUpdate(openClawIntegration);
   }, [onOpenClawIntegrationUpdate, openClawIntegration]);
   const missionRoutingReadiness = useMemo(() => buildMissionRoutingReadiness({
@@ -371,9 +384,9 @@ export default function MissionConsoleTile({
     finishAuthority: intentToBuild?.missionSpec?.finishAuthority || {},
   }), [agentAssignmentMatrix, intentToBuild?.missionSpec, memoryLibrarian, missionCommandPacket, missionEvidenceLedger, verificationReturnAdjudication]);
 
-  useEffect(() => {
+  const intentToBuildUpdateProjection = useMemo(() => {
     const missionSpec = intentToBuild?.missionSpec || {};
-    onIntentToBuildUpdate({
+    return {
       latestMissionId: missionSpec.missionId || 'n/a',
       missionStatus: missionSpec.status || 'draft',
       approvalRequired: intentToBuild?.approvalRequired === true ? 'yes' : 'no',
@@ -475,9 +488,24 @@ export default function MissionConsoleTile({
       missionRoutingBlockerCount: String((missionRoutingReadiness.blockers || []).length || 0),
       missionRoutingWarningCount: String((missionRoutingReadiness.warnings || []).length || 0),
       missionRoutingNextAction: missionRoutingReadiness.nextAction || 'Await operator decision.',
-    });
-  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, onIntentToBuildUpdate, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
+    };
+  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
   useEffect(() => {
+    const signature = JSON.stringify(intentToBuildUpdateProjection);
+    if (intentUpdateSignatureRef.current === signature) return;
+    intentUpdateSignatureRef.current = signature;
+    onIntentToBuildUpdate(intentToBuildUpdateProjection);
+  }, [intentToBuildUpdateProjection, onIntentToBuildUpdate]);
+  useEffect(() => {
+    const signature = JSON.stringify({
+      state: missionBridgeState?.state || '',
+      pendingApproval: missionBridgeState?.pendingApproval === true,
+      nextRecommendedAction: missionBridgeState?.nextRecommendedAction || '',
+      missionPacketId: missionBridgeState?.missionPacket?.missionId || '',
+      eventsCount: Array.isArray(missionBridgeState?.events) ? missionBridgeState.events.length : 0,
+    });
+    if (missionBridgeSignatureRef.current === signature) return;
+    missionBridgeSignatureRef.current = signature;
     onMissionBridgeUpdate(missionBridgeState);
   }, [missionBridgeState, onMissionBridgeUpdate]);
 
@@ -497,7 +525,7 @@ export default function MissionConsoleTile({
     } catch {
       return null;
     }
-  }, [messages.length]);
+  }, [runtimeStatusModel?.musicContextRevision]);
 
   function buildStephanosResponse(content) {
     const normalizedPrompt = String(content || '').trim();
