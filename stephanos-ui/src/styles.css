@@ -4525,3 +4525,49 @@ pre {
 .canonical-pane__body { padding: 0 10px 10px; min-height:0; }
 .mission-console__history { min-height: 260px; max-height: none; overflow-y: auto; }
 .mission-console__composer { position: sticky; bottom: 0; background: inherit; }
+
+/* Mission Console cockpit repair: keep answer history, composer, and relief surfaces separated. */
+.mission-console-section--status-strip .mission-console__status-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.45rem 0.9rem;
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.mission-console-section--assistant-console .mission-console {
+  border: 0;
+  background: transparent;
+}
+
+.mission-console .panel-body {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.mission-console-shell {
+  overflow: visible;
+}
+
+.mission-console-pane__body.mission-console__history {
+  min-height: 260px;
+  max-height: min(46vh, 520px);
+  overflow-y: auto;
+  margin-bottom: 0.65rem;
+}
+
+.mission-console-input,
+.mission-console__composer {
+  position: static;
+  background: transparent;
+  border-top: 1px solid rgba(88, 148, 220, 0.35);
+  padding-top: 0.7rem;
+  margin-top: 0.35rem;
+}
+
+.mission-console-section--operator-relief pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
