@@ -810,7 +810,12 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section mission-console-section--operator-relief">
-        <CollapsiblePanel title="Operator Relief v2 · Mission Brain" defaultOpen={false}>
+        <CollapsiblePanel
+          panelId="missionConsoleOperatorReliefPanel"
+          title="Operator Relief v2 · Mission Brain"
+          isOpen={uiLayout.missionConsoleOperatorReliefPanel !== false}
+          onToggle={() => togglePanel('missionConsoleOperatorReliefPanel')}
+        >
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
@@ -863,7 +868,12 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section mission-console-section--secondary">
-        <CollapsiblePanel title="Secondary Diagnostics" defaultOpen={false}>
+        <CollapsiblePanel
+          panelId="missionConsoleSecondaryDiagnosticsPanel"
+          title="Secondary Diagnostics"
+          isOpen={uiLayout.missionConsoleSecondaryDiagnosticsPanel !== false}
+          onToggle={() => togglePanel('missionConsoleSecondaryDiagnosticsPanel')}
+        >
         <h4>Workspace Header / Command Authority</h4>
         <ul>
           <li><strong>Current Workspace:</strong> Agent Mission Console (Mission Router)</li>
@@ -879,7 +889,12 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section">
-        <CollapsiblePanel title="Connected Tile Contexts (advanced)" defaultOpen={false}>
+        <CollapsiblePanel
+          panelId="missionConsoleConnectedTileContextsPanel"
+          title="Connected Tile Contexts (advanced)"
+          isOpen={uiLayout.missionConsoleConnectedTileContextsPanel !== false}
+          onToggle={() => togglePanel('missionConsoleConnectedTileContextsPanel')}
+        >
           <h4>Connected Tile Contexts</h4>
           <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
           <p><strong>Current artist/vibe:</strong> {musicTileContext?.currentArtistInput || 'not set'} · {musicTileContext?.currentTasteTarget || 'unknown'}</p>
