@@ -798,7 +798,7 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section mission-console-section--operator-relief">
-        <CollapsiblePanel title="Operator Relief v1" defaultOpen={false}>
+        <CollapsiblePanel title="Operator Relief v2 · Mission Brain" defaultOpen={false}>
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
@@ -809,16 +809,18 @@ export default function MissionConsoleTile({
           <h5>Tests / Build / Verify Evidence</h5>
           <p>Required tests: {operatorReliefProjection.tests.required.length} · Passed: {operatorReliefProjection.tests.passed} · Failed: {operatorReliefProjection.tests.failed}</p>
           <p>Build: {operatorReliefProjection.tests.buildPassed ? 'passed' : 'not-passed'} · Verify: {operatorReliefProjection.tests.verifyPassed ? 'passed' : 'not-passed'}</p>
-          <h5>Browser Proof Gaps</h5>
-          <p>Missing proof count: {operatorReliefProjection.browserProof.missing.length}</p>
-          <ul>{operatorReliefProjection.browserProof.missing.map((item) => <li key={item}>{item}</li>)}</ul>
+          <h5>Browser Proof Checklist</h5>
+          <p>Required: {operatorReliefProjection.browserProof.required ? 'yes' : 'no'} · Missing: {operatorReliefProjection.browserProof.missingItems?.length || 0}</p>
+          <ul>{(operatorReliefProjection.browserProof.missingItems || []).map((item) => <li key={item}>{item}</li>)}</ul>
           <h5>Runtime Evidence and Warnings</h5>
           <p>Route: {operatorReliefProjection.runtimeEvidence.routeStatus} · Provider: {operatorReliefProjection.runtimeEvidence.providerStatus} · Tile readiness: {operatorReliefProjection.runtimeEvidence.tileStatus}</p>
           <ul>{operatorReliefProjection.runtimeEvidence.warnings.map((warn) => <li key={warn}>{warn}</li>)}</ul>
           <h5>Merge Safety Verdict</h5>
           <p>{operatorReliefProjection.mergeSafety.verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required' : operatorReliefProjection.mergeSafety.verdict}</p>
-          <h5>Next Actions</h5>
-          <ul>{operatorReliefProjection.nextActions.map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
+          <h5>Next Best Action</h5>
+          <p><strong>{operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'}</strong> — {operatorReliefProjection.nextBestAction?.reason}</p>
+          <h5>Secondary Actions</h5>
+          <ul>{operatorReliefProjection.nextActions.slice(1).map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
           <h5>Repair Prompt</h5>
           <button type="button" onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState)}>
             {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : 'Copy Repair Prompt'}
@@ -826,9 +828,13 @@ export default function MissionConsoleTile({
           <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
           <h5>Lesson Candidates</h5>
           <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}</ul>
+          <h5>Evidence Gaps</h5>
+          <ul>{(operatorReliefProjection.evidenceGaps || []).map((gap) => <li key={gap.id}><strong>{gap.label}</strong>: {gap.reason}</li>)}</ul>
           <h5>Operator Decision Queue</h5>
-          <p>Decision required: {operatorReliefProjection.operatorDecision.required ? 'yes' : 'no'}</p>
-          <p>Available actions: {operatorReliefProjection.operatorDecision.options.join(', ')}</p>
+          <p>Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
+          <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
+          <h5>Mission Handoff Pack</h5>
+          <button type="button" onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setRepairPromptCopyState)}>Copy Mission Handoff</button>
         </CollapsiblePanel>
       </section>
 
