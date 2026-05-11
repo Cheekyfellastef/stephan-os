@@ -858,7 +858,7 @@ export default function App() {
           </div>
         ) : null}
         <MissionConsoleTile
-          uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}
+          uiLayout={safeUiLayout}
           togglePanel={togglePanel}
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
@@ -1317,7 +1317,7 @@ export default function App() {
         />
         <section className="mission-console-surface-stage">
           <MissionConsoleTile
-            uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}
+            uiLayout={safeUiLayout}
             togglePanel={() => {}}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
@@ -1405,7 +1405,7 @@ export default function App() {
             })}
           />
           <MissionConsoleTile
-            uiLayout={{ ...safeUiLayout, missionConsolePanel: true }}
+            uiLayout={safeUiLayout}
             togglePanel={() => {}}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
