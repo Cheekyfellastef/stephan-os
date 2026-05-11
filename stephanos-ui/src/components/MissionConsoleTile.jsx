@@ -773,6 +773,17 @@ export default function MissionConsoleTile({
         runtimeStatusModel={runtimeStatusModel}
         compactVerificationSummary={compactVerificationSummary}
       />
+      <section className="mission-console-section mission-console-section--operator-overview">
+        <h4>Operator Overview</h4>
+        <ul className="mission-console__status-list">
+          <li><strong>Workspace / mode:</strong> Agent Mission Console · {sessionMode}</li>
+          <li><strong>Stephanos readiness:</strong> {executionReadiness.ready ? 'ready' : 'not-ready'} ({compactVerificationSummary.verificationReturnStatus})</li>
+          <li><strong>Route / provider:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} via {finalRouteTruth?.routeKind || 'unknown'} · requested {finalRouteTruth?.providerRequested || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
+          <li><strong>Operator Relief:</strong> {operatorReliefProjection.status || 'unknown'} · merge safety {operatorReliefProjection.mergeSafety?.verdict || 'unknown'} · proof {compactVerificationSummary.realityForgeProofStatus}</li>
+          <li><strong>Next action:</strong> {operatorReliefProjection?.nextActions?.[0]?.label || compactVerificationSummary.openClawNextAction || 'Review Operator Relief next actions.'}</li>
+          <li><strong>Primary control:</strong> Use Assistant Command Console below to submit the next mission command.</li>
+        </ul>
+      </section>
       <section className="mission-console-section mission-console-section--status-strip">
         <h4>Runtime + Route Status</h4>
         <ul className="mission-console__status-list">
@@ -787,7 +798,7 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section mission-console-section--operator-relief">
-        <CollapsiblePanel title="Operator Relief v1" defaultOpen>
+        <CollapsiblePanel title="Operator Relief v1" defaultOpen={false}>
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
@@ -850,13 +861,15 @@ export default function MissionConsoleTile({
       </section>
 
       <section className="mission-console-section">
-        <h4>Connected Tile Contexts</h4>
-        <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
-        <p><strong>Current artist/vibe:</strong> {musicTileContext?.currentArtistInput || 'not set'} · {musicTileContext?.currentTasteTarget || 'unknown'}</p>
-        <p><strong>Counts:</strong> verified {musicTileContext?.verification?.verified || 0} / search {musicTileContext?.verification?.searchOnly || 0} / fallback {musicTileContext?.discoveryPipeline?.fallbackCount || 0}</p>
-        <p><strong>Taste DNA:</strong> {(musicTileContext?.tasteDNA?.strongestPositiveTraits || []).slice(0,3).map((row)=>row.name).join(', ') || 'no strong positives yet'}</p>
-        <button type="button" onClick={() => setInput('What is happening in the Music Tile right now?')}>Ask about Music Tile</button>
-        <button type="button" onClick={() => { if (typeof window !== 'undefined') window.open('../music-tile/index.html', '_blank', 'noopener,noreferrer'); }}>Open Music Tile</button>
+        <CollapsiblePanel title="Connected Tile Contexts (advanced)" defaultOpen={false}>
+          <h4>Connected Tile Contexts</h4>
+          <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
+          <p><strong>Current artist/vibe:</strong> {musicTileContext?.currentArtistInput || 'not set'} · {musicTileContext?.currentTasteTarget || 'unknown'}</p>
+          <p><strong>Counts:</strong> verified {musicTileContext?.verification?.verified || 0} / search {musicTileContext?.verification?.searchOnly || 0} / fallback {musicTileContext?.discoveryPipeline?.fallbackCount || 0}</p>
+          <p><strong>Taste DNA:</strong> {(musicTileContext?.tasteDNA?.strongestPositiveTraits || []).slice(0, 3).map((row) => row.name).join(', ') || 'no strong positives yet'}</p>
+          <button type="button" onClick={() => setInput('What is happening in the Music Tile right now?')}>Ask about Music Tile</button>
+          <button type="button" onClick={() => { if (typeof window !== 'undefined') window.open('../music-tile/index.html', '_blank', 'noopener,noreferrer'); }}>Open Music Tile</button>
+        </CollapsiblePanel>
       </section>
 
       <section className="mission-console-section">
