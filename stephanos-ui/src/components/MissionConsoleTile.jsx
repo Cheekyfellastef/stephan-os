@@ -773,27 +773,21 @@ export default function MissionConsoleTile({
         runtimeStatusModel={runtimeStatusModel}
         compactVerificationSummary={compactVerificationSummary}
       />
-      <section className="mission-console-section">
-        <h4>Canonical Mission Chat Surface</h4>
-        <p><strong>Opened route:</strong> mission-console</p>
-        <p><strong>Canonical route:</strong> mission-console</p>
-        <p><strong>Workspace source:</strong> stephanos-ui/src/components/MissionConsoleTile.jsx</p>
-        <p><strong>Chat surface mounted:</strong> yes</p>
-        <p><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</p>
-        <ul>
-          <li>Chat input: {executionReadiness.chatInputReady ? 'yes' : 'no'}</li>
-          <li>Submit route: {executionReadiness.submitRouteReady ? 'yes' : 'no'}</li>
-          <li>Answer pane: {executionReadiness.answerPaneReady ? 'yes' : 'no'}</li>
-          <li>AI route: {executionReadiness.aiRouteStatus}</li>
-          <li>Music context: {executionReadiness.musicContextAvailable ? 'available' : 'unavailable'}</li>
+      <section className="mission-console-section mission-console-section--status-strip">
+        <h4>Runtime + Route Status</h4>
+        <ul className="mission-console__status-list">
+          <li><strong>Opened route:</strong> mission-console</li>
+          <li><strong>Canonical route:</strong> mission-console</li>
+          <li><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</li>
+          <li><strong>Route status:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} / {finalRouteTruth?.routeKind || 'unknown'}</li>
+          <li><strong>Provider chain:</strong> requested {finalRouteTruth?.providerRequested || 'unknown'} → selected {finalRouteTruth?.providerSelected || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
+          <li><strong>Addressed target:</strong> {resolvedTarget.label}</li>
+          <li><strong>Music context:</strong> {executionReadiness.musicContextAvailable ? 'available' : 'unavailable'}</li>
         </ul>
-        {!executionReadiness.musicContextAvailable ? (
-          <p>Music Tile context unavailable. Open Music Tile or rebuild context.</p>
-        ) : null}
       </section>
 
-      <section className="mission-console-section">
-        <CollapsiblePanel title="Operator Relief v1" defaultOpen={false}>
+      <section className="mission-console-section mission-console-section--operator-relief">
+        <CollapsiblePanel title="Operator Relief v1" defaultOpen>
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
@@ -825,8 +819,11 @@ export default function MissionConsoleTile({
           <p>Decision required: {operatorReliefProjection.operatorDecision.required ? 'yes' : 'no'}</p>
           <p>Available actions: {operatorReliefProjection.operatorDecision.options.join(', ')}</p>
         </CollapsiblePanel>
+      </section>
 
-      <AIConsole
+      <section className="mission-console-section mission-console-section--assistant-console">
+        <h4>Assistant Command Console</h4>
+        <AIConsole
           input={sharedConsoleInput}
           setInput={setSharedConsoleInput}
           submitPrompt={(rawPrompt) => submitPrompt?.(rawPrompt, { orchestrationTruth, submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router' })}
@@ -836,7 +833,8 @@ export default function MissionConsoleTile({
         />
       </section>
 
-      <section className="mission-console-section">
+      <section className="mission-console-section mission-console-section--secondary">
+        <CollapsiblePanel title="Secondary Diagnostics" defaultOpen={false}>
         <h4>Workspace Header / Command Authority</h4>
         <ul>
           <li><strong>Current Workspace:</strong> Agent Mission Console (Mission Router)</li>
@@ -848,6 +846,7 @@ export default function MissionConsoleTile({
           <li><strong>Approval Mode:</strong> Required for OpenClaw proposals and destructive/high-risk actions</li>
           <li><strong>Current session mode:</strong> {sessionMode}</li>
         </ul>
+        </CollapsiblePanel>
       </section>
 
       <section className="mission-console-section">
