@@ -109,6 +109,8 @@ export default function MissionConsoleTile({
   const [verificationReturnInput, setVerificationReturnInput] = useState('');
   const [prEvidenceInput, setPrEvidenceInput] = useState('');
   const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
+  const [showRepairPromptBody, setShowRepairPromptBody] = useState(false);
+  const [showMissionHandoffJson, setShowMissionHandoffJson] = useState(false);
 
   const operatorReliefPresenceSignatureRef = useRef('');
   const intentUpdateSignatureRef = useRef('');
@@ -491,7 +493,16 @@ export default function MissionConsoleTile({
     };
   }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
   useEffect(() => {
-    const signature = JSON.stringify(intentToBuildUpdateProjection);
+    const signature = [
+      intentToBuildUpdateProjection.latestMissionId,
+      intentToBuildUpdateProjection.missionStatus,
+      intentToBuildUpdateProjection.verificationStatus,
+      intentToBuildUpdateProjection.missionVerificationJudgment,
+      intentToBuildUpdateProjection.missionVerificationReadinessLevel,
+      intentToBuildUpdateProjection.missionRoutingReadinessLevel,
+      intentToBuildUpdateProjection.memoryLibrarianPendingCount,
+      intentToBuildUpdateProjection.missionEvidenceLedgerEntryCount,
+    ].join('|');
     if (intentUpdateSignatureRef.current === signature) return;
     intentUpdateSignatureRef.current = signature;
     onIntentToBuildUpdate(intentToBuildUpdateProjection);
@@ -870,7 +881,12 @@ export default function MissionConsoleTile({
           <button type="button" onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState)}>
             {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : 'Copy Repair Prompt'}
           </button>
-          <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
+          <button type="button" onClick={() => setShowRepairPromptBody((prev) => !prev)}>
+            {showRepairPromptBody ? 'Hide Repair Prompt Body' : 'Show Repair Prompt Body'}
+          </button>
+          {showRepairPromptBody ? (
+            <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
+          ) : null}
           <h5>Lesson Candidates</h5>
           <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}</ul>
           <h5>Evidence Gaps</h5>
@@ -880,6 +896,10 @@ export default function MissionConsoleTile({
           <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
           <h5>Mission Handoff Pack</h5>
           <button type="button" onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setRepairPromptCopyState)}>Copy Mission Handoff</button>
+          <button type="button" onClick={() => setShowMissionHandoffJson((prev) => !prev)}>
+            {showMissionHandoffJson ? 'Hide Mission Handoff JSON' : 'Show Mission Handoff JSON'}
+          </button>
+          {showMissionHandoffJson ? <pre>{JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2)}</pre> : null}
         </CollapsiblePanel>
       </section>
 
