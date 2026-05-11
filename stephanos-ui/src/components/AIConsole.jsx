@@ -171,23 +171,29 @@ export default function AIConsole({
           </div>
         </section>
         <form className="command-form mission-console-input paneFormLayout mission-console__composer" onSubmit={onSubmit}>
-          <input
-            className="paneInput paneControl"
-            ref={inputRef}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder="Enter command or prompt..."
-            disabled={isBusy}
-          />
-          <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
-          {isBusy ? (
-            <button type="button" className="ghost-button" onClick={() => cancelActivePrompt?.()}>
-              Stop generating
+          <div className="mission-console__input-row">
+            <input
+              className="paneInput paneControl"
+              ref={inputRef}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Enter command or prompt..."
+              disabled={isBusy}
+            />
+          </div>
+          <div className="mission-console__action-row">
+            <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
+            {isBusy ? (
+              <button type="button" className="ghost-button" onClick={() => cancelActivePrompt?.()}>
+                Stop generating
+              </button>
+            ) : null}
+          </div>
+          <div className="mission-console__safety-row">
+            <button type="button" className="ghost-button" onClick={() => emergencyReleaseOllamaLoad?.()}>
+              Emergency release Ollama load
             </button>
-          ) : null}
-          <button type="button" className="ghost-button" onClick={() => emergencyReleaseOllamaLoad?.()}>
-            Emergency release Ollama load
-          </button>
+          </div>
         </form>
       </div>
     </CollapsiblePanel>
