@@ -2557,7 +2557,6 @@ export function AIStoreProvider({ children }) {
       cancelled = true;
     };
   }, [
-    apiStatus?.runtimeContext?.routeDiagnostics,
     bridgeMemory,
     bridgeTransportPreferences,
     bridgeValidationTruth,
