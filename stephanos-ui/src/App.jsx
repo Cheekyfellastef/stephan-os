@@ -110,6 +110,17 @@ const PANE_DRAG_BLOCK_SELECTOR = [
   '[data-stephanos-no-drag]',
 ].join(', ');
 
+function countTelemetryEventsSince(entries = [], sinceMs = 0) {
+  if (!Array.isArray(entries) || entries.length === 0) return 0;
+  let count = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const timestampMs = Date.parse(entries[index]?.timestamp || '');
+    if (!Number.isFinite(timestampMs) || timestampMs < sinceMs) break;
+    count += 1;
+  }
+  return count;
+}
+
 export function shouldStartPaneDrag(target) {
   if (!target || typeof target.closest !== 'function') {
     return false;
@@ -637,8 +648,21 @@ export default function App() {
     if (typeof window === 'undefined') {
       return undefined;
     }
-    const tickId = window.setInterval(() => setMetricsTick(Date.now()), 1000);
-    return () => window.clearInterval(tickId);
+    const TICK_VISIBLE_MS = 5_000;
+    const TICK_HIDDEN_MS = 30_000;
+    let tickId = null;
+    const restartTick = () => {
+      if (tickId != null) window.clearInterval(tickId);
+      const nextIntervalMs = document.visibilityState === 'visible' ? TICK_VISIBLE_MS : TICK_HIDDEN_MS;
+      tickId = window.setInterval(() => setMetricsTick(Date.now()), nextIntervalMs);
+    };
+    const handleVisibilityChange = () => restartTick();
+    restartTick();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      if (tickId != null) window.clearInterval(tickId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const runtimeDiagnostics = useMemo(() => {
@@ -647,7 +671,7 @@ export default function App() {
       .filter(([panelId, value]) => panelId.endsWith('Panel') && value !== false)
       .length;
     const tenSecondsAgo = metricsTick - 10_000;
-    const eventRate = telemetryEntries.filter((entry) => Date.parse(entry.timestamp) >= tenSecondsAgo).length / 10;
+    const eventRate = countTelemetryEventsSince(telemetryEntries, tenSecondsAgo) / 10;
     return {
       activeTimerCount: 2,
       activeListenerCount: 2,
