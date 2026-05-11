@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { OPENCLAW_AUTHORITY, OPENCLAW_MODE, OPENCLAW_SCAN_MODES } from './openclaw/openclawTilePolicy.js';
 import { buildOpenClawGuardrailSnapshot } from './openclaw/openclawGuardrails.js';
@@ -109,6 +109,8 @@ export default function MissionConsoleTile({
   const [verificationReturnInput, setVerificationReturnInput] = useState('');
   const [prEvidenceInput, setPrEvidenceInput] = useState('');
   const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
+
+  const operatorReliefPresenceSignatureRef = useRef('');
 
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
@@ -255,15 +257,25 @@ export default function MissionConsoleTile({
   useEffect(() => {
     const verdict = operatorReliefProjection?.mergeSafety?.verdict;
     if (!verdict) return;
+
+    const status = operatorReliefProjection?.status || 'unknown';
+    const repairPromptAvailable = operatorReliefProjection?.repairPrompt?.available === true;
+    const hasLessonCandidates = (operatorReliefProjection?.lessonCandidates || []).length > 0;
+    const presenceSignature = `${status}|${verdict}|${repairPromptAvailable ? 'repair' : 'no-repair'}|${hasLessonCandidates ? 'lessons' : 'no-lessons'}`;
+    if (operatorReliefPresenceSignatureRef.current === presenceSignature) {
+      return;
+    }
+    operatorReliefPresenceSignatureRef.current = presenceSignature;
+
     const summary = verdict === 'safe-to-merge'
       ? 'Build and verify passed. Operator browser smoke test remains.'
       : verdict === 'needs-browser-proof'
         ? 'This PR is not merge-safe yet because browser proof is missing.'
         : 'A repair prompt is available from console error evidence.';
-    emitPresenceEvent({ kind: `operator_relief.${operatorReliefProjection.status === 'merge-candidate' ? 'merge_candidate' : operatorReliefProjection.status === 'blocked' ? 'blocked' : 'ready'}`, summary, impact: operatorReliefProjection?.missionTitle || 'Operator Relief update.' });
+    emitPresenceEvent({ kind: `operator_relief.${status === 'merge-candidate' ? 'merge_candidate' : status === 'blocked' ? 'blocked' : 'ready'}`, summary, impact: operatorReliefProjection?.missionTitle || 'Operator Relief update.' });
     if (verdict === 'needs-browser-proof') emitPresenceEvent({ kind: 'operator_relief.browser_proof_missing', summary: 'Browser proof missing. Run UI smoke test before merge.' });
-    if (operatorReliefProjection?.repairPrompt?.available) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
-    if ((operatorReliefProjection?.lessonCandidates || []).length > 0) emitPresenceEvent({ kind: 'operator_relief.lesson_candidate_available', summary: 'I found a project lesson candidate from this failure.' });
+    if (repairPromptAvailable) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
+    if (hasLessonCandidates) emitPresenceEvent({ kind: 'operator_relief.lesson_candidate_available', summary: 'I found a project lesson candidate from this failure.' });
   }, [operatorReliefProjection]);
   const missionCommandPacket = useMemo(() => buildMissionCommandPacket({
     missionSpec: intentToBuild?.missionSpec || {},
