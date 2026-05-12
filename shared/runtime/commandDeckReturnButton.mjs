@@ -68,6 +68,14 @@ export function createCommandDeckReturnButton({
   const clickHandler = typeof onClick === 'function'
     ? onClick
     : () => {
+      if (typeof windowRef.returnToCommandDeck === 'function') {
+        windowRef.returnToCommandDeck();
+        return;
+      }
+      if (windowRef.parent && windowRef.parent !== windowRef && typeof windowRef.parent.returnToCommandDeck === 'function') {
+        windowRef.parent.returnToCommandDeck();
+        return;
+      }
       windowRef.location.assign(resolveCommandDeckDestinationPath(windowRef));
     };
   button.addEventListener('click', clickHandler);

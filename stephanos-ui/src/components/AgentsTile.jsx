@@ -22,12 +22,17 @@ export default function AgentsTile({
   finalAgentView,
   onSelectAgent,
   selectedAgentId,
+  uiLayout = {},
+  togglePanel = null,
   isOpen = true,
   onToggle = () => {},
   debugVisibility = false,
   openClawIntegration = null,
   agentTaskProjection = null,
 } = {}) {
+  const hasCanonicalToggle = typeof togglePanel === 'function';
+  const resolvedIsOpen = hasCanonicalToggle ? uiLayout.agentsPanel !== false : isOpen;
+  const resolvedToggle = hasCanonicalToggle ? () => togglePanel('agentsPanel') : onToggle;
   const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
@@ -82,8 +87,8 @@ export default function AgentsTile({
       title="Agents Tile"
       description="Canonical fleet projection from runtime agent truth."
       className="agents-tile"
-      isOpen={isOpen}
-      onToggle={onToggle}
+      isOpen={resolvedIsOpen}
+      onToggle={resolvedToggle}
     >
       <p className="muted">{view.operatorSummary || 'No agent projection available.'}</p>
       <div className="agents-fleet-strip" role="list" aria-label="Agent fleet strip">

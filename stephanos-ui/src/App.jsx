@@ -1581,8 +1581,8 @@ export default function App() {
             finalAgentView={displayAgentView}
             selectedAgentId={displayAgentView.selectedAgentId}
             onSelectAgent={setSelectedAgentId}
-            isOpen
-            onToggle={() => {}}
+            uiLayout={safeUiLayout}
+            togglePanel={togglePanel}
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
@@ -1631,7 +1631,7 @@ export default function App() {
         <section className="mission-console-surface-stage">
           <MissionConsoleTile
             uiLayout={safeUiLayout}
-            togglePanel={() => {}}
+            togglePanel={togglePanel}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
@@ -1695,8 +1695,8 @@ export default function App() {
             <p>OpenClaw + Mission Console workspace stage</p>
           </header>
           <OpenClawTile
-            uiLayout={{ ...safeUiLayout, openClawPanel: true }}
-            togglePanel={() => {}}
+            uiLayout={safeUiLayout}
+            togglePanel={togglePanel}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
@@ -1719,7 +1719,7 @@ export default function App() {
           />
           <MissionConsoleTile
             uiLayout={safeUiLayout}
-            togglePanel={() => {}}
+            togglePanel={togglePanel}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
