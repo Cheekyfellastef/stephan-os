@@ -35,6 +35,7 @@ import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth.
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
+import { recordPerfCounter, recordPerfEvent } from '../state/perfDiagnostics.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -2017,21 +2018,33 @@ export function useAIConsole() {
 
 
   const refreshHealth = useCallback(async ({ force = false } = {}) => {
+    recordPerfCounter('polling', force ? 'refreshHealth.force' : 'refreshHealth.interval');
     const governor = runtimeGovernorStateRef.current;
     const nowMs = Date.now();
-    if (!force && (governor.mode === 'standby' || governor.mode === 'hidden')) return;
-    if (!force && nowMs < healthRefreshBackoffUntilMsRef.current) return;
-    if (healthRefreshInFlightRef.current) return;
+    if (!force && (governor.mode === 'standby' || governor.mode === 'hidden')) {
+      recordPerfCounter('polling', 'refreshHealth.skip_governor');
+      return;
+    }
+    if (!force && nowMs < healthRefreshBackoffUntilMsRef.current) {
+      recordPerfCounter('polling', 'refreshHealth.skip_backoff');
+      return;
+    }
+    if (healthRefreshInFlightRef.current) {
+      recordPerfCounter('polling', 'refreshHealth.skip_in_flight');
+      return;
+    }
     healthRefreshInFlightRef.current = true;
     let resolvedRuntimeContext = runtimeConfig;
 
     try {
       ({ runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig());
+      recordPerfCounter('polling', 'checkApiHealth.attempt');
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
       const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
       const nextProviderHealth = providerHealth.data || {};
       setProviderHealth(nextProviderHealth);
+      recordPerfCounter('store_writes', 'providerHealth');
       ['groq', 'gemini'].forEach((providerKey) => {
         const health = nextProviderHealth?.[providerKey] || {};
         const ok = health.ok === true;
@@ -2075,7 +2088,9 @@ export function useAIConsole() {
           final_route: finalized.runtimeStatus.finalRoute,
         },
       });
+      recordPerfCounter('store_writes', 'apiStatus');
     } catch (error) {
+      recordPerfEvent('polling', 'checkApiHealth.error', error?.message || 'unknown');
       healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error);
       const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealthRef.current, false);
@@ -2095,6 +2110,7 @@ export function useAIConsole() {
         lastCheckedAt: new Date().toISOString(),
         meta: null,
       });
+      recordPerfCounter('store_writes', 'apiStatus');
     } finally {
       healthRefreshInFlightRef.current = false;
     }
@@ -2135,6 +2151,7 @@ export function useAIConsole() {
 
     let intervalId = null;
     const runRefresh = () => {
+      recordPerfCounter('timers', 'health_poll.tick');
       void refreshHealth({ force: false });
     };
     const restartPolling = () => {
@@ -2142,6 +2159,7 @@ export function useAIConsole() {
         window.clearInterval(intervalId);
       }
       const pollIntervalMs = document.visibilityState === 'visible' ? 60_000 : 180_000;
+      recordPerfEvent('timers', 'health_poll.restart', `${pollIntervalMs}`);
       intervalId = window.setInterval(runRefresh, pollIntervalMs);
     };
     const handleVisibilityChange = () => {
@@ -2153,12 +2171,14 @@ export function useAIConsole() {
 
     restartPolling();
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    recordPerfCounter('listeners', 'visibilitychange.health_poll.register');
 
     return () => {
       if (intervalId != null) {
         window.clearInterval(intervalId);
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      recordPerfCounter('listeners', 'visibilitychange.health_poll.cleanup');
     };
   }, [refreshHealth]);
 
