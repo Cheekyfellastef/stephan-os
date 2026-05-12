@@ -1216,8 +1216,6 @@ export default function App() {
     next.splice(sourceIndex, 1);
     next.splice(targetIndex, 0, sourcePaneId);
     setPaneOrder(next);
-    console.info('[PANES] pane order updated', { order: next });
-    console.info('[PANES] reflow completed after visibility change', { trigger: 'pane-order-change' });
   }
 
   function nudgePane(paneId, direction = 1) {
@@ -1233,7 +1231,6 @@ export default function App() {
     const [pane] = order.splice(index, 1);
     order.splice(nextIndex, 0, pane);
     setPaneOrder(order);
-    console.info('[PANES] pane order updated', { order, interaction: 'touch-nudge' });
   }
 
   useEffect(() => {
@@ -1247,19 +1244,6 @@ export default function App() {
       sourceFunction: 'App.useEffect',
     });
   }, []);
-
-  useEffect(() => {
-    console.info('[Stephanos Runtime Fingerprint] mission-control', runtimeFingerprint);
-  }, [runtimeFingerprint]);
-
-  useEffect(() => {
-    console.info('[PANES] pane audit snapshot', paneAudit);
-  }, [paneAudit]);
-
-  useEffect(() => {
-    console.info('[PANES] fingerprint pane registered', { paneId: 'missionFingerprintPanel' });
-    console.info('[PANES] layout restored from memory', { order: safePaneOrder });
-  }, [safePaneOrder]);
 
   useEffect(() => {
     savePaneOrder(STEPHANOS_TILE_PANE_ORDER_STORAGE_KEY, safePaneOrder);

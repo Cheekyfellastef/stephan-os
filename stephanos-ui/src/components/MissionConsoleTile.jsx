@@ -35,7 +35,7 @@ import AIConsole from './AIConsole';
 import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
 import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
 import { emitPresenceEvent } from '../../../shared/runtime/stephanosPresenceBridge.mjs';
-import { recordPerfCounter } from '../state/perfDiagnostics.js';
+import { copyPerfDiagnosticsSnapshot, recordPerfCounter } from '../state/perfDiagnostics.js';
 
 registerTileMissionContext('music', ({ state }) => buildMusicMissionContext(state));
 
@@ -70,6 +70,7 @@ export default function MissionConsoleTile({
   const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
   const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
   const { copyState: repairPromptCopyState, setCopyState: setRepairPromptCopyState } = useClipboardButtonState();
+  const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
   const [contextScope, setContextScope] = useState('whole-stephanos');
@@ -806,6 +807,16 @@ export default function MissionConsoleTile({
     setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
   }
 
+  async function copyPerfDiagnostics() {
+    const result = await copyPerfDiagnosticsSnapshot();
+    if (result?.copied) {
+      setPerfCopyState(COPY_STATE.SUCCESS);
+      return;
+    }
+    const fallback = await writeTextToClipboard(result?.text || '', { navigatorObject: typeof navigator !== 'undefined' ? navigator : null });
+    setPerfCopyState(fallback.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+  }
+
   return (
     <CollapsiblePanel
       panelId="missionConsolePanel"
@@ -929,6 +940,9 @@ export default function MissionConsoleTile({
           onToggle={() => togglePanel('missionConsoleSecondaryDiagnosticsPanel')}
         >
         <h4>Workspace Header / Command Authority</h4>
+        <button type="button" onClick={copyPerfDiagnostics}>
+          {perfCopyState === COPY_STATE.SUCCESS ? 'Perf Diagnostics Copied' : 'Copy Perf Diagnostics'}
+        </button>
         <ul>
           <li><strong>Current Workspace:</strong> Agent Mission Console (Mission Router)</li>
           <li><strong>Operator Authority:</strong> Active</li>
