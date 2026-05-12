@@ -1772,6 +1772,8 @@ export function useAIConsole() {
   const runtimeGovernorStateRef = useRef({ mode: 'passive', leader: false, hidden: false, reason: 'startup', duplicateTabDetected: false, lastGovernorHeartbeat: '' });
   const activePromptRequestRef = useRef(null);
   const providerHealthRef = useRef(providerHealth);
+  const hostedCloudLastHealthRef = useRef(hostedCloudCognition?.lastHealth || {});
+  const refreshHealthRef = useRef(null);
   const effectiveProviderConfigs = useMemo(() => getEffectiveProviderConfigs(), [getEffectiveProviderConfigs]);
   const ollamaDraftConfig = effectiveProviderConfigs.ollama || {};
   const ollamaHealth = providerHealth.ollama || {};
@@ -1779,6 +1781,10 @@ export function useAIConsole() {
   useEffect(() => {
     providerHealthRef.current = providerHealth;
   }, [providerHealth]);
+
+  useEffect(() => {
+    hostedCloudLastHealthRef.current = hostedCloudCognition?.lastHealth || {};
+  }, [hostedCloudCognition?.lastHealth]);
 
   const buildRuntimeContextFromHealth = useCallback((resolvedRuntimeContext, health = {}) => {
     const backendBaseUrl = health.baseUrl || resolvedRuntimeContext.baseUrl || resolvedRuntimeContext.apiBaseUrl || '';
@@ -2052,8 +2058,8 @@ export function useAIConsole() {
           status: ok ? 'healthy' : (health.detail ? 'unhealthy' : 'unknown'),
           reason: String(health.detail || health.reason || (ok ? 'Provider reachable.' : 'No provider health data yet.')),
           checkedAt: new Date().toISOString(),
-          lastSuccessAt: ok ? new Date().toISOString() : (hostedCloudCognition?.lastHealth?.[providerKey]?.lastSuccessAt || ''),
-          lastFailureAt: ok ? (hostedCloudCognition?.lastHealth?.[providerKey]?.lastFailureAt || '') : new Date().toISOString(),
+          lastSuccessAt: ok ? new Date().toISOString() : (hostedCloudLastHealthRef.current?.[providerKey]?.lastSuccessAt || ''),
+          lastFailureAt: ok ? (hostedCloudLastHealthRef.current?.[providerKey]?.lastFailureAt || '') : new Date().toISOString(),
         });
       });
       const finalized = finalizeRuntimeContext(hydratedRuntimeContext, nextProviderHealth, health.ok);
@@ -2114,7 +2120,7 @@ export function useAIConsole() {
     } finally {
       healthRefreshInFlightRef.current = false;
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth, hostedCloudCognition?.lastHealth]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth]);
 
 
   useEffect(() => {
@@ -2139,6 +2145,10 @@ export function useAIConsole() {
   }, [setUiDiagnostics]);
 
   useEffect(() => {
+    refreshHealthRef.current = refreshHealth;
+  }, [refreshHealth]);
+
+  useEffect(() => {
     void refreshHealth({ force: true });
     // Intentionally execute only once at mount; interval and visibility handlers perform subsequent refreshes.
     // This prevents dependency churn from creating refresh feedback loops.
@@ -2149,27 +2159,38 @@ export function useAIConsole() {
       return undefined;
     }
 
+    recordPerfCounter('timers', 'health_poll.effect_run');
     let intervalId = null;
+    let currentCadenceMs = -1;
+
     const runRefresh = () => {
       recordPerfCounter('timers', 'health_poll.tick');
-      void refreshHealth({ force: false });
+      void refreshHealthRef.current?.({ force: false });
     };
-    const restartPolling = () => {
+
+    const restartPolling = (reason = 'unknown') => {
+      const nextCadenceMs = document.visibilityState === 'visible' ? 60_000 : 180_000;
+      recordPerfCounter('timers', `health_poll.effect_restart_reason.${reason}`);
+      if (intervalId != null && currentCadenceMs === nextCadenceMs) {
+        recordPerfCounter('timers', 'health_poll.restart_skipped_same_cadence');
+        return;
+      }
       if (intervalId != null) {
         window.clearInterval(intervalId);
       }
-      const pollIntervalMs = document.visibilityState === 'visible' ? 60_000 : 180_000;
-      recordPerfEvent('timers', 'health_poll.restart', `${pollIntervalMs}`);
-      intervalId = window.setInterval(runRefresh, pollIntervalMs);
+      currentCadenceMs = nextCadenceMs;
+      recordPerfEvent('timers', 'health_poll.restart', `${nextCadenceMs}`);
+      intervalId = window.setInterval(runRefresh, nextCadenceMs);
     };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         runRefresh();
       }
-      restartPolling();
+      restartPolling('visibilitychange');
     };
 
-    restartPolling();
+    restartPolling('mount');
     document.addEventListener('visibilitychange', handleVisibilityChange);
     recordPerfCounter('listeners', 'visibilitychange.health_poll.register');
 
@@ -2180,7 +2201,7 @@ export function useAIConsole() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       recordPerfCounter('listeners', 'visibilitychange.health_poll.cleanup');
     };
-  }, [refreshHealth]);
+  }, []);
 
   useEffect(() => {
     if (startupOllamaSyncAttemptedRef.current) return;
