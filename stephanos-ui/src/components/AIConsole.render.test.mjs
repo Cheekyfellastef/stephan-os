@@ -119,3 +119,11 @@ test('AIConsole renders copy buttons for historical and new assistant answer pan
   assert.match(rendered, /answer-pane-copy-button/);
   assert.match(rendered, /assistant-answer-text/);
 });
+
+
+test('AIConsole exposes Copy Perf Diagnostics control for AI core surface instrumentation', async () => {
+  const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
+  assert.match(source, /Copy Perf Diagnostics/);
+  assert.match(source, /recordPerfCounter\('render', 'AIConsole'\)/);
+  assert.match(source, /ai_core\.autoscroll_run/);
+});
