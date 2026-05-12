@@ -5,6 +5,7 @@ const appSource = fs.readFileSync(new URL('../App.jsx', import.meta.url), 'utf8'
 const surfacePaneSource = fs.readFileSync(new URL('./StephanosSurfacePane.jsx', import.meta.url), 'utf8');
 const openClawSource = fs.readFileSync(new URL('./OpenClawTile.jsx', import.meta.url), 'utf8');
 const collapsiblePanelSource = fs.readFileSync(new URL('./CollapsiblePanel.jsx', import.meta.url), 'utf8');
+const aiStoreSource = fs.readFileSync(new URL('../state/aiStore.js', import.meta.url), 'utf8');
 
 test('drag gate remains canonical-handle only in App logic', () => {
   assert.equal(appSource.includes("const PANE_DRAG_HANDLE_SELECTOR = '[data-pane-drag-handle=\"true\"]';"), true);
@@ -30,7 +31,7 @@ test('Capability Radar surface uses canonical collapse wiring and persisted uiLa
   assert.equal(capabilityRadarSurfaceSegment.includes('uiLayout={safeUiLayout}'), true);
   assert.equal(capabilityRadarSurfaceSegment.includes('togglePanel={togglePanel}'), true);
   assert.equal(capabilityRadarSurfaceSegment.includes('capabilityRadarPanel: true'), false);
-  assert.equal(capabilityRadarSurfaceSegment.includes('togglePanel={() => {}}'), false);
+  assert.equal(aiStoreSource.includes('capabilityRadarPanel: true'), true);
 });
 
 test('OpenClaw execution stays disabled in tile copy', () => {
