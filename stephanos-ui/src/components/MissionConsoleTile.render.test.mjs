@@ -161,3 +161,9 @@ test('MissionConsoleTile uses collapsible panel canon wiring for Agent Mission C
   assert.equal(source.includes("onToggle={() => togglePanel('missionConsolePanel')}"), true);
   assert.equal(source.includes('aria-expanded={isOpen}'), false, 'aria-expanded should come from CollapsiblePanel canon, not duplicated locally');
 });
+
+test('MissionConsoleTile exposes Copy Perf Diagnostics control in diagnostics area', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.equal(source.includes('Copy Perf Diagnostics'), true);
+  assert.equal(source.includes('copyPerfDiagnosticsSnapshot'), true);
+});
