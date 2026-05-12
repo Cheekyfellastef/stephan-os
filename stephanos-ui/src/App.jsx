@@ -137,6 +137,8 @@ export function shouldStartPaneDrag(target) {
 
 export default function App() {
   recordPerfCounter('render', 'App');
+  const previousRenderSignatureRef = useRef('');
+  const renderCountRef = useRef(0);
   const {
     input,
     setInput,
@@ -344,6 +346,35 @@ export default function App() {
     () => deriveContinuityLoopSnapshot({ runtimeStatus, commandHistory, telemetryEntries, now: metricsTick }),
     [runtimeStatus, commandHistory, telemetryEntries, metricsTick],
   );
+  renderCountRef.current += 1;
+  const renderSignature = [
+    surfaceMode,
+    missionConsoleSurfaceMode ? 'mission-console:1' : 'mission-console:0',
+    runtimeStatus?.appLaunchState || '',
+    runtimeStatus?.runtimeTruth?.runtimeState || '',
+    routeTruthView?.routeKind || '',
+    routeTruthView?.routeUsableState || '',
+    routeTruthView?.backendReachableState || '',
+    safeApiStatus.state || '',
+    safeApiStatus.detail || '',
+    provider || '',
+    safeProviderHealth?.[provider]?.status || '',
+    uiLayout?.workspacePaneCanonEnabled ? 'panecanon:1' : 'panecanon:0',
+    safePaneLayout?.activePaneId || '',
+    Array.isArray(safePaneLayout?.order) ? safePaneLayout.order.join('|') : '',
+    telemetryEntries.length,
+    continuitySnapshot?.recentContinuityEvents?.length || 0,
+    continuitySnapshot?.recentActivityActive ? 'activity:1' : 'activity:0',
+    metricsTick,
+  ].join('::');
+  if (renderCountRef.current === 1) {
+    recordPerfCounter('render_reason.App', 'initial');
+  } else if (previousRenderSignatureRef.current === renderSignature) {
+    recordPerfCounter('render_reason.App', 'no_semantic_change');
+  } else {
+    recordPerfCounter('render_reason.App', 'state_changed');
+  }
+  previousRenderSignatureRef.current = renderSignature;
   const missionPacketTruth = useMemo(
     () => normalizeMissionPacketTruth(lastExecutionMetadata || {}),
     [lastExecutionMetadata],
@@ -1256,7 +1287,14 @@ export default function App() {
   }
 
   useEffect(() => {
-    setUiDiagnostics((prev) => ({ ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER }));
+    setUiDiagnostics((prev) => {
+      if (prev?.appRootRendered === true && prev?.componentMarker === APP_COMPONENT_MARKER) {
+        recordPerfCounter('render_reason.App', 'startupAudit_noop');
+        return prev;
+      }
+      recordPerfCounter('render_reason.App', 'startupAudit');
+      return { ...prev, appRootRendered: true, componentMarker: APP_COMPONENT_MARKER };
+    });
   }, [setUiDiagnostics]);
   useEffect(() => {
     recordStartupRenderStage({
