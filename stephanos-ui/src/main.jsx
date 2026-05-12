@@ -15,6 +15,7 @@ import {
   recordStartupRenderStage,
 } from "../../shared/runtime/startupLaunchDiagnostics.mjs";
 import { StartupFailureFallback } from "./startupFailureFallback.jsx";
+import { recordPerfCounter } from "./state/perfDiagnostics.js";
 
 // LIVE SOURCE OF TRUTH: this Vite entry boots the Stephanos Mission Console UI from stephanos-ui/src.
 // Production output is generated into apps/stephanos/dist and embedded by the root launcher.
@@ -178,6 +179,7 @@ const rootNode = document.getElementById("root");
 if (!rootNode) {
   throw new Error("Stephanos runtime root element #root was not found.");
 }
+recordPerfCounter("root", "render.call");
 ReactDOM.createRoot(rootNode).render(
   <React.StrictMode>
     <StartupErrorBoundary>

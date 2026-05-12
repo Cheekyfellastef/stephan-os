@@ -138,6 +138,7 @@ export function shouldStartPaneDrag(target) {
 export default function App() {
   recordPerfCounter('render', 'App');
   const previousRenderSignatureRef = useRef('');
+  const previousStoreChurnSignatureRef = useRef('');
   const renderCountRef = useRef(0);
   const {
     input,
@@ -367,14 +368,28 @@ export default function App() {
     continuitySnapshot?.recentActivityActive ? 'activity:1' : 'activity:0',
     metricsTick,
   ].join('::');
+  const storeChurnSignature = [
+    safeUiLayout?.debugConsole ? 'debug:1' : 'debug:0',
+    String(runtimeStatusModel?.runtimeMarker || ''),
+    String(runtimeStatusModel?.runtimeContext?.runtimeGovernorMode || ''),
+    String(runtimeStatusModel?.runtimeContext?.runtimeGovernorLeader || ''),
+    String(runtimeStatusModel?.runtimeContext?.runtimeGovernorReason || ''),
+    String(runtimeStatusModel?.runtimeContext?.lastGovernorHeartbeat || ''),
+  ].join('::');
   if (renderCountRef.current === 1) {
     recordPerfCounter('render_reason.App', 'initial');
   } else if (previousRenderSignatureRef.current === renderSignature) {
+    if (previousStoreChurnSignatureRef.current === storeChurnSignature) {
+      recordPerfCounter('render_reason.App', 'parent_forced');
+    } else {
+      recordPerfCounter('render_reason.App', 'provider_churn');
+    }
     recordPerfCounter('render_reason.App', 'no_semantic_change');
   } else {
     recordPerfCounter('render_reason.App', 'state_changed');
   }
   previousRenderSignatureRef.current = renderSignature;
+  previousStoreChurnSignatureRef.current = storeChurnSignature;
   const missionPacketTruth = useMemo(
     () => normalizeMissionPacketTruth(lastExecutionMetadata || {}),
     [lastExecutionMetadata],
