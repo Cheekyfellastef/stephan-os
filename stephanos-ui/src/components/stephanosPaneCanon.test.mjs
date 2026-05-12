@@ -1,11 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 const appSource = fs.readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
 const surfacePaneSource = fs.readFileSync(new URL('./StephanosSurfacePane.jsx', import.meta.url), 'utf8');
 const openClawSource = fs.readFileSync(new URL('./OpenClawTile.jsx', import.meta.url), 'utf8');
 const collapsiblePanelSource = fs.readFileSync(new URL('./CollapsiblePanel.jsx', import.meta.url), 'utf8');
 const aiStoreSource = fs.readFileSync(new URL('../state/aiStore.js', import.meta.url), 'utf8');
+
+function collectSourceFiles(dirPath) {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const absolutePath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectSourceFiles(absolutePath));
+      continue;
+    }
+    if (/\.(jsx|js|mjs)$/.test(entry.name) && !entry.name.endsWith('.test.mjs')) {
+      files.push(absolutePath);
+    }
+  }
+  return files;
+}
 
 test('drag gate remains canonical-handle only in App logic', () => {
   assert.equal(appSource.includes("const PANE_DRAG_HANDLE_SELECTOR = '[data-pane-drag-handle=\"true\"]';"), true);
@@ -64,6 +81,28 @@ test('pane canon keeps move controls and collapse state persistence surfaces int
   assert.equal(surfacePaneSource.includes('onClick={onMoveDown}'), true);
   assert.equal(surfacePaneSource.includes('data-pane-collapsed={paneCollapsed ? \'true\' : \'false\'}'), true);
   assert.equal(appSource.includes('togglePanel('), true);
+});
+
+test('every CollapsiblePanel panelId is registered in DEFAULT_UI_LAYOUT', () => {
+  const defaultLayoutMatch = aiStoreSource.match(/const DEFAULT_UI_LAYOUT = \{([\s\S]*?)\n\};/);
+  assert.ok(defaultLayoutMatch, 'DEFAULT_UI_LAYOUT block must exist in aiStore');
+  const defaultLayoutKeys = new Set(
+    Array.from(defaultLayoutMatch[1].matchAll(/\n\s*([A-Za-z0-9_]+):/g)).map((match) => match[1]),
+  );
+  const componentRoot = new URL('.', import.meta.url);
+  const sourceFiles = collectSourceFiles(componentRoot.pathname);
+  const missingPanelIds = [];
+  for (const filePath of sourceFiles) {
+    const source = fs.readFileSync(filePath, 'utf8');
+    const collapsibleUseRegex = /<CollapsiblePanel[\s\S]*?panelId="([^"]+)"/g;
+    for (const match of source.matchAll(collapsibleUseRegex)) {
+      const panelId = match[1];
+      if (!defaultLayoutKeys.has(panelId)) {
+        missingPanelIds.push({ panelId, filePath: path.relative(componentRoot.pathname, filePath) });
+      }
+    }
+  }
+  assert.deepEqual(missingPanelIds, [], `unregistered CollapsiblePanel panelIds found: ${JSON.stringify(missingPanelIds)}`);
 });
 
 test('wide panes mount through canonical workspace shell, lane, and gutters', () => {

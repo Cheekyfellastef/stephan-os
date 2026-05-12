@@ -134,6 +134,7 @@ const DEFAULT_UI_LAYOUT = {
   proposalPanel: true,
   activityPanel: true,
   telemetryFeedPanel: true,
+  actionHintsPanel: true,
   cockpitPanel: true,
   agentsPanel: true,
   promptBuilderPanel: true,
