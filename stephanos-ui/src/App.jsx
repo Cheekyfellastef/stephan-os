@@ -1675,7 +1675,7 @@ export default function App() {
           CAPABILITY RADAR SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="mission-console-surface-stage">
-          <CapabilityRadarTile uiLayout={{ ...safeUiLayout, capabilityRadarPanel: true }} togglePanel={() => {}} runtimeStatusModel={runtimeStatusModel} />
+          <CapabilityRadarTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} />
         </section>
         <DebugConsole />
       </main>
