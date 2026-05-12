@@ -2128,15 +2128,29 @@ export function useAIConsole() {
     const governor = createRuntimeWorkGovernor({
       onStateChange: (nextState) => {
         runtimeGovernorStateRef.current = nextState;
-        setUiDiagnostics((previous) => ({
-          ...previous,
-          runtimeGovernorMode: nextState.mode,
-          runtimeGovernorLeader: nextState.leader,
-          runtimeGovernorReason: nextState.reason,
-          duplicateTabDetected: nextState.duplicateTabDetected,
-          hiddenTabThrottleActive: nextState.hidden,
-          lastGovernorHeartbeat: nextState.lastGovernorHeartbeat,
-        }));
+        setUiDiagnostics((previous) => {
+          const unchanged = previous
+            && previous.runtimeGovernorMode === nextState.mode
+            && previous.runtimeGovernorLeader === nextState.leader
+            && previous.runtimeGovernorReason === nextState.reason
+            && previous.duplicateTabDetected === nextState.duplicateTabDetected
+            && previous.hiddenTabThrottleActive === nextState.hidden
+            && previous.lastGovernorHeartbeat === nextState.lastGovernorHeartbeat;
+          if (unchanged) {
+            recordPerfCounter('store.notify.uiDiagnostics', 'runtimeGovernor.skip_unchanged');
+            return previous;
+          }
+          recordPerfCounter('store.notify.uiDiagnostics', 'runtimeGovernor.apply_changed');
+          return {
+            ...previous,
+            runtimeGovernorMode: nextState.mode,
+            runtimeGovernorLeader: nextState.leader,
+            runtimeGovernorReason: nextState.reason,
+            duplicateTabDetected: nextState.duplicateTabDetected,
+            hiddenTabThrottleActive: nextState.hidden,
+            lastGovernorHeartbeat: nextState.lastGovernorHeartbeat,
+          };
+        });
       },
     });
     runtimeGovernorRef.current = governor;
