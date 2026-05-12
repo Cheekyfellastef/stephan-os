@@ -126,6 +126,27 @@ function signaturesEqual(a, b) {
   return a === b;
 }
 
+
+function buildOpenClawIntegrationInputSignature({
+  routeTruthView = {},
+  runtimeStatusModel = {},
+  runtimeStatus = {},
+} = {}) {
+  const runtimeContext = runtimeStatusModel?.runtimeContext || runtimeStatus?.runtimeContext || {};
+  return [
+    String(routeTruthView?.routeKind || ''),
+    String(routeTruthView?.routeLayerStatus || ''),
+    String(routeTruthView?.selectedRouteReachableState || ''),
+    String(routeTruthView?.routeUsableState || ''),
+    String(routeTruthView?.backendReachableState || ''),
+    String(routeTruthView?.selectedProvider || ''),
+    String(routeTruthView?.executedProvider || ''),
+    String(routeTruthView?.providerExecutionGateStatus || ''),
+    String(routeTruthView?.backendExecutionContractStatus || ''),
+    String(routeTruthView?.effectiveLaunchState || ''),
+    String(runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'),
+  ].join('::');
+}
 function buildOpenClawIntegrationSignature(snapshot = {}) {
   return [
     String(snapshot.currentActivity || ''),
@@ -283,7 +304,7 @@ export default function App() {
     setPerfIdentityField('surface.workspace', missionConsoleSurfaceMode || '');
     setPerfIdentityField('component.app', true);
   }, [missionConsoleSurfaceMode, surfaceMode]);
-  const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+  const routeTruthView = useMemo(() => buildFinalRouteTruthView(runtimeStatus), [runtimeStatus]);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
       return;
@@ -745,9 +766,21 @@ export default function App() {
     });
   }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, openClawReadonlyValidation, orchestrationSelectors?.blockageExplanation]);
 
+  const openClawIntegrationSignatureRef = useRef('');
+  const openClawIntegrationInputSignature = useMemo(() => buildOpenClawIntegrationInputSignature({
+    routeTruthView,
+    runtimeStatusModel,
+    runtimeStatus,
+  }), [routeTruthView?.backendExecutionContractStatus, routeTruthView?.backendReachableState, routeTruthView?.effectiveLaunchState, routeTruthView?.executedProvider, routeTruthView?.providerExecutionGateStatus, routeTruthView?.routeKind, routeTruthView?.routeLayerStatus, routeTruthView?.routeUsableState, routeTruthView?.selectedProvider, routeTruthView?.selectedRouteReachableState, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel?.runtimeContext]);
+
   useEffect(() => {
+    recordPerfCounter('app_state.openClawIntegration.effect_called', 'routeTruth');
+    if (signaturesEqual(openClawIntegrationSignatureRef.current, openClawIntegrationInputSignature)) {
+      recordPerfCounter('app_state.openClawIntegration.effect_skipped_same_signature', 'routeTruth');
+      return;
+    }
+
     setOpenClawIntegration((previous) => {
-      recordPerfCounter('app_state.openClawIntegration.called', 'effect.routeTruth');
       if (previous && previous.currentActivity !== 'Standing by for bounded intent.') {
         recordPerfCounter('app_state.openClawIntegration.skipped', 'activity_locked');
         return previous;
@@ -761,14 +794,16 @@ export default function App() {
       const prevSig = buildOpenClawIntegrationSignature(previous);
       const nextSig = buildOpenClawIntegrationSignature(next);
       if (signaturesEqual(prevSig, nextSig)) {
-        recordPerfCounter('app_state.openClawIntegration.same_semantic', 'effect.routeTruth');
-        recordPerfCounter('app_state.openClawIntegration.skipped', 'same_semantic');
+        openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+        recordPerfCounter('app_state.openClawIntegration.setter_skipped_same_semantic', 'routeTruth');
         return previous ?? next;
       }
-      recordPerfCounter('app_state.openClawIntegration.changed', 'effect.routeTruth');
+      openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+      recordPerfCounter('app_state.openClawIntegration.setter_changed', 'routeTruth');
+      recordPerfCounter('app_state.openClawIntegration.effect_applied', 'routeTruth');
       return next;
     });
-  }, [routeTruthView, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel]);
+  }, [openClawIntegrationInputSignature, routeTruthView, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel]);
   markStartupStage('app-derived-agent-projection-ready', {
     surfaceMode,
     visibleAgentCount: agentSurfaceProjection?.visibleAgentCount ?? null,
