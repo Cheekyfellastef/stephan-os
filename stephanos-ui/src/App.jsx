@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AIConsole from './components/AIConsole';
 import PowerShellMergeConsolePanel from './components/PowerShellMergeConsolePanel';
 import StatusPanel from './components/StatusPanel';
@@ -126,6 +126,13 @@ function signaturesEqual(a, b) {
   return a === b;
 }
 
+function stableJsonSignature(value) {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return String(value ?? '');
+  }
+}
 
 function buildOpenClawIntegrationInputSignature({
   routeTruthView = {},
@@ -176,6 +183,7 @@ export function shouldStartPaneDrag(target) {
 
 export default function App() {
   recordPerfCounter('render', 'App');
+  recordPerfCounter('hook.App.useAIConsole.render_or_call', 'called');
   const lastAppUpdateSourceRef = useRef('initial');
   const pendingAppUpdateSourcesRef = useRef([]);
   const consumedAppUpdateSourceRef = useRef('');
@@ -193,6 +201,7 @@ export default function App() {
     runAiButlerAction,
     aiActionState,
   } = useAIConsole();
+  recordPerfCounter('hook.App.useAIStore.render_or_call', 'called');
 
   useEffect(() => {
     recordPerfCounter('surface_mount', 'app.mount');
@@ -220,6 +229,7 @@ export default function App() {
     debugData,
   } = useAIStore();
   const previousAppStoreFieldsRef = useRef(null);
+  recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
   const startupStageRef = useRef(new Set());
   const markStartupStage = (stage, details = null) => {
@@ -785,6 +795,57 @@ export default function App() {
     lastAppUpdateSourceRef.current = source;
     pendingAppUpdateSourcesRef.current.push(source);
   };
+  const openClawIntegrationExternalSigRef = useRef(stableJsonSignature(openClawIntegration));
+  const intentToBuildExternalSigRef = useRef(stableJsonSignature(intentToBuildTruth));
+  const missionBridgeExternalSigRef = useRef(stableJsonSignature(missionBridgeTruth));
+  const trackedSetOpenClawIntegration = useCallback((nextValueOrUpdater) => {
+    recordPerfCounter('hook.App.externalSetter.openClawIntegration.called', 'called');
+    setOpenClawIntegration((previous) => {
+      const next = typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(previous) : nextValueOrUpdater;
+      const previousSig = openClawIntegrationExternalSigRef.current || stableJsonSignature(previous);
+      const nextSig = stableJsonSignature(next);
+      if (previousSig === nextSig) {
+        recordPerfCounter('hook.App.externalSetter.openClawIntegration.skipped', 'unchanged');
+        return previous;
+      }
+      openClawIntegrationExternalSigRef.current = nextSig;
+      markPendingAppUpdateSource('setOpenClawIntegration.external');
+      recordPerfCounter('hook.App.externalSetter.openClawIntegration.changed', 'changed');
+      return next;
+    });
+  }, []);
+  const trackedSetIntentToBuildTruth = useCallback((nextValueOrUpdater) => {
+    recordPerfCounter('hook.App.externalSetter.intentToBuildTruth.called', 'called');
+    setIntentToBuildTruth((previous) => {
+      const next = typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(previous) : nextValueOrUpdater;
+      const previousSig = intentToBuildExternalSigRef.current || stableJsonSignature(previous);
+      const nextSig = stableJsonSignature(next);
+      if (previousSig === nextSig) {
+        recordPerfCounter('hook.App.externalSetter.intentToBuildTruth.skipped', 'unchanged');
+        return previous;
+      }
+      intentToBuildExternalSigRef.current = nextSig;
+      markPendingAppUpdateSource('setIntentToBuildTruth.external');
+      recordPerfCounter('hook.App.externalSetter.intentToBuildTruth.changed', 'changed');
+      return next;
+    });
+  }, []);
+  const trackedSetMissionBridgeTruth = useCallback((nextValueOrUpdater) => {
+    recordPerfCounter('hook.App.externalSetter.missionBridgeTruth.called', 'called');
+    setMissionBridgeTruth((previous) => {
+      const next = typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(previous) : nextValueOrUpdater;
+      const previousSig = missionBridgeExternalSigRef.current || stableJsonSignature(previous);
+      const nextSig = stableJsonSignature(next);
+      if (previousSig === nextSig) {
+        recordPerfCounter('hook.App.externalSetter.missionBridgeTruth.skipped', 'unchanged');
+        return previous;
+      }
+      missionBridgeExternalSigRef.current = nextSig;
+      markPendingAppUpdateSource('setMissionBridgeTruth.external');
+      recordPerfCounter('hook.App.externalSetter.missionBridgeTruth.changed', 'changed');
+      return next;
+    });
+  }, []);
 
   const openClawIntegrationSignatureRef = useRef('');
   const openClawIntegrationInputSignature = useMemo(() => buildOpenClawIntegrationInputSignature({
@@ -1125,9 +1186,9 @@ export default function App() {
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-          onOpenClawIntegrationUpdate={setOpenClawIntegration}
-          onIntentToBuildUpdate={setIntentToBuildTruth}
-          onMissionBridgeUpdate={setMissionBridgeTruth}
+          onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+          onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+          onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
           submitPrompt={submitPrompt}
           sharedConsoleInput={input}
           setSharedConsoleInput={setInput}
@@ -1288,9 +1349,9 @@ export default function App() {
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-          onOpenClawIntegrationUpdate={setOpenClawIntegration}
-          onIntentToBuildUpdate={setIntentToBuildTruth}
-          onMissionBridgeUpdate={setMissionBridgeTruth}
+          onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+          onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+          onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
           submitPrompt={submitPrompt}
           sharedConsoleInput={input}
           setSharedConsoleInput={setInput}
@@ -1341,7 +1402,7 @@ export default function App() {
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-          onIntegrationUpdate={setOpenClawIntegration}
+          onIntegrationUpdate={trackedSetOpenClawIntegration}
           agentTaskProjection={agentTaskProjection}
           openClawEndpointDraft={openClawEndpointDraft}
           onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
@@ -1575,9 +1636,9 @@ export default function App() {
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-            onOpenClawIntegrationUpdate={setOpenClawIntegration}
-            onIntentToBuildUpdate={setIntentToBuildTruth}
-            onMissionBridgeUpdate={setMissionBridgeTruth}
+            onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+            onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
             setSharedConsoleInput={setInput}
@@ -1639,7 +1700,7 @@ export default function App() {
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-            onIntegrationUpdate={setOpenClawIntegration}
+            onIntegrationUpdate={trackedSetOpenClawIntegration}
             agentTaskProjection={agentTaskProjection}
             openClawEndpointDraft={openClawEndpointDraft}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
@@ -1663,9 +1724,9 @@ export default function App() {
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-            onOpenClawIntegrationUpdate={setOpenClawIntegration}
-            onIntentToBuildUpdate={setIntentToBuildTruth}
-            onMissionBridgeUpdate={setMissionBridgeTruth}
+            onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+            onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
             setSharedConsoleInput={setInput}
