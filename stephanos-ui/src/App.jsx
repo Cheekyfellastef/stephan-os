@@ -176,6 +176,8 @@ export function shouldStartPaneDrag(target) {
 
 export default function App() {
   recordPerfCounter('render', 'App');
+  const lastAppUpdateSourceRef = useRef('initial');
+  const pendingAppUpdateSourcesRef = useRef([]);
   const previousRenderSignatureRef = useRef('');
   const previousStoreChurnSignatureRef = useRef('');
   const renderCountRef = useRef(0);
@@ -458,6 +460,14 @@ export default function App() {
     recordPerfCounter('render_reason.App', 'no_semantic_change');
   } else {
     recordPerfCounter('render_reason.App', 'state_changed');
+  }
+  const lastSource = lastAppUpdateSourceRef.current || 'unknown';
+  recordPerfCounter('render_trigger.App.last_source', lastSource);
+  const pendingSource = pendingAppUpdateSourcesRef.current.shift();
+  if (pendingSource) {
+    recordPerfCounter('app_render_after_update', pendingSource);
+  } else if (renderCountRef.current > 1) {
+    recordPerfCounter('render_trigger.App', 'unknown_external');
   }
   previousRenderSignatureRef.current = renderSignature;
   previousStoreChurnSignatureRef.current = storeChurnSignature;
@@ -780,9 +790,12 @@ export default function App() {
       return;
     }
 
+    lastAppUpdateSourceRef.current = 'setOpenClawIntegration.routeTruth';
+    recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'called');
     setOpenClawIntegration((previous) => {
       if (previous && previous.currentActivity !== 'Standing by for bounded intent.') {
         recordPerfCounter('app_state.openClawIntegration.skipped', 'activity_locked');
+        recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'skipped');
         return previous;
       }
       const next = buildOpenClawIntegrationSnapshot({
@@ -796,14 +809,17 @@ export default function App() {
       if (signaturesEqual(prevSig, nextSig)) {
         openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
         recordPerfCounter('app_state.openClawIntegration.setter_skipped_same_semantic', 'routeTruth');
+        recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'skipped');
         return previous ?? next;
       }
       openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
       recordPerfCounter('app_state.openClawIntegration.setter_changed', 'routeTruth');
       recordPerfCounter('app_state.openClawIntegration.effect_applied', 'routeTruth');
+      recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'changed');
+      pendingAppUpdateSourcesRef.current.push('setOpenClawIntegration.routeTruth');
       return next;
     });
-  }, [openClawIntegrationInputSignature, routeTruthView, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel]);
+  }, [openClawIntegrationInputSignature, routeTruthView?.routeKind, routeTruthView?.routeLayerStatus, routeTruthView?.selectedRouteReachableState, routeTruthView?.routeUsableState, routeTruthView?.backendReachableState, routeTruthView?.selectedProvider, routeTruthView?.executedProvider, routeTruthView?.providerExecutionGateStatus, routeTruthView?.backendExecutionContractStatus, routeTruthView?.effectiveLaunchState, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch]);
   markStartupStage('app-derived-agent-projection-ready', {
     surfaceMode,
     visibleAgentCount: agentSurfaceProjection?.visibleAgentCount ?? null,
@@ -828,8 +844,12 @@ export default function App() {
           recordPerfCounter('app_state.metricsTick.called', 'timer');
           if (next <= previous) {
             recordPerfCounter('app_state.metricsTick.skipped', 'non_monotonic');
+            recordPerfCounter('app_update_source.setMetricsTick.timer', 'skipped');
             return previous;
           }
+          lastAppUpdateSourceRef.current = 'setMetricsTick.timer';
+          pendingAppUpdateSourcesRef.current.push('setMetricsTick.timer');
+          recordPerfCounter('app_update_source.setMetricsTick.timer', 'changed');
           recordPerfCounter('app_state.metricsTick.changed', 'timer');
           return next;
         });
@@ -864,6 +884,8 @@ export default function App() {
   }, [continuitySnapshot.recentActivityActive, continuitySnapshot.recentContinuityEvents.length, metricsTick, safeUiLayout, telemetryEntries]);
 
   useEffect(() => {
+    lastAppUpdateSourceRef.current = 'setUiDiagnostics.runtimeDiagnostics';
+    recordPerfCounter('app_update_source.setUiDiagnostics.runtimeDiagnostics', 'called');
     setUiDiagnostics((prev) => {
       const previousDiagnostics = prev?.runtimeDiagnostics || null;
       const unchanged = previousDiagnostics
@@ -877,15 +899,20 @@ export default function App() {
         && previousDiagnostics.eventRatePerSecond === runtimeDiagnostics.eventRatePerSecond;
       if (unchanged) {
         recordPerfCounter('app_state.uiDiagnostics.skipped', 'runtimeDiagnostics_same');
+        recordPerfCounter('app_update_source.setUiDiagnostics.runtimeDiagnostics', 'skipped');
         return prev;
       }
       recordPerfCounter('app_state.uiDiagnostics.changed', 'runtimeDiagnostics_changed');
+      recordPerfCounter('app_update_source.setUiDiagnostics.runtimeDiagnostics', 'changed');
+      pendingAppUpdateSourcesRef.current.push('setUiDiagnostics.runtimeDiagnostics');
       return { ...prev, runtimeDiagnostics };
     });
   }, [runtimeDiagnostics, setUiDiagnostics]);
 
   useEffect(() => {
     if (!finalRouteTruth) {
+      lastAppUpdateSourceRef.current = 'setTelemetryEntries.finalRouteTruthReset';
+      recordPerfCounter('app_update_source.setTelemetryEntries.finalRouteTruthReset', 'called');
       setTelemetryEntries([]);
       previousTelemetryTruthRef.current = null;
       telemetryBaselineAddedRef.current = false;
@@ -903,7 +930,11 @@ export default function App() {
     incoming.push(...extractTelemetryEvents(previousTelemetryTruthRef.current, finalRouteTruth, timestamp));
 
     if (incoming.length > 0) {
+      lastAppUpdateSourceRef.current = 'setTelemetryEntries.finalRouteTruthEvents';
+      recordPerfCounter('app_update_source.setTelemetryEntries.finalRouteTruthEvents', 'called');
       setTelemetryEntries((previous) => appendTelemetryHistory(previous, incoming, TELEMETRY_MAX_HISTORY));
+      pendingAppUpdateSourcesRef.current.push('setTelemetryEntries.finalRouteTruthEvents');
+      recordPerfCounter('app_update_source.setTelemetryEntries.finalRouteTruthEvents', 'changed');
     }
 
     previousTelemetryTruthRef.current = finalRouteTruth;
