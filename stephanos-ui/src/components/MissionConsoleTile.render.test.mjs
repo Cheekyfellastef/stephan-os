@@ -177,3 +177,30 @@ test('MissionConsoleTile wraps operator overview and runtime status walls in can
   assert.equal(source.includes("isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}"), true);
   assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}"), true);
 });
+
+test('MissionConsoleTile keeps priority mission console panels wired to canonical togglePanel ids', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  [
+    'missionConsoleOperatorOverviewPanel',
+    'missionConsoleRuntimeRouteStatusPanel',
+    'missionConsoleOperatorReliefPanel',
+    'missionConsoleSecondaryDiagnosticsPanel',
+    'missionConsoleConnectedTileContextsPanel',
+  ].forEach((panelId) => {
+    assert.equal(source.includes(`panelId="${panelId}"`), true, `missing panelId ${panelId}`);
+    assert.equal(source.includes(`isOpen={uiLayout.${panelId} !== false}`), true, `missing isOpen wiring for ${panelId}`);
+    assert.equal(source.includes(`onToggle={() => togglePanel('${panelId}')}`), true, `missing toggle wiring for ${panelId}`);
+  });
+});
+
+test('MissionConsoleTile does not reuse panel ids across collapsible panels', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  const panelIds = [...source.matchAll(/panelId=\"([^\"]+)\"/g)].map((match) => match[1]);
+  const seen = new Set();
+  const duplicates = new Set();
+  panelIds.forEach((id) => {
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  });
+  assert.deepEqual([...duplicates], []);
+});
