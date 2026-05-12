@@ -1,6 +1,6 @@
 // LIVE SOURCE OF TRUTH: this store backs the served Stephanos AI router/settings UI.
 // Update provider state here, then rebuild stephanos-ui to refresh apps/stephanos/dist.
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_PROVIDER_KEY,
   DEFAULT_ROUTE_MODE,
@@ -93,6 +93,7 @@ import {
   shouldTreatBridgeHealthProbeAsReachable,
 } from './bridgeAutoRevalidation.mjs';
 import { recordStartupRenderStage } from '../../../shared/runtime/startupLaunchDiagnostics.mjs';
+import { recordPerfCounter } from './perfDiagnostics.js';
 import {
   applyHostedIdeaStagingAction,
   buildHostedStagingHandoffPayload,
@@ -886,6 +887,8 @@ export function AIStoreProvider({ children }) {
     });
   }, [initialSnapshot?.hasPersistedUiLayout, initialSnapshot?.runtimeContext?.restoreDecision]);
   const initialSettings = initialSnapshot.settings;
+  const providerValueSignatureRef = useRef('');
+  const providerValueRef = useRef(null);
   const [commandHistory, setCommandHistory] = useState(initialSnapshot.commandHistory);
   const [status, setStatus] = useState('idle');
   const [isBusy, setIsBusy] = useState(false);
@@ -2874,6 +2877,34 @@ export function AIStoreProvider({ children }) {
     resetProviderConfig,
     setMissionPacketWorkflow,
   ]);
+
+
+  recordPerfCounter('render', 'Provider.AIStoreProvider');
+  const providerSignature = [
+    provider,
+    routeMode,
+    status,
+    isBusy ? 'busy:1' : 'busy:0',
+    String(runtimeStatusModel?.runtimeMarker || ''),
+    String(runtimeStatusModel?.runtimeContext?.lastGovernorHeartbeat || ''),
+    String(apiStatus?.state || ''),
+    String(uiDiagnostics?.runtimeDiagnostics?.eventRatePerSecond ?? ''),
+    String(commandHistory?.length || 0),
+  ].join('::');
+  const previousSignature = providerValueSignatureRef.current;
+  if (previousSignature === providerSignature) {
+    recordPerfCounter('provider.value_semantic_same', 'AIStoreProvider');
+  } else {
+    recordPerfCounter('provider.value_semantic_changed', 'AIStoreProvider');
+  }
+  if (providerValueRef.current === value) {
+    recordPerfCounter('provider.value_same', 'AIStoreProvider');
+  } else {
+    recordPerfCounter('provider.value_changed', 'AIStoreProvider');
+    recordPerfCounter('provider.value_identity_changed', 'AIStoreProvider');
+  }
+  providerValueSignatureRef.current = providerSignature;
+  providerValueRef.current = value;
 
   return createElement(AIStoreContext.Provider, { value }, children);
 }

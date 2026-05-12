@@ -138,6 +138,7 @@ class StartupErrorBoundary extends React.Component {
 }
 
 function StartupRenderSentinel() {
+  recordPerfCounter('render', 'AppWrapper');
   React.useEffect(() => {
     recordStartupRenderStage({
       stage: "first-paint-complete",
@@ -151,6 +152,7 @@ function StartupRenderSentinel() {
 }
 
 function StartupAppRoot() {
+  recordPerfCounter('render', 'AppParent');
   recordStartupRenderStage({
     stage: "app-component-render-start",
     status: "ok",

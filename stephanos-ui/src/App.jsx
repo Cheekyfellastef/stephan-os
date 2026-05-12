@@ -178,6 +178,7 @@ export default function App() {
   recordPerfCounter('render', 'App');
   const lastAppUpdateSourceRef = useRef('initial');
   const pendingAppUpdateSourcesRef = useRef([]);
+  const consumedAppUpdateSourceRef = useRef('');
   const previousRenderSignatureRef = useRef('');
   const previousStoreChurnSignatureRef = useRef('');
   const renderCountRef = useRef(0);
@@ -461,12 +462,14 @@ export default function App() {
   } else {
     recordPerfCounter('render_reason.App', 'state_changed');
   }
-  const lastSource = lastAppUpdateSourceRef.current || 'unknown';
-  recordPerfCounter('render_trigger.App.last_source', lastSource);
   const pendingSource = pendingAppUpdateSourcesRef.current.shift();
   if (pendingSource) {
+    consumedAppUpdateSourceRef.current = pendingSource;
+    lastAppUpdateSourceRef.current = pendingSource;
+    recordPerfCounter('render_trigger.App.last_source', pendingSource);
     recordPerfCounter('app_render_after_update', pendingSource);
   } else if (renderCountRef.current > 1) {
+    consumedAppUpdateSourceRef.current = '';
     recordPerfCounter('render_trigger.App', 'unknown_external');
   }
   previousRenderSignatureRef.current = renderSignature;
@@ -776,6 +779,13 @@ export default function App() {
     });
   }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, openClawReadonlyValidation, orchestrationSelectors?.blockageExplanation]);
 
+
+  const markPendingAppUpdateSource = (source) => {
+    if (!source) return;
+    lastAppUpdateSourceRef.current = source;
+    pendingAppUpdateSourcesRef.current.push(source);
+  };
+
   const openClawIntegrationSignatureRef = useRef('');
   const openClawIntegrationInputSignature = useMemo(() => buildOpenClawIntegrationInputSignature({
     routeTruthView,
@@ -816,7 +826,7 @@ export default function App() {
       recordPerfCounter('app_state.openClawIntegration.setter_changed', 'routeTruth');
       recordPerfCounter('app_state.openClawIntegration.effect_applied', 'routeTruth');
       recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'changed');
-      pendingAppUpdateSourcesRef.current.push('setOpenClawIntegration.routeTruth');
+      markPendingAppUpdateSource('setOpenClawIntegration.routeTruth');
       return next;
     });
   }, [openClawIntegrationInputSignature, routeTruthView?.routeKind, routeTruthView?.routeLayerStatus, routeTruthView?.selectedRouteReachableState, routeTruthView?.routeUsableState, routeTruthView?.backendReachableState, routeTruthView?.selectedProvider, routeTruthView?.executedProvider, routeTruthView?.providerExecutionGateStatus, routeTruthView?.backendExecutionContractStatus, routeTruthView?.effectiveLaunchState, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch]);
@@ -848,7 +858,7 @@ export default function App() {
             return previous;
           }
           lastAppUpdateSourceRef.current = 'setMetricsTick.timer';
-          pendingAppUpdateSourcesRef.current.push('setMetricsTick.timer');
+          markPendingAppUpdateSource('setMetricsTick.timer');
           recordPerfCounter('app_update_source.setMetricsTick.timer', 'changed');
           recordPerfCounter('app_state.metricsTick.changed', 'timer');
           return next;
@@ -904,7 +914,7 @@ export default function App() {
       }
       recordPerfCounter('app_state.uiDiagnostics.changed', 'runtimeDiagnostics_changed');
       recordPerfCounter('app_update_source.setUiDiagnostics.runtimeDiagnostics', 'changed');
-      pendingAppUpdateSourcesRef.current.push('setUiDiagnostics.runtimeDiagnostics');
+      markPendingAppUpdateSource('setUiDiagnostics.runtimeDiagnostics');
       return { ...prev, runtimeDiagnostics };
     });
   }, [runtimeDiagnostics, setUiDiagnostics]);
@@ -933,7 +943,7 @@ export default function App() {
       lastAppUpdateSourceRef.current = 'setTelemetryEntries.finalRouteTruthEvents';
       recordPerfCounter('app_update_source.setTelemetryEntries.finalRouteTruthEvents', 'called');
       setTelemetryEntries((previous) => appendTelemetryHistory(previous, incoming, TELEMETRY_MAX_HISTORY));
-      pendingAppUpdateSourcesRef.current.push('setTelemetryEntries.finalRouteTruthEvents');
+      markPendingAppUpdateSource('setTelemetryEntries.finalRouteTruthEvents');
       recordPerfCounter('app_update_source.setTelemetryEntries.finalRouteTruthEvents', 'changed');
     }
 
