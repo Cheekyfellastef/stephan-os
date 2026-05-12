@@ -1744,7 +1744,7 @@ export default function App() {
   markStartupStage('app-provider-controls-render-start');
   markStartupStage('app-provider-controls-render-complete');
 
-  const missionConsoleWideShellMode = safeUiLayout.missionConsolePanel !== false;
+  const missionConsoleWideShellMode = safeUiLayout.missionConsoleCommandDeckMode !== false;
 
   return (
     <main className={`app-shell-root ${missionConsoleWideShellMode ? 'mission-console-command-deck-mode' : ''}`.trim()}>
