@@ -145,6 +145,7 @@ const DEFAULT_UI_LAYOUT = {
   hostedIdeaStagingPanel: true,
   openClawPanel: true,
   skillForgePanel: true,
+  capabilityRadarPanel: true,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
