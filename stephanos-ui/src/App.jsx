@@ -177,6 +177,7 @@ export default function App() {
     surfaceFrictionPatterns,
     debugData,
   } = useAIStore();
+  const previousAppStoreFieldsRef = useRef(null);
   useDebugConsole();
   const startupStageRef = useRef(new Set());
   const markStartupStage = (stage, details = null) => {
@@ -199,6 +200,37 @@ export default function App() {
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const appStoreFieldsSnapshot = useMemo(() => ({
+    provider,
+    routeMode,
+    apiStatusState: safeApiStatus.state || '',
+    providerHealthSignature: `${Object.keys(safeProviderHealth).length}:${String(safeProviderHealth[provider]?.status || '')}`,
+    runtimeStatusState: runtimeStatus?.appLaunchState || '',
+    uiLayoutSignature: `${Object.keys(safeUiLayout).length}:${Object.values(safeUiLayout).filter(Boolean).length}`,
+    paneLayoutSignature: `${String(safePaneLayout.activeWorkspace || '')}:${Array.isArray(safePaneLayout.operatorPaneOrder) ? safePaneLayout.operatorPaneOrder.length : 0}`,
+    missionPacketRevision: String(missionPacketWorkflow?.lastUpdatedAt || ''),
+    missionLineageRevision: String(missionLineage?.lastUpdatedAt || ''),
+    surfaceFrictionRevision: `${surfaceFrictionPatterns?.trend || ''}:${surfaceFrictionPatterns?.totalEvents || 0}`,
+    debugDataRevision: `${String(debugData?.status || '')}:${String(debugData?.lastUpdatedAt || '')}`,
+  }), [debugData?.lastUpdatedAt, debugData?.status, missionLineage?.lastUpdatedAt, missionPacketWorkflow?.lastUpdatedAt, provider, routeMode, runtimeStatus?.appLaunchState, safeApiStatus.state, safePaneLayout.activeWorkspace, safePaneLayout.operatorPaneOrder, safeProviderHealth, safeUiLayout, surfaceFrictionPatterns?.totalEvents, surfaceFrictionPatterns?.trend]);
+  useEffect(() => {
+    const previous = previousAppStoreFieldsRef.current;
+    if (!previous) {
+      previousAppStoreFieldsRef.current = appStoreFieldsSnapshot;
+      return;
+    }
+    let changedCount = 0;
+    Object.entries(appStoreFieldsSnapshot).forEach(([field, value]) => {
+      if (previous[field] !== value) {
+        changedCount += 1;
+        recordPerfCounter('store.subscription.App.aiStore.selected_changed', field);
+      } else {
+        recordPerfCounter('store.subscription.App.aiStore.selected_unchanged', field);
+      }
+    });
+    recordPerfCounter('store.subscription.App.aiStore.callback', changedCount === 0 ? 'selected_unchanged_all' : 'selected_changed');
+    previousAppStoreFieldsRef.current = appStoreFieldsSnapshot;
+  }, [appStoreFieldsSnapshot]);
   const surfaceMode = useMemo(() => {
     if (typeof window === 'undefined') {
       return 'mission-control';
