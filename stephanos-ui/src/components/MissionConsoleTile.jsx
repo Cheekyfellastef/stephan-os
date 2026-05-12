@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { OPENCLAW_AUTHORITY, OPENCLAW_MODE, OPENCLAW_SCAN_MODES } from './openclaw/openclawTilePolicy.js';
 import { buildOpenClawGuardrailSnapshot } from './openclaw/openclawGuardrails.js';
@@ -39,13 +39,58 @@ import { copyPerfDiagnosticsSnapshot, recordPerfCounter } from '../state/perfDia
 
 registerTileMissionContext('music', ({ state }) => buildMusicMissionContext(state));
 
+
+
+function summarizeMissionConsoleProps(props = {}) {
+  const uiLayout = props.uiLayout || {};
+  const runtimeStatus = props.runtimeStatusModel || {};
+  const finalRouteTruth = props.finalRouteTruth || {};
+  const finalAgentView = props.finalAgentView || {};
+  const orchestrationTruth = props.orchestrationTruth || {};
+  const agentTaskProjection = props.agentTaskProjection || {};
+  return {
+    uiLayout: [
+      uiLayout.missionConsolePanel !== false ? 'open' : 'closed',
+      uiLayout.operatorOverviewPanel !== false ? 'open' : 'closed',
+      uiLayout.aiConsolePanel !== false ? 'open' : 'closed',
+      (uiLayout.paneOrder || []).join(','),
+    ].join('|'),
+    routeStatus: [finalRouteTruth.routeUsableState || '', finalRouteTruth.routeKind || '', finalRouteTruth.selectedProvider || ''].join('|'),
+    runtimeStatus: [runtimeStatus.provider || '', runtimeStatus.appLaunchState || '', runtimeStatus.routeMode || ''].join('|'),
+    agentContext: [finalAgentView.actingAgentId || '', (finalAgentView.visibleAgents || []).length, (finalAgentView.activeAgentIds || []).length].join('|'),
+    missionBridge: [props.onMissionBridgeUpdate, orchestrationTruth?.missionBridge?.state || orchestrationTruth?.missionBridgeState || ''].join('|'),
+    operatorRelief: [agentTaskProjection?.readinessSummary?.verificationReturnStatus || '', agentTaskProjection?.operatorSurface?.verificationReturnStatus || ''].join('|'),
+    callbacks: [props.togglePanel, props.onOpenClawIntegrationUpdate, props.onIntentToBuildUpdate, props.onMissionBridgeUpdate, props.setSharedConsoleInput, props.submitPrompt, props.cancelActivePrompt, props.emergencyReleaseOllamaLoad].map((fn)=>typeof fn==='function'?String(fn):'null').join('|'),
+    input: props.sharedConsoleInput || '',
+    commandHistory: (props.sharedCommandHistory || []).length,
+    branch: props.branchName || 'unknown',
+  };
+}
+
+function recordMissionConsoleRenderReasons(currentProps) {
+  const next = summarizeMissionConsoleProps(currentProps);
+  const previous = recordMissionConsoleRenderReasons.previous;
+  if (!previous) {
+    recordPerfCounter('render_reason', 'MissionConsoleTile.initial');
+  } else {
+    let changed = 0;
+    for (const key of Object.keys(next)) {
+      if (next[key] !== previous[key]) {
+        changed += 1;
+        recordPerfCounter('render_reason', `MissionConsoleTile.${key}`);
+      }
+    }
+    if (changed === 0) recordPerfCounter('render_reason', 'MissionConsoleTile.no_semantic_change');
+  }
+  recordMissionConsoleRenderReasons.previous = next;
+}
 const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'run-scan', label: 'Run bounded scan' },
   { id: 'refresh-status', label: 'Summarize inspection scope' },
   { id: 'generate-candidate-prompts', label: 'Generate alternatives / refine prompts' },
 ]);
 
-export default function MissionConsoleTile({
+function MissionConsoleTile({
   uiLayout,
   togglePanel,
   runtimeStatusModel,
@@ -65,6 +110,12 @@ export default function MissionConsoleTile({
   agentTaskProjection = null,
 }) {
   recordPerfCounter('render', 'MissionConsoleTile');
+  recordMissionConsoleRenderReasons({
+    uiLayout, runtimeStatusModel, finalRouteTruth, finalAgentView, branchName,
+    onOpenClawIntegrationUpdate, onIntentToBuildUpdate, onMissionBridgeUpdate,
+    submitPrompt, sharedConsoleInput, setSharedConsoleInput, sharedCommandHistory,
+    cancelActivePrompt, emergencyReleaseOllamaLoad, orchestrationTruth, agentTaskProjection, togglePanel,
+  });
   const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
   const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
@@ -1578,3 +1629,20 @@ export default function MissionConsoleTile({
     </CollapsiblePanel>
   );
 }
+
+
+function missionConsolePropsEqual(previousProps, nextProps) {
+  const previousSummary = summarizeMissionConsoleProps(previousProps);
+  const nextSummary = summarizeMissionConsoleProps(nextProps);
+  const same = Object.keys(previousSummary).every((key) => previousSummary[key] === nextSummary[key]);
+  if (!same) {
+    for (const key of Object.keys(nextSummary)) {
+      if (previousSummary[key] !== nextSummary[key]) {
+        recordPerfCounter('render_reason', `MissionConsoleTile.memo_miss.${key}`);
+      }
+    }
+  }
+  return same;
+}
+
+export default memo(MissionConsoleTile, missionConsolePropsEqual);
