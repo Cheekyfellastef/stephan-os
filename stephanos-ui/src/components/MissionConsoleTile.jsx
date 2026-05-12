@@ -35,7 +35,7 @@ import AIConsole from './AIConsole';
 import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
 import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
 import { emitPresenceEvent } from '../../../shared/runtime/stephanosPresenceBridge.mjs';
-import { copyPerfDiagnosticsSnapshot, recordPerfCounter } from '../state/perfDiagnostics.js';
+import { copyPerfDiagnosticsSnapshot, recordPerfCounter, setPerfIdentityField } from '../state/perfDiagnostics.js';
 
 registerTileMissionContext('music', ({ state }) => buildMusicMissionContext(state));
 
@@ -110,6 +110,14 @@ function MissionConsoleTile({
   agentTaskProjection = null,
 }) {
   recordPerfCounter('render', 'MissionConsoleTile');
+  useEffect(() => {
+    setPerfIdentityField('component.MissionConsoleTile.mounted', true);
+    recordPerfCounter('surface_mount', 'MissionConsoleTile.mount');
+    return () => {
+      setPerfIdentityField('component.MissionConsoleTile.mounted', false);
+      recordPerfCounter('surface_mount', 'MissionConsoleTile.unmount');
+    };
+  }, []);
   recordMissionConsoleRenderReasons({
     uiLayout, runtimeStatusModel, finalRouteTruth, finalAgentView, branchName,
     onOpenClawIntegrationUpdate, onIntentToBuildUpdate, onMissionBridgeUpdate,

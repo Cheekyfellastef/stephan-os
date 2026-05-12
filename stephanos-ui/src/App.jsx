@@ -42,6 +42,7 @@ import { ensureRuntimeStatusModel } from './state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from './state/finalRouteTruthView';
 import { evaluateRuntimeTruthDependencyGate } from './state/runtimeTruthDependencyGate.js';
 import { deriveContinuityLoopSnapshot } from './state/continuityLoopSnapshot';
+import { recordPerfCounter, setPerfIdentityField } from './state/perfDiagnostics.js';
 import {
   buildCanonicalCurrentIntent,
   buildCanonicalMemoryContext,
@@ -135,6 +136,7 @@ export function shouldStartPaneDrag(target) {
 }
 
 export default function App() {
+  recordPerfCounter('render', 'App');
   const {
     input,
     setInput,
@@ -146,6 +148,12 @@ export default function App() {
     runAiButlerAction,
     aiActionState,
   } = useAIConsole();
+
+  useEffect(() => {
+    recordPerfCounter('surface_mount', 'app.mount');
+    return () => recordPerfCounter('surface_mount', 'app.unmount');
+  }, []);
+
   const {
     provider,
     getActiveProviderConfig,
@@ -210,6 +218,18 @@ export default function App() {
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
   const skillForgeSurfaceMode = surfaceMode === 'skill-forge' || launcherDestination === 'skill-forge';
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const { pathname = '', search = '', hash = '', href = '' } = window.location || {};
+    setPerfIdentityField('page.url', href);
+    setPerfIdentityField('page.title', typeof document !== 'undefined' ? document.title || '' : '');
+    setPerfIdentityField('route.pathname', pathname);
+    setPerfIdentityField('route.search', search);
+    setPerfIdentityField('route.hash', hash);
+    setPerfIdentityField('surface.mode', surfaceMode || '');
+    setPerfIdentityField('surface.workspace', missionConsoleSurfaceMode || '');
+    setPerfIdentityField('component.app', true);
+  }, [missionConsoleSurfaceMode, surfaceMode]);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
@@ -648,12 +668,14 @@ export default function App() {
     if (typeof window === 'undefined') {
       return undefined;
     }
-    const TICK_VISIBLE_MS = 5_000;
-    const TICK_HIDDEN_MS = 30_000;
+    const TICK_VISIBLE_MS = 30_000;
+    const TICK_HIDDEN_MS = 120_000;
     let tickId = null;
     const restartTick = () => {
       if (tickId != null) window.clearInterval(tickId);
       const nextIntervalMs = document.visibilityState === 'visible' ? TICK_VISIBLE_MS : TICK_HIDDEN_MS;
+      recordPerfCounter('timers', 'app.metricsTick.restart');
+      setPerfIdentityField('timers.metricsTick.cadenceMs', nextIntervalMs);
       tickId = window.setInterval(() => setMetricsTick(Date.now()), nextIntervalMs);
     };
     const handleVisibilityChange = () => restartTick();

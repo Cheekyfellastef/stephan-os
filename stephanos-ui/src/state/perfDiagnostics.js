@@ -2,6 +2,7 @@ const MAX_BUCKETS = 120;
 const MAX_RECENT_EVENTS = 80;
 const MAX_COPY_EVENTS = 40;
 const MAX_COPY_COUNTERS = 30;
+const MAX_IDENTITY_KEYS = 80;
 
 function nowIso() {
   return new Date().toISOString();
@@ -16,6 +17,7 @@ function ensureRoot() {
       counters: Object.create(null),
       rates: Object.create(null),
       recent: [],
+      identity: Object.create(null),
     };
   }
   return globalThis.__STEPHANOS_PERF_DIAGNOSTICS__;
@@ -55,6 +57,20 @@ export function recordPerfEvent(group, name, detail = '') {
   }
 }
 
+export function setPerfIdentityField(key, value) {
+  const root = ensureRoot();
+  if (!root) return;
+  if (!root.identity || typeof root.identity !== 'object') {
+    root.identity = Object.create(null);
+  }
+  root.identity[String(key || '').slice(0, 80)] = value;
+  const keys = Object.keys(root.identity);
+  if (keys.length > MAX_IDENTITY_KEYS) {
+    const overflow = keys.length - MAX_IDENTITY_KEYS;
+    keys.slice(0, overflow).forEach((dropKey) => delete root.identity[dropKey]);
+  }
+}
+
 export function getPerfDiagnosticsSnapshot() {
   const root = ensureRoot();
   if (!root) return null;
@@ -77,6 +93,7 @@ export function buildPerfDiagnosticsCopyPayload() {
     capturedAt: nowIso(),
     pageUrl: typeof window !== 'undefined' ? window.location?.href || '' : '',
     startedAt: snapshot.startedAt,
+    identity: snapshot.identity || {},
     topCounters: buildTopCounterEntries(snapshot.counters || {}),
     rates: snapshot.rates || {},
     recentEvents: Array.isArray(snapshot.recent) ? snapshot.recent.slice(0, MAX_COPY_EVENTS) : [],
