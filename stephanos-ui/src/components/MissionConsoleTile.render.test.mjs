@@ -167,3 +167,13 @@ test('MissionConsoleTile exposes Copy Perf Diagnostics control in diagnostics ar
   assert.equal(source.includes('Copy Perf Diagnostics'), true);
   assert.equal(source.includes('copyPerfDiagnosticsSnapshot'), true);
 });
+
+test('MissionConsoleTile wraps operator overview and runtime status walls in canonical collapsible panels', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.equal(source.includes('panelId="missionConsoleOperatorOverviewPanel"'), true);
+  assert.equal(source.includes("isOpen={uiLayout.missionConsoleOperatorOverviewPanel !== false}"), true);
+  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}"), true);
+  assert.equal(source.includes('panelId="missionConsoleRuntimeRouteStatusPanel"'), true);
+  assert.equal(source.includes("isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}"), true);
+  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}"), true);
+});

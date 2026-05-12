@@ -901,27 +901,39 @@ function MissionConsoleTile({
         compactVerificationSummary={compactVerificationSummary}
       />
       <section className="mission-console-section mission-console-section--operator-overview">
-        <h4>Operator Overview</h4>
-        <ul className="mission-console__status-list">
-          <li><strong>Workspace / mode:</strong> Agent Mission Console · {sessionMode}</li>
-          <li><strong>Stephanos readiness:</strong> {executionReadiness.ready ? 'ready' : 'not-ready'} ({compactVerificationSummary.verificationReturnStatus})</li>
-          <li><strong>Route / provider:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} via {finalRouteTruth?.routeKind || 'unknown'} · requested {finalRouteTruth?.providerRequested || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
-          <li><strong>Operator Relief:</strong> {operatorReliefProjection.status || 'unknown'} · merge safety {operatorReliefProjection.mergeSafety?.verdict || 'unknown'} · proof {compactVerificationSummary.realityForgeProofStatus}</li>
-          <li><strong>Next action:</strong> {operatorReliefProjection?.nextActions?.[0]?.label || compactVerificationSummary.openClawNextAction || 'Review Operator Relief next actions.'}</li>
-          <li><strong>Primary control:</strong> Use Assistant Command Console below to submit the next mission command.</li>
-        </ul>
+        <CollapsiblePanel
+          panelId="missionConsoleOperatorOverviewPanel"
+          title="Operator Overview"
+          isOpen={uiLayout.missionConsoleOperatorOverviewPanel !== false}
+          onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}
+        >
+          <ul className="mission-console__status-list">
+            <li><strong>Workspace / mode:</strong> Agent Mission Console · {sessionMode}</li>
+            <li><strong>Stephanos readiness:</strong> {executionReadiness.ready ? 'ready' : 'not-ready'} ({compactVerificationSummary.verificationReturnStatus})</li>
+            <li><strong>Route / provider:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} via {finalRouteTruth?.routeKind || 'unknown'} · requested {finalRouteTruth?.providerRequested || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
+            <li><strong>Operator Relief:</strong> {operatorReliefProjection.status || 'unknown'} · merge safety {operatorReliefProjection.mergeSafety?.verdict || 'unknown'} · proof {compactVerificationSummary.realityForgeProofStatus}</li>
+            <li><strong>Next action:</strong> {operatorReliefProjection?.nextActions?.[0]?.label || compactVerificationSummary.openClawNextAction || 'Review Operator Relief next actions.'}</li>
+            <li><strong>Primary control:</strong> Use Assistant Command Console below to submit the next mission command.</li>
+          </ul>
+        </CollapsiblePanel>
       </section>
       <section className="mission-console-section mission-console-section--status-strip">
-        <h4>Runtime + Route Status</h4>
-        <ul className="mission-console__status-list">
-          <li><strong>Opened route:</strong> mission-console</li>
-          <li><strong>Canonical route:</strong> mission-console</li>
-          <li><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</li>
-          <li><strong>Route status:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} / {finalRouteTruth?.routeKind || 'unknown'}</li>
-          <li><strong>Provider chain:</strong> requested {finalRouteTruth?.providerRequested || 'unknown'} → selected {finalRouteTruth?.providerSelected || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
-          <li><strong>Addressed target:</strong> {resolvedTarget.label}</li>
-          <li><strong>Music context:</strong> {executionReadiness.musicContextAvailable ? 'available' : 'unavailable'}</li>
-        </ul>
+        <CollapsiblePanel
+          panelId="missionConsoleRuntimeRouteStatusPanel"
+          title="Runtime + Route Status"
+          isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}
+          onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}
+        >
+          <ul className="mission-console__status-list">
+            <li><strong>Opened route:</strong> mission-console</li>
+            <li><strong>Canonical route:</strong> mission-console</li>
+            <li><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</li>
+            <li><strong>Route status:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} / {finalRouteTruth?.routeKind || 'unknown'}</li>
+            <li><strong>Provider chain:</strong> requested {finalRouteTruth?.providerRequested || 'unknown'} → selected {finalRouteTruth?.providerSelected || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
+            <li><strong>Addressed target:</strong> {resolvedTarget.label}</li>
+            <li><strong>Music context:</strong> {executionReadiness.musicContextAvailable ? 'available' : 'unavailable'}</li>
+          </ul>
+        </CollapsiblePanel>
       </section>
 
       <section className="mission-console-section mission-console-section--operator-relief">
