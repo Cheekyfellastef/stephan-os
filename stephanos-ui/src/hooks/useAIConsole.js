@@ -35,7 +35,7 @@ import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth.
 import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrationSelectors.js';
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
-import { recordPerfCounter, recordPerfEvent } from '../state/perfDiagnostics.js';
+import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -2128,19 +2128,25 @@ export function useAIConsole() {
     const governor = createRuntimeWorkGovernor({
       onStateChange: (nextState) => {
         runtimeGovernorStateRef.current = nextState;
+        setPerfIdentityField('runtimeGovernor.lastHeartbeat', String(nextState.lastGovernorHeartbeat || ''));
         setUiDiagnostics((previous) => {
-          const unchanged = previous
-            && previous.runtimeGovernorMode === nextState.mode
-            && previous.runtimeGovernorLeader === nextState.leader
-            && previous.runtimeGovernorReason === nextState.reason
-            && previous.duplicateTabDetected === nextState.duplicateTabDetected
-            && previous.hiddenTabThrottleActive === nextState.hidden
-            && previous.lastGovernorHeartbeat === nextState.lastGovernorHeartbeat;
-          if (unchanged) {
-            recordPerfCounter('store.notify.uiDiagnostics', 'runtimeGovernor.skip_unchanged');
+          const changedFields = [];
+          if (previous?.runtimeGovernorMode !== nextState.mode) changedFields.push('runtimeGovernorMode');
+          if (previous?.runtimeGovernorLeader !== nextState.leader) changedFields.push('runtimeGovernorLeader');
+          if (previous?.runtimeGovernorReason !== nextState.reason) changedFields.push('runtimeGovernorReason');
+          if (previous?.duplicateTabDetected !== nextState.duplicateTabDetected) changedFields.push('duplicateTabDetected');
+          if (previous?.hiddenTabThrottleActive !== nextState.hidden) changedFields.push('hiddenTabThrottleActive');
+
+          if (changedFields.length === 0) {
+            recordPerfCounter('store.notify.uiDiagnostics', 'runtimeGovernor.apply_skipped');
             return previous;
           }
+
           recordPerfCounter('store.notify.uiDiagnostics', 'runtimeGovernor.apply_changed');
+          for (const fieldName of changedFields) {
+            recordPerfCounter('store.notify.uiDiagnostics.runtimeGovernor.apply_changed', fieldName);
+          }
+
           return {
             ...previous,
             runtimeGovernorMode: nextState.mode,
@@ -2148,7 +2154,6 @@ export function useAIConsole() {
             runtimeGovernorReason: nextState.reason,
             duplicateTabDetected: nextState.duplicateTabDetected,
             hiddenTabThrottleActive: nextState.hidden,
-            lastGovernorHeartbeat: nextState.lastGovernorHeartbeat,
           };
         });
       },
