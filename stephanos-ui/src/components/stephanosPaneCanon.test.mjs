@@ -51,6 +51,12 @@ test('Capability Radar surface uses canonical collapse wiring and persisted uiLa
   assert.equal(aiStoreSource.includes('capabilityRadarPanel: true'), true);
 });
 
+test('Cockpit surface uses canonical togglePanel wiring (no force-open override)', () => {
+  const cockpitSurfaceSegment = appSource.split('if (cockpitSurfaceMode) {')[1]?.split('if (agentsSurfaceMode) {')[0] || '';
+  assert.equal(cockpitSurfaceSegment.includes('<CockpitPanel standalone'), true);
+  assert.equal(cockpitSurfaceSegment.includes('forceOpen'), false);
+});
+
 test('OpenClaw execution stays disabled in tile copy', () => {
   assert.equal(openClawSource.includes('Execution disabled:'), true);
   assert.equal(openClawSource.includes('no (disabled)'), true);

@@ -111,6 +111,25 @@ const PANE_DRAG_BLOCK_SELECTOR = [
   '[data-stephanos-no-drag]',
 ].join(', ');
 
+function readSurfaceModeFromLocation(windowRef = globalThis.window) {
+  if (!windowRef?.location) {
+    return 'mission-control';
+  }
+  const params = new URLSearchParams(windowRef.location.search || '');
+  return resolveAgentSurfaceMode(params.get('surface') || params.get('app'));
+}
+
+function clearLauncherSurfaceQuery(windowRef = globalThis.window) {
+  if (!windowRef?.location || !windowRef?.history?.replaceState) {
+    return;
+  }
+  const currentUrl = new URL(windowRef.location.href);
+  currentUrl.searchParams.delete('surface');
+  currentUrl.searchParams.delete('app');
+  currentUrl.searchParams.delete('destination');
+  windowRef.history.replaceState(windowRef.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+}
+
 function countTelemetryEventsSince(entries = [], sinceMs = 0) {
   if (!Array.isArray(entries) || entries.length === 0) return 0;
   let count = 0;
@@ -283,14 +302,7 @@ export default function App() {
     recordPerfCounter('store.subscription.App.aiStore.callback', changedCount === 0 ? 'selected_unchanged_all' : 'selected_changed');
     previousAppStoreFieldsRef.current = appStoreFieldsSnapshot;
   }, [appStoreFieldsSnapshot]);
-  const surfaceMode = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return 'mission-control';
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    return resolveAgentSurfaceMode(params.get('surface') || params.get('app'));
-  }, []);
+  const [surfaceMode, setSurfaceMode] = useState(() => readSurfaceModeFromLocation());
   const launcherDestination = useMemo(() => {
     if (typeof window === 'undefined') {
       return '';
@@ -305,6 +317,24 @@ export default function App() {
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
   const skillForgeSurfaceMode = surfaceMode === 'skill-forge' || launcherDestination === 'skill-forge';
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleRouteChange = () => {
+      setSurfaceMode(readSurfaceModeFromLocation(window));
+    };
+    const returnToCommandDeck = () => {
+      clearLauncherSurfaceQuery(window);
+      setSurfaceMode('mission-control');
+    };
+    window.addEventListener('popstate', handleRouteChange);
+    window.returnToCommandDeck = returnToCommandDeck;
+    return () => {
+      window.removeEventListener('popstate', handleRouteChange);
+      if (window.returnToCommandDeck === returnToCommandDeck) {
+        delete window.returnToCommandDeck;
+      }
+    };
+  }, []);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const { pathname = '', search = '', hash = '', href = '' } = window.location || {};
@@ -1548,7 +1578,7 @@ export default function App() {
           COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="cockpit-surface-stage">
-          <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
+          <CockpitPanel standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
         </section>
         <DebugConsole />
       </main>
