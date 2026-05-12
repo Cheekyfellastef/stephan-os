@@ -5,7 +5,7 @@ import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import CollapsiblePanel from './CollapsiblePanel';
 import CommandResultCard from './CommandResultCard';
-import { copyPerfDiagnosticsSnapshot, recordPerfCounter, recordPerfEvent } from '../state/perfDiagnostics.js';
+import { copyPerfDiagnosticsSnapshot, recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
@@ -56,6 +56,15 @@ export default function AIConsole({
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    setPerfIdentityField('component.AIConsole.mounted', true);
+    recordPerfCounter('surface_mount', 'AIConsole.mount');
+    return () => {
+      setPerfIdentityField('component.AIConsole.mounted', false);
+      recordPerfCounter('surface_mount', 'AIConsole.unmount');
+    };
+  }, []);
 
   const preserveDocumentScrollPosition = () => {
     if (typeof window === 'undefined') return;
