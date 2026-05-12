@@ -24,6 +24,15 @@ test('OpenClaw landing tile layout and Stephanos pane layout stay distinct in Ap
   assert.equal(openClawSurfaceSegment.includes('className="workspace-canvas"'), false);
 });
 
+
+test('Capability Radar surface uses canonical collapse wiring and persisted uiLayout state path', () => {
+  const capabilityRadarSurfaceSegment = appSource.split('if (capabilityRadarSurfaceMode) {')[1]?.split('if (openClawSurfaceMode) {')[0] || '';
+  assert.equal(capabilityRadarSurfaceSegment.includes('uiLayout={safeUiLayout}'), true);
+  assert.equal(capabilityRadarSurfaceSegment.includes('togglePanel={togglePanel}'), true);
+  assert.equal(capabilityRadarSurfaceSegment.includes('capabilityRadarPanel: true'), false);
+  assert.equal(capabilityRadarSurfaceSegment.includes('togglePanel={() => {}}'), false);
+});
+
 test('OpenClaw execution stays disabled in tile copy', () => {
   assert.equal(openClawSource.includes('Execution disabled:'), true);
   assert.equal(openClawSource.includes('no (disabled)'), true);
