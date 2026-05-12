@@ -116,6 +116,12 @@ const AIStoreContext = createContext(null);
 const DEFAULT_UI_LAYOUT = {
   providerControlsPanel: true,
   homeBridgePanel: true,
+  missionConsolePanel: true,
+  missionConsoleOperatorOverviewPanel: true,
+  missionConsoleRuntimeRouteStatusPanel: true,
+  missionConsoleOperatorReliefPanel: true,
+  missionConsoleSecondaryDiagnosticsPanel: true,
+  missionConsoleConnectedTileContextsPanel: true,
   commandDeck: true,
   powerShellMergeConsolePanel: true,
   statusPanel: true,
