@@ -122,6 +122,24 @@ function countTelemetryEventsSince(entries = [], sinceMs = 0) {
   return count;
 }
 
+function signaturesEqual(a, b) {
+  return a === b;
+}
+
+function buildOpenClawIntegrationSignature(snapshot = {}) {
+  return [
+    String(snapshot.currentActivity || ''),
+    String(snapshot.zeroCostGuardrailsStatus || ''),
+    String(snapshot.approvalRequired || ''),
+    String(snapshot.sandboxStatus || ''),
+    Array.isArray(snapshot.warnings) ? snapshot.warnings.join('|') : '',
+    String(snapshot.routeHealth || ''),
+    String(snapshot.routeReachability || ''),
+    String(snapshot.runtimeMode || ''),
+  ].join('::');
+}
+
+
 export function shouldStartPaneDrag(target) {
   if (!target || typeof target.closest !== 'function') {
     return false;
@@ -728,14 +746,28 @@ export default function App() {
   }, [canonicalCurrentIntent?.operatorIntent?.label, displayAgentView?.actingAgentId, displayAgentView?.finalApprovalQueueView?.pendingCount, displayAgentView?.operatorSummary, displayAgentView?.visibleAgents?.length, hasAssignedTaskIntent, latestCommandPrompt, missionBridgeTruth, openClawEndpointDraft, openClawIntegration?.approvalRequired, openClawIntegration?.sandboxStatus, openClawIntegration?.warnings, openClawIntegration?.zeroCostGuardrailsStatus, openClawReadonlyValidation, orchestrationSelectors?.blockageExplanation]);
 
   useEffect(() => {
-    setOpenClawIntegration((previous) => (previous && previous.currentActivity !== 'Standing by for bounded intent.'
-      ? previous
-      : buildOpenClawIntegrationSnapshot({
+    setOpenClawIntegration((previous) => {
+      recordPerfCounter('app_state.openClawIntegration.called', 'effect.routeTruth');
+      if (previous && previous.currentActivity !== 'Standing by for bounded intent.') {
+        recordPerfCounter('app_state.openClawIntegration.skipped', 'activity_locked');
+        return previous;
+      }
+      const next = buildOpenClawIntegrationSnapshot({
         runtimeStatusModel,
         finalRouteTruth: routeTruthView,
         repoPath: '/workspace/stephan-os',
         branchName: runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown',
-      })));
+      });
+      const prevSig = buildOpenClawIntegrationSignature(previous);
+      const nextSig = buildOpenClawIntegrationSignature(next);
+      if (signaturesEqual(prevSig, nextSig)) {
+        recordPerfCounter('app_state.openClawIntegration.same_semantic', 'effect.routeTruth');
+        recordPerfCounter('app_state.openClawIntegration.skipped', 'same_semantic');
+        return previous ?? next;
+      }
+      recordPerfCounter('app_state.openClawIntegration.changed', 'effect.routeTruth');
+      return next;
+    });
   }, [routeTruthView, runtimeStatus?.runtimeContext?.repoBranch, runtimeStatus?.runtimeTruth?.repoBranch, runtimeStatusModel]);
   markStartupStage('app-derived-agent-projection-ready', {
     surfaceMode,
@@ -754,7 +786,19 @@ export default function App() {
       const nextIntervalMs = document.visibilityState === 'visible' ? TICK_VISIBLE_MS : TICK_HIDDEN_MS;
       recordPerfCounter('timers', 'app.metricsTick.restart');
       setPerfIdentityField('timers.metricsTick.cadenceMs', nextIntervalMs);
-      tickId = window.setInterval(() => setMetricsTick(Date.now()), nextIntervalMs);
+      tickId = window.setInterval(() => {
+        recordPerfCounter('app_timer.metricsTick.tick', document.visibilityState === 'visible' ? 'visible' : 'hidden');
+        setMetricsTick((previous) => {
+          const next = Date.now();
+          recordPerfCounter('app_state.metricsTick.called', 'timer');
+          if (next <= previous) {
+            recordPerfCounter('app_state.metricsTick.skipped', 'non_monotonic');
+            return previous;
+          }
+          recordPerfCounter('app_state.metricsTick.changed', 'timer');
+          return next;
+        });
+      }, nextIntervalMs);
     };
     const handleVisibilityChange = () => restartTick();
     restartTick();
@@ -797,8 +841,10 @@ export default function App() {
         && previousDiagnostics.animationActiveCount === runtimeDiagnostics.animationActiveCount
         && previousDiagnostics.eventRatePerSecond === runtimeDiagnostics.eventRatePerSecond;
       if (unchanged) {
+        recordPerfCounter('app_state.uiDiagnostics.skipped', 'runtimeDiagnostics_same');
         return prev;
       }
+      recordPerfCounter('app_state.uiDiagnostics.changed', 'runtimeDiagnostics_changed');
       return { ...prev, runtimeDiagnostics };
     });
   }, [runtimeDiagnostics, setUiDiagnostics]);
