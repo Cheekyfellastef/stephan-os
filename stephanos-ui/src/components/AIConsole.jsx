@@ -5,6 +5,7 @@ import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import CollapsiblePanel from './CollapsiblePanel';
 import CommandResultCard from './CommandResultCard';
+import { copyPerfDiagnosticsSnapshot, recordPerfCounter, recordPerfEvent } from '../state/perfDiagnostics.js';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 
@@ -20,6 +21,9 @@ export default function AIConsole({
   const inputRef = useRef(null);
   const documentScrollTopRef = useRef(0);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const [perfCopyState, setPerfCopyState] = useState('idle');
+  const [perfCopyMessage, setPerfCopyMessage] = useState('');
+  const lastHistoryRenderKeyRef = useRef('');
   const {
     isBusy,
     apiStatus,
@@ -36,6 +40,7 @@ export default function AIConsole({
   const safeUiLayout = uiLayout || {};
   const safeCommandHistory = Array.isArray(commandHistory) ? commandHistory : [];
   const latestCommand = safeCommandHistory.length > 0 ? safeCommandHistory[safeCommandHistory.length - 1] : null;
+  const historyRenderKey = `${safeCommandHistory.length}:${latestCommand?.id || 'none'}`;
   const continuityMode = latestCommand?.continuity_mode || 'recording-only';
   const continuityRecords = Array.isArray(latestCommand?.continuity_context?.records) ? latestCommand.continuity_context.records : [];
   const activeHealth = safeProviderHealth[provider] || {};
@@ -46,6 +51,7 @@ export default function AIConsole({
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const showStartupPlaceholder = safeCommandHistory.length === 0
     && (runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking');
+  recordPerfCounter('render', 'AIConsole');
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -85,12 +91,19 @@ export default function AIConsole({
 
   useEffect(() => {
     if (!autoScrollEnabled) return;
+    if (lastHistoryRenderKeyRef.current === historyRenderKey) {
+      recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_history');
+      return;
+    }
+    lastHistoryRenderKeyRef.current = historyRenderKey;
+    recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
     scrollMessageContainerToBottom('smooth');
     requestAnimationFrame(() => {
+      recordPerfCounter('timers', 'ai_core.autoscroll_raf');
       restoreDocumentScrollPosition();
     });
-  }, [autoScrollEnabled, safeCommandHistory]);
+  }, [autoScrollEnabled, historyRenderKey]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -98,7 +111,27 @@ export default function AIConsole({
 
     const threshold = 50;
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    setAutoScrollEnabled(isNearBottom);
+    setAutoScrollEnabled((previous) => {
+      if (previous === isNearBottom) {
+        return previous;
+      }
+      recordPerfCounter('events', 'ai_core.scroll.autoscroll_toggle');
+      return isNearBottom;
+    });
+  };
+
+  const copyPerfDiagnostics = async () => {
+    recordPerfCounter('events', 'ai_core.copy_perf.click');
+    const result = await copyPerfDiagnosticsSnapshot();
+    if (result?.ok) {
+      setPerfCopyState('success');
+      setPerfCopyMessage('Perf diagnostics copied.');
+      recordPerfCounter('events', 'ai_core.copy_perf.success');
+    } else {
+      setPerfCopyState('error');
+      setPerfCopyMessage(result?.error || 'Unable to copy perf diagnostics.');
+      recordPerfEvent('events', 'ai_core.copy_perf.error', result?.error || 'unknown');
+    }
   };
 
   const onSubmit = (event) => {
@@ -193,7 +226,11 @@ export default function AIConsole({
             <button type="button" className="ghost-button" onClick={() => emergencyReleaseOllamaLoad?.()}>
               Emergency release Ollama load
             </button>
+            <button type="button" className="ghost-button" onClick={copyPerfDiagnostics}>
+              {perfCopyState === 'success' ? 'Perf Diagnostics Copied' : 'Copy Perf Diagnostics'}
+            </button>
           </div>
+          {perfCopyMessage ? <p className={`muted ${perfCopyState === 'error' ? 'status-error' : ''}`}>{perfCopyMessage}</p> : null}
         </form>
       </div>
     </CollapsiblePanel>
