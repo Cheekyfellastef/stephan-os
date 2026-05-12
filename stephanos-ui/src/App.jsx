@@ -154,18 +154,6 @@ export default function App() {
     return () => recordPerfCounter('surface_mount', 'app.unmount');
   }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const { pathname = '', search = '', hash = '', href = '' } = window.location || {};
-    setPerfIdentityField('page.url', href);
-    setPerfIdentityField('page.title', typeof document !== 'undefined' ? document.title || '' : '');
-    setPerfIdentityField('route.pathname', pathname);
-    setPerfIdentityField('route.search', search);
-    setPerfIdentityField('route.hash', hash);
-    setPerfIdentityField('surface.mode', surfaceMode || '');
-    setPerfIdentityField('surface.workspace', missionConsoleSurfaceMode || '');
-    setPerfIdentityField('component.app', true);
-  }, [missionConsoleSurfaceMode, surfaceMode]);
   const {
     provider,
     getActiveProviderConfig,
@@ -230,6 +218,18 @@ export default function App() {
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
   const skillForgeSurfaceMode = surfaceMode === 'skill-forge' || launcherDestination === 'skill-forge';
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const { pathname = '', search = '', hash = '', href = '' } = window.location || {};
+    setPerfIdentityField('page.url', href);
+    setPerfIdentityField('page.title', typeof document !== 'undefined' ? document.title || '' : '');
+    setPerfIdentityField('route.pathname', pathname);
+    setPerfIdentityField('route.search', search);
+    setPerfIdentityField('route.hash', hash);
+    setPerfIdentityField('surface.mode', surfaceMode || '');
+    setPerfIdentityField('surface.workspace', missionConsoleSurfaceMode || '');
+    setPerfIdentityField('component.app', true);
+  }, [missionConsoleSurfaceMode, surfaceMode]);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   useEffect(() => {
     if (launcherDestination !== 'openclaw') {
