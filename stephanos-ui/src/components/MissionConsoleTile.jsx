@@ -35,6 +35,7 @@ import AIConsole from './AIConsole';
 import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
 import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
 import { emitPresenceEvent } from '../../../shared/runtime/stephanosPresenceBridge.mjs';
+import { recordPerfCounter } from '../state/perfDiagnostics.js';
 
 registerTileMissionContext('music', ({ state }) => buildMusicMissionContext(state));
 
@@ -63,6 +64,7 @@ export default function MissionConsoleTile({
   orchestrationTruth = null,
   agentTaskProjection = null,
 }) {
+  recordPerfCounter('render', 'MissionConsoleTile');
   const { copyState: promptCopyState, setCopyState: setPromptCopyState } = useClipboardButtonState();
   const { copyState: specCopyState, setCopyState: setSpecCopyState } = useClipboardButtonState();
   const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
@@ -248,7 +250,9 @@ export default function MissionConsoleTile({
     memoryLibrarianQueue: memoryLibrarian,
   }), [intentToBuild?.missionSpec, memoryLibrarian, prEvidenceParseResult, verificationReturnAdjudication, verificationReturnInput]);
 
-  const operatorReliefProjection = useMemo(() => deriveOperatorReliefProjection({
+  const operatorReliefProjection = useMemo(() => {
+    recordPerfCounter('projection', 'operatorReliefProjection');
+    return deriveOperatorReliefProjection({
     intentToBuildModel: intentToBuild,
     taskFinisherModel: intentToBuild?.missionSpec?.taskFinisherPlan || {},
     missionEvidenceLedgerModel: missionEvidenceLedger || {},
@@ -257,7 +261,8 @@ export default function MissionConsoleTile({
     operatorDecisionQueue: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
     memoryLibrarianQueue: memoryLibrarian || {},
     supportSnapshot: runtimeStatusModel || {},
-  }), [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
+    });
+  }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
 
   useEffect(() => {
     const verdict = operatorReliefProjection?.mergeSafety?.verdict;
@@ -277,6 +282,7 @@ export default function MissionConsoleTile({
       : verdict === 'needs-browser-proof'
         ? 'This PR is not merge-safe yet because browser proof is missing.'
         : 'A repair prompt is available from console error evidence.';
+    recordPerfCounter('events', 'presence.operator_relief');
     emitPresenceEvent({ kind: `operator_relief.${status === 'merge-candidate' ? 'merge_candidate' : status === 'blocked' ? 'blocked' : 'ready'}`, summary, impact: operatorReliefProjection?.missionTitle || 'Operator Relief update.' });
     if (verdict === 'needs-browser-proof') emitPresenceEvent({ kind: 'operator_relief.browser_proof_missing', summary: 'Browser proof missing. Run UI smoke test before merge.' });
     if (repairPromptAvailable) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
