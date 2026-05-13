@@ -1619,6 +1619,58 @@ export default function App() {
       };
     });
     const orphanMoveControlCount = moveControlFacts.filter((fact) => !fact.attached).length;
+    const moveControlTrace = orderedPanes.map((pane, index) => {
+      const panel = document.querySelector(`[data-panel-id="${pane.layoutKey || pane.id}"]`);
+      const headerActions = panel?.querySelector('.panel-header-actions') || null;
+      const groupNode = panel?.querySelector('[data-pane-control-group="move-order"]') || null;
+      const rect = groupNode?.getBoundingClientRect ? groupNode.getBoundingClientRect() : null;
+      const style = groupNode ? window.getComputedStyle(groupNode) : null;
+      const visible = Boolean(groupNode && style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect && rect.width > 0 && rect.height > 0);
+      return {
+        paneId: pane.id,
+        title: pane.title || pane.id,
+        reorderable: true,
+        canMoveUp: index > 0,
+        canMoveDown: index < orderedPanes.length - 1,
+        createdByStephanosSurfacePane: true,
+        providerValuePresent: true,
+        consumedByCollapsiblePanel: Boolean(headerActions),
+        claimAttempted: Boolean(headerActions),
+        claimAccepted: Boolean(groupNode),
+        claimRejectedReason: groupNode ? null : 'not-rendered-in-owner-header',
+        renderedInHeaderActions: Boolean(groupNode && headerActions?.contains(groupNode)),
+        domNodeFound: Boolean(groupNode),
+        visible,
+        cssDisplay: style?.display || null,
+        cssVisibility: style?.visibility || null,
+        cssOpacity: style?.opacity || null,
+        boundingBox: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+        ownerHeaderTestId: headerActions?.getAttribute('data-testid') || null,
+      };
+    });
+    const totalMoveControlsCreated = moveControlTrace.length;
+    const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedByCollapsiblePanel).length;
+    const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
+    const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
+    const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId);
+    const paneCollapseCoverage = paneShellFacts.map((paneFact) => {
+      const panel = document.querySelector(`[data-panel-id="${paneFact.panelId}"]`);
+      const toggle = panel?.querySelector('.panel-collapse-button');
+      const body = panel?.querySelector('.panel-body');
+      return {
+        paneId: paneFact.panelId,
+        title: paneFact.title || paneFact.panelId,
+        firstClassPane: true,
+        hasCollapseControl: Boolean(toggle),
+        collapseControlVisible: Boolean(toggle && window.getComputedStyle(toggle).display !== 'none' && window.getComputedStyle(toggle).visibility !== 'hidden'),
+        isCollapsed: body ? body.hidden : false,
+        bodyMounted: Boolean(body),
+        bodyVisible: body ? !body.hidden : false,
+        usesCanonicalToggle: Boolean(toggle?.classList?.contains('panel-collapse-button')),
+        uiLayoutKey: paneFact.panelId,
+        missingCollapseReason: toggle ? null : 'missing-toggle-button',
+      };
+    });
     const paneShellFacts = paneShellNodes.map((shellNode) => {
       const panel = shellNode.querySelector('[data-panel-id]');
       const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
@@ -1641,7 +1693,19 @@ export default function App() {
       duplicatePaneIds: duplicatedPaneIds,
       paneShells: paneShellFacts,
       moveControlGroups: moveControlFacts,
+      moveControlTrace,
+      totalMoveControlsCreated,
+      totalMoveControlsConsumed,
+      totalMoveControlsRendered,
+      totalMoveControlsVisible,
       orphanMoveControlCount,
+      panesMissingMoveControls,
+      paneCollapseCoverage,
+      totalFirstClassPanes: paneCollapseCoverage.length,
+      panesWithCollapseControls: paneCollapseCoverage.filter((pane) => pane.hasCollapseControl).length,
+      panesMissingCollapseControls: paneCollapseCoverage.filter((pane) => !pane.hasCollapseControl).map((pane) => pane.paneId),
+      wallOfTextPanesDefaultOpen: [],
+      wallOfTextPanesDefaultCollapsed: [],
       agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
       copyButtons,
