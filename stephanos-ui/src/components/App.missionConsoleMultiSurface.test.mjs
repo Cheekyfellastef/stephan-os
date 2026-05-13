@@ -26,7 +26,7 @@ test('embedded Stephanos AI Core MissionConsoleTile is explicitly exempt from mi
   const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
 
   assert.match(missionConsoleSource, /forcePanelOpen = false/);
-  assert.match(missionConsoleSource, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\.missionConsolePanel !== false;/);
+  assert.match(missionConsoleSource, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\[panelId\] !== false;/);
   assert.match(missionConsoleSource, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
-  assert.match(missionConsoleSource, /dispatchPanelToggle\('missionConsolePanel'\)/);
+  assert.match(missionConsoleSource, /dispatchPanelToggle\(panelId\)/);
 });

@@ -1272,6 +1272,7 @@ export default function App() {
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
           forcePanelOpen
+          panelId="aiCoreMissionConsolePanel"
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}
@@ -1435,6 +1436,7 @@ export default function App() {
         <MissionConsoleTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
+          panelId="missionConsolePanel"
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}
@@ -1462,6 +1464,7 @@ export default function App() {
         <CapabilityRadarTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
+          panelId="missionConsolePanel"
           runtimeStatusModel={runtimeStatusModel}
         />
       ),
@@ -1489,6 +1492,7 @@ export default function App() {
         <OpenClawTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
+          panelId="missionConsolePanel"
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
@@ -1604,6 +1608,9 @@ export default function App() {
       hydratedOperatorPaneLayoutOrder: safePaneLayout.order || [],
       uiLayout: safeUiLayout,
       safeUiLayout,
+      forcePanelOpenActivity: [{ panelId: 'aiCoreMissionConsolePanel', forcedOpen: true, source: 'App.aiCoreEmbeddedMissionConsole' }],
+      agentMissionConsole: { panelId: 'missionConsolePanel', open: safeUiLayout.missionConsolePanel !== false },
+      intentToBuildPanel: { panelId: 'missionConsoleIntentToBuildPanel', open: safeUiLayout.missionConsoleIntentToBuildPanel !== false },
       appRenderCount: appRenderCountRef.current,
       paneDefinitionsRecomputeCount: paneDefinitionsRecomputeRef.current,
       lastUpdatedAt: new Date().toISOString(),
