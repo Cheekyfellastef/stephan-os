@@ -198,27 +198,16 @@ body {
   min-width: 0;
 }
 
-.stephanos-surface-pane__actions {
+.pane-order-controls {
   display: flex;
   justify-content: flex-end;
-  margin: 0 0 0.35rem;
-}
-
-.pane-order-controls {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.35rem;
-  padding: 0.2rem;
-  border-radius: 999px;
-  background: rgba(8, 20, 38, 0.72);
-  border: 1px solid rgba(81, 150, 233, 0.34);
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
 }
 
 .pane-order-controls .ghost-button {
-  min-height: 32px;
-  font-size: 0.74rem;
-  padding: 0.28rem 0.58rem;
+  min-height: 40px;
+  font-size: 0.76rem;
 }
 
 .panel,
