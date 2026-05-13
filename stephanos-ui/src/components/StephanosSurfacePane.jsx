@@ -17,7 +17,6 @@ export default function StephanosSurfacePane({
   const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
   const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
   const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
-  const renderedPane = pane.render();
   return (
     <div
       className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass}${workspaceShellClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
@@ -39,7 +38,7 @@ export default function StephanosSurfacePane({
         <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
         <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
       </div>
-      {renderedPane}
+      {paneCollapsed ? null : pane.render()}
     </div>
   );
 }

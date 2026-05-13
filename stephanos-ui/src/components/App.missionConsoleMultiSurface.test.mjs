@@ -27,6 +27,6 @@ test('embedded Stephanos AI Core MissionConsoleTile is explicitly exempt from mi
 
   assert.match(missionConsoleSource, /forcePanelOpen = false/);
   assert.match(missionConsoleSource, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\[panelId\] !== false;/);
-  assert.match(missionConsoleSource, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
+  assert.match(missionConsoleSource, /if \(forcePanelOpen\) \{[\s\S]*blockedByForcePanelOpen: true,[\s\S]*return;\s*\}/m);
   assert.match(missionConsoleSource, /dispatchPanelToggle\(panelId\)/);
 });
