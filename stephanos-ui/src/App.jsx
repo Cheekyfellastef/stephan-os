@@ -1531,6 +1531,7 @@ export default function App() {
     runtimeStatus.runtimeContext?.repoBranch,
     runtimeStatus.runtimeTruth?.repoBranch,
     safeApiStatus.detail,
+    safeUiLayout,
     setInput,
     togglePanel,
     startupDiagnosticsVisible,

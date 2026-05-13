@@ -204,3 +204,13 @@ test('MissionConsoleTile does not reuse panel ids across collapsible panels', as
   });
   assert.deepEqual([...duplicates], []);
 });
+
+test('MissionConsoleTile forcePanelOpen is scoped to missionConsolePanel and does not alter other panel toggle wiring', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.match(source, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\.missionConsolePanel !== false;/);
+  assert.match(source, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
+  assert.match(source, /togglePanel\('missionConsolePanel'\)/);
+  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorReliefPanel')}"), true);
+});
