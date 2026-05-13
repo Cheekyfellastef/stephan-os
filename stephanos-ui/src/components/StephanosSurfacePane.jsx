@@ -1,5 +1,6 @@
-import { cloneElement, isValidElement } from 'react';
+import { useMemo, useRef } from 'react';
 import { resolvePaneCollapsedState } from '../utils/stephanosPaneBehavior';
+import StephanosPaneMoveControlsContext from './StephanosPaneMoveControlsContext';
 
 export default function StephanosSurfacePane({
   pane,
@@ -28,12 +29,20 @@ export default function StephanosSurfacePane({
     </div>
   );
 
-  const paneNode = paneCollapsed ? null : pane.render({});
-  const renderedPane = isValidElement(paneNode)
-    ? cloneElement(paneNode, {
-      actions: paneNode.props?.actions ? <>{paneNode.props.actions}{moveControlGroup}</> : moveControlGroup,
-    })
-    : paneNode;
+  const moveControlClaimedRef = useRef(false);
+  const moveControlContextValue = useMemo(() => ({
+    paneId: pane.id,
+    moveControlGroup,
+    claimMoveControls() {
+      if (moveControlClaimedRef.current) {
+        return null;
+      }
+      moveControlClaimedRef.current = true;
+      return moveControlGroup;
+    },
+  }), [moveControlGroup, pane.id]);
+
+  const paneNode = pane.render({ moveControlGroup });
 
   return (
     <div
@@ -53,7 +62,9 @@ export default function StephanosSurfacePane({
       onDragEnd={onDragEnd}
       onDrop={onDrop}
     >
-      {renderedPane}
+      <StephanosPaneMoveControlsContext.Provider value={moveControlContextValue}>
+        {paneNode}
+      </StephanosPaneMoveControlsContext.Provider>
     </div>
   );
 }
