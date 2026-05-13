@@ -31,3 +31,11 @@ test('default pane order keeps Mission Console mounted in Stephanos tile workspa
   const source = await fs.readFile(aiStorePath, 'utf8');
   assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'missionConsolePanel'/m);
 });
+
+test('Stephanos Tile workspace renders missionConsolePanel via canonical pane registry path', async () => {
+  const source = await fs.readFile(appPath, 'utf8');
+  assert.equal(source.includes("id: 'missionConsolePanel'"), true);
+  assert.equal(source.includes('orderedPanes.map((pane) => {'), true);
+  assert.equal(source.includes('<StephanosSurfacePane'), true);
+  assert.equal(source.includes('<MissionConsoleTile'), true);
+});
