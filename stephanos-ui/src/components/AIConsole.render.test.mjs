@@ -68,8 +68,8 @@ test('assistant answer pane keeps text selection enabled for drag-copy operation
 
 test('assistant answer pane enforces tall bounded scrolling region so long answers stay inside pane', async () => {
   const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
-  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*min-height:\s*clamp\(12rem,\s*34vh,\s*22rem\);/m);
-  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*max-height:\s*50vh;/m);
+  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*min-height:\s*clamp\(24rem,\s*68vh,\s*44rem\);/m);
+  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*max-height:\s*78vh;/m);
   assert.match(stylesSource, /\.assistant-answer-text[\s\S]*overflow-y:\s*auto;/m);
 });
 

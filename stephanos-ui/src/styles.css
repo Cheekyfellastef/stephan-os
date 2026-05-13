@@ -1016,8 +1016,8 @@ button:active,
   -webkit-user-select: text;
   cursor: text;
   white-space: pre-wrap;
-  min-height: clamp(12rem, 34vh, 22rem);
-  max-height: 50vh;
+  min-height: clamp(24rem, 68vh, 44rem);
+  max-height: 78vh;
   overflow-y: auto;
   padding-right: 0.25rem;
 }
