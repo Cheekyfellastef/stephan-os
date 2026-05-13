@@ -1,4 +1,6 @@
+import { useContext } from 'react';
 import PaneCollapseDial from './PaneCollapseDial';
+import StephanosPaneMoveControlsContext from './StephanosPaneMoveControlsContext';
 
 export default function CollapsiblePanel({
   as: Component = 'section',
@@ -39,6 +41,11 @@ export default function CollapsiblePanel({
   }
 
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
+  const paneMoveControlsContext = useContext(StephanosPaneMoveControlsContext);
+  const paneMoveControls = paneMoveControlsContext?.paneId === panelId
+    ? paneMoveControlsContext.claimMoveControls?.() || null
+    : null;
+  const combinedActions = actions ? <>{actions}{paneMoveControls}</> : paneMoveControls;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'} data-testid={resolvedTestIdBase || undefined}>
       <div className="panel-header-row" data-pane-drag-handle="true" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-header` : undefined}>
@@ -63,7 +70,7 @@ export default function CollapsiblePanel({
             </span>
           </div>
         </div>
-        {actions ? <div className="panel-header-actions" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-actions` : undefined}>{actions}</div> : null}
+        {combinedActions ? <div className="panel-header-actions" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-actions` : undefined}>{combinedActions}</div> : null}
       </div>
       <div id={bodyId} className="panel-body" hidden={!isOpen} aria-hidden={!isOpen} data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-body` : undefined}>
         {shouldRenderBody ? children : null}
