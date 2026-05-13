@@ -108,6 +108,7 @@ function MissionConsoleTile({
   orchestrationTruth = null,
   agentTaskProjection = null,
   forcePanelOpen = false,
+  panelId = 'missionConsolePanel',
 }) {
   recordPerfCounter('render', 'MissionConsoleTile');
   useEffect(() => {
@@ -861,9 +862,15 @@ function MissionConsoleTile({
     }));
   }
 
-  async function copyToClipboard(text, setCopyState) {
+  async function copyToClipboard(text, setCopyState, copySource = 'MissionConsoleTile.copy') {
     const result = await writeTextToClipboard(text, { navigatorObject: typeof navigator !== 'undefined' ? navigator : null });
     setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (typeof window !== 'undefined') {
+      const snapshot = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
+      const events = Array.isArray(snapshot.copyEvents) ? [...snapshot.copyEvents] : [];
+      events.push({ source: copySource, ok: result.ok, reason: result.reason || 'unknown', method: result.method || 'unknown', timestamp: new Date().toISOString() });
+      window.__STEPHANOS_PANE_DIAGNOSTICS__ = { ...snapshot, copyEvents: events.slice(-50), lastCopyEvent: events.at(-1) };
+    }
   }
 
   async function copyPerfDiagnostics() {
@@ -876,18 +883,18 @@ function MissionConsoleTile({
     setPerfCopyState(fallback.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
   }
 
-  const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout.missionConsolePanel !== false;
+  const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout[panelId] !== false;
   const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
   const handleMissionConsolePanelToggle = () => {
     if (forcePanelOpen) {
       return;
     }
-    dispatchPanelToggle('missionConsolePanel');
+    dispatchPanelToggle(panelId);
   };
 
   return (
     <CollapsiblePanel
-      panelId="missionConsolePanel"
+      panelId={panelId}
       title="Agent Mission Console"
       description="Mission Router workspace for agent mission packets, target routing, and bounded OpenClaw interaction."
       className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-workspace-surface stephanos-workspace-surface--mission"
@@ -1103,8 +1110,14 @@ function MissionConsoleTile({
         <p><strong>Target: Stephanos → Assistant Router</strong></p>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Intent-to-Build Control Loop</h4>
+      <section className="mission-console-section mission-console-section--intent-to-build-loop">
+        <CollapsiblePanel
+          panelId="missionConsoleIntentToBuildPanel"
+          title="Intent-to-Build Control Loop"
+          description={`Mission ${intentToBuild.missionSpec.missionId || 'pending'} · status ${intentToBuild.missionSpec.missionStatus || 'draft'} · next ${intentToBuild.missionSpec.nextBestAction || 'generate spec'}`}
+          isOpen={uiLayout.missionConsoleIntentToBuildPanel !== false}
+          onToggle={() => dispatchPanelToggle('missionConsoleIntentToBuildPanel')}
+        >
         <label className="paneFieldGroup">
           Raw intent
           <textarea
@@ -1374,6 +1387,9 @@ function MissionConsoleTile({
             {packetJsonCopyState === COPY_STATE.SUCCESS ? 'Packet JSON Copied' : 'Copy Packet JSON'}
           </button>
       </div>
+        </CollapsiblePanel>
+      </section>
+
       <div className="paneSection">
         <h5>Agent Assignment Matrix</h5>
         <ul>
@@ -1477,9 +1493,6 @@ function MissionConsoleTile({
           </ul>
         )}
       </div>
-        <pre className="openclaw-prompt-box">{intentToBuild.codexPrompt}</pre>
-      </section>
-
 
       <section className="mission-console-section">
         <h4>Mission Intelligence Brief</h4>
