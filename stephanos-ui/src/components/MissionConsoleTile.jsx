@@ -108,6 +108,7 @@ function MissionConsoleTile({
   emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
+  forcePanelOpen = false,
 }) {
   recordPerfCounter('render', 'MissionConsoleTile');
   useEffect(() => {
@@ -876,14 +877,22 @@ function MissionConsoleTile({
     setPerfCopyState(fallback.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
   }
 
+  const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout.missionConsolePanel !== false;
+  const handleMissionConsolePanelToggle = () => {
+    if (forcePanelOpen) {
+      return;
+    }
+    togglePanel('missionConsolePanel');
+  };
+
   return (
     <CollapsiblePanel
       panelId="missionConsolePanel"
       title="Agent Mission Console"
       description="Mission Router workspace for agent mission packets, target routing, and bounded OpenClaw interaction."
       className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-workspace-surface stephanos-workspace-surface--mission"
-      isOpen={uiLayout.missionConsolePanel !== false}
-      onToggle={() => togglePanel('missionConsolePanel')}
+      isOpen={missionConsolePanelOpen}
+      onToggle={handleMissionConsolePanelToggle}
     >
       <MissionCommandDeck
         missionRoutingReadiness={missionRoutingReadiness}
