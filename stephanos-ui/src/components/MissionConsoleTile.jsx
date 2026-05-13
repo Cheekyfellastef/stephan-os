@@ -885,10 +885,62 @@ function MissionConsoleTile({
 
   const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout[panelId] !== false;
   const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
+  const updatePaneDiagnostics = (patch = {}) => {
+    if (typeof window === 'undefined') return;
+    const snapshot = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
+    const existingAgentMissionConsole = snapshot.agentMissionConsole || {};
+    window.__STEPHANOS_PANE_DIAGNOSTICS__ = {
+      ...snapshot,
+      agentMissionConsole: {
+        ...existingAgentMissionConsole,
+        ...patch,
+      },
+    };
+  };
+
+  useEffect(() => {
+    if (panelId !== 'missionConsolePanel') return;
+    updatePaneDiagnostics({
+      actualPanelId: panelId,
+      forcePanelOpen: Boolean(forcePanelOpen),
+      isOpenFromUiLayout: uiLayout?.[panelId] !== false,
+      renderedOpenState: missionConsolePanelOpen,
+      togglePanelKey: panelId,
+      visibleChevronLayer: 'MissionConsoleTile.CollapsiblePanel.header',
+      visibleContentLayer: 'MissionConsoleTile.CollapsiblePanel.body',
+    });
+  }, [forcePanelOpen, missionConsolePanelOpen, panelId, uiLayout]);
+
   const handleMissionConsolePanelToggle = () => {
     if (forcePanelOpen) {
+      updatePaneDiagnostics({
+        actualPanelId: panelId,
+        forcePanelOpen: Boolean(forcePanelOpen),
+        renderedOpenState: missionConsolePanelOpen,
+        lastToggleEvent: {
+          panelId,
+          source: 'MissionConsoleTile.handleMissionConsolePanelToggle',
+          blockedByForcePanelOpen: true,
+          timestamp: new Date().toISOString(),
+        },
+      });
       return;
     }
+    const nextOpen = uiLayout?.[panelId] === false;
+    updatePaneDiagnostics({
+      actualPanelId: panelId,
+      forcePanelOpen: Boolean(forcePanelOpen),
+      isOpenFromUiLayout: uiLayout?.[panelId] !== false,
+      renderedOpenState: missionConsolePanelOpen,
+      togglePanelKey: panelId,
+      lastToggleEvent: {
+        panelId,
+        source: 'MissionConsoleTile.handleMissionConsolePanelToggle',
+        blockedByForcePanelOpen: false,
+        nextOpen,
+        timestamp: new Date().toISOString(),
+      },
+    });
     dispatchPanelToggle(panelId);
   };
 
