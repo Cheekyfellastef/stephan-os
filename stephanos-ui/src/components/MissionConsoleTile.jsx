@@ -130,6 +130,7 @@ function MissionConsoleTile({
   const { copyState: packetMarkdownCopyState, setCopyState: setPacketMarkdownCopyState } = useClipboardButtonState();
   const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
   const { copyState: repairPromptCopyState, setCopyState: setRepairPromptCopyState } = useClipboardButtonState();
+  const { copyState: missionHandoffCopyState, setCopyState: setMissionHandoffCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
@@ -1051,7 +1052,7 @@ function MissionConsoleTile({
           <p>Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
           <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
           <h5>Mission Handoff Pack</h5>
-          <button type="button" onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setRepairPromptCopyState)}>Copy Mission Handoff</button>
+          <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionHandoff')}>{missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Handoff Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Handoff failed' : 'Copy Mission Handoff'}</button>
           <button type="button" onClick={() => setShowMissionHandoffJson((prev) => !prev)}>
             {showMissionHandoffJson ? 'Hide Mission Handoff JSON' : 'Show Mission Handoff JSON'}
           </button>

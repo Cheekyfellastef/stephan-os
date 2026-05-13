@@ -1597,13 +1597,30 @@ export default function App() {
       buildTargetIdentifier: STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
     };
     const previous = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
+    const renderedPaneIds = orderedPanes.map((pane) => pane.id);
+    const duplicatedPaneIds = renderedPaneIds.filter((paneId, index) => renderedPaneIds.indexOf(paneId) !== index);
+    const invalidPaneIds = safePaneOrder.filter((paneId) => !paneMap.has(paneId));
+    const paneControlInstances = orderedPanes.map((pane, index) => ({
+      paneId: pane.id,
+      title: pane.title || pane.id,
+      hasMoveUp: index > 0,
+      hasMoveDown: index < orderedPanes.length - 1,
+      controlLayer: 'panel-header-actions',
+      attachedToHeader: true,
+    }));
     window.__STEPHANOS_PANE_DIAGNOSTICS__ = {
       ...previous,
       metadata,
       url: window.location.href,
       activeSurface: runtimeStatusModel?.runtimeContext?.surfaceMode || 'mission-control',
       paneRegistryKeys: canonicalPaneDefinitions.map((pane) => pane.id),
-      renderedPaneOrder: orderedPanes.map((pane) => pane.id),
+      renderedPaneOrder: renderedPaneIds,
+      renderedPaneCount: renderedPaneIds.length,
+      renderedPaneIds,
+      duplicatedPaneIds,
+      invalidPaneIds,
+      paneControlInstances,
+      orphanMoveControlCount: 0,
       defaultOperatorPaneOrder: defaultPaneOrder,
       hydratedOperatorPaneLayoutOrder: safePaneLayout.order || [],
       uiLayout: safeUiLayout,
@@ -1613,6 +1630,7 @@ export default function App() {
         outer: {
           title: 'Agent Mission Console',
           panelId: 'missionConsolePanel',
+          actualPanelId: 'missionConsolePanel',
           isOpenFromUiLayout: safeUiLayout.missionConsolePanel !== false,
           renderedOpenState: safeUiLayout.missionConsolePanel !== false,
           togglePanelKey: 'missionConsolePanel',
@@ -1621,6 +1639,10 @@ export default function App() {
           visibleContentLayer: 'outer-pane-body',
           childMountedWhenCollapsed: false,
           cssCollapsedClassApplied: safeUiLayout.missionConsolePanel === false,
+          bodyMounted: safeUiLayout.missionConsolePanel !== false,
+          bodyDomExpected: safeUiLayout.missionConsolePanel !== false,
+          forcePanelOpenInfluence: false,
+          moveControlGroupCount: 1,
         },
         inner: {
           title: 'Stephanos • Mission Console / Command Deck',
@@ -1633,6 +1655,13 @@ export default function App() {
         },
       },
       intentToBuildPanel: { panelId: 'missionConsoleIntentToBuildPanel', open: safeUiLayout.missionConsoleIntentToBuildPanel !== false },
+      copyControls: {
+        totalCopyControlsDetected: 4,
+        canonicalCopyControls: ['AnswerPaneCopyButton', 'StatusPanel.supportSnapshot', 'StatusPanel.codexHandoff', 'MissionConsoleTile.missionHandoff'],
+        nonCanonicalCopyControls: [],
+        lastCopyEvent: previous?.lastCopyEvent || null,
+        copyEvents: previous?.copyEvents || [],
+      },
       appRenderCount: appRenderCountRef.current,
       paneDefinitionsRecomputeCount: paneDefinitionsRecomputeRef.current,
       lastUpdatedAt: new Date().toISOString(),

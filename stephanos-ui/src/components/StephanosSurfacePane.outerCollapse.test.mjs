@@ -9,7 +9,7 @@ const appPath = path.join(componentsDir, '../App.jsx');
 
 test('outer Stephanos surface pane hides rendered pane body when collapsed', async () => {
   const source = await fs.readFile(surfacePanePath, 'utf8');
-  assert.match(source, /\{paneCollapsed \? null : pane\.render\(\)\}/);
+  assert.match(source, /const paneNode = paneCollapsed \? null : pane\.render\(\{ moveControlGroup \}\);/);
   assert.match(source, /data-pane-collapsed=\{paneCollapsed \? 'true' : 'false'\}/);
 });
 
