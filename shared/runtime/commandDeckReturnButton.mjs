@@ -84,18 +84,27 @@ export function createCommandDeckReturnButton({
     : () => {
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.button_click', Date.now());
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_before', windowRef.location?.search || '');
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.active_tile_before', windowRef.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
       const localHandler = typeof windowRef.returnToCommandDeck === 'function';
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.local_handler_found', localHandler);
       if (localHandler) {
-        windowRef.returnToCommandDeck();
+        const handled = windowRef.returnToCommandDeck();
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.local_handler_invoked', true);
         recordReturnDiagnostic(windowRef, 'commandDeckReturn.handler_invoked', 'window');
-        return;
+        if (handled !== false) {
+          recordReturnDiagnostic(windowRef, 'commandDeckReturn.active_tile_after', windowRef.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
+          recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_after', windowRef.location?.search || '');
+          return;
+        }
       }
       const parentHandler = Boolean(windowRef.parent && windowRef.parent !== windowRef && typeof windowRef.parent.returnToCommandDeck === 'function');
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.parent_handler_found', parentHandler);
       if (parentHandler) {
         windowRef.parent.returnToCommandDeck();
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.parent_handler_invoked', true);
         recordReturnDiagnostic(windowRef, 'commandDeckReturn.handler_invoked', 'parent');
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.active_tile_after', windowRef.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_after', windowRef.location?.search || '');
         return;
       }
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.fallback_navigation_used', true);

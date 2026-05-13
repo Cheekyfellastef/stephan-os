@@ -93,6 +93,22 @@ test('shared return button invokes local in-runtime handler when present and ski
   assert.equal(assignCalls.length, 0);
 });
 
+test('shared return button invokes parent handler when local handler reports unhandled', () => {
+  const { documentRef } = createMockDocument();
+  const assignCalls = [];
+  const parentRef = { called: false, returnToCommandDeck() { parentRef.called = true; } };
+  const windowRef = {
+    document: documentRef,
+    parent: parentRef,
+    location: { assign(url) { assignCalls.push(url); }, search: '?surface=agents', href: 'http://127.0.0.1:5173/?surface=agents' },
+    returnToCommandDeck() { return false; },
+  };
+  const button = createCommandDeckReturnButton({ documentRef, windowRef });
+  button.dispatchEvent({ type: 'click' });
+  assert.equal(parentRef.called, true);
+  assert.equal(assignCalls.length, 0);
+});
+
 test('installTopLevelCommandDeckReturnControls skips embedded contexts by default', () => {
   const { documentRef, bodyChildren } = createMockDocument();
   const windowRef = {

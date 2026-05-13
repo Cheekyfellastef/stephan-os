@@ -23,6 +23,7 @@ test('App registers in-runtime returnToCommandDeck handler without reload fallba
   assert.equal(appSource.includes('window.returnToCommandDeck = returnToCommandDeck;'), true);
   assert.equal(appSource.includes('clearLauncherSurfaceQuery(window);'), true);
   assert.equal(appSource.includes('window.parent.returnToCommandDeck();'), true);
+  assert.equal(appSource.includes("window.parent?.postMessage?.({ type: 'stephanos:return-to-command-deck', source: 'stephanos-runtime' }, '*');"), true);
   assert.equal(appSource.includes("setSurfaceMode('mission-control');"), true);
   assert.equal(appSource.includes('commandDeckReturn.handler_invoked'), true);
   assert.equal(appSource.includes('location.assign('), false);
