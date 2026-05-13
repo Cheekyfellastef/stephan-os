@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const appPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../App.jsx');
 
+const aiStorePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../state/aiStore.js');
+
 test('App registers Mission Console pane and keeps OpenClaw tile present', async () => {
   const source = await fs.readFile(appPath, 'utf8');
   assert.equal(source.includes("import MissionConsoleTile from './components/MissionConsoleTile.jsx';"), true);
@@ -23,4 +25,9 @@ test('App default shell keeps command deck width mode independent from missionCo
   assert.equal(source.includes('safeUiLayout.missionConsoleCommandDeckMode !== false'), true);
   assert.equal(source.includes('safeUiLayout.missionConsolePanel !== false'), false);
   assert.equal(source.includes('mission-console-command-deck-mode'), true);
+});
+
+test('default pane order keeps Mission Console mounted in Stephanos tile workspace', async () => {
+  const source = await fs.readFile(aiStorePath, 'utf8');
+  assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'missionConsolePanel'/m);
 });

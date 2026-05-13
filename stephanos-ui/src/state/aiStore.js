@@ -151,6 +151,7 @@ const DEFAULT_UI_LAYOUT = {
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
   'aiConsole',
+  'missionConsolePanel',
   'statusPanel',
   'toolsPanel',
   'memoryPanel',
