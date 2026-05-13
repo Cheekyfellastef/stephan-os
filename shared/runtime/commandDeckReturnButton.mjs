@@ -100,15 +100,19 @@ export function createCommandDeckReturnButton({
       const parentHandler = Boolean(windowRef.parent && windowRef.parent !== windowRef && typeof windowRef.parent.returnToCommandDeck === 'function');
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.parent_handler_found', parentHandler);
       if (parentHandler) {
-        windowRef.parent.returnToCommandDeck();
+        const handled = windowRef.parent.returnToCommandDeck();
         recordReturnDiagnostic(windowRef, 'commandDeckReturn.parent_handler_invoked', true);
         recordReturnDiagnostic(windowRef, 'commandDeckReturn.handler_invoked', 'parent');
-        recordReturnDiagnostic(windowRef, 'commandDeckReturn.active_tile_after', windowRef.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
-        recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_after', windowRef.location?.search || '');
-        return;
+        if (handled !== false) {
+          recordReturnDiagnostic(windowRef, 'commandDeckReturn.active_tile_after', windowRef.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
+          recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_after', windowRef.location?.search || '');
+          return;
+        }
       }
       recordReturnDiagnostic(windowRef, 'commandDeckReturn.fallback_navigation_used', true);
-      windowRef.location.assign(resolveCommandDeckDestinationPath(windowRef));
+      const destination = resolveCommandDeckDestinationPath(windowRef);
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.fallback_destination', destination);
+      windowRef.location.assign(destination);
     };
   button.addEventListener('click', clickHandler);
   return button;

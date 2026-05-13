@@ -71,3 +71,31 @@ test('resolveCommandDeckDestinationPath keeps localhost launcher origin for dev 
 
   assert.equal(resolveCommandDeckDestinationPath(mockWindow), 'http://127.0.0.1:4173/');
 });
+
+test('resolveCommandDeckDestinationPath strips runtime dist path to same-origin root when no launcher hints exist', () => {
+  const mockWindow = {
+    location: {
+      href: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html?surface=agents',
+      origin: 'http://127.0.0.1:4173',
+      pathname: '/apps/stephanos/dist/index.html',
+    },
+    document: { querySelector() { return null; } },
+  };
+
+  assert.equal(resolveCommandDeckDestinationPath(mockWindow), 'http://127.0.0.1:4173/');
+});
+
+test('resolveCommandDeckDestinationPath does not route hosted runtime to localhost when launcher url is provided', () => {
+  const mockWindow = {
+    location: {
+      href: 'https://example.github.io/stephan-os/apps/stephanos/dist/index.html?stephanosLauncherShellUrl=https%3A%2F%2Fexample.github.io%2Fstephan-os%2F',
+      origin: 'https://example.github.io',
+      pathname: '/stephan-os/apps/stephanos/dist/index.html',
+    },
+    document: { querySelector() { return null; } },
+  };
+
+  const resolved = resolveCommandDeckDestinationPath(mockWindow);
+  assert.equal(resolved, 'https://example.github.io/stephan-os/');
+  assert.equal(resolved.includes('127.0.0.1'), false);
+});
