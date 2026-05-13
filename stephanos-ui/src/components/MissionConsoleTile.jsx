@@ -953,7 +953,9 @@ function MissionConsoleTile({
       className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-workspace-surface stephanos-workspace-surface--mission"
       isOpen={missionConsolePanelOpen}
       onToggle={handleMissionConsolePanelToggle}
+      testIdBase="pane-agent-mission-console"
     >
+      <div data-testid="mission-console-inner-command-deck">
       <MissionCommandDeck
         missionRoutingReadiness={missionRoutingReadiness}
         agentAssignmentMatrix={agentAssignmentMatrix}
@@ -969,6 +971,7 @@ function MissionConsoleTile({
         runtimeStatusModel={runtimeStatusModel}
         compactVerificationSummary={compactVerificationSummary}
       />
+      </div>
       <section className="mission-console-section mission-console-section--operator-overview">
         <CollapsiblePanel
           panelId="missionConsoleOperatorOverviewPanel"
@@ -1052,7 +1055,7 @@ function MissionConsoleTile({
           <p>Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
           <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
           <h5>Mission Handoff Pack</h5>
-          <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionHandoff')}>{missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Handoff Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Handoff failed' : 'Copy Mission Handoff'}</button>
+          <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} data-testid="copy-button-mission-handoff" onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionHandoff')}>{missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Handoff Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Handoff failed' : 'Copy Mission Handoff'}</button>
           <button type="button" onClick={() => setShowMissionHandoffJson((prev) => !prev)}>
             {showMissionHandoffJson ? 'Hide Mission Handoff JSON' : 'Show Mission Handoff JSON'}
           </button>

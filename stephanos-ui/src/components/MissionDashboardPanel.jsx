@@ -566,6 +566,7 @@ export default function MissionDashboardPanel({
         <button
           type="button"
           className={`status-panel-copy-button ${missionHandoffCopyState}`}
+          data-testid="copy-button-mission-handoff"
           onClick={handleCopyMissionHandoff}
           title={missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
         >
