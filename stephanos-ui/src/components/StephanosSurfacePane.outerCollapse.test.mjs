@@ -7,11 +7,10 @@ const componentsDir = path.resolve(path.dirname(new URL(import.meta.url).pathnam
 const surfacePanePath = path.join(componentsDir, 'StephanosSurfacePane.jsx');
 const appPath = path.join(componentsDir, '../App.jsx');
 
-test('outer Stephanos surface pane renders canonical outer header controls and gates body render while collapsed', async () => {
+test('outer Stephanos surface pane preserves shell collapse state while rendering pane for header controls', async () => {
   const source = await fs.readFile(surfacePanePath, 'utf8');
-  assert.match(source, /data-testid={`pane-\${pane\.id}-move-controls`}/);
-  assert.match(source, /\{paneCollapsed \? null : \(/);
-  assert.doesNotMatch(source, /pane\.render\(\{ moveControlGroup \}\)/);
+  assert.match(source, /const paneNode = pane\.render\(\{ moveControlGroup \}\);/);
+  assert.match(source, /StephanosPaneMoveControlsContext\.Provider/);
   assert.match(source, /data-pane-collapsed=\{paneCollapsed \? 'true' : 'false'\}/);
 });
 
