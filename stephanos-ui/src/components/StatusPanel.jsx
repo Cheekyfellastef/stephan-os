@@ -650,6 +650,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
           <button
             type="button"
             className={`status-panel-copy-button ${supportSnapshotCopyState}`}
+            data-testid="copy-button-support-snapshot"
             onClick={handleCopySupportSnapshot}
             aria-label="Copy Support Snapshot"
             title={supportSnapshotCopyState === COPY_STATE.SUCCESS ? 'Copied' : supportSnapshotCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}
@@ -662,6 +663,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
           <button
             type="button"
             className={`status-panel-copy-button ${codexHandoffCopyState}`}
+            data-testid="copy-button-codex-handoff"
             onClick={handleCopyCodexHandoff}
             aria-label="Copy Codex Handoff Packet"
             title={codexHandoffCopyState === COPY_STATE.SUCCESS ? 'Copied' : codexHandoffCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy'}

@@ -12,8 +12,10 @@ export default function CollapsiblePanel({
   actions = null,
   titleAs = 'h2',
   keepMountedWhenClosed = false,
+  testIdBase = '',
 }) {
   const TitleTag = titleAs;
+  const resolvedTestIdBase = testIdBase || (panelId ? `pane-${panelId}` : '');
   const rootClassName = ['panel', 'collapsible-panel', className, isOpen ? 'is-open' : 'is-collapsed']
     .filter(Boolean)
     .join(' ');
@@ -38,8 +40,8 @@ export default function CollapsiblePanel({
 
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
   return (
-    <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'}>
-      <div className="panel-header-row" data-pane-drag-handle="true">
+    <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'} data-testid={resolvedTestIdBase || undefined}>
+      <div className="panel-header-row" data-pane-drag-handle="true" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-header` : undefined}>
         <div className="panel-heading-wrap" data-pane-drag-handle="true">
           <div className="panel-collapse-toggle" data-pane-drag-handle="true">
             <button
@@ -51,6 +53,7 @@ export default function CollapsiblePanel({
               aria-controls={bodyId}
               aria-label={toggleLabel}
               title={toggleLabel}
+              data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-toggle` : undefined}
             >
               <PaneCollapseDial isOpen={isOpen} />
             </button>
@@ -60,9 +63,9 @@ export default function CollapsiblePanel({
             </span>
           </div>
         </div>
-        {actions ? <div className="panel-header-actions">{actions}</div> : null}
+        {actions ? <div className="panel-header-actions" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-actions` : undefined}>{actions}</div> : null}
       </div>
-      <div id={bodyId} className="panel-body" hidden={!isOpen} aria-hidden={!isOpen}>
+      <div id={bodyId} className="panel-body" hidden={!isOpen} aria-hidden={!isOpen} data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-body` : undefined}>
         {shouldRenderBody ? children : null}
       </div>
     </Component>

@@ -1608,6 +1608,54 @@ export default function App() {
       controlLayer: 'panel-header-actions',
       attachedToHeader: true,
     }));
+    const paneShellNodes = Array.from(document.querySelectorAll('[data-testid^="pane-"][data-testid$="-shell"]'));
+    const moveControlGroups = Array.from(document.querySelectorAll('[data-pane-control-group="move-order"]'));
+    const moveControlFacts = moveControlGroups.map((node, index) => {
+      const ownerPaneShell = node.closest('[data-pane-id]');
+      return {
+        index,
+        attached: Boolean(ownerPaneShell),
+        parentPaneId: ownerPaneShell?.getAttribute('data-pane-id') || null,
+      };
+    });
+    const orphanMoveControlCount = moveControlFacts.filter((fact) => !fact.attached).length;
+    const paneShellFacts = paneShellNodes.map((shellNode) => {
+      const panel = shellNode.querySelector('[data-panel-id]');
+      const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
+      const title = panel?.querySelector('.panel-heading-copy h1, .panel-heading-copy h2, .panel-heading-copy h3')?.textContent?.trim() || '';
+      const body = panel?.querySelector('.panel-body');
+      const header = panel?.querySelector('.panel-header-row');
+      return { panelId, title, bodyMounted: Boolean(body), bodyVisible: body ? !body.hidden : false, headerVisible: Boolean(header) };
+    });
+    const copyButtons = Array.from(document.querySelectorAll('button')).filter((node) => /copy/i.test(node.textContent || '')).map((node) => ({
+      testId: node.getAttribute('data-testid') || null,
+      label: node.textContent?.trim() || '',
+      className: node.className || '',
+      successState: /\bsuccess\b/i.test(node.className || '') || /copied/i.test(node.textContent || ''),
+    }));
+    const reality = {
+      metadata,
+      url: window.location.href,
+      renderedPaneIds,
+      renderedPaneCount: renderedPaneIds.length,
+      duplicatePaneIds: duplicatedPaneIds,
+      paneShells: paneShellFacts,
+      moveControlGroups: moveControlFacts,
+      orphanMoveControlCount,
+      agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,
+      agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
+      copyButtons,
+      layout: {
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        scrollHeight: document.documentElement?.scrollHeight || 0,
+      },
+    };
+    window.__STEPHANOS_UI_REALITY__ = reality;
+    window.__COPY_STEPHANOS_UI_REALITY__ = () => {
+      const payload = JSON.stringify(window.__STEPHANOS_UI_REALITY__ || {}, null, 2);
+      if (typeof window.copy === 'function') window.copy(payload);
+      return payload;
+    };
     window.__STEPHANOS_PANE_DIAGNOSTICS__ = {
       ...previous,
       metadata,
@@ -1620,7 +1668,7 @@ export default function App() {
       duplicatedPaneIds,
       invalidPaneIds,
       paneControlInstances,
-      orphanMoveControlCount: 0,
+      orphanMoveControlCount,
       defaultOperatorPaneOrder: defaultPaneOrder,
       hydratedOperatorPaneLayoutOrder: safePaneLayout.order || [],
       uiLayout: safeUiLayout,
