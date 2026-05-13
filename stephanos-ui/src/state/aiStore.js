@@ -1450,7 +1450,7 @@ export function AIStoreProvider({ children }) {
     }));
   }, [updateUiLayout]);
 
-  const setPanelState = useCallback((panelId, isOpen) => {
+  const setPanelState = useCallback((panelId, isOpen, source = 'unknown') => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
 
     setUiLayout((prev) => {
@@ -1459,19 +1459,26 @@ export function AIStoreProvider({ children }) {
         ...prev,
         [panelId]: resolvedOpen,
       });
+      const event = { panelId, previous: prev[panelId] !== false, next: resolvedOpen === true, source, timestamp: new Date().toISOString() };
+      if (typeof window !== 'undefined') {
+        const snapshot = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
+        const events = Array.isArray(snapshot.toggleEvents) ? snapshot.toggleEvents.slice(-99) : [];
+        events.push(event);
+        window.__STEPHANOS_PANE_DIAGNOSTICS__ = { ...snapshot, toggleEvents: events, lastToggleEvent: event };
+      }
       console.info(
         resolvedOpen === true
           ? '[WORKSPACE] persisted open action for pane'
           : '[WORKSPACE] persisted close action for pane',
-        { paneId: panelId },
+        { paneId: panelId, source },
       );
       return nextLayout;
     });
   }, []);
 
-  const togglePanel = useCallback((panelId) => {
+  const togglePanel = useCallback((panelId, source = 'unknown') => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
-    setPanelState(panelId, (prev) => !prev);
+    setPanelState(panelId, (prev) => !prev, source);
   }, [setPanelState]);
 
   const setProvider = useCallback((nextProvider) => {

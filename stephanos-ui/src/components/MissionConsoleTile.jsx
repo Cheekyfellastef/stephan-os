@@ -49,12 +49,11 @@ function summarizeMissionConsoleProps(props = {}) {
   const orchestrationTruth = props.orchestrationTruth || {};
   const agentTaskProjection = props.agentTaskProjection || {};
   return {
-    uiLayout: [
-      uiLayout.missionConsolePanel !== false ? 'open' : 'closed',
-      uiLayout.operatorOverviewPanel !== false ? 'open' : 'closed',
-      uiLayout.aiConsolePanel !== false ? 'open' : 'closed',
-      (uiLayout.paneOrder || []).join(','),
-    ].join('|'),
+    uiLayout: Object.entries(uiLayout)
+      .filter(([key]) => key.endsWith('Panel') || key === 'commandDeck')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${key}:${value !== false ? 'open' : 'closed'}`)
+      .join('|'),
     routeStatus: [finalRouteTruth.routeUsableState || '', finalRouteTruth.routeKind || '', finalRouteTruth.selectedProvider || ''].join('|'),
     runtimeStatus: [runtimeStatus.provider || '', runtimeStatus.appLaunchState || '', runtimeStatus.routeMode || ''].join('|'),
     agentContext: [finalAgentView.actingAgentId || '', (finalAgentView.visibleAgents || []).length, (finalAgentView.activeAgentIds || []).length].join('|'),
@@ -878,11 +877,12 @@ function MissionConsoleTile({
   }
 
   const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout.missionConsolePanel !== false;
+  const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
   const handleMissionConsolePanelToggle = () => {
     if (forcePanelOpen) {
       return;
     }
-    togglePanel('missionConsolePanel');
+    dispatchPanelToggle('missionConsolePanel');
   };
 
   return (
@@ -914,7 +914,7 @@ function MissionConsoleTile({
           panelId="missionConsoleOperatorOverviewPanel"
           title="Operator Overview"
           isOpen={uiLayout.missionConsoleOperatorOverviewPanel !== false}
-          onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}
+          onToggle={() => dispatchPanelToggle('missionConsoleOperatorOverviewPanel')}
         >
           <ul className="mission-console__status-list">
             <li><strong>Workspace / mode:</strong> Agent Mission Console · {sessionMode}</li>
@@ -931,7 +931,7 @@ function MissionConsoleTile({
           panelId="missionConsoleRuntimeRouteStatusPanel"
           title="Runtime + Route Status"
           isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}
-          onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}
+          onToggle={() => dispatchPanelToggle('missionConsoleRuntimeRouteStatusPanel')}
         >
           <ul className="mission-console__status-list">
             <li><strong>Opened route:</strong> mission-console</li>
@@ -950,7 +950,7 @@ function MissionConsoleTile({
           panelId="missionConsoleOperatorReliefPanel"
           title="Operator Relief v2 · Mission Brain"
           isOpen={uiLayout.missionConsoleOperatorReliefPanel !== false}
-          onToggle={() => togglePanel('missionConsoleOperatorReliefPanel')}
+          onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefPanel')}
         >
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
@@ -1017,7 +1017,7 @@ function MissionConsoleTile({
           panelId="missionConsoleSecondaryDiagnosticsPanel"
           title="Secondary Diagnostics"
           isOpen={uiLayout.missionConsoleSecondaryDiagnosticsPanel !== false}
-          onToggle={() => togglePanel('missionConsoleSecondaryDiagnosticsPanel')}
+          onToggle={() => dispatchPanelToggle('missionConsoleSecondaryDiagnosticsPanel')}
         >
         <h4>Workspace Header / Command Authority</h4>
         <button type="button" onClick={copyPerfDiagnostics}>
@@ -1041,7 +1041,7 @@ function MissionConsoleTile({
           panelId="missionConsoleConnectedTileContextsPanel"
           title="Connected Tile Contexts (advanced)"
           isOpen={uiLayout.missionConsoleConnectedTileContextsPanel !== false}
-          onToggle={() => togglePanel('missionConsoleConnectedTileContextsPanel')}
+          onToggle={() => dispatchPanelToggle('missionConsoleConnectedTileContextsPanel')}
         >
           <h4>Connected Tile Contexts</h4>
           <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
