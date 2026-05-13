@@ -278,6 +278,11 @@ export default function App() {
   markStartupStage('app-render-start');
 
   const safeUiLayout = uiLayout || {};
+
+  const paneDefinitionsRecomputeRef = useRef(0);
+  const appRenderCountRef = useRef(0);
+  appRenderCountRef.current += 1;
+
   const safePaneLayout = paneLayout && typeof paneLayout === 'object' ? paneLayout : {};
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
@@ -1569,6 +1574,41 @@ export default function App() {
     .map((paneId) => paneMap.get(paneId))
     .filter(Boolean), [safePaneOrder, paneMap]);
   const [dragPaneId, setDragPaneId] = useState('');
+
+  useEffect(() => {
+    paneDefinitionsRecomputeRef.current += 1;
+  }, [paneDefinitions]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const metadata = {
+      buildStamp: STEPHANOS_UI_BUILD_STAMP,
+      buildTimestamp: STEPHANOS_UI_BUILD_TIMESTAMP,
+      gitCommit: STEPHANOS_UI_GIT_COMMIT,
+      runtimeId: STEPHANOS_UI_RUNTIME_ID,
+      runtimeLabel: STEPHANOS_UI_RUNTIME_LABEL,
+      source: STEPHANOS_UI_SOURCE,
+      sourceFingerprint: STEPHANOS_UI_SOURCE_FINGERPRINT,
+      buildTarget: STEPHANOS_UI_BUILD_TARGET,
+      buildTargetIdentifier: STEPHANOS_UI_BUILD_TARGET_IDENTIFIER,
+    };
+    const previous = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
+    window.__STEPHANOS_PANE_DIAGNOSTICS__ = {
+      ...previous,
+      metadata,
+      url: window.location.href,
+      activeSurface: runtimeStatusModel?.runtimeContext?.surfaceMode || 'mission-control',
+      paneRegistryKeys: canonicalPaneDefinitions.map((pane) => pane.id),
+      renderedPaneOrder: orderedPanes.map((pane) => pane.id),
+      defaultOperatorPaneOrder: defaultPaneOrder,
+      hydratedOperatorPaneLayoutOrder: safePaneLayout.order || [],
+      uiLayout: safeUiLayout,
+      safeUiLayout,
+      appRenderCount: appRenderCountRef.current,
+      paneDefinitionsRecomputeCount: paneDefinitionsRecomputeRef.current,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }, [canonicalPaneDefinitions, defaultPaneOrder, orderedPanes, runtimeStatusModel?.runtimeContext?.surfaceMode, safePaneLayout.order, safeUiLayout]);
 
   function reorderPanes(sourcePaneId, targetPaneId) {
     if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {

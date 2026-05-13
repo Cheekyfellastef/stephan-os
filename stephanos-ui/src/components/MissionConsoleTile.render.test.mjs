@@ -172,10 +172,10 @@ test('MissionConsoleTile wraps operator overview and runtime status walls in can
   const source = await fs.readFile(componentPath, 'utf8');
   assert.equal(source.includes('panelId="missionConsoleOperatorOverviewPanel"'), true);
   assert.equal(source.includes("isOpen={uiLayout.missionConsoleOperatorOverviewPanel !== false}"), true);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleOperatorOverviewPanel')}"), true);
   assert.equal(source.includes('panelId="missionConsoleRuntimeRouteStatusPanel"'), true);
   assert.equal(source.includes("isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}"), true);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleRuntimeRouteStatusPanel')}"), true);
 });
 
 test('MissionConsoleTile keeps priority mission console panels wired to canonical togglePanel ids', async () => {
@@ -189,7 +189,7 @@ test('MissionConsoleTile keeps priority mission console panels wired to canonica
   ].forEach((panelId) => {
     assert.equal(source.includes(`panelId="${panelId}"`), true, `missing panelId ${panelId}`);
     assert.equal(source.includes(`isOpen={uiLayout.${panelId} !== false}`), true, `missing isOpen wiring for ${panelId}`);
-    assert.equal(source.includes(`onToggle={() => togglePanel('${panelId}')}`), true, `missing toggle wiring for ${panelId}`);
+    assert.equal(source.includes(`onToggle={() => dispatchPanelToggle('${panelId}')}`), true, `missing toggle wiring for ${panelId}`);
   });
 });
 
@@ -209,8 +209,8 @@ test('MissionConsoleTile forcePanelOpen is scoped to missionConsolePanel and doe
   const source = await fs.readFile(componentPath, 'utf8');
   assert.match(source, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\.missionConsolePanel !== false;/);
   assert.match(source, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
-  assert.match(source, /togglePanel\('missionConsolePanel'\)/);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorOverviewPanel')}"), true);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleRuntimeRouteStatusPanel')}"), true);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsoleOperatorReliefPanel')}"), true);
+  assert.match(source, /dispatchPanelToggle\('missionConsolePanel'\)/);
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleOperatorOverviewPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleRuntimeRouteStatusPanel')}"), true);
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefPanel')}"), true);
 });
