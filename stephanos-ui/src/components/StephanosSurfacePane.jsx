@@ -30,17 +30,24 @@ export default function StephanosSurfacePane({
   );
 
   const moveControlClaimedRef = useRef(false);
+  const ownerPanelId = pane.layoutKey || pane.id;
   const moveControlContextValue = useMemo(() => ({
     paneId: pane.id,
+    ownerPanelId,
+    reorderable: true,
+    canMoveUp: Boolean(canMoveUp),
+    canMoveDown: Boolean(canMoveDown),
+    createdByStephanosSurfacePane: true,
+    providerValuePresent: true,
     moveControlGroup,
     claimMoveControls() {
       if (moveControlClaimedRef.current) {
-        return null;
+        return { node: null, accepted: false, reason: 'already-claimed' };
       }
       moveControlClaimedRef.current = true;
-      return moveControlGroup;
+      return { node: moveControlGroup, accepted: true, reason: null };
     },
-  }), [moveControlGroup, pane.id]);
+  }), [canMoveDown, canMoveUp, moveControlGroup, ownerPanelId, pane.id]);
 
   const paneNode = pane.render({ moveControlGroup });
 

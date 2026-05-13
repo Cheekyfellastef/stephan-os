@@ -21,9 +21,10 @@ test('App registers Mission Console pane and keeps OpenClaw tile present', async
 
 test('App default shell keeps command deck width mode independent from missionConsolePanel collapse state', async () => {
   const source = await fs.readFile(appPath, 'utf8');
+  const missionConsoleWidthModeSegment = source.split('const missionConsoleWideShellMode')[1]?.split('const missionConsoleIntentToBuildOpen')[0] || '';
   assert.equal(source.includes('missionConsoleWideShellMode'), true);
-  assert.equal(source.includes('safeUiLayout.missionConsoleCommandDeckMode !== false'), true);
-  assert.equal(source.includes('safeUiLayout.missionConsolePanel !== false'), false);
+  assert.equal(missionConsoleWidthModeSegment.includes('safeUiLayout.missionConsoleCommandDeckMode !== false'), true);
+  assert.equal(missionConsoleWidthModeSegment.includes('safeUiLayout.missionConsolePanel !== false'), false);
   assert.equal(source.includes('mission-console-command-deck-mode'), true);
 });
 

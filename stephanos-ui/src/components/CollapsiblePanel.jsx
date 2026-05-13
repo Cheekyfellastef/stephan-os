@@ -42,9 +42,11 @@ export default function CollapsiblePanel({
 
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
   const paneMoveControlsContext = useContext(StephanosPaneMoveControlsContext);
-  const paneMoveControls = paneMoveControlsContext?.paneId === panelId
-    ? paneMoveControlsContext.claimMoveControls?.() || null
+  const matchesOwnerPanel = paneMoveControlsContext?.ownerPanelId === panelId;
+  const claimResult = matchesOwnerPanel
+    ? paneMoveControlsContext.claimMoveControls?.()
     : null;
+  const paneMoveControls = claimResult?.node || null;
   const combinedActions = actions ? <>{actions}{paneMoveControls}</> : paneMoveControls;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'} data-testid={resolvedTestIdBase || undefined}>
