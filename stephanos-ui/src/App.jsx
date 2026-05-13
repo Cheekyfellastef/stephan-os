@@ -1620,9 +1620,9 @@ export default function App() {
     });
     const orphanMoveControlCount = moveControlFacts.filter((fact) => !fact.attached).length;
     const moveControlTrace = orderedPanes.map((pane, index) => {
-      const panel = document.querySelector(`[data-panel-id="${pane.layoutKey || pane.id}"]`);
-      const headerActions = panel?.querySelector('.panel-header-actions') || null;
-      const groupNode = panel?.querySelector('[data-pane-control-group="move-order"]') || null;
+      const paneShell = document.querySelector(`[data-pane-id="${pane.id}"]`);
+      const headerActions = paneShell?.querySelector('[data-testid="pane-' + pane.id + '-actions"]') || null;
+      const groupNode = paneShell?.querySelector('[data-testid="pane-' + pane.id + '-move-controls"]') || null;
       const rect = groupNode?.getBoundingClientRect ? groupNode.getBoundingClientRect() : null;
       const style = groupNode ? window.getComputedStyle(groupNode) : null;
       const visible = Boolean(groupNode && style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect && rect.width > 0 && rect.height > 0);
@@ -1634,8 +1634,8 @@ export default function App() {
         canMoveDown: index < orderedPanes.length - 1,
         createdByStephanosSurfacePane: true,
         providerValuePresent: true,
-        consumedByCollapsiblePanel: Boolean(headerActions),
-        claimAttempted: Boolean(headerActions),
+        consumedBySurfacePaneHeader: Boolean(headerActions),
+        claimAttempted: false,
         claimAccepted: Boolean(groupNode),
         claimRejectedReason: groupNode ? null : 'not-rendered-in-owner-header',
         renderedInHeaderActions: Boolean(groupNode && headerActions?.contains(groupNode)),
@@ -1649,22 +1649,21 @@ export default function App() {
       };
     });
     const totalMoveControlsCreated = moveControlTrace.length;
-    const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedByCollapsiblePanel).length;
+    const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedBySurfacePaneHeader).length;
     const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
     const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
     const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId);
     const paneShellFacts = paneShellNodes.map((shellNode) => {
-      const panel = shellNode.querySelector('[data-panel-id]');
-      const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
-      const title = panel?.querySelector('.panel-heading-copy h1, .panel-heading-copy h2, .panel-heading-copy h3')?.textContent?.trim() || '';
-      const body = panel?.querySelector('.panel-body');
-      const header = panel?.querySelector('.panel-header-row');
+      const panelId = shellNode.getAttribute('data-pane-id');
+      const title = shellNode?.querySelector('.panel-heading-copy h1, .panel-heading-copy h2, .panel-heading-copy h3')?.textContent?.trim() || '';
+      const body = shellNode?.querySelector('[data-testid="pane-' + panelId + '-body"]');
+      const header = shellNode?.querySelector('[data-testid="pane-' + panelId + '-header"]');
       return { panelId, title, bodyMounted: Boolean(body), bodyVisible: body ? !body.hidden : false, headerVisible: Boolean(header) };
     });
     const paneCollapseCoverage = paneShellFacts.map((paneFact) => {
-      const panel = document.querySelector(`[data-panel-id="${paneFact.panelId}"]`);
-      const toggle = panel?.querySelector('.panel-collapse-button');
-      const body = panel?.querySelector('.panel-body');
+      const paneShell = document.querySelector(`[data-pane-id="${paneFact.panelId}"]`);
+      const toggle = paneShell?.querySelector(`[data-testid="pane-${paneFact.panelId}-toggle"]`);
+      const body = paneShell?.querySelector(`[data-testid="pane-${paneFact.panelId}-body"]`);
       return {
         paneId: paneFact.panelId,
         title: paneFact.title || paneFact.panelId,
@@ -2134,6 +2133,7 @@ export default function App() {
                 }}
                 onMoveUp={() => nudgePane(pane.id, -1)}
                 onMoveDown={() => nudgePane(pane.id, 1)}
+                onToggleCollapse={() => togglePanel(pane.layoutKey || pane.id)}
                 canMoveUp={moveState.canMoveUp}
                 canMoveDown={moveState.canMoveDown}
               />

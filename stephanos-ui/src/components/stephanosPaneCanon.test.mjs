@@ -111,12 +111,10 @@ test('App diagnostics expose explicit agent mission console live mount keys', ()
 
 test('pane canon keeps move controls and collapse state persistence surfaces intact', () => {
   assert.equal(surfacePaneSource.includes('className="pane-order-controls"'), true);
-  assert.equal(surfacePaneSource.includes('ownerPanelId = pane.layoutKey || pane.id'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveUp}'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveDown}'), true);
   assert.equal(surfacePaneSource.includes('data-pane-collapsed={paneCollapsed ? \'true\' : \'false\'}'), true);
-  assert.equal(collapsiblePanelSource.includes('const matchesOwnerPanel = paneMoveControlsContext?.ownerPanelId === panelId;'), true);
-  assert.equal(collapsiblePanelSource.includes('const claimResult = matchesOwnerPanel'), true);
+  assert.equal(collapsiblePanelSource.includes('paneMoveControlsContext'), false);
   assert.equal(appSource.includes('togglePanel('), true);
 });
 

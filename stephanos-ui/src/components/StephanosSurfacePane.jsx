@@ -1,6 +1,5 @@
-import { useMemo, useRef } from 'react';
+import PaneCollapseDial from './PaneCollapseDial';
 import { resolvePaneCollapsedState } from '../utils/stephanosPaneBehavior';
-import StephanosPaneMoveControlsContext from './StephanosPaneMoveControlsContext';
 
 export default function StephanosSurfacePane({
   pane,
@@ -14,45 +13,21 @@ export default function StephanosSurfacePane({
   onMoveDown,
   canMoveUp,
   canMoveDown,
+  onToggleCollapse,
 }) {
   if (!pane?.id || typeof pane?.render !== 'function') {
     return null;
   }
+
   const paneCollapsed = resolvePaneCollapsedState(pane, uiLayout);
   const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
   const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
   const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
-  const moveControlGroup = (
-    <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="pane-header" data-pane-control-attached="true" data-testid={`pane-${pane.id}-move-controls`}>
-      <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
-      <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
-    </div>
-  );
-
-  const moveControlClaimedRef = useRef(false);
-  const ownerPanelId = pane.layoutKey || pane.id;
-  const moveControlContextValue = useMemo(() => ({
-    paneId: pane.id,
-    ownerPanelId,
-    reorderable: true,
-    canMoveUp: Boolean(canMoveUp),
-    canMoveDown: Boolean(canMoveDown),
-    createdByStephanosSurfacePane: true,
-    providerValuePresent: true,
-    moveControlGroup,
-    claimMoveControls() {
-      if (moveControlClaimedRef.current) {
-        return { node: null, accepted: false, reason: 'already-claimed' };
-      }
-      moveControlClaimedRef.current = true;
-      return { node: moveControlGroup, accepted: true, reason: null };
-    },
-  }), [canMoveDown, canMoveUp, moveControlGroup, ownerPanelId, pane.id]);
-
-  const paneNode = pane.render({ moveControlGroup });
+  const paneBodyId = `pane-${pane.id}-body`;
+  const toggleLabel = `${paneCollapsed ? 'Expand' : 'Collapse'} ${pane.title || pane.id}`;
 
   return (
-    <div
+    <section
       className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass}${workspaceShellClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
       draggable
       data-pane-id={pane.id}
@@ -69,9 +44,42 @@ export default function StephanosSurfacePane({
       onDragEnd={onDragEnd}
       onDrop={onDrop}
     >
-      <StephanosPaneMoveControlsContext.Provider value={moveControlContextValue}>
-        {paneNode}
-      </StephanosPaneMoveControlsContext.Provider>
-    </div>
+      <header className="panel-header-row" data-pane-drag-handle="true" data-testid={`pane-${pane.id}-header`}>
+        <div className="panel-heading-wrap" data-pane-drag-handle="true">
+          <div className="panel-collapse-toggle" data-pane-drag-handle="true">
+            <button
+              type="button"
+              className="stephanos-canon-rotating-chevron-button panel-collapse-button"
+              onClick={onToggleCollapse}
+              data-no-drag="true"
+              aria-expanded={!paneCollapsed}
+              aria-controls={paneBodyId}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+              data-testid={`pane-${pane.id}-toggle`}
+            >
+              <PaneCollapseDial isOpen={!paneCollapsed} />
+            </button>
+            <span className="panel-heading-copy">
+              <h2>{pane.title || pane.id}</h2>
+              {pane.description ? <span className="panel-description">{pane.description}</span> : null}
+            </span>
+          </div>
+        </div>
+        <div className="panel-header-actions" data-testid={`pane-${pane.id}-actions`}>
+          <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="pane-header" data-pane-control-attached="true" data-testid={`pane-${pane.id}-move-controls`}>
+            <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
+            <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
+          </div>
+          {pane.actions || null}
+        </div>
+      </header>
+
+      {paneCollapsed ? null : (
+        <div id={paneBodyId} className="panel-body" data-testid={`pane-${pane.id}-body`}>
+          {pane.render()}
+        </div>
+      )}
+    </section>
   );
 }
