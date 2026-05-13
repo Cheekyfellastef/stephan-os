@@ -1,3 +1,4 @@
+import { cloneElement, isValidElement } from 'react';
 import { resolvePaneCollapsedState } from '../utils/stephanosPaneBehavior';
 
 export default function StephanosSurfacePane({
@@ -13,10 +14,27 @@ export default function StephanosSurfacePane({
   canMoveUp,
   canMoveDown,
 }) {
+  if (!pane?.id || typeof pane?.render !== 'function') {
+    return null;
+  }
   const paneCollapsed = resolvePaneCollapsedState(pane, uiLayout);
   const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
   const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
   const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
+  const moveControlGroup = (
+    <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="pane-header" data-pane-control-attached="true">
+      <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
+      <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
+    </div>
+  );
+
+  const paneNode = paneCollapsed ? null : pane.render({ moveControlGroup });
+  const renderedPane = isValidElement(paneNode)
+    ? cloneElement(paneNode, {
+      actions: paneNode.props?.actions ? <>{paneNode.props.actions}{moveControlGroup}</> : moveControlGroup,
+    })
+    : paneNode;
+
   return (
     <div
       className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass}${workspaceShellClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
@@ -34,11 +52,7 @@ export default function StephanosSurfacePane({
       onDragEnd={onDragEnd}
       onDrop={onDrop}
     >
-      <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`}>
-        <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
-        <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
-      </div>
-      {paneCollapsed ? null : pane.render()}
+      {renderedPane}
     </div>
   );
 }
