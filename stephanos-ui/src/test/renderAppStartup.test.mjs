@@ -18,14 +18,14 @@ test('App startup render path mounts with AIStoreProvider after runtimeStatusMod
   assert.match(rendered, /AI Provider Controls/);
 });
 
-test('App registers in-runtime returnToCommandDeck handler without reload fallback', () => {
+test('App registers in-runtime returnToCommandDeck handler with canonical navigation fallback', () => {
   const appSource = fs.readFileSync(path.join(srcRoot, 'App.jsx'), 'utf8');
   assert.equal(appSource.includes('window.returnToCommandDeck = returnToCommandDeck;'), true);
   assert.equal(appSource.includes('clearLauncherSurfaceQuery(window);'), true);
   assert.equal(appSource.includes('window.parent.returnToCommandDeck();'), true);
   assert.equal(appSource.includes("window.parent?.postMessage?.({ type: 'stephanos:return-to-command-deck', source: 'stephanos-runtime' }, '*');"), true);
   assert.equal(appSource.includes("setSurfaceMode('mission-control');"), true);
+  assert.equal(appSource.includes('resolveCommandDeckDestinationPath(window);'), true);
+  assert.equal(appSource.includes('window.location.assign(destination);'), true);
   assert.equal(appSource.includes('commandDeckReturn.handler_invoked'), true);
-  assert.equal(appSource.includes('location.assign('), false);
-  assert.equal(appSource.includes('window.location.assign('), false);
 });

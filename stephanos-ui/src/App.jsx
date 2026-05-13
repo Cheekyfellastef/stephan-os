@@ -64,6 +64,7 @@ import {
   STEPHANOS_UI_SOURCE_FINGERPRINT,
 } from './runtimeInfo';
 import { createStephanosLocalUrls } from '../../shared/runtime/stephanosLocalUrls.mjs';
+import { resolveCommandDeckDestinationPath } from '../../shared/runtime/commandDeckDestination.mjs';
 import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs';
 import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
 import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
@@ -340,10 +341,21 @@ export default function App() {
       recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.active_tile_before', window.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
       try {
         if (window.parent && window.parent !== window && typeof window.parent.returnToCommandDeck === 'function') {
-          window.parent.returnToCommandDeck();
+          const handledByParent = window.parent.returnToCommandDeck();
           recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.parent_handler_found', true);
           recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.parent_handler_invoked', true);
           recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'parent_from_runtime');
+          if (handledByParent !== false) {
+            return true;
+          }
+        }
+        const destination = resolveCommandDeckDestinationPath(window);
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.fallback_destination', destination);
+        const currentUrl = String(window.location?.href || '').trim();
+        if (destination && destination !== currentUrl) {
+          window.location.assign(destination);
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.fallback_navigation_used', true);
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'runtime_fallback_navigation');
           return true;
         }
         clearLauncherSurfaceQuery(window);

@@ -109,6 +109,28 @@ test('shared return button invokes parent handler when local handler reports unh
   assert.equal(assignCalls.length, 0);
 });
 
+test('shared return button falls back to canonical navigation when parent handler reports unhandled', () => {
+  const { documentRef } = createMockDocument();
+  const assignCalls = [];
+  const parentRef = { returnToCommandDeck() { return false; } };
+  const windowRef = {
+    document: documentRef,
+    parent: parentRef,
+    location: {
+      assign(url) { assignCalls.push(url); },
+      search: '?surface=agents',
+      href: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html?surface=agents',
+      origin: 'http://127.0.0.1:4173',
+      pathname: '/apps/stephanos/dist/index.html',
+    },
+    returnToCommandDeck() { return false; },
+  };
+  const button = createCommandDeckReturnButton({ documentRef, windowRef });
+  button.dispatchEvent({ type: 'click' });
+  assert.equal(assignCalls.length, 1);
+  assert.equal(assignCalls[0], 'http://127.0.0.1:4173/');
+});
+
 test('installTopLevelCommandDeckReturnControls skips embedded contexts by default', () => {
   const { documentRef, bodyChildren } = createMockDocument();
   const windowRef = {
