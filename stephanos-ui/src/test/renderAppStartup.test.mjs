@@ -22,7 +22,9 @@ test('App registers in-runtime returnToCommandDeck handler without reload fallba
   const appSource = fs.readFileSync(path.join(srcRoot, 'App.jsx'), 'utf8');
   assert.equal(appSource.includes('window.returnToCommandDeck = returnToCommandDeck;'), true);
   assert.equal(appSource.includes('clearLauncherSurfaceQuery(window);'), true);
+  assert.equal(appSource.includes('window.parent.returnToCommandDeck();'), true);
   assert.equal(appSource.includes("setSurfaceMode('mission-control');"), true);
+  assert.equal(appSource.includes('commandDeckReturn.handler_invoked'), true);
   assert.equal(appSource.includes('location.assign('), false);
   assert.equal(appSource.includes('window.location.assign('), false);
 });

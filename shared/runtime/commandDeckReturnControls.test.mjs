@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { installTopLevelCommandDeckReturnControls } from './commandDeckReturnControls.mjs';
+import { createCommandDeckReturnButton } from './commandDeckReturnButton.mjs';
 
 function createMockDocument() {
   const allNodes = [];
@@ -9,6 +10,7 @@ function createMockDocument() {
   const bodyChildren = [];
 
   function createElement(tagName) {
+    const listeners = new Map();
     const node = {
       tagName: String(tagName || '').toUpperCase(),
       attributes: new Map(),
@@ -26,7 +28,15 @@ function createMockDocument() {
       appendChild(child) {
         this.children.push(child);
       },
-      addEventListener() {},
+      addEventListener(name, handler) {
+        listeners.set(String(name), handler);
+      },
+      dispatchEvent(event) {
+        const handler = listeners.get(String(event?.type || ''));
+        if (typeof handler === 'function') {
+          handler(event);
+        }
+      },
     };
     allNodes.push(node);
     return node;
@@ -67,6 +77,21 @@ function createMockDocument() {
 
   return { documentRef, bodyChildren };
 }
+
+test('shared return button invokes local in-runtime handler when present and skips fallback navigation', () => {
+  const { documentRef } = createMockDocument();
+  const assignCalls = [];
+  const windowRef = {
+    document: documentRef,
+    location: { assign(url) { assignCalls.push(url); }, search: '?surface=agents', href: 'http://127.0.0.1:5173/?surface=agents' },
+    returnToCommandDeck() { windowRef.called = true; },
+    called: false,
+  };
+  const button = createCommandDeckReturnButton({ documentRef, windowRef });
+  button.dispatchEvent({ type: 'click' });
+  assert.equal(windowRef.called, true);
+  assert.equal(assignCalls.length, 0);
+});
 
 test('installTopLevelCommandDeckReturnControls skips embedded contexts by default', () => {
   const { documentRef, bodyChildren } = createMockDocument();

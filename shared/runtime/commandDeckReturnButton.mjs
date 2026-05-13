@@ -4,6 +4,20 @@ const CONTROL_ATTRIBUTE = 'data-command-deck-return-button';
 const CONTROL_LABEL = 'Return to Command Deck';
 const CONTROL_STYLE_ID = 'command-deck-return-controls-style';
 const BUTTON_CLASS = 'command-deck-return-button';
+const RETURN_DIAGNOSTIC_NAMESPACE = '__stephanosReturnDiagnostics';
+
+function recordReturnDiagnostic(windowRef, key, value) {
+  if (!windowRef || !key) {
+    return;
+  }
+  const store = windowRef[RETURN_DIAGNOSTIC_NAMESPACE] || {};
+  const counters = store.counters || {};
+  const nextCount = Number(counters[key] || 0) + 1;
+  counters[key] = nextCount;
+  store.counters = counters;
+  store[key] = value;
+  windowRef[RETURN_DIAGNOSTIC_NAMESPACE] = store;
+}
 
 export function ensureCommandDeckReturnButtonStyles(documentRef = globalThis.document) {
   if (!documentRef?.head || documentRef.getElementById(CONTROL_STYLE_ID)) {
@@ -68,14 +82,23 @@ export function createCommandDeckReturnButton({
   const clickHandler = typeof onClick === 'function'
     ? onClick
     : () => {
-      if (typeof windowRef.returnToCommandDeck === 'function') {
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.button_click', Date.now());
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.query_before', windowRef.location?.search || '');
+      const localHandler = typeof windowRef.returnToCommandDeck === 'function';
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.local_handler_found', localHandler);
+      if (localHandler) {
         windowRef.returnToCommandDeck();
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.handler_invoked', 'window');
         return;
       }
-      if (windowRef.parent && windowRef.parent !== windowRef && typeof windowRef.parent.returnToCommandDeck === 'function') {
+      const parentHandler = Boolean(windowRef.parent && windowRef.parent !== windowRef && typeof windowRef.parent.returnToCommandDeck === 'function');
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.parent_handler_found', parentHandler);
+      if (parentHandler) {
         windowRef.parent.returnToCommandDeck();
+        recordReturnDiagnostic(windowRef, 'commandDeckReturn.handler_invoked', 'parent');
         return;
       }
+      recordReturnDiagnostic(windowRef, 'commandDeckReturn.fallback_navigation_used', true);
       windowRef.location.assign(resolveCommandDeckDestinationPath(windowRef));
     };
   button.addEventListener('click', clickHandler);

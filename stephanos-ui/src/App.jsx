@@ -129,6 +129,16 @@ function clearLauncherSurfaceQuery(windowRef = globalThis.window) {
   currentUrl.searchParams.delete('destination');
   windowRef.history.replaceState(windowRef.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
 }
+function recordCommandDeckReturnDiagnostic(windowRef, key, value) {
+  if (!windowRef || !key) return;
+  const namespace = '__stephanosReturnDiagnostics';
+  const store = windowRef[namespace] || {};
+  const counters = store.counters || {};
+  counters[key] = Number(counters[key] || 0) + 1;
+  store.counters = counters;
+  store[key] = value;
+  windowRef[namespace] = store;
+}
 
 function countTelemetryEventsSince(entries = [], sinceMs = 0) {
   if (!Array.isArray(entries) || entries.length === 0) return 0;
@@ -323,8 +333,26 @@ export default function App() {
       setSurfaceMode(readSurfaceModeFromLocation(window));
     };
     const returnToCommandDeck = () => {
-      clearLauncherSurfaceQuery(window);
-      setSurfaceMode('mission-control');
+      const surfaceBefore = readSurfaceModeFromLocation(window);
+      const queryBefore = window.location?.search || '';
+      recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.surface_before', surfaceBefore);
+      recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.query_before', queryBefore);
+      try {
+        if (window.parent && window.parent !== window && typeof window.parent.returnToCommandDeck === 'function') {
+          window.parent.returnToCommandDeck();
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'parent_from_runtime');
+          return true;
+        }
+        clearLauncherSurfaceQuery(window);
+        setSurfaceMode('mission-control');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'runtime_local');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.surface_after', 'mission-control');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.query_after', window.location?.search || '');
+        return true;
+      } catch (error) {
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_error', String(error?.message || error || 'unknown'));
+        return false;
+      }
     };
     window.addEventListener('popstate', handleRouteChange);
     window.returnToCommandDeck = returnToCommandDeck;
