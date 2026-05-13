@@ -1,4 +1,6 @@
+import { useContext } from 'react';
 import PaneCollapseDial from './PaneCollapseDial';
+import StephanosPaneMoveControlsContext from './StephanosPaneMoveControlsContext';
 
 export default function CollapsiblePanel({
   as: Component = 'section',
@@ -39,7 +41,13 @@ export default function CollapsiblePanel({
   }
 
   const shouldRenderBody = isOpen || keepMountedWhenClosed;
-  const combinedActions = actions;
+  const paneMoveControlsContext = useContext(StephanosPaneMoveControlsContext);
+  const matchesOwnerPanel = paneMoveControlsContext?.ownerPanelId === panelId;
+  const claimResult = matchesOwnerPanel
+    ? paneMoveControlsContext.claimMoveControls?.()
+    : null;
+  const paneMoveControls = claimResult?.node || null;
+  const combinedActions = actions ? <>{actions}{paneMoveControls}</> : paneMoveControls;
   return (
     <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'} data-testid={resolvedTestIdBase || undefined}>
       <div className="panel-header-row" data-pane-drag-handle="true" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-header` : undefined}>

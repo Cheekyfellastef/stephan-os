@@ -1605,8 +1605,8 @@ export default function App() {
       title: pane.title || pane.id,
       hasMoveUp: index > 0,
       hasMoveDown: index < orderedPanes.length - 1,
-      controlLayer: 'stephanos-surface-pane__actions',
-      attachedToShellActions: true,
+      controlLayer: 'panel-header-actions',
+      attachedToHeader: true,
     }));
     const paneShellNodes = Array.from(document.querySelectorAll('[data-testid^="pane-"][data-testid$="-shell"]'));
     const moveControlGroups = Array.from(document.querySelectorAll('[data-pane-control-group="move-order"]'));
@@ -1619,11 +1619,10 @@ export default function App() {
       };
     });
     const orphanMoveControlCount = moveControlFacts.filter((fact) => !fact.attached).length;
-    const duplicateMoveControlCount = Math.max(0, moveControlGroups.length - orderedPanes.length);
     const moveControlTrace = orderedPanes.map((pane, index) => {
-      const paneShell = document.querySelector(`[data-testid="pane-${pane.id}-shell"]`);
-      const shellActions = paneShell?.querySelector(`:scope > [data-testid="pane-${pane.id}-actions"]`) || null;
-      const groupNode = paneShell?.querySelector(`:scope > [data-testid="pane-${pane.id}-actions"] [data-pane-control-group="move-order"]`) || null;
+      const panel = document.querySelector(`[data-panel-id="${pane.layoutKey || pane.id}"]`);
+      const headerActions = panel?.querySelector('.panel-header-actions') || null;
+      const groupNode = panel?.querySelector('[data-pane-control-group="move-order"]') || null;
       const rect = groupNode?.getBoundingClientRect ? groupNode.getBoundingClientRect() : null;
       const style = groupNode ? window.getComputedStyle(groupNode) : null;
       const visible = Boolean(groupNode && style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect && rect.width > 0 && rect.height > 0);
@@ -1635,24 +1634,25 @@ export default function App() {
         canMoveDown: index < orderedPanes.length - 1,
         createdByStephanosSurfacePane: true,
         providerValuePresent: true,
-        ownerModel: 'StephanosSurfacePane.shell-actions',
-        renderedByOwnerShell: Boolean(groupNode),
-        renderedInShellActions: Boolean(groupNode && shellActions?.contains(groupNode)),
-        renderedInOwningPaneBoundary: Boolean(groupNode && groupNode.closest('[data-pane-id]')?.getAttribute('data-pane-id') === pane.id),
+        consumedByCollapsiblePanel: Boolean(headerActions),
+        claimAttempted: Boolean(headerActions),
+        claimAccepted: Boolean(groupNode),
+        claimRejectedReason: groupNode ? null : 'not-rendered-in-owner-header',
+        renderedInHeaderActions: Boolean(groupNode && headerActions?.contains(groupNode)),
         domNodeFound: Boolean(groupNode),
         visible,
         cssDisplay: style?.display || null,
         cssVisibility: style?.visibility || null,
         cssOpacity: style?.opacity || null,
         boundingBox: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-        ownerShellActionsTestId: shellActions?.getAttribute('data-testid') || null,
+        ownerHeaderTestId: headerActions?.getAttribute('data-testid') || null,
       };
     });
     const totalMoveControlsCreated = moveControlTrace.length;
-    const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.renderedByOwnerShell).length;
-    const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInShellActions).length;
+    const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedByCollapsiblePanel).length;
+    const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
     const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
-    const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInShellActions).map((item) => item.paneId);
+    const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId);
     const paneShellFacts = paneShellNodes.map((shellNode) => {
       const panel = shellNode.querySelector('[data-panel-id]');
       const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
@@ -1699,7 +1699,6 @@ export default function App() {
       totalMoveControlsRendered,
       totalMoveControlsVisible,
       orphanMoveControlCount,
-      duplicateMoveControlCount,
       panesMissingMoveControls,
       paneCollapseCoverage,
       totalFirstClassPanes: paneCollapseCoverage.length,
