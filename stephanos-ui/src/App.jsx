@@ -337,21 +337,35 @@ export default function App() {
       const queryBefore = window.location?.search || '';
       recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.surface_before', surfaceBefore);
       recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.query_before', queryBefore);
+      recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.active_tile_before', window.__stephanosRuntime?.context?.workspace?.activeProjectKey || '');
       try {
         if (window.parent && window.parent !== window && typeof window.parent.returnToCommandDeck === 'function') {
           window.parent.returnToCommandDeck();
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.parent_handler_found', true);
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.parent_handler_invoked', true);
           recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'parent_from_runtime');
           return true;
         }
         clearLauncherSurfaceQuery(window);
         setSurfaceMode('mission-control');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.local_handler_invoked', true);
         recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'runtime_local');
         recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.surface_after', 'mission-control');
         recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.query_after', window.location?.search || '');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.active_tile_after', '');
         return true;
       } catch (error) {
-        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_error', String(error?.message || error || 'unknown'));
-        return false;
+        const message = String(error?.message || error || 'unknown');
+        recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_error', message);
+        try {
+          window.parent?.postMessage?.({ type: 'stephanos:return-to-command-deck', source: 'stephanos-runtime' }, '*');
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.parent_handler_invoked', 'postmessage');
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_invoked', 'parent_postmessage');
+          return true;
+        } catch (postMessageError) {
+          recordCommandDeckReturnDiagnostic(window, 'commandDeckReturn.handler_error', String(postMessageError?.message || postMessageError || message));
+          return false;
+        }
       }
     };
     window.addEventListener('popstate', handleRouteChange);

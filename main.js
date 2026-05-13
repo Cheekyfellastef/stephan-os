@@ -1510,8 +1510,24 @@ async function startStephanos() {
     };
 
     window.returnToCommandDeck = function() {
+      const returnDiagnostics = window.__stephanosReturnDiagnostics || {};
+      returnDiagnostics['commandDeckReturn.launcher_handler_found'] = true;
       context.workspace.close(context);
+      returnDiagnostics['commandDeckReturn.launcher_handler_invoked'] = true;
+      returnDiagnostics['commandDeckReturn.active_tile_after'] = workspace?.activeProjectKey || '';
+      returnDiagnostics['commandDeckReturn.surface_after'] = 'command-deck';
+      returnDiagnostics.counters = returnDiagnostics.counters || {};
+      returnDiagnostics.counters['commandDeckReturn.launcher_handler_invoked'] = Number(returnDiagnostics.counters['commandDeckReturn.launcher_handler_invoked'] || 0) + 1;
+      window.__stephanosReturnDiagnostics = returnDiagnostics;
+      return true;
     };
+
+    window.addEventListener("message", (event) => {
+      if (event?.data?.type !== "stephanos:return-to-command-deck") {
+        return;
+      }
+      window.returnToCommandDeck();
+    });
 
     eventBus.on("workspace:opened", () => {
       updateRuntimeDiagnostics({ projects: getRuntimeProjects(context), workspace });
