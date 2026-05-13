@@ -127,3 +127,10 @@ test('AIConsole exposes Copy Perf Diagnostics control for AI core surface instru
   assert.match(source, /recordPerfCounter\('render', 'AIConsole'\)/);
   assert.match(source, /ai_core\.autoscroll_run/);
 });
+
+test('embedded mission console answer history keeps larger viewport and visible composer', async () => {
+  const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(26rem,\s*62vh,\s*56rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*min\(78vh,\s*960px\);/m);
+  assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*position:\s*static;/m);
+});

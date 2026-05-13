@@ -3127,7 +3127,7 @@ pre {
 
 .stephanos-opening-sequence__terminal {
   width: min(840px, 90vw);
-  min-height: 220px;
+  min-height: clamp(26rem, 62vh, 56rem);
   border: 1px solid rgba(92, 245, 198, 0.3);
   border-radius: 8px;
   background: rgba(2, 13, 15, 0.9);
@@ -4347,7 +4347,7 @@ pre {
 
 .stephanos-opening-sequence__terminal {
   width: min(840px, 90vw);
-  min-height: 220px;
+  min-height: clamp(26rem, 62vh, 56rem);
   border: 1px solid rgba(92, 245, 198, 0.3);
   border-radius: 8px;
   background: rgba(2, 13, 15, 0.9);
@@ -4551,8 +4551,8 @@ pre {
 }
 
 .mission-console-pane__body.mission-console__history {
-  min-height: 220px;
-  max-height: min(42vh, 460px);
+  min-height: clamp(26rem, 62vh, 56rem);
+  max-height: min(78vh, 960px);
   overflow-y: auto;
   margin-bottom: 0;
   padding-bottom: 0.55rem;

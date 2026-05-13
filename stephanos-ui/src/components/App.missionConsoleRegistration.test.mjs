@@ -39,3 +39,8 @@ test('Stephanos Tile workspace renders missionConsolePanel via canonical pane re
   assert.equal(source.includes('<StephanosSurfacePane'), true);
   assert.equal(source.includes('<MissionConsoleTile'), true);
 });
+
+test('pane definitions include safeUiLayout dependency so togglePanel state updates re-render pane shells', async () => {
+  const source = await fs.readFile(appPath, 'utf8');
+  assert.equal(source.includes('safeUiLayout,'), true);
+});
