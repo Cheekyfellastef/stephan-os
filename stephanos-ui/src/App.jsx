@@ -1653,6 +1653,14 @@ export default function App() {
     const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
     const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
     const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId);
+    const paneShellFacts = paneShellNodes.map((shellNode) => {
+      const panel = shellNode.querySelector('[data-panel-id]');
+      const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
+      const title = panel?.querySelector('.panel-heading-copy h1, .panel-heading-copy h2, .panel-heading-copy h3')?.textContent?.trim() || '';
+      const body = panel?.querySelector('.panel-body');
+      const header = panel?.querySelector('.panel-header-row');
+      return { panelId, title, bodyMounted: Boolean(body), bodyVisible: body ? !body.hidden : false, headerVisible: Boolean(header) };
+    });
     const paneCollapseCoverage = paneShellFacts.map((paneFact) => {
       const panel = document.querySelector(`[data-panel-id="${paneFact.panelId}"]`);
       const toggle = panel?.querySelector('.panel-collapse-button');
@@ -1670,14 +1678,6 @@ export default function App() {
         uiLayoutKey: paneFact.panelId,
         missingCollapseReason: toggle ? null : 'missing-toggle-button',
       };
-    });
-    const paneShellFacts = paneShellNodes.map((shellNode) => {
-      const panel = shellNode.querySelector('[data-panel-id]');
-      const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
-      const title = panel?.querySelector('.panel-heading-copy h1, .panel-heading-copy h2, .panel-heading-copy h3')?.textContent?.trim() || '';
-      const body = panel?.querySelector('.panel-body');
-      const header = panel?.querySelector('.panel-header-row');
-      return { panelId, title, bodyMounted: Boolean(body), bodyVisible: body ? !body.hidden : false, headerVisible: Boolean(header) };
     });
     const copyButtons = Array.from(document.querySelectorAll('button')).filter((node) => /copy/i.test(node.textContent || '')).map((node) => ({
       testId: node.getAttribute('data-testid') || null,

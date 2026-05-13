@@ -29,3 +29,15 @@ test('App registers in-runtime returnToCommandDeck handler with canonical naviga
   assert.equal(appSource.includes('window.location.assign(destination);'), true);
   assert.equal(appSource.includes('commandDeckReturn.handler_invoked'), true);
 });
+
+test('UI Reality diagnostics computes pane shell facts before pane collapse coverage during startup effect', () => {
+  const appSource = fs.readFileSync(path.join(srcRoot, 'App.jsx'), 'utf8');
+  const paneShellFactsIndex = appSource.indexOf('const paneShellFacts = paneShellNodes.map((shellNode) => {');
+  const paneCollapseCoverageIndex = appSource.indexOf('const paneCollapseCoverage = paneShellFacts.map((paneFact) => {');
+  assert.notEqual(paneShellFactsIndex, -1);
+  assert.notEqual(paneCollapseCoverageIndex, -1);
+  assert.ok(
+    paneShellFactsIndex < paneCollapseCoverageIndex,
+    'paneShellFacts must be initialized before paneCollapseCoverage to avoid TDZ crashes in first diagnostics effect render',
+  );
+});
