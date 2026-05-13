@@ -447,23 +447,41 @@ function normalizeUiLayout(value = {}) {
   );
 }
 
-function normalizeOperatorPaneOrder(value = []) {
+function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPERATOR_PANE_ORDER) {
+  const canonicalOrder = Array.isArray(requiredPaneOrder) ? requiredPaneOrder : DEFAULT_OPERATOR_PANE_ORDER;
   const seen = new Set();
   const normalized = [];
   (Array.isArray(value) ? value : []).forEach((paneId) => {
     const normalizedPaneId = String(paneId || '');
-    if (!DEFAULT_OPERATOR_PANE_ORDER.includes(normalizedPaneId) || seen.has(normalizedPaneId)) {
+    if (!canonicalOrder.includes(normalizedPaneId) || seen.has(normalizedPaneId)) {
       return;
     }
     seen.add(normalizedPaneId);
     normalized.push(normalizedPaneId);
   });
-  DEFAULT_OPERATOR_PANE_ORDER.forEach((paneId) => {
+  canonicalOrder.forEach((paneId) => {
     if (!seen.has(paneId)) {
       normalized.push(paneId);
     }
   });
   return normalized;
+}
+
+
+function persistedPaneOrderIncludesMissionConsole(persistedSession = {}) {
+  const sessionUi = persistedSession?.session?.ui || {};
+  const legacyPaneOrder = sessionUi?.uiLayout?.paneOrder || sessionUi?.paneOrder || [];
+  const persistedOrder = sessionUi?.operatorPaneLayout?.order;
+  const sourceOrder = Array.isArray(persistedOrder) && persistedOrder.length > 0 ? persistedOrder : legacyPaneOrder;
+  return Array.isArray(sourceOrder) && sourceOrder.includes('missionConsolePanel');
+}
+export function reconcilePersistedOperatorPaneLayout(persistedSession = {}) {
+  const sessionUi = persistedSession?.session?.ui || {};
+  const legacyPaneOrder = sessionUi?.uiLayout?.paneOrder || sessionUi?.paneOrder || [];
+  const persistedOrder = sessionUi?.operatorPaneLayout?.order;
+  return normalizeOperatorPaneOrder(
+    Array.isArray(persistedOrder) && persistedOrder.length > 0 ? persistedOrder : legacyPaneOrder,
+  );
 }
 
 function normalizeOllamaConnection(value = {}) {
@@ -727,9 +745,14 @@ function createInitialMemorySnapshot() {
     });
     const hasPersistedUiLayout = restoredVisibilityEntries.length > 0;
     const normalizedUiLayout = normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT);
-    const effectiveUiLayout = hasPersistedUiLayout
+    const reconciledPaneOrder = reconcilePersistedOperatorPaneLayout(persistedSession);
+    const effectiveUiLayoutBase = hasPersistedUiLayout
       ? normalizedUiLayout
       : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
+    const shouldForceMissionConsoleOpen = !persistedPaneOrderIncludesMissionConsole(persistedSession);
+    const effectiveUiLayout = shouldForceMissionConsoleOpen
+      ? { ...effectiveUiLayoutBase, missionConsolePanel: true }
+      : effectiveUiLayoutBase;
 
   const initialBridgeTransportPreferences = normalizeBridgeTransportPreferences(
     persistedSession?.session?.bridgeTransportPreferences,
@@ -808,7 +831,7 @@ function createInitialMemorySnapshot() {
       hostedCloudCognitionRestoreDiagnostics,
       uiLayout: effectiveUiLayout,
       paneLayout: {
-        order: normalizeOperatorPaneOrder(persistedSession?.session?.ui?.operatorPaneLayout?.order),
+        order: reconciledPaneOrder,
       },
       lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
       commandHistory: sanitizePersistedCommandHistory(
