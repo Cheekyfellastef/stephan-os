@@ -157,8 +157,8 @@ test('MissionConsoleTile renders dedicated wide workspace classes for command de
 test('MissionConsoleTile uses collapsible panel canon wiring for Agent Mission Console', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
   assert.equal(source.includes('panelId="missionConsolePanel"'), true);
-  assert.equal(source.includes("isOpen={uiLayout.missionConsolePanel !== false}"), true);
-  assert.equal(source.includes("onToggle={() => togglePanel('missionConsolePanel')}"), true);
+  assert.equal(source.includes("isOpen={missionConsolePanelOpen}"), true);
+  assert.equal(source.includes("onToggle={handleMissionConsolePanelToggle}"), true);
   assert.equal(source.includes('aria-expanded={isOpen}'), false, 'aria-expanded should come from CollapsiblePanel canon, not duplicated locally');
 });
 

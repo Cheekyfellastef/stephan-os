@@ -1266,6 +1266,7 @@ export default function App() {
         <MissionConsoleTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
+          forcePanelOpen
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}

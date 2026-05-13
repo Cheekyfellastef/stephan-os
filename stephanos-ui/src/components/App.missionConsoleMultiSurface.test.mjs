@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const componentsDir = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+const appPath = path.join(componentsDir, '../App.jsx');
+const missionConsolePath = path.join(componentsDir, 'MissionConsoleTile.jsx');
+
+test('mission console can render in both landing tile and Stephanos AI Core surface from canonical component path', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
+
+  assert.match(appSource, /import MissionConsoleTile from '\.\/components\/MissionConsoleTile\.jsx';/);
+  assert.match(missionConsoleSource, /import AIConsole from '\.\/AIConsole';/);
+
+  const missionConsoleMountCount = (appSource.match(/<MissionConsoleTile/g) || []).length;
+  assert.ok(missionConsoleMountCount >= 2, 'App should mount MissionConsoleTile in multiple legitimate surfaces');
+
+  assert.match(appSource, /id: 'missionConsolePanel'/);
+  assert.match(appSource, /id: 'aiConsole'/);
+  assert.match(appSource, /forcePanelOpen/);
+});
+
+test('embedded Stephanos AI Core MissionConsoleTile is explicitly exempt from missionConsolePanel collapse filtering', async () => {
+  const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
+
+  assert.match(missionConsoleSource, /forcePanelOpen = false/);
+  assert.match(missionConsoleSource, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\.missionConsolePanel !== false;/);
+  assert.match(missionConsoleSource, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
+  assert.match(missionConsoleSource, /togglePanel\('missionConsolePanel'\)/);
+});
