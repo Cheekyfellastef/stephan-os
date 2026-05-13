@@ -81,6 +81,22 @@ test('canonical collapse control reduces footprint and avoids dead empty panel a
   assert.equal(collapsiblePanelSource.includes('{shouldRenderBody ? children : null}'), true);
 });
 
+
+test('Agents tile uses canonical uiLayout + togglePanel collapse wiring only', () => {
+  const agentsSource = fs.readFileSync(new URL('./AgentsTile.jsx', import.meta.url), 'utf8');
+  assert.equal(agentsSource.includes('resolvedIsOpen = uiLayout.agentsPanel !== false'), true);
+  assert.equal(agentsSource.includes("resolvedToggle = () => togglePanel('agentsPanel')"), true);
+  assert.equal(agentsSource.includes('hasCanonicalToggle'), false);
+  assert.equal(agentsSource.includes('onToggle = () => {}'), false);
+  assert.equal(agentsSource.includes('isOpen = true'), false);
+});
+
+test('Mission Console defaults wall-of-text detail panes to compact/collapsed in DEFAULT_UI_LAYOUT', () => {
+  assert.equal(aiStoreSource.includes('missionConsoleOperatorReliefPanel: false'), true);
+  assert.equal(aiStoreSource.includes('missionConsoleSecondaryDiagnosticsPanel: false'), true);
+  assert.equal(aiStoreSource.includes('missionConsoleConnectedTileContextsPanel: false'), true);
+});
+
 test('pane canon keeps move controls and collapse state persistence surfaces intact', () => {
   assert.equal(surfacePaneSource.includes('className="pane-order-controls"'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveUp}'), true);

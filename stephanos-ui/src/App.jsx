@@ -1317,8 +1317,8 @@ export default function App() {
             finalAgentView={displayAgentView}
             selectedAgentId={displayAgentView.selectedAgentId}
             onSelectAgent={setSelectedAgentId}
-            isOpen={safeUiLayout.agentsPanel !== false}
-            onToggle={() => togglePanel('agentsPanel')}
+            uiLayout={safeUiLayout}
+            togglePanel={togglePanel}
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}

@@ -23,16 +23,13 @@ export default function AgentsTile({
   onSelectAgent,
   selectedAgentId,
   uiLayout = {},
-  togglePanel = null,
-  isOpen = true,
-  onToggle = () => {},
+  togglePanel = () => {},
   debugVisibility = false,
   openClawIntegration = null,
   agentTaskProjection = null,
 } = {}) {
-  const hasCanonicalToggle = typeof togglePanel === 'function';
-  const resolvedIsOpen = hasCanonicalToggle ? uiLayout.agentsPanel !== false : isOpen;
-  const resolvedToggle = hasCanonicalToggle ? () => togglePanel('agentsPanel') : onToggle;
+  const resolvedIsOpen = uiLayout.agentsPanel !== false;
+  const resolvedToggle = () => togglePanel('agentsPanel');
   const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
