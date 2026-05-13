@@ -97,6 +97,18 @@ test('Mission Console defaults wall-of-text detail panes to compact/collapsed in
   assert.equal(aiStoreSource.includes('missionConsoleConnectedTileContextsPanel: false'), true);
 });
 
+test('App diagnostics expose explicit agent mission console live mount keys', () => {
+  [
+    'actualPanelId: \'missionConsolePanel\'',
+    'forcePanelOpen: false',
+    'isOpenFromUiLayout: safeUiLayout.missionConsolePanel !== false',
+    'renderedOpenState: safeUiLayout.missionConsolePanel !== false',
+    'togglePanelKey: \'missionConsolePanel\'',
+    'visibleChevronLayer',
+    'visibleContentLayer',
+  ].forEach((token) => assert.equal(appSource.includes(token), true, `missing diagnostics key in App: ${token}`));
+});
+
 test('pane canon keeps move controls and collapse state persistence surfaces intact', () => {
   assert.equal(surfacePaneSource.includes('className="pane-order-controls"'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveUp}'), true);

@@ -208,9 +208,24 @@ test('MissionConsoleTile does not reuse panel ids across collapsible panels', as
 test('MissionConsoleTile forcePanelOpen is scoped to missionConsolePanel and does not alter other panel toggle wiring', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
   assert.match(source, /const missionConsolePanelOpen = forcePanelOpen \? true : uiLayout\[panelId\] !== false;/);
-  assert.match(source, /if \(forcePanelOpen\) \{\s*return;\s*\}/m);
+  assert.match(source, /if \(forcePanelOpen\) \{[\s\S]*return;\s*\}/m);
   assert.match(source, /dispatchPanelToggle\(panelId\)/);
   assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleOperatorOverviewPanel')}"), true);
   assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleRuntimeRouteStatusPanel')}"), true);
   assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefPanel')}"), true);
+});
+
+test('MissionConsoleTile updates live pane diagnostics for landing-page agent mission console mount', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  [
+    'actualPanelId',
+    'forcePanelOpen',
+    'isOpenFromUiLayout',
+    'renderedOpenState',
+    'lastToggleEvent',
+    'togglePanelKey',
+    'visibleChevronLayer',
+    'visibleContentLayer',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing diagnostics token: ${token}`));
+  assert.equal(source.includes("if (panelId !== 'missionConsolePanel') return;"), true);
 });

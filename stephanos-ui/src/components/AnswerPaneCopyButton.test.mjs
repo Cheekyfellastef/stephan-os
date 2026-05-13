@@ -24,3 +24,10 @@ test('AnswerPaneCopyButton exposes separate answer and debug copy actions', () =
   assert.match(source, /Copy Answer/);
   assert.match(source, /Copy Debug Payload/);
 });
+
+test('AnswerPaneCopyButton surfaces observable success/failure state via class and status labels', () => {
+  assert.match(source, /className={`answer-pane-copy-button \$\{answerCopyState\}`}/);
+  assert.match(source, /Copied Answer/);
+  assert.match(source, /Copy failed/);
+  assert.match(source, /Answer copied to clipboard\./);
+});
