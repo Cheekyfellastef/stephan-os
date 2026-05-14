@@ -40,6 +40,6 @@ test('resolvePaneCollapsedState uses canonical layout key so outer pane follows 
 
   assert.equal(resolvePaneCollapsedState({ id: 'statusPanel' }, { statusPanel: false }), true);
   assert.equal(resolvePaneCollapsedState({ id: 'statusPanel' }, { statusPanel: true }), false);
-  assert.equal(resolvePaneCollapsedState({ id: 'aiConsole', layoutKey: 'commandDeck' }, { commandDeck: false }), true);
-  assert.equal(resolvePaneCollapsedState({ id: 'aiConsole', layoutKey: 'commandDeck' }, { aiConsole: false, commandDeck: true }), false);
+  assert.equal(resolvePaneCollapsedState({ id: 'commandDeck', layoutKey: 'commandDeck' }, { commandDeck: false }), true);
+  assert.equal(resolvePaneCollapsedState({ id: 'commandDeck', layoutKey: 'commandDeck' }, { aiConsole: false, commandDeck: true }), false);
 });

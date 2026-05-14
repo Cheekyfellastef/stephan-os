@@ -153,8 +153,8 @@ export default function AIConsole({
   return (
     <CollapsiblePanel
       panelId="commandDeck"
-      title="Stephanos Mission Console"
-      description="Command deck for prompts, command execution, and route feedback."
+      title="Stephanos AI Chat Command Deck"
+      description="Immediate access to prompts, AI chat, answer history, command execution, and route/provider feedback."
       className="mission-console"
       titleAs="h1"
       isOpen={safeUiLayout.commandDeck !== false}
