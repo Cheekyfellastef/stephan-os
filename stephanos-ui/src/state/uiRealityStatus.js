@@ -132,12 +132,19 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     : [];
   const nestedOperationalPaneIds = nestedOperationalPaneFacts.map((pane) => pane.paneId);
   const nestedOperationalPaneTitles = nestedOperationalPaneFacts.map((pane) => pane.title);
+  const aiCoreDomParentPaneId = hasReality ? String(reality?.aiCoreMissionConsole?.domParentPaneId || 'unknown') : 'unknown';
+  const aiCoreDomParentPaneTitle = hasReality ? String(reality?.aiCoreMissionConsole?.domParentPaneTitle || 'unknown') : 'unknown';
+  const aiCoreInsideAgentMissionConsole = hasReality ? reality?.aiCoreMissionConsole?.insideAgentMissionConsole === true : false;
+  const aiCoreDomAncestryPath = hasReality ? String(reality?.aiCoreMissionConsole?.domAncestryPath || 'unknown') : 'unknown';
+  const aiCorePlacementReason = hasReality ? String(reality?.aiCoreMissionConsole?.placementReason || 'unknown') : 'unknown';
   const missionConsoleNesting = hasReality
-    ? nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel')
-      ? 'nested-in-ai-console'
-      : aiCoreMissionConsoleRendered
+    ? (aiCoreInsideAgentMissionConsole || aiCoreDomParentPaneId === 'missionConsolePanel')
+      ? 'nested-in-agent-mission-console'
+      : aiCoreMissionConsoleRendered && aiCoreDomParentPaneId === 'aiCoreMissionConsolePanel'
         ? 'first-class-pane'
-        : 'missing'
+        : aiCoreMissionConsoleRendered
+          ? 'rendered-parent-unverified'
+          : 'missing'
     : 'unknown';
 
   const failReasons = [];
@@ -157,7 +164,7 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     : null;
   const deferredExtractionPaneIds = nestedOperationalPaneIds.filter((paneId) => paneId !== 'aiCoreMissionConsolePanel');
   const deferredExtractionPaneFacts = nestedOperationalPaneFacts.filter((pane) => pane.paneId !== 'aiCoreMissionConsolePanel');
-  if (hasReality && nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel')) failReasons.push('ai-core-mission-console-nested-in-agent-mission-console');
+  if (hasReality && (nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel') || aiCoreInsideAgentMissionConsole || aiCoreDomParentPaneId === 'missionConsolePanel')) failReasons.push('ai-core-mission-console-nested-in-agent-mission-console');
   if (hasReality && deferredExtractionPaneIds.length > 0) warnReasons.push('deferred-operational-pane-extractions-pending');
   if (hasReality && agentMissionConsoleBodyCollapses === false) failReasons.push('agent-mission-console-collapse-body-visible');
 
@@ -214,6 +221,11 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityAgentMissionConsoleNestedOperationalPaneTitles: nestedOperationalPaneTitles,
     uiRealityAgentMissionConsoleBodyCollapses: agentMissionConsoleBodyCollapses === null ? 'unknown' : (agentMissionConsoleBodyCollapses ? 'yes' : 'no'),
     uiRealityAgentMissionConsoleCollapseStatus: agentMissionConsoleBodyCollapses === false ? 'FAIL' : 'OK',
+    uiRealityAiCoreMissionConsoleDomParentPaneId: aiCoreDomParentPaneId,
+    uiRealityAiCoreMissionConsoleDomParentPaneTitle: aiCoreDomParentPaneTitle,
+    uiRealityAiCoreMissionConsoleInsideAgentMissionConsole: aiCoreInsideAgentMissionConsole ? 'yes' : 'no',
+    uiRealityAiCoreMissionConsoleDomAncestryPath: aiCoreDomAncestryPath,
+    uiRealityAiCoreMissionConsolePlacementReason: aiCorePlacementReason,
     uiRealityAiCoreMissionConsoleNesting: missionConsoleNesting,
     uiRealityOperationalPanePlacementStatus: !hasReality
       ? 'WARN'

@@ -1630,7 +1630,7 @@ export default function App() {
       controlLayer: 'panel-header-actions',
       attachedToHeader: true,
     }));
-    const paneShellNodes = Array.from(document.querySelectorAll('[data-testid^="pane-"][data-testid$="-shell"]'));
+    const paneShellNodes = Array.from(document.querySelectorAll('[data-pane-id]'));
     const moveControlGroups = Array.from(document.querySelectorAll('[data-pane-control-group="move-order"]'));
     const moveControlFacts = moveControlGroups.map((node, index) => {
       const ownerPaneShell = node.closest('[data-pane-id]');
@@ -1784,14 +1784,45 @@ export default function App() {
             : !missionConsoleVisible
               ? 'collapsed'
               : 'visible';
+        const parentPaneShell = markerNode?.parentElement?.closest?.('[data-pane-id]') || markerNode?.closest?.('[data-pane-id]') || null;
+        const parentPaneId = parentPaneShell?.getAttribute('data-pane-id') || 'unknown';
+        const parentPaneTitle = parentPaneShell?.getAttribute('data-pane-title') || 'unknown';
+        const insideAgentMissionConsole = rendered && Boolean(markerNode?.closest?.('[data-pane-id="missionConsolePanel"], [data-testid="pane-missionConsolePanel-body"], .mission-console-shell'));
+        const domAncestryPath = rendered
+          ? (() => {
+            const parts = [];
+            let current = markerNode;
+            while (current && parts.length < 12) {
+              const paneId = current.getAttribute?.('data-pane-id');
+              const testId = current.getAttribute?.('data-testid');
+              if (paneId) parts.push(`pane:${paneId}`);
+              else if (testId) parts.push(`testid:${testId}`);
+              else parts.push(String(current.tagName || 'node').toLowerCase());
+              current = current.parentElement;
+            }
+            return parts.join(' <- ');
+          })()
+          : 'not-mounted';
+        const placementReason = !rendered
+          ? 'marker-not-mounted'
+          : insideAgentMissionConsole || parentPaneId === 'missionConsolePanel'
+            ? 'nested-inside-agent-mission-console'
+            : parentPaneId === 'aiCoreMissionConsolePanel'
+              ? 'first-class-pane-shell'
+              : 'unknown-parent-pane';
         return {
-          configured: Boolean(canonicalPaneDefinitions.some((pane) => pane.id === 'aiConsole')),
+          configured: Boolean(canonicalPaneDefinitions.some((pane) => pane.id === 'aiCoreMissionConsolePanel')),
           rendered,
           visible: visibilityReason === 'visible',
           panelId: markerNode?.getAttribute('data-panel-id') || 'aiCoreMissionConsolePanel',
           forceOpen: markerNode?.getAttribute('data-force-panel-open') === 'true',
           renderReason: rendered ? 'mounted-active-path' : 'not-mounted',
           visibilityReason,
+          domParentPaneId: parentPaneId,
+          domParentPaneTitle: parentPaneTitle,
+          insideAgentMissionConsole,
+          domAncestryPath,
+          placementReason,
         };
       })(),
       aiCoreActivePath: missionConsoleSurfaceMode ? 'missionConsoleSurfaceMode' : 'aiConsole',

@@ -57,7 +57,8 @@ export default function StephanosSurfacePane({
       className={`operator-pane-slot${wideSurfaceClass}${wideSurfaceActiveClass}${workspaceShellClass} ${pane.className || ''} ${paneCollapsed ? 'pane-collapsed' : 'pane-expanded'} ${dragPaneId === pane.id ? 'dragging' : ''}`}
       draggable
       data-pane-id={pane.id}
-      data-testid={`pane-${pane.id}-shell`}
+      data-pane-title={pane.title || pane.id}
+      data-testid={`pane-${pane.id}`}
       data-pane-collapsed={paneCollapsed ? 'true' : 'false'}
       data-workspace-shell={pane.wideSurface ? 'canonical' : undefined}
       onDragStart={(event) => {
