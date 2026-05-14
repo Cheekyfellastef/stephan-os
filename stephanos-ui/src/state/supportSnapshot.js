@@ -359,6 +359,10 @@ export function buildSupportSnapshot({
   finalAgentView = null,
   missionBridgeTruth = null,
   uiReality = null,
+  uiRealitySampledAt = 'n/a',
+  uiRealitySampleSource = 'cached',
+  uiRealitySnapshotAgeMs = 'n/a',
+  uiRealityFreshAtCopy = 'no',
   uiRealityStartupStatus = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
@@ -696,6 +700,12 @@ export function buildSupportSnapshot({
     `UI Reality Operational Pane Placement Next Action: ${asText(uiRealityStatus.uiRealityOperationalPanePlacementNextAction, 'Capture UI reality diagnostics to validate operational pane placement.')}`,
     `UI Reality Suggested Extraction Plan: ${asText(uiRealityStatus.uiRealitySuggestedExtractionPlan, 'No extraction required.')}`,
     `UI Reality Startup Status: ${asText(uiRealityStatus.startup, 'unknown')}`,
+    `UI Reality Sampled At: ${asText(uiRealitySampledAt, 'n/a')}`,
+    `UI Reality Sample Source: ${asText(uiRealitySampleSource, 'cached')}`,
+    `UI Reality Snapshot Age Ms: ${asText(uiRealitySnapshotAgeMs, 'n/a')}`,
+    `UI Reality Fresh At Copy: ${asText(uiRealityFreshAtCopy, 'no')}`,
+    `UI Reality State/DOM Mismatch: ${asText(uiRealityStatus.uiRealityStateDomMismatch, 'no')}`,
+    `UI Reality Mismatch Reason: ${asText(uiRealityStatus.uiRealityMismatchReason, 'none')}`,
     `UI Reality Diagnostics Available: ${uiRealityDiagnosticsAvailable}`,
     `UI Reality Next Action: ${uiRealityNextAction}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,

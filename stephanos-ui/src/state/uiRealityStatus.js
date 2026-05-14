@@ -251,6 +251,8 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
       : (deferredExtractionPaneIds.length > 0
         ? 'Stage 2B: extract remaining deferred operational panes from Agent Mission Console.'
         : 'No deferred extraction panes pending.'),
+    uiRealityStateDomMismatch: hasReality && reality.stateDomMismatch === true ? 'yes' : 'no',
+    uiRealityMismatchReason: hasReality ? String(reality.stateDomMismatchReason || 'none') : 'none',
     ...copyFeedback,
   };
 }

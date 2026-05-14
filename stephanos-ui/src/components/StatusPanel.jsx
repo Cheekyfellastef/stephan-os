@@ -34,6 +34,43 @@ import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import UIRealityStatusPanel from './UIRealityStatusPanel';
 
+function nodeVisibleInDom(node) {
+  if (!node || typeof window === 'undefined') return false;
+  const style = window.getComputedStyle(node);
+  if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = node.getBoundingClientRect?.();
+  return Boolean(rect && rect.width > 0 && rect.height > 0);
+}
+
+function buildLiveUiRealitySnapshot({ cachedReality = null } = {}) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return { reality: cachedReality, source: 'unavailable' };
+  const sampledAt = new Date().toISOString();
+  const aiCoreNode = document.querySelector('[data-testid="ai-core-mission-console"]');
+  const rendered = Boolean(aiCoreNode);
+  const closestPane = aiCoreNode?.closest?.('[data-pane-id]') || null;
+  const collapsedAncestor = aiCoreNode?.closest?.('.panel-body[hidden], [data-testid$="-body"][hidden]') || null;
+  const visible = rendered && nodeVisibleInDom(aiCoreNode) && !collapsedAncestor;
+  const visibilityReason = !rendered ? 'not-mounted' : collapsedAncestor ? 'collapsed-ancestor' : visible ? 'visible' : 'hidden-css';
+  const reality = {
+    ...(cachedReality && typeof cachedReality === 'object' ? cachedReality : {}),
+    sampledAt,
+    aiCoreMissionConsole: {
+      ...((cachedReality && cachedReality.aiCoreMissionConsole) || {}),
+      rendered,
+      visible,
+      visibilityReason,
+      collapsedAncestorPaneId: collapsedAncestor?.closest?.('[data-pane-id]')?.getAttribute?.('data-pane-id') || null,
+      domParentPaneId: closestPane?.getAttribute?.('data-pane-id') || 'unknown',
+      domParentPaneTitle: closestPane?.getAttribute?.('data-pane-title') || 'unknown',
+    },
+    stateDomMismatch: Boolean(cachedReality?.aiCoreMissionConsole?.visibilityReason === 'collapsed' && visible),
+    stateDomMismatchReason: cachedReality?.aiCoreMissionConsole?.visibilityReason === 'collapsed' && visible
+      ? 'state-collapsed-dom-visible'
+      : 'none',
+  };
+  return { reality, source: 'live-dom' };
+}
+
 export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null, missionBridgeTruth = null } = {}) {
   const [copyNotice, setCopyNotice] = useState(null);
   const { copyState: supportSnapshotCopyState, setCopyState: setSupportSnapshotCopyState } = useClipboardButtonState();
@@ -263,7 +300,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     missionPacketWorkflow,
     finalRouteTruth: routeTruthView,
   });
-  const supportSnapshot = buildSupportSnapshot({
+  const buildSnapshotText = (uiRealityInput, uiRealitySampling = {}) => buildSupportSnapshot({
     runtimeStatus: {
       ...runtimeStatus,
       providerSelectionSource,
@@ -597,15 +634,29 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     },
     finalAgentView,
     missionBridgeTruth,
-    uiReality: uiRealityHarness,
+    uiReality: uiRealityInput,
+    uiRealitySampledAt: uiRealitySampling.sampledAt || 'n/a',
+    uiRealitySampleSource: uiRealitySampling.source || 'cached',
+    uiRealitySnapshotAgeMs: uiRealitySampling.ageMs ?? 'n/a',
+    uiRealityFreshAtCopy: uiRealitySampling.freshAtCopy === true ? 'yes' : 'no',
     uiRealityStartupStatus: runtimeStatus?.appLaunchState || 'unknown',
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,
   });
+  const supportSnapshot = buildSnapshotText(uiRealityHarness, { source: 'cached', freshAtCopy: false });
 
   const handleCopySupportSnapshot = async () => {
     try {
-      const result = await writeTextToClipboard(supportSnapshot, { navigatorObject: browserNavigator });
+      const liveReality = buildLiveUiRealitySnapshot({ cachedReality: uiRealityHarness });
+      const now = Date.now();
+      const sampledAtMs = Number.isFinite(Date.parse(liveReality.reality?.sampledAt || '')) ? Date.parse(liveReality.reality.sampledAt) : null;
+      const payload = buildSnapshotText(liveReality.reality, {
+        sampledAt: liveReality.reality?.sampledAt || 'n/a',
+        source: liveReality.source,
+        ageMs: sampledAtMs ? Math.max(0, now - sampledAtMs) : 'n/a',
+        freshAtCopy: liveReality.source === 'live-dom',
+      });
+      const result = await writeTextToClipboard(payload, { navigatorObject: browserNavigator });
       if (!result.ok) {
         recordCopyFeedbackEvent({ source: 'StatusPanel.supportSnapshot', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: 'supportSnapshot', reason: result.reason || 'unknown', method: result.method || 'unknown' });
         setSupportSnapshotCopyState(COPY_STATE.FAILURE);
