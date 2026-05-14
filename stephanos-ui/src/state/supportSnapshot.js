@@ -420,6 +420,22 @@ export function buildSupportSnapshot({
     executableProvider,
     launchState: runtimeStatus?.appLaunchState,
   });
+
+  const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
+    ? runtimeStatus.lastExecutionMetadata
+    : {};
+  const chatContextStatus = runtimeStatus?.chatContextPackStatus || executionMetadata.chat_context_pack_status || 'unavailable';
+  const chatContextVersion = runtimeStatus?.chatContextVersion || executionMetadata.chat_context_version || 'n/a';
+  const chatContextResponseMode = runtimeStatus?.chatContextResponseMode || executionMetadata.chat_context_response_mode || 'direct-answer';
+  const chatContextRelevantCanonCount = runtimeStatus?.chatContextRelevantCanonCount ?? executionMetadata.chat_context_relevant_canon_count ?? 0;
+  const chatContextAffectedSubsystems = runtimeStatus?.chatContextAffectedSubsystems || executionMetadata.chat_context_affected_subsystems || 'none';
+  const chatContextSourcesUsed = runtimeStatus?.chatContextSourcesUsed || executionMetadata.chat_context_sources_used || 'none';
+  const chatContextUiRealityStatus = runtimeStatus?.chatContextUiRealityStatus || executionMetadata.chat_context_ui_reality_status || 'UNKNOWN';
+  const chatContextMissionState = runtimeStatus?.chatContextMissionState || executionMetadata.chat_context_mission_state || 'unknown';
+  const chatContextNextAction = runtimeStatus?.chatContextNextAction || executionMetadata.chat_context_next_action || (chatContextStatus === 'unavailable' ? 'Submit a Command Deck message to generate context pack.' : 'Answer directly with bounded confidence.');
+  const chatContextWarningCount = runtimeStatus?.chatContextWarningCount ?? executionMetadata.chat_context_warning_count ?? 0;
+  const chatContextWarnings = runtimeStatus?.chatContextWarnings || executionMetadata.chat_context_warnings || 'none';
+
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
     sessionKind,
@@ -1088,12 +1104,17 @@ export function buildSupportSnapshot({
     `Task Finisher Merge Operator Controlled: ${asText(runtimeStatus?.taskFinisherMergeOperatorControlled, 'yes')}`,
     `Task Finisher Warning Level: ${asText(runtimeStatus?.taskFinisherWarningLevel, 'none')}`,
     `Task Finisher Next Action: ${asText(runtimeStatus?.taskFinisherNextAction, 'not reported')}`,
-    `Chat Context Pack Status: ${asText(runtimeStatus?.chatContextPackStatus, 'unavailable')}`,
-    `Chat Context Response Mode: ${asText(runtimeStatus?.chatContextResponseMode, 'direct-answer')}`,
-    `Chat Context Relevant Canon Count: ${asText(runtimeStatus?.chatContextRelevantCanonCount, '0')}`,
-    `Chat Context Affected Subsystems: ${asText(runtimeStatus?.chatContextAffectedSubsystems, 'none')}`,
-    `Chat Context Next Action: ${asText(runtimeStatus?.chatContextNextAction, 'Answer directly with bounded confidence.')}`,
-    `Chat Context Warnings: ${asText(runtimeStatus?.chatContextWarnings, 'none')}`,
+    `Chat Context Pack Status: ${asText(chatContextStatus, 'unavailable')}`,
+    `Chat Context Version: ${asText(chatContextVersion, 'n/a')}`,
+    `Chat Context Response Mode: ${asText(chatContextResponseMode, 'direct-answer')}`,
+    `Chat Context Relevant Canon Count: ${asText(chatContextRelevantCanonCount, '0')}`,
+    `Chat Context Affected Subsystems: ${asText(chatContextAffectedSubsystems, 'none')}`,
+    `Chat Context Sources Used: ${asText(chatContextSourcesUsed, 'none')}`,
+    `Chat Context UI Reality Status: ${asText(chatContextUiRealityStatus, 'UNKNOWN')}`,
+    `Chat Context Mission State: ${asText(chatContextMissionState, 'unknown')}`,
+    `Chat Context Next Action: ${asText(chatContextNextAction, 'Submit a Command Deck message to generate context pack.')}`,
+    `Chat Context Warning Count: ${asText(chatContextWarningCount, '0')}`,
+    `Chat Context Warnings: ${asText(chatContextWarnings, 'none')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,
