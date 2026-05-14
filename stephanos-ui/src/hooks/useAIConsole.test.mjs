@@ -30,9 +30,10 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /submissionSource = 'stephanos-mission-console'/);
   assert.match(source, /submissionRoute = 'assistant-router'/);
   assert.match(source, /chat_context_pack_status/);
-  assert.match(source, /setLastExecutionMetadata\(\(prev\) => \(\{/);
+  assert.match(source, /setLastExecutionMetadata\(\(prev\) => attachChatContextToExecutionMetadata\(\{/);
   assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(chatContextPack\)/);
-  assert.match(source, /\.\.\.buildChatContextAttachmentMetadata\(\{/);
+  assert.match(source, /function attachChatContextToExecutionMetadata/);
+  assert.match(source, /setLastExecutionMetadata\(attachChatContextToExecutionMetadata\(\{/);
   assert.match(source, /submission_console: executionMetadata\.submission_console \|\| requestTrace\.submission_console \|\| requestPayload\.submissionSource \|\| 'stephanos-mission-console'/);
   assert.match(source, /submission_route: executionMetadata\.submission_route \|\| requestTrace\.submission_route \|\| requestPayload\.submissionRoute \|\| 'assistant-router'/);
   assert.match(source, /chat_context_pack_status/);
@@ -52,4 +53,3 @@ test('useAIConsole final execution metadata includes chat context attachment pro
   assert.match(source, /chat_context_attachment_probe_prompt/);
   assert.match(source, /chat_context_attachment_probe_response_mode/);
 });
-
