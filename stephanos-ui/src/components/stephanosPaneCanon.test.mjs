@@ -91,6 +91,19 @@ test('Agents tile uses canonical uiLayout + togglePanel collapse wiring only', (
   assert.equal(agentsSource.includes('isOpen = true'), false);
 });
 
+
+
+test('Hosted Idea Staging pane uses canonical collapse wiring and human-readable pane title', () => {
+  const hostedIdeaSource = fs.readFileSync(new URL('./HostedIdeaStagingPanel.jsx', import.meta.url), 'utf8');
+  assert.equal(hostedIdeaSource.includes('panelId="hostedIdeaStagingPanel"'), true);
+  assert.equal(hostedIdeaSource.includes('title="Hosted Idea Staging"'), true);
+  assert.equal(hostedIdeaSource.includes('isOpen={uiLayout.hostedIdeaStagingPanel !== false}'), true);
+  assert.equal(hostedIdeaSource.includes("onToggle={() => togglePanel('hostedIdeaStagingPanel')"), true);
+  assert.equal(aiStoreSource.includes('hostedIdeaStagingPanel: true'), true);
+  assert.equal(appSource.includes("id: 'hostedIdeaStagingPanel'"), true);
+  assert.equal(appSource.includes("title: 'Hosted Idea Staging'"), true);
+});
+
 test('Mission Console defaults wall-of-text detail panes to compact/collapsed in DEFAULT_UI_LAYOUT', () => {
   assert.equal(aiStoreSource.includes('missionConsoleOperatorReliefPanel: false'), true);
   assert.equal(aiStoreSource.includes('missionConsoleSecondaryDiagnosticsPanel: false'), true);
