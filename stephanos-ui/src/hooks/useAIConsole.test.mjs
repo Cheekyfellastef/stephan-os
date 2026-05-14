@@ -64,6 +64,10 @@ test('useAIConsole chat context metadata includes operator message proof fields'
   assert.match(source, /chat_context_default_pack_used/);
   assert.match(source, /chat_context_was_overwritten/);
   assert.match(source, /operatorMessage:\s*prompt/);
+  assert.match(source, /buildSource:\s*submissionSource/);
+  assert.match(source, /chat_context_builder_function/);
+  assert.match(source, /chat_context_fallback_branch_taken/);
+  assert.match(source, /chat_context_fallback_branch_reason/);
 });
 
 test('useAIConsole live submit path preserves merge-decision metadata attachment fields', async () => {
@@ -72,4 +76,13 @@ test('useAIConsole live submit path preserves merge-decision metadata attachment
   assert.match(source, /chat_context_intent_classifier_matched_rule:\s*requestPayload\?\.chatContextPack\?\.intentClassifierMatchedRule/);
   assert.match(source, /chat_context_attachment_probe_response_mode:\s*pickChatContextFieldPreferRequestNonDefault/);
   assert.match(source, /defaultPackUsed = \(deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer'\)\s*\?\s*'no'/);
+});
+
+
+test('stephanos-mission-console and command deck label path share orchestrator INTENT_RULES classifier source', async () => {
+  const hookSource = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  const orchestratorSource = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'state/chatContextOrchestrator.js'), 'utf8');
+  assert.match(hookSource, /chat_context_classifier_function_source:\s*requestPayload\?\.chatContextPack\?\.classifierDebug\?\.classifierFunctionSource/);
+  assert.match(orchestratorSource, /classifierFunctionSource:\s*'chatContextOrchestrator\.INTENT_RULES'/);
+  assert.match(orchestratorSource, /id:\s*'merge-decision'/);
 });

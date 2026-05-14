@@ -109,6 +109,7 @@ export function buildChatContextPack(input = {}) {
   const providerTruth = input.providerTruth || {};
   const missionState = input.missionState || {};
   const intent = classifyIntent(operatorMessage);
+  const buildSource = String(input.buildSource || input.submissionSource || 'unknown').trim() || 'unknown';
   const responseMode = intent.responseMode;
   const warnings = [];
   if (!operatorMessage) warnings.push('operator message missing');
@@ -143,6 +144,7 @@ export function buildChatContextPack(input = {}) {
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
     createdAt: new Date().toISOString(),
     requestId: String(input.requestId || input.commandId || '').trim() || null,
+    buildSource,
   };
 
   return {
@@ -201,6 +203,9 @@ export function buildChatContextPack(input = {}) {
       classifierRuleIndex: intent.matchedRuleIndex,
       classifierFallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
       defaultOverrideReason: 'none',
+      builderFunction: 'buildChatContextPack',
+      fallbackBranchTaken: intent.fallbackApplied ? 'yes' : 'no',
+      fallbackBranchReason: intent.fallbackApplied ? 'no-intent-rule-matched' : 'none',
     },
   };
 }
