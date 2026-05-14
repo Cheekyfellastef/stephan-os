@@ -1742,14 +1742,25 @@ export default function App() {
         const missionConsoleVisible = rendered
           ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
           : false;
+        const visibilityReason = !rendered
+          ? 'not-mounted'
+          : !markerVisible
+            ? 'hidden-css'
+            : !missionConsoleVisible
+              ? 'collapsed'
+              : 'visible';
         return {
           configured: Boolean(canonicalPaneDefinitions.some((pane) => pane.id === 'aiConsole')),
           rendered,
-          visible: markerVisible && missionConsoleVisible,
+          visible: visibilityReason === 'visible',
           panelId: markerNode?.getAttribute('data-panel-id') || 'aiCoreMissionConsolePanel',
           forceOpen: markerNode?.getAttribute('data-force-panel-open') === 'true',
+          renderReason: rendered ? 'mounted-active-path' : 'not-mounted',
+          visibilityReason,
         };
       })(),
+      aiCoreActivePath: missionConsoleSurfaceMode ? 'missionConsoleSurfaceMode' : 'aiConsole',
+      renderedPaneOrderContainsAiConsole: renderedPaneIds.includes('aiConsole'),
       dedicatedMissionConsole: (() => {
         const markerNode = document.querySelector('[data-testid="dedicated-mission-console"]');
         const rendered = Boolean(markerNode);
@@ -1759,10 +1770,18 @@ export default function App() {
         const missionConsoleVisible = rendered
           ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
           : false;
+        const visibilityReason = !rendered
+          ? 'not-mounted'
+          : !markerVisible
+            ? 'hidden-css'
+            : !missionConsoleVisible
+              ? 'collapsed'
+              : 'visible';
         return {
           rendered,
-          visible: markerVisible && missionConsoleVisible,
+          visible: visibilityReason === 'visible',
           panelId: markerNode?.getAttribute('data-panel-id') || 'missionConsolePanel',
+          visibilityReason,
         };
       })(),
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
@@ -1986,9 +2005,12 @@ export default function App() {
           }))}
         />
         <section className="mission-console-surface-stage">
+          <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="true">
           <MissionConsoleTile
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
+            forcePanelOpen
+            panelId="aiCoreMissionConsolePanel"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
@@ -2019,6 +2041,7 @@ export default function App() {
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
+          </div>
         </section>
         <DebugConsole />
       </main>
