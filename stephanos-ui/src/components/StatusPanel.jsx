@@ -31,6 +31,7 @@ import {
 import CollapsiblePanel from './CollapsiblePanel';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
+import UIRealityStatusPanel from './UIRealityStatusPanel';
 
 export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null, missionBridgeTruth = null } = {}) {
   const [copyNotice, setCopyNotice] = useState(null);
@@ -177,6 +178,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
   const sessionRestoreReason = safeSessionRestoreDiagnostics.reasons?.[0] || runtimeContext.restoreDecision || 'Portable session state restored.';
   const browserWindow = typeof window !== 'undefined' ? window : null;
   const browserNavigator = typeof navigator !== 'undefined' ? navigator : null;
+  const uiRealityHarness = browserWindow?.__STEPHANOS_UI_REALITY__ || runtimeDiagnostics?.stephanosUiReality || null;
   const snapshotProviderKey = routeTruthView.selectedProvider || routeTruthView.executedProvider || provider;
   const snapshotProviderConfig = (typeof getEffectiveProviderConfig === 'function'
     ? getEffectiveProviderConfig(snapshotProviderKey)
@@ -676,6 +678,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         </>
       )}
     >
+      <UIRealityStatusPanel reality={uiRealityHarness} startupStatus={runtimeStatus.appLaunchState === 'error' ? 'error' : 'ok'} />
       {copyNotice ? (
         <div className="status-panel-copy-actions">
           <span className={`status-panel-copy-notice ${copyNotice.tone}`} role="status" aria-live="polite">

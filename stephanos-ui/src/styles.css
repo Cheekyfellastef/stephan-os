@@ -4597,3 +4597,17 @@ pre {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.ui-reality-status-panel {
+  border: 1px solid rgba(120,140,180,0.35);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.75rem;
+  background: rgba(20,24,36,0.45);
+  font-size: 0.88rem;
+}
+.ui-reality-status-panel p { margin: 0.2rem 0; }
+.ui-reality-status-panel details { margin-top: 0.35rem; }
+.ui-reality-status-panel.severity-fail { border-color: rgba(220,90,90,0.65); }
+.ui-reality-status-panel.severity-warn { border-color: rgba(220,180,90,0.65); }
+.ui-reality-status-panel.severity-ok { border-color: rgba(90,200,120,0.65); }
