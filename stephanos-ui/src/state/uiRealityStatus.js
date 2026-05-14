@@ -155,7 +155,10 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const agentMissionConsoleBodyCollapses = hasReality && reality.agentMissionConsoleCollapse
     ? reality.agentMissionConsoleCollapse.bodyVisibleWhenCollapsed !== true
     : null;
-  if (hasReality && nestedOperationalPaneIds.length > 0) failReasons.push('operational-panes-nested-in-agent-mission-console');
+  const deferredExtractionPaneIds = nestedOperationalPaneIds.filter((paneId) => paneId !== 'aiCoreMissionConsolePanel');
+  const deferredExtractionPaneFacts = nestedOperationalPaneFacts.filter((pane) => pane.paneId !== 'aiCoreMissionConsolePanel');
+  if (hasReality && nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel')) failReasons.push('ai-core-mission-console-nested-in-agent-mission-console');
+  if (hasReality && deferredExtractionPaneIds.length > 0) warnReasons.push('deferred-operational-pane-extractions-pending');
   if (hasReality && agentMissionConsoleBodyCollapses === false) failReasons.push('agent-mission-console-collapse-body-visible');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
@@ -214,15 +217,28 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityAiCoreMissionConsoleNesting: missionConsoleNesting,
     uiRealityOperationalPanePlacementStatus: !hasReality
       ? 'WARN'
-      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' && agentMissionConsoleBodyCollapses !== false ? 'OK' : 'FAIL'),
+      : (missionConsoleNesting !== 'first-class-pane' || agentMissionConsoleBodyCollapses === false
+        ? 'FAIL'
+        : deferredExtractionPaneIds.length > 0
+          ? 'NEEDS-FOLLOWUP'
+          : 'OK'),
     uiRealityOperationalPanePlacementNextAction: !hasReality
       ? 'Capture UI reality diagnostics to validate operational pane placement.'
-      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' && agentMissionConsoleBodyCollapses !== false
-        ? 'No operator action required.'
-        : 'Stage extraction PRs to unnest operational panes from Agent Mission Console; preserve canonical pane identities while lifting one pane group per PR.'),
-    uiRealitySuggestedExtractionPlan: nestedOperationalPaneIds.length > 0
-      ? `Extract in order: ${nestedOperationalPaneIds.join(' -> ')}.`
+      : (missionConsoleNesting !== 'first-class-pane' || agentMissionConsoleBodyCollapses === false
+        ? 'Extract aiCoreMissionConsolePanel into a first-class pane and restore Agent Mission Console body collapse boundaries.'
+        : deferredExtractionPaneIds.length > 0
+          ? 'Proceed with Stage 2B to extract deferred operational panes while preserving canonical tile identity and collapse truth.'
+          : 'No operator action required.'),
+    uiRealitySuggestedExtractionPlan: deferredExtractionPaneIds.length > 0
+      ? `Extract in order: ${deferredExtractionPaneIds.join(' -> ')}.`
       : 'No extraction required.',
+    uiRealityDeferredExtractionPaneIds: deferredExtractionPaneIds,
+    uiRealityDeferredExtractionPaneTitles: deferredExtractionPaneFacts.map((pane) => pane.title),
+    uiRealityDeferredExtractionNextAction: !hasReality
+      ? 'Capture UI reality diagnostics to identify deferred extraction candidates.'
+      : (deferredExtractionPaneIds.length > 0
+        ? 'Stage 2B: extract remaining deferred operational panes from Agent Mission Console.'
+        : 'No deferred extraction panes pending.'),
     ...copyFeedback,
   };
 }
