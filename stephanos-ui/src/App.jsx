@@ -279,6 +279,7 @@ export default function App() {
   markStartupStage('app-render-start');
 
   const safeUiLayout = uiLayout || {};
+  const arrangeModeActive = safeUiLayout.arrangeMode === true;
 
   const paneDefinitionsRecomputeRef = useRef(0);
   const appRenderCountRef = useRef(0);
@@ -1658,11 +1659,16 @@ export default function App() {
         ownerHeaderTestId: headerActions?.getAttribute('data-testid') || null,
       };
     });
-    const totalMoveControlsCreated = moveControlTrace.length;
+    const totalMoveControlsCreated = arrangeModeActive ? moveControlTrace.length : 0;
     const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedByCollapsiblePanel).length;
     const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
     const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
-    const panesMissingMoveControls = moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId);
+    const panesMissingMoveControls = arrangeModeActive
+      ? moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId)
+      : [];
+    const moveControlDetailState = arrangeModeActive
+      ? (panesMissingMoveControls.length > 0 ? 'missing' : totalMoveControlsVisible > 0 ? 'visible' : 'missing')
+      : 'intentionally-hidden';
     const paneShellFacts = paneShellNodes.map((shellNode) => {
       const panel = shellNode.querySelector('[data-panel-id]');
       const panelId = panel?.getAttribute('data-panel-id') || shellNode.getAttribute('data-pane-id');
@@ -1707,17 +1713,14 @@ export default function App() {
       paneShells: paneShellFacts,
       moveControlGroups: moveControlFacts,
       moveControlTrace,
+      arrangeMode: arrangeModeActive,
       totalMoveControlsCreated,
       totalMoveControlsConsumed,
       totalMoveControlsRendered,
       totalMoveControlsVisible,
       orphanMoveControlCount,
       panesMissingMoveControls,
-      moveControlDetailState: panesMissingMoveControls.length > 0
-        ? 'missing'
-        : totalMoveControlsVisible > 0
-          ? 'visible'
-          : 'intentionally-hidden',
+      moveControlDetailState,
       paneCollapseCoverage,
       totalFirstClassPanes: paneCollapseCoverage.length,
       panesWithCollapseControls: paneCollapseCoverage.filter((pane) => pane.hasCollapseControl).length,
@@ -1799,7 +1802,7 @@ export default function App() {
       paneDefinitionsRecomputeCount: paneDefinitionsRecomputeRef.current,
       lastUpdatedAt: new Date().toISOString(),
     };
-  }, [canonicalPaneDefinitions, defaultPaneOrder, orderedPanes, runtimeStatusModel?.runtimeContext?.surfaceMode, safePaneLayout.order, safeUiLayout]);
+  }, [arrangeModeActive, canonicalPaneDefinitions, defaultPaneOrder, orderedPanes, runtimeStatusModel?.runtimeContext?.surfaceMode, safePaneLayout.order, safeUiLayout]);
 
   function reorderPanes(sourcePaneId, targetPaneId) {
     if (!sourcePaneId || !targetPaneId || sourcePaneId === targetPaneId) {
@@ -2134,6 +2137,12 @@ export default function App() {
         />
       </CollapsiblePanel>
       <HomeBridgePanel />
+      <section className="provider-dock" aria-label="Layout controls">
+        <p className="provider-dock-status">Arrange Mode: <strong>{arrangeModeActive ? 'on' : 'off'}</strong></p>
+        <button type="button" className="ghost-button" onClick={() => setPanelState('arrangeMode', !arrangeModeActive)}>
+          {arrangeModeActive ? 'Disable Arrange Mode' : 'Enable Arrange Mode'}
+        </button>
+      </section>
 
       <section className="stephanos-workspace-canvas stephanos-app-workspace-canvas" data-workspace-shell="canonical" onDragOver={(event) => event.preventDefault()}>
         <div className="stephanos-workspace-gutter stephanos-workspace-gutter--left" aria-hidden="true" />
