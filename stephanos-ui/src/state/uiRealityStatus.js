@@ -127,6 +127,18 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const dedicatedVisibilityReason = hasReality && reality.dedicatedMissionConsole
     ? String(reality.dedicatedMissionConsole.visibilityReason || (dedicatedMissionConsoleVisible ? 'visible' : 'unknown'))
     : 'unknown';
+  const nestedOperationalPaneFacts = hasReality && Array.isArray(reality.aiConsoleNestedOperationalPanes)
+    ? reality.aiConsoleNestedOperationalPanes.map(normalizePaneFact).filter(Boolean)
+    : [];
+  const nestedOperationalPaneIds = nestedOperationalPaneFacts.map((pane) => pane.paneId);
+  const nestedOperationalPaneTitles = nestedOperationalPaneFacts.map((pane) => pane.title);
+  const missionConsoleNesting = hasReality
+    ? nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel')
+      ? 'nested-in-ai-console'
+      : aiCoreMissionConsoleRendered
+        ? 'first-class-pane'
+        : 'missing'
+    : 'unknown';
 
   const failReasons = [];
   const warnReasons = [];
@@ -140,6 +152,7 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
   if (hasReality && (!aiCoreMissionConsoleRendered || !aiCoreMissionConsoleVisible)) failReasons.push('ai-core-mission-console-missing');
   if (hasReality && !dedicatedMissionConsoleRendered) failReasons.push('dedicated-mission-console-missing');
+  if (hasReality && nestedOperationalPaneIds.length > 0) failReasons.push('operational-panes-nested-in-ai-console');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
   const copyFeedback = deriveCopyFeedbackStatus(reality, hasReality);
@@ -189,6 +202,18 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
       : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered
         ? 'No operator action required.'
         : 'Restore missing Mission Console surface via canonical MissionConsoleTile mount path.'),
+    uiRealityAiConsoleNestedOperationalPaneCount: nestedOperationalPaneIds.length,
+    uiRealityAiConsoleNestedOperationalPaneIds: nestedOperationalPaneIds,
+    uiRealityAiConsoleNestedOperationalPaneTitles: nestedOperationalPaneTitles,
+    uiRealityAiCoreMissionConsoleNesting: missionConsoleNesting,
+    uiRealityOperationalPanePlacementStatus: !hasReality
+      ? 'WARN'
+      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' ? 'OK' : 'FAIL'),
+    uiRealityOperationalPanePlacementNextAction: !hasReality
+      ? 'Capture UI reality diagnostics to validate operational pane placement.'
+      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane'
+        ? 'No operator action required.'
+        : 'Unnest operational panes from AI Console and render them as first-class panes in Stephanos AI Core.'),
     ...copyFeedback,
   };
 }
