@@ -41,6 +41,7 @@ export default function HostedIdeaStagingPanel() {
 
   return (
     <CollapsiblePanel
+      panelId="hostedIdeaStagingPanel"
       title="Hosted Idea Staging"
       isOpen={uiLayout.hostedIdeaStagingPanel !== false}
       onToggle={() => togglePanel('hostedIdeaStagingPanel')}

@@ -71,3 +71,21 @@ test('missing collapse controls include named pane ids and titles', () => {
   assert.deepEqual(result.missingCollapseControlIds, ['worldWorkspacePanel']);
   assert.deepEqual(result.missingCollapseControlTitles, ['World Workspace']);
 });
+
+
+test('hostedIdeaStagingPanel is absent from missing collapse list when canonical control exists', () => {
+  const result = deriveUiRealityStatus({ reality: {
+    paneShells: [{ paneId: 'hostedIdeaStagingPanel' }],
+    panesMissingCollapseControls: [],
+    moveControlGroups: [{ ownerPanelId: 'hostedIdeaStagingPanel' }],
+    totalFirstClassPanes: 1,
+    panesMissingMoveControls: [],
+    orphanMoveControlCount: 0,
+    totalMoveControlsVisible: 1,
+    metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
+    copyButtons: [],
+    layout: {},
+  } });
+  assert.equal(result.severity, 'OK');
+  assert.deepEqual(result.missingCollapseControlIds, []);
+});

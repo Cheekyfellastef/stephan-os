@@ -1433,6 +1433,7 @@ export default function App() {
     },
     {
       id: 'hostedIdeaStagingPanel',
+      title: 'Hosted Idea Staging',
       className: 'pane-span-2',
       render: () => <HostedIdeaStagingPanel />,
     },
