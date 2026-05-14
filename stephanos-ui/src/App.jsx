@@ -1260,7 +1260,14 @@ export default function App() {
   }, [runtimeFingerprint]);
 
   const paneDefinitions = useMemo(() => ([
-    { id: 'aiConsole', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
+    { id: 'aiConsole', title: 'AI Console', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
+      <CollapsiblePanel
+        panelId="commandDeck"
+        title="AI Console"
+        description="Primary AI command surface with mission console and merge console."
+        isOpen={safeUiLayout.commandDeck !== false}
+        onToggle={() => togglePanel('commandDeck')}
+      >
       <div className="primary-stack">
         {startupDiagnosticsVisible ? (
           <div className="api-banner degraded" role="status" aria-live="polite">
@@ -1291,6 +1298,7 @@ export default function App() {
         />
         <PowerShellMergeConsolePanel />
       </div>
+      </CollapsiblePanel>
     ) },
     { id: 'statusPanel', title: 'Route Status', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} /> },
     {
@@ -1481,7 +1489,7 @@ export default function App() {
       wideSurface: true,
       title: 'World Workspace',
       className: 'pane-span-2',
-      render: () => <WorldWorkspaceTile />,
+      render: () => <WorldWorkspaceTile uiLayout={safeUiLayout} togglePanel={togglePanel} />,
     },
     {
       id: 'openClawPanel',
@@ -1700,10 +1708,15 @@ export default function App() {
       totalMoveControlsVisible,
       orphanMoveControlCount,
       panesMissingMoveControls,
+      moveControlDetailState: panesMissingMoveControls.length > 0
+        ? 'missing'
+        : totalMoveControlsVisible > 0
+          ? 'visible'
+          : 'intentionally-hidden',
       paneCollapseCoverage,
       totalFirstClassPanes: paneCollapseCoverage.length,
       panesWithCollapseControls: paneCollapseCoverage.filter((pane) => pane.hasCollapseControl).length,
-      panesMissingCollapseControls: paneCollapseCoverage.filter((pane) => !pane.hasCollapseControl).map((pane) => pane.paneId),
+      panesMissingCollapseControls: paneCollapseCoverage.filter((pane) => !pane.hasCollapseControl).map((pane) => ({ paneId: pane.paneId, title: pane.title || pane.paneId })),
       wallOfTextPanesDefaultOpen: [],
       wallOfTextPanesDefaultCollapsed: [],
       agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,

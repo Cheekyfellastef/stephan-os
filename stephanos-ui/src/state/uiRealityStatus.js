@@ -1,16 +1,32 @@
+function normalizePaneFact(entry) {
+  if (!entry) return null;
+  if (typeof entry === 'string') return { paneId: entry, title: entry };
+  if (typeof entry !== 'object') return null;
+  const paneId = String(entry.paneId || entry.id || '').trim();
+  if (!paneId) return null;
+  const title = String(entry.title || paneId).trim() || paneId;
+  return { paneId, title };
+}
+
 export function deriveUiRealityStatus({ reality = null, startupStatus = null } = {}) {
   const hasReality = Boolean(reality && typeof reality === 'object');
   const paneShells = hasReality && Array.isArray(reality.paneShells) ? reality.paneShells.length : null;
-  const missingCollapseControls = hasReality && Array.isArray(reality.panesMissingCollapseControls)
-    ? reality.panesMissingCollapseControls.length
-    : null;
+  const missingCollapsePaneFacts = hasReality && Array.isArray(reality.panesMissingCollapseControls)
+    ? reality.panesMissingCollapseControls.map(normalizePaneFact).filter(Boolean)
+    : [];
+  const missingCollapseControls = hasReality ? missingCollapsePaneFacts.length : null;
   const orphanMoveControls = hasReality ? Number(reality.orphanMoveControlCount || 0) : null;
   const duplicateMoveControls = hasReality && Array.isArray(reality.moveControlGroups)
     ? Math.max(0, reality.moveControlGroups.length - Number(reality.totalFirstClassPanes || 0))
     : null;
-  const missingMoveControls = hasReality && Array.isArray(reality.panesMissingMoveControls)
-    ? reality.panesMissingMoveControls.length
-    : null;
+  const missingMovePaneFacts = hasReality && Array.isArray(reality.panesMissingMoveControls)
+    ? reality.panesMissingMoveControls.map(normalizePaneFact).filter(Boolean)
+    : [];
+  const missingMoveControls = hasReality ? missingMovePaneFacts.length : null;
+  const moveControlDetailState = !hasReality
+    ? 'unavailable'
+    : String(reality.moveControlDetailState || '').trim()
+      || (missingMoveControls > 0 ? 'missing' : Number(reality.totalMoveControlsVisible || 0) > 0 ? 'visible' : 'intentionally-hidden');
   const moveControlStatus = !hasReality
     ? 'missing'
     : orphanMoveControls > 0
@@ -46,7 +62,11 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     severity,
     paneShells,
     missingCollapseControls,
+    missingCollapseControlIds: missingCollapsePaneFacts.map((pane) => pane.paneId),
+    missingCollapseControlTitles: missingCollapsePaneFacts.map((pane) => pane.title),
     moveControlStatus,
+    moveControlDetailState,
+    panesMissingMoveControls: missingMovePaneFacts.map((pane) => pane.paneId),
     orphanMoveControls,
     duplicateMoveControls,
     sourceDist: sourceDist || 'unknown',
