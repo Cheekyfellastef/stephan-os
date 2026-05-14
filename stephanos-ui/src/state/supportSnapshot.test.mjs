@@ -2016,6 +2016,8 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
       copyButtons: [{ id: 'copy-support-snapshot' }],
       layout: { mode: 'default' },
       agentMissionConsoleOuter: { bodyVisible: true },
+      aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+      dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
     },
   });
   assert.match(snapshot, /UI Reality Status: FAIL/);
@@ -2028,6 +2030,11 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
   assert.match(snapshot, /UI Reality Duplicate Move Control Count: 1/);
   assert.match(snapshot, /UI Reality Source\/Dist Alignment: mismatch/);
   assert.match(snapshot, /UI Reality Diagnostics Available: yes/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Present: yes/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Panel ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Force Open: yes/);
+  assert.match(snapshot, /UI Reality Dedicated Mission Console Present: yes/);
+  assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: OK/);
 });
 
 test('buildSupportSnapshot includes WARN\/UNKNOWN UI reality section when diagnostics missing', () => {
@@ -2085,4 +2092,27 @@ test('support snapshot projects mission routing readiness fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { missionRoutingStatus: 'ready_for_codex', missionRoutingRecommendedRoute: 'codex_handoff', missionRoutingReadinessLevel: 'ready', missionRoutingLeadRole: 'codex_builder', missionRoutingCodexReady: 'yes', missionRoutingOpenClawResearchReady: 'no', missionRoutingOperatorDecisionRequired: 'no', missionRoutingBlockerCount: '0', missionRoutingWarningCount: '1', missionRoutingNextAction: 'Send bounded handoff.' } });
   assert.match(snapshot, /Mission Routing Status: ready_for_codex/);
   assert.match(snapshot, /Mission Routing Recommended Route: codex_handoff/);
+});
+
+
+test('buildSupportSnapshot marks mission console multi-surface FAIL when AI Core console missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready' },
+    uiReality: {
+      paneShells: [{}],
+      panesMissingCollapseControls: [],
+      moveControlGroups: [{}],
+      totalFirstClassPanes: 1,
+      panesMissingMoveControls: [],
+      totalMoveControlsVisible: 1,
+      metadata: { sourceDistAlignment: 'aligned' },
+      copyButtons: [],
+      layout: { mode: 'default' },
+      agentMissionConsoleOuter: { bodyVisible: true },
+      aiCoreMissionConsole: { present: false, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+      dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    },
+  });
+  assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: FAIL/);
+  assert.match(snapshot, /UI Reality Mission Console Next Action: Restore missing Mission Console surface via canonical MissionConsoleTile mount path\./);
 });
