@@ -36,6 +36,7 @@ import { deriveRuntimeOrchestrationSelectors } from '../state/runtimeOrchestrati
 import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandIntents.js';
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
+import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -2708,6 +2709,28 @@ export function useAIConsole() {
         executionModel: timeoutExecutionEnvelope.effectiveModel || '',
         providerConfigs: effectiveProviderConfigs,
       });
+      const chatContextPack = buildChatContextPack({
+        operatorMessage: prompt,
+        uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+        runtimeTruth: requestRuntimeStatus,
+        routeTruth: requestRouteTruthView,
+        providerTruth: {
+          executableProvider: requestRouteTruthView.executedProvider,
+          selectedProvider: requestRouteTruthView.selectedProvider,
+        },
+        missionState: {
+          status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown',
+        },
+        agentState: {
+          actingAgentId: requestRuntimeStatus?.agentActingAgentId || 'none',
+          blockedTaskCount: requestRuntimeStatus?.agentBlockedTaskCount || '0',
+        },
+        memoryState: {
+          candidates: Array.isArray(continuityLookup?.records) ? continuityLookup.records.map((record) => record.summary).filter(Boolean) : [],
+        },
+      });
+      setUiDiagnostics((prev) => ({ ...prev, chatContextPack }));
+
       const requestPayload = {
         request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
         provider: requestedProvider,
@@ -2734,6 +2757,7 @@ export function useAIConsole() {
         contextAssemblyMetadata: contextAssembly.truthMetadata,
         intentResult,
         missionPacket,
+        chatContextPack,
         submissionSource,
         submissionRoute,
         execution_cancelled: false,
@@ -2869,6 +2893,7 @@ export function useAIConsole() {
         freshnessContext: freshnessClassification,
         routeDecision: freshnessRouteDecision,
         contextAssembly,
+        chatContextPack,
         streamingMode,
         ollamaLoadMode: requestPayload.ollama_load_mode || ollamaLoadMode,
         abortSignal: activePromptRequestRef.current?.signal || null,
@@ -2910,6 +2935,12 @@ export function useAIConsole() {
         mission_packet_title: effectiveRequestPayload?.missionPacket?.missionTitle || 'n/a',
         mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
         mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
+        chat_context_pack_status: effectiveRequestPayload?.chatContextPack ? 'active' : 'unavailable',
+        chat_context_response_mode: effectiveRequestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
+        chat_context_relevant_canon_count: Array.isArray(effectiveRequestPayload?.chatContextPack?.relevantCanon) ? effectiveRequestPayload.chatContextPack.relevantCanon.length : 0,
+        chat_context_affected_subsystems: Array.isArray(effectiveRequestPayload?.chatContextPack?.affectedSubsystems) ? effectiveRequestPayload.chatContextPack.affectedSubsystems.join('|') : 'none',
+        chat_context_next_action: effectiveRequestPayload?.chatContextPack?.recommendedNextAction || 'Answer directly with bounded confidence.',
+        chat_context_warnings: Array.isArray(effectiveRequestPayload?.chatContextPack?.warnings) ? effectiveRequestPayload.chatContextPack.warnings.join(' | ') : 'none',
         mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
           ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
           : [],

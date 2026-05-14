@@ -122,6 +122,12 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
       taskFinisherMergeOperatorControlled: 'yes',
       taskFinisherWarningLevel: 'medium',
       taskFinisherNextAction: 'rebuild generated dist and rerun stephanos verify',
+      chatContextPackStatus: 'active',
+      chatContextResponseMode: 'merge-decision',
+      chatContextRelevantCanonCount: '3',
+      chatContextAffectedSubsystems: 'ui|route',
+      chatContextNextAction: 'Collect proof',
+      chatContextWarnings: 'none',
 
     },
     routeTruthView: {
@@ -258,6 +264,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Surface Active Protocols: touch-first-input, stacked-panels/);
   assert.match(snapshot, /Task Finisher Plan Status: ready_for_routine_finish/);
   assert.match(snapshot, /Task Finisher Merge Operator Controlled: yes/);
+  assert.match(snapshot, /Chat Context Pack Status: active/);
+  assert.match(snapshot, /Chat Context Response Mode: merge-decision/);
   assert.match(snapshot, /PR Evidence Parse Confidence: high/);
   assert.match(snapshot, /PR Evidence Parsed Repo: acme\/stephan-os/);
   assert.match(snapshot, /Surface Friction Latest: panel-dragging \(mission-console\) confidence=0.66/);
