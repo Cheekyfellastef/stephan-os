@@ -30,3 +30,16 @@ test('embedded Stephanos AI Core MissionConsoleTile is explicitly exempt from mi
   assert.match(missionConsoleSource, /if \(forcePanelOpen\) \{[\s\S]*blockedByForcePanelOpen: true,[\s\S]*return;\s*\}/m);
   assert.match(missionConsoleSource, /dispatchPanelToggle\(panelId\)/);
 });
+
+test('App wires canonical MissionConsoleTile mount props for AI Core and dedicated Mission Console surfaces', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+
+  assert.match(
+    appSource,
+    /id: 'aiConsole'[\s\S]*?<MissionConsoleTile[\s\S]*?forcePanelOpen[\s\S]*?panelId="aiCoreMissionConsolePanel"/m,
+  );
+  assert.match(
+    appSource,
+    /id: 'missionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?panelId="missionConsolePanel"/m,
+  );
+});
