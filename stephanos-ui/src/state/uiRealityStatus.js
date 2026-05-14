@@ -151,14 +151,21 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const paneTitleCounts = new Map();
   const paneShellFacts = hasReality && Array.isArray(reality.paneShells) ? reality.paneShells : [];
   const commandDeckPaneFact = paneShellFacts.find((pane) => String(pane?.panelId || '') === 'commandDeck')
-    || paneShellFacts.find((pane) => String(pane?.panelId || '') === 'aiConsole')
     || null;
   const commandDeckPanePresent = Boolean(commandDeckPaneFact);
   const commandDeckPaneId = commandDeckPaneFact ? String(commandDeckPaneFact.panelId || 'unknown') : 'missing';
   const commandDeckPaneTitle = commandDeckPaneFact ? String(commandDeckPaneFact.title || commandDeckPaneId || 'unknown') : 'missing';
   const commandDeckPaneVisible = commandDeckPaneFact ? commandDeckPaneFact.bodyVisible !== false : false;
   const renderedPaneOrder = hasReality && Array.isArray(reality.renderedPaneOrder) ? reality.renderedPaneOrder : [];
+  const commandDeckInPaneOrder = renderedPaneOrder.includes('commandDeck');
   const commandDeckPaneIndex = renderedPaneOrder.findIndex((paneId) => paneId === commandDeckPaneId);
+  const commandDeckMoveTrace = hasReality && Array.isArray(reality.moveControlTrace)
+    ? reality.moveControlTrace.find((trace) => String(trace?.paneId || '') === 'commandDeck') || null
+    : null;
+  const commandDeckMoveControlsVisible = Boolean(commandDeckMoveTrace?.visible);
+  const commandDeckCanMoveUp = commandDeckMoveTrace?.canMoveUp === true;
+  const commandDeckCanMoveDown = commandDeckMoveTrace?.canMoveDown === true;
+  const commandDeckHasNeighbors = commandDeckPaneIndex > 0 || (commandDeckPaneIndex >= 0 && commandDeckPaneIndex < renderedPaneOrder.length - 1);
   const commandDeckPlacementStatus = !hasReality
     ? 'WARN'
     : !commandDeckPanePresent
@@ -185,6 +192,8 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (arrangeMode === 'on' && orphanMoveControls > 0) failReasons.push('orphan-move-controls');
   if (arrangeMode === 'on' && duplicateMoveControls > 0) failReasons.push('duplicate-move-controls');
   if (arrangeMode === 'on' && missingMoveControls > 0) failReasons.push('missing-move-controls');
+  if (hasReality && commandDeckPanePresent && !commandDeckInPaneOrder) failReasons.push('command-deck-visible-missing-pane-order');
+  if (arrangeMode === 'on' && commandDeckPanePresent && commandDeckHasNeighbors && commandDeckMoveControlsVisible && !commandDeckCanMoveUp && !commandDeckCanMoveDown) failReasons.push('command-deck-move-controls-disabled-with-neighbors');
   if (missingCollapseControls > 0) failReasons.push('missing-collapse-controls');
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
   if (hasReality && (!aiCoreMissionConsoleRendered || !aiCoreMissionConsoleVisible)) failReasons.push('ai-core-mission-console-missing');
@@ -243,11 +252,24 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityAiChatCommandDeckPaneId: commandDeckPaneId,
     uiRealityAiChatCommandDeckPaneTitle: commandDeckPaneTitle,
     uiRealityAiChatCommandDeckVisible: commandDeckPaneVisible ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckOrderKey: 'commandDeck',
+    uiRealityAiChatCommandDeckInPaneOrder: commandDeckInPaneOrder ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckMoveControlsVisible: commandDeckMoveControlsVisible ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckCanMoveUp: commandDeckCanMoveUp ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckCanMoveDown: commandDeckCanMoveDown ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckLastMoveResult: hasReality ? String(reality?.lastPaneMoveResult || 'unknown') : 'unknown',
+    uiRealityAiChatCommandDeckMoveStatus: !hasReality
+      ? 'UNKNOWN'
+      : (!commandDeckPanePresent || !commandDeckInPaneOrder || (arrangeMode === 'on' && commandDeckHasNeighbors && commandDeckMoveControlsVisible && !commandDeckCanMoveUp && !commandDeckCanMoveDown))
+        ? 'FAIL'
+        : 'OK',
     uiRealityAiChatCommandDeckPlacementStatus: commandDeckPlacementStatus,
     uiRealityAiChatCommandDeckNextAction: !hasReality
       ? 'Capture UI reality diagnostics to validate command deck pane placement.'
       : !commandDeckPanePresent
         ? 'Restore first-class command deck pane mount using canonical AI console surface.'
+        : !commandDeckInPaneOrder
+          ? 'Register commandDeck in canonical pane order and reconcile persisted pane order.'
         : commandDeckPlacementStatus === 'OK'
           ? 'No operator action required.'
           : 'Move command deck pane near the top of pane order and keep it open by default.',
