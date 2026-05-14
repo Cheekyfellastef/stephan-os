@@ -1266,7 +1266,7 @@ export default function App() {
       <CollapsiblePanel
         panelId="commandDeck"
         title="AI Console"
-        description="Primary AI command surface with mission console and merge console."
+        description="Primary AI conversational command surface and merge console."
         isOpen={safeUiLayout.commandDeck !== false}
         onToggle={() => togglePanel('commandDeck')}
       >
@@ -1277,29 +1277,6 @@ export default function App() {
             <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
           </div>
         ) : null}
-        <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="true">
-        <MissionConsoleTile
-          uiLayout={safeUiLayout}
-          togglePanel={togglePanel}
-          forcePanelOpen
-          panelId="aiCoreMissionConsolePanel"
-          runtimeStatusModel={runtimeStatusModel}
-          finalRouteTruth={routeTruthView}
-          finalAgentView={displayAgentView}
-          branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-          onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
-          onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-          onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
-          submitPrompt={submitPrompt}
-          sharedConsoleInput={input}
-          setSharedConsoleInput={setInput}
-          sharedCommandHistory={commandHistory}
-          cancelActivePrompt={cancelActivePrompt}
-          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
-          orchestrationTruth={orchestrationTruth}
-          agentTaskProjection={agentTaskProjection}
-        />
-        </div>
         <PowerShellMergeConsolePanel />
       </div>
       </CollapsiblePanel>
@@ -1447,10 +1424,12 @@ export default function App() {
       className: 'pane-span-2',
       render: () => (
         <div data-testid="dedicated-mission-console" data-panel-id="missionConsolePanel" data-canonical-component="MissionConsoleTile">
+        <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="true">
         <MissionConsoleTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
-          panelId="missionConsolePanel"
+          forcePanelOpen
+          panelId="aiCoreMissionConsolePanel"
           runtimeStatusModel={runtimeStatusModel}
           finalRouteTruth={routeTruthView}
           finalAgentView={displayAgentView}
@@ -1467,6 +1446,7 @@ export default function App() {
           orchestrationTruth={orchestrationTruth}
           agentTaskProjection={agentTaskProjection}
         />
+        </div>
       </div>
       ),
     },
@@ -1707,6 +1687,24 @@ export default function App() {
       successState: /success/i.test(node.className || '') || /copied/i.test(node.textContent || ''),
     }));
     const canonicalCopyControls = getCanonicalCopySources();
+    const operationalPaneIds = [
+      'aiCoreMissionConsolePanel',
+      'missionConsoleOperatorOverviewPanel',
+      'missionConsoleRuntimeRouteStatusPanel',
+      'missionConsoleOperatorReliefPanel',
+      'missionConsoleSecondaryDiagnosticsPanel',
+      'missionConsoleConnectedTileContextsPanel',
+      'missionConsoleIntentToBuildPanel',
+    ];
+    const aiConsolePanelBody = document.querySelector('[data-panel-id="commandDeck"] .panel-body');
+    const nestedOperationalPaneFacts = operationalPaneIds
+      .map((panelId) => {
+        const node = aiConsolePanelBody?.querySelector(`[data-panel-id="${panelId}"]`);
+        return node
+          ? { paneId: panelId, title: String(node.getAttribute('data-title') || node.getAttribute('aria-label') || node.querySelector('.panel-header h2')?.textContent || panelId).trim() || panelId }
+          : null;
+      })
+      .filter(Boolean);
     const copyEvents = Array.isArray(previous?.copyEvents) ? previous.copyEvents : [];
     const lastCopyEvent = previous?.lastCopyEvent || null;
     const reality = {
@@ -1785,6 +1783,7 @@ export default function App() {
         };
       })(),
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
+      aiConsoleNestedOperationalPanes: nestedOperationalPaneFacts,
       copyButtons,
       copyEvents,
       lastCopyEvent,
