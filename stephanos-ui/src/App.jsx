@@ -1277,6 +1277,7 @@ export default function App() {
             <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
           </div>
         ) : null}
+        <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="true">
         <MissionConsoleTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
@@ -1298,6 +1299,7 @@ export default function App() {
           orchestrationTruth={orchestrationTruth}
           agentTaskProjection={agentTaskProjection}
         />
+        </div>
         <PowerShellMergeConsolePanel />
       </div>
       </CollapsiblePanel>
@@ -1444,6 +1446,7 @@ export default function App() {
       title: 'Mission Console',
       className: 'pane-span-2',
       render: () => (
+        <div data-testid="dedicated-mission-console" data-panel-id="missionConsolePanel" data-canonical-component="MissionConsoleTile">
         <MissionConsoleTile
           uiLayout={safeUiLayout}
           togglePanel={togglePanel}
@@ -1464,6 +1467,7 @@ export default function App() {
           orchestrationTruth={orchestrationTruth}
           agentTaskProjection={agentTaskProjection}
         />
+      </div>
       ),
     },
     {
@@ -1729,15 +1733,38 @@ export default function App() {
       wallOfTextPanesDefaultOpen: [],
       wallOfTextPanesDefaultCollapsed: [],
       agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,
-      aiCoreMissionConsole: {
-        present: Boolean(document.querySelector('[data-panel-id="aiCoreMissionConsolePanel"] .mission-console-shell, [data-panel-id="aiCoreMissionConsolePanel"] [data-testid="mission-console-inner-command-deck"]')),
-        panelId: 'aiCoreMissionConsolePanel',
-        forceOpen: true,
-      },
-      dedicatedMissionConsole: {
-        present: Boolean(paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel')),
-        panelId: 'missionConsolePanel',
-      },
+      aiCoreMissionConsole: (() => {
+        const markerNode = document.querySelector('[data-testid="ai-core-mission-console"]');
+        const rendered = Boolean(markerNode);
+        const markerVisible = rendered
+          ? (window.getComputedStyle(markerNode).display !== 'none' && window.getComputedStyle(markerNode).visibility !== 'hidden')
+          : false;
+        const missionConsoleVisible = rendered
+          ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
+          : false;
+        return {
+          configured: Boolean(canonicalPaneDefinitions.some((pane) => pane.id === 'aiConsole')),
+          rendered,
+          visible: markerVisible && missionConsoleVisible,
+          panelId: markerNode?.getAttribute('data-panel-id') || 'aiCoreMissionConsolePanel',
+          forceOpen: markerNode?.getAttribute('data-force-panel-open') === 'true',
+        };
+      })(),
+      dedicatedMissionConsole: (() => {
+        const markerNode = document.querySelector('[data-testid="dedicated-mission-console"]');
+        const rendered = Boolean(markerNode);
+        const markerVisible = rendered
+          ? (window.getComputedStyle(markerNode).display !== 'none' && window.getComputedStyle(markerNode).visibility !== 'hidden')
+          : false;
+        const missionConsoleVisible = rendered
+          ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
+          : false;
+        return {
+          rendered,
+          visible: markerVisible && missionConsoleVisible,
+          panelId: markerNode?.getAttribute('data-panel-id') || 'missionConsolePanel',
+        };
+      })(),
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
       copyButtons,
       copyEvents,
