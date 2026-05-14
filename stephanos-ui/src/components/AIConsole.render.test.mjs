@@ -26,7 +26,9 @@ function createBaseStore(overrides = {}) {
       chat_context_pack_status: 'active',
       chat_context_response_mode: 'merge-decision',
       chat_context_relevant_canon_count: 2,
-      chat_context_next_action: 'Collect proof',
+      chat_context_ui_reality_status: 'OK',
+      chat_context_mission_state: 'draft',
+      chat_context_next_action: 'Collect merge proof before deciding',
     },
     ...overrides,
   };
@@ -140,4 +142,20 @@ test('embedded mission console answer history keeps larger viewport and visible 
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(14rem,\s*34vh,\s*24rem\);/m);
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*min\(62vh,\s*760px\);/m);
   assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*position:\s*static;/m);
+});
+
+
+test('AIConsole context indicator renders active merge-decision state from execution metadata', async () => {
+  const { renderAIConsole } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'),
+    aliases,
+    'ai-console-context-indicator',
+  );
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore();
+  const rendered = renderAIConsole();
+  assert.match(rendered, /Context Pack: active/);
+  assert.match(rendered, /Response Mode: merge-decision/);
+  assert.match(rendered, /Relevant Canon Count: 2/);
+  assert.match(rendered, /UI Reality Status: OK/);
+  assert.match(rendered, /Next Action: Collect merge proof before deciding/);
 });

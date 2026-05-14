@@ -20,3 +20,14 @@ test('UI tasks include source/dist canon', () => {
   const canonText = pack.relevantCanon.map((entry) => entry.text).join(' | ');
   assert.match(canonText, /dist is never source of truth/);
 });
+
+
+test('merge-decision pack includes merge canon and non-direct next action', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?' });
+  const canonText = pack.relevantCanon.map((entry) => entry.text).join(' | ');
+  assert.equal(pack.recommendedResponseMode, 'merge-decision');
+  assert.match(canonText, /do not merge when checks\/build\/verify fail/);
+  assert.match(canonText, /prefer amendment to existing PR when PR is still open/);
+  assert.match(canonText, /do not treat terminal-only UI checks as complete/);
+  assert.match(pack.recommendedNextAction, /merge|proof|PR/i);
+});
