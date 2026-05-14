@@ -12,6 +12,7 @@ test('fresh default layout includes missionConsolePanel in canonical defaults', 
 
 test('persisted pane order reconciliation restores missionConsolePanel and preserves user order', () => {
   assert.match(source, /function normalizeOperatorPaneOrder\([\s\S]*canonicalOrder\.forEach\([\s\S]*normalized\.push\(paneId\)/m);
+  assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'commandDeck'/m);
   assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'aiCoreMissionConsolePanel'[\s\S]*'missionConsolePanel'/m);
   assert.match(source, /reconcilePersistedOperatorPaneLayout\([\s\S]*operatorPaneLayout\?\.order[\s\S]*legacyPaneOrder/m);
 });

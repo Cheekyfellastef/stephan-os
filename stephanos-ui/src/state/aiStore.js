@@ -154,7 +154,7 @@ const DEFAULT_UI_LAYOUT = {
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
-  'aiConsole',
+  'commandDeck',
   'aiCoreMissionConsolePanel',
   'missionConsolePanel',
   'statusPanel',
