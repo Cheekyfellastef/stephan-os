@@ -22,7 +22,7 @@ test('buildAiActionContext composes mission/workspace/runtime summaries', () => 
       ],
     },
     uiLayout: { missionDashboardPanel: true, toolsPanel: false, commandDeck: true },
-    paneLayout: { order: ['aiConsole', 'missionDashboardPanel'] },
+    paneLayout: { order: ['commandDeck', 'missionDashboardPanel'] },
     runtimeStatusModel: {
       appLaunchState: 'ready',
       selectedProvider: 'mock',

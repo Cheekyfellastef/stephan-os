@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AIConsole from './components/AIConsole';
-import PowerShellMergeConsolePanel from './components/PowerShellMergeConsolePanel';
 import StatusPanel from './components/StatusPanel';
 import DebugConsole from './components/DebugConsole';
 import ToolsPanel from './components/ToolsPanel';
@@ -1262,24 +1261,15 @@ export default function App() {
   }, [runtimeFingerprint]);
 
   const paneDefinitions = useMemo(() => ([
-    { id: 'aiConsole', title: 'AI Console', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
-      <CollapsiblePanel
-        panelId="commandDeck"
-        title="AI Console"
-        description="Primary AI conversational command surface and merge console."
-        isOpen={safeUiLayout.commandDeck !== false}
-        onToggle={() => togglePanel('commandDeck')}
-      >
-      <div className="primary-stack">
-        {startupDiagnosticsVisible ? (
-          <div className="api-banner degraded" role="status" aria-live="polite">
-            <strong>{runtimeStatus.headline || 'Diagnostics pending'}</strong>
-            <span>{runtimeStatus.dependencySummary || safeApiStatus.detail || 'Stephanos is loading runtime diagnostics and route status.'}</span>
-          </div>
-        ) : null}
-        <PowerShellMergeConsolePanel />
-      </div>
-      </CollapsiblePanel>
+    { id: 'commandDeck', title: 'Stephanos AI Chat Command Deck', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
+      <AIConsole
+        input={input}
+        setInput={setInput}
+        submitPrompt={submitPrompt}
+        cancelActivePrompt={cancelActivePrompt}
+        emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
+        commandHistory={commandHistory}
+      />
     ) },
     {
       id: 'aiCoreMissionConsolePanel',
@@ -1829,8 +1819,8 @@ export default function App() {
           placementReason,
         };
       })(),
-      aiCoreActivePath: missionConsoleSurfaceMode ? 'missionConsoleSurfaceMode' : 'aiConsole',
-      renderedPaneOrderContainsAiConsole: renderedPaneIds.includes('aiConsole'),
+      aiCoreActivePath: missionConsoleSurfaceMode ? 'missionConsoleSurfaceMode' : 'commandDeck',
+      renderedPaneOrderContainsAiConsole: renderedPaneIds.includes('commandDeck'),
       dedicatedMissionConsole: (() => {
         const markerNode = document.querySelector('[data-testid="dedicated-mission-console"]');
         const rendered = Boolean(markerNode);

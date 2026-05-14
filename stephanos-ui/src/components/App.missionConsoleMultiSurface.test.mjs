@@ -20,7 +20,7 @@ test('mission console can render in both landing tile and Stephanos AI Core surf
   assert.ok(missionConsoleMountCount >= 2, 'App should mount MissionConsoleTile in multiple legitimate surfaces');
 
   assert.match(appSource, /id: 'missionConsolePanel'/);
-  assert.match(appSource, /id: 'aiConsole'/);
+  assert.match(appSource, /id: 'commandDeck'/);
   assert.match(appSource, /id: 'aiCoreMissionConsolePanel'/);
 });
 
