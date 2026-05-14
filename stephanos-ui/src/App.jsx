@@ -95,6 +95,7 @@ import {
   loadOpenClawReadonlyValidationEvidence,
   saveOpenClawReadonlyValidationEvidence,
 } from '../../shared/agents/openClawReadonlyValidationStore.mjs';
+import { getCanonicalCopySources } from './utils/copyFeedbackRecorder.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
 const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
