@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const source = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'aiStore.js'), 'utf8');
+import { fileURLToPath } from 'node:url';
+
+const thisFilePath = fileURLToPath(import.meta.url);
+const thisDirPath = path.dirname(thisFilePath);
+const source = fs.readFileSync(path.join(thisDirPath, 'aiStore.js'), 'utf8');
 
 test('fresh default layout includes missionConsolePanel in canonical defaults', () => {
   assert.match(source, /const DEFAULT_UI_LAYOUT = \{[\s\S]*missionConsolePanel: true/m);
@@ -14,11 +18,12 @@ test('persisted pane order reconciliation restores missionConsolePanel and prese
   assert.match(source, /function normalizeOperatorPaneOrder\([\s\S]*canonicalOrder\.forEach\([\s\S]*normalized\.push\(paneId\)/m);
   assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'commandDeck'/m);
   assert.match(source, /const DEFAULT_OPERATOR_PANE_ORDER = \[[\s\S]*'aiCoreMissionConsolePanel'[\s\S]*'missionConsolePanel'/m);
+  assert.match(source, /legacyPaneAliasMap[\s\S]*aiConsole:\s*'commandDeck'/m);
   assert.match(source, /reconcilePersistedOperatorPaneLayout\([\s\S]*operatorPaneLayout\?\.order[\s\S]*legacyPaneOrder/m);
 });
 
 test('reconciliation avoids duplicate missionConsolePanel entries', () => {
-  assert.match(source, /seen\.has\(normalizedPaneId\)/m);
+  assert.match(source, /seen\.has\(canonicalPaneId\)/m);
 });
 
 

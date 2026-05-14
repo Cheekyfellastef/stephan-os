@@ -454,15 +454,19 @@ function normalizeUiLayout(value = {}) {
 
 function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPERATOR_PANE_ORDER) {
   const canonicalOrder = Array.isArray(requiredPaneOrder) ? requiredPaneOrder : DEFAULT_OPERATOR_PANE_ORDER;
+  const legacyPaneAliasMap = {
+    aiConsole: 'commandDeck',
+  };
   const seen = new Set();
   const normalized = [];
   (Array.isArray(value) ? value : []).forEach((paneId) => {
     const normalizedPaneId = String(paneId || '');
-    if (!canonicalOrder.includes(normalizedPaneId) || seen.has(normalizedPaneId)) {
+    const canonicalPaneId = legacyPaneAliasMap[normalizedPaneId] || normalizedPaneId;
+    if (!canonicalOrder.includes(canonicalPaneId) || seen.has(canonicalPaneId)) {
       return;
     }
-    seen.add(normalizedPaneId);
-    normalized.push(normalizedPaneId);
+    seen.add(canonicalPaneId);
+    normalized.push(canonicalPaneId);
   });
   canonicalOrder.forEach((paneId) => {
     if (!seen.has(paneId)) {
