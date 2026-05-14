@@ -2152,6 +2152,12 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
         chat_context_warnings: 'none',
         chat_context_attachment_probe: 'attached-at-final-execution-metadata',
         chat_context_attachment_probe_response_mode: 'merge-decision',
+        chat_context_raw_operator_message_seen: 'do I merge this PR?',
+        chat_context_normalized_operator_message: 'do I merge this PR?',
+        chat_context_intent_classifier_matched_rule: 'merge-decision',
+        chat_context_build_source: 'stephanos-mission-console',
+        chat_context_default_pack_used: 'no',
+        chat_context_was_overwritten: 'no',
       },
     },
   });
@@ -2162,6 +2168,13 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
   assert.match(snapshot, /Chat Context Final Execution Metadata Present: yes/);
   assert.match(snapshot, /Chat Context Attachment Probe Present: yes/);
   assert.match(snapshot, /Chat Context Attachment Probe Response Mode: merge-decision/);
+
+  assert.match(snapshot, /Chat Context Raw Operator Message Seen: do I merge this PR\?/);
+  assert.match(snapshot, /Chat Context Normalized Operator Message: do I merge this PR\?/);
+  assert.match(snapshot, /Chat Context Intent Classifier Matched Rule: merge-decision/);
+  assert.match(snapshot, /Chat Context Build Source: stephanos-mission-console/);
+  assert.match(snapshot, /Chat Context Default Pack Used: no/);
+  assert.match(snapshot, /Chat Context Was Overwritten: no/);
 });
 
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {

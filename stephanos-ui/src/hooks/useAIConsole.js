@@ -230,6 +230,22 @@ function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
 }
 
 
+
+function normalizeChatContextOperatorMessage(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function isDefaultChatContextValue(key = '', value = '') {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return true;
+  if (key === 'chat_context_pack_status') return ['unavailable', 'warning'].includes(normalized);
+  if (key === 'chat_context_response_mode') return normalized === 'direct-answer';
+  if (key === 'chat_context_relevant_canon_count') return normalized === '0';
+  return ['none', 'unknown', 'n/a'].includes(normalized);
+}
+
 function pickChatContextField(...values) {
   for (const value of values) {
     if (value === undefined || value === null) continue;
@@ -244,6 +260,8 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
   const raw = rawExecutionMetadata && typeof rawExecutionMetadata === 'object' ? rawExecutionMetadata : {};
   const trace = requestTrace && typeof requestTrace === 'object' ? requestTrace : {};
   const requestChatContext = buildChatContextExecutionMetadata(requestPayload?.chatContextPack || null);
+  const rawOperatorMessage = normalizeChatContextOperatorMessage(requestPayload?.raw_input || requestPayload?.prompt || requestPayload?.operatorMessage || '');
+  const normalizedOperatorMessage = normalizeChatContextOperatorMessage(requestPayload?.chatContextPack?.contextForPrompt?.operatorMessage || rawOperatorMessage);
   const probePrompt = String(requestPayload?.prompt || requestPayload?.raw_input || requestPayload?.operatorMessage || '').trim();
   const normalizedProbePrompt = probePrompt ? (probePrompt.length > 96 ? `${probePrompt.slice(0, 93)}...` : probePrompt) : 'n/a';
   const merged = {
@@ -267,9 +285,18 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_attachment_probe_prompt: normalizedProbePrompt,
     chat_context_attachment_probe_response_mode: pickChatContextField(raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode, 'direct-answer'),
   };
+  const validRequestPack = requestChatContext.chat_context_pack_status === 'active' && requestChatContext.chat_context_response_mode !== 'direct-answer';
+  const defaultPackUsed = requestChatContext.chat_context_pack_status !== 'active' ? 'yes' : 'no';
+  const overwrittenByDefault = validRequestPack && (isDefaultChatContextValue('chat_context_pack_status', raw.chat_context_pack_status) || isDefaultChatContextValue('chat_context_response_mode', raw.chat_context_response_mode));
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
   return {
     ...merged,
+    chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
+    chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
+    chat_context_intent_classifier_matched_rule: requestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
+    chat_context_build_source: requestPayload?.submissionSource || 'stephanos-mission-console',
+    chat_context_default_pack_used: defaultPackUsed,
+    chat_context_was_overwritten: overwrittenByDefault ? 'yes' : 'no',
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
 }
@@ -2813,6 +2840,7 @@ export function useAIConsole() {
       const requestPayload = {
         request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
         provider: requestedProvider,
+        raw_input: prompt,
         ui_requested_provider: normalizedUiRequestedProvider || requestedProvider,
         request_side_selected_provider: normalizedRequestProvider || requestedProvider,
         router_selected_provider: normalizeProviderKey(freshnessRouteDecision.selectedProvider || requestedProvider) || requestedProvider,

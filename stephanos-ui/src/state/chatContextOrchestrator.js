@@ -38,6 +38,9 @@ export function buildChatContextPack(input = {}) {
   if (String(uiReality.severity || '').toUpperCase() === 'FAIL') warnings.push('UI Reality FAIL: visual proof required before merge claims.');
   const uiTask = /\b(ui|pane|render|layout|button|console|collapse|arrange)\b/i.test(operatorMessage) || responseMode === 'diagnosis';
   const mergeDecisionTask = responseMode === 'merge-decision';
+  const inferredSubsystems = mergeDecisionTask
+    ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
+    : (uiTask ? ['ui', 'proof', 'source-truth'] : ['general']);
   const relevantCanon = CANON_RULES.filter((rule) => {
     if (mergeDecisionTask) return rule.tags.includes('merge') || rule.tags.includes('pr') || rule.tags.includes('codex') || rule.tags.includes('truth') || rule.tags.includes('ui') || rule.tags.includes('proof');
     if (uiTask) return rule.tags.includes('ui') || rule.tags.includes('truth') || rule.tags.includes('proof');
@@ -49,7 +52,9 @@ export function buildChatContextPack(input = {}) {
     version: CHAT_CONTEXT_VERSION,
     responseMode,
     relevantCanonCount: relevantCanon.length,
-    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) ? input.supportSnapshot.affectedSubsystems : [],
+    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) && input.supportSnapshot.affectedSubsystems.length
+      ? input.supportSnapshot.affectedSubsystems
+      : inferredSubsystems,
     nextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
@@ -67,7 +72,9 @@ export function buildChatContextPack(input = {}) {
     version: CHAT_CONTEXT_VERSION,
     compactSummary,
     operatorIntent: responseMode,
-    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) ? input.supportSnapshot.affectedSubsystems : [],
+    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) && input.supportSnapshot.affectedSubsystems.length
+      ? input.supportSnapshot.affectedSubsystems
+      : inferredSubsystems,
     missionMode: String(missionState.mode || missionState.status || 'unknown'),
     riskLevel: (uiTask || mergeDecisionTask) ? 'medium' : 'low',
     relevantCanon,
