@@ -150,6 +150,7 @@ const DEFAULT_UI_LAYOUT = {
   skillForgePanel: true,
   worldWorkspacePanel: true,
   capabilityRadarPanel: true,
+  arrangeMode: false,
   debugConsole: false,
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [

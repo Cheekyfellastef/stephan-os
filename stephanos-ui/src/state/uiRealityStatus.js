@@ -67,13 +67,20 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     ? reality.panesMissingMoveControls.map(normalizePaneFact).filter(Boolean)
     : [];
   const missingMoveControls = hasReality ? missingMovePaneFacts.length : null;
+  const arrangeMode = !hasReality
+    ? 'unknown'
+    : typeof reality.arrangeMode === 'boolean'
+      ? (reality.arrangeMode ? 'on' : 'off')
+      : 'on';
   const moveControlDetailState = !hasReality
     ? 'unavailable'
     : String(reality.moveControlDetailState || '').trim()
       || (missingMoveControls > 0 ? 'missing' : Number(reality.totalMoveControlsVisible || 0) > 0 ? 'visible' : 'intentionally-hidden');
   const moveControlStatus = !hasReality
     ? 'missing'
-    : orphanMoveControls > 0
+    : arrangeMode === 'off'
+      ? 'intentionally-hidden'
+      : orphanMoveControls > 0
       ? 'orphaned'
       : missingMoveControls > 0
         ? 'missing'
@@ -95,8 +102,9 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (!hasReality) warnReasons.push('ui-reality-unavailable');
   if (sourceDist === 'mismatch') failReasons.push('source-dist-mismatch');
   if (startup === 'error') failReasons.push('startup-error');
-  if (orphanMoveControls > 0) failReasons.push('orphan-move-controls');
-  if (duplicateMoveControls > 0) failReasons.push('duplicate-move-controls');
+  if (arrangeMode === 'on' && orphanMoveControls > 0) failReasons.push('orphan-move-controls');
+  if (arrangeMode === 'on' && duplicateMoveControls > 0) failReasons.push('duplicate-move-controls');
+  if (arrangeMode === 'on' && missingMoveControls > 0) failReasons.push('missing-move-controls');
   if (missingCollapseControls > 0) failReasons.push('missing-collapse-controls');
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
 
@@ -111,6 +119,8 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     missingCollapseControlTitles: missingCollapsePaneFacts.map((pane) => pane.title),
     moveControlStatus,
     moveControlDetailState,
+    arrangeMode,
+    totalMoveControlsVisible: hasReality ? Number(reality.totalMoveControlsVisible || 0) : null,
     panesMissingMoveControls: missingMovePaneFacts.map((pane) => pane.paneId),
     orphanMoveControls,
     duplicateMoveControls,

@@ -19,15 +19,16 @@ export default function StephanosSurfacePane({
     return null;
   }
   const paneCollapsed = resolvePaneCollapsedState(pane, uiLayout);
+  const arrangeModeActive = uiLayout?.arrangeMode === true;
   const wideSurfaceClass = pane.wideSurface ? ' stephanos-tile--wide-capable' : '';
   const wideSurfaceActiveClass = pane.wideSurface && !paneCollapsed ? ' stephanos-tile--wide-active' : '';
   const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
-  const moveControlGroup = (
+  const moveControlGroup = arrangeModeActive ? (
     <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="pane-header" data-pane-control-attached="true" data-testid={`pane-${pane.id}-move-controls`}>
       <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
       <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
     </div>
-  );
+  ) : null;
 
   const moveControlClaimedRef = useRef(false);
   const ownerPanelId = pane.layoutKey || pane.id;
