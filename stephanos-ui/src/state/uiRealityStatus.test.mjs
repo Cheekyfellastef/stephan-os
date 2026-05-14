@@ -119,3 +119,48 @@ test('fails when AI Core Mission Console is missing even if dedicated surface ex
   assert.equal(result.uiRealityMissionConsoleMultiSurfaceStatus, 'FAIL');
   assert.match(result.failReasons.join(','), /ai-core-mission-console-missing/);
 });
+
+test('UI Reality FAILs when AI Core Mission Console closest parent pane is missionConsolePanel', () => {
+  const result = deriveUiRealityStatus({ reality: {
+    paneShells: [{}, {}],
+    panesMissingCollapseControls: [],
+    moveControlGroups: [{}, {}],
+    totalFirstClassPanes: 2,
+    panesMissingMoveControls: [],
+    orphanMoveControlCount: 0,
+    metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
+    copyButtons: [{}],
+    layout: {},
+    aiCoreMissionConsole: {
+      configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: false,
+      domParentPaneId: 'missionConsolePanel', domParentPaneTitle: 'Mission Console', insideAgentMissionConsole: true, domAncestryPath: 'testid:ai-core-mission-console <- pane:missionConsolePanel', placementReason: 'nested-inside-agent-mission-console',
+    },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
+  } });
+  assert.equal(result.severity, 'FAIL');
+  assert.equal(result.uiRealityAiCoreMissionConsoleInsideAgentMissionConsole, 'yes');
+  assert.equal(result.uiRealityAiCoreMissionConsoleNesting, 'nested-in-agent-mission-console');
+});
+
+test('UI Reality OKs AI Core Mission Console placement when closest parent pane is aiCoreMissionConsolePanel', () => {
+  const result = deriveUiRealityStatus({ reality: {
+    paneShells: [{}, {}],
+    panesMissingCollapseControls: [],
+    moveControlGroups: [{}, {}],
+    totalFirstClassPanes: 2,
+    panesMissingMoveControls: [],
+    orphanMoveControlCount: 0,
+    metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
+    copyButtons: [{}],
+    layout: {},
+    aiCoreMissionConsole: {
+      configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: false,
+      domParentPaneId: 'aiCoreMissionConsolePanel', domParentPaneTitle: 'AI Core Mission Console', insideAgentMissionConsole: false, domAncestryPath: 'testid:ai-core-mission-console <- pane:aiCoreMissionConsolePanel', placementReason: 'first-class-pane-shell',
+    },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
+  } });
+  assert.equal(result.severity, 'OK');
+  assert.equal(result.uiRealityAiCoreMissionConsoleInsideAgentMissionConsole, 'no');
+  assert.equal(result.uiRealityAiCoreMissionConsoleNesting, 'first-class-pane');
+  assert.equal(result.uiRealityOperationalPanePlacementStatus, 'OK');
+});
