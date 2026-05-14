@@ -130,6 +130,23 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
   }).backendUrl;
 }
 
+function buildChatContextExecutionMetadata(chatContextPack = null) {
+  const hasPack = chatContextPack && typeof chatContextPack === 'object';
+  return {
+    chat_context_pack_status: chatContextPack?.compactSummary?.status || (hasPack ? 'active' : 'unavailable'),
+    chat_context_version: chatContextPack?.version || 'n/a',
+    chat_context_response_mode: chatContextPack?.recommendedResponseMode || 'direct-answer',
+    chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : 0,
+    chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : 'none',
+    chat_context_sources_used: Array.isArray(chatContextPack?.compactSummary?.contextSourcesUsed) ? chatContextPack.compactSummary.contextSourcesUsed.join('|') : 'none',
+    chat_context_ui_reality_status: chatContextPack?.compactSummary?.uiRealityStatusAtBuild || 'UNKNOWN',
+    chat_context_mission_state: chatContextPack?.compactSummary?.missionStateAtBuild || 'unknown',
+    chat_context_next_action: chatContextPack?.recommendedNextAction || 'Answer directly with bounded confidence.',
+    chat_context_warning_count: Number(chatContextPack?.compactSummary?.warningCount || 0),
+    chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : 'none',
+  };
+}
+
 
 
 function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
@@ -2807,6 +2824,7 @@ export function useAIConsole() {
         ollama_reader_cancelled: false,
         provider_generation_still_running_unknown: false,
         provider_generation_confirmed_stopped: false,
+        ...buildChatContextExecutionMetadata(chatContextPack),
       }));
       const requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
@@ -2935,17 +2953,7 @@ export function useAIConsole() {
         mission_packet_title: effectiveRequestPayload?.missionPacket?.missionTitle || 'n/a',
         mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
         mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
-        chat_context_pack_status: effectiveRequestPayload?.chatContextPack?.compactSummary?.status || (effectiveRequestPayload?.chatContextPack ? 'active' : 'unavailable'),
-        chat_context_version: effectiveRequestPayload?.chatContextPack?.version || 'n/a',
-        chat_context_response_mode: effectiveRequestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
-        chat_context_relevant_canon_count: Array.isArray(effectiveRequestPayload?.chatContextPack?.relevantCanon) ? effectiveRequestPayload.chatContextPack.relevantCanon.length : 0,
-        chat_context_affected_subsystems: Array.isArray(effectiveRequestPayload?.chatContextPack?.affectedSubsystems) ? effectiveRequestPayload.chatContextPack.affectedSubsystems.join('|') : 'none',
-        chat_context_sources_used: Array.isArray(effectiveRequestPayload?.chatContextPack?.compactSummary?.contextSourcesUsed) ? effectiveRequestPayload.chatContextPack.compactSummary.contextSourcesUsed.join('|') : 'none',
-        chat_context_ui_reality_status: effectiveRequestPayload?.chatContextPack?.compactSummary?.uiRealityStatusAtBuild || 'UNKNOWN',
-        chat_context_mission_state: effectiveRequestPayload?.chatContextPack?.compactSummary?.missionStateAtBuild || 'unknown',
-        chat_context_next_action: effectiveRequestPayload?.chatContextPack?.recommendedNextAction || 'Answer directly with bounded confidence.',
-        chat_context_warning_count: Number(effectiveRequestPayload?.chatContextPack?.compactSummary?.warningCount || 0),
-        chat_context_warnings: Array.isArray(effectiveRequestPayload?.chatContextPack?.warnings) ? effectiveRequestPayload.chatContextPack.warnings.join(' | ') : 'none',
+        ...buildChatContextExecutionMetadata(effectiveRequestPayload?.chatContextPack || null),
         mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
           ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
           : [],
