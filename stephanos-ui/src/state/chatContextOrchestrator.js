@@ -17,9 +17,9 @@ function pickResponseMode(msg = '') {
   const text = String(msg || '').toLowerCase();
   if (/\bdo i merge\b|\bshould i merge\b|\bmerge this\b/.test(text)) return 'merge-decision';
   if (/\bgive me (a )?(codex )?prompt\b|\bcodex prompt\b/.test(text)) return 'codex-prompt';
-  if (/\bbroken\b|\bnot working\b|\berror\b|\bbug\b/.test(text)) return 'diagnosis';
-  if (/\bwhat should we build next\b|\bbuild next\b|\bplan\b/.test(text)) return 'mission-planning';
-  if (/\bwhy does stephanos feel generic\b|\barchitecture\b/.test(text)) return 'architecture-guidance';
+  if (/\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/.test(text)) return 'diagnosis';
+  if (/\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b/.test(text)) return 'mission-planning';
+  if (/\bwhy does it feel generic\b|\bwhy does stephanos feel generic\b|\barchitecture\b/.test(text)) return 'architecture-guidance';
   if (/\bvr\b|flat-to-vr|\bresearch\b/.test(text)) return 'research-scouting';
   return 'direct-answer';
 }
@@ -37,8 +37,26 @@ export function buildChatContextPack(input = {}) {
   const uiTask = /\b(ui|pane|render|layout|button|console|collapse|arrange)\b/i.test(operatorMessage) || responseMode === 'diagnosis';
   const relevantCanon = CANON_RULES.filter((rule) => (uiTask ? rule.tags.includes('ui') || rule.tags.includes('truth') || rule.tags.includes('proof') : true));
 
+  const compactSummary = {
+    status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
+    version: CHAT_CONTEXT_VERSION,
+    responseMode,
+    relevantCanonCount: relevantCanon.length,
+    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) ? input.supportSnapshot.affectedSubsystems : [],
+    nextAction: uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.',
+    warningCount: warnings.length,
+    warnings,
+    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
+    uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
+    missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
+    providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
+    createdAt: new Date().toISOString(),
+    requestId: String(input.requestId || input.commandId || '').trim() || null,
+  };
+
   return {
     version: CHAT_CONTEXT_VERSION,
+    compactSummary,
     operatorIntent: responseMode,
     affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) ? input.supportSnapshot.affectedSubsystems : [],
     missionMode: String(missionState.mode || missionState.status || 'unknown'),
