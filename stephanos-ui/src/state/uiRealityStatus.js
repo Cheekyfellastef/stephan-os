@@ -156,16 +156,22 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const commandDeckPaneId = commandDeckPaneFact ? String(commandDeckPaneFact.panelId || 'unknown') : 'missing';
   const commandDeckPaneTitle = commandDeckPaneFact ? String(commandDeckPaneFact.title || commandDeckPaneId || 'unknown') : 'missing';
   const commandDeckPaneVisible = commandDeckPaneFact ? commandDeckPaneFact.bodyVisible !== false : false;
-  const renderedPaneOrder = hasReality && Array.isArray(reality.renderedPaneOrder) ? reality.renderedPaneOrder : [];
-  const commandDeckInPaneOrder = renderedPaneOrder.includes('commandDeck');
-  const commandDeckPaneIndex = renderedPaneOrder.findIndex((paneId) => paneId === commandDeckPaneId);
+  const statePaneOrder = hasReality && Array.isArray(reality.renderedPaneOrder) ? reality.renderedPaneOrder : [];
+  const domPaneOrder = hasReality && Array.isArray(reality.domPaneOrder) ? reality.domPaneOrder : [];
+  const canonicalPaneOrder = domPaneOrder.length > 0 ? domPaneOrder : statePaneOrder;
+  const canonicalPaneOrderSource = domPaneOrder.length > 0 ? 'dom-pane-shell-order' : 'rendered-pane-order-state';
+  const commandDeckFoundInDomOrder = domPaneOrder.includes('commandDeck');
+  const commandDeckFoundInStateOrder = statePaneOrder.includes('commandDeck');
+  const commandDeckInPaneOrder = canonicalPaneOrder.includes('commandDeck');
+  const commandDeckOrderDetectionSource = domPaneOrder.length > 0 ? 'dom-pane-shell-order' : 'rendered-pane-order-state';
+  const commandDeckPaneIndex = canonicalPaneOrder.findIndex((paneId) => paneId === commandDeckPaneId);
   const commandDeckMoveTrace = hasReality && Array.isArray(reality.moveControlTrace)
     ? reality.moveControlTrace.find((trace) => String(trace?.paneId || '') === 'commandDeck') || null
     : null;
   const commandDeckMoveControlsVisible = Boolean(commandDeckMoveTrace?.visible);
   const commandDeckCanMoveUp = commandDeckMoveTrace?.canMoveUp === true;
   const commandDeckCanMoveDown = commandDeckMoveTrace?.canMoveDown === true;
-  const commandDeckHasNeighbors = commandDeckPaneIndex > 0 || (commandDeckPaneIndex >= 0 && commandDeckPaneIndex < renderedPaneOrder.length - 1);
+  const commandDeckHasNeighbors = commandDeckPaneIndex > 0 || (commandDeckPaneIndex >= 0 && commandDeckPaneIndex < canonicalPaneOrder.length - 1);
   const commandDeckPlacementStatus = !hasReality
     ? 'WARN'
     : !commandDeckPanePresent
@@ -192,7 +198,11 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (arrangeMode === 'on' && orphanMoveControls > 0) failReasons.push('orphan-move-controls');
   if (arrangeMode === 'on' && duplicateMoveControls > 0) failReasons.push('duplicate-move-controls');
   if (arrangeMode === 'on' && missingMoveControls > 0) failReasons.push('missing-move-controls');
-  if (hasReality && commandDeckPanePresent && !commandDeckInPaneOrder) failReasons.push('command-deck-visible-missing-pane-order');
+  if (hasReality && commandDeckPanePresent && !commandDeckInPaneOrder) {
+    failReasons.push(commandDeckFoundInDomOrder !== commandDeckFoundInStateOrder
+      ? 'command-deck-pane-order-state-dom-mismatch'
+      : 'command-deck-visible-missing-pane-order');
+  }
   if (arrangeMode === 'on' && commandDeckPanePresent && commandDeckHasNeighbors && commandDeckMoveControlsVisible && !commandDeckCanMoveUp && !commandDeckCanMoveDown) failReasons.push('command-deck-move-controls-disabled-with-neighbors');
   if (missingCollapseControls > 0) failReasons.push('missing-collapse-controls');
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
@@ -254,6 +264,11 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityAiChatCommandDeckVisible: commandDeckPaneVisible ? 'yes' : 'no',
     uiRealityAiChatCommandDeckOrderKey: 'commandDeck',
     uiRealityAiChatCommandDeckInPaneOrder: commandDeckInPaneOrder ? 'yes' : 'no',
+    uiRealityRenderedPaneOrder: canonicalPaneOrder,
+    uiRealityCanonicalPaneOrderSource: canonicalPaneOrderSource,
+    uiRealityCommandDeckOrderDetectionSource: commandDeckOrderDetectionSource,
+    uiRealityAiChatCommandDeckFoundInDomOrder: commandDeckFoundInDomOrder ? 'yes' : 'no',
+    uiRealityAiChatCommandDeckFoundInStateOrder: commandDeckFoundInStateOrder ? 'yes' : 'no',
     uiRealityAiChatCommandDeckMoveControlsVisible: commandDeckMoveControlsVisible ? 'yes' : 'no',
     uiRealityAiChatCommandDeckCanMoveUp: commandDeckCanMoveUp ? 'yes' : 'no',
     uiRealityAiChatCommandDeckCanMoveDown: commandDeckCanMoveDown ? 'yes' : 'no',

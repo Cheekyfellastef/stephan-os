@@ -164,3 +164,25 @@ test('UI Reality OKs AI Core Mission Console placement when closest parent pane 
   assert.equal(result.uiRealityAiCoreMissionConsoleNesting, 'first-class-pane');
   assert.equal(result.uiRealityOperationalPanePlacementStatus, 'OK');
 });
+
+test('uses DOM pane order as canonical source for commandDeck order detection', () => {
+  const result = deriveUiRealityStatus({ reality: {
+    paneShells: [{ panelId: 'commandDeck', bodyVisible: true }],
+    renderedPaneOrder: ['aiConsole', 'missionConsolePanel'],
+    domPaneOrder: ['commandDeck', 'missionConsolePanel'],
+    panesMissingCollapseControls: [],
+    moveControlGroups: [{}, {}],
+    totalFirstClassPanes: 2,
+    panesMissingMoveControls: [],
+    orphanMoveControlCount: 0,
+    metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
+    copyButtons: [{}],
+    layout: {},
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: false },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
+  } });
+  assert.equal(result.uiRealityAiChatCommandDeckInPaneOrder, 'yes');
+  assert.equal(result.uiRealityAiChatCommandDeckFoundInDomOrder, 'yes');
+  assert.equal(result.uiRealityAiChatCommandDeckFoundInStateOrder, 'no');
+  assert.equal(result.uiRealityCanonicalPaneOrderSource, 'dom-pane-shell-order');
+});
