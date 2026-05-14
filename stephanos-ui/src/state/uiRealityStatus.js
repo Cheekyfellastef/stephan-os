@@ -127,8 +127,8 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const dedicatedVisibilityReason = hasReality && reality.dedicatedMissionConsole
     ? String(reality.dedicatedMissionConsole.visibilityReason || (dedicatedMissionConsoleVisible ? 'visible' : 'unknown'))
     : 'unknown';
-  const nestedOperationalPaneFacts = hasReality && Array.isArray(reality.aiConsoleNestedOperationalPanes)
-    ? reality.aiConsoleNestedOperationalPanes.map(normalizePaneFact).filter(Boolean)
+  const nestedOperationalPaneFacts = hasReality && Array.isArray(reality.agentMissionConsoleNestedOperationalPanes)
+    ? reality.agentMissionConsoleNestedOperationalPanes.map(normalizePaneFact).filter(Boolean)
     : [];
   const nestedOperationalPaneIds = nestedOperationalPaneFacts.map((pane) => pane.paneId);
   const nestedOperationalPaneTitles = nestedOperationalPaneFacts.map((pane) => pane.title);
@@ -152,7 +152,11 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
   if (hasReality && (!aiCoreMissionConsoleRendered || !aiCoreMissionConsoleVisible)) failReasons.push('ai-core-mission-console-missing');
   if (hasReality && !dedicatedMissionConsoleRendered) failReasons.push('dedicated-mission-console-missing');
-  if (hasReality && nestedOperationalPaneIds.length > 0) failReasons.push('operational-panes-nested-in-ai-console');
+  const agentMissionConsoleBodyCollapses = hasReality && reality.agentMissionConsoleCollapse
+    ? reality.agentMissionConsoleCollapse.bodyVisibleWhenCollapsed !== true
+    : null;
+  if (hasReality && nestedOperationalPaneIds.length > 0) failReasons.push('operational-panes-nested-in-agent-mission-console');
+  if (hasReality && agentMissionConsoleBodyCollapses === false) failReasons.push('agent-mission-console-collapse-body-visible');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
   const copyFeedback = deriveCopyFeedbackStatus(reality, hasReality);
@@ -202,18 +206,23 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
       : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered
         ? 'No operator action required.'
         : 'Restore missing Mission Console surface via canonical MissionConsoleTile mount path.'),
-    uiRealityAiConsoleNestedOperationalPaneCount: nestedOperationalPaneIds.length,
-    uiRealityAiConsoleNestedOperationalPaneIds: nestedOperationalPaneIds,
-    uiRealityAiConsoleNestedOperationalPaneTitles: nestedOperationalPaneTitles,
+    uiRealityAgentMissionConsoleNestedOperationalPaneCount: nestedOperationalPaneIds.length,
+    uiRealityAgentMissionConsoleNestedOperationalPaneIds: nestedOperationalPaneIds,
+    uiRealityAgentMissionConsoleNestedOperationalPaneTitles: nestedOperationalPaneTitles,
+    uiRealityAgentMissionConsoleBodyCollapses: agentMissionConsoleBodyCollapses === null ? 'unknown' : (agentMissionConsoleBodyCollapses ? 'yes' : 'no'),
+    uiRealityAgentMissionConsoleCollapseStatus: agentMissionConsoleBodyCollapses === false ? 'FAIL' : 'OK',
     uiRealityAiCoreMissionConsoleNesting: missionConsoleNesting,
     uiRealityOperationalPanePlacementStatus: !hasReality
       ? 'WARN'
-      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' ? 'OK' : 'FAIL'),
+      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' && agentMissionConsoleBodyCollapses !== false ? 'OK' : 'FAIL'),
     uiRealityOperationalPanePlacementNextAction: !hasReality
       ? 'Capture UI reality diagnostics to validate operational pane placement.'
-      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane'
+      : (nestedOperationalPaneIds.length === 0 && missionConsoleNesting === 'first-class-pane' && agentMissionConsoleBodyCollapses !== false
         ? 'No operator action required.'
-        : 'Unnest operational panes from AI Console and render them as first-class panes in Stephanos AI Core.'),
+        : 'Stage extraction PRs to unnest operational panes from Agent Mission Console; preserve canonical pane identities while lifting one pane group per PR.'),
+    uiRealitySuggestedExtractionPlan: nestedOperationalPaneIds.length > 0
+      ? `Extract in order: ${nestedOperationalPaneIds.join(' -> ')}.`
+      : 'No extraction required.',
     ...copyFeedback,
   };
 }
