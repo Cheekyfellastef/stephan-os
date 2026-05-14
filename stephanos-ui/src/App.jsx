@@ -1691,8 +1691,11 @@ export default function App() {
       testId: node.getAttribute('data-testid') || null,
       label: node.textContent?.trim() || '',
       className: node.className || '',
-      successState: /\bsuccess\b/i.test(node.className || '') || /copied/i.test(node.textContent || ''),
+      successState: /success/i.test(node.className || '') || /copied/i.test(node.textContent || ''),
     }));
+    const canonicalCopyControls = getCanonicalCopySources();
+    const copyEvents = Array.isArray(previous?.copyEvents) ? previous.copyEvents : [];
+    const lastCopyEvent = previous?.lastCopyEvent || null;
     const reality = {
       metadata,
       url: window.location.href,
@@ -1722,6 +1725,9 @@ export default function App() {
       agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
       copyButtons,
+      copyEvents,
+      lastCopyEvent,
+      canonicalCopyControls,
       layout: {
         viewport: { width: window.innerWidth, height: window.innerHeight },
         scrollHeight: document.documentElement?.scrollHeight || 0,
@@ -1782,7 +1788,7 @@ export default function App() {
       intentToBuildPanel: { panelId: 'missionConsoleIntentToBuildPanel', open: safeUiLayout.missionConsoleIntentToBuildPanel !== false },
       copyControls: {
         totalCopyControlsDetected: 4,
-        canonicalCopyControls: ['AnswerPaneCopyButton', 'StatusPanel.supportSnapshot', 'StatusPanel.codexHandoff', 'MissionConsoleTile.missionHandoff'],
+        canonicalCopyControls,
         nonCanonicalCopyControls: [],
         lastCopyEvent: previous?.lastCopyEvent || null,
         copyEvents: previous?.copyEvents || [],

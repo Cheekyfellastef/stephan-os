@@ -22,6 +22,7 @@ import {
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { normalizeMissionDashboardUiState } from '../state/missionDashboardUiState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const MISSION_RECORD_NAMESPACE = 'mission-dashboard';

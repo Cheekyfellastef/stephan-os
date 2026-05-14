@@ -8,6 +8,50 @@ function normalizePaneFact(entry) {
   return { paneId, title };
 }
 
+function deriveCopyFeedbackStatus(reality, hasReality) {
+  const copyEvents = hasReality && Array.isArray(reality.copyEvents) ? reality.copyEvents : [];
+  const lastCopyEvent = hasReality ? reality.lastCopyEvent || copyEvents.at(-1) || null : null;
+  const successes = copyEvents.filter((event) => event?.ok === true).length;
+  const failures = copyEvents.filter((event) => event?.ok !== true).length;
+  const greenConfirmedCount = copyEvents.filter((event) => event?.ok === true && event?.greenConfirmed === true).length;
+  const copyButtonsDetected = hasReality && Array.isArray(reality.copyButtons) ? reality.copyButtons.length : null;
+  const canonicalSources = hasReality && Array.isArray(reality.canonicalCopyControls) ? reality.canonicalCopyControls : [];
+  const observedSources = [...new Set(copyEvents.map((event) => String(event?.source || '').trim()).filter(Boolean))];
+  const nonCanonicalSources = observedSources.filter((source) => !canonicalSources.includes(source));
+  const diagnosticsAvailable = hasReality && (Array.isArray(reality.copyButtons) || copyEvents.length > 0 || canonicalSources.length > 0);
+  let status = 'UNKNOWN';
+  let nextAction = 'Capture copy diagnostics.';
+  if (!hasReality || !diagnosticsAvailable) {
+    status = hasReality ? 'WARN' : 'UNKNOWN';
+    nextAction = 'Refresh UI reality and run a copy action to populate diagnostics.';
+  } else if (nonCanonicalSources.length > 0) {
+    status = 'WARN';
+    nextAction = `Align non-canonical copy sources: ${nonCanonicalSources.join(', ')}.`;
+  } else if (failures > 0 && successes === 0) {
+    status = 'FAIL';
+    nextAction = 'Investigate clipboard failure path and retry copy.';
+  } else if (copyButtonsDetected > 0 && copyEvents.length === 0) {
+    status = 'WARN';
+    nextAction = 'Perform a canonical copy action to validate blue-to-green success feedback.';
+  } else {
+    status = 'OK';
+    nextAction = 'No operator action required.';
+  }
+  return {
+    copyFeedbackStatus: status,
+    copySuccessCount: successes,
+    copyFailureCount: failures,
+    lastCopyResult: lastCopyEvent ? (lastCopyEvent.ok === true ? 'success' : 'failure') : 'none',
+    lastCopySource: lastCopyEvent?.source || 'none',
+    greenSuccessConfirmedCount: greenConfirmedCount,
+    copyButtonsDetected,
+    canonicalCopyButtons: canonicalSources.length,
+    nonCanonicalCopyButtons: nonCanonicalSources.length,
+    nonCanonicalCopySources: nonCanonicalSources,
+    copyFeedbackNextAction: nextAction,
+  };
+}
+
 export function deriveUiRealityStatus({ reality = null, startupStatus = null } = {}) {
   const hasReality = Boolean(reality && typeof reality === 'object');
   const paneShells = hasReality && Array.isArray(reality.paneShells) ? reality.paneShells.length : null;
@@ -57,6 +101,7 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
+  const copyFeedback = deriveCopyFeedbackStatus(reality, hasReality);
 
   return {
     severity,
@@ -81,5 +126,6 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     warnReasons,
     url: hasReality ? reality.url || null : null,
     metadata,
+    ...copyFeedback,
   };
 }

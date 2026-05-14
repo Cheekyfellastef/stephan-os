@@ -31,6 +31,7 @@ import {
 import CollapsiblePanel from './CollapsiblePanel';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import UIRealityStatusPanel from './UIRealityStatusPanel';
 
 export default function StatusPanel({ finalAgentView = null, intentToBuildTruth = null, missionBridgeTruth = null } = {}) {
@@ -606,13 +607,16 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     try {
       const result = await writeTextToClipboard(supportSnapshot, { navigatorObject: browserNavigator });
       if (!result.ok) {
+        recordCopyFeedbackEvent({ source: 'StatusPanel.supportSnapshot', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: 'supportSnapshot', reason: result.reason || 'unknown', method: result.method || 'unknown' });
         setSupportSnapshotCopyState(COPY_STATE.FAILURE);
         notifyCopyResult('Copy failed', 'degraded');
         return;
       }
+      recordCopyFeedbackEvent({ source: 'StatusPanel.supportSnapshot', success: true, visualState: 'success', greenConfirmed: true, payloadKind: 'supportSnapshot', reason: result.reason || 'none', method: result.method || 'unknown' });
       setSupportSnapshotCopyState(COPY_STATE.SUCCESS);
       notifyCopyResult('Support snapshot copied', 'ready');
     } catch (_error) {
+      recordCopyFeedbackEvent({ source: 'StatusPanel.supportSnapshot', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: 'supportSnapshot', reason: 'exception', method: 'unknown' });
       setSupportSnapshotCopyState(COPY_STATE.FAILURE);
       notifyCopyResult('Copy failed', 'degraded');
     }
@@ -628,13 +632,16 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     try {
       const result = await writeTextToClipboard(payload, { navigatorObject: browserNavigator });
       if (!result.ok) {
+        recordCopyFeedbackEvent({ source: 'StatusPanel.codexHandoff', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: 'codexHandoff', reason: result.reason || 'unknown', method: result.method || 'unknown' });
         setCodexHandoffCopyState(COPY_STATE.FAILURE);
         notifyCopyResult('Codex handoff copy failed', 'degraded');
         return;
       }
+      recordCopyFeedbackEvent({ source: 'StatusPanel.codexHandoff', success: true, visualState: 'success', greenConfirmed: true, payloadKind: 'codexHandoff', reason: result.reason || 'none', method: result.method || 'unknown' });
       setCodexHandoffCopyState(COPY_STATE.SUCCESS);
       notifyCopyResult('Codex handoff copied', 'ready');
     } catch (_error) {
+      recordCopyFeedbackEvent({ source: 'StatusPanel.codexHandoff', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: 'codexHandoff', reason: 'exception', method: 'unknown' });
       setCodexHandoffCopyState(COPY_STATE.FAILURE);
       notifyCopyResult('Codex handoff copy failed', 'degraded');
     }
