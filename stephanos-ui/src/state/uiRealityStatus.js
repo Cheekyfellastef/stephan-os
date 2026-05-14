@@ -147,6 +147,20 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
           : 'missing'
     : 'unknown';
 
+
+  const paneTitleCounts = new Map();
+  const paneShellFacts = hasReality && Array.isArray(reality.paneShells) ? reality.paneShells : [];
+  for (const pane of paneShellFacts) {
+    const t = String(pane?.title || '').trim();
+    if (!t) continue;
+    paneTitleCounts.set(t, (paneTitleCounts.get(t) || 0) + 1);
+  }
+  const duplicatePaneTitles = [...paneTitleCounts.entries()].filter(([,count]) => count > 1).map(([title]) => title);
+  const missionConsolePaneFacts = paneShellFacts.filter((pane) => ['aiCoreMissionConsolePanel','missionConsolePanel'].includes(String(pane?.panelId || '')));
+  const missionConsolePaneIds = missionConsolePaneFacts.map((pane) => String(pane.panelId || 'unknown'));
+  const missionConsolePaneTitles = missionConsolePaneFacts.map((pane) => String(pane.title || pane.panelId || 'unknown'));
+  const missionConsoleDistinctTitles = new Set(missionConsolePaneTitles.filter(Boolean));
+  const duplicateMissionConsoleTitleCount = missionConsolePaneTitles.length - missionConsoleDistinctTitles.size;
   const failReasons = [];
   const warnReasons = [];
   if (!hasReality) warnReasons.push('ui-reality-unavailable');
@@ -167,6 +181,7 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (hasReality && (nestedOperationalPaneIds.includes('aiCoreMissionConsolePanel') || aiCoreInsideAgentMissionConsole || aiCoreDomParentPaneId === 'missionConsolePanel')) failReasons.push('ai-core-mission-console-nested-in-agent-mission-console');
   if (hasReality && deferredExtractionPaneIds.length > 0) warnReasons.push('deferred-operational-pane-extractions-pending');
   if (hasReality && agentMissionConsoleBodyCollapses === false) failReasons.push('agent-mission-console-collapse-body-visible');
+  if (hasReality && duplicateMissionConsoleTitleCount > 0) failReasons.push('duplicate-mission-console-pane-titles');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
   const copyFeedback = deriveCopyFeedbackStatus(reality, hasReality);
@@ -211,6 +226,17 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityMissionConsoleMultiSurfaceStatus: !hasReality
       ? 'WARN'
       : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered ? 'OK' : 'FAIL'),
+    uiRealityDuplicatePaneTitleCount: duplicatePaneTitles.length,
+    uiRealityDuplicatePaneTitles: duplicatePaneTitles,
+    uiRealityDuplicateMissionConsoleTitleCount: duplicateMissionConsoleTitleCount,
+    uiRealityMissionConsolePaneIds: missionConsolePaneIds,
+    uiRealityMissionConsolePaneTitles: missionConsolePaneTitles,
+    uiRealityMissionConsoleIdentityStatus: !hasReality ? 'WARN' : (duplicateMissionConsoleTitleCount > 0 ? 'FAIL' : 'OK'),
+    uiRealityMissionConsoleIdentityNextAction: !hasReality
+      ? 'Capture UI reality diagnostics to validate mission console pane identity.'
+      : (duplicateMissionConsoleTitleCount > 0
+        ? 'Assign distinct human-readable titles to aiCoreMissionConsolePanel and missionConsolePanel.'
+        : 'No operator action required.'),
     uiRealityMissionConsoleNextAction: !hasReality
       ? 'Capture UI reality diagnostics to validate Mission Console multi-surface mount.'
       : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered
