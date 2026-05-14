@@ -1631,9 +1631,9 @@ export default function App() {
     });
     const orphanMoveControlCount = moveControlFacts.filter((fact) => !fact.attached).length;
     const moveControlTrace = orderedPanes.map((pane, index) => {
-      const panel = document.querySelector(`[data-panel-id="${pane.layoutKey || pane.id}"]`);
-      const headerActions = panel?.querySelector('.panel-header-actions') || null;
-      const groupNode = panel?.querySelector('[data-pane-control-group="move-order"]') || null;
+      const paneShell = document.querySelector(`[data-pane-id="${pane.id}"]`);
+      const panel = paneShell?.querySelector(`[data-panel-id="${pane.layoutKey || pane.id}"]`) || null;
+      const groupNode = paneShell?.querySelector('[data-pane-control-group="move-order"]') || null;
       const rect = groupNode?.getBoundingClientRect ? groupNode.getBoundingClientRect() : null;
       const style = groupNode ? window.getComputedStyle(groupNode) : null;
       const visible = Boolean(groupNode && style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect && rect.width > 0 && rect.height > 0);
@@ -1645,26 +1645,27 @@ export default function App() {
         canMoveDown: index < orderedPanes.length - 1,
         createdByStephanosSurfacePane: true,
         providerValuePresent: true,
-        consumedByCollapsiblePanel: Boolean(headerActions),
-        claimAttempted: Boolean(headerActions),
+        consumedByCollapsiblePanel: false,
+        claimAttempted: false,
         claimAccepted: Boolean(groupNode),
         claimRejectedReason: groupNode ? null : 'not-rendered-in-owner-header',
-        renderedInHeaderActions: Boolean(groupNode && headerActions?.contains(groupNode)),
+        renderedInHeaderActions: false,
+        renderedInPaneShell: Boolean(groupNode && paneShell?.contains(groupNode)),
         domNodeFound: Boolean(groupNode),
         visible,
         cssDisplay: style?.display || null,
         cssVisibility: style?.visibility || null,
         cssOpacity: style?.opacity || null,
         boundingBox: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-        ownerHeaderTestId: headerActions?.getAttribute('data-testid') || null,
+        ownerHeaderTestId: null,
       };
     });
     const totalMoveControlsCreated = arrangeModeActive ? moveControlTrace.length : 0;
     const totalMoveControlsConsumed = moveControlTrace.filter((item) => item.consumedByCollapsiblePanel).length;
-    const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInHeaderActions).length;
+    const totalMoveControlsRendered = moveControlTrace.filter((item) => item.renderedInPaneShell).length;
     const totalMoveControlsVisible = moveControlTrace.filter((item) => item.visible).length;
     const panesMissingMoveControls = arrangeModeActive
-      ? moveControlTrace.filter((item) => !item.renderedInHeaderActions).map((item) => item.paneId)
+      ? moveControlTrace.filter((item) => !item.renderedInPaneShell).map((item) => item.paneId)
       : [];
     const moveControlDetailState = arrangeModeActive
       ? (panesMissingMoveControls.length > 0 ? 'missing' : totalMoveControlsVisible > 0 ? 'visible' : 'missing')
@@ -2137,9 +2138,9 @@ export default function App() {
         />
       </CollapsiblePanel>
       <HomeBridgePanel />
-      <section className="provider-dock" aria-label="Layout controls">
-        <p className="provider-dock-status">Arrange Mode: <strong>{arrangeModeActive ? 'on' : 'off'}</strong></p>
-        <button type="button" className="ghost-button" onClick={() => setPanelState('arrangeMode', !arrangeModeActive)}>
+      <section className="arrange-mode-toolbar" aria-label="Layout controls" data-testid="arrange-mode-toolbar">
+        <p className="provider-dock-status arrange-mode-status">Arrange Mode: <strong>{arrangeModeActive ? 'on' : 'off'}</strong></p>
+        <button type="button" className="ghost-button arrange-mode-toggle" onClick={() => setPanelState('arrangeMode', !arrangeModeActive)} data-testid="arrange-mode-toggle">
           {arrangeModeActive ? 'Disable Arrange Mode' : 'Enable Arrange Mode'}
         </button>
       </section>

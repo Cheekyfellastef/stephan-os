@@ -124,6 +124,9 @@ test('App diagnostics expose explicit agent mission console live mount keys', ()
 
 test('pane canon keeps move controls and collapse state persistence surfaces intact', () => {
   assert.equal(surfacePaneSource.includes('className="pane-order-controls"'), true);
+  assert.equal(surfacePaneSource.includes('pane-order-controls-shell'), true);
+  assert.equal(surfacePaneSource.includes('data-testid={`pane-${pane.id}-move-up`}'), true);
+  assert.equal(surfacePaneSource.includes('data-testid={`pane-${pane.id}-move-down`}'), true);
   assert.equal(surfacePaneSource.includes('ownerPanelId = pane.layoutKey || pane.id'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveUp}'), true);
   assert.equal(surfacePaneSource.includes('onClick={onMoveDown}'), true);
@@ -131,6 +134,12 @@ test('pane canon keeps move controls and collapse state persistence surfaces int
   assert.equal(collapsiblePanelSource.includes('const matchesOwnerPanel = paneMoveControlsContext?.ownerPanelId === panelId;'), true);
   assert.equal(collapsiblePanelSource.includes('const claimResult = matchesOwnerPanel'), true);
   assert.equal(appSource.includes('togglePanel('), true);
+});
+
+test('Arrange Mode toggle uses compact toolbar placement instead of full pane surface section', () => {
+  assert.equal(appSource.includes('className="arrange-mode-toolbar"'), true);
+  assert.equal(appSource.includes('data-testid="arrange-mode-toolbar"'), true);
+  assert.equal(appSource.includes('className="provider-dock" aria-label="Layout controls"'), false);
 });
 
 test('UI reality diagnostics track move-control and collapse coverage truth', () => {

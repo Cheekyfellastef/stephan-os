@@ -9,8 +9,9 @@ const appPath = path.join(componentsDir, '../App.jsx');
 
 test('outer Stephanos surface pane preserves shell collapse state while rendering pane for header controls', async () => {
   const source = await fs.readFile(surfacePanePath, 'utf8');
-  assert.match(source, /const paneNode = pane\.render\(\{ moveControlGroup \}\);/);
+  assert.match(source, /const paneNode = pane\.render\(\{\}\);/);
   assert.match(source, /StephanosPaneMoveControlsContext\.Provider/);
+  assert.match(source, /pane-order-controls-shell/);
   assert.match(source, /data-pane-collapsed=\{paneCollapsed \? 'true' : 'false'\}/);
 });
 
