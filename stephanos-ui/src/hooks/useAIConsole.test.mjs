@@ -32,7 +32,7 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /chat_context_pack_status/);
   assert.match(source, /setLastExecutionMetadata\(\(prev\) => \(\{/);
   assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(chatContextPack\)/);
-  assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(effectiveRequestPayload\?\.chatContextPack \|\| null\)/);
+  assert.match(source, /\.\.\.buildChatContextAttachmentMetadata\(\{/);
   assert.match(source, /submission_console: executionMetadata\.submission_console \|\| requestTrace\.submission_console \|\| requestPayload\.submissionSource \|\| 'stephanos-mission-console'/);
   assert.match(source, /submission_route: executionMetadata\.submission_route \|\| requestTrace\.submission_route \|\| requestPayload\.submissionRoute \|\| 'assistant-router'/);
   assert.match(source, /chat_context_pack_status/);
@@ -41,5 +41,5 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /chat_context_relevant_canon_count/);
   assert.match(source, /chat_context_sources_used/);
   assert.match(source, /chat_context_warning_count/);
-  assert.match(source, /request_payload_chat_context_present:\s*Boolean\(effectiveRequestPayload\?\.chatContextPack\)/);
+  assert.match(source, /request_payload_chat_context_present:\s*Boolean\(\(effectiveRequestPayload\?\.chatContextPack\) \|\|/);
 });
