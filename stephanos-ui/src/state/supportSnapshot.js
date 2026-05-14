@@ -448,7 +448,7 @@ export function buildSupportSnapshot({
   const chatContextMissionState = runtimeStatus?.chatContextMissionState || executionMetadata.chat_context_mission_state || 'unknown';
   const chatContextNextAction = runtimeStatus?.chatContextNextAction || executionMetadata.chat_context_next_action || (commandExecutedWithoutContext
     ? 'Command executed without chat context metadata; regenerate context pack on next submission.'
-    : (chatContextStatus === 'unavailable' ? 'Submit a Command Deck message to generate context pack.' : 'Answer directly with bounded confidence.')); 
+    : (chatContextStatus === 'unavailable' ? 'Submit an operator command to generate context pack.' : 'Answer directly with bounded confidence.')); 
   const chatContextWarningCount = runtimeStatus?.chatContextWarningCount ?? executionMetadata.chat_context_warning_count ?? (commandExecutedWithoutContext ? 1 : 0);
   const chatContextWarnings = runtimeStatus?.chatContextWarnings || executionMetadata.chat_context_warnings || (commandExecutedWithoutContext ? 'command executed without chat context metadata' : 'none');
 

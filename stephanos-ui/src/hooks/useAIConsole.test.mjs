@@ -26,6 +26,15 @@ test('useAIConsole request path includes chat context pack metadata', async () =
 
 test('useAIConsole stores compact chat context metadata in latest execution metadata', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /function buildChatContextExecutionMetadata/);
+  assert.match(source, /submissionSource = 'stephanos-mission-console'/);
+  assert.match(source, /submissionRoute = 'assistant-router'/);
+  assert.match(source, /chat_context_pack_status/);
+  assert.match(source, /setLastExecutionMetadata\(\(prev\) => \(\{/);
+  assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(chatContextPack\)/);
+  assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(effectiveRequestPayload\?\.chatContextPack \|\| null\)/);
+  assert.match(source, /submission_console: executionMetadata\.submission_console \|\| requestTrace\.submission_console \|\| requestPayload\.submissionSource \|\| 'stephanos-mission-console'/);
+  assert.match(source, /submission_route: executionMetadata\.submission_route \|\| requestTrace\.submission_route \|\| requestPayload\.submissionRoute \|\| 'assistant-router'/);
   assert.match(source, /chat_context_pack_status/);
   assert.match(source, /chat_context_version/);
   assert.match(source, /chat_context_response_mode/);
