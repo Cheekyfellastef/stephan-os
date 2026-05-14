@@ -1281,6 +1281,36 @@ export default function App() {
       </div>
       </CollapsiblePanel>
     ) },
+    {
+      id: 'aiCoreMissionConsolePanel',
+      wideSurface: true,
+      title: 'AI Core Mission Console',
+      className: 'pane-span-2',
+      render: () => (
+        <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="false">
+          <MissionConsoleTile
+            uiLayout={safeUiLayout}
+            togglePanel={togglePanel}
+            panelId="aiCoreMissionConsolePanel"
+            runtimeStatusModel={runtimeStatusModel}
+            finalRouteTruth={routeTruthView}
+            finalAgentView={displayAgentView}
+            branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+            onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+            onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
+            submitPrompt={submitPrompt}
+            sharedConsoleInput={input}
+            setSharedConsoleInput={setInput}
+            sharedCommandHistory={commandHistory}
+            cancelActivePrompt={cancelActivePrompt}
+            emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
+            orchestrationTruth={orchestrationTruth}
+            agentTaskProjection={agentTaskProjection}
+          />
+        </div>
+      ),
+    },
     { id: 'statusPanel', title: 'Route Status', render: () => <StatusPanel finalAgentView={displayAgentView} intentToBuildTruth={intentToBuildTruth} missionBridgeTruth={missionBridgeTruth} /> },
     {
       id: 'toolsPanel',
@@ -1424,30 +1454,27 @@ export default function App() {
       className: 'pane-span-2',
       render: () => (
         <div data-testid="dedicated-mission-console" data-panel-id="missionConsolePanel" data-canonical-component="MissionConsoleTile">
-        <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="true">
-        <MissionConsoleTile
-          uiLayout={safeUiLayout}
-          togglePanel={togglePanel}
-          forcePanelOpen
-          panelId="aiCoreMissionConsolePanel"
-          runtimeStatusModel={runtimeStatusModel}
-          finalRouteTruth={routeTruthView}
-          finalAgentView={displayAgentView}
-          branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
-          onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
-          onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-          onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
-          submitPrompt={submitPrompt}
-          sharedConsoleInput={input}
-          setSharedConsoleInput={setInput}
-          sharedCommandHistory={commandHistory}
-          cancelActivePrompt={cancelActivePrompt}
-          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
-          orchestrationTruth={orchestrationTruth}
-          agentTaskProjection={agentTaskProjection}
-        />
+          <MissionConsoleTile
+            uiLayout={safeUiLayout}
+            togglePanel={togglePanel}
+            panelId="missionConsolePanel"
+            runtimeStatusModel={runtimeStatusModel}
+            finalRouteTruth={routeTruthView}
+            finalAgentView={displayAgentView}
+            branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
+            onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
+            onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
+            submitPrompt={submitPrompt}
+            sharedConsoleInput={input}
+            setSharedConsoleInput={setInput}
+            sharedCommandHistory={commandHistory}
+            cancelActivePrompt={cancelActivePrompt}
+            emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
+            orchestrationTruth={orchestrationTruth}
+            agentTaskProjection={agentTaskProjection}
+          />
         </div>
-      </div>
       ),
     },
     {
@@ -1831,7 +1858,7 @@ export default function App() {
       hydratedOperatorPaneLayoutOrder: safePaneLayout.order || [],
       uiLayout: safeUiLayout,
       safeUiLayout,
-      forcePanelOpenActivity: [{ panelId: 'aiCoreMissionConsolePanel', forcedOpen: true, source: 'App.aiCoreEmbeddedMissionConsole' }],
+      forcePanelOpenActivity: [{ panelId: 'aiCoreMissionConsolePanel', forcedOpen: false, source: 'App.aiCoreFirstClassPane' }],
       agentMissionConsole: {
         outer: {
           title: 'Agent Mission Console',

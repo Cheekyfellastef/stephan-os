@@ -155,6 +155,7 @@ const DEFAULT_UI_LAYOUT = {
 };
 const DEFAULT_OPERATOR_PANE_ORDER = [
   'aiConsole',
+  'aiCoreMissionConsolePanel',
   'missionConsolePanel',
   'statusPanel',
   'toolsPanel',
@@ -472,12 +473,12 @@ function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPER
 }
 
 
-function persistedPaneOrderIncludesMissionConsole(persistedSession = {}) {
+function persistedPaneOrderIncludesPane(persistedSession = {}, paneId = '') {
   const sessionUi = persistedSession?.session?.ui || {};
   const legacyPaneOrder = sessionUi?.uiLayout?.paneOrder || sessionUi?.paneOrder || [];
   const persistedOrder = sessionUi?.operatorPaneLayout?.order;
   const sourceOrder = Array.isArray(persistedOrder) && persistedOrder.length > 0 ? persistedOrder : legacyPaneOrder;
-  return Array.isArray(sourceOrder) && sourceOrder.includes('missionConsolePanel');
+  return Array.isArray(sourceOrder) && sourceOrder.includes(String(paneId || ''));
 }
 export function reconcilePersistedOperatorPaneLayout(persistedSession = {}) {
   const sessionUi = persistedSession?.session?.ui || {};
@@ -753,9 +754,14 @@ function createInitialMemorySnapshot() {
     const effectiveUiLayoutBase = hasPersistedUiLayout
       ? normalizedUiLayout
       : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
-    const shouldForceMissionConsoleOpen = !persistedPaneOrderIncludesMissionConsole(persistedSession);
-    const effectiveUiLayout = shouldForceMissionConsoleOpen
-      ? { ...effectiveUiLayoutBase, missionConsolePanel: true }
+    const shouldForceMissionConsoleOpen = !persistedPaneOrderIncludesPane(persistedSession, 'missionConsolePanel');
+    const shouldForceAiCoreMissionConsoleOpen = !persistedPaneOrderIncludesPane(persistedSession, 'aiCoreMissionConsolePanel');
+    const effectiveUiLayout = (shouldForceMissionConsoleOpen || shouldForceAiCoreMissionConsoleOpen)
+      ? {
+        ...effectiveUiLayoutBase,
+        ...(shouldForceMissionConsoleOpen ? { missionConsolePanel: true } : {}),
+        ...(shouldForceAiCoreMissionConsoleOpen ? { aiCoreMissionConsolePanel: true } : {}),
+      }
       : effectiveUiLayoutBase;
 
   const initialBridgeTransportPreferences = normalizeBridgeTransportPreferences(

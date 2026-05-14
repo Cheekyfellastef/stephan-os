@@ -19,7 +19,7 @@ test('mission console can render in both landing tile and Stephanos AI Core surf
 
   assert.match(appSource, /id: 'missionConsolePanel'/);
   assert.match(appSource, /id: 'aiConsole'/);
-  assert.match(appSource, /forcePanelOpen/);
+  assert.match(appSource, /id: 'aiCoreMissionConsolePanel'/);
 });
 
 test('embedded Stephanos AI Core MissionConsoleTile is explicitly exempt from missionConsolePanel collapse filtering', async () => {
@@ -36,7 +36,7 @@ test('App wires canonical MissionConsoleTile mount props for AI Core and dedicat
 
   assert.match(
     appSource,
-    /id: 'aiConsole'[\s\S]*?<MissionConsoleTile[\s\S]*?forcePanelOpen[\s\S]*?panelId="aiCoreMissionConsolePanel"/m,
+    /id: 'aiCoreMissionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?panelId="aiCoreMissionConsolePanel"/m,
   );
   assert.match(
     appSource,
