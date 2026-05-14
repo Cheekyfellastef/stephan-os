@@ -53,3 +53,15 @@ test('useAIConsole final execution metadata includes chat context attachment pro
   assert.match(source, /chat_context_attachment_probe_prompt/);
   assert.match(source, /chat_context_attachment_probe_response_mode/);
 });
+
+
+test('useAIConsole chat context metadata includes operator message proof fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_raw_operator_message_seen/);
+  assert.match(source, /chat_context_normalized_operator_message/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule/);
+  assert.match(source, /chat_context_build_source/);
+  assert.match(source, /chat_context_default_pack_used/);
+  assert.match(source, /chat_context_was_overwritten/);
+  assert.match(source, /operatorMessage:\s*prompt/);
+});

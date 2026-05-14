@@ -429,6 +429,8 @@ export function buildSupportSnapshot({
     'chat_context_response_mode',
     'chat_context_relevant_canon_count',
     'chat_context_next_action',
+    'chat_context_raw_operator_message_seen',
+    'chat_context_intent_classifier_matched_rule',
   ];
   const executionHasChatContext = chatContextFields
     .some((field) => executionMetadata[field] !== undefined && executionMetadata[field] !== null && executionMetadata[field] !== '');
@@ -466,6 +468,12 @@ export function buildSupportSnapshot({
   const chatContextAttachmentProbe = executionMetadata?.chat_context_attachment_probe || 'none';
   const chatContextAttachmentProbeResponseMode = executionMetadata?.chat_context_attachment_probe_response_mode || 'n/a';
   const chatContextAttachmentProbePresent = chatContextAttachmentProbe === 'attached-at-final-execution-metadata' ? 'yes' : 'no';
+  const chatContextRawOperatorMessageSeen = executionMetadata?.chat_context_raw_operator_message_seen || 'n/a';
+  const chatContextNormalizedOperatorMessage = executionMetadata?.chat_context_normalized_operator_message || 'n/a';
+  const chatContextIntentClassifierMatchedRule = executionMetadata?.chat_context_intent_classifier_matched_rule || 'n/a';
+  const chatContextBuildSource = executionMetadata?.chat_context_build_source || 'n/a';
+  const chatContextDefaultPackUsed = executionMetadata?.chat_context_default_pack_used || 'n/a';
+  const chatContextWasOverwritten = executionMetadata?.chat_context_was_overwritten || 'no';
 
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
@@ -1155,6 +1163,12 @@ export function buildSupportSnapshot({
     `Chat Context Attachment Probe: ${asText(chatContextAttachmentProbe, 'none')}`,
     `Chat Context Attachment Probe Response Mode: ${asText(chatContextAttachmentProbeResponseMode, 'n/a')}`,
     `Chat Context Attachment Probe Present: ${asText(chatContextAttachmentProbePresent, 'no')}`,
+    `Chat Context Raw Operator Message Seen: ${asText(chatContextRawOperatorMessageSeen, 'n/a')}`,
+    `Chat Context Normalized Operator Message: ${asText(chatContextNormalizedOperatorMessage, 'n/a')}`,
+    `Chat Context Intent Classifier Matched Rule: ${asText(chatContextIntentClassifierMatchedRule, 'n/a')}`,
+    `Chat Context Build Source: ${asText(chatContextBuildSource, 'n/a')}`,
+    `Chat Context Default Pack Used: ${asText(chatContextDefaultPackUsed, 'n/a')}`,
+    `Chat Context Was Overwritten: ${asText(chatContextWasOverwritten, 'no')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,
