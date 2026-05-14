@@ -31,3 +31,35 @@ test('merge-decision pack includes merge canon and non-direct next action', () =
   assert.match(canonText, /do not treat terminal-only UI checks as complete/);
   assert.match(pack.recommendedNextAction, /merge|proof|PR/i);
 });
+
+
+test('merge-decision classifier catches common merge question variants', () => {
+  const a = buildChatContextPack({ operatorMessage: 'do I merge this PR?' });
+  const b = buildChatContextPack({ operatorMessage: 'should I merge this' });
+  const c = buildChatContextPack({ operatorMessage: 'can I merge this PR' });
+
+  for (const pack of [a, b, c]) {
+    assert.equal(pack.compactSummary.status, 'active');
+    assert.equal(pack.recommendedResponseMode, 'merge-decision');
+    assert.equal(pack.intentClassifierMatchedRule, 'merge-decision');
+    assert.ok(pack.compactSummary.relevantCanonCount > 0);
+    assert.equal(pack.compactSummary.defaultPackUsed, undefined);
+    assert.ok(pack.affectedSubsystems.length > 0);
+    assert.match(pack.recommendedNextAction, /merge|proof|check/i);
+  }
+});
+
+test('missing PR evidence does not downgrade merge-decision and keeps canon/subsystems', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?', supportSnapshot: {} });
+  assert.equal(pack.recommendedResponseMode, 'merge-decision');
+  assert.equal(pack.intentClassifierMatchedRule, 'merge-decision');
+  assert.ok(pack.relevantCanon.length > 0);
+  assert.ok(pack.affectedSubsystems.includes('merge'));
+  assert.ok(pack.affectedSubsystems.includes('pr'));
+});
+
+test('direct-answer remains fallback for generic prompts', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'hello there' });
+  assert.equal(pack.recommendedResponseMode, 'direct-answer');
+  assert.equal(pack.intentClassifierMatchedRule, 'direct-answer');
+});
