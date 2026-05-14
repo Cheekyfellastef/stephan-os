@@ -43,3 +43,13 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /chat_context_warning_count/);
   assert.match(source, /request_payload_chat_context_present:\s*Boolean\(\(effectiveRequestPayload\?\.chatContextPack\) \|\|/);
 });
+
+
+test('useAIConsole final execution metadata includes chat context attachment probe fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_attachment_probe:\s*'attached-at-final-execution-metadata'/);
+  assert.match(source, /chat_context_attachment_probe_request_id/);
+  assert.match(source, /chat_context_attachment_probe_prompt/);
+  assert.match(source, /chat_context_attachment_probe_response_mode/);
+});
+

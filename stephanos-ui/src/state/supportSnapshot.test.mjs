@@ -2150,6 +2150,8 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
         chat_context_next_action: 'Collect merge proof before deciding',
         chat_context_warning_count: 0,
         chat_context_warnings: 'none',
+        chat_context_attachment_probe: 'attached-at-final-execution-metadata',
+        chat_context_attachment_probe_response_mode: 'merge-decision',
       },
     },
   });
@@ -2158,6 +2160,8 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
   assert.match(snapshot, /Chat Context Relevant Canon Count: 5/);
   assert.match(snapshot, /Chat Context Metadata Source: final-execution-metadata/);
   assert.match(snapshot, /Chat Context Final Execution Metadata Present: yes/);
+  assert.match(snapshot, /Chat Context Attachment Probe Present: yes/);
+  assert.match(snapshot, /Chat Context Attachment Probe Response Mode: merge-decision/);
 });
 
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
@@ -2225,6 +2229,7 @@ test('support snapshot reports warning when command executed without chat contex
   assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
   assert.match(snapshot, /Chat Context Metadata Source: none/);
   assert.match(snapshot, /Chat Context Dropped Before Snapshot: yes/);
+  assert.match(snapshot, /Chat Context Attachment Probe Present: no/);
   assert.match(snapshot, /Chat Context Metadata Found In: none/);
 });
 
@@ -2232,4 +2237,21 @@ test('support snapshot unavailable next action does not require commandDeck rout
   const snapshot = buildSupportSnapshot({ runtimeStatus: {} });
   assert.match(snapshot, /Chat Context Next Action: Submit an operator command to generate context pack\./);
   assert.doesNotMatch(snapshot, /Submit a Command Deck message/);
+});
+
+
+test('execution metadata fixture with retrieval_query also includes chat_context_pack_status', () => {
+  const fixture = {
+    retrieval_query: 'do I merge this PR?',
+    chat_context_pack_status: 'active',
+  };
+  assert.equal(fixture.chat_context_pack_status, 'active');
+});
+
+test('execution metadata fixture with execution_status also includes chat_context_pack_status', () => {
+  const fixture = {
+    execution_status: 'ok:ollama',
+    chat_context_pack_status: 'active',
+  };
+  assert.equal(fixture.chat_context_pack_status, 'active');
 });
