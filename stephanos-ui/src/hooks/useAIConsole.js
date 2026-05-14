@@ -2954,6 +2954,7 @@ export function useAIConsole() {
         mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
         mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
         ...buildChatContextExecutionMetadata(effectiveRequestPayload?.chatContextPack || null),
+        request_payload_chat_context_present: Boolean(effectiveRequestPayload?.chatContextPack),
         mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
           ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
           : [],

@@ -41,4 +41,5 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /chat_context_relevant_canon_count/);
   assert.match(source, /chat_context_sources_used/);
   assert.match(source, /chat_context_warning_count/);
+  assert.match(source, /request_payload_chat_context_present:\s*Boolean\(effectiveRequestPayload\?\.chatContextPack\)/);
 });

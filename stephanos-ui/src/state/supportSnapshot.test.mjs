@@ -2156,6 +2156,8 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
   assert.match(snapshot, /Chat Context Pack Status: active/);
   assert.match(snapshot, /Chat Context Response Mode: merge-decision/);
   assert.match(snapshot, /Chat Context Relevant Canon Count: 5/);
+  assert.match(snapshot, /Chat Context Metadata Source: final-execution-metadata/);
+  assert.match(snapshot, /Chat Context Final Execution Metadata Present: yes/);
 });
 
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
@@ -2186,6 +2188,27 @@ test('support snapshot reads chat context for stephanos-mission-console latest e
   assert.match(snapshot, /Chat Context Sources Used: uiRealityStatus\|routeTruth\|missionState/);
 });
 
+
+test('support snapshot prefers final execution chat context over stale runtime chat context defaults', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      chatContextPackStatus: 'unavailable',
+      chatContextResponseMode: 'direct-answer',
+      lastExecutionMetadata: {
+        request_execution_id: 'req_prefer_final',
+        execution_status: 'ok:ollama',
+        chat_context_pack_status: 'active',
+        chat_context_version: 'v1',
+        chat_context_response_mode: 'merge-decision',
+        chat_context_relevant_canon_count: 3,
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Pack Status: active/);
+  assert.match(snapshot, /Chat Context Response Mode: merge-decision/);
+  assert.match(snapshot, /Chat Context Metadata Source: final-execution-metadata/);
+});
+
 test('support snapshot reports warning when command executed without chat context metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
@@ -2200,6 +2223,9 @@ test('support snapshot reports warning when command executed without chat contex
   assert.match(snapshot, /Chat Context Warning Count: 1/);
   assert.match(snapshot, /Chat Context Warnings: command executed without chat context metadata/);
   assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
+  assert.match(snapshot, /Chat Context Metadata Source: none/);
+  assert.match(snapshot, /Chat Context Dropped Before Snapshot: yes/);
+  assert.match(snapshot, /Chat Context Metadata Found In: none/);
 });
 
 test('support snapshot unavailable next action does not require commandDeck route identity', () => {
