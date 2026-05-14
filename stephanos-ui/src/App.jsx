@@ -1630,7 +1630,9 @@ export default function App() {
       controlLayer: 'panel-header-actions',
       attachedToHeader: true,
     }));
-    const paneShellNodes = Array.from(document.querySelectorAll('[data-pane-id]'));
+    const firstClassPaneIds = new Set(canonicalPaneDefinitions.map((pane) => pane.id));
+    const paneShellNodes = Array.from(document.querySelectorAll('[data-pane-id]'))
+      .filter((node) => firstClassPaneIds.has(String(node.getAttribute('data-pane-id') || '')));
     const moveControlGroups = Array.from(document.querySelectorAll('[data-pane-control-group="move-order"]'));
     const moveControlFacts = moveControlGroups.map((node, index) => {
       const ownerPaneShell = node.closest('[data-pane-id]');
