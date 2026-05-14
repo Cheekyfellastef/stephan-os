@@ -2016,8 +2016,8 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
       copyButtons: [{ id: 'copy-support-snapshot' }],
       layout: { mode: 'default' },
       agentMissionConsoleOuter: { bodyVisible: true },
-      aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-      dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+      aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+      dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
     },
   });
   assert.match(snapshot, /UI Reality Status: FAIL/);
@@ -2030,10 +2030,12 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
   assert.match(snapshot, /UI Reality Duplicate Move Control Count: 1/);
   assert.match(snapshot, /UI Reality Source\/Dist Alignment: mismatch/);
   assert.match(snapshot, /UI Reality Diagnostics Available: yes/);
-  assert.match(snapshot, /UI Reality AI Core Mission Console Present: yes/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Configured: yes/);
   assert.match(snapshot, /UI Reality AI Core Mission Console Panel ID: aiCoreMissionConsolePanel/);
-  assert.match(snapshot, /UI Reality AI Core Mission Console Force Open: yes/);
-  assert.match(snapshot, /UI Reality Dedicated Mission Console Present: yes/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Rendered: yes/);
+  assert.match(snapshot, /UI Reality AI Core Mission Console Visible: yes/);
+  assert.match(snapshot, /UI Reality Dedicated Mission Console Rendered: yes/);
+  assert.match(snapshot, /UI Reality Dedicated Mission Console Visible: yes/);
   assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: OK/);
 });
 
@@ -2109,8 +2111,8 @@ test('buildSupportSnapshot marks mission console multi-surface FAIL when AI Core
       copyButtons: [],
       layout: { mode: 'default' },
       agentMissionConsoleOuter: { bodyVisible: true },
-      aiCoreMissionConsole: { present: false, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-      dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+      aiCoreMissionConsole: { configured: false, rendered: false, visible: false, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+      dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
     },
   });
   assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: FAIL/);

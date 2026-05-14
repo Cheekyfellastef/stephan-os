@@ -14,8 +14,8 @@ test('derives OK when reality facts are complete and healthy', () => {
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [{}, {}],
     layout: {},
-    aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.equal(result.severity, 'OK');
 });
@@ -37,8 +37,8 @@ test('orphan and duplicate move controls become FAIL', () => {
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [],
     layout: {},
-    aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.equal(result.severity, 'FAIL');
 });
@@ -54,8 +54,8 @@ test('missing collapse controls become FAIL', () => {
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [],
     layout: {},
-    aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.equal(result.severity, 'FAIL');
 });
@@ -73,8 +73,8 @@ test('missing collapse controls include named pane ids and titles', () => {
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [],
     layout: {},
-    aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.deepEqual(result.missingCollapseControlIds, ['worldWorkspacePanel']);
   assert.deepEqual(result.missingCollapseControlTitles, ['World Workspace']);
@@ -93,8 +93,8 @@ test('hostedIdeaStagingPanel is absent from missing collapse list when canonical
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [],
     layout: {},
-    aiCoreMissionConsole: { present: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.equal(result.severity, 'OK');
   assert.deepEqual(result.missingCollapseControlIds, []);
@@ -112,8 +112,8 @@ test('fails when AI Core Mission Console is missing even if dedicated surface ex
     metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
     copyButtons: [],
     layout: {},
-    aiCoreMissionConsole: { present: false, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
-    dedicatedMissionConsole: { present: true, panelId: 'missionConsolePanel' },
+    aiCoreMissionConsole: { configured: true, rendered: false, visible: false, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
+    dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
   } });
   assert.equal(result.severity, 'FAIL');
   assert.equal(result.uiRealityMissionConsoleMultiSurfaceStatus, 'FAIL');
