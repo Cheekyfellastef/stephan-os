@@ -279,6 +279,7 @@ export default function App() {
   markStartupStage('app-render-start');
 
   const safeUiLayout = uiLayout || {};
+  const arrangeModeActive = safeUiLayout.arrangeMode === true;
 
   const paneDefinitionsRecomputeRef = useRef(0);
   const appRenderCountRef = useRef(0);
@@ -2064,7 +2065,6 @@ export default function App() {
   markStartupStage('app-provider-controls-render-complete');
 
   const missionConsoleWideShellMode = safeUiLayout.missionConsoleCommandDeckMode !== false;
-  const arrangeModeActive = safeUiLayout.arrangeMode === true;
 
   return (
     <main className={`app-shell-root ${missionConsoleWideShellMode ? 'mission-console-command-deck-mode' : ''}`.trim()}>
