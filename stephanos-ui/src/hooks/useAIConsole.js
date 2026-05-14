@@ -255,6 +255,14 @@ function pickChatContextField(...values) {
   return undefined;
 }
 
+function pickChatContextFieldPreferRequestNonDefault(key = '', rawValue, traceValue, requestValue, fallback) {
+  const requestIsNonDefault = !isDefaultChatContextValue(key, requestValue);
+  const rawIsDefault = isDefaultChatContextValue(key, rawValue);
+  const traceIsDefault = isDefaultChatContextValue(key, traceValue);
+  if (requestIsNonDefault && rawIsDefault && traceIsDefault) return requestValue;
+  return pickChatContextField(rawValue, traceValue, requestValue, fallback);
+}
+
 function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, rawExecutionMetadata = {}, requestTrace = {}, requestPayload = {} }) {
   const normalized = normalizedExecutionMetadata && typeof normalizedExecutionMetadata === 'object' ? normalizedExecutionMetadata : {};
   const raw = rawExecutionMetadata && typeof rawExecutionMetadata === 'object' ? rawExecutionMetadata : {};
@@ -265,10 +273,10 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
   const probePrompt = String(requestPayload?.prompt || requestPayload?.raw_input || requestPayload?.operatorMessage || '').trim();
   const normalizedProbePrompt = probePrompt ? (probePrompt.length > 96 ? `${probePrompt.slice(0, 93)}...` : probePrompt) : 'n/a';
   const merged = {
-    chat_context_pack_status: pickChatContextField(raw.chat_context_pack_status, trace.chat_context_pack_status, requestChatContext.chat_context_pack_status),
+    chat_context_pack_status: pickChatContextFieldPreferRequestNonDefault('chat_context_pack_status', raw.chat_context_pack_status, trace.chat_context_pack_status, requestChatContext.chat_context_pack_status),
     chat_context_version: pickChatContextField(raw.chat_context_version, trace.chat_context_version, requestChatContext.chat_context_version),
-    chat_context_response_mode: pickChatContextField(raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode),
-    chat_context_relevant_canon_count: pickChatContextField(raw.chat_context_relevant_canon_count, trace.chat_context_relevant_canon_count, requestChatContext.chat_context_relevant_canon_count),
+    chat_context_response_mode: pickChatContextFieldPreferRequestNonDefault('chat_context_response_mode', raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode),
+    chat_context_relevant_canon_count: pickChatContextFieldPreferRequestNonDefault('chat_context_relevant_canon_count', raw.chat_context_relevant_canon_count, trace.chat_context_relevant_canon_count, requestChatContext.chat_context_relevant_canon_count),
     chat_context_affected_subsystems: pickChatContextField(raw.chat_context_affected_subsystems, trace.chat_context_affected_subsystems, requestChatContext.chat_context_affected_subsystems),
     chat_context_sources_used: pickChatContextField(raw.chat_context_sources_used, trace.chat_context_sources_used, requestChatContext.chat_context_sources_used),
     chat_context_ui_reality_status: pickChatContextField(raw.chat_context_ui_reality_status, trace.chat_context_ui_reality_status, requestChatContext.chat_context_ui_reality_status),
@@ -283,7 +291,7 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_attachment_probe: 'attached-at-final-execution-metadata',
     chat_context_attachment_probe_request_id: pickChatContextField(raw.request_execution_id, trace.request_execution_id, requestPayload?.request_execution_id, normalized.chat_context_request_id),
     chat_context_attachment_probe_prompt: normalizedProbePrompt,
-    chat_context_attachment_probe_response_mode: pickChatContextField(raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode, 'direct-answer'),
+    chat_context_attachment_probe_response_mode: pickChatContextFieldPreferRequestNonDefault('chat_context_response_mode', raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode, 'direct-answer'),
   };
   const validRequestPack = requestChatContext.chat_context_pack_status === 'active' && requestChatContext.chat_context_response_mode !== 'direct-answer';
   const defaultPackUsed = requestChatContext.chat_context_pack_status !== 'active' ? 'yes' : 'no';
@@ -293,10 +301,15 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
     chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
-    chat_context_intent_classifier_matched_rule: requestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
+    chat_context_intent_classifier_matched_rule: requestPayload?.chatContextPack?.intentClassifierMatchedRule || requestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
     chat_context_build_source: requestPayload?.submissionSource || 'stephanos-mission-console',
     chat_context_default_pack_used: defaultPackUsed,
     chat_context_was_overwritten: overwrittenByDefault ? 'yes' : 'no',
+    chat_context_classifier_function_source: requestPayload?.chatContextPack?.classifierDebug?.classifierFunctionSource || 'other',
+    chat_context_classifier_rule_order: Array.isArray(requestPayload?.chatContextPack?.classifierDebug?.classifierRuleOrder) ? requestPayload.chatContextPack.classifierDebug.classifierRuleOrder.join('>') : 'n/a',
+    chat_context_classifier_candidate_rules_evaluated: Array.isArray(requestPayload?.chatContextPack?.classifierDebug?.classifierCandidateRulesEvaluated) ? requestPayload.chatContextPack.classifierDebug.classifierCandidateRulesEvaluated.join(',') : 'n/a',
+    chat_context_classifier_merge_rule_matched: requestPayload?.chatContextPack?.classifierDebug?.classifierMergeRuleMatched || 'no',
+    chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
 }

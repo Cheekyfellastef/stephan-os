@@ -15,7 +15,7 @@ const CANON_RULES = [
   { id: 'canon.no_junk_drawer', text: 'AI Console must not become a junk drawer for operational panes', tags: ['ai-console', 'architecture'] },
 ];
 
-const INTENT_RULES = [
+export const INTENT_RULES = [
   {
     id: 'merge-decision',
     responseMode: 'merge-decision',
@@ -54,9 +54,31 @@ function normalizeIntentInput(msg = '') {
 
 function classifyIntent(msg = '') {
   const normalized = normalizeIntentInput(msg);
-  const matchedRule = INTENT_RULES.find((rule) => rule.pattern.test(normalized));
-  if (!matchedRule) return { responseMode: 'direct-answer', matchedRule: 'direct-answer', normalized };
-  return { responseMode: matchedRule.responseMode, matchedRule: matchedRule.id, normalized };
+  const candidateRulesEvaluated = [];
+  let matchedRule = null;
+  for (const rule of INTENT_RULES) {
+    const matched = rule.pattern.test(normalized);
+    candidateRulesEvaluated.push(`${rule.id}:${matched ? '1' : '0'}`);
+    if (matched && !matchedRule) matchedRule = rule;
+  }
+  if (!matchedRule) return {
+    responseMode: 'direct-answer',
+    matchedRule: 'direct-answer',
+    normalized,
+    classifierFunctionSource: 'chatContextOrchestrator.INTENT_RULES',
+    classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
+    candidateRulesEvaluated,
+    mergeRuleMatched: false,
+  };
+  return {
+    responseMode: matchedRule.responseMode,
+    matchedRule: matchedRule.id,
+    normalized,
+    classifierFunctionSource: 'chatContextOrchestrator.INTENT_RULES',
+    classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
+    candidateRulesEvaluated,
+    mergeRuleMatched: matchedRule.id === 'merge-decision',
+  };
 }
 
 function pickResponseMode(msg = '') {
@@ -152,6 +174,13 @@ export function buildChatContextPack(input = {}) {
       provider: String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown'),
       canon: relevantCanon.map((rule) => rule.text),
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
+    },
+    classifierDebug: {
+      classifierFunctionSource: intent.classifierFunctionSource,
+      classifierRuleOrder: intent.classifierRuleOrder,
+      classifierCandidateRulesEvaluated: intent.candidateRulesEvaluated,
+      classifierMergeRuleMatched: intent.mergeRuleMatched ? 'yes' : 'no',
+      defaultOverrideReason: 'none',
     },
   };
 }
