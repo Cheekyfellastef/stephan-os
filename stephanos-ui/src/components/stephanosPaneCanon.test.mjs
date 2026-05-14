@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-const appSource = fs.readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
-const surfacePaneSource = fs.readFileSync(new URL('./StephanosSurfacePane.jsx', import.meta.url), 'utf8');
-const openClawSource = fs.readFileSync(new URL('./OpenClawTile.jsx', import.meta.url), 'utf8');
-const collapsiblePanelSource = fs.readFileSync(new URL('./CollapsiblePanel.jsx', import.meta.url), 'utf8');
-const aiStoreSource = fs.readFileSync(new URL('../state/aiStore.js', import.meta.url), 'utf8');
+import { fileURLToPath } from 'node:url';
+const thisFilePath = fileURLToPath(import.meta.url);
+const thisDirPath = path.dirname(thisFilePath);
+
+const appSource = fs.readFileSync(path.join(thisDirPath, '../App.jsx'), 'utf8');
+const surfacePaneSource = fs.readFileSync(path.join(thisDirPath, './StephanosSurfacePane.jsx'), 'utf8');
+const openClawSource = fs.readFileSync(path.join(thisDirPath, './OpenClawTile.jsx'), 'utf8');
+const collapsiblePanelSource = fs.readFileSync(path.join(thisDirPath, './CollapsiblePanel.jsx'), 'utf8');
+const aiStoreSource = fs.readFileSync(path.join(thisDirPath, '../state/aiStore.js'), 'utf8');
 
 function collectSourceFiles(dirPath) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -83,7 +87,7 @@ test('canonical collapse control reduces footprint and avoids dead empty panel a
 
 
 test('Agents tile uses canonical uiLayout + togglePanel collapse wiring only', () => {
-  const agentsSource = fs.readFileSync(new URL('./AgentsTile.jsx', import.meta.url), 'utf8');
+  const agentsSource = fs.readFileSync(path.join(thisDirPath, './AgentsTile.jsx'), 'utf8');
   assert.equal(agentsSource.includes('resolvedIsOpen = uiLayout.agentsPanel !== false'), true);
   assert.equal(agentsSource.includes("resolvedToggle = () => togglePanel('agentsPanel')"), true);
   assert.equal(agentsSource.includes('hasCanonicalToggle'), false);
@@ -94,7 +98,7 @@ test('Agents tile uses canonical uiLayout + togglePanel collapse wiring only', (
 
 
 test('Hosted Idea Staging pane uses canonical collapse wiring and human-readable pane title', () => {
-  const hostedIdeaSource = fs.readFileSync(new URL('./HostedIdeaStagingPanel.jsx', import.meta.url), 'utf8');
+  const hostedIdeaSource = fs.readFileSync(path.join(thisDirPath, './HostedIdeaStagingPanel.jsx'), 'utf8');
   assert.equal(hostedIdeaSource.includes('panelId="hostedIdeaStagingPanel"'), true);
   assert.equal(hostedIdeaSource.includes('title="Hosted Idea Staging"'), true);
   assert.equal(hostedIdeaSource.includes('isOpen={uiLayout.hostedIdeaStagingPanel !== false}'), true);
@@ -161,8 +165,8 @@ test('every CollapsiblePanel panelId is registered in DEFAULT_UI_LAYOUT', () => 
   const defaultLayoutKeys = new Set(
     Array.from(defaultLayoutMatch[1].matchAll(/\n\s*([A-Za-z0-9_]+):/g)).map((match) => match[1]),
   );
-  const componentRoot = new URL('.', import.meta.url);
-  const sourceFiles = collectSourceFiles(componentRoot.pathname);
+  const componentRoot = thisDirPath;
+  const sourceFiles = collectSourceFiles(componentRoot);
   const missingPanelIds = [];
   for (const filePath of sourceFiles) {
     const source = fs.readFileSync(filePath, 'utf8');
@@ -170,7 +174,7 @@ test('every CollapsiblePanel panelId is registered in DEFAULT_UI_LAYOUT', () => 
     for (const match of source.matchAll(collapsibleUseRegex)) {
       const panelId = match[1];
       if (!defaultLayoutKeys.has(panelId)) {
-        missingPanelIds.push({ panelId, filePath: path.relative(componentRoot.pathname, filePath) });
+        missingPanelIds.push({ panelId, filePath: path.relative(componentRoot, filePath) });
       }
     }
   }

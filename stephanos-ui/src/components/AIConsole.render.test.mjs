@@ -68,8 +68,8 @@ test('assistant answer pane keeps text selection enabled for drag-copy operation
 
 test('assistant answer pane enforces tall bounded scrolling region so long answers stay inside pane', async () => {
   const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
-  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*min-height:\s*clamp\(24rem,\s*68vh,\s*44rem\);/m);
-  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*max-height:\s*78vh;/m);
+  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*min-height:\s*clamp\(8rem,\s*20vh,\s*14rem\);/m);
+  assert.match(stylesSource, /\.assistant-answer-text[\s\S]*max-height:\s*min\(60vh,\s*42rem\);/m);
   assert.match(stylesSource, /\.assistant-answer-text[\s\S]*overflow-y:\s*auto;/m);
 });
 
@@ -130,7 +130,7 @@ test('AIConsole exposes Copy Perf Diagnostics control for AI core surface instru
 
 test('embedded mission console answer history keeps larger viewport and visible composer', async () => {
   const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(26rem,\s*62vh,\s*56rem\);/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*min\(78vh,\s*960px\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(14rem,\s*34vh,\s*24rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*min\(62vh,\s*760px\);/m);
   assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*position:\s*static;/m);
 });
