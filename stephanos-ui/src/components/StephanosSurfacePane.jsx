@@ -25,8 +25,8 @@ export default function StephanosSurfacePane({
   const workspaceShellClass = pane.wideSurface ? ' stephanos-workspace-pane-shell' : '';
   const moveControlGroup = arrangeModeActive ? (
     <div className="pane-order-controls" aria-label={`${pane.title || pane.id} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="pane-header" data-pane-control-attached="true" data-testid={`pane-${pane.id}-move-controls`}>
-      <button type="button" className="ghost-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`}>Move up</button>
-      <button type="button" className="ghost-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`}>Move down</button>
+      <button type="button" className="ghost-button pane-order-button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move ${pane.title || pane.id} up`} data-testid={`pane-${pane.id}-move-up`}>Move up</button>
+      <button type="button" className="ghost-button pane-order-button" onClick={onMoveDown} disabled={!canMoveDown} aria-label={`Move ${pane.title || pane.id} down`} data-testid={`pane-${pane.id}-move-down`}>Move down</button>
     </div>
   ) : null;
 
@@ -50,7 +50,7 @@ export default function StephanosSurfacePane({
     },
   }), [canMoveDown, canMoveUp, moveControlGroup, ownerPanelId, pane.id]);
 
-  const paneNode = pane.render({ moveControlGroup });
+  const paneNode = pane.render({});
 
   return (
     <div
@@ -71,6 +71,11 @@ export default function StephanosSurfacePane({
       onDrop={onDrop}
     >
       <StephanosPaneMoveControlsContext.Provider value={moveControlContextValue}>
+        {moveControlGroup ? (
+          <div className="pane-order-controls-shell" data-testid={`pane-${pane.id}-move-controls-shell`}>
+            {moveControlGroup}
+          </div>
+        ) : null}
         {paneNode}
       </StephanosPaneMoveControlsContext.Provider>
     </div>
