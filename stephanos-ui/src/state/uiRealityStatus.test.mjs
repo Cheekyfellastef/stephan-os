@@ -53,3 +53,21 @@ test('missing collapse controls become FAIL', () => {
   } });
   assert.equal(result.severity, 'FAIL');
 });
+
+
+test('missing collapse controls include named pane ids and titles', () => {
+  const result = deriveUiRealityStatus({ reality: {
+    paneShells: [{}],
+    panesMissingCollapseControls: [{ paneId: 'worldWorkspacePanel', title: 'World Workspace' }],
+    moveControlGroups: [{}],
+    totalFirstClassPanes: 1,
+    panesMissingMoveControls: [],
+    orphanMoveControlCount: 0,
+    totalMoveControlsVisible: 1,
+    metadata: { sourceDistAlignment: 'aligned', startupStatus: 'ok' },
+    copyButtons: [],
+    layout: {},
+  } });
+  assert.deepEqual(result.missingCollapseControlIds, ['worldWorkspacePanel']);
+  assert.deepEqual(result.missingCollapseControlTitles, ['World Workspace']);
+});

@@ -2021,6 +2021,9 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
   assert.match(snapshot, /UI Reality Status: FAIL/);
   assert.match(snapshot, /UI Reality Reason: source-dist-mismatch/);
   assert.match(snapshot, /UI Reality Missing Collapse Controls: 1/);
+  assert.match(snapshot, /UI Reality Missing Collapse Control IDs: mission-console/);
+  assert.match(snapshot, /UI Reality Missing Collapse Control Titles: mission-console/);
+  assert.match(snapshot, /UI Reality Move Control Detail State: visible/);
   assert.match(snapshot, /UI Reality Orphan Move Control Count: 0/);
   assert.match(snapshot, /UI Reality Duplicate Move Control Count: 1/);
   assert.match(snapshot, /UI Reality Source\/Dist Alignment: mismatch/);
