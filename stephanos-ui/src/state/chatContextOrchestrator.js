@@ -19,7 +19,7 @@ export const INTENT_RULES = [
   {
     id: 'merge-decision',
     responseMode: 'merge-decision',
-    pattern: /\b(do|should|can)\s+i\s+merge\b|\bmerge\s+(this|the)\s+pr\b|\bmerge\s+this\b/,
+    pattern: /\b(do|should|can)\s+i\s+merge(?:\s+(?:this|the|that|it|one))?(?:\s+pr)?\b|\bmerge\s+(?:this|that|the)\s+(?:pr|one)\b|\bmerge\s+this\b/,
   },
   {
     id: 'codex-prompt',
@@ -69,6 +69,9 @@ function classifyIntent(msg = '') {
     classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
     candidateRulesEvaluated,
     mergeRuleMatched: false,
+    matchedRuleIndex: -1,
+    matchedRegex: 'none',
+    fallbackApplied: true,
   };
   return {
     responseMode: matchedRule.responseMode,
@@ -78,6 +81,9 @@ function classifyIntent(msg = '') {
     classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
     candidateRulesEvaluated,
     mergeRuleMatched: matchedRule.id === 'merge-decision',
+    matchedRuleIndex: INTENT_RULES.findIndex((rule) => rule.id === matchedRule.id),
+    matchedRegex: matchedRule.pattern.source,
+    fallbackApplied: false,
   };
 }
 
@@ -180,6 +186,9 @@ export function buildChatContextPack(input = {}) {
       classifierRuleOrder: intent.classifierRuleOrder,
       classifierCandidateRulesEvaluated: intent.candidateRulesEvaluated,
       classifierMergeRuleMatched: intent.mergeRuleMatched ? 'yes' : 'no',
+      classifierRegexUsed: intent.matchedRegex,
+      classifierRuleIndex: intent.matchedRuleIndex,
+      classifierFallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
       defaultOverrideReason: 'none',
     },
   };

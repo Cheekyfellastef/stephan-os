@@ -130,7 +130,7 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
   }).backendUrl;
 }
 
-function buildChatContextExecutionMetadata(chatContextPack = null) {
+export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const hasPack = chatContextPack && typeof chatContextPack === 'object';
   return {
     chat_context_pack_status: chatContextPack?.compactSummary?.status || (hasPack ? 'active' : 'unavailable'),
@@ -263,7 +263,7 @@ function pickChatContextFieldPreferRequestNonDefault(key = '', rawValue, traceVa
   return pickChatContextField(rawValue, traceValue, requestValue, fallback);
 }
 
-function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, rawExecutionMetadata = {}, requestTrace = {}, requestPayload = {} }) {
+export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, rawExecutionMetadata = {}, requestTrace = {}, requestPayload = {} }) {
   const normalized = normalizedExecutionMetadata && typeof normalizedExecutionMetadata === 'object' ? normalizedExecutionMetadata : {};
   const raw = rawExecutionMetadata && typeof rawExecutionMetadata === 'object' ? rawExecutionMetadata : {};
   const trace = requestTrace && typeof requestTrace === 'object' ? requestTrace : {};
@@ -294,7 +294,10 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_attachment_probe_response_mode: pickChatContextFieldPreferRequestNonDefault('chat_context_response_mode', raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode, 'direct-answer'),
   };
   const validRequestPack = requestChatContext.chat_context_pack_status === 'active' && requestChatContext.chat_context_response_mode !== 'direct-answer';
-  const defaultPackUsed = requestChatContext.chat_context_pack_status !== 'active' ? 'yes' : 'no';
+  const deterministicRuleMatched = String(requestPayload?.chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase();
+  const defaultPackUsed = (deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer')
+    ? 'no'
+    : (requestChatContext.chat_context_pack_status !== 'active' ? 'yes' : 'no');
   const overwrittenByDefault = validRequestPack && (isDefaultChatContextValue('chat_context_pack_status', raw.chat_context_pack_status) || isDefaultChatContextValue('chat_context_response_mode', raw.chat_context_response_mode));
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
   return {
@@ -309,6 +312,9 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_classifier_rule_order: Array.isArray(requestPayload?.chatContextPack?.classifierDebug?.classifierRuleOrder) ? requestPayload.chatContextPack.classifierDebug.classifierRuleOrder.join('>') : 'n/a',
     chat_context_classifier_candidate_rules_evaluated: Array.isArray(requestPayload?.chatContextPack?.classifierDebug?.classifierCandidateRulesEvaluated) ? requestPayload.chatContextPack.classifierDebug.classifierCandidateRulesEvaluated.join(',') : 'n/a',
     chat_context_classifier_merge_rule_matched: requestPayload?.chatContextPack?.classifierDebug?.classifierMergeRuleMatched || 'no',
+    chat_context_classifier_regex_used: requestPayload?.chatContextPack?.classifierDebug?.classifierRegexUsed || 'none',
+    chat_context_classifier_rule_index: requestPayload?.chatContextPack?.classifierDebug?.classifierRuleIndex ?? -1,
+    chat_context_classifier_fallback_applied: requestPayload?.chatContextPack?.classifierDebug?.classifierFallbackApplied || 'no',
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };

@@ -65,3 +65,11 @@ test('useAIConsole chat context metadata includes operator message proof fields'
   assert.match(source, /chat_context_was_overwritten/);
   assert.match(source, /operatorMessage:\s*prompt/);
 });
+
+test('useAIConsole live submit path preserves merge-decision metadata attachment fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_response_mode:\s*pickChatContextFieldPreferRequestNonDefault/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule:\s*requestPayload\?\.chatContextPack\?\.intentClassifierMatchedRule/);
+  assert.match(source, /chat_context_attachment_probe_response_mode:\s*pickChatContextFieldPreferRequestNonDefault/);
+  assert.match(source, /defaultPackUsed = \(deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer'\)\s*\?\s*'no'/);
+});

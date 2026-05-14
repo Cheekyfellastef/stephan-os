@@ -37,13 +37,15 @@ test('merge-decision classifier catches common merge question variants', () => {
   const a = buildChatContextPack({ operatorMessage: 'do I merge this PR?' });
   const b = buildChatContextPack({ operatorMessage: 'should I merge this' });
   const c = buildChatContextPack({ operatorMessage: 'can I merge this PR' });
+  const d = buildChatContextPack({ operatorMessage: 'merge this one?' });
+  const e = buildChatContextPack({ operatorMessage: 'do I merge this one?' });
 
-  for (const pack of [a, b, c]) {
+  for (const pack of [a, b, c, d, e]) {
     assert.equal(pack.compactSummary.status, 'active');
     assert.equal(pack.recommendedResponseMode, 'merge-decision');
     assert.equal(pack.intentClassifierMatchedRule, 'merge-decision');
     assert.ok(pack.compactSummary.relevantCanonCount > 0);
-    assert.equal(pack.compactSummary.defaultPackUsed, undefined);
+    assert.equal(pack.classifierDebug.classifierFallbackApplied, 'no');
     assert.ok(pack.affectedSubsystems.length > 0);
     assert.match(pack.recommendedNextAction, /merge|proof|check/i);
   }
