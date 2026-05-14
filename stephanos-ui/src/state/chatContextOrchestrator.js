@@ -15,15 +15,52 @@ const CANON_RULES = [
   { id: 'canon.no_junk_drawer', text: 'AI Console must not become a junk drawer for operational panes', tags: ['ai-console', 'architecture'] },
 ];
 
+const INTENT_RULES = [
+  {
+    id: 'merge-decision',
+    responseMode: 'merge-decision',
+    pattern: /\b(do|should|can)\s+i\s+merge\b|\bmerge\s+(this|the)\s+pr\b|\bmerge\s+this\b/,
+  },
+  {
+    id: 'codex-prompt',
+    responseMode: 'codex-prompt',
+    pattern: /\bgive me (a )?(codex )?prompt\b|\bcodex prompt\b/,
+  },
+  {
+    id: 'diagnosis',
+    responseMode: 'diagnosis',
+    pattern: /\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/,
+  },
+  {
+    id: 'mission-planning',
+    responseMode: 'mission-planning',
+    pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b/,
+  },
+  {
+    id: 'architecture-guidance',
+    responseMode: 'architecture-guidance',
+    pattern: /\bwhy does it feel generic\b|\bwhy does stephanos feel generic\b|\barchitecture\b/,
+  },
+  {
+    id: 'research-scouting',
+    responseMode: 'research-scouting',
+    pattern: /\bvr\b|flat-to-vr|\bresearch\b/,
+  },
+];
+
+function normalizeIntentInput(msg = '') {
+  return String(msg || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function classifyIntent(msg = '') {
+  const normalized = normalizeIntentInput(msg);
+  const matchedRule = INTENT_RULES.find((rule) => rule.pattern.test(normalized));
+  if (!matchedRule) return { responseMode: 'direct-answer', matchedRule: 'direct-answer', normalized };
+  return { responseMode: matchedRule.responseMode, matchedRule: matchedRule.id, normalized };
+}
+
 function pickResponseMode(msg = '') {
-  const text = String(msg || '').toLowerCase();
-  if (/\bdo i merge\b|\bshould i merge\b|\bmerge this\b/.test(text)) return 'merge-decision';
-  if (/\bgive me (a )?(codex )?prompt\b|\bcodex prompt\b/.test(text)) return 'codex-prompt';
-  if (/\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/.test(text)) return 'diagnosis';
-  if (/\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b/.test(text)) return 'mission-planning';
-  if (/\bwhy does it feel generic\b|\bwhy does stephanos feel generic\b|\barchitecture\b/.test(text)) return 'architecture-guidance';
-  if (/\bvr\b|flat-to-vr|\bresearch\b/.test(text)) return 'research-scouting';
-  return 'direct-answer';
+  return classifyIntent(msg).responseMode;
 }
 
 export function buildChatContextPack(input = {}) {
@@ -32,7 +69,8 @@ export function buildChatContextPack(input = {}) {
   const routeTruth = input.routeTruth || {};
   const providerTruth = input.providerTruth || {};
   const missionState = input.missionState || {};
-  const responseMode = pickResponseMode(operatorMessage);
+  const intent = classifyIntent(operatorMessage);
+  const responseMode = intent.responseMode;
   const warnings = [];
   if (!operatorMessage) warnings.push('operator message missing');
   if (String(uiReality.severity || '').toUpperCase() === 'FAIL') warnings.push('UI Reality FAIL: visual proof required before merge claims.');
@@ -99,6 +137,7 @@ export function buildChatContextPack(input = {}) {
       ? ['browser-ui-reality-proof', 'source-of-truth-proof', 'targeted-tests']
       : ['targeted-evidence'],
     recommendedResponseMode: responseMode,
+    intentClassifierMatchedRule: intent.matchedRule,
     recommendedNextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
@@ -106,6 +145,7 @@ export function buildChatContextPack(input = {}) {
     contextForPrompt: {
       operatorMessage,
       responseMode,
+      intentClassifierMatchedRule: intent.matchedRule,
       missionMode: String(missionState.mode || missionState.status || 'unknown'),
       uiRealityStatus: String(uiReality.severity || 'UNKNOWN'),
       route: String(routeTruth.routeKind || 'unknown'),
@@ -116,4 +156,4 @@ export function buildChatContextPack(input = {}) {
   };
 }
 
-export { pickResponseMode };
+export { pickResponseMode, classifyIntent, normalizeIntentInput };
