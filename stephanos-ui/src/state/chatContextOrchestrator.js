@@ -49,15 +49,24 @@ export const INTENT_RULES = [
 ];
 
 function normalizeIntentInput(msg = '') {
-  return String(msg || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return String(msg || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeIntentInputForMatching(msg = '') {
+  return normalizeIntentInput(msg)
+    .toLowerCase()
+    .replace(/[?!.,;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function classifyIntent(msg = '') {
   const normalized = normalizeIntentInput(msg);
+  const normalizedForMatching = normalizeIntentInputForMatching(msg);
   const candidateRulesEvaluated = [];
   let matchedRule = null;
   for (const rule of INTENT_RULES) {
-    const matched = rule.pattern.test(normalized);
+    const matched = rule.pattern.test(normalizedForMatching);
     candidateRulesEvaluated.push(`${rule.id}:${matched ? '1' : '0'}`);
     if (matched && !matchedRule) matchedRule = rule;
   }
@@ -72,6 +81,7 @@ function classifyIntent(msg = '') {
     matchedRuleIndex: -1,
     matchedRegex: 'none',
     fallbackApplied: true,
+    normalizedForMatching,
   };
   return {
     responseMode: matchedRule.responseMode,
@@ -83,6 +93,7 @@ function classifyIntent(msg = '') {
     mergeRuleMatched: matchedRule.id === 'merge-decision',
     matchedRuleIndex: INTENT_RULES.findIndex((rule) => rule.id === matchedRule.id),
     matchedRegex: matchedRule.pattern.source,
+    normalizedForMatching,
     fallbackApplied: false,
   };
 }
@@ -194,4 +205,4 @@ export function buildChatContextPack(input = {}) {
   };
 }
 
-export { pickResponseMode, classifyIntent, normalizeIntentInput };
+export { pickResponseMode, classifyIntent, normalizeIntentInput, normalizeIntentInputForMatching };
