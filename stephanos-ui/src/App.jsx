@@ -1696,15 +1696,25 @@ export default function App() {
       'missionConsoleConnectedTileContextsPanel',
       'missionConsoleIntentToBuildPanel',
     ];
-    const aiConsolePanelBody = document.querySelector('[data-panel-id="commandDeck"] .panel-body');
+    const missionConsolePanel = document.querySelector('[data-panel-id="missionConsolePanel"]');
+    const missionConsolePanelBody = missionConsolePanel?.querySelector('.panel-body') || null;
+    const missionConsolePanelCollapsed = missionConsolePanelBody ? missionConsolePanelBody.hidden === true : false;
     const nestedOperationalPaneFacts = operationalPaneIds
       .map((panelId) => {
-        const node = aiConsolePanelBody?.querySelector(`[data-panel-id="${panelId}"]`);
+        const node = missionConsolePanelBody?.querySelector(`[data-panel-id="${panelId}"]`);
         return node
           ? { paneId: panelId, title: String(node.getAttribute('data-title') || node.getAttribute('aria-label') || node.querySelector('.panel-header h2')?.textContent || panelId).trim() || panelId }
           : null;
       })
       .filter(Boolean);
+    const nestedOperationalPanesVisibleWhenCollapsed = missionConsolePanelCollapsed
+      ? nestedOperationalPaneFacts.some((pane) => {
+        const paneNode = missionConsolePanelBody?.querySelector(`[data-panel-id="${pane.paneId}"]`);
+        if (!paneNode) return false;
+        const style = window.getComputedStyle(paneNode);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      })
+      : false;
     const copyEvents = Array.isArray(previous?.copyEvents) ? previous.copyEvents : [];
     const lastCopyEvent = previous?.lastCopyEvent || null;
     const reality = {
@@ -1783,7 +1793,12 @@ export default function App() {
         };
       })(),
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
-      aiConsoleNestedOperationalPanes: nestedOperationalPaneFacts,
+      agentMissionConsoleNestedOperationalPanes: nestedOperationalPaneFacts,
+      agentMissionConsoleCollapse: {
+        collapsed: missionConsolePanelCollapsed,
+        bodyVisibleWhenCollapsed: Boolean(missionConsolePanelCollapsed && missionConsolePanelBody && !missionConsolePanelBody.hidden),
+        nestedOperationalPanesVisibleWhenCollapsed,
+      },
       copyButtons,
       copyEvents,
       lastCopyEvent,
