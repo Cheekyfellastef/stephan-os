@@ -273,6 +273,24 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
 }
+
+function attachChatContextToExecutionMetadata({
+  executionMetadata = {},
+  rawExecutionMetadata = {},
+  requestTrace = {},
+  requestPayload = {},
+}) {
+  const normalizedExecutionMetadata = executionMetadata && typeof executionMetadata === 'object' ? executionMetadata : {};
+  return {
+    ...normalizedExecutionMetadata,
+    ...buildChatContextAttachmentMetadata({
+      normalizedExecutionMetadata,
+      rawExecutionMetadata,
+      requestTrace,
+      requestPayload,
+    }),
+  };
+}
 function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
@@ -2837,7 +2855,8 @@ export function useAIConsole() {
         ollama_reader_cancelled: false,
       };
       inFlightRequestPayload = requestPayload;
-      setLastExecutionMetadata((prev) => ({
+      setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
+        executionMetadata: {
         ...(prev || {}),
         request_execution_id: requestPayload.request_execution_id,
         ui_requested_provider: requestPayload.ui_requested_provider || 'unknown',
@@ -2869,6 +2888,8 @@ export function useAIConsole() {
         provider_generation_still_running_unknown: false,
         provider_generation_confirmed_stopped: false,
         ...buildChatContextExecutionMetadata(chatContextPack),
+        },
+        requestPayload,
       }));
       const requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
@@ -2986,7 +3007,8 @@ export function useAIConsole() {
         requestPayload: effectiveRequestPayload,
         backendDefaultProvider: apiStatus.backendDefaultProvider,
       });
-      const executionMetadata = {
+      const executionMetadata = attachChatContextToExecutionMetadata({
+        executionMetadata: {
         ...executionMetadataBase,
         intent_type: effectiveRequestPayload?.intentResult?.intentType || 'unknown',
         intent_confidence: effectiveRequestPayload?.intentResult?.confidence ?? 0,
@@ -2997,12 +3019,6 @@ export function useAIConsole() {
         mission_packet_title: effectiveRequestPayload?.missionPacket?.missionTitle || 'n/a',
         mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
         mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
-        ...buildChatContextAttachmentMetadata({
-          normalizedExecutionMetadata: executionMetadataBase,
-          rawExecutionMetadata: data?.data?.execution_metadata || {},
-          requestTrace: data?.data?.request_trace || {},
-          requestPayload: effectiveRequestPayload || {},
-        }),
         request_payload_chat_context_present: Boolean((effectiveRequestPayload?.chatContextPack) || (data?.data?.execution_metadata?.chat_context_pack_status) || (data?.data?.request_trace?.chat_context_pack_status)),
         mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
           ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
@@ -3017,7 +3033,11 @@ export function useAIConsole() {
         graph_link_suggested: effectiveRequestPayload?.missionPacket?.graphLinkSuggested === true,
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
-      };
+        },
+        rawExecutionMetadata: data?.data?.execution_metadata || {},
+        requestTrace: data?.data?.request_trace || {},
+        requestPayload: effectiveRequestPayload || {},
+      });
       if (executionMetadata.actual_provider_used === 'ollama' && data.success) {
         executionMetadata.provider_generation_still_running_unknown = false;
         executionMetadata.provider_generation_confirmed_stopped = true;
@@ -3221,7 +3241,10 @@ export function useAIConsole() {
           cancellationSource: uiError.cancellationSource || timeoutDetails.cancellationSource || null,
         },
       });
-      setLastExecutionMetadata(timeoutFailureMetadata);
+      setLastExecutionMetadata(attachChatContextToExecutionMetadata({
+        executionMetadata: timeoutFailureMetadata,
+        requestPayload: inFlightRequestPayload || {},
+      }));
       setApiStatus((prev) => {
         if (uiError.errorCode === 'TIMEOUT' || uiError.errorCode === 'CANCELLED' || uiError.errorCode === 'STREAM_FINALIZATION_MISSING') {
           return {

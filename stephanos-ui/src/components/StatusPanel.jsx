@@ -303,6 +303,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
   const buildSnapshotText = (uiRealityInput, uiRealitySampling = {}) => buildSupportSnapshot({
     runtimeStatus: {
       ...runtimeStatus,
+      lastExecutionMetadata: lastExecutionMetadata && typeof lastExecutionMetadata === 'object' ? lastExecutionMetadata : {},
       providerSelectionSource,
       activeProviderConfigSource: getActiveProviderConfigSource(),
       devMode,
