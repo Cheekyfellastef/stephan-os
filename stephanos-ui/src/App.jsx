@@ -1625,6 +1625,7 @@ export default function App() {
     const firstClassPaneIds = new Set(canonicalPaneDefinitions.map((pane) => pane.id));
     const paneShellNodes = Array.from(document.querySelectorAll('[data-pane-id]'))
       .filter((node) => firstClassPaneIds.has(String(node.getAttribute('data-pane-id') || '')));
+    const domPaneOrder = paneShellNodes.map((node) => String(node.getAttribute('data-pane-id') || '')).filter(Boolean);
     const moveControlGroups = Array.from(document.querySelectorAll('[data-pane-control-group="move-order"]'));
     const moveControlFacts = moveControlGroups.map((node, index) => {
       const ownerPaneShell = node.closest('[data-pane-id]');
@@ -1742,6 +1743,7 @@ export default function App() {
       metadata,
       url: window.location.href,
       renderedPaneIds,
+      domPaneOrder,
       renderedPaneCount: renderedPaneIds.length,
       duplicatePaneIds: duplicatedPaneIds,
       paneShells: paneShellFacts,
@@ -1873,6 +1875,7 @@ export default function App() {
       activeSurface: runtimeStatusModel?.runtimeContext?.surfaceMode || 'mission-control',
       paneRegistryKeys: canonicalPaneDefinitions.map((pane) => pane.id),
       renderedPaneOrder: renderedPaneIds,
+      domPaneOrder,
       renderedPaneCount: renderedPaneIds.length,
       renderedPaneIds,
       duplicatedPaneIds,

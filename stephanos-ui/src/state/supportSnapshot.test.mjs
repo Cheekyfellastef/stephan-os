@@ -2014,7 +2014,6 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
   const snapshot = buildSupportSnapshot({
     runtimeStatus: { appLaunchState: 'ready' },
     uiReality: {
-      paneShells: [{}, {}],
       panesMissingCollapseControls: ['mission-console'],
       moveControlGroups: [{}, {}],
       totalFirstClassPanes: 1,
@@ -2022,8 +2021,11 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
       totalMoveControlsVisible: 2,
       metadata: { sourceDistAlignment: 'mismatch' },
       copyButtons: [{ id: 'copy-support-snapshot' }],
+      renderedPaneOrder: ['aiConsole', 'missionConsolePanel'],
+      domPaneOrder: ['commandDeck', 'missionConsolePanel'],
       layout: { mode: 'default' },
       agentMissionConsoleOuter: { bodyVisible: true },
+      paneShells: [{ panelId: 'commandDeck', bodyVisible: true }, {}],
       aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', forceOpen: true },
       dedicatedMissionConsole: { rendered: true, visible: true, panelId: 'missionConsolePanel' },
     },
@@ -2044,6 +2046,11 @@ test('buildSupportSnapshot includes UI reality diagnostics fields when available
   assert.match(snapshot, /UI Reality AI Core Mission Console Visible: yes/);
   assert.match(snapshot, /UI Reality Dedicated Mission Console Rendered: yes/);
   assert.match(snapshot, /UI Reality Dedicated Mission Console Visible: yes/);
+  assert.match(snapshot, /UI Reality Rendered Pane Order: commandDeck, missionConsolePanel/);
+  assert.match(snapshot, /UI Reality Canonical Pane Order Source: dom-pane-shell-order/);
+  assert.match(snapshot, /UI Reality Command Deck Order Detection Source: dom-pane-shell-order/);
+  assert.match(snapshot, /UI Reality AI Chat Command Deck Found In DOM Order: yes/);
+  assert.match(snapshot, /UI Reality AI Chat Command Deck Found In State Order: no/);
   assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: OK/);
 });
 
