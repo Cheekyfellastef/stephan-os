@@ -463,6 +463,9 @@ export function buildSupportSnapshot({
   const chatContextDroppedBeforeSnapshot = commandExecutedWithoutContext ? 'yes' : 'no';
   const chatContextMetadataFoundIn = executionHasChatContext ? 'lastExecutionMetadata' : (runtimeHasChatContext ? 'runtimeStatusModel' : 'none');
   const chatContextDebugKeysPresent = chatContextFields.filter((field) => executionMetadata[field] !== undefined).join('|') || 'none';
+  const chatContextAttachmentProbe = executionMetadata?.chat_context_attachment_probe || 'none';
+  const chatContextAttachmentProbeResponseMode = executionMetadata?.chat_context_attachment_probe_response_mode || 'n/a';
+  const chatContextAttachmentProbePresent = chatContextAttachmentProbe === 'attached-at-final-execution-metadata' ? 'yes' : 'no';
 
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
@@ -1149,6 +1152,9 @@ export function buildSupportSnapshot({
     `Chat Context Final Execution Metadata Present: ${asText(chatContextFinalExecutionMetadataPresent, 'no')}`,
     `Chat Context Dropped Before Snapshot: ${asText(chatContextDroppedBeforeSnapshot, 'no')}`,
     `Chat Context Debug Keys Present: ${asText(chatContextDebugKeysPresent, 'none')}`,
+    `Chat Context Attachment Probe: ${asText(chatContextAttachmentProbe, 'none')}`,
+    `Chat Context Attachment Probe Response Mode: ${asText(chatContextAttachmentProbeResponseMode, 'n/a')}`,
+    `Chat Context Attachment Probe Present: ${asText(chatContextAttachmentProbePresent, 'no')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

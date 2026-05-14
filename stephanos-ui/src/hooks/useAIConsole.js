@@ -244,6 +244,8 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
   const raw = rawExecutionMetadata && typeof rawExecutionMetadata === 'object' ? rawExecutionMetadata : {};
   const trace = requestTrace && typeof requestTrace === 'object' ? requestTrace : {};
   const requestChatContext = buildChatContextExecutionMetadata(requestPayload?.chatContextPack || null);
+  const probePrompt = String(requestPayload?.prompt || requestPayload?.raw_input || requestPayload?.operatorMessage || '').trim();
+  const normalizedProbePrompt = probePrompt ? (probePrompt.length > 96 ? `${probePrompt.slice(0, 93)}...` : probePrompt) : 'n/a';
   const merged = {
     chat_context_pack_status: pickChatContextField(raw.chat_context_pack_status, trace.chat_context_pack_status, requestChatContext.chat_context_pack_status),
     chat_context_version: pickChatContextField(raw.chat_context_version, trace.chat_context_version, requestChatContext.chat_context_version),
@@ -260,6 +262,10 @@ function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, 
     chat_context_request_id: pickChatContextField(raw.chat_context_request_id, trace.chat_context_request_id, raw.request_execution_id, trace.request_execution_id, requestPayload?.request_execution_id),
     chat_context_attachment_point: 'lastExecutionMetadata',
     chat_context_attached_to_same_metadata_as_retrieval_query: 'yes',
+    chat_context_attachment_probe: 'attached-at-final-execution-metadata',
+    chat_context_attachment_probe_request_id: pickChatContextField(raw.request_execution_id, trace.request_execution_id, requestPayload?.request_execution_id, normalized.chat_context_request_id),
+    chat_context_attachment_probe_prompt: normalizedProbePrompt,
+    chat_context_attachment_probe_response_mode: pickChatContextField(raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode, 'direct-answer'),
   };
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
   return {
