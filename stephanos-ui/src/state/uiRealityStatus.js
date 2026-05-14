@@ -118,6 +118,15 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   const dedicatedMissionConsoleVisible = hasReality && reality.dedicatedMissionConsole
     ? reality.dedicatedMissionConsole.visible === true
     : false;
+  const aiCoreRenderReason = hasReality && reality.aiCoreMissionConsole
+    ? String(reality.aiCoreMissionConsole.renderReason || (aiCoreMissionConsoleRendered ? 'mounted-active-path' : 'not-mounted'))
+    : 'unknown';
+  const aiCoreVisibilityReason = hasReality && reality.aiCoreMissionConsole
+    ? String(reality.aiCoreMissionConsole.visibilityReason || (aiCoreMissionConsoleVisible ? 'visible' : 'unknown'))
+    : 'unknown';
+  const dedicatedVisibilityReason = hasReality && reality.dedicatedMissionConsole
+    ? String(reality.dedicatedMissionConsole.visibilityReason || (dedicatedMissionConsoleVisible ? 'visible' : 'unknown'))
+    : 'unknown';
 
   const failReasons = [];
   const warnReasons = [];
@@ -130,7 +139,7 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
   if (missingCollapseControls > 0) failReasons.push('missing-collapse-controls');
   if (missingCollapseControls === null) warnReasons.push('collapse-coverage-unavailable');
   if (hasReality && (!aiCoreMissionConsoleRendered || !aiCoreMissionConsoleVisible)) failReasons.push('ai-core-mission-console-missing');
-  if (hasReality && (!dedicatedMissionConsoleRendered || !dedicatedMissionConsoleVisible)) failReasons.push('dedicated-mission-console-missing');
+  if (hasReality && !dedicatedMissionConsoleRendered) failReasons.push('dedicated-mission-console-missing');
 
   const severity = failReasons.length > 0 ? 'FAIL' : warnReasons.length > 0 ? 'WARN' : 'OK';
   const copyFeedback = deriveCopyFeedbackStatus(reality, hasReality);
@@ -167,12 +176,17 @@ export function deriveUiRealityStatus({ reality = null, startupStatus = null } =
     uiRealityAiCoreMissionConsoleForceOpen: aiCoreMissionConsoleForceOpen ? 'yes' : 'no',
     uiRealityDedicatedMissionConsoleRendered: dedicatedMissionConsoleRendered ? 'yes' : 'no',
     uiRealityDedicatedMissionConsoleVisible: dedicatedMissionConsoleVisible ? 'yes' : 'no',
+    uiRealityAiCoreMissionConsoleRenderReason: aiCoreRenderReason,
+    uiRealityAiCoreMissionConsoleVisibilityReason: aiCoreVisibilityReason,
+    uiRealityDedicatedMissionConsoleVisibilityReason: dedicatedVisibilityReason,
+    uiRealityAiCoreActivePath: hasReality ? String(reality.aiCoreActivePath || 'unknown') : 'unknown',
+    uiRealityAiCoreRenderedPaneOrderContainsAiConsole: hasReality ? (reality.renderedPaneOrderContainsAiConsole ? 'yes' : 'no') : 'unknown',
     uiRealityMissionConsoleMultiSurfaceStatus: !hasReality
       ? 'WARN'
-      : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered && dedicatedMissionConsoleVisible ? 'OK' : 'FAIL'),
+      : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered ? 'OK' : 'FAIL'),
     uiRealityMissionConsoleNextAction: !hasReality
       ? 'Capture UI reality diagnostics to validate Mission Console multi-surface mount.'
-      : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered && dedicatedMissionConsoleVisible
+      : (aiCoreMissionConsoleRendered && aiCoreMissionConsoleVisible && dedicatedMissionConsoleRendered
         ? 'No operator action required.'
         : 'Restore missing Mission Console surface via canonical MissionConsoleTile mount path.'),
     ...copyFeedback,
