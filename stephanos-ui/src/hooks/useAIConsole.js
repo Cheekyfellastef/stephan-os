@@ -229,6 +229,44 @@ function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
   };
 }
 
+
+function pickChatContextField(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' && value.trim() === '') continue;
+    return value;
+  }
+  return undefined;
+}
+
+function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, rawExecutionMetadata = {}, requestTrace = {}, requestPayload = {} }) {
+  const normalized = normalizedExecutionMetadata && typeof normalizedExecutionMetadata === 'object' ? normalizedExecutionMetadata : {};
+  const raw = rawExecutionMetadata && typeof rawExecutionMetadata === 'object' ? rawExecutionMetadata : {};
+  const trace = requestTrace && typeof requestTrace === 'object' ? requestTrace : {};
+  const requestChatContext = buildChatContextExecutionMetadata(requestPayload?.chatContextPack || null);
+  const merged = {
+    chat_context_pack_status: pickChatContextField(raw.chat_context_pack_status, trace.chat_context_pack_status, requestChatContext.chat_context_pack_status),
+    chat_context_version: pickChatContextField(raw.chat_context_version, trace.chat_context_version, requestChatContext.chat_context_version),
+    chat_context_response_mode: pickChatContextField(raw.chat_context_response_mode, trace.chat_context_response_mode, requestChatContext.chat_context_response_mode),
+    chat_context_relevant_canon_count: pickChatContextField(raw.chat_context_relevant_canon_count, trace.chat_context_relevant_canon_count, requestChatContext.chat_context_relevant_canon_count),
+    chat_context_affected_subsystems: pickChatContextField(raw.chat_context_affected_subsystems, trace.chat_context_affected_subsystems, requestChatContext.chat_context_affected_subsystems),
+    chat_context_sources_used: pickChatContextField(raw.chat_context_sources_used, trace.chat_context_sources_used, requestChatContext.chat_context_sources_used),
+    chat_context_ui_reality_status: pickChatContextField(raw.chat_context_ui_reality_status, trace.chat_context_ui_reality_status, requestChatContext.chat_context_ui_reality_status),
+    chat_context_mission_state: pickChatContextField(raw.chat_context_mission_state, trace.chat_context_mission_state, requestChatContext.chat_context_mission_state),
+    chat_context_next_action: pickChatContextField(raw.chat_context_next_action, trace.chat_context_next_action, requestChatContext.chat_context_next_action),
+    chat_context_warning_count: pickChatContextField(raw.chat_context_warning_count, trace.chat_context_warning_count, requestChatContext.chat_context_warning_count),
+    chat_context_warnings: pickChatContextField(raw.chat_context_warnings, trace.chat_context_warnings, requestChatContext.chat_context_warnings),
+    chat_context_created_at: pickChatContextField(raw.chat_context_created_at, trace.chat_context_created_at, requestPayload?.chatContextPack?.createdAt, new Date().toISOString()),
+    chat_context_request_id: pickChatContextField(raw.chat_context_request_id, trace.chat_context_request_id, raw.request_execution_id, trace.request_execution_id, requestPayload?.request_execution_id),
+    chat_context_attachment_point: 'lastExecutionMetadata',
+    chat_context_attached_to_same_metadata_as_retrieval_query: 'yes',
+  };
+  const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
+  return {
+    ...merged,
+    chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
+  };
+}
 function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvider }) {
   const executionMetadata = data.data?.execution_metadata || {};
   const requestTrace = data.data?.request_trace || {};
@@ -2953,8 +2991,13 @@ export function useAIConsole() {
         mission_packet_title: effectiveRequestPayload?.missionPacket?.missionTitle || 'n/a',
         mission_packet_class: effectiveRequestPayload?.missionPacket?.missionClass || 'analysis',
         mission_execution_mode: effectiveRequestPayload?.missionPacket?.executionMode || 'analysis-only',
-        ...buildChatContextExecutionMetadata(effectiveRequestPayload?.chatContextPack || null),
-        request_payload_chat_context_present: Boolean(effectiveRequestPayload?.chatContextPack),
+        ...buildChatContextAttachmentMetadata({
+          normalizedExecutionMetadata: executionMetadataBase,
+          rawExecutionMetadata: data?.data?.execution_metadata || {},
+          requestTrace: data?.data?.request_trace || {},
+          requestPayload: effectiveRequestPayload || {},
+        }),
+        request_payload_chat_context_present: Boolean((effectiveRequestPayload?.chatContextPack) || (data?.data?.execution_metadata?.chat_context_pack_status) || (data?.data?.request_trace?.chat_context_pack_status)),
         mission_assigned_roles: Array.isArray(effectiveRequestPayload?.missionPacket?.agentAssignments)
           ? effectiveRequestPayload.missionPacket.agentAssignments.map((assignment) => assignment.roleId).filter(Boolean)
           : [],
