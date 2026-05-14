@@ -2002,6 +2002,39 @@ test('buildSupportSnapshot snapshot: streaming completion state distinguishes fa
   assert.match(finalizedSnapshot, /Streaming Completion State: fully-finalized/);
 });
 
+test('buildSupportSnapshot includes UI reality diagnostics fields when available', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: { appLaunchState: 'ready' },
+    uiReality: {
+      paneShells: [{}, {}],
+      panesMissingCollapseControls: ['mission-console'],
+      moveControlGroups: [{}, {}],
+      totalFirstClassPanes: 1,
+      panesMissingMoveControls: [],
+      totalMoveControlsVisible: 2,
+      metadata: { sourceDistAlignment: 'mismatch' },
+      copyButtons: [{ id: 'copy-support-snapshot' }],
+      layout: { mode: 'default' },
+      agentMissionConsoleOuter: { bodyVisible: true },
+    },
+  });
+  assert.match(snapshot, /UI Reality Status: FAIL/);
+  assert.match(snapshot, /UI Reality Reason: source-dist-mismatch/);
+  assert.match(snapshot, /UI Reality Missing Collapse Controls: 1/);
+  assert.match(snapshot, /UI Reality Orphan Move Control Count: 0/);
+  assert.match(snapshot, /UI Reality Duplicate Move Control Count: 1/);
+  assert.match(snapshot, /UI Reality Source\/Dist Alignment: mismatch/);
+  assert.match(snapshot, /UI Reality Diagnostics Available: yes/);
+});
+
+test('buildSupportSnapshot includes WARN\/UNKNOWN UI reality section when diagnostics missing', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: {} });
+  assert.match(snapshot, /UI Reality Status: WARN/);
+  assert.match(snapshot, /UI Reality Reason: ui-reality-unavailable/);
+  assert.match(snapshot, /UI Reality Browser Proof State: needs operator proof/);
+  assert.match(snapshot, /UI Reality Diagnostics Available: no/);
+});
+
 
 test('support snapshot projects compact repo architecture context fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { repoArchitectureAffectedSubsystemCount: '3', repoArchitectureAffectedSubsystems: 'mission-console|intent-to-build|support-snapshot', repoArchitectureLikelyTestCount: '2', repoArchitectureGeneratedOutputTouched: 'yes', repoArchitectureSourceTruthWarning: 'apps/stephanos/dist is generated output, not source truth.', repoArchitectureRiskLevel: 'mission-console:high' } });

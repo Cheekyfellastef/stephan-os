@@ -1,4 +1,5 @@
 import { buildOperatorGuidanceProjection } from './operatorGuidanceRendering.js';
+import { deriveUiRealityStatus } from './uiRealityStatus.js';
 
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
@@ -357,6 +358,8 @@ export function buildSupportSnapshot({
   orchestrationTruth = null,
   finalAgentView = null,
   missionBridgeTruth = null,
+  uiReality = null,
+  uiRealityStartupStatus = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const sourceDistAlignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
@@ -470,6 +473,17 @@ export function buildSupportSnapshot({
   const missionBridgeLastEvent = Array.isArray(missionBridge.events) && missionBridge.events.length > 0
     ? missionBridge.events[missionBridge.events.length - 1]
     : null;
+  const uiRealityStatus = deriveUiRealityStatus({
+    reality: uiReality,
+    startupStatus: uiRealityStartupStatus || runtimeStatus?.appLaunchState || 'unknown',
+  });
+  const uiRealityReason = uiRealityStatus.failReasons[0] || uiRealityStatus.warnReasons[0] || 'healthy';
+  const uiRealityDiagnosticsAvailable = uiReality && typeof uiReality === 'object' ? 'yes' : 'no';
+  const uiRealityNextAction = uiRealityStatus.severity === 'FAIL'
+    ? 'Fix UI reality failures before trusting pane controls.'
+    : uiRealityStatus.severity === 'WARN'
+      ? 'Capture/refresh UI diagnostics and re-copy snapshot.'
+      : 'No operator action required.';
 
   const blockingIssues = (runtimeDiagnosticsTruth?.blockingIssues || []).map((issue) => issue?.detail || issue?.message || issue?.code || issue?.id || 'unknown');
   if (hostedBackendTargetGuidance?.blockingIssue) {
@@ -622,6 +636,21 @@ export function buildSupportSnapshot({
     `System Watcher Timeout Hypothesis: ${asText(cognitiveAdjudication.contradictions?.find((entry) => entry.family === 'timeout-derivation-drift')?.interpretation, 'none-detected')}`,
     `System Watcher Projection Mismatch: ${asText(cognitiveAdjudication.contradictions?.find((entry) => entry.family === 'ui-truth-projection-mismatch')?.title, 'none-detected')}`,
     `System Watcher Likely Repair Boundary: ${asText(cognitiveAdjudication.rootCauseCandidates?.[0]?.likelyRepairBoundary?.subsystem, 'none-detected')}`,
+    `UI Reality Status: ${asText(uiRealityStatus.severity, 'UNKNOWN')}`,
+    `UI Reality Reason: ${asText(uiRealityReason, 'unknown')}`,
+    `UI Reality Browser Proof State: ${asText(uiRealityStatus.browserProof, 'unknown')}`,
+    `UI Reality Pane Shell Count: ${asText(uiRealityStatus.paneShells, 'unknown')}`,
+    `UI Reality Missing Collapse Controls: ${asText(uiRealityStatus.missingCollapseControls, 'unknown')}`,
+    `UI Reality Move Control Status: ${asText(uiRealityStatus.moveControlStatus, 'unknown')}`,
+    `UI Reality Orphan Move Control Count: ${asText(uiRealityStatus.orphanMoveControls, 'unknown')}`,
+    `UI Reality Duplicate Move Control Count: ${asText(uiRealityStatus.duplicateMoveControls, 'unknown')}`,
+    `UI Reality Source/Dist Alignment: ${asText(uiRealityStatus.sourceDist, 'unknown')}`,
+    `UI Reality Pane Layout Status: ${asText(uiRealityStatus.layoutStatus, 'unknown')}`,
+    `UI Reality Copy Button Status: ${asText(uiRealityStatus.copyButtonStatus, 'unknown')}`,
+    `UI Reality Agent Mission Console Outer Collapse Status: ${asText(uiRealityStatus.agentMissionConsoleOuterCollapse, 'unknown')}`,
+    `UI Reality Startup Status: ${asText(uiRealityStatus.startup, 'unknown')}`,
+    `UI Reality Diagnostics Available: ${uiRealityDiagnosticsAvailable}`,
+    `UI Reality Next Action: ${uiRealityNextAction}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
     `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,

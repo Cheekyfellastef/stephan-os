@@ -596,6 +596,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     },
     finalAgentView,
     missionBridgeTruth,
+    uiReality: uiRealityHarness,
+    uiRealityStartupStatus: runtimeStatus?.appLaunchState || 'unknown',
     origin: browserWindow?.location?.origin,
     href: browserWindow?.location?.href,
   });
