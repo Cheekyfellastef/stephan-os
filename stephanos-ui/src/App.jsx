@@ -1729,6 +1729,15 @@ export default function App() {
       wallOfTextPanesDefaultOpen: [],
       wallOfTextPanesDefaultCollapsed: [],
       agentMissionConsoleOuter: paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel') || null,
+      aiCoreMissionConsole: {
+        present: Boolean(document.querySelector('[data-panel-id="aiCoreMissionConsolePanel"] .mission-console-shell, [data-panel-id="aiCoreMissionConsolePanel"] [data-testid="mission-console-inner-command-deck"]')),
+        panelId: 'aiCoreMissionConsolePanel',
+        forceOpen: true,
+      },
+      dedicatedMissionConsole: {
+        present: Boolean(paneShellFacts.find((pane) => pane.panelId === 'missionConsolePanel')),
+        panelId: 'missionConsolePanel',
+      },
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
       copyButtons,
       copyEvents,
