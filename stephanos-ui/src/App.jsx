@@ -1284,7 +1284,7 @@ export default function App() {
     {
       id: 'aiCoreMissionConsolePanel',
       wideSurface: true,
-      title: 'AI Core Mission Console',
+      title: 'Stephanos Mission Console',
       className: 'pane-span-2',
       render: () => (
         <div data-testid="ai-core-mission-console" data-panel-id="aiCoreMissionConsolePanel" data-canonical-component="MissionConsoleTile" data-force-panel-open="false">
@@ -1292,6 +1292,7 @@ export default function App() {
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
             panelId="aiCoreMissionConsolePanel"
+            panelTitle="Stephanos Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
@@ -1450,7 +1451,7 @@ export default function App() {
     {
       id: 'missionConsolePanel',
       wideSurface: true,
-      title: 'Mission Console',
+      title: 'Agent Mission Console',
       className: 'pane-span-2',
       render: () => (
         <div data-testid="dedicated-mission-console" data-panel-id="missionConsolePanel" data-canonical-component="MissionConsoleTile">
@@ -1458,6 +1459,7 @@ export default function App() {
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
             panelId="missionConsolePanel"
+            panelTitle="Agent Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
@@ -2085,6 +2087,7 @@ export default function App() {
             togglePanel={togglePanel}
             forcePanelOpen
             panelId="aiCoreMissionConsolePanel"
+            panelTitle="Stephanos Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}

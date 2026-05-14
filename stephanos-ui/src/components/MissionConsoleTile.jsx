@@ -110,6 +110,7 @@ function MissionConsoleTile({
   agentTaskProjection = null,
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
+  panelTitle = 'Agent Mission Console',
 }) {
   recordPerfCounter('render', 'MissionConsoleTile');
   useEffect(() => {
@@ -952,7 +953,7 @@ function MissionConsoleTile({
   return (
     <CollapsiblePanel
       panelId={panelId}
-      title="Agent Mission Console"
+      title={panelTitle}
       description="Mission Router workspace for agent mission packets, target routing, and bounded OpenClaw interaction."
       className="pane-span-2 mission-console-workspace mission-console-workspace-wide stephanos-workspace-surface stephanos-workspace-surface--mission"
       isOpen={missionConsolePanelOpen}
