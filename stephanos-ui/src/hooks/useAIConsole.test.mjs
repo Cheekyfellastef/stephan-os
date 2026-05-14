@@ -22,3 +22,14 @@ test('useAIConsole request path includes chat context pack metadata', async () =
   assert.match(source, /chatContextPack/);
   assert.match(source, /chat_context_response_mode/);
 });
+
+
+test('useAIConsole stores compact chat context metadata in latest execution metadata', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_pack_status/);
+  assert.match(source, /chat_context_version/);
+  assert.match(source, /chat_context_response_mode/);
+  assert.match(source, /chat_context_relevant_canon_count/);
+  assert.match(source, /chat_context_sources_used/);
+  assert.match(source, /chat_context_warning_count/);
+});

@@ -2133,3 +2133,43 @@ test('buildSupportSnapshot marks mission console multi-surface FAIL when AI Core
   assert.match(snapshot, /UI Reality Mission Console Multi-Surface Status: FAIL/);
   assert.match(snapshot, /UI Reality Mission Console Next Action: Restore missing Mission Console surface via canonical MissionConsoleTile mount path\./);
 });
+
+test('support snapshot reads chat_context_* fields from latest execution metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        request_execution_id: 'req_123',
+        chat_context_pack_status: 'active',
+        chat_context_version: 'v1',
+        chat_context_response_mode: 'merge-decision',
+        chat_context_relevant_canon_count: 5,
+        chat_context_affected_subsystems: 'codex|pr|merge',
+        chat_context_sources_used: 'uiRealityStatus|missionState',
+        chat_context_ui_reality_status: 'OK',
+        chat_context_mission_state: 'draft',
+        chat_context_next_action: 'Collect merge proof before deciding',
+        chat_context_warning_count: 0,
+        chat_context_warnings: 'none',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Pack Status: active/);
+  assert.match(snapshot, /Chat Context Response Mode: merge-decision/);
+  assert.match(snapshot, /Chat Context Relevant Canon Count: 5/);
+});
+
+test('support snapshot reports warning when command executed without chat context metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        request_execution_id: 'req_124',
+        execution_status: 'ok:ollama',
+        retrieval_query: 'do I merge this PR?',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Pack Status: warning/);
+  assert.match(snapshot, /Chat Context Warning Count: 1/);
+  assert.match(snapshot, /Chat Context Warnings: command executed without chat context metadata/);
+  assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
+});

@@ -424,17 +424,33 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
-  const chatContextStatus = runtimeStatus?.chatContextPackStatus || executionMetadata.chat_context_pack_status || 'unavailable';
-  const chatContextVersion = runtimeStatus?.chatContextVersion || executionMetadata.chat_context_version || 'n/a';
-  const chatContextResponseMode = runtimeStatus?.chatContextResponseMode || executionMetadata.chat_context_response_mode || 'direct-answer';
+  const executionHasChatContext = [
+    'chat_context_pack_status',
+    'chat_context_response_mode',
+    'chat_context_relevant_canon_count',
+    'chat_context_next_action',
+  ].some((field) => executionMetadata[field] !== undefined && executionMetadata[field] !== null && executionMetadata[field] !== '');
+  const runtimeHasChatContext = runtimeStatus?.chatContextPackStatus || runtimeStatus?.chatContextResponseMode;
+  const commandExecutedWithoutContext = !executionHasChatContext
+    && Object.keys(executionMetadata).length > 0
+    && (executionMetadata.execution_status || executionMetadata.retrieval_query || executionMetadata.request_execution_id || executionMetadata.actual_provider_used);
+  const chatContextStatus = runtimeHasChatContext
+    ? runtimeStatus.chatContextPackStatus
+    : (executionHasChatContext
+      ? executionMetadata.chat_context_pack_status
+      : (commandExecutedWithoutContext ? 'warning' : 'unavailable'));
+  const chatContextVersion = runtimeStatus?.chatContextVersion || executionMetadata.chat_context_version || (commandExecutedWithoutContext ? 'v1' : 'n/a');
+  const chatContextResponseMode = runtimeStatus?.chatContextResponseMode || executionMetadata.chat_context_response_mode || (commandExecutedWithoutContext ? 'direct-answer' : 'direct-answer');
   const chatContextRelevantCanonCount = runtimeStatus?.chatContextRelevantCanonCount ?? executionMetadata.chat_context_relevant_canon_count ?? 0;
   const chatContextAffectedSubsystems = runtimeStatus?.chatContextAffectedSubsystems || executionMetadata.chat_context_affected_subsystems || 'none';
   const chatContextSourcesUsed = runtimeStatus?.chatContextSourcesUsed || executionMetadata.chat_context_sources_used || 'none';
   const chatContextUiRealityStatus = runtimeStatus?.chatContextUiRealityStatus || executionMetadata.chat_context_ui_reality_status || 'UNKNOWN';
   const chatContextMissionState = runtimeStatus?.chatContextMissionState || executionMetadata.chat_context_mission_state || 'unknown';
-  const chatContextNextAction = runtimeStatus?.chatContextNextAction || executionMetadata.chat_context_next_action || (chatContextStatus === 'unavailable' ? 'Submit a Command Deck message to generate context pack.' : 'Answer directly with bounded confidence.');
-  const chatContextWarningCount = runtimeStatus?.chatContextWarningCount ?? executionMetadata.chat_context_warning_count ?? 0;
-  const chatContextWarnings = runtimeStatus?.chatContextWarnings || executionMetadata.chat_context_warnings || 'none';
+  const chatContextNextAction = runtimeStatus?.chatContextNextAction || executionMetadata.chat_context_next_action || (commandExecutedWithoutContext
+    ? 'Command executed without chat context metadata; regenerate context pack on next submission.'
+    : (chatContextStatus === 'unavailable' ? 'Submit a Command Deck message to generate context pack.' : 'Answer directly with bounded confidence.')); 
+  const chatContextWarningCount = runtimeStatus?.chatContextWarningCount ?? executionMetadata.chat_context_warning_count ?? (commandExecutedWithoutContext ? 1 : 0);
+  const chatContextWarnings = runtimeStatus?.chatContextWarnings || executionMetadata.chat_context_warnings || (commandExecutedWithoutContext ? 'command executed without chat context metadata' : 'none');
 
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
