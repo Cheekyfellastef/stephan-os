@@ -22,6 +22,12 @@ function createBaseStore(overrides = {}) {
     getActiveProviderConfig: () => ({ baseURL: '', model: 'llama3' }),
     setUiDiagnostics: () => {},
     togglePanel: () => {},
+    lastExecutionMetadata: {
+      chat_context_pack_status: 'active',
+      chat_context_response_mode: 'merge-decision',
+      chat_context_relevant_canon_count: 2,
+      chat_context_next_action: 'Collect proof',
+    },
     ...overrides,
   };
 }
@@ -46,6 +52,7 @@ test('AIConsole renders mission console shell with internal message region and a
   assert.match(rendered, /mission-console__input-row/);
   assert.match(rendered, /mission-console__action-row/);
   assert.match(rendered, /mission-console__safety-row/);
+  assert.match(rendered, /Context Used/);
 });
 
 test('AIConsole avoids viewport-targeting scrollIntoView calls for message updates', async () => {

@@ -34,6 +34,7 @@ export default function AIConsole({
     runtimeStatusModel,
     uiLayout,
     togglePanel,
+    lastExecutionMetadata,
   } = useAIStore();
   const safeApiStatus = apiStatus || {};
   const safeProviderHealth = providerHealth && typeof providerHealth === 'object' ? providerHealth : {};
@@ -174,6 +175,11 @@ export default function AIConsole({
         <div className="api-banner ready">
           <strong>Routing Notice</strong>
           <span>This console uses the assistant/provider router. Use Agent Mission Console for mission packets and agent orchestration.</span>
+        </div>
+        <div className="api-banner ready">
+          <strong>Context Used</strong>
+          <span>Context Pack: {lastExecutionMetadata?.chat_context_pack_status || 'unavailable'} · Response Mode: {lastExecutionMetadata?.chat_context_response_mode || 'direct-answer'} · Relevant Canon Count: {lastExecutionMetadata?.chat_context_relevant_canon_count ?? 0}</span>
+          <span>UI Reality Status: {runtimeStatus?.uiRealityStatus?.severity || 'UNKNOWN'} · Mission State: {runtimeStatus?.missionStatus || 'unknown'} · Next Action: {lastExecutionMetadata?.chat_context_next_action || 'Answer directly with bounded confidence.'}</span>
         </div>
         {provider === 'ollama' && !runtimeStatus.localAvailable ? (
           <div className="api-banner degraded">
