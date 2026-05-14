@@ -17,6 +17,7 @@ import {
 } from '../state/missionConsoleMessageLedger.js';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import { createIntentToBuildState, deriveVerificationReturnLessonCandidates, INTENT_TO_BUILD_BOUNDARIES } from '../state/intentToBuildModel.js';
 import { buildPrEvidenceFromInput, parsePrEvidenceInput } from '../state/prEvidenceConnectorModel.js';
 import { buildMemoryLibrarianQueue } from '../state/memoryLibrarianModel.js';
@@ -866,12 +867,15 @@ function MissionConsoleTile({
   async function copyToClipboard(text, setCopyState, copySource = 'MissionConsoleTile.copy') {
     const result = await writeTextToClipboard(text, { navigatorObject: typeof navigator !== 'undefined' ? navigator : null });
     setCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
-    if (typeof window !== 'undefined') {
-      const snapshot = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
-      const events = Array.isArray(snapshot.copyEvents) ? [...snapshot.copyEvents] : [];
-      events.push({ source: copySource, ok: result.ok, reason: result.reason || 'unknown', method: result.method || 'unknown', timestamp: new Date().toISOString() });
-      window.__STEPHANOS_PANE_DIAGNOSTICS__ = { ...snapshot, copyEvents: events.slice(-50), lastCopyEvent: events.at(-1) };
-    }
+    recordCopyFeedbackEvent({
+      source: copySource,
+      success: result.ok === true,
+      visualState: result.ok ? 'success' : 'failure',
+      greenConfirmed: result.ok === true,
+      payloadKind: 'missionConsole',
+      reason: result.reason || 'unknown',
+      method: result.method || 'unknown',
+    });
   }
 
   async function copyPerfDiagnostics() {

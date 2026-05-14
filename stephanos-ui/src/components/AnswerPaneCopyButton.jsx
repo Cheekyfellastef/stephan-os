@@ -4,6 +4,7 @@ import {
 } from '../utils/assistantMessageClipboard';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
+import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 
 export default function AnswerPaneCopyButton({ message }) {
   const { copyState: answerCopyState, setCopyState: setAnswerCopyState } = useClipboardButtonState();
@@ -24,12 +25,15 @@ export default function AnswerPaneCopyButton({ message }) {
 
     try {
       const result = await writeTextToClipboard(payload);
+      const success = result.ok === true;
+      recordCopyFeedbackEvent({ source: mode === 'debug' ? 'AnswerPaneCopyButton.debug' : 'AnswerPaneCopyButton.answer', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: mode, reason: result.reason || 'unknown', method: result.method || 'unknown' });
       if (mode === 'debug') {
         setDebugCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
       } else {
         setAnswerCopyState(result.ok ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
       }
     } catch {
+      recordCopyFeedbackEvent({ source: mode === 'debug' ? 'AnswerPaneCopyButton.debug' : 'AnswerPaneCopyButton.answer', success: false, visualState: 'failure', greenConfirmed: false, payloadKind: mode, reason: 'exception', method: 'unknown' });
       if (mode === 'debug') {
         setDebugCopyState(COPY_STATE.FAILURE);
       } else {
