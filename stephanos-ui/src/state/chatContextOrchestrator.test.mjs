@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChatContextPack } from './chatContextOrchestrator.js';
+import { INTENT_RULES, buildChatContextPack, normalizeIntentInputForMatching } from './chatContextOrchestrator.js';
 
 test('buildChatContextPack returns compact structured context', () => {
   const pack = buildChatContextPack({ operatorMessage: 'this pane is broken', uiRealityStatus: { severity: 'FAIL' }, routeTruth: { routeKind: 'cloud', routeUsableState: 'yes', executedProvider: 'groq' } });
@@ -13,6 +13,24 @@ test('buildChatContextPack returns compact structured context', () => {
 test('intent mapping: merge decision and codex prompt', () => {
   assert.equal(buildChatContextPack({ operatorMessage: 'do I merge this' }).recommendedResponseMode, 'merge-decision');
   assert.equal(buildChatContextPack({ operatorMessage: 'give me a Codex prompt' }).recommendedResponseMode, 'codex-prompt');
+});
+
+
+test('live classify/build path maps exact normalized merge prompt to merge-decision', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?' });
+  assert.equal(pack.recommendedResponseMode, 'merge-decision');
+  assert.equal(pack.intentClassifierMatchedRule, 'merge-decision');
+  assert.equal(pack.classifierDebug.classifierFallbackApplied, 'no');
+  assert.ok(pack.compactSummary.relevantCanonCount > 0);
+  assert.ok(Array.isArray(pack.affectedSubsystems) && pack.affectedSubsystems.length > 0);
+});
+
+test('merge-decision regex matches normalized lowercase pr form', () => {
+  const mergeRule = INTENT_RULES.find((rule) => rule.id === 'merge-decision');
+  assert.ok(mergeRule, 'merge-decision rule must exist');
+  const normalizedInput = normalizeIntentInputForMatching('do I merge this PR?');
+  assert.equal(normalizedInput, 'do i merge this pr');
+  assert.equal(mergeRule.pattern.test(normalizedInput), true);
 });
 
 test('UI tasks include source/dist canon', () => {
