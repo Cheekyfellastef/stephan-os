@@ -201,6 +201,11 @@ export function buildChatContextPack(input = {}) {
       : ['targeted-evidence'],
     recommendedResponseMode: responseMode,
     intentClassifierMatchedRule: intent.matchedRule,
+    matchInput: intent.matchInput || normalizeIntentInputForMatching(operatorMessage),
+    mergeRulePattern: intent.mergeRulePattern || 'none',
+    mergeRuleTestResult: intent.mergeRuleTestResult || 'no',
+    firstMatchingRule: intent.firstMatchingRule || intent.matchedRule || 'direct-answer',
+    evaluatedRuleResults: Array.isArray(intent.candidateRulesEvaluated) ? intent.candidateRulesEvaluated : [],
     recommendedNextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),

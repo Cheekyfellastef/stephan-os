@@ -32,6 +32,10 @@ test('merge rule test returns true for do i merge this pr', () => {
   assert.equal(pack.classifierDebug.classifierMatchInput, 'do i merge this pr');
   assert.equal(pack.classifierDebug.classifierMergeRuleTestResult, 'yes');
   assert.equal(pack.classifierDebug.classifierFirstMatchingRule, 'merge-decision');
+  assert.equal(pack.matchInput, 'do i merge this pr');
+  assert.equal(pack.mergeRuleTestResult, 'yes');
+  assert.equal(pack.firstMatchingRule, 'merge-decision');
+  assert.ok(pack.evaluatedRuleResults.includes('merge-decision:1'));
 });
 
 test('UI tasks include source/dist canon', () => {
