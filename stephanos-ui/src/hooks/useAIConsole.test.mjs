@@ -80,7 +80,7 @@ test('useAIConsole live submit path preserves merge-decision metadata attachment
 
 test('buildChatContextAttachmentMetadata prefers request-pack classifier proof fields', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /const classifierProof = requestPack\.classifierProof/);
+  assert.match(source, /const requestPackClassifierProof = requestPack\.classifierProof/);
   assert.match(source, /chat_context_merge_rule_pattern: classifierProof\?\.mergeRulePattern \|\| 'none'/);
   assert.match(source, /chat_context_match_input: resolvedMatchInput/);
   assert.match(source, /chat_context_merge_rule_test_result: classifierProof\?\.mergeRuleTestResult \|\| 'no'/);
@@ -91,9 +91,9 @@ test('buildChatContextAttachmentMetadata prefers request-pack classifier proof f
 
 test('buildChatContextAttachmentMetadata uses operator-message fallback + proof warning when classifier proof missing', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /const resolvedMatchInput = classifierProof\?\.matchInput \|\| normalizedOperatorMessage \|\| rawOperatorMessage \|\| 'n\/a'/);
+  assert.match(source, /const resolvedMatchInput = classifierProof\?\.matchInput \|\| normalizedOperatorMessage \|\| rawOperatorMessage \|\| rebuiltOperatorMessage \|\| 'n\/a'/);
   assert.match(source, /chat_context_match_input: resolvedMatchInput/);
-  assert.match(source, /chat_context_classifier_proof_warning: classifierProofMissing \? 'request-pack-classifier-proof-missing' : 'none'/);
+  assert.match(source, /chat_context_classifier_proof_warning: classifierProofMissing \? 'classifier-proof-missing-after-final-attachment-rebuild' : 'none'/);
 });
 
 test('useAIConsole re-attaches chat context metadata in final execution metadata setter path', async () => {
@@ -105,7 +105,7 @@ test('useAIConsole re-attaches chat context metadata in final execution metadata
 test('request classifier proof wins over raw\/trace direct-answer defaults', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /pickChatContextFieldPreferRequestNonDefault\('chat_context_response_mode', raw\.chat_context_response_mode, trace\.chat_context_response_mode, requestChatContext\.chat_context_response_mode\)/);
-  assert.match(source, /chat_context_intent_classifier_matched_rule: classifierProof\?\.intentClassifierMatchedRule \|\| requestPack\.intentClassifierMatchedRule \|\| requestPack\.recommendedResponseMode \|\| 'direct-answer'/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule: classifierProof\?\.intentClassifierMatchedRule \|\| requestPack\.intentClassifierMatchedRule \|\| requestPack\.recommendedResponseMode \|\| rebuiltPack\?\.intentClassifierMatchedRule \|\| 'direct-answer'/);
   assert.match(source, /const defaultPackUsed = \(deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer'\)\s*\?\s*'no'/);
 });
 
@@ -123,7 +123,7 @@ test('stephanos-mission-console and command deck label path share orchestrator I
 
 test('buildChatContextAttachmentMetadata copies classifierProof directly from request pack', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /const classifierProof = requestPack\.classifierProof/);
+  assert.match(source, /const requestPackClassifierProof = requestPack\.classifierProof/);
   assert.match(source, /chat_context_merge_rule_test_result: classifierProof\?\.mergeRuleTestResult \|\| 'no'/);
   assert.match(source, /chat_context_first_matching_rule: classifierProof\?\.firstMatchingRule \|\| 'direct-answer'/);
   assert.match(source, /chat_context_evaluated_rule_results: resolvedRuleResults\.length > 0 \? resolvedRuleResults\.join\(','\) : 'n\/a'/);
@@ -133,5 +133,23 @@ test('buildChatContextAttachmentMetadata reports proof missing rather than inven
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const classifierProofMissing = !classifierProof/);
   assert.match(source, /chat_context_classifier_proof_missing: classifierProofMissing \? 'yes' : 'no'/);
-  assert.match(source, /chat_context_classifier_proof_warning: classifierProofMissing \? 'request-pack-classifier-proof-missing' : 'none'/);
+  assert.match(source, /chat_context_classifier_proof_warning: classifierProofMissing \? 'classifier-proof-missing-after-final-attachment-rebuild' : 'none'/);
+});
+
+
+test('buildChatContextAttachmentMetadata rebuild path is wired for request-pack fallback and source tagging', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const requestPackClassifierProof = requestPack\.classifierProof/);
+  assert.match(source, /const rebuiltPack = \(!requestPackClassifierProof && rebuiltOperatorMessage\)/);
+  assert.match(source, /buildChatContextPack\(\{/);
+  assert.match(source, /chat_context_classifier_proof_source: classifierProofSource/);
+  assert.match(source, /chat_context_rebuilt_at_final_attachment: rebuiltAtFinalAttachment/);
+  assert.match(source, /chat_context_rebuild_source_field: rebuildSourceField/);
+});
+
+test('buildChatContextAttachmentMetadata rebuild candidate priority includes retrieval_query and raw_input', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /\['retrieval_query', normalized\.retrieval_query\]/);
+  assert.match(source, /\['raw_input', requestPayload\?\.raw_input\]/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule: classifierProof\?\.intentClassifierMatchedRule \|\| requestPack\.intentClassifierMatchedRule \|\| requestPack\.recommendedResponseMode \|\| rebuiltPack\?\.intentClassifierMatchedRule \|\| 'direct-answer'/);
 });

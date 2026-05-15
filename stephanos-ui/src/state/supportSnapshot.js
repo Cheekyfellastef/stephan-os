@@ -480,6 +480,9 @@ export function buildSupportSnapshot({
   const chatContextBuildSource = executionMetadata?.chat_context_build_source || 'n/a';
   const chatContextDefaultPackUsed = executionMetadata?.chat_context_default_pack_used || 'n/a';
   const chatContextWasOverwritten = executionMetadata?.chat_context_was_overwritten || 'no';
+  const chatContextRebuiltAtFinalAttachment = executionMetadata?.chat_context_rebuilt_at_final_attachment || 'no';
+  const chatContextRebuildSourceField = executionMetadata?.chat_context_rebuild_source_field || 'none';
+  const chatContextClassifierProofSource = executionMetadata?.chat_context_classifier_proof_source || 'missing';
 
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
@@ -1180,6 +1183,9 @@ export function buildSupportSnapshot({
     `Chat Context Build Source: ${asText(chatContextBuildSource, 'n/a')}`,
     `Chat Context Default Pack Used: ${asText(chatContextDefaultPackUsed, 'n/a')}`,
     `Chat Context Was Overwritten: ${asText(chatContextWasOverwritten, 'no')}`,
+    `Chat Context Rebuilt At Final Attachment: ${asText(chatContextRebuiltAtFinalAttachment, 'no')}`,
+    `Chat Context Rebuild Source Field: ${asText(chatContextRebuildSourceField, 'none')}`,
+    `Chat Context Classifier Proof Source: ${asText(chatContextClassifierProofSource, 'missing')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,
