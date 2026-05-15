@@ -19,6 +19,11 @@ const CANON_RULES = [
 
 export const INTENT_RULES = [
   {
+    id: 'identity-recall',
+    responseMode: 'identity-recall',
+    pattern: /\b(can you remember my name|what is my name|who am i|do you know my name|remember my name)\b/,
+  },
+  {
     id: 'merge-decision',
     responseMode: 'merge-decision',
     pattern: 'contains "merge" and merge-decision companion phrase',
@@ -66,6 +71,7 @@ function classifyIntent(msg = '') {
   const normalized = normalizeIntentInput(msg);
   const normalizedForMatching = normalizeIntentInputForMatching(msg);
   const mergeRulePattern = 'contains: merge + any(pr|pull request|this|this one|this pr|should i|do i|can i)';
+  const identityRecallPattern = 'contains: name/identity recall phrase';
   const mergeRuleMatched = normalizedForMatching.includes('merge')
     && (
       normalizedForMatching.includes('pr')
@@ -111,6 +117,7 @@ function classifyIntent(msg = '') {
     classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
     candidateRulesEvaluated,
     mergeRuleMatched: matchedRule.id === 'merge-decision',
+    identityRecallMatched: matchedRule.id === 'identity-recall',
     mergeRulePattern,
     mergeRuleTestResult: mergeRuleMatched ? 'yes' : 'no',
     matchInput: normalizedForMatching,
@@ -140,6 +147,7 @@ export function buildChatContextPack(input = {}) {
   if (String(uiReality.severity || '').toUpperCase() === 'FAIL') warnings.push('UI Reality FAIL: visual proof required before merge claims.');
   const uiTask = /\b(ui|pane|render|layout|button|console|collapse|arrange)\b/i.test(operatorMessage) || responseMode === 'diagnosis';
   const mergeDecisionTask = responseMode === 'merge-decision';
+  const identityRecallTask = responseMode === 'identity-recall';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : [];
@@ -147,7 +155,7 @@ export function buildChatContextPack(input = {}) {
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
-    : (uiTask ? ['ui', 'proof', 'source-truth'] : ['general']);
+    : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity','memory','operator-profile'] : ['general']));
   const providerSnapshot = buildContextProviderSnapshot({
     ...input,
     contextProviderIdsRequested,
@@ -279,6 +287,7 @@ export function buildChatContextPack(input = {}) {
       canon: relevantCanon.map((rule) => rule.text),
       contextProviderCanonLinks,
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
+      operatorProfileLine: providerSummaries?.operatorProfile?.known === 'yes' ? `Operator profile indicates the operator's name is ${providerSummaries.operatorProfile.operatorName}. Use this if asked about the operator's name.` : 'Operator profile does not include a known operator name yet.',
     },
     classifierDebug: {
       classifierFunctionSource: intent.classifierFunctionSource,

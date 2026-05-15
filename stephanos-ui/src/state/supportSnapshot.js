@@ -536,6 +536,8 @@ export function buildSupportSnapshot({
   const operatorIdentityConfidence = executionMetadata?.chat_context_operator_identity_confidence || executionMetadata?.command_envelope_operator_identity_confidence || 'unknown';
   const operatorIdentityUpdatedAt = executionMetadata?.chat_context_operator_identity_updated_at || 'unknown';
   const operatorIdentityNextAction = executionMetadata?.chat_context_operator_identity_next_action || 'Ask operator for preferred name when relevant.';
+  const chatContextOperatorProfileUsed = (executionMetadata?.chat_context_provider_ids_used || '').includes('operatorProfile') ? 'yes' : 'no';
+  const chatContextOperatorNameAvailable = operatorNameKnown === 'yes' ? 'yes' : 'no';
 
   const responsePlannerStatus = executionMetadata?.response_planner_status || 'unavailable';
   const responsePlannerVersion = executionMetadata?.response_planner_version || 'n/a';
@@ -550,6 +552,8 @@ export function buildSupportSnapshot({
   const responsePlannerWarningCount = executionMetadata?.response_planner_warning_count ?? 0;
   const responsePlannerWarnings = executionMetadata?.response_planner_warnings || 'none';
   const responsePlannerCanonApplied = executionMetadata?.response_planner_canon_applied || 'none';
+  const responsePlannerIdentityRecall = executionMetadata?.response_planner_identity_recall || 'no';
+  const responsePlannerOperatorNameUsed = executionMetadata?.response_planner_operator_name_used || 'no';
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1279,6 +1283,8 @@ export function buildSupportSnapshot({
     `Operator Name: ${asText(operatorName, 'unknown')}`,
     `Operator Identity Source: ${asText(operatorIdentitySource, 'none')}`,
     `Operator Identity Confidence: ${asText(operatorIdentityConfidence, 'unknown')}`,
+    `Chat Context Operator Profile Used: ${asText(chatContextOperatorProfileUsed, 'no')}`,
+    `Chat Context Operator Name Available: ${asText(chatContextOperatorNameAvailable, 'no')}`,
     `Operator Identity Updated At: ${asText(operatorIdentityUpdatedAt, 'unknown')}`,
     `Operator Identity Next Action: ${asText(operatorIdentityNextAction, 'Ask operator for preferred name when relevant.')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
@@ -1293,6 +1299,8 @@ export function buildSupportSnapshot({
     `Command Envelope Actual Model: ${asText(commandEnvelopeActualModel, 'unknown')}`,
     `Command Envelope Proof Status: ${asText(commandEnvelopeProofStatus, 'unknown')}`,
     `Command Envelope UI Reality Status: ${asText(commandEnvelopeUiRealityStatus, 'UNKNOWN')}`,
+    `Command Envelope Operator Name: ${asText(executionMetadata?.command_envelope_operator_name || 'unknown', 'unknown')}`,
+    `Command Envelope Operator Profile Used: ${asText(executionMetadata?.command_envelope_operator_profile_used || 'no', 'no')}`,
     `Command Envelope Warnings: ${asText(commandEnvelopeWarnings, 'none')}`,
     `Response Planner Status: ${asText(responsePlannerStatus, 'unavailable')}`,
     `Response Planner Version: ${asText(responsePlannerVersion, 'n/a')}`,
@@ -1307,6 +1315,8 @@ export function buildSupportSnapshot({
     `Response Planner Warning Count: ${asText(responsePlannerWarningCount, '0')}`,
     `Response Planner Warnings: ${asText(responsePlannerWarnings, 'none')}`,
     `Response Planner Canon Applied: ${asText(responsePlannerCanonApplied, 'none')}`,
+    `Response Planner Identity Recall: ${asText(responsePlannerIdentityRecall, 'no')}`,
+    `Response Planner Operator Name Used: ${asText(responsePlannerOperatorNameUsed, 'no')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

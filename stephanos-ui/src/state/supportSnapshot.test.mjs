@@ -2431,7 +2431,10 @@ test('Support Snapshot reports command-envelope-missing when envelope metadata i
 
 
 test('support snapshot contains response planner fields', () => {
-  const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: { response_planner_status: 'active', response_planner_answer_shape: 'merge-decision' } } });
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: { response_planner_status: 'active', response_planner_answer_shape: 'merge-decision', response_planner_identity_recall: 'yes', response_planner_operator_name_used: 'yes', chat_context_provider_ids_used: 'operatorProfile', command_envelope_operator_name: 'Stephan', command_envelope_operator_profile_used: 'yes', chat_context_operator_name_known: 'yes' } } });
   assert.match(snapshot, /Response Planner Status: active/);
   assert.match(snapshot, /Response Planner Answer Shape: merge-decision/);
+  assert.match(snapshot, /Response Planner Identity Recall: yes/);
+  assert.match(snapshot, /Command Envelope Operator Name: Stephan/);
+  assert.match(snapshot, /Chat Context Operator Profile Used: yes/);
 });

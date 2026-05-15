@@ -61,6 +61,7 @@ export function attachChatContextToEnvelope(envelope, chatContextPack = null) {
       rawTranscriptStored: 'no',
     },
     operatorProfile: {
+      used: chatContextPack?.contextProviderIdsUsed?.includes('operatorProfile') ? 'yes' : 'no',
       known: chatContextPack?.providerSummaries?.operatorProfile?.known || 'no',
       operatorName: chatContextPack?.providerSummaries?.operatorProfile?.operatorName || 'unknown',
       source: chatContextPack?.providerSummaries?.operatorProfile?.source || 'none',
@@ -102,6 +103,7 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     chat_continuity_source: asText(envelope?.chatContinuity?.continuitySource, 'none'),
     chat_continuity_summary_count: Number(envelope?.chatContinuity?.summaryCount || 0),
     chat_continuity_raw_transcript_stored: asText(envelope?.chatContinuity?.rawTranscriptStored, 'no'),
+    command_envelope_operator_profile_used: asText(envelope?.operatorProfile?.used, 'no'),
     command_envelope_operator_name_known: asText(envelope?.operatorProfile?.known, 'no'),
     command_envelope_operator_name: asText(envelope?.operatorProfile?.operatorName, 'unknown'),
     command_envelope_operator_identity_source: asText(envelope?.operatorProfile?.source, 'none'),

@@ -25,3 +25,13 @@ test('diagnosis and architecture/direct-answer stay compact', () => {
   assert.equal(buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'architecture-guidance' } }).answerShape, 'architecture-guidance');
   assert.equal(buildResponsePlan({}).answerShape, 'direct-answer');
 });
+
+test('identity-recall uses operator profile when known and unknown fallback when missing', () => {
+  const known = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'identity-recall', providerSummaries: { operatorProfile: { known: 'yes', operatorName: 'Stephan' } } } });
+  assert.equal(known.identityRecallUsed, 'yes');
+  assert.equal(known.operatorNameUsed, 'yes');
+  assert.match(known.identityGuidance, /Stephan/);
+  const unknown = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'identity-recall', providerSummaries: { operatorProfile: { known: 'no' } } } });
+  assert.equal(unknown.operatorNameUsed, 'no');
+  assert.match(unknown.identityGuidance, /does not include a known operator name/);
+});

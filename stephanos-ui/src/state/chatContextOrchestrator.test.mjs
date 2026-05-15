@@ -138,3 +138,9 @@ test('operator profile is included in context providers and prompt context', () 
   assert.ok(pack.contextProviderIdsUsed.includes('operatorProfile'));
   assert.equal(pack.operatorProfile.operatorName, 'Stephan');
 });
+
+test('identity recall prompt maps to identity-recall and carries compact operator line', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'can you remember my name?', operatorProfile: { known: true, operatorName: 'Stephan' } });
+  assert.equal(pack.recommendedResponseMode, 'identity-recall');
+  assert.match(pack.contextForPrompt.operatorProfileLine, /name is Stephan/i);
+});
