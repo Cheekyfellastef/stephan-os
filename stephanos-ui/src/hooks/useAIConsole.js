@@ -132,25 +132,40 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
 
 export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const hasPack = chatContextPack && typeof chatContextPack === 'object';
+  const compact = chatContextPack?.compactSummary || {};
+  const providerIdsUsed = Array.isArray(chatContextPack?.contextProviderIdsUsed)
+    ? chatContextPack.contextProviderIdsUsed
+    : (Array.isArray(compact?.contextProviderIdsUsed) ? compact.contextProviderIdsUsed : []);
+  const providerIdsRegistered = Array.isArray(chatContextPack?.contextProviderIdsRegistered)
+    ? chatContextPack.contextProviderIdsRegistered
+    : (Array.isArray(compact?.contextProviderIdsRegistered) ? compact.contextProviderIdsRegistered : []);
+  const providerNextActions = Array.isArray(chatContextPack?.providerNextActions)
+    ? chatContextPack.providerNextActions
+    : (Array.isArray(compact?.contextProviderNextActions) ? compact.contextProviderNextActions : []);
+  const providerProofState = chatContextPack?.contextProviderProofState || compact?.contextProviderProofState || null;
+  const providerCanonLinksCount = Array.isArray(chatContextPack?.contextForPrompt?.contextProviderCanonLinks)
+    ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length
+    : Number(compact?.contextProviderCanonLinksCount || 0);
+
   return {
-    chat_context_pack_status: chatContextPack?.compactSummary?.status || (hasPack ? 'active' : 'unavailable'),
+    chat_context_pack_status: compact?.status || (hasPack ? 'active' : 'unavailable'),
     chat_context_version: chatContextPack?.version || 'n/a',
-    chat_context_response_mode: chatContextPack?.recommendedResponseMode || 'direct-answer',
-    chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : 0,
-    chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : 'none',
-    chat_context_sources_used: Array.isArray(chatContextPack?.compactSummary?.contextSourcesUsed) ? chatContextPack.compactSummary.contextSourcesUsed.join('|') : 'none',
-    chat_context_ui_reality_status: chatContextPack?.compactSummary?.uiRealityStatusAtBuild || 'UNKNOWN',
-    chat_context_mission_state: chatContextPack?.compactSummary?.missionStateAtBuild || 'unknown',
-    chat_context_next_action: chatContextPack?.recommendedNextAction || 'Answer directly with bounded confidence.',
-    chat_context_warning_count: Number(chatContextPack?.compactSummary?.warningCount || 0),
-    chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : 'none',
-    chat_context_provider_ids_used: Array.isArray(chatContextPack?.contextProviderIdsUsed) ? chatContextPack.contextProviderIdsUsed.join('|') : 'none',
-    chat_context_provider_registry_status: chatContextPack?.contextProviderRegistryStatus || 'inactive',
-    chat_context_provider_ids_registered: Array.isArray(chatContextPack?.contextProviderIdsRegistered) ? chatContextPack.contextProviderIdsRegistered.join('|') : 'none',
-    chat_context_provider_warning_count: Number(chatContextPack?.contextProviderWarningCount || 0),
-    chat_context_provider_next_actions: Array.isArray(chatContextPack?.providerNextActions) ? chatContextPack.providerNextActions.slice(0, 3).join(' | ') : 'none',
-    chat_context_provider_proof_state: chatContextPack?.contextProviderProofState ? JSON.stringify(chatContextPack.contextProviderProofState) : 'unknown',
-    chat_context_provider_canon_links_count: Array.isArray(chatContextPack?.contextForPrompt?.contextProviderCanonLinks) ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length : 0,
+    chat_context_response_mode: chatContextPack?.recommendedResponseMode || compact?.responseMode || 'direct-answer',
+    chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : Number(compact?.relevantCanonCount || 0),
+    chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : (Array.isArray(compact?.affectedSubsystems) ? compact.affectedSubsystems.join('|') : 'none'),
+    chat_context_sources_used: Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.join('|') : 'none',
+    chat_context_ui_reality_status: compact?.uiRealityStatusAtBuild || 'UNKNOWN',
+    chat_context_mission_state: compact?.missionStateAtBuild || 'unknown',
+    chat_context_next_action: chatContextPack?.recommendedNextAction || compact?.nextAction || 'Answer directly with bounded confidence.',
+    chat_context_warning_count: Number(compact?.warningCount || 0),
+    chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : (Array.isArray(compact?.warnings) ? compact.warnings.join(' | ') : 'none'),
+    chat_context_provider_ids_used: providerIdsUsed.length ? providerIdsUsed.join('|') : 'none',
+    chat_context_provider_registry_status: chatContextPack?.contextProviderRegistryStatus || compact?.contextProviderRegistryStatus || 'inactive',
+    chat_context_provider_ids_registered: providerIdsRegistered.length ? providerIdsRegistered.join('|') : 'none',
+    chat_context_provider_warning_count: Number(chatContextPack?.contextProviderWarningCount ?? compact?.contextProviderWarningCount ?? 0),
+    chat_context_provider_next_actions: providerNextActions.length ? providerNextActions.slice(0, 3).join(' | ') : 'none',
+    chat_context_provider_proof_state: providerProofState ? JSON.stringify(providerProofState) : 'unknown',
+    chat_context_provider_canon_links_count: providerCanonLinksCount,
   };
 }
 

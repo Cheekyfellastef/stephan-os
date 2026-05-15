@@ -521,7 +521,7 @@ export function buildSupportSnapshot({
   const chatContextRebuiltAtFinalAttachment = executionMetadata?.chat_context_rebuilt_at_final_attachment || 'no';
   const chatContextRebuildSourceField = executionMetadata?.chat_context_rebuild_source_field || 'none';
   const chatContextClassifierProofSource = executionMetadata?.chat_context_classifier_proof_source || 'missing';
-  const contextProviderRegistryStatus = chatContextStatus === 'active' ? 'active' : 'unavailable';
+  const contextProviderRegistryStatus = executionMetadata?.chat_context_provider_registry_status || (chatContextStatus === 'active' ? 'active' : 'unavailable');
   const contextProvidersRegistered = executionMetadata?.chat_context_provider_ids_registered || 'none';
   const contextProvidersUsed = executionMetadata?.chat_context_provider_ids_used || 'none';
   const contextProviderWarningCount = executionMetadata?.chat_context_provider_warning_count ?? 0;
