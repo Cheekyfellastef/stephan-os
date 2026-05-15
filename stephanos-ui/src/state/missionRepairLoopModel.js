@@ -20,29 +20,39 @@ export function buildMissionRepairLoopModel(input = {}) {
   const requiredProof = asList(input.requiredProof);
   const failingAcceptanceFields = asList(input.failingAcceptanceFields);
 
-  const buildVerifyPassed = input.latestBuildVerifyStatus === 'pass';
-  const testsPassed = input.latestTestResults === 'pass';
-  const uiRealityFailed = String(input.latestSupportSnapshotStatus?.uiRealityStatus || input.uiRealityStatus || '').toUpperCase() === 'FAIL';
+  const sourceTruthsUsed = asList(input.sourceTruthsUsed);
+  const latestBuildVerifyStatus = asText(input.latestBuildVerifyStatus, 'unknown');
+  const latestTestResults = asText(input.latestTestResults, 'unknown');
+  const uiRealityStatus = asText(input.latestSupportSnapshotStatus?.uiRealityStatus || input.uiRealityStatus, 'UNKNOWN').toUpperCase();
   const supportAcceptanceMatch = input.latestSupportSnapshotStatus?.acceptanceFieldsMatch !== false;
   const browserProofRequired = input.latestSupportSnapshotStatus?.browserProofRequired === true;
   const browserProofAvailable = input.latestSupportSnapshotStatus?.browserProofAvailable === true;
+  const verificationReady = asText(input.missionVerificationReadinessLevel, 'unknown');
+  const verificationProof = asText(input.missionVerificationProofStatus, 'unknown');
   const attemptsExhausted = currentAttempt >= maxAttempts;
+
+  const buildVerifyFailed = latestBuildVerifyStatus === 'fail';
+  const testsFailed = latestTestResults === 'fail';
+  const uiRealityFailed = uiRealityStatus === 'FAIL';
+  const verificationBlocked = ['blocked', 'not_ready', 'failed'].includes(verificationReady) || ['failed'].includes(verificationProof);
 
   let status = 'active';
   if (attemptsExhausted) status = 'blocked';
-  else if (!buildVerifyPassed || !testsPassed) status = 'blocked';
+  else if (buildVerifyFailed || testsFailed || verificationBlocked) status = 'blocked';
   else if (uiRealityFailed || !supportAcceptanceMatch || failingAcceptanceFields.length > 0) status = 'needs-repair';
   else if (browserProofRequired && !browserProofAvailable) status = 'needs-proof';
-  else status = 'passed';
+  else if (latestBuildVerifyStatus === 'pass' && latestTestResults === 'pass' && supportAcceptanceMatch) status = 'passed';
 
   const latestFailingField = failingAcceptanceFields[0] || '';
   const operatorDecisionRequired = status === 'blocked';
-  const mergeRecommendation = status === 'passed' ? 'merge-candidate' : 'hold';
+  const mergeRecommendation = status === 'passed' && verificationProof !== 'failed' ? 'merge-candidate' : 'hold';
   const nextPrompt = status === 'passed'
     ? 'All acceptance fields pass. Prepare merge evidence summary only.'
     : latestFailingField
       ? `Repair ${latestFailingField} and rerun required proof commands before requesting merge.`
       : 'Collect missing proof, repair failing acceptance fields, and rerun required tests/build/verify.';
+
+  const duplicateAuthorityDetected = sourceTruthsUsed.length === 0 ? 'yes' : 'no';
 
   return {
     version: 'mission-repair-loop.v1',
@@ -56,13 +66,17 @@ export function buildMissionRepairLoopModel(input = {}) {
     forbiddenActions,
     requiredProof,
     latestCodexSummary: asText(input.latestCodexSummary, 'n/a'),
-    latestTestResults: asText(input.latestTestResults, 'unknown'),
-    latestBuildVerifyStatus: asText(input.latestBuildVerifyStatus, 'unknown'),
+    latestTestResults,
+    latestBuildVerifyStatus,
     latestSupportSnapshotStatus: input.latestSupportSnapshotStatus || {},
+    missionVerificationReadinessLevel: verificationReady,
+    missionVerificationProofStatus: verificationProof,
     failingAcceptanceFields,
     nextPrompt,
     mergeRecommendation,
     operatorDecisionRequired,
+    sourceTruthsUsed,
+    duplicateAuthorityDetected,
     warnings: asList(input.warnings),
   };
 }

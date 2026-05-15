@@ -14,6 +14,9 @@ const base = {
   latestCodexSummary: 'patched',
   latestTestResults: 'pass',
   latestBuildVerifyStatus: 'pass',
+  missionVerificationReadinessLevel: 'ready',
+  missionVerificationProofStatus: 'passed',
+  sourceTruthsUsed: ['uiRealityStatus', 'missionVerificationProofStatus'],
   latestSupportSnapshotStatus: {
     uiRealityStatus: 'OK',
     acceptanceFieldsMatch: true,
@@ -54,9 +57,19 @@ test('next prompt is generated from failing fields', () => {
   assert.match(model.nextPrompt, /Support Snapshot acceptance mismatch/);
 });
 
-test('merge recommendation follows proof state', () => {
+test('merge recommendation follows verification proof state', () => {
   const passModel = buildMissionRepairLoopModel(base);
-  const failModel = buildMissionRepairLoopModel({ ...base, latestTestResults: 'fail' });
+  const failModel = buildMissionRepairLoopModel({ ...base, missionVerificationProofStatus: 'failed' });
   assert.equal(passModel.mergeRecommendation, 'merge-candidate');
   assert.equal(failModel.mergeRecommendation, 'hold');
+});
+
+test('model reports source truths used', () => {
+  const model = buildMissionRepairLoopModel(base);
+  assert.deepEqual(model.sourceTruthsUsed, ['uiRealityStatus', 'missionVerificationProofStatus']);
+});
+
+test('duplicate authority is not introduced when source truths are declared', () => {
+  const model = buildMissionRepairLoopModel(base);
+  assert.equal(model.duplicateAuthorityDetected, 'no');
 });

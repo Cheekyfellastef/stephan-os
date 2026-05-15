@@ -782,13 +782,25 @@ export function buildSupportSnapshot({
     latestCodexSummary: runtimeStatus?.missionLatestCodexSummary || executionMetadata?.codex_handoff_summary,
     latestTestResults: runtimeStatus?.missionLatestTestResults || (runtimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'pass' : 'fail'),
     latestBuildVerifyStatus: runtimeStatus?.missionLatestBuildVerifyStatus || (runtimeStatus?.missionVerificationProofStatus === 'passed' ? 'pass' : (runtimeStatus?.missionVerificationProofStatus === 'pending' ? 'fail' : runtimeStatus?.missionVerificationProofStatus)),
+    missionVerificationReadinessLevel: runtimeStatus?.missionVerificationReadinessLevel,
+    missionVerificationProofStatus: runtimeStatus?.missionVerificationProofStatus,
     latestSupportSnapshotStatus: {
       uiRealityStatus: uiRealityStatus.severity,
       acceptanceFieldsMatch: (runtimeStatus?.missionVerificationBlockerCount ?? 0) === 0,
-      browserProofRequired: chatContextResponseMode === 'merge-decision',
+      browserProofRequired: chatContextResponseMode === 'merge-decision' || responsePlannerProofRequired === 'yes',
       browserProofAvailable: uiRealityStatus.browserProof === 'available',
     },
     failingAcceptanceFields: String(runtimeStatus?.missionVerificationBlockingIssues || '').split('|').map((item) => item.trim()).filter(Boolean),
+    sourceTruthsUsed: [
+      'uiRealityStatus',
+      'missionVerificationReadinessLevel',
+      'missionVerificationProofStatus',
+      'missionVerificationBlockerCount',
+      'responsePlannerProofRequired',
+      'chatContextResponseMode',
+      'commandEnvelopeStatus',
+      'prEvidenceProofStatus',
+    ],
   });
 
   const lines = [
@@ -840,6 +852,8 @@ export function buildSupportSnapshot({
     `Mission Repair Loop Merge Recommendation: ${asText(missionRepairLoop.mergeRecommendation, 'hold')}`,
     `Mission Repair Loop Next Action: ${asText(missionRepairLoop.nextPrompt, 'collect proof')}`,
     `Mission Repair Loop Operator Decision Required: ${missionRepairLoop.operatorDecisionRequired ? 'yes' : 'no'}`,
+    `Mission Repair Loop Source Truths Used: ${asText(missionRepairLoop.sourceTruthsUsed.join(' | ') || 'unknown')}`,
+    `Mission Repair Loop Duplicate Authority Detected: ${asText(missionRepairLoop.duplicateAuthorityDetected, 'yes')}`,
     `UI Reality Reason: ${asText(uiRealityReason, 'unknown')}`,
     `UI Reality Browser Proof State: ${asText(uiRealityStatus.browserProof, 'unknown')}`,
     `UI Reality Pane Shell Count: ${asText(uiRealityStatus.paneShells, 'unknown')}`,

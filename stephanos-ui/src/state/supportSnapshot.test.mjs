@@ -2518,4 +2518,6 @@ test('support snapshot projects mission repair loop fields', () => {
   assert.match(snapshot, /Mission Repair Loop Status:/);
   assert.match(snapshot, /Mission Repair Loop Current Attempt:/);
   assert.match(snapshot, /Mission Repair Loop Merge Recommendation:/);
+  assert.match(snapshot, /Mission Repair Loop Source Truths Used:/);
+  assert.match(snapshot, /Mission Repair Loop Duplicate Authority Detected: no/);
 });
