@@ -2708,13 +2708,15 @@ export function useAIConsole() {
 
   async function submitPrompt(rawPrompt, { telemetryEntries = [], orchestrationTruth = null, submissionSource = 'stephanos-mission-console', submissionRoute = 'assistant-router' } = {}) {
     const prompt = rawPrompt.trim();
-    if (!prompt) return;
+    if (!prompt) return { submitAccepted: false, inputCleared: false, restoreInput: true };
     if (prompt === '/clear') {
       clearConsole();
-      return;
+      return { submitAccepted: true, inputCleared: true, restoreInput: false };
     }
 
     const normalizedPrompt = prompt.toLowerCase();
+    let submitAccepted = false;
+    let lastFinalizationPath = 'unknown';
     const appendLocalOperatorEntry = (outputText) => {
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -2734,6 +2736,8 @@ export function useAIConsole() {
       setCommandHistory((prev) => appendCommandHistory(prev, entry));
       setLastRoute('assistant');
       setStatus('idle');
+      submitAccepted = true;
+      lastFinalizationPath = 'deterministic-identity';
     };
     const runtimeSelectors = orchestrationTruth?.selectors || null;
 
@@ -2865,7 +2869,7 @@ export function useAIConsole() {
         response: null,
       }));
       setStatus('blocked');
-      return;
+      return { submitAccepted: true, inputCleared: true, restoreInput: false };
     }
     const startedAt = performance.now();
     setIsBusy(true);
@@ -3160,6 +3164,14 @@ export function useAIConsole() {
         submissionSource,
         submissionRoute,
         execution_cancelled: false,
+        command_pipeline_last_submit_accepted: 'no',
+        command_pipeline_last_user_message_recorded: 'no',
+        command_pipeline_last_assistant_answer_generated: 'no',
+        command_pipeline_last_answer_pane_rendered: 'no',
+        command_pipeline_last_failure_reason: 'none',
+        command_pipeline_last_finalization_path: 'unknown',
+        command_pipeline_last_input_cleared: 'no',
+        command_pipeline_last_input_restore_available: 'yes',
         cancellation_source: null,
         provider_cancelled: false,
         provider_cancel_reason: null,
@@ -3291,6 +3303,7 @@ export function useAIConsole() {
       const streamEntryId = `cmd_${Date.now()}_stream`;
       let streamBuffer = '';
       if (!routeUnavailableResult && !identityRecallDeterministicResult) {
+        submitAccepted = true;
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
           raw_input: prompt,
@@ -3494,9 +3507,11 @@ export function useAIConsole() {
       };
 
       setCommandHistory((prev) => {
-        if (routeUnavailableResult) return appendCommandHistory(prev, entry);
+        if (routeUnavailableResult || identityRecallDeterministicResult) return appendCommandHistory(prev, entry);
         return prev.map((existing) => existing.id === streamEntryId ? entry : existing);
       });
+      submitAccepted = true;
+      lastFinalizationPath = routeUnavailableResult ? 'error' : (identityRecallDeterministicResult ? 'deterministic-identity' : 'provider');
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 
@@ -3523,6 +3538,15 @@ export function useAIConsole() {
         requestTrace: data?.data?.request_trace || {},
         requestPayload: effectiveRequestPayload || {},
       });
+
+      finalExecutionMetadata.command_pipeline_last_submit_accepted = submitAccepted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = data.success ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = data.success ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_failure_reason = data.success ? 'none' : (data.error_code || data.error || 'unknown');
+      finalExecutionMetadata.command_pipeline_last_finalization_path = lastFinalizationPath;
+      finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
       setLastExecutionMetadata(finalExecutionMetadata);
 
       setDebugData({
@@ -3592,6 +3616,7 @@ export function useAIConsole() {
         continuity_context_summary: continuityContext?.summary || '',
         continuity_context_records: continuityContext?.records || [],
       });
+      return { submitAccepted: true, inputCleared: true, restoreInput: false };
     } catch (error) {
       healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error, {
@@ -3610,6 +3635,14 @@ export function useAIConsole() {
           cancellationSource: uiError.cancellationSource || timeoutDetails.cancellationSource || null,
         },
       });
+      timeoutFailureMetadata.command_pipeline_last_submit_accepted = submitAccepted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_last_assistant_answer_generated = 'no';
+      timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'yes';
+      timeoutFailureMetadata.command_pipeline_last_failure_reason = uiError.errorCode || uiError.error || 'unknown';
+      timeoutFailureMetadata.command_pipeline_last_finalization_path = 'error';
+      timeoutFailureMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
       setLastExecutionMetadata(attachChatContextToExecutionMetadata({
         executionMetadata: timeoutFailureMetadata,
         requestPayload: inFlightRequestPayload || {},
@@ -3683,10 +3716,12 @@ export function useAIConsole() {
         timeout_override_applied: Boolean(uiError.timeoutOverrideApplied ?? timeoutFailureMetadata.timeout_override_applied ?? false),
         execution_metadata: timeoutFailureMetadata,
       });
+      return { submitAccepted, inputCleared: submitAccepted, restoreInput: !submitAccepted };
     } finally {
       activePromptRequestRef.current = null;
       setIsBusy(false);
     }
+    return { submitAccepted, inputCleared: submitAccepted, restoreInput: !submitAccepted };
   }
 
   const cancelActivePrompt = useCallback(() => {

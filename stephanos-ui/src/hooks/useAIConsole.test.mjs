@@ -210,3 +210,15 @@ test('useAIConsole wires response planner into metadata and prompt guidance', as
   assert.match(source, /createIdentityRecallDeterministicResult/);
   assert.match(source, /Yes\. Your name is \$\{safeName\}\./);
 });
+
+test('deterministic identity recall appends assistant answer through command history path', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /if \(routeUnavailableResult \|\| identityRecallDeterministicResult\) return appendCommandHistory\(prev, entry\);/);
+  assert.match(source, /lastFinalizationPath = routeUnavailableResult \? 'error' : \(identityRecallDeterministicResult \? 'deterministic-identity' : 'provider'\);/);
+});
+
+test('command input clearing is gated by submit acceptance return contract', async () => {
+  const aiConsoleSource = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'components/AIConsole.jsx'), 'utf8');
+  assert.match(aiConsoleSource, /if \(submitResult\?\.inputCleared === true \|\| submitResult\?\.submitAccepted === true\) \{/);
+  assert.match(aiConsoleSource, /else if \(submitResult\?\.restoreInput === true\) \{/);
+});

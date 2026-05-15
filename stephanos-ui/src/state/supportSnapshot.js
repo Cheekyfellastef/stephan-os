@@ -565,6 +565,14 @@ export function buildSupportSnapshot({
   const operatorProfilePromptLinePresent = executionMetadata?.operator_profile_prompt_line_present || 'no';
   const finalAnswerUsedOperatorProfile = executionMetadata?.final_answer_used_operator_profile || 'no';
   const identityRecallDeterministicAnswerUsed = executionMetadata?.identity_recall_deterministic_answer_used || 'no';
+  const commandPipelineLastSubmitAccepted = executionMetadata?.command_pipeline_last_submit_accepted || 'no';
+  const commandPipelineLastUserMessageRecorded = executionMetadata?.command_pipeline_last_user_message_recorded || 'no';
+  const commandPipelineLastAssistantAnswerGenerated = executionMetadata?.command_pipeline_last_assistant_answer_generated || 'no';
+  const commandPipelineLastAnswerPaneRendered = executionMetadata?.command_pipeline_last_answer_pane_rendered || 'no';
+  const commandPipelineLastFailureReason = executionMetadata?.command_pipeline_last_failure_reason || 'none';
+  const commandPipelineLastFinalizationPath = executionMetadata?.command_pipeline_last_finalization_path || 'unknown';
+  const commandPipelineLastInputCleared = executionMetadata?.command_pipeline_last_input_cleared || 'no';
+  const commandPipelineLastInputRestoreAvailable = executionMetadata?.command_pipeline_last_input_restore_available || 'yes';
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1332,6 +1340,14 @@ export function buildSupportSnapshot({
     `Operator Profile Prompt Line Present: ${asText(operatorProfilePromptLinePresent, 'no')}`,
     `Final Answer Used Operator Profile: ${asText(finalAnswerUsedOperatorProfile, 'no')}`,
     `Identity Recall Deterministic Answer Used: ${asText(identityRecallDeterministicAnswerUsed, 'no')}`,
+    `Command Pipeline Last Submit Accepted: ${asText(commandPipelineLastSubmitAccepted, 'no')}`,
+    `Command Pipeline Last User Message Recorded: ${asText(commandPipelineLastUserMessageRecorded, 'no')}`,
+    `Command Pipeline Last Assistant Answer Generated: ${asText(commandPipelineLastAssistantAnswerGenerated, 'no')}`,
+    `Command Pipeline Last Answer Pane Rendered: ${asText(commandPipelineLastAnswerPaneRendered, 'no')}`,
+    `Command Pipeline Last Failure Reason: ${asText(commandPipelineLastFailureReason, 'none')}`,
+    `Command Pipeline Last Finalization Path: ${asText(commandPipelineLastFinalizationPath, 'unknown')}`,
+    `Command Pipeline Last Input Cleared: ${asText(commandPipelineLastInputCleared, 'no')}`,
+    `Command Pipeline Last Input Restore Available: ${asText(commandPipelineLastInputRestoreAvailable, 'yes')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,
