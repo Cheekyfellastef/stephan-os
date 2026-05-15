@@ -49,3 +49,9 @@ test('codex-dispatch mode reports approval next action', () => {
   assert.equal(plan.codexPromptRequired, 'yes');
   assert.equal(plan.proofRequired, 'yes');
 });
+
+
+test('failed checks map to no in merge-decision mode', () => {
+  const plan = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'merge-decision' }, supportSnapshotSummary: { prEvidenceInputDetected: 'yes', prEvidenceMergeReadiness: 'needs-amendment' }, uiRealityStatus: { severity: 'OK' } });
+  assert.equal(plan.mergeDecision, 'no');
+});

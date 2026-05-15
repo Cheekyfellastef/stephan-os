@@ -33,7 +33,8 @@ export function buildResponsePlan(input = {}) {
   const providerPr = input?.githubPrEvidence || input?.chatContextPack?.providerSummaries?.prEvidence || {};
   const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || providerPr?.mergeReadiness || '').toLowerCase();
   const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (providerPr?.missingProof || []).join('|') || '').toLowerCase();
-  const prAlreadyMerged = String(input?.missionState?.prEvidenceStatus || providerPr?.status || '').toLowerCase() === 'merged' || prMergeReadiness === 'already-merged';
+  const prStatus = String(input?.missionState?.prEvidenceStatus || providerPr?.status || '').toLowerCase();
+  const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged';
 
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
@@ -90,7 +91,7 @@ export function buildResponsePlan(input = {}) {
       recommendedNextAction = 'connect read-only GitHub evidence or paste PR summary';
     }
     if (checksKnownFail || checksUnknown || !testsPassed || prMergeReadiness === 'needs-amendment') {
-      mergeDecision = mergeDecision === 'unknown' ? 'wait' : mergeDecision;
+      mergeDecision = prMergeReadiness === 'needs-amendment' || checksKnownFail ? 'no' : (mergeDecision === 'unknown' ? 'wait' : mergeDecision);
       warnings.push('build/verify/check evidence missing or failing.');
       recommendedNextAction = 'run build/verify checks and attach results';
     }
@@ -108,7 +109,7 @@ export function buildResponsePlan(input = {}) {
       mergeDecision = 'already-merged';
       recommendedNextAction = 'PR already merged; run post-merge validation and monitor regressions';
     }
-    if (prMissingProof || ['hold','needs-amendment','incomplete'].includes(prMergeReadiness)) {
+    if (prMissingProof || ['hold','needs-proof','incomplete'].includes(prMergeReadiness)) {
       mergeDecision = 'wait';
       warnings.push('PR evidence indicates missing proof or amendment required.');
       recommendedNextAction = 'request amendment prompt with missing proof fields';

@@ -42,3 +42,9 @@ test('dist-only source truth risk', () => {
   const r = buildGithubPrEvidenceProvider({ connectorEvidence: { prNumber: 1, changedFiles: ['apps/stephanos/dist/x.js'] } });
   assert.equal(r.evidenceWarnings.includes('dist_only_change_source_truth_risk'), true);
 });
+
+
+test('prompt PR without connector returns needs-connector', () => {
+  const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123' });
+  assert.equal(r.status, 'needs-connector');
+});
