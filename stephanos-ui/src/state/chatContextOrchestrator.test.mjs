@@ -144,3 +144,11 @@ test('identity recall prompt maps to identity-recall and carries compact operato
   assert.equal(pack.recommendedResponseMode, 'identity-recall');
   assert.match(pack.contextForPrompt.operatorProfileLine, /name is Stephan/i);
 });
+
+
+test('codex dispatch phrases map to codex-dispatch or codex-prompt', () => {
+  assert.equal(buildChatContextPack({ operatorMessage: 'get Codex to fix this' }).recommendedResponseMode, 'codex-dispatch');
+  assert.equal(buildChatContextPack({ operatorMessage: 'ask Codex to build the next step' }).recommendedResponseMode, 'codex-dispatch');
+  assert.equal(buildChatContextPack({ operatorMessage: 'have Codex repair the failing PR' }).recommendedResponseMode, 'codex-dispatch');
+  assert.equal(buildChatContextPack({ operatorMessage: 'give me a Codex prompt' }).recommendedResponseMode, 'codex-prompt');
+});

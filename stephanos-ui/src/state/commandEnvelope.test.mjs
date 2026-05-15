@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata, projectEnvelopeToSupportSnapshot } from './commandEnvelope.js';
+import { attachChatContextToEnvelope, attachCodexDispatchToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata, projectEnvelopeToSupportSnapshot } from './commandEnvelope.js';
 
 test('createCommandEnvelope produces command-envelope.v1 with identity fields', () => {
   const env = createCommandEnvelope({ operatorMessage: 'do i merge this pr', submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router', commandId: 'req_1' });
@@ -30,4 +30,13 @@ test('envelope attachment + projection covers chat context/provider/execution/su
   assert.equal(snapshot.chat_continuity_source, 'command-history');
   assert.equal(snapshot.chat_continuity_raw_transcript_stored, 'no');
   assert.equal(projected.command_envelope_operator_profile_used, 'no');
+});
+
+
+test('command envelope carries codex dispatch packet id/status', () => {
+  let env = createCommandEnvelope({ operatorMessage: 'get codex to fix this' });
+  env = attachCodexDispatchToEnvelope(env, { packetId: 'cdp_1', status: 'ready-for-approval', approvalRequired: true, targetSubsystems: ['ui','proof'] });
+  const projected = projectEnvelopeToExecutionMetadata(env);
+  assert.equal(projected.command_envelope_codex_dispatch_packet_id, 'cdp_1');
+  assert.equal(projected.command_envelope_codex_dispatch_status, 'ready-for-approval');
 });

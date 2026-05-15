@@ -23,6 +23,7 @@ export default function AIConsole({
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [perfCopyState, setPerfCopyState] = useState('idle');
   const [perfCopyMessage, setPerfCopyMessage] = useState('');
+  const [codexDispatchCopyState, setCodexDispatchCopyState] = useState('idle');
   const lastHistoryRenderKeyRef = useRef('');
   const {
     isBusy,
@@ -144,6 +145,21 @@ export default function AIConsole({
     }
   };
 
+
+  const copyCodexDispatchPrompt = async () => {
+    const prompt = String(lastExecutionMetadata?.codex_dispatch_prompt || '').trim();
+    if (!prompt) {
+      setCodexDispatchCopyState('error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCodexDispatchCopyState('success');
+    } catch (_error) {
+      setCodexDispatchCopyState('error');
+    }
+  };
+
   const onSubmit = async (event) => {
     event.preventDefault();
     const submittedInput = input;
@@ -188,6 +204,7 @@ export default function AIConsole({
           <span>Response Planner: {lastExecutionMetadata?.response_planner_status || 'unavailable'} · Answer Shape: {lastExecutionMetadata?.response_planner_answer_shape || 'direct-answer'} · Risk Level: {lastExecutionMetadata?.response_planner_risk_level || 'low'} · Next Action: {lastExecutionMetadata?.response_planner_next_action || 'answer directly with bounded confidence'}</span>
           <span>Provider Registry: {lastExecutionMetadata?.chat_context_provider_registry_status || 'inactive'} · Providers Used Count: {String(lastExecutionMetadata?.chat_context_provider_ids_used || '').split('|').filter((item) => item && item !== 'none').length || 0} · Key Providers Used: {String(lastExecutionMetadata?.chat_context_provider_ids_used || 'none').split('|').filter((item) => item && item !== 'none').slice(0, 6).join(', ') || 'none'} · Provider Warning Count: {lastExecutionMetadata?.chat_context_provider_warning_count ?? 0}</span>
           <span>Mission Repair Loop: {lastExecutionMetadata?.mission_repair_loop_status || runtimeStatus?.missionRepairLoopStatus || 'idle'} · Failing Field: {lastExecutionMetadata?.mission_repair_loop_latest_failing_field || runtimeStatus?.missionRepairLoopLatestFailingField || 'none'} · Next Action: {lastExecutionMetadata?.mission_repair_loop_next_action || runtimeStatus?.missionRepairLoopNextAction || 'collect proof'} · Merge Recommendation: {lastExecutionMetadata?.mission_repair_loop_merge_recommendation || runtimeStatus?.missionRepairLoopMergeRecommendation || 'hold'} · Codex Prompt: {lastExecutionMetadata?.mission_repair_loop_codex_prompt_available || runtimeStatus?.missionRepairLoopCodexPromptAvailable || 'no'} · Approval Required: {lastExecutionMetadata?.mission_repair_loop_operator_approval_required || 'yes'}</span>
+          <span>Codex Dispatch Packet: {lastExecutionMetadata?.command_envelope_codex_dispatch_status || 'not-ready'} · Packet ID: {lastExecutionMetadata?.command_envelope_codex_dispatch_packet_id || 'none'} · Target: {lastExecutionMetadata?.command_envelope_codex_dispatch_target_subsystems || 'none'} · Approval Required: {lastExecutionMetadata?.command_envelope_codex_dispatch_approval_required || 'yes'}</span>
         </div>
         {provider === 'ollama' && !runtimeStatus.localAvailable ? (
           <div className="api-banner degraded">
@@ -251,6 +268,9 @@ export default function AIConsole({
             </button>
             <button type="button" className="ghost-button" onClick={copyPerfDiagnostics}>
               {perfCopyState === 'success' ? 'Perf Diagnostics Copied' : 'Copy Perf Diagnostics'}
+            </button>
+            <button type="button" className="ghost-button" onClick={copyCodexDispatchPrompt}>
+              {codexDispatchCopyState === 'success' ? 'Codex Dispatch Prompt Copied' : 'Copy Codex Dispatch Prompt'}
             </button>
           </div>
           {perfCopyMessage ? <p className={`muted ${perfCopyState === 'error' ? 'status-error' : ''}`}>{perfCopyMessage}</p> : null}

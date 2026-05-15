@@ -41,3 +41,11 @@ test('identity-recall uses operator profile when known and unknown fallback when
   assert.equal(unknown.operatorProfilePromptLinePresent, 'no');
   assert.match(unknown.identityGuidance, /does not include a known operator name/);
 });
+
+
+test('codex-dispatch mode reports approval next action', () => {
+  const plan = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'codex-dispatch' } });
+  assert.equal(plan.answerShape, 'codex-dispatch');
+  assert.equal(plan.codexPromptRequired, 'yes');
+  assert.equal(plan.proofRequired, 'yes');
+});

@@ -29,9 +29,14 @@ export const INTENT_RULES = [
     pattern: 'contains "merge" and merge-decision companion phrase',
   },
   {
+    id: 'codex-dispatch',
+    responseMode: 'codex-dispatch',
+    pattern: /\b(get|ask|have|make)\b[^.!?]{0,80}\bcodex\b[^.!?]{0,120}\b(fix|repair|build|implement|next step|prompt)\b|\bcodex should\b/,
+  },
+  {
     id: 'codex-prompt',
     responseMode: 'codex-prompt',
-    pattern: /\bgive me (a )?(codex )?prompt\b|\bcodex prompt\b/,
+    pattern: /\b(give|make)\b[^.!?]{0,60}\b(codex )?prompt\b|\bcodex prompt\b/,
   },
   {
     id: 'diagnosis',
@@ -147,6 +152,7 @@ export function buildChatContextPack(input = {}) {
   if (String(uiReality.severity || '').toUpperCase() === 'FAIL') warnings.push('UI Reality FAIL: visual proof required before merge claims.');
   const uiTask = /\b(ui|pane|render|layout|button|console|collapse|arrange)\b/i.test(operatorMessage) || responseMode === 'diagnosis';
   const mergeDecisionTask = responseMode === 'merge-decision';
+  const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
@@ -155,7 +161,9 @@ export function buildChatContextPack(input = {}) {
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
-    : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity','memory','operator-profile'] : ['general']));
+    : (codexDispatchTask
+      ? ['codex', 'mission-console', 'proof', 'source-truth']
+      : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity', 'memory', 'operator-profile'] : ['general'])));
   const providerSnapshot = buildContextProviderSnapshot({
     ...input,
     contextProviderIdsRequested,
@@ -185,7 +193,9 @@ export function buildChatContextPack(input = {}) {
       : inferredSubsystems,
     nextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
-      : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
+      : (codexDispatchTask
+        ? 'Build a Codex Dispatch Packet draft and wait for operator approval.'
+        : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.')),
     warningCount: warnings.length,
     warnings,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
@@ -274,7 +284,9 @@ export function buildChatContextPack(input = {}) {
     classifierProof,
     recommendedNextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
-      : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
+      : (codexDispatchTask
+        ? 'Build a Codex Dispatch Packet draft and wait for operator approval.'
+        : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.')),
     warnings,
     contextForPrompt: {
       operatorMessage,
