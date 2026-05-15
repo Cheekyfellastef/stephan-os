@@ -265,6 +265,9 @@ function isDefaultChatContextValue(key = '', value = '') {
   if (key === 'chat_context_pack_status') return ['unavailable', 'warning'].includes(normalized);
   if (key === 'chat_context_response_mode') return normalized === 'direct-answer';
   if (key === 'chat_context_relevant_canon_count') return normalized === '0';
+  if (key === 'chat_context_provider_registry_status') return normalized === 'inactive';
+  if (key === 'chat_context_provider_warning_count' || key === 'chat_context_provider_canon_links_count') return normalized === '0';
+  if (key.startsWith('chat_context_provider_')) return ['none', 'unknown'].includes(normalized);
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
 
@@ -283,6 +286,15 @@ function pickChatContextFieldPreferRequestNonDefault(key = '', rawValue, traceVa
   const traceIsDefault = isDefaultChatContextValue(key, traceValue);
   if (requestIsNonDefault && rawIsDefault && traceIsDefault) return requestValue;
   return pickChatContextField(rawValue, traceValue, requestValue, fallback);
+}
+
+function pickChatContextFieldPreferPackOrRebuildNonDefault(key = '', rawValue, traceValue, requestValue, rebuiltValue, fallback) {
+  const preferredValue = !isDefaultChatContextValue(key, requestValue) ? requestValue : rebuiltValue;
+  const preferredIsNonDefault = !isDefaultChatContextValue(key, preferredValue);
+  const rawIsDefault = isDefaultChatContextValue(key, rawValue);
+  const traceIsDefault = isDefaultChatContextValue(key, traceValue);
+  if (preferredIsNonDefault && rawIsDefault && traceIsDefault) return preferredValue;
+  return pickChatContextField(rawValue, traceValue, requestValue, rebuiltValue, fallback);
 }
 
 export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata = {}, rawExecutionMetadata = {}, requestTrace = {}, requestPayload = {} }) {
@@ -351,49 +363,56 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
   const resolvedMatchInput = classifierProof?.matchInput || normalizedOperatorMessage || rawOperatorMessage || rebuiltOperatorMessage || 'n/a';
   const resolvedRuleResults = Array.isArray(classifierProof?.evaluatedRuleResults) ? classifierProof.evaluatedRuleResults : [];
   const rebuiltExecutionMetadata = buildChatContextExecutionMetadata(rebuiltPack);
-  const resolvedProviderRegistryStatus = pickChatContextField(
+  const resolvedProviderRegistryStatus = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_registry_status',
     raw.chat_context_provider_registry_status,
     trace.chat_context_provider_registry_status,
     requestChatContext.chat_context_provider_registry_status,
     rebuiltExecutionMetadata.chat_context_provider_registry_status,
     'inactive',
   );
-  const resolvedProviderIdsRegistered = pickChatContextField(
+  const resolvedProviderIdsRegistered = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_ids_registered',
     raw.chat_context_provider_ids_registered,
     trace.chat_context_provider_ids_registered,
     requestChatContext.chat_context_provider_ids_registered,
     rebuiltExecutionMetadata.chat_context_provider_ids_registered,
     'none',
   );
-  const resolvedProviderIdsUsed = pickChatContextField(
+  const resolvedProviderIdsUsed = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_ids_used',
     raw.chat_context_provider_ids_used,
     trace.chat_context_provider_ids_used,
     requestChatContext.chat_context_provider_ids_used,
     rebuiltExecutionMetadata.chat_context_provider_ids_used,
     'none',
   );
-  const resolvedProviderWarningCount = pickChatContextField(
+  const resolvedProviderWarningCount = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_warning_count',
     raw.chat_context_provider_warning_count,
     trace.chat_context_provider_warning_count,
     requestChatContext.chat_context_provider_warning_count,
     rebuiltExecutionMetadata.chat_context_provider_warning_count,
     0,
   );
-  const resolvedProviderProofState = pickChatContextField(
+  const resolvedProviderProofState = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_proof_state',
     raw.chat_context_provider_proof_state,
     trace.chat_context_provider_proof_state,
     requestChatContext.chat_context_provider_proof_state,
     rebuiltExecutionMetadata.chat_context_provider_proof_state,
     'unknown',
   );
-  const resolvedProviderNextActions = pickChatContextField(
+  const resolvedProviderNextActions = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_next_actions',
     raw.chat_context_provider_next_actions,
     trace.chat_context_provider_next_actions,
     requestChatContext.chat_context_provider_next_actions,
     rebuiltExecutionMetadata.chat_context_provider_next_actions,
     'none',
   );
-  const resolvedProviderCanonLinksCount = pickChatContextField(
+  const resolvedProviderCanonLinksCount = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'chat_context_provider_canon_links_count',
     raw.chat_context_provider_canon_links_count,
     trace.chat_context_provider_canon_links_count,
     requestChatContext.chat_context_provider_canon_links_count,

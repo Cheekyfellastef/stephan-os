@@ -176,3 +176,12 @@ test('buildChatContextAttachmentMetadata rebuild path rehydrates provider regist
   assert.match(source, /chat_context_provider_next_actions: resolvedProviderNextActions/);
   assert.match(source, /chat_context_provider_canon_links_count: resolvedProviderCanonLinksCount/);
 });
+
+test('provider registry resolution prefers rebuilt/request non-default values over inactive raw defaults', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /function pickChatContextFieldPreferPackOrRebuildNonDefault/);
+  assert.match(source, /const preferredValue = !isDefaultChatContextValue\(key, requestValue\) \? requestValue : rebuiltValue/);
+  assert.match(source, /if \(key === 'chat_context_provider_registry_status'\) return normalized === 'inactive';/);
+  assert.match(source, /const resolvedProviderRegistryStatus = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProviderCanonLinksCount = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+});
