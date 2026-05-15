@@ -2394,3 +2394,37 @@ test('support snapshot projects context provider registry fields from execution 
   assert.match(snapshot, /Context Providers Used: uiReality\|proofState\|canonRules\|runtimeTruth\|providerTruth\|missionState/);
   assert.match(snapshot, /Context Provider Canon Links Count: 2/);
 });
+
+test('Support Snapshot reports active command envelope when command_envelope_* fields are present', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      chatContextPackStatus: 'active',
+      chatContextResponseMode: 'merge-decision',
+      chatContextProviderIdsUsed: 'uiReality|proofState|canonRules',
+      chatContextUiRealityStatus: 'OK',
+      lastExecutionMetadata: {
+        command_envelope_status: 'active',
+        command_envelope_version: 'command-envelope.v1',
+        command_envelope_id: 'env_123',
+        command_envelope_submission_source: 'stephanos-mission-console',
+        command_envelope_submission_route: 'assistant-router',
+        command_envelope_response_mode: 'merge-decision',
+        command_envelope_context_providers_used: 'uiReality|proofState|canonRules',
+        command_envelope_execution_status: 'ok',
+        command_envelope_actual_provider: 'ollama',
+        command_envelope_actual_model: 'llama3.2:3b',
+        command_envelope_proof_status: 'pending',
+        command_envelope_ui_reality_status: 'OK',
+        command_envelope_warnings: 'none',
+      },
+    },
+  });
+  assert.match(snapshot, /Command Envelope Status: active/);
+  assert.match(snapshot, /Command Envelope Version: command-envelope.v1/);
+  assert.match(snapshot, /Command Envelope UI Reality Status: OK/);
+});
+
+test('Support Snapshot reports command-envelope-missing when envelope metadata is absent', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { chatContextPackStatus: 'active' } });
+  assert.match(snapshot, /Command Envelope Warnings: command-envelope-missing/);
+});
