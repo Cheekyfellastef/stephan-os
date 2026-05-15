@@ -158,6 +158,23 @@ const builtinProviders = [
     getCanonLinks: () => ['canon.source_owns_behavior'], getSourceRefs: () => ['memoryState'],
   },
   {
+    id: 'operatorProfile', label: 'Operator Profile', priority: 72,
+    getSummary: (input) => ({
+      operatorName: String(input.operatorProfile?.operatorName || 'unknown'),
+      known: String(input.operatorProfile?.known ? 'yes' : 'no'),
+      confidence: String(input.operatorProfile?.confidence || 'unknown'),
+      nextAction: String(input.operatorProfile?.nextAction || 'Ask operator for preferred name when relevant.'),
+      source: String(input.operatorProfile?.source || 'none'),
+      updatedAt: String(input.operatorProfile?.updatedAt || 'unknown'),
+      rawTranscriptStored: 'no',
+    }),
+    getWarnings: () => [],
+    getNextAction: (input) => normalizeList([input.operatorProfile?.nextAction]),
+    getProofState: () => 'ready',
+    getCanonLinks: () => ['canon.source_owns_behavior'],
+    getSourceRefs: () => ['operatorProfile'],
+  },
+  {
     id: 'conversationContinuity', label: 'Conversation Continuity', priority: 75,
     getSummary: (input) => ({
       status: String(input.chatContinuity?.summaries?.length ? 'ready' : (input.chatContinuity?.rehydrated ? 'empty' : 'hydrating')) ,

@@ -530,6 +530,13 @@ export function buildSupportSnapshot({
   const contextProviderCanonLinksCount = executionMetadata?.chat_context_provider_canon_links_count || 0;
 
 
+  const operatorNameKnown = executionMetadata?.chat_context_operator_name_known || executionMetadata?.command_envelope_operator_name_known || 'no';
+  const operatorName = executionMetadata?.chat_context_operator_name || executionMetadata?.command_envelope_operator_name || 'unknown';
+  const operatorIdentitySource = executionMetadata?.chat_context_operator_identity_source || executionMetadata?.command_envelope_operator_identity_source || 'none';
+  const operatorIdentityConfidence = executionMetadata?.chat_context_operator_identity_confidence || executionMetadata?.command_envelope_operator_identity_confidence || 'unknown';
+  const operatorIdentityUpdatedAt = executionMetadata?.chat_context_operator_identity_updated_at || 'unknown';
+  const operatorIdentityNextAction = executionMetadata?.chat_context_operator_identity_next_action || 'Ask operator for preferred name when relevant.';
+
   const responsePlannerStatus = executionMetadata?.response_planner_status || 'unavailable';
   const responsePlannerVersion = executionMetadata?.response_planner_version || 'n/a';
   const responsePlannerResponseMode = executionMetadata?.response_planner_response_mode || chatContextResponseMode || 'direct-answer';
@@ -1267,6 +1274,13 @@ export function buildSupportSnapshot({
     `Context Provider Proof State: ${asText(contextProviderProofState, 'unknown')}`,
     `Context Provider Next Actions: ${asText(contextProviderNextActions, 'none')}`,
     `Context Provider Canon Links Count: ${asText(contextProviderCanonLinksCount, '0')}`,
+    `Operator Profile Status: ${asText(operatorNameKnown === 'yes' ? 'known' : 'unknown', 'unknown')}`,
+    `Operator Name Known: ${asText(operatorNameKnown, 'no')}`,
+    `Operator Name: ${asText(operatorName, 'unknown')}`,
+    `Operator Identity Source: ${asText(operatorIdentitySource, 'none')}`,
+    `Operator Identity Confidence: ${asText(operatorIdentityConfidence, 'unknown')}`,
+    `Operator Identity Updated At: ${asText(operatorIdentityUpdatedAt, 'unknown')}`,
+    `Operator Identity Next Action: ${asText(operatorIdentityNextAction, 'Ask operator for preferred name when relevant.')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,

@@ -124,10 +124,17 @@ test('buildChatContextPack do i merge this pr emits registered and used provider
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
   assert.deepEqual(
     pack.contextProviderIdsRegistered,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'conversationContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
   );
   assert.deepEqual(
     pack.contextProviderIdsUsed,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'conversationContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
   );
+});
+
+
+test('operator profile is included in context providers and prompt context', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'hello', operatorProfile: { known: true, operatorName: 'Stephan', confidence: 'high', source: 'operator explicit statement' } });
+  assert.ok(pack.contextProviderIdsUsed.includes('operatorProfile'));
+  assert.equal(pack.operatorProfile.operatorName, 'Stephan');
 });

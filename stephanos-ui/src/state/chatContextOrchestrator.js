@@ -143,7 +143,7 @@ export function buildChatContextPack(input = {}) {
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : [];
-  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'conversationContinuity', 'agentState'] : ['conversationContinuity', 'agentState'];
+  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState'];
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
@@ -187,7 +187,7 @@ export function buildChatContextPack(input = {}) {
     contextProviderProofState,
     contextProviderNextActions: providerNextActions,
     contextProviderCanonLinksCount: contextProviderCanonLinks.length,
-    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'chatContinuity', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
+    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'chatContinuity', 'operatorProfile', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
@@ -229,6 +229,13 @@ export function buildChatContextPack(input = {}) {
     contextProviderNextActions: providerNextActions,
     contextProviderCanonLinksCount: contextProviderCanonLinks.length,
     relevantMemory: Array.isArray(input.memoryState?.candidates) ? input.memoryState.candidates.slice(0, 3) : [],
+    operatorProfile: input.operatorProfile && typeof input.operatorProfile === 'object' ? {
+      operatorName: String(input.operatorProfile.operatorName || ''),
+      known: input.operatorProfile.known === true,
+      confidence: String(input.operatorProfile.confidence || 'unknown'),
+      source: String(input.operatorProfile.source || 'none'),
+      nextAction: String(input.operatorProfile.nextAction || 'Ask operator for preferred name when relevant.'),
+    } : { operatorName: '', known: false, confidence: 'unknown', source: 'none', nextAction: 'Ask operator for preferred name when relevant.' },
     currentTruthSummary: {
       runtime: String(input.runtimeTruth?.status || 'unknown'),
       routeKind: String(routeTruth.routeKind || 'unknown'),
