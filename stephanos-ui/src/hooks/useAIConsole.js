@@ -37,6 +37,7 @@ import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandInten
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
+import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -3025,6 +3026,7 @@ export function useAIConsole() {
         intentResult,
         missionPacket,
         chatContextPack,
+        commandEnvelope: null,
         submissionSource,
         submissionRoute,
         execution_cancelled: false,
@@ -3042,6 +3044,24 @@ export function useAIConsole() {
         ollama_fetch_aborted: false,
         ollama_reader_cancelled: false,
       };
+      let commandEnvelope = createCommandEnvelope({
+        operatorMessage: prompt,
+        normalizedOperatorMessage: normalizeChatContextOperatorMessage(prompt),
+        commandId: requestPayload.request_execution_id,
+        submissionSource,
+        submissionRoute,
+      });
+      commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
+      commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
+        requestedProvider,
+        selectedProvider: freshnessRouteDecision.selectedProvider || requestedProvider,
+        executableProvider: timeoutExecutionEnvelope.effectiveProvider || freshnessRouteDecision.selectedProvider || requestedProvider,
+        requestedModel: timeoutExecutionEnvelope.effectiveModel || '',
+        selectedModel: timeoutExecutionEnvelope.effectiveModel || '',
+        freshnessMode: freshnessClassification.freshnessNeed || 'low',
+        timeoutPolicy: timeoutExecutionEnvelope.timeoutMode || 'standard',
+      });
+      requestPayload.commandEnvelope = commandEnvelope;
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
         executionMetadata: {
@@ -3076,6 +3096,7 @@ export function useAIConsole() {
         provider_generation_still_running_unknown: false,
         provider_generation_confirmed_stopped: false,
         ...buildChatContextExecutionMetadata(chatContextPack),
+        ...projectEnvelopeToExecutionMetadata(commandEnvelope),
         },
         requestPayload,
       }));
@@ -3195,6 +3216,10 @@ export function useAIConsole() {
         requestPayload: effectiveRequestPayload,
         backendDefaultProvider: apiStatus.backendDefaultProvider,
       });
+      let commandEnvelopeFinal = effectiveRequestPayload?.commandEnvelope || null;
+      if (commandEnvelopeFinal) {
+        commandEnvelopeFinal = attachExecutionMetadataToEnvelope(commandEnvelopeFinal, executionMetadataBase);
+      }
       const executionMetadata = attachChatContextToExecutionMetadata({
         executionMetadata: {
         ...executionMetadataBase,
@@ -3221,6 +3246,7 @@ export function useAIConsole() {
         graph_link_suggested: effectiveRequestPayload?.missionPacket?.graphLinkSuggested === true,
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
+        ...(commandEnvelopeFinal ? projectEnvelopeToExecutionMetadata(commandEnvelopeFinal) : {}),
         },
         rawExecutionMetadata: data?.data?.execution_metadata || {},
         requestTrace: data?.data?.request_trace || {},

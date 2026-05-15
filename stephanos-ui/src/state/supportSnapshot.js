@@ -529,6 +529,20 @@ export function buildSupportSnapshot({
   const contextProviderNextActions = executionMetadata?.chat_context_provider_next_actions || 'none';
   const contextProviderCanonLinksCount = executionMetadata?.chat_context_provider_canon_links_count || 0;
 
+  const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
+  const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
+  const commandEnvelopeId = executionMetadata?.command_envelope_id || 'n/a';
+  const commandEnvelopeSubmissionSource = executionMetadata?.command_envelope_submission_source || 'unknown';
+  const commandEnvelopeSubmissionRoute = executionMetadata?.command_envelope_submission_route || 'unknown';
+  const commandEnvelopeResponseMode = executionMetadata?.command_envelope_response_mode || chatContextResponseMode || 'direct-answer';
+  const commandEnvelopeContextProvidersUsed = executionMetadata?.command_envelope_context_providers_used || contextProvidersUsed || 'none';
+  const commandEnvelopeExecutionStatus = executionMetadata?.command_envelope_execution_status || executionMetadata?.execution_status || 'unknown';
+  const commandEnvelopeActualProvider = executionMetadata?.command_envelope_actual_provider || executionMetadata?.actual_provider_used || 'unknown';
+  const commandEnvelopeActualModel = executionMetadata?.command_envelope_actual_model || executionMetadata?.model_used || 'unknown';
+  const commandEnvelopeProofStatus = executionMetadata?.command_envelope_proof_status || 'unknown';
+  const commandEnvelopeUiRealityStatus = executionMetadata?.command_envelope_ui_reality_status || chatContextUiRealityStatus || 'UNKNOWN';
+  const commandEnvelopeWarnings = executionMetadata?.command_envelope_warnings || (commandEnvelopeStatus === 'unavailable' ? 'command-envelope-missing' : 'none');
+
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
     sessionKind,
@@ -1238,6 +1252,19 @@ export function buildSupportSnapshot({
     `Context Provider Proof State: ${asText(contextProviderProofState, 'unknown')}`,
     `Context Provider Next Actions: ${asText(contextProviderNextActions, 'none')}`,
     `Context Provider Canon Links Count: ${asText(contextProviderCanonLinksCount, '0')}`,
+    `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
+    `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
+    `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,
+    `Command Envelope Submission Source: ${asText(commandEnvelopeSubmissionSource, 'unknown')}`,
+    `Command Envelope Submission Route: ${asText(commandEnvelopeSubmissionRoute, 'unknown')}`,
+    `Command Envelope Response Mode: ${asText(commandEnvelopeResponseMode, 'direct-answer')}`,
+    `Command Envelope Context Providers Used: ${asText(commandEnvelopeContextProvidersUsed, 'none')}`,
+    `Command Envelope Execution Status: ${asText(commandEnvelopeExecutionStatus, 'unknown')}`,
+    `Command Envelope Actual Provider: ${asText(commandEnvelopeActualProvider, 'unknown')}`,
+    `Command Envelope Actual Model: ${asText(commandEnvelopeActualModel, 'unknown')}`,
+    `Command Envelope Proof Status: ${asText(commandEnvelopeProofStatus, 'unknown')}`,
+    `Command Envelope UI Reality Status: ${asText(commandEnvelopeUiRealityStatus, 'UNKNOWN')}`,
+    `Command Envelope Warnings: ${asText(commandEnvelopeWarnings, 'none')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

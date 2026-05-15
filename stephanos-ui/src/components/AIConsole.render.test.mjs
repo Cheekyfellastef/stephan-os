@@ -158,7 +158,7 @@ test('AIConsole context indicator renders active merge-decision state from execu
   const rendered = renderAIConsole();
   assert.match(rendered, /Context Pack: active/);
   assert.match(rendered, /Response Mode: merge-decision/);
-  assert.match(rendered, /Relevant Canon Count: 2/);
+  assert.match(rendered, /Envelope: unavailable/);
   assert.match(rendered, /UI Reality Status: OK/);
   assert.match(rendered, /Next Action: Collect merge proof before deciding/);
   assert.match(rendered, /Providers Used Count: 3/);
