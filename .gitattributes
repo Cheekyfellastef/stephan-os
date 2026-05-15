@@ -1,0 +1,6 @@
+apps/stephanos/dist/** linguist-generated=true
+apps/stephanos/dist/index.html linguist-generated=false
+apps/stephanos/dist/stephanos-build.json linguist-generated=false
+
+apps/stephanos/dist/assets/*.js -diff
+apps/stephanos/dist/assets/*.css -diff
