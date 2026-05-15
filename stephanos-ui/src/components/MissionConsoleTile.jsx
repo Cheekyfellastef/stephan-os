@@ -1043,8 +1043,8 @@ function MissionConsoleTile({
           <h5>Secondary Actions</h5>
           <ul>{operatorReliefProjection.nextActions.slice(1).map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
           <h5>Repair Prompt</h5>
-          <button type="button" onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState)}>
-            {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : 'Copy Repair Prompt'}
+          <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState, 'MissionConsoleTile.copyRepairPrompt')}>
+            {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : repairPromptCopyState === COPY_STATE.FAILURE ? 'Copy Repair Prompt failed' : 'Copy Repair Prompt'}
           </button>
           <button type="button" onClick={() => setShowRepairPromptBody((prev) => !prev)}>
             {showRepairPromptBody ? 'Hide Repair Prompt Body' : 'Show Repair Prompt Body'}
