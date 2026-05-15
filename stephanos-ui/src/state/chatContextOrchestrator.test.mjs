@@ -92,3 +92,16 @@ test('direct-answer remains fallback for generic prompts', () => {
   assert.equal(pack.classifierDebug.classifierFirstMatchingRule, 'direct-answer');
   assert.equal(pack.classifierDebug.classifierMergeRuleTestResult, 'no');
 });
+
+
+test('buildChatContextPack emits canonical classifierProof for do i merge this pr', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
+  assert.equal(pack.classifierProof.matchInput, 'do i merge this pr');
+  assert.match(pack.classifierProof.mergeRulePattern, /contains: merge/);
+  assert.equal(pack.classifierProof.mergeRuleTestResult, 'yes');
+  assert.equal(pack.classifierProof.firstMatchingRule, 'merge-decision');
+  assert.ok(pack.classifierProof.evaluatedRuleResults.includes('merge-decision:1'));
+  assert.equal(pack.classifierProof.intentClassifierMatchedRule, 'merge-decision');
+  assert.equal(pack.classifierProof.responseMode, 'merge-decision');
+  assert.equal(pack.classifierProof.defaultPackUsed, 'no');
+});

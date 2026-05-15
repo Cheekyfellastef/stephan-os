@@ -301,44 +301,23 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
   const overwrittenByDefault = validRequestPack && (isDefaultChatContextValue('chat_context_pack_status', raw.chat_context_pack_status) || isDefaultChatContextValue('chat_context_response_mode', raw.chat_context_response_mode));
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
   const requestPack = requestPayload?.chatContextPack || {};
-  const requestPackClassifierDebug = requestPack.classifierDebug || {};
-  const requestPackMatchInput = pickChatContextField(
-    requestPack.matchInput,
-    requestPackClassifierDebug.classifierMatchInput,
-  );
-  const requestPackMergeRulePattern = pickChatContextField(
-    requestPack.mergeRulePattern,
-    requestPackClassifierDebug.classifierMergeRulePattern,
-  );
-  const requestPackMergeRuleTestResult = pickChatContextField(
-    requestPack.mergeRuleTestResult,
-    requestPackClassifierDebug.classifierMergeRuleTestResult,
-  );
-  const requestPackFirstMatchingRule = pickChatContextField(
-    requestPack.firstMatchingRule,
-    requestPackClassifierDebug.classifierFirstMatchingRule,
-    requestPack.intentClassifierMatchedRule,
-  );
-  const requestPackEvaluatedRuleResults = Array.isArray(requestPack.evaluatedRuleResults) && requestPack.evaluatedRuleResults.length > 0
-    ? requestPack.evaluatedRuleResults
-    : (Array.isArray(requestPackClassifierDebug.classifierCandidateRulesEvaluated) ? requestPackClassifierDebug.classifierCandidateRulesEvaluated : []);
-  const classifierProofMissing = !(requestPackMatchInput && requestPackMergeRulePattern && requestPackMergeRuleTestResult && requestPackFirstMatchingRule && requestPackEvaluatedRuleResults.length > 0);
-  const resolvedMatchInput = requestPackMatchInput || normalizedOperatorMessage || rawOperatorMessage || 'n/a';
-  const resolvedProofMissing = classifierProofMissing
-    && (!normalizedOperatorMessage || resolvedMatchInput === 'n/a');
+  const classifierProof = requestPack.classifierProof && typeof requestPack.classifierProof === 'object' ? requestPack.classifierProof : null;
+  const classifierProofMissing = !classifierProof;
+  const resolvedMatchInput = classifierProof?.matchInput || normalizedOperatorMessage || rawOperatorMessage || 'n/a';
+  const resolvedRuleResults = Array.isArray(classifierProof?.evaluatedRuleResults) ? classifierProof.evaluatedRuleResults : [];
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
     chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
-    chat_context_intent_classifier_matched_rule: requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || 'direct-answer',
+    chat_context_intent_classifier_matched_rule: classifierProof?.intentClassifierMatchedRule || requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || 'direct-answer',
     chat_context_match_input: resolvedMatchInput,
-    chat_context_merge_rule_pattern: requestPackMergeRulePattern || 'none',
-    chat_context_merge_rule_test_result: requestPackMergeRuleTestResult || 'no',
-    chat_context_first_matching_rule: requestPackFirstMatchingRule || 'direct-answer',
-    chat_context_evaluated_rule_results: requestPackEvaluatedRuleResults.length > 0 ? requestPackEvaluatedRuleResults.join(',') : 'n/a',
+    chat_context_merge_rule_pattern: classifierProof?.mergeRulePattern || 'none',
+    chat_context_merge_rule_test_result: classifierProof?.mergeRuleTestResult || 'no',
+    chat_context_first_matching_rule: classifierProof?.firstMatchingRule || 'direct-answer',
+    chat_context_evaluated_rule_results: resolvedRuleResults.length > 0 ? resolvedRuleResults.join(',') : 'n/a',
     chat_context_builder_function: requestPayload?.chatContextPack?.classifierDebug?.builderFunction || 'buildChatContextPack',
     chat_context_build_source: requestPayload?.submissionSource || requestPayload?.chatContextPack?.compactSummary?.buildSource || 'stephanos-mission-console',
-    chat_context_default_pack_used: defaultPackUsed,
+    chat_context_default_pack_used: classifierProof?.defaultPackUsed || defaultPackUsed,
     chat_context_was_overwritten: overwrittenByDefault ? 'yes' : 'no',
     chat_context_classifier_function_source: requestPayload?.chatContextPack?.classifierDebug?.classifierFunctionSource || 'other',
     chat_context_classifier_function_source_label: requestPayload?.chatContextPack?.classifierDebug?.classifierFunctionSource || 'other',
@@ -347,11 +326,11 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_classifier_merge_rule_matched: requestPayload?.chatContextPack?.classifierDebug?.classifierMergeRuleMatched || 'no',
     chat_context_classifier_regex_used: requestPayload?.chatContextPack?.classifierDebug?.classifierRegexUsed || 'none',
     chat_context_classifier_rule_index: requestPayload?.chatContextPack?.classifierDebug?.classifierRuleIndex ?? -1,
-    chat_context_classifier_fallback_applied: requestPayload?.chatContextPack?.classifierDebug?.classifierFallbackApplied || 'no',
-    chat_context_fallback_branch_taken: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchTaken || 'no',
-    chat_context_fallback_branch_reason: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchReason || 'none',
-    chat_context_classifier_proof_missing: resolvedProofMissing ? 'yes' : 'no',
-    chat_context_classifier_proof_warning: resolvedProofMissing ? 'request-pack-classifier-proof-missing' : 'none',
+    chat_context_classifier_fallback_applied: classifierProof?.fallbackApplied || requestPayload?.chatContextPack?.classifierDebug?.classifierFallbackApplied || 'no',
+    chat_context_fallback_branch_taken: classifierProof?.fallbackApplied || requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchTaken || 'no',
+    chat_context_fallback_branch_reason: classifierProof?.fallbackApplied === 'yes' ? 'no-intent-rule-matched' : (requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchReason || 'none'),
+    chat_context_classifier_proof_missing: classifierProofMissing ? 'yes' : 'no',
+    chat_context_classifier_proof_warning: classifierProofMissing ? 'request-pack-classifier-proof-missing' : 'none',
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
