@@ -1,5 +1,6 @@
 import { buildOperatorGuidanceProjection } from './operatorGuidanceRendering.js';
 import { deriveUiRealityStatus } from './uiRealityStatus.js';
+import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
 
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
@@ -768,6 +769,28 @@ export function buildSupportSnapshot({
   const mindRegistry = runtimeStatus?.aiMindRegistry || {};
   const mindSupport = mindRegistry?.supportSnapshot || {};
 
+
+  const missionRepairLoop = buildMissionRepairLoopModel({
+    missionId: runtimeStatus?.latestMissionId || executionMetadata?.mission_id,
+    title: runtimeStatus?.missionTitle || 'Mission Repair Loop',
+    objective: runtimeStatus?.missionObjective || 'Repair mission until acceptance criteria are proven.',
+    currentAttempt: runtimeStatus?.missionRepairCurrentAttempt || executionMetadata?.mission_repair_current_attempt,
+    maxAttempts: runtimeStatus?.missionRepairMaxAttempts || executionMetadata?.mission_repair_max_attempts || 3,
+    acceptanceCriteria: runtimeStatus?.missionAcceptanceCriteria || [],
+    forbiddenActions: runtimeStatus?.missionForbiddenActions || [],
+    requiredProof: runtimeStatus?.missionRequiredProof || [],
+    latestCodexSummary: runtimeStatus?.missionLatestCodexSummary || executionMetadata?.codex_handoff_summary,
+    latestTestResults: runtimeStatus?.missionLatestTestResults || (runtimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'pass' : 'fail'),
+    latestBuildVerifyStatus: runtimeStatus?.missionLatestBuildVerifyStatus || (runtimeStatus?.missionVerificationProofStatus === 'passed' ? 'pass' : (runtimeStatus?.missionVerificationProofStatus === 'pending' ? 'fail' : runtimeStatus?.missionVerificationProofStatus)),
+    latestSupportSnapshotStatus: {
+      uiRealityStatus: uiRealityStatus.severity,
+      acceptanceFieldsMatch: (runtimeStatus?.missionVerificationBlockerCount ?? 0) === 0,
+      browserProofRequired: chatContextResponseMode === 'merge-decision',
+      browserProofAvailable: uiRealityStatus.browserProof === 'available',
+    },
+    failingAcceptanceFields: String(runtimeStatus?.missionVerificationBlockingIssues || '').split('|').map((item) => item.trim()).filter(Boolean),
+  });
+
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -809,6 +832,14 @@ export function buildSupportSnapshot({
     `System Watcher Projection Mismatch: ${asText(cognitiveAdjudication.contradictions?.find((entry) => entry.family === 'ui-truth-projection-mismatch')?.title, 'none-detected')}`,
     `System Watcher Likely Repair Boundary: ${asText(cognitiveAdjudication.rootCauseCandidates?.[0]?.likelyRepairBoundary?.subsystem, 'none-detected')}`,
     `UI Reality Status: ${asText(uiRealityStatus.severity, 'UNKNOWN')}`,
+    `Mission Repair Loop Status: ${asText(missionRepairLoop.status, 'idle')}`,
+    `Mission Repair Loop Current Attempt: ${asText(missionRepairLoop.currentAttempt, '0')}`,
+    `Mission Repair Loop Max Attempts: ${asText(missionRepairLoop.maxAttempts, '0')}`,
+    `Mission Repair Loop Failing Acceptance Fields: ${asText(missionRepairLoop.failingAcceptanceFields.join(' | ') || 'none')}`,
+    `Mission Repair Loop Latest Proof State: ${asText(missionRepairLoop.latestBuildVerifyStatus, 'unknown')}/${asText(missionRepairLoop.latestTestResults, 'unknown')}/${asText(missionRepairLoop.latestSupportSnapshotStatus?.uiRealityStatus, 'UNKNOWN')}`,
+    `Mission Repair Loop Merge Recommendation: ${asText(missionRepairLoop.mergeRecommendation, 'hold')}`,
+    `Mission Repair Loop Next Action: ${asText(missionRepairLoop.nextPrompt, 'collect proof')}`,
+    `Mission Repair Loop Operator Decision Required: ${missionRepairLoop.operatorDecisionRequired ? 'yes' : 'no'}`,
     `UI Reality Reason: ${asText(uiRealityReason, 'unknown')}`,
     `UI Reality Browser Proof State: ${asText(uiRealityStatus.browserProof, 'unknown')}`,
     `UI Reality Pane Shell Count: ${asText(uiRealityStatus.paneShells, 'unknown')}`,
