@@ -39,4 +39,6 @@ test('command envelope carries codex dispatch packet id/status', () => {
   const projected = projectEnvelopeToExecutionMetadata(env);
   assert.equal(projected.command_envelope_codex_dispatch_packet_id, 'cdp_1');
   assert.equal(projected.command_envelope_codex_dispatch_status, 'ready-for-approval');
+  assert.equal(projected.command_envelope_operator_approval_required, 'yes');
+  assert.equal(projected.command_envelope_repair_loop_status, 'unknown');
 });
