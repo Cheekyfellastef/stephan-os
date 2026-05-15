@@ -561,6 +561,10 @@ export function buildSupportSnapshot({
   const responsePlannerOperatorNameUsed = responsePlannerOperatorNameUsedMetadata
     ? (responsePlannerOperatorNameUsedMetadata === 'yes' ? 'yes' : 'no')
     : (responsePlannerIdentityMode && operatorNameKnown === 'yes' ? 'yes' : 'no');
+  const responsePlannerIdentityPromptInjected = executionMetadata?.response_planner_identity_prompt_injected || 'no';
+  const operatorProfilePromptLinePresent = executionMetadata?.operator_profile_prompt_line_present || 'no';
+  const finalAnswerUsedOperatorProfile = executionMetadata?.final_answer_used_operator_profile || 'no';
+  const identityRecallDeterministicAnswerUsed = executionMetadata?.identity_recall_deterministic_answer_used || 'no';
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1324,6 +1328,10 @@ export function buildSupportSnapshot({
     `Response Planner Canon Applied: ${asText(responsePlannerCanonApplied, 'none')}`,
     `Response Planner Identity Recall: ${asText(responsePlannerIdentityRecall, 'no')}`,
     `Response Planner Operator Name Used: ${asText(responsePlannerOperatorNameUsed, 'no')}`,
+    `Response Planner Identity Prompt Injected: ${asText(responsePlannerIdentityPromptInjected, 'no')}`,
+    `Operator Profile Prompt Line Present: ${asText(operatorProfilePromptLinePresent, 'no')}`,
+    `Final Answer Used Operator Profile: ${asText(finalAnswerUsedOperatorProfile, 'no')}`,
+    `Identity Recall Deterministic Answer Used: ${asText(identityRecallDeterministicAnswerUsed, 'no')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

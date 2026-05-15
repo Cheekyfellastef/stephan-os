@@ -203,4 +203,10 @@ test('useAIConsole wires response planner into metadata and prompt guidance', as
   assert.match(source, /response_planner_status/);
   assert.match(source, /responsePlannerGuidance/);
   assert.match(source, /buildResponsePlanExecutionMetadata/);
+  assert.match(source, /response_planner_identity_prompt_injected/);
+  assert.match(source, /operator_profile_prompt_line_present/);
+  assert.match(source, /final_answer_used_operator_profile/);
+  assert.match(source, /identity_recall_deterministic_answer_used/);
+  assert.match(source, /createIdentityRecallDeterministicResult/);
+  assert.match(source, /Yes\. Your name is \$\{safeName\}\./);
 });

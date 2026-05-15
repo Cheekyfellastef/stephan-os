@@ -2439,6 +2439,10 @@ test('support snapshot projects identity recall and operator name usage from ide
         response_planner_status: 'active',
         response_planner_response_mode: 'identity-recall',
         response_planner_answer_shape: 'identity-recall',
+        response_planner_identity_prompt_injected: 'yes',
+        operator_profile_prompt_line_present: 'yes',
+        final_answer_used_operator_profile: 'yes',
+        identity_recall_deterministic_answer_used: 'yes',
         chat_context_operator_name_known: 'yes',
         command_envelope_operator_name: 'Stephan',
         command_envelope_operator_profile_used: 'yes',
@@ -2450,6 +2454,10 @@ test('support snapshot projects identity recall and operator name usage from ide
   assert.match(snapshot, /Response Planner Answer Shape: identity-recall/);
   assert.match(snapshot, /Response Planner Identity Recall: yes/);
   assert.match(snapshot, /Response Planner Operator Name Used: yes/);
+  assert.match(snapshot, /Response Planner Identity Prompt Injected: yes/);
+  assert.match(snapshot, /Operator Profile Prompt Line Present: yes/);
+  assert.match(snapshot, /Final Answer Used Operator Profile: yes/);
+  assert.match(snapshot, /Identity Recall Deterministic Answer Used: yes/);
 });
 
 test('support snapshot keeps operator name used as no when name is unknown', () => {
