@@ -164,3 +164,15 @@ test('buildChatContextExecutionMetadata emits provider registry metadata fields'
   assert.match(source, /chat_context_provider_next_actions/);
   assert.match(source, /chat_context_provider_canon_links_count/);
 });
+
+test('buildChatContextAttachmentMetadata rebuild path rehydrates provider registry fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const rebuiltExecutionMetadata = buildChatContextExecutionMetadata\(rebuiltPack\)/);
+  assert.match(source, /chat_context_provider_registry_status: resolvedProviderRegistryStatus/);
+  assert.match(source, /chat_context_provider_ids_registered: resolvedProviderIdsRegistered/);
+  assert.match(source, /chat_context_provider_ids_used: resolvedProviderIdsUsed/);
+  assert.match(source, /chat_context_provider_warning_count: resolvedProviderWarningCount/);
+  assert.match(source, /chat_context_provider_proof_state: resolvedProviderProofState/);
+  assert.match(source, /chat_context_provider_next_actions: resolvedProviderNextActions/);
+  assert.match(source, /chat_context_provider_canon_links_count: resolvedProviderCanonLinksCount/);
+});

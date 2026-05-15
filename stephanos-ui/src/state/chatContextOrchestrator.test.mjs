@@ -119,3 +119,15 @@ test('merge-decision uses required context providers and stays compact', () => {
   assert.equal(typeof pack.providerSummaries, 'object');
   assert.equal(pack.providerSummaries.rawSupportSnapshot, undefined);
 });
+
+test('buildChatContextPack do i merge this pr emits registered and used provider IDs', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
+  assert.deepEqual(
+    pack.contextProviderIdsRegistered,
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'agentState'],
+  );
+  assert.deepEqual(
+    pack.contextProviderIdsUsed,
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'agentState'],
+  );
+});

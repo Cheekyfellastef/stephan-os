@@ -2282,6 +2282,28 @@ test('support snapshot keeps direct-answer fallback for generic prompts without 
   assert.match(snapshot, /Chat Context Response Mode: direct-answer/);
 });
 
+test('support snapshot projects provider registry fields for active merge-decision context', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        chat_context_pack_status: 'active',
+        chat_context_response_mode: 'merge-decision',
+        chat_context_provider_registry_status: 'active',
+        chat_context_provider_ids_registered: 'uiReality|runtimeTruth|providerTruth|missionState|proofState|canonRules|memoryContinuity|agentState',
+        chat_context_provider_ids_used: 'uiReality|proofState|canonRules|runtimeTruth|providerTruth|missionState',
+        chat_context_provider_warning_count: 0,
+        chat_context_provider_proof_state: '{"uiReality":"OK"}',
+        chat_context_provider_next_actions: 'Collect build/verify/UI proof and amend the open PR before deciding merge.',
+        chat_context_provider_canon_links_count: 3,
+      },
+    },
+  });
+  assert.match(snapshot, /Context Provider Registry Status: active/);
+  assert.match(snapshot, /Context Providers Registered: uiReality\|runtimeTruth\|providerTruth\|missionState\|proofState\|canonRules\|memoryContinuity\|agentState/);
+  assert.match(snapshot, /Context Providers Used: uiReality\|proofState\|canonRules\|runtimeTruth\|providerTruth\|missionState/);
+  assert.match(snapshot, /Context Provider Canon Links Count: 3/);
+});
+
 test('support snapshot reports warning when command executed without chat context metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
