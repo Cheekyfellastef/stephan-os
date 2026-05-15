@@ -552,8 +552,15 @@ export function buildSupportSnapshot({
   const responsePlannerWarningCount = executionMetadata?.response_planner_warning_count ?? 0;
   const responsePlannerWarnings = executionMetadata?.response_planner_warnings || 'none';
   const responsePlannerCanonApplied = executionMetadata?.response_planner_canon_applied || 'none';
-  const responsePlannerIdentityRecall = executionMetadata?.response_planner_identity_recall || 'no';
-  const responsePlannerOperatorNameUsed = executionMetadata?.response_planner_operator_name_used || 'no';
+  const responsePlannerIdentityRecallMetadata = String(executionMetadata?.response_planner_identity_recall || '').trim().toLowerCase();
+  const responsePlannerOperatorNameUsedMetadata = String(executionMetadata?.response_planner_operator_name_used || '').trim().toLowerCase();
+  const responsePlannerIdentityMode = responsePlannerResponseMode === 'identity-recall' || responsePlannerAnswerShape === 'identity-recall';
+  const responsePlannerIdentityRecall = responsePlannerIdentityRecallMetadata
+    ? (responsePlannerIdentityRecallMetadata === 'yes' ? 'yes' : 'no')
+    : (responsePlannerIdentityMode ? 'yes' : 'no');
+  const responsePlannerOperatorNameUsed = responsePlannerOperatorNameUsedMetadata
+    ? (responsePlannerOperatorNameUsedMetadata === 'yes' ? 'yes' : 'no')
+    : (responsePlannerIdentityMode && operatorNameKnown === 'yes' ? 'yes' : 'no');
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
