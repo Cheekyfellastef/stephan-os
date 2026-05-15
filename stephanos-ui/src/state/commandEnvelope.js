@@ -33,7 +33,7 @@ export function createCommandEnvelope(input = {}) {
     operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
     codexDispatch: { packetId: 'none', status: 'not-ready', approvalRequired: 'yes', targetSubsystems: [] },
-    prEvidence: { status: 'none', prNumber: 'unknown', repo: 'unknown', checksStatus: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
+    prEvidence: { status: 'none', prNumber: 'unknown', repo: 'unknown', prUrl: 'n/a', parseConfidence: 'none', checksStatus: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
   };
 }
 
@@ -98,6 +98,8 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
       status: asText(prEvidence?.status, 'none'),
       prNumber: asText(prEvidence?.prNumber, 'unknown'),
       repo: asText(prEvidence?.repo, 'unknown'),
+      prUrl: asText(prEvidence?.prUrl, 'n/a'),
+      parseConfidence: asText(prEvidence?.parseConfidence, 'none'),
       checksStatus: asText(prEvidence?.checksStatus, 'unknown'),
       mergeReadiness: asText(prEvidence?.mergeReadiness, 'wait'),
       missingProof: asList(prEvidence?.missingProof),
@@ -147,6 +149,8 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_pr_evidence_status: asText(envelope?.prEvidence?.status, 'none'),
     command_envelope_pr_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
     command_envelope_pr_repo: asText(envelope?.prEvidence?.repo, 'unknown'),
+    command_envelope_pr_url: asText(envelope?.prEvidence?.prUrl, 'n/a'),
+    command_envelope_pr_parse_confidence: asText(envelope?.prEvidence?.parseConfidence, 'none'),
     command_envelope_pr_checks_status: asText(envelope?.prEvidence?.checksStatus, 'unknown'),
     command_envelope_pr_merge_readiness: asText(envelope?.prEvidence?.mergeReadiness, 'wait'),
     command_envelope_pr_missing_proof: asList(envelope?.prEvidence?.missingProof).join('|') || 'none',

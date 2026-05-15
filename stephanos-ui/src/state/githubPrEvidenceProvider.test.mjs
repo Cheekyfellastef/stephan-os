@@ -5,12 +5,24 @@ import { buildGithubPrEvidenceProvider, parsePrReferenceFromPrompt } from './git
 test('parses PR number from merge prompt', () => {
   const r = parsePrReferenceFromPrompt('do i merge PR 123');
   assert.equal(r.prNumber, 123);
+  assert.equal(r.parseConfidence, 'high');
+});
+
+test('parses lowercase PR in merge prompt', () => {
+  const r = parsePrReferenceFromPrompt('do i merge pr 123');
+  assert.equal(r.prNumber, 123);
+});
+
+test('parses check PR prompt', () => {
+  const r = parsePrReferenceFromPrompt('check PR 123');
+  assert.equal(r.prNumber, 123);
 });
 
 test('parses PR URL', () => {
   const r = parsePrReferenceFromPrompt('check https://github.com/acme/stephan-os/pull/88');
   assert.equal(r.prNumber, 88);
   assert.equal(r.repo, 'acme/stephan-os');
+  assert.equal(r.parseConfidence, 'high');
 });
 
 test('handles missing PR safely', () => {
@@ -47,4 +59,5 @@ test('dist-only source truth risk', () => {
 test('prompt PR without connector returns needs-connector', () => {
   const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123' });
   assert.equal(r.status, 'needs-connector');
+  assert.equal(r.prNumber, 123);
 });

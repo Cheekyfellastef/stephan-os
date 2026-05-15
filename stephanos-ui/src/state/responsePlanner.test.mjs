@@ -55,3 +55,14 @@ test('failed checks map to no in merge-decision mode', () => {
   const plan = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'merge-decision' }, supportSnapshotSummary: { prEvidenceInputDetected: 'yes', prEvidenceMergeReadiness: 'needs-amendment' }, uiRealityStatus: { severity: 'OK' } });
   assert.equal(plan.mergeDecision, 'no');
 });
+
+test('unavailable github evidence keeps merge decision at wait', () => {
+  const plan = buildResponsePlan({
+    chatContextPack: { recommendedResponseMode: 'merge-decision' },
+    supportSnapshotSummary: { prEvidenceInputDetected: 'yes' },
+    githubPrEvidence: { status: 'needs-connector', prNumber: 123 },
+    uiRealityStatus: { severity: 'OK' },
+  });
+  assert.equal(plan.mergeDecision, 'wait');
+  assert.match(plan.recommendedNextAction, /connect read-only GitHub evidence|paste PR summary/i);
+});

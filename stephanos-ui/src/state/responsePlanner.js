@@ -35,6 +35,7 @@ export function buildResponsePlan(input = {}) {
   const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (providerPr?.missingProof || []).join('|') || '').toLowerCase();
   const prStatus = String(input?.missionState?.prEvidenceStatus || providerPr?.status || '').toLowerCase();
   const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged';
+  const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
 
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
@@ -85,12 +86,12 @@ export function buildResponsePlan(input = {}) {
       warnings.push('PR evidence missing; do not infer merge status.');
       recommendedNextAction = 'collect PR evidence and verification proofs before merge decision';
     }
-    if (String(providerPr?.status || '').toLowerCase() === 'unavailable') {
+    if (prEvidenceUnavailable) {
       mergeDecision = 'wait';
       warnings.push('GitHub evidence unavailable; request connector or pasted PR summary.');
       recommendedNextAction = 'connect read-only GitHub evidence or paste PR summary';
     }
-    if (checksKnownFail || checksUnknown || !testsPassed || prMergeReadiness === 'needs-amendment') {
+    if (!prEvidenceUnavailable && (checksKnownFail || checksUnknown || !testsPassed || prMergeReadiness === 'needs-amendment')) {
       mergeDecision = prMergeReadiness === 'needs-amendment' || checksKnownFail ? 'no' : (mergeDecision === 'unknown' ? 'wait' : mergeDecision);
       warnings.push('build/verify/check evidence missing or failing.');
       recommendedNextAction = 'run build/verify checks and attach results';

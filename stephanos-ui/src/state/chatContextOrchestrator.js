@@ -155,7 +155,7 @@ export function buildChatContextPack(input = {}) {
   const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
   const requiredProviders = mergeDecisionTask
-    ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
+    ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : [];
   const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState'];
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
