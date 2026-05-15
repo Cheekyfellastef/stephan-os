@@ -3216,7 +3216,7 @@ export function useAIConsole() {
         requestPayload: effectiveRequestPayload,
         backendDefaultProvider: apiStatus.backendDefaultProvider,
       });
-      let commandEnvelopeFinal = effectiveRequestPayload?.commandEnvelope || null;
+      let commandEnvelopeFinal = effectiveRequestPayload?.commandEnvelope || requestPayload.commandEnvelope || null;
       if (commandEnvelopeFinal) {
         commandEnvelopeFinal = attachExecutionMetadataToEnvelope(commandEnvelopeFinal, executionMetadataBase);
       }

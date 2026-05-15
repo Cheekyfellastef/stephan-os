@@ -165,3 +165,24 @@ test('AIConsole context indicator renders active merge-decision state from execu
   assert.match(rendered, /Provider Registry: active/);
   assert.match(rendered, /Provider Warning Count: 1/);
 });
+
+
+test('AIConsole context indicator can render active command envelope compactly', async () => {
+  const { renderAIConsole } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'),
+    aliases,
+    'ai-console-envelope-active',
+  );
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    lastExecutionMetadata: {
+      command_envelope_status: 'active',
+      command_envelope_response_mode: 'merge-decision',
+      command_envelope_context_providers_used: 'uiReality|runtimeTruth|proofState',
+      command_envelope_ui_reality_status: 'OK',
+      command_envelope_execution_status: 'ok',
+    },
+  });
+  const rendered = renderAIConsole();
+  assert.match(rendered, /Envelope: active/);
+  assert.match(rendered, /Response Mode: merge-decision/);
+});

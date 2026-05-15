@@ -185,3 +185,13 @@ test('provider registry resolution prefers rebuilt/request non-default values ov
   assert.match(source, /const resolvedProviderRegistryStatus = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
   assert.match(source, /const resolvedProviderCanonLinksCount = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
 });
+
+
+test('useAIConsole live submit path creates and projects command envelope metadata', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /createCommandEnvelope\(\{/);
+  assert.match(source, /attachChatContextToEnvelope\(commandEnvelope, chatContextPack\)/);
+  assert.match(source, /attachProviderRequestToEnvelope\(commandEnvelope,/);
+  assert.match(source, /chat_context_response_mode/);
+  assert.match(source, /let commandEnvelopeFinal = effectiveRequestPayload\?\.commandEnvelope \|\| requestPayload\.commandEnvelope \|\| null/);
+});

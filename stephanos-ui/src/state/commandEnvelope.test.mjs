@@ -2,21 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata, projectEnvelopeToSupportSnapshot } from './commandEnvelope.js';
 
-test('creates stable envelope with operator message and submission identity', () => {
+test('createCommandEnvelope produces command-envelope.v1 with identity fields', () => {
   const env = createCommandEnvelope({ operatorMessage: 'do i merge this pr', submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router', commandId: 'req_1' });
   assert.equal(env.version, 'command-envelope.v1');
+  assert.ok(env.envelopeId);
+  assert.equal(env.operatorMessage, 'do i merge this pr');
   assert.equal(env.submission.source, 'stephanos-mission-console');
+  assert.equal(env.submission.route, 'assistant-router');
 });
 
-test('attaches chat context/provider/execution and projects metadata safely', () => {
+test('envelope attachment + projection covers chat context/provider/execution/support snapshot fields', () => {
   let env = createCommandEnvelope({ operatorMessage: 'do i merge this pr', commandId: 'req_2' });
-  env = attachChatContextToEnvelope(env, { version: 'v1', recommendedResponseMode: 'merge-decision', intentClassifierMatchedRule: 'merge-decision', contextProviderIdsUsed: ['uiReality', 'proofState'], compactSummary: { status: 'active' } });
-  env = attachProviderRequestToEnvelope(env, { requestedProvider: 'ollama' });
-  env = attachExecutionMetadataToEnvelope(env, { execution_status: 'ok', actual_provider_used: 'ollama', model_used: 'llama3.2:3b', chat_context_ui_reality_status: 'OK' });
+  env = attachChatContextToEnvelope(env, { version: 'v1', recommendedResponseMode: 'merge-decision', intentClassifierMatchedRule: 'merge-decision', recommendedNextAction: 'collect-proof', contextProviderIdsUsed: ['uiReality', 'proofState', 'canonRules'], compactSummary: { status: 'active', contextProviderCanonLinksCount: 11 } });
+  env = attachProviderRequestToEnvelope(env, { requestedProvider: 'ollama', selectedProvider: 'ollama', selectedModel: 'llama3.2:3b' });
+  env = attachExecutionMetadataToEnvelope(env, { execution_status: 'ok', execution_truth: 'answered', actual_provider_used: 'ollama', model_used: 'llama3.2:3b', proof_status: 'pending', chat_context_ui_reality_status: 'OK', elapsed_ms: 321 });
   const projected = projectEnvelopeToExecutionMetadata(env);
   assert.equal(projected.command_envelope_status, 'active');
   assert.equal(projected.command_envelope_response_mode, 'merge-decision');
   assert.match(projected.command_envelope_context_providers_used, /uiReality/);
+  assert.equal(projected.command_envelope_execution_status, 'ok');
+  assert.equal(projected.command_envelope_actual_provider, 'ollama');
+  assert.equal(projected.command_envelope_actual_model, 'llama3.2:3b');
+  assert.equal(projected.command_envelope_ui_reality_status, 'OK');
   const snapshot = projectEnvelopeToSupportSnapshot(env);
   assert.equal(snapshot.command_envelope_actual_provider, 'ollama');
 });
