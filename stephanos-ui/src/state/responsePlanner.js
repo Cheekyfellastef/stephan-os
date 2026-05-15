@@ -48,6 +48,10 @@ export function buildResponsePlan(input = {}) {
   let identityRecallUsed = 'no';
   let operatorNameUsed = 'no';
   let identityGuidance = 'Operator identity unavailable.';
+  let identityPromptInjected = 'no';
+  let operatorProfilePromptLinePresent = 'no';
+  let finalAnswerUsedOperatorProfile = 'no';
+  let identityRecallDeterministicAnswerUsed = 'no';
 
   if (identityRecall) {
     identityRecallUsed = 'yes';
@@ -56,6 +60,8 @@ export function buildResponsePlan(input = {}) {
       ? `Operator profile indicates the operator's name is ${operatorName}. Use this if asked about the operator's name.`
       : 'Operator profile does not include a known operator name yet. Say name is not stored yet.';
     recommendedNextAction = operatorNameKnown ? 'answer directly with stored operator name' : 'ask operator for preferred name';
+    identityPromptInjected = operatorNameKnown ? 'yes' : 'no';
+    operatorProfilePromptLinePresent = operatorNameKnown ? 'yes' : 'no';
   }
 
   if (responseMode === 'merge-decision') {
@@ -113,6 +119,10 @@ export function buildResponsePlan(input = {}) {
     identityRecallUsed,
     operatorNameUsed,
     identityGuidance,
+    identityPromptInjected,
+    operatorProfilePromptLinePresent,
+    finalAnswerUsedOperatorProfile,
+    identityRecallDeterministicAnswerUsed,
     sourceRefs: ['chatContextPack', 'commandEnvelope', 'contextProviderSnapshot', 'uiRealityStatus', 'missionState'],
   };
 }

@@ -30,8 +30,14 @@ test('identity-recall uses operator profile when known and unknown fallback when
   const known = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'identity-recall', providerSummaries: { operatorProfile: { known: 'yes', operatorName: 'Stephan' } } } });
   assert.equal(known.identityRecallUsed, 'yes');
   assert.equal(known.operatorNameUsed, 'yes');
+  assert.equal(known.identityPromptInjected, 'yes');
+  assert.equal(known.operatorProfilePromptLinePresent, 'yes');
   assert.match(known.identityGuidance, /Stephan/);
+  const nonHardcoded = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'identity-recall', providerSummaries: { operatorProfile: { known: 'yes', operatorName: 'Alex' } } } });
+  assert.match(nonHardcoded.identityGuidance, /Alex/);
   const unknown = buildResponsePlan({ chatContextPack: { recommendedResponseMode: 'identity-recall', providerSummaries: { operatorProfile: { known: 'no' } } } });
   assert.equal(unknown.operatorNameUsed, 'no');
+  assert.equal(unknown.identityPromptInjected, 'no');
+  assert.equal(unknown.operatorProfilePromptLinePresent, 'no');
   assert.match(unknown.identityGuidance, /does not include a known operator name/);
 });

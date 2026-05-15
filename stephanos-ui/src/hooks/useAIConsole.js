@@ -153,6 +153,12 @@ export function buildResponsePlanExecutionMetadata(responsePlan = null) {
     response_planner_warning_count: warnings.length,
     response_planner_warnings: warnings.length ? warnings.join(' | ') : 'none',
     response_planner_canon_applied: canonApplied.length ? canonApplied.join('|') : 'none',
+    response_planner_identity_recall: plan.identityRecallUsed || 'no',
+    response_planner_operator_name_used: plan.operatorNameUsed || 'no',
+    response_planner_identity_prompt_injected: plan.identityPromptInjected || 'no',
+    operator_profile_prompt_line_present: plan.operatorProfilePromptLinePresent || 'no',
+    final_answer_used_operator_profile: plan.finalAnswerUsedOperatorProfile || 'no',
+    identity_recall_deterministic_answer_used: plan.identityRecallDeterministicAnswerUsed || 'no',
   };
 }
 
@@ -1612,6 +1618,43 @@ function createRouteUnavailableResult({
   };
 }
 
+function createIdentityRecallDeterministicResult({
+  prompt,
+  parsed,
+  startedAt,
+  requestPayload,
+  operatorName = '',
+  operatorProfileSource = 'operator profile',
+}) {
+  const safeName = String(operatorName || '').trim();
+  const output = safeName
+    ? `Yes. Your name is ${safeName}.\n\nI have that from your ${operatorProfileSource}.`
+    : 'I do not have your preferred name stored yet.';
+  return {
+    data: {
+      type: 'assistant_response',
+      route: 'assistant',
+      success: true,
+      output_text: output,
+      error: null,
+      error_code: null,
+      timing_ms: Math.round(performance.now() - startedAt),
+      data: {
+        execution_metadata: {
+          final_answer_used_operator_profile: safeName ? 'yes' : 'no',
+          identity_recall_deterministic_answer_used: safeName ? 'yes' : 'no',
+        },
+      },
+      raw_input: prompt,
+      parsed_command: parsed,
+      request_execution_id: requestPayload?.request_execution_id || null,
+    },
+    requestPayload: {
+      ...requestPayload,
+    },
+  };
+}
+
 function transportErrorToUi(error, { routeDecision = null } = {}) {
   const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
   const routeTruthUsable = routeDecision?.requestDispatchGate?.selectedRouteUsable === true
@@ -3061,6 +3104,15 @@ export function useAIConsole() {
           prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
         },
       });
+      const identityRecallKnownName = (
+        responsePlan?.responseMode === 'identity-recall'
+        && responsePlan?.operatorNameUsed === 'yes'
+        && String(chatContextPack?.providerSummaries?.operatorProfile?.operatorName || '').trim()
+      );
+      if (identityRecallKnownName) {
+        responsePlan.identityPromptInjected = 'yes';
+        responsePlan.operatorProfilePromptLinePresent = 'yes';
+      }
       const nextChatContinuity = buildChatContinuitySummary({
         previousContinuity: previousChatContinuity,
         sessionId: requestRuntimeStatus?.sessionId || 'session-local',
@@ -3140,6 +3192,12 @@ export function useAIConsole() {
         freshnessMode: freshnessClassification.freshnessNeed || 'low',
         timeoutPolicy: timeoutExecutionEnvelope.timeoutMode || 'standard',
       });
+      const identityRecallDeterministicEligible = responsePlan?.responseMode === 'identity-recall'
+        && responsePlan?.operatorNameUsed === 'yes';
+      if (identityRecallDeterministicEligible) {
+        responsePlan.finalAnswerUsedOperatorProfile = 'yes';
+        responsePlan.identityRecallDeterministicAnswerUsed = 'yes';
+      }
       requestPayload.commandEnvelope = commandEnvelope;
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
@@ -3220,9 +3278,19 @@ export function useAIConsole() {
           requestPayload,
         })
         : null;
+      const identityRecallDeterministicResult = (!routeUnavailableResult && identityRecallDeterministicEligible)
+        ? createIdentityRecallDeterministicResult({
+          prompt,
+          parsed,
+          startedAt,
+          requestPayload,
+          operatorName: chatContextPack?.providerSummaries?.operatorProfile?.operatorName || '',
+          operatorProfileSource: chatContextPack?.providerSummaries?.operatorProfile?.source || 'operator profile',
+        })
+        : null;
       const streamEntryId = `cmd_${Date.now()}_stream`;
       let streamBuffer = '';
-      if (!routeUnavailableResult) {
+      if (!routeUnavailableResult && !identityRecallDeterministicResult) {
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
           raw_input: prompt,
@@ -3245,7 +3313,7 @@ export function useAIConsole() {
           continuity_retrieval_reason: continuityLookup.reason,
         }));
       }
-      const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || await sendPrompt({
+      const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || identityRecallDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
         uiRequestedProvider: requestPayload.ui_requested_provider,
