@@ -144,10 +144,15 @@ export default function AIConsole({
     }
   };
 
-  const onSubmit = (event) => {
+  const onSubmit = async (event) => {
     event.preventDefault();
-    submitPrompt(input);
-    setInput('');
+    const submittedInput = input;
+    const submitResult = await submitPrompt(submittedInput);
+    if (submitResult?.inputCleared === true || submitResult?.submitAccepted === true) {
+      setInput('');
+    } else if (submitResult?.restoreInput === true) {
+      setInput(submittedInput);
+    }
     inputRef.current?.focus({ preventScroll: true });
   };
 
