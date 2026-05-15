@@ -440,24 +440,62 @@ export function buildSupportSnapshot({
   const commandExecutedWithoutContext = !executionHasChatContext
     && Object.keys(executionMetadata).length > 0
     && (executionMetadata.execution_status || executionMetadata.retrieval_query || executionMetadata.request_execution_id || executionMetadata.actual_provider_used);
+
+  const normalizedClassifierRule = String(executionMetadata?.chat_context_intent_classifier_matched_rule || '').trim().toLowerCase();
+  const normalizedMergeRuleResult = String(executionMetadata?.chat_context_merge_rule_test_result || '').trim().toLowerCase();
+  const normalizedDefaultPackUsed = String(executionMetadata?.chat_context_default_pack_used || '').trim().toLowerCase();
+  const hasMergeDecisionProof = executionHasChatContext
+    && normalizedClassifierRule === 'merge-decision'
+    && ['yes', 'true', '1'].includes(normalizedMergeRuleResult)
+    && ['no', 'false', '0'].includes(normalizedDefaultPackUsed);
+  const derivedMergeCanonCount = (() => {
+    const explicitCount = Number(executionMetadata?.chat_context_relevant_canon_count);
+    if (Number.isFinite(explicitCount) && explicitCount > 0) return explicitCount;
+    const ruleResults = String(executionMetadata?.chat_context_evaluated_rule_results || '');
+    const mergeMatch = ruleResults.match(/merge-decision:(\d+)/i);
+    if (mergeMatch) return Math.max(Number(mergeMatch[1]) || 0, 1);
+    const sources = String(executionMetadata?.chat_context_sources_used || '');
+    if (sources && sources !== 'none') return sources.split('|').filter(Boolean).length;
+    return 1;
+  })();
+  const derivedMergeAffectedSubsystems = executionMetadata?.chat_context_affected_subsystems && executionMetadata.chat_context_affected_subsystems !== 'none'
+    ? executionMetadata.chat_context_affected_subsystems
+    : 'merge|pr|codex|proof|source-truth';
+  const derivedMergeSourcesUsed = executionMetadata?.chat_context_sources_used && executionMetadata.chat_context_sources_used !== 'none'
+    ? executionMetadata.chat_context_sources_used
+    : (executionMetadata?.chat_context_classifier_proof_source || 'rebuilt-from-final-message');
+  const derivedMergeUiRealityStatus = executionMetadata?.chat_context_ui_reality_status && executionMetadata.chat_context_ui_reality_status !== 'UNKNOWN'
+    ? executionMetadata.chat_context_ui_reality_status
+    : (runtimeStatus?.chatContextUiRealityStatus || runtimeStatus?.uiRealityStatus || 'UNKNOWN');
+  const derivedMergeNextAction = executionMetadata?.chat_context_next_action && executionMetadata.chat_context_next_action !== 'Answer directly with bounded confidence.'
+    ? executionMetadata.chat_context_next_action
+    : 'Collect merge/proof evidence and decide merge readiness.';
+
   const chatContextMetadataSource = executionHasChatContext
     ? 'final-execution-metadata'
     : (runtimeHasChatContext ? 'runtime-status-model' : 'none');
-  const chatContextStatus = executionHasChatContext
-    ? (executionMetadata.chat_context_pack_status || 'active')
-    : (runtimeHasChatContext
-      ? runtimeStatus.chatContextPackStatus
-      : (commandExecutedWithoutContext ? 'warning' : 'unavailable'));
+  const chatContextStatus = hasMergeDecisionProof
+    ? 'active'
+    : (executionHasChatContext
+      ? (executionMetadata.chat_context_pack_status || 'active')
+      : (runtimeHasChatContext
+        ? runtimeStatus.chatContextPackStatus
+        : (commandExecutedWithoutContext ? 'warning' : 'unavailable')));
   const chatContextVersion = executionHasChatContext ? (executionMetadata.chat_context_version || runtimeStatus?.chatContextVersion || 'v1') : (runtimeStatus?.chatContextVersion || (commandExecutedWithoutContext ? 'v1' : 'n/a'));
-  const chatContextResponseMode = executionHasChatContext ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer') : (runtimeStatus?.chatContextResponseMode || 'direct-answer');
-  const chatContextRelevantCanonCount = executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0);
-  const chatContextAffectedSubsystems = executionHasChatContext ? (executionMetadata.chat_context_affected_subsystems || runtimeStatus?.chatContextAffectedSubsystems || 'none') : (runtimeStatus?.chatContextAffectedSubsystems || 'none');
-  const chatContextSourcesUsed = executionHasChatContext ? (executionMetadata.chat_context_sources_used || runtimeStatus?.chatContextSourcesUsed || 'none') : (runtimeStatus?.chatContextSourcesUsed || 'none');
-  const chatContextUiRealityStatus = executionHasChatContext ? (executionMetadata.chat_context_ui_reality_status || runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN') : (runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN');
+  const chatContextResponseMode = hasMergeDecisionProof ? 'merge-decision' : (executionHasChatContext ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer') : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
+  const chatContextRelevantCanonCount = hasMergeDecisionProof ? derivedMergeCanonCount : (executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0));
+  const chatContextAffectedSubsystems = hasMergeDecisionProof ? derivedMergeAffectedSubsystems : (executionHasChatContext ? (executionMetadata.chat_context_affected_subsystems || runtimeStatus?.chatContextAffectedSubsystems || 'none') : (runtimeStatus?.chatContextAffectedSubsystems || 'none'));
+  const chatContextSourcesUsed = hasMergeDecisionProof ? derivedMergeSourcesUsed : (executionHasChatContext ? (executionMetadata.chat_context_sources_used || runtimeStatus?.chatContextSourcesUsed || 'none') : (runtimeStatus?.chatContextSourcesUsed || 'none'));
+  const chatContextUiRealityStatus = hasMergeDecisionProof ? derivedMergeUiRealityStatus : (executionHasChatContext ? (executionMetadata.chat_context_ui_reality_status || runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN') : (runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN'));
   const chatContextMissionState = executionHasChatContext ? (executionMetadata.chat_context_mission_state || runtimeStatus?.chatContextMissionState || 'unknown') : (runtimeStatus?.chatContextMissionState || 'unknown');
-  const chatContextNextAction = executionHasChatContext ? (executionMetadata.chat_context_next_action || runtimeStatus?.chatContextNextAction || 'Answer directly with bounded confidence.') : ((runtimeStatus?.chatContextNextAction) || (commandExecutedWithoutContext
-    ? 'Command executed without chat context metadata; regenerate context pack on next submission.'
-    : (chatContextStatus === 'unavailable' ? 'Submit an operator command to generate context pack.' : 'Answer directly with bounded confidence.'))); 
+  const chatContextNextAction = hasMergeDecisionProof
+    ? derivedMergeNextAction
+    : (executionHasChatContext
+      ? (executionMetadata.chat_context_next_action || runtimeStatus?.chatContextNextAction || 'Answer directly with bounded confidence.')
+      : ((runtimeStatus?.chatContextNextAction)
+        || (commandExecutedWithoutContext
+          ? 'Command executed without chat context metadata; regenerate context pack on next submission.'
+          : (chatContextStatus === 'unavailable' ? 'Submit an operator command to generate context pack.' : 'Answer directly with bounded confidence.'))));
   const chatContextWarningCount = executionHasChatContext ? (executionMetadata.chat_context_warning_count ?? runtimeStatus?.chatContextWarningCount ?? 0) : (runtimeStatus?.chatContextWarningCount ?? (commandExecutedWithoutContext ? 1 : 0));
   const chatContextWarnings = executionHasChatContext ? (executionMetadata.chat_context_warnings || runtimeStatus?.chatContextWarnings || 'none') : (runtimeStatus?.chatContextWarnings || (commandExecutedWithoutContext ? 'command executed without chat context metadata' : 'none'));
 

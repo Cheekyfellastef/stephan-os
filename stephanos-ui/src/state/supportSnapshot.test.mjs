@@ -2234,6 +2234,54 @@ test('support snapshot prefers final execution chat context over stale runtime c
   assert.match(snapshot, /Chat Context Metadata Source: final-execution-metadata/);
 });
 
+
+test('support snapshot projects merge proof fields over stale top-level direct-answer defaults', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      uiRealityStatus: 'OK',
+      lastExecutionMetadata: {
+        request_execution_id: 'req_merge_projection',
+        chat_context_pack_status: 'unavailable',
+        chat_context_response_mode: 'direct-answer',
+        chat_context_relevant_canon_count: 0,
+        chat_context_affected_subsystems: 'none',
+        chat_context_sources_used: 'none',
+        chat_context_ui_reality_status: 'UNKNOWN',
+        chat_context_next_action: 'Answer directly with bounded confidence.',
+        chat_context_intent_classifier_matched_rule: 'merge-decision',
+        chat_context_merge_rule_test_result: 'yes',
+        chat_context_default_pack_used: 'no',
+        chat_context_classifier_proof_source: 'rebuilt-from-final-message',
+        chat_context_evaluated_rule_results: 'merge-decision:1,direct-answer:0',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Chat Context Pack Status: active/);
+  assert.match(snapshot, /Chat Context Response Mode: merge-decision/);
+  assert.match(snapshot, /Chat Context Relevant Canon Count: 1/);
+  assert.match(snapshot, /Chat Context Affected Subsystems: merge\|pr\|codex\|proof\|source-truth/);
+  assert.match(snapshot, /Chat Context Sources Used: rebuilt-from-final-message/);
+  assert.match(snapshot, /Chat Context UI Reality Status: OK/);
+  assert.match(snapshot, /Chat Context Next Action: Collect merge\/proof evidence and decide merge readiness\./);
+});
+
+test('support snapshot keeps direct-answer fallback for generic prompts without merge proof', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        chat_context_pack_status: 'unavailable',
+        chat_context_response_mode: 'direct-answer',
+        chat_context_default_pack_used: 'yes',
+        chat_context_intent_classifier_matched_rule: 'direct-answer',
+        chat_context_merge_rule_test_result: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Pack Status: unavailable/);
+  assert.match(snapshot, /Chat Context Response Mode: direct-answer/);
+});
+
 test('support snapshot reports warning when command executed without chat context metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
