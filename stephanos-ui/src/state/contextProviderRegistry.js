@@ -122,9 +122,12 @@ const builtinProviders = [
   {
     id: 'missionState', label: 'Mission State', priority: 40,
     getSummary: (input) => ({
-      canonicalMissionPhase: String(input.missionState?.mode || input.missionState?.status || 'unknown'),
-      missionBlockedState: String(input.missionState?.blocked || 'unknown'), missionNextAction: String(input.missionState?.nextAction || 'unknown'),
+      canonicalMissionPhase: String(input.missionState?.activeMission?.phase || input.missionState?.mode || input.missionState?.status || 'unknown'),
+      missionBlockedState: String(input.missionState?.activeMission?.blockedReason || input.missionState?.blocked || 'unknown'), missionNextAction: String(input.missionState?.activeMission?.nextRecommendedStep || input.missionState?.nextAction || 'unknown'),
       approvalRequired: String(input.missionState?.approvalRequired || 'unknown'), codexHandoffReadiness: String(input.missionState?.codexHandoffReadiness || 'unknown'),
+      activeMissionId: String(input.missionState?.activeMission?.missionId || 'unknown'),
+      activeMissionTitle: String(input.missionState?.activeMission?.title || 'unknown'),
+      activeMissionRehydrated: String(input.missionState?.activeMission?.rehydrated ? 'yes' : 'no'),
     }),
     getWarnings: () => [], getNextAction: (input) => [String(input.missionState?.nextAction || '').trim()].filter(Boolean), getProofState: () => 'ready',
     getCanonLinks: () => ['canon.prefer_pr_amend_open'], getSourceRefs: () => ['missionState'],
