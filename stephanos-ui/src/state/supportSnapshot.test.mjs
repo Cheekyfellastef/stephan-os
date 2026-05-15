@@ -2430,6 +2430,44 @@ test('Support Snapshot reports command-envelope-missing when envelope metadata i
 });
 
 
+
+test('support snapshot projects identity recall and operator name usage from identity-recall planner mode', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      chatContextResponseMode: 'identity-recall',
+      lastExecutionMetadata: {
+        response_planner_status: 'active',
+        response_planner_response_mode: 'identity-recall',
+        response_planner_answer_shape: 'identity-recall',
+        chat_context_operator_name_known: 'yes',
+        command_envelope_operator_name: 'Stephan',
+        command_envelope_operator_profile_used: 'yes',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Response Planner Response Mode: identity-recall/);
+  assert.match(snapshot, /Response Planner Answer Shape: identity-recall/);
+  assert.match(snapshot, /Response Planner Identity Recall: yes/);
+  assert.match(snapshot, /Response Planner Operator Name Used: yes/);
+});
+
+test('support snapshot keeps operator name used as no when name is unknown', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        response_planner_status: 'active',
+        response_planner_response_mode: 'identity-recall',
+        response_planner_answer_shape: 'identity-recall',
+        chat_context_operator_name_known: 'no',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Response Planner Identity Recall: yes/);
+  assert.match(snapshot, /Response Planner Operator Name Used: no/);
+});
+
 test('support snapshot contains response planner fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: { response_planner_status: 'active', response_planner_answer_shape: 'merge-decision', response_planner_identity_recall: 'yes', response_planner_operator_name_used: 'yes', chat_context_provider_ids_used: 'operatorProfile', command_envelope_operator_name: 'Stephan', command_envelope_operator_profile_used: 'yes', chat_context_operator_name_known: 'yes' } } });
   assert.match(snapshot, /Response Planner Status: active/);
