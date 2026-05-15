@@ -430,6 +430,7 @@ export function buildSupportSnapshot({
     'chat_context_relevant_canon_count',
     'chat_context_next_action',
     'chat_context_raw_operator_message_seen',
+    'chat_context_match_input',
     'chat_context_intent_classifier_matched_rule',
   ];
   const executionHasChatContext = chatContextFields
@@ -471,6 +472,11 @@ export function buildSupportSnapshot({
   const chatContextRawOperatorMessageSeen = executionMetadata?.chat_context_raw_operator_message_seen || 'n/a';
   const chatContextNormalizedOperatorMessage = executionMetadata?.chat_context_normalized_operator_message || 'n/a';
   const chatContextIntentClassifierMatchedRule = executionMetadata?.chat_context_intent_classifier_matched_rule || 'n/a';
+  const chatContextMatchInput = executionMetadata?.chat_context_match_input || 'n/a';
+  const chatContextMergeRulePattern = executionMetadata?.chat_context_merge_rule_pattern || 'none';
+  const chatContextMergeRuleTestResult = executionMetadata?.chat_context_merge_rule_test_result || 'no';
+  const chatContextFirstMatchingRule = executionMetadata?.chat_context_first_matching_rule || 'n/a';
+  const chatContextEvaluatedRuleResults = executionMetadata?.chat_context_evaluated_rule_results || 'n/a';
   const chatContextBuildSource = executionMetadata?.chat_context_build_source || 'n/a';
   const chatContextDefaultPackUsed = executionMetadata?.chat_context_default_pack_used || 'n/a';
   const chatContextWasOverwritten = executionMetadata?.chat_context_was_overwritten || 'no';
@@ -1166,6 +1172,11 @@ export function buildSupportSnapshot({
     `Chat Context Raw Operator Message Seen: ${asText(chatContextRawOperatorMessageSeen, 'n/a')}`,
     `Chat Context Normalized Operator Message: ${asText(chatContextNormalizedOperatorMessage, 'n/a')}`,
     `Chat Context Intent Classifier Matched Rule: ${asText(chatContextIntentClassifierMatchedRule, 'n/a')}`,
+    `Chat Context Match Input: ${asText(chatContextMatchInput, 'n/a')}`,
+    `Chat Context Merge Rule Pattern: ${asText(chatContextMergeRulePattern, 'none')}`,
+    `Chat Context Merge Rule Test Result: ${asText(chatContextMergeRuleTestResult, 'no')}`,
+    `Chat Context First Matching Rule: ${asText(chatContextFirstMatchingRule, 'n/a')}`,
+    `Chat Context Evaluated Rule Results: ${asText(chatContextEvaluatedRuleResults, 'n/a')}`,
     `Chat Context Build Source: ${asText(chatContextBuildSource, 'n/a')}`,
     `Chat Context Default Pack Used: ${asText(chatContextDefaultPackUsed, 'n/a')}`,
     `Chat Context Was Overwritten: ${asText(chatContextWasOverwritten, 'no')}`,
