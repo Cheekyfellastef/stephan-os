@@ -186,3 +186,13 @@ test('AIConsole context indicator can render active command envelope compactly',
   assert.match(rendered, /Envelope: active/);
   assert.match(rendered, /Response Mode: merge-decision/);
 });
+
+
+test('AIConsole context indicator includes response planner compact fields', async () => {
+  const { renderAIConsole } = await importBundledModule(path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'), aliases, 'ai-console-planner-indicator');
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore();
+  const rendered = renderAIConsole();
+  assert.match(rendered, /Response Planner:/);
+  assert.match(rendered, /Answer Shape:/);
+  assert.match(rendered, /Risk Level:/);
+});

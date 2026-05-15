@@ -529,6 +529,21 @@ export function buildSupportSnapshot({
   const contextProviderNextActions = executionMetadata?.chat_context_provider_next_actions || 'none';
   const contextProviderCanonLinksCount = executionMetadata?.chat_context_provider_canon_links_count || 0;
 
+
+  const responsePlannerStatus = executionMetadata?.response_planner_status || 'unavailable';
+  const responsePlannerVersion = executionMetadata?.response_planner_version || 'n/a';
+  const responsePlannerResponseMode = executionMetadata?.response_planner_response_mode || chatContextResponseMode || 'direct-answer';
+  const responsePlannerAnswerShape = executionMetadata?.response_planner_answer_shape || 'direct-answer';
+  const responsePlannerRequiredSections = executionMetadata?.response_planner_required_sections || 'none';
+  const responsePlannerRiskLevel = executionMetadata?.response_planner_risk_level || 'low';
+  const responsePlannerProofRequired = executionMetadata?.response_planner_proof_required || 'no';
+  const responsePlannerMergeDecision = executionMetadata?.response_planner_merge_decision || 'unknown';
+  const responsePlannerCodexPromptRequired = executionMetadata?.response_planner_codex_prompt_required || 'no';
+  const responsePlannerNextAction = executionMetadata?.response_planner_next_action || 'answer directly with bounded confidence';
+  const responsePlannerWarningCount = executionMetadata?.response_planner_warning_count ?? 0;
+  const responsePlannerWarnings = executionMetadata?.response_planner_warnings || 'none';
+  const responsePlannerCanonApplied = executionMetadata?.response_planner_canon_applied || 'none';
+
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
   const commandEnvelopeId = executionMetadata?.command_envelope_id || 'n/a';
@@ -1265,6 +1280,19 @@ export function buildSupportSnapshot({
     `Command Envelope Proof Status: ${asText(commandEnvelopeProofStatus, 'unknown')}`,
     `Command Envelope UI Reality Status: ${asText(commandEnvelopeUiRealityStatus, 'UNKNOWN')}`,
     `Command Envelope Warnings: ${asText(commandEnvelopeWarnings, 'none')}`,
+    `Response Planner Status: ${asText(responsePlannerStatus, 'unavailable')}`,
+    `Response Planner Version: ${asText(responsePlannerVersion, 'n/a')}`,
+    `Response Planner Response Mode: ${asText(responsePlannerResponseMode, 'direct-answer')}`,
+    `Response Planner Answer Shape: ${asText(responsePlannerAnswerShape, 'direct-answer')}`,
+    `Response Planner Required Sections: ${asText(responsePlannerRequiredSections, 'none')}`,
+    `Response Planner Risk Level: ${asText(responsePlannerRiskLevel, 'low')}`,
+    `Response Planner Proof Required: ${asText(responsePlannerProofRequired, 'no')}`,
+    `Response Planner Merge Decision: ${asText(responsePlannerMergeDecision, 'unknown')}`,
+    `Response Planner Codex Prompt Required: ${asText(responsePlannerCodexPromptRequired, 'no')}`,
+    `Response Planner Next Action: ${asText(responsePlannerNextAction, 'answer directly with bounded confidence')}`,
+    `Response Planner Warning Count: ${asText(responsePlannerWarningCount, '0')}`,
+    `Response Planner Warnings: ${asText(responsePlannerWarnings, 'none')}`,
+    `Response Planner Canon Applied: ${asText(responsePlannerCanonApplied, 'none')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

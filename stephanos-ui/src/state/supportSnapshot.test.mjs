@@ -2428,3 +2428,10 @@ test('Support Snapshot reports command-envelope-missing when envelope metadata i
   const snapshot = buildSupportSnapshot({ runtimeStatus: { chatContextPackStatus: 'active' } });
   assert.match(snapshot, /Command Envelope Warnings: command-envelope-missing/);
 });
+
+
+test('support snapshot contains response planner fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: { response_planner_status: 'active', response_planner_answer_shape: 'merge-decision' } } });
+  assert.match(snapshot, /Response Planner Status: active/);
+  assert.match(snapshot, /Response Planner Answer Shape: merge-decision/);
+});

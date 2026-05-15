@@ -37,6 +37,7 @@ import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandInten
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
+import { buildResponsePlan } from '../state/responsePlanner.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -129,6 +130,28 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
     host: preferredHost || 'localhost',
     backendPort: DEFAULT_HOME_NODE_BACKEND_PORT,
   }).backendUrl;
+}
+
+export function buildResponsePlanExecutionMetadata(responsePlan = null) {
+  const plan = responsePlan && typeof responsePlan === 'object' ? responsePlan : {};
+  const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+  const requiredSections = Array.isArray(plan.requiredSections) ? plan.requiredSections : [];
+  const canonApplied = Array.isArray(plan.canonApplied) ? plan.canonApplied : [];
+  return {
+    response_planner_status: plan.status || 'unavailable',
+    response_planner_version: plan.version || 'n/a',
+    response_planner_response_mode: plan.responseMode || 'direct-answer',
+    response_planner_answer_shape: plan.answerShape || 'direct-answer',
+    response_planner_required_sections: requiredSections.length ? requiredSections.join('|') : 'none',
+    response_planner_risk_level: plan.riskLevel || 'low',
+    response_planner_proof_required: plan.proofRequired || 'no',
+    response_planner_merge_decision: plan.mergeDecision || 'unknown',
+    response_planner_codex_prompt_required: plan.codexPromptRequired || 'no',
+    response_planner_next_action: plan.recommendedNextAction || 'answer directly with bounded confidence',
+    response_planner_warning_count: warnings.length,
+    response_planner_warnings: warnings.length ? warnings.join(' | ') : 'none',
+    response_planner_canon_applied: canonApplied.length ? canonApplied.join('|') : 'none',
+  };
 }
 
 export function buildChatContextExecutionMetadata(chatContextPack = null) {
@@ -2996,7 +3019,25 @@ export function useAIConsole() {
           candidates: Array.isArray(continuityLookup?.records) ? continuityLookup.records.map((record) => record.summary).filter(Boolean) : [],
         },
       });
-      setUiDiagnostics((prev) => ({ ...prev, chatContextPack }));
+      const responsePlan = buildResponsePlan({
+        operatorMessage: prompt,
+        commandEnvelope: null,
+        chatContextPack,
+        contextProviderSnapshot: {
+          contextProviderProofState: chatContextPack.contextProviderProofState || null,
+        },
+        supportSnapshotSummary: {
+          prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
+        },
+        uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+        runtimeTruth: requestRuntimeStatus || {},
+        providerTruth: { executableProvider: requestRouteTruthView.executedProvider },
+        missionState: {
+          testsPassed: requestRuntimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'yes' : 'no',
+          prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
+        },
+      });
+      setUiDiagnostics((prev) => ({ ...prev, chatContextPack, responsePlan }));
 
       const requestPayload = {
         request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
@@ -3026,6 +3067,7 @@ export function useAIConsole() {
         intentResult,
         missionPacket,
         chatContextPack,
+        responsePlan,
         commandEnvelope: null,
         submissionSource,
         submissionRoute,
@@ -3053,6 +3095,7 @@ export function useAIConsole() {
       });
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
+        responsePlannerGuidance: `Use ${responsePlan.answerShape} answer shape: ${responsePlan.requiredSections.join(', ')}. Do not invent PR status if PR evidence is missing.`,
         requestedProvider,
         selectedProvider: freshnessRouteDecision.selectedProvider || requestedProvider,
         executableProvider: timeoutExecutionEnvelope.effectiveProvider || freshnessRouteDecision.selectedProvider || requestedProvider,
@@ -3096,6 +3139,7 @@ export function useAIConsole() {
         provider_generation_still_running_unknown: false,
         provider_generation_confirmed_stopped: false,
         ...buildChatContextExecutionMetadata(chatContextPack),
+        ...buildResponsePlanExecutionMetadata(responsePlan),
         ...projectEnvelopeToExecutionMetadata(commandEnvelope),
         },
         requestPayload,
@@ -3247,6 +3291,7 @@ export function useAIConsole() {
         graph_link_eligible: effectiveRequestPayload?.missionPacket?.graphLinkEligible === true,
         graph_promotion_deferred_reason: effectiveRequestPayload?.missionPacket?.graphPromotionDeferredReason || '',
         ...(commandEnvelopeFinal ? projectEnvelopeToExecutionMetadata(commandEnvelopeFinal) : {}),
+        ...buildResponsePlanExecutionMetadata(effectiveRequestPayload?.responsePlan || requestPayload?.responsePlan || null),
         },
         rawExecutionMetadata: data?.data?.execution_metadata || {},
         requestTrace: data?.data?.request_trace || {},
