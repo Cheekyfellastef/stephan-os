@@ -350,6 +350,56 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
   const classifierProofMissing = !classifierProof;
   const resolvedMatchInput = classifierProof?.matchInput || normalizedOperatorMessage || rawOperatorMessage || rebuiltOperatorMessage || 'n/a';
   const resolvedRuleResults = Array.isArray(classifierProof?.evaluatedRuleResults) ? classifierProof.evaluatedRuleResults : [];
+  const rebuiltExecutionMetadata = buildChatContextExecutionMetadata(rebuiltPack);
+  const resolvedProviderRegistryStatus = pickChatContextField(
+    raw.chat_context_provider_registry_status,
+    trace.chat_context_provider_registry_status,
+    requestChatContext.chat_context_provider_registry_status,
+    rebuiltExecutionMetadata.chat_context_provider_registry_status,
+    'inactive',
+  );
+  const resolvedProviderIdsRegistered = pickChatContextField(
+    raw.chat_context_provider_ids_registered,
+    trace.chat_context_provider_ids_registered,
+    requestChatContext.chat_context_provider_ids_registered,
+    rebuiltExecutionMetadata.chat_context_provider_ids_registered,
+    'none',
+  );
+  const resolvedProviderIdsUsed = pickChatContextField(
+    raw.chat_context_provider_ids_used,
+    trace.chat_context_provider_ids_used,
+    requestChatContext.chat_context_provider_ids_used,
+    rebuiltExecutionMetadata.chat_context_provider_ids_used,
+    'none',
+  );
+  const resolvedProviderWarningCount = pickChatContextField(
+    raw.chat_context_provider_warning_count,
+    trace.chat_context_provider_warning_count,
+    requestChatContext.chat_context_provider_warning_count,
+    rebuiltExecutionMetadata.chat_context_provider_warning_count,
+    0,
+  );
+  const resolvedProviderProofState = pickChatContextField(
+    raw.chat_context_provider_proof_state,
+    trace.chat_context_provider_proof_state,
+    requestChatContext.chat_context_provider_proof_state,
+    rebuiltExecutionMetadata.chat_context_provider_proof_state,
+    'unknown',
+  );
+  const resolvedProviderNextActions = pickChatContextField(
+    raw.chat_context_provider_next_actions,
+    trace.chat_context_provider_next_actions,
+    requestChatContext.chat_context_provider_next_actions,
+    rebuiltExecutionMetadata.chat_context_provider_next_actions,
+    'none',
+  );
+  const resolvedProviderCanonLinksCount = pickChatContextField(
+    raw.chat_context_provider_canon_links_count,
+    trace.chat_context_provider_canon_links_count,
+    requestChatContext.chat_context_provider_canon_links_count,
+    rebuiltExecutionMetadata.chat_context_provider_canon_links_count,
+    0,
+  );
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
@@ -379,6 +429,13 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_rebuilt_at_final_attachment: rebuiltAtFinalAttachment,
     chat_context_rebuild_source_field: rebuildSourceField,
     chat_context_classifier_proof_source: classifierProofSource,
+    chat_context_provider_registry_status: resolvedProviderRegistryStatus,
+    chat_context_provider_ids_registered: resolvedProviderIdsRegistered,
+    chat_context_provider_ids_used: resolvedProviderIdsUsed,
+    chat_context_provider_warning_count: resolvedProviderWarningCount,
+    chat_context_provider_proof_state: resolvedProviderProofState,
+    chat_context_provider_next_actions: resolvedProviderNextActions,
+    chat_context_provider_canon_links_count: resolvedProviderCanonLinksCount,
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
