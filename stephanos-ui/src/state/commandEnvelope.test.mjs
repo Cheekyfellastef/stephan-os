@@ -27,6 +27,7 @@ test('envelope attachment + projection covers chat context/provider/execution/su
   assert.equal(projected.command_envelope_ui_reality_status, 'OK');
   assert.equal(projected.command_envelope_pr_number, '123');
   assert.equal(projected.command_envelope_pr_repo, 'acme/stephan-os');
+  assert.equal(projected.command_envelope_pr_parse_confidence, 'none');
   assert.equal(projected.command_envelope_pr_checks_status, 'failed');
   assert.equal(projected.command_envelope_pr_merge_readiness, 'needs-proof');
   const snapshot = projectEnvelopeToSupportSnapshot(env);

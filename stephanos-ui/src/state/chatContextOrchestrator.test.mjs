@@ -111,7 +111,7 @@ test('merge-decision uses required context providers and stays compact', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
   assert.equal(pack.contextProviderRegistryStatus, 'active');
   assert.ok(Array.isArray(pack.contextProviderIdsRegistered));
-  for (const id of ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']) {
+  for (const id of ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']) {
     assert.ok(pack.contextProviderIdsUsed.includes(id));
   }
   assert.ok(pack.contextProviderCanonLinksCount > 0);
@@ -124,11 +124,11 @@ test('buildChatContextPack do i merge this pr emits registered and used provider
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
   assert.deepEqual(
     pack.contextProviderIdsRegistered,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'prEvidence', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
   );
   assert.deepEqual(
     pack.contextProviderIdsUsed,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'prEvidence', 'canonRules', 'memoryContinuity', 'operatorProfile', 'conversationContinuity', 'agentState'],
   );
 });
 

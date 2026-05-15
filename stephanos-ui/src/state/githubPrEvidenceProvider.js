@@ -3,15 +3,15 @@ function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map
 
 export function parsePrReferenceFromPrompt(prompt = '') {
   const text = asText(prompt, '');
-  const prUrl = text.match(/https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/i);
-  const num = text.match(/\bpr\s*#?\s*(\d{1,8})\b|#(\d{1,8})\b/i);
-  const number = prUrl ? Number(prUrl[3]) : Number(num?.[1] || num?.[2] || 0) || null;
+  const prUrl = text.match(/https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:\b|[/?#])/i);
+  const num = text.match(/\bpr\s*#?\s*(\d{1,8})\b|\bpull\s+request\s*#?\s*(\d{1,8})\b|#(\d{1,8})\b/i);
+  const number = prUrl ? Number(prUrl[3]) : Number(num?.[1] || num?.[2] || num?.[3] || 0) || null;
   const repo = prUrl ? `${prUrl[1]}/${prUrl[2]}` : asText(text.match(/\brepo(?:sitory)?\s*[:=-]\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/i)?.[1], '');
   return {
     prNumber: number,
     repo,
     prUrl: asText(prUrl?.[0], ''),
-    parseConfidence: number ? (repo ? 'high' : 'medium') : 'low',
+    parseConfidence: number ? 'high' : 'low',
     parseWarnings: number ? [] : ['pr_number_not_detected'],
   };
 }
@@ -36,7 +36,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const failingChecks = asList(connector.failingChecks || pasted.failingChecks);
   const codexTaskRefs = asList(connector.codexTaskRefs || pasted.codexTaskRefs);
   const codexTaskPresent = codexTaskRefs.length > 0 ? 'yes' : 'no';
-  const evidenceWarnings = [...asList(connector.evidenceWarnings), ...asList(pasted.evidenceWarnings), ...promptRef.parseWarnings];
+  const evidenceWarnings = [...asList(connector.evidenceWarnings), ...asList(pasted.evidenceWarnings)];
   const missingProof = [];
   if (!['passed','success','ok'].includes(checksStatus.toLowerCase()) && checksStatus !== 'unknown') missingProof.push('checks');
   if (buildStatus !== 'passed') missingProof.push('build');
