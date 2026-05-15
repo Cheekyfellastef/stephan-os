@@ -29,4 +29,5 @@ test('envelope attachment + projection covers chat context/provider/execution/su
   assert.equal(snapshot.chat_continuity_seeded_from_existing_history, 'yes');
   assert.equal(snapshot.chat_continuity_source, 'command-history');
   assert.equal(snapshot.chat_continuity_raw_transcript_stored, 'no');
+  assert.equal(projected.command_envelope_operator_profile_used, 'no');
 });

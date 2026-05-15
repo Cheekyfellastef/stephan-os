@@ -11,6 +11,7 @@ const MODE_SHAPES = {
   'architecture-guidance': ['current-architecture-read', 'missing-layer', 'recommended-model', 'build-order', 'guardrails'],
   'research-scouting': ['research-target', 'sources-context-needed', 'hypotheses', 'next-collection-step', 'applicability-to-stephanos'],
   'direct-answer': ['direct-answer', 'confidence-caveat', 'optional-next-action'],
+  'identity-recall': ['direct-answer', 'identity-source', 'optional-next-action'],
 };
 
 export function buildResponsePlan(input = {}) {
@@ -30,6 +31,11 @@ export function buildResponsePlan(input = {}) {
 
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
+  const operatorProfile = input?.chatContextPack?.providerSummaries?.operatorProfile || {};
+  const identityRecall = responseMode === 'identity-recall';
+  const operatorNameKnown = String(operatorProfile?.known || '').toLowerCase() === 'yes';
+  const operatorName = String(operatorProfile?.operatorName || 'unknown');
+
   const recommendedAgents = Array.isArray(input?.chatContextPack?.providerSummaries?.agentState?.recommendedAgents)
     ? input.chatContextPack.providerSummaries.agentState.recommendedAgents
     : [];
@@ -39,6 +45,18 @@ export function buildResponsePlan(input = {}) {
   let proofRequired = 'no';
   let codexPromptRequired = responseMode === 'codex-prompt' ? 'yes' : 'no';
   let recommendedNextAction = 'answer directly with bounded confidence';
+  let identityRecallUsed = 'no';
+  let operatorNameUsed = 'no';
+  let identityGuidance = 'Operator identity unavailable.';
+
+  if (identityRecall) {
+    identityRecallUsed = 'yes';
+    operatorNameUsed = operatorNameKnown ? 'yes' : 'no';
+    identityGuidance = operatorNameKnown
+      ? `Operator profile indicates the operator's name is ${operatorName}. Use this if asked about the operator's name.`
+      : 'Operator profile does not include a known operator name yet. Say name is not stored yet.';
+    recommendedNextAction = operatorNameKnown ? 'answer directly with stored operator name' : 'ask operator for preferred name';
+  }
 
   if (responseMode === 'merge-decision') {
     riskLevel = 'medium';
@@ -92,6 +110,9 @@ export function buildResponsePlan(input = {}) {
     agentAdviceUsed: recommendedAgents.length > 0,
     canonApplied,
     providerIdsUsed,
+    identityRecallUsed,
+    operatorNameUsed,
+    identityGuidance,
     sourceRefs: ['chatContextPack', 'commandEnvelope', 'contextProviderSnapshot', 'uiRealityStatus', 'missionState'],
   };
 }

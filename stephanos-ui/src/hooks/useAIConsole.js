@@ -3131,7 +3131,7 @@ export function useAIConsole() {
       });
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
-        responsePlannerGuidance: `Use ${responsePlan.answerShape} answer shape: ${responsePlan.requiredSections.join(', ')}. Do not invent PR status if PR evidence is missing.`,
+        responsePlannerGuidance: `Use ${responsePlan.answerShape} answer shape: ${responsePlan.requiredSections.join(', ')}. ${responsePlan.identityGuidance || ''} Do not invent PR status if PR evidence is missing.`,
         requestedProvider,
         selectedProvider: freshnessRouteDecision.selectedProvider || requestedProvider,
         executableProvider: timeoutExecutionEnvelope.effectiveProvider || freshnessRouteDecision.selectedProvider || requestedProvider,
