@@ -30,9 +30,10 @@ export function buildResponsePlan(input = {}) {
   const distRebuilt = String(input?.missionState?.distRebuilt || '').toLowerCase() === 'yes';
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
-  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();
-  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || '').toLowerCase();
-  const prAlreadyMerged = String(input?.missionState?.prEvidenceStatus || '').toLowerCase() === 'merged';
+  const providerPr = input?.githubPrEvidence || input?.chatContextPack?.providerSummaries?.prEvidence || {};
+  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || providerPr?.mergeReadiness || '').toLowerCase();
+  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (providerPr?.missingProof || []).join('|') || '').toLowerCase();
+  const prAlreadyMerged = String(input?.missionState?.prEvidenceStatus || providerPr?.status || '').toLowerCase() === 'merged' || prMergeReadiness === 'already-merged';
 
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
@@ -83,7 +84,12 @@ export function buildResponsePlan(input = {}) {
       warnings.push('PR evidence missing; do not infer merge status.');
       recommendedNextAction = 'collect PR evidence and verification proofs before merge decision';
     }
-    if (checksKnownFail || checksUnknown || !testsPassed) {
+    if (String(providerPr?.status || '').toLowerCase() === 'unavailable') {
+      mergeDecision = 'wait';
+      warnings.push('GitHub evidence unavailable; request connector or pasted PR summary.');
+      recommendedNextAction = 'connect read-only GitHub evidence or paste PR summary';
+    }
+    if (checksKnownFail || checksUnknown || !testsPassed || prMergeReadiness === 'needs-amendment') {
       mergeDecision = mergeDecision === 'unknown' ? 'wait' : mergeDecision;
       warnings.push('build/verify/check evidence missing or failing.');
       recommendedNextAction = 'run build/verify checks and attach results';

@@ -33,6 +33,7 @@ export function createCommandEnvelope(input = {}) {
     operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
     codexDispatch: { packetId: 'none', status: 'not-ready', approvalRequired: 'yes', targetSubsystems: [] },
+    prEvidence: { status: 'none', prNumber: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
   };
 }
 
@@ -89,6 +90,20 @@ export function attachCodexDispatchToEnvelope(envelope, codexDispatchPacket = nu
   };
 }
 
+
+export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
+  return {
+    ...envelope,
+    prEvidence: {
+      status: asText(prEvidence?.status, 'none'),
+      prNumber: asText(prEvidence?.prNumber, 'unknown'),
+      mergeReadiness: asText(prEvidence?.mergeReadiness, 'wait'),
+      missingProof: asList(prEvidence?.missingProof),
+      nextAction: asText(prEvidence?.recommendedNextAction, 'Collect PR evidence.'),
+    },
+  };
+}
+
 export function attachProviderRequestToEnvelope(envelope, providerRequestMetadata = {}) { return { ...envelope, providerRequest: { ...providerRequestMetadata } }; }
 export function attachExecutionMetadataToEnvelope(envelope, executionMetadata = {}) {
   return { ...envelope, execution: { ...envelope.execution, status: asText(executionMetadata.execution_status || executionMetadata.selected_provider_final_execution_outcome || envelope.execution.status, 'unknown'), truth: asText(executionMetadata.execution_truth || envelope.execution.truth, 'unknown'), actualProvider: asText(executionMetadata.actual_provider_used || executionMetadata.execution_selected_provider || envelope.execution.actualProvider, 'unknown'), actualModel: asText(executionMetadata.model_used || envelope.execution.actualModel, 'unknown'), elapsedMs: executionMetadata.elapsed_ms ?? envelope.execution.elapsedMs ?? null, fallbackUsed: Boolean(executionMetadata.fallback_used ?? envelope.execution.fallbackUsed), cancellationState: executionMetadata.execution_cancelled ? 'cancelled' : 'none' }, proof: { ...envelope.proof, proofStatus: asText(executionMetadata.proof_status || envelope.proof.proofStatus, 'unknown'), uiRealityStatus: asText(executionMetadata.chat_context_ui_reality_status || envelope.proof.uiRealityStatus, 'UNKNOWN') } };
@@ -127,6 +142,11 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_operator_approval_required: asText(envelope?.codexDispatch?.approvalRequired, 'yes'),
     command_envelope_codex_dispatch_target_subsystems: asList(envelope?.codexDispatch?.targetSubsystems).join('|') || 'none',
     command_envelope_repair_loop_status: asText(envelope?.proof?.missionRepairLoopStatus || envelope?.missionRepairLoopStatus, 'unknown'),
+    command_envelope_pr_evidence_status: asText(envelope?.prEvidence?.status, 'none'),
+    command_envelope_pr_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
+    command_envelope_pr_merge_readiness: asText(envelope?.prEvidence?.mergeReadiness, 'wait'),
+    command_envelope_pr_missing_proof: asList(envelope?.prEvidence?.missingProof).join('|') || 'none',
+    command_envelope_pr_next_action: asText(envelope?.prEvidence?.nextAction, 'Collect PR evidence.'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

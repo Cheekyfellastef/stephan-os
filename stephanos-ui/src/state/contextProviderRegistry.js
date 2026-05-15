@@ -141,6 +141,27 @@ const builtinProviders = [
     getWarnings: () => [], getNextAction: () => ['Collect build/verify/UI proof and amend the open PR before deciding merge.'], getProofState: (input) => String(input.uiRealityStatus?.severity || 'UNKNOWN'),
     getCanonLinks: () => ['canon.merge_block_failed_checks', 'canon.tests_not_ui_proof'], getSourceRefs: () => ['uiRealityStatus', 'missionState', 'supportSnapshot'],
   },
+
+  {
+    id: 'prEvidence', label: 'PR Evidence', priority: 55,
+    getSummary: (input) => {
+      const pr = input.githubPrEvidence || input.prEvidence || {};
+      return {
+        status: String(pr.status || 'none'),
+        prNumber: String(pr.prNumber || 'unknown'),
+        checksStatus: String(pr.checksStatus || 'unknown'),
+        missingProof: normalizeList(pr.missingProof),
+        mergeReadiness: String(pr.mergeReadiness || 'wait'),
+        nextAction: String(pr.recommendedNextAction || 'Collect PR evidence.'),
+        warnings: normalizeList(pr.evidenceWarnings),
+      };
+    },
+    getWarnings: (input) => normalizeList((input.githubPrEvidence || input.prEvidence || {}).evidenceWarnings),
+    getNextAction: (input) => normalizeList([(input.githubPrEvidence || input.prEvidence || {}).recommendedNextAction]),
+    getProofState: (input) => String((input.githubPrEvidence || input.prEvidence || {}).mergeReadiness || 'unknown'),
+    getCanonLinks: () => ['canon.merge_block_failed_checks', 'canon.dist_not_truth'],
+    getSourceRefs: () => ['githubPrEvidence', 'prEvidence'],
+  },
   {
     id: 'canonRules', label: 'Canon Rules', priority: 60,
     getSummary: () => ({ mode: 'intent-sensitive-canon' }),

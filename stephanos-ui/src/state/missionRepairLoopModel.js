@@ -40,6 +40,7 @@ export function buildMissionRepairLoopModel(input = {}) {
   const verificationProof = asText(input.missionVerificationProofStatus, 'unknown');
   const prEvidence = input.prEvidenceIntake || {};
   const attemptsExhausted = currentAttempt >= maxAttempts;
+  const prMergeReadiness = asText(prEvidence.mergeReadiness, 'merge-candidate');
 
   const buildVerifyFailed = latestBuildVerifyStatus === 'fail';
   const testsFailed = latestTestResults === 'fail';
@@ -49,9 +50,10 @@ export function buildMissionRepairLoopModel(input = {}) {
   let status = 'active';
   if (attemptsExhausted) status = 'blocked';
   else if (buildVerifyFailed || testsFailed || verificationBlocked) status = 'blocked';
+  else if (prEvidence.checksStatus === 'failed' || prEvidence.buildStatus === 'failed' || prEvidence.verifyStatus === 'failed') status = 'needs-repair';
   else if (uiRealityFailed || !supportAcceptanceMatch || failingAcceptanceFields.length > 0) status = 'needs-repair';
-  else if (browserProofRequired && !browserProofAvailable) status = 'needs-proof';
-  else if (latestBuildVerifyStatus === 'pass' && latestTestResults === 'pass' && supportAcceptanceMatch) status = 'passed';
+  else if (browserProofRequired && !browserProofAvailable || prMergeReadiness === 'needs-proof') status = 'needs-proof';
+  else if (latestBuildVerifyStatus === 'pass' && latestTestResults === 'pass' && supportAcceptanceMatch && prMergeReadiness === 'merge-candidate') status = 'passed';
 
   const latestFailingField = failingAcceptanceFields[0] || '';
   const likelySubsystem = inferLikelySubsystem(latestFailingField, uiRealityFailed);
@@ -59,7 +61,6 @@ export function buildMissionRepairLoopModel(input = {}) {
   const proofFieldsRequired = failingAcceptanceFields.length > 0
     ? [...failingAcceptanceFields]
     : asList(input.proofFieldsRequired);
-  const prMergeReadiness = asText(prEvidence.mergeReadiness, 'merge-candidate');
   const needsAmendment = prMergeReadiness === 'needs-amendment' || (Array.isArray(prEvidence.missingProof) && prEvidence.missingProof.length > 0);
   const operatorDecisionRequired = status === 'blocked' || prMergeReadiness === 'merge-candidate';
   const mergeRecommendation = status === 'passed' && verificationProof !== 'failed' && prMergeReadiness === 'merge-candidate' ? 'merge-candidate' : (needsAmendment ? 'amend' : 'hold');
