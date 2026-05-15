@@ -2496,3 +2496,28 @@ test('support snapshot contains response planner fields', () => {
   assert.match(snapshot, /Command Envelope Operator Name: Stephan/);
   assert.match(snapshot, /Chat Context Operator Profile Used: yes/);
 });
+
+test('support snapshot projects mission repair loop fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      latestMissionId: 'mission-1',
+      missionVerificationRequiredTestsRun: 'yes',
+      missionVerificationProofStatus: 'passed',
+      missionVerificationBlockerCount: 0,
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+  });
+  assert.match(snapshot, /Mission Repair Loop Status:/);
+  assert.match(snapshot, /Mission Repair Loop Current Attempt:/);
+  assert.match(snapshot, /Mission Repair Loop Merge Recommendation:/);
+  assert.match(snapshot, /Mission Repair Loop Source Truths Used:/);
+  assert.match(snapshot, /Mission Repair Loop Duplicate Authority Detected: no/);
+});
