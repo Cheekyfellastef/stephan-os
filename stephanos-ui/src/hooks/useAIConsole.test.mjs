@@ -222,3 +222,13 @@ test('command input clearing is gated by submit acceptance return contract', asy
   assert.match(aiConsoleSource, /if \(submitResult\?\.inputCleared === true \|\| submitResult\?\.submitAccepted === true\) \{/);
   assert.match(aiConsoleSource, /else if \(submitResult\?\.restoreInput === true\) \{/);
 });
+
+test('useAIConsole startup rehydrates operator profile metadata for support snapshot visibility', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_operator_profile_rehydrated/);
+  assert.match(source, /chat_context_operator_profile_storage_key/);
+  assert.match(source, /chat_context_operator_profile_storage_read_status/);
+  assert.match(source, /chat_context_operator_profile_last_read_at/);
+  assert.match(source, /chat_context_operator_profile_last_write_at/);
+  assert.match(source, /setLastExecutionMetadata\(\(prev = \{\}\) => \(\{/);
+});

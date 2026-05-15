@@ -537,6 +537,11 @@ export function buildSupportSnapshot({
   const operatorIdentityConfidence = executionMetadata?.chat_context_operator_identity_confidence || executionMetadata?.command_envelope_operator_identity_confidence || 'unknown';
   const operatorIdentityUpdatedAt = executionMetadata?.chat_context_operator_identity_updated_at || 'unknown';
   const operatorIdentityNextAction = executionMetadata?.chat_context_operator_identity_next_action || 'Ask operator for preferred name when relevant.';
+  const operatorProfileRehydrated = executionMetadata?.chat_context_operator_profile_rehydrated || 'no';
+  const operatorProfileStorageKey = executionMetadata?.chat_context_operator_profile_storage_key || 'stephanos.operator.profile.v1';
+  const operatorProfileStorageReadStatus = executionMetadata?.chat_context_operator_profile_storage_read_status || 'missing';
+  const operatorProfileLastReadAt = executionMetadata?.chat_context_operator_profile_last_read_at || 'unknown';
+  const operatorProfileLastWriteAt = executionMetadata?.chat_context_operator_profile_last_write_at || 'unknown';
   const chatContextOperatorProfileUsed = (executionMetadata?.chat_context_provider_ids_used || '').includes('operatorProfile') ? 'yes' : 'no';
   const chatContextOperatorNameAvailable = operatorNameKnown === 'yes' ? 'yes' : 'no';
 
@@ -1351,6 +1356,11 @@ export function buildSupportSnapshot({
     `Chat Context Operator Name Available: ${asText(chatContextOperatorNameAvailable, 'no')}`,
     `Operator Identity Updated At: ${asText(operatorIdentityUpdatedAt, 'unknown')}`,
     `Operator Identity Next Action: ${asText(operatorIdentityNextAction, 'Ask operator for preferred name when relevant.')}`,
+    `Operator Profile Rehydrated: ${asText(operatorProfileRehydrated, 'no')}`,
+    `Operator Profile Storage Key: ${asText(operatorProfileStorageKey, 'stephanos.operator.profile.v1')}`,
+    `Operator Profile Storage Read Status: ${asText(operatorProfileStorageReadStatus, 'missing')}`,
+    `Operator Profile Last Read At: ${asText(operatorProfileLastReadAt, 'unknown')}`,
+    `Operator Profile Last Write At: ${asText(operatorProfileLastWriteAt, 'unknown')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,

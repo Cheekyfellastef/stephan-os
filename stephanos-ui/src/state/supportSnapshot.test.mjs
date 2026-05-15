@@ -2521,3 +2521,18 @@ test('support snapshot projects mission repair loop fields', () => {
   assert.match(snapshot, /Mission Repair Loop Source Truths Used:/);
   assert.match(snapshot, /Mission Repair Loop Duplicate Authority Detected: no/);
 });
+
+test('Support Snapshot reports rehydrated operator profile storage diagnostics', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: {
+    chat_context_operator_name_known: 'yes',
+    chat_context_operator_name: 'Stephan',
+    chat_context_operator_profile_rehydrated: 'yes',
+    chat_context_operator_profile_storage_key: 'stephanos.operator.profile.v1',
+    chat_context_operator_profile_storage_read_status: 'success',
+    chat_context_operator_profile_last_read_at: '2026-05-15T00:00:00.000Z',
+    chat_context_operator_profile_last_write_at: '2026-05-14T23:59:59.000Z',
+  } } });
+  assert.match(snapshot, /Operator Profile Rehydrated: yes/);
+  assert.match(snapshot, /Operator Profile Storage Key: stephanos.operator.profile.v1/);
+  assert.match(snapshot, /Operator Profile Storage Read Status: success/);
+});

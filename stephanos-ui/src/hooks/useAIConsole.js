@@ -201,6 +201,11 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_operator_identity_confidence: chatContextPack?.providerSummaries?.operatorProfile?.confidence || 'unknown',
     chat_context_operator_identity_updated_at: chatContextPack?.providerSummaries?.operatorProfile?.updatedAt || 'unknown',
     chat_context_operator_identity_next_action: chatContextPack?.providerSummaries?.operatorProfile?.nextAction || 'Ask operator for preferred name when relevant.',
+    chat_context_operator_profile_rehydrated: chatContextPack?.providerSummaries?.operatorProfile?.rehydrated || 'no',
+    chat_context_operator_profile_storage_key: chatContextPack?.providerSummaries?.operatorProfile?.storageKey || 'stephanos.operator.profile.v1',
+    chat_context_operator_profile_storage_read_status: chatContextPack?.providerSummaries?.operatorProfile?.storageReadStatus || 'missing',
+    chat_context_operator_profile_last_read_at: chatContextPack?.providerSummaries?.operatorProfile?.lastReadAt || 'unknown',
+    chat_context_operator_profile_last_write_at: chatContextPack?.providerSummaries?.operatorProfile?.lastWriteAt || 'unknown',
     chat_context_provider_next_actions: providerNextActions.length ? providerNextActions.slice(0, 3).join(' | ') : 'none',
     chat_context_provider_proof_state: providerProofState ? JSON.stringify(providerProofState) : 'unknown',
     chat_context_provider_canon_links_count: providerCanonLinksCount,
@@ -2077,6 +2082,25 @@ export function useAIConsole() {
   } = useAIStore();
 
   const runtimeConfigKey = getApiRuntimeConfigSnapshotKey();
+  useEffect(() => {
+    const profile = readOperatorProfile();
+    setLastExecutionMetadata((prev = {}) => ({
+      ...prev,
+      chat_context_operator_name_known: profile.known ? 'yes' : 'no',
+      chat_context_operator_name: profile.known ? profile.operatorName : 'unknown',
+      chat_context_operator_identity_source: profile.source || 'none',
+      chat_context_operator_identity_confidence: profile.confidence || 'unknown',
+      chat_context_operator_identity_updated_at: profile.updatedAt || 'unknown',
+      chat_context_operator_identity_next_action: profile.nextAction || 'Ask operator for preferred name when relevant.',
+      chat_context_operator_profile_rehydrated: profile.rehydrated ? 'yes' : 'no',
+      chat_context_operator_profile_storage_key: profile.storageKey || 'stephanos.operator.profile.v1',
+      chat_context_operator_profile_storage_read_status: profile.storageReadStatus || 'missing',
+      chat_context_operator_profile_last_read_at: profile.lastReadAt || 'unknown',
+      chat_context_operator_profile_last_write_at: profile.lastWriteAt || 'unknown',
+      raw_transcript_stored: 'no',
+    }));
+  }, [setLastExecutionMetadata]);
+
   const runtimeConfig = useMemo(() => getApiRuntimeConfig(), [runtimeConfigKey]);
   const hostedCloudConfigOverlay = useMemo(() => ({
     enabled: hostedCloudCognition?.enabled === true,
