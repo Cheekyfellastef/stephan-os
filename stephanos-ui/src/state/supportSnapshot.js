@@ -521,6 +521,13 @@ export function buildSupportSnapshot({
   const chatContextRebuiltAtFinalAttachment = executionMetadata?.chat_context_rebuilt_at_final_attachment || 'no';
   const chatContextRebuildSourceField = executionMetadata?.chat_context_rebuild_source_field || 'none';
   const chatContextClassifierProofSource = executionMetadata?.chat_context_classifier_proof_source || 'missing';
+  const contextProviderRegistryStatus = chatContextStatus === 'active' ? 'active' : 'unavailable';
+  const contextProvidersRegistered = executionMetadata?.chat_context_provider_ids_used || 'none';
+  const contextProvidersUsed = executionMetadata?.chat_context_provider_ids_used || 'none';
+  const contextProviderWarningCount = executionMetadata?.chat_context_provider_warning_count ?? 0;
+  const contextProviderProofState = executionMetadata?.chat_context_provider_proof_state || 'unknown';
+  const contextProviderNextActions = executionMetadata?.chat_context_provider_next_actions || 'none';
+  const contextProviderCanonLinksCount = executionMetadata?.chat_context_provider_canon_links_count || 0;
 
   const hostedBackendTargetGuidance = buildHostedBackendTargetGuidance({
     canonicalHostedRouteTruth,
@@ -1224,6 +1231,13 @@ export function buildSupportSnapshot({
     `Chat Context Rebuilt At Final Attachment: ${asText(chatContextRebuiltAtFinalAttachment, 'no')}`,
     `Chat Context Rebuild Source Field: ${asText(chatContextRebuildSourceField, 'none')}`,
     `Chat Context Classifier Proof Source: ${asText(chatContextClassifierProofSource, 'missing')}`,
+    `Context Provider Registry Status: ${asText(contextProviderRegistryStatus, 'unavailable')}`,
+    `Context Providers Registered: ${asText(contextProvidersRegistered, 'none')}`,
+    `Context Providers Used: ${asText(contextProvidersUsed, 'none')}`,
+    `Context Provider Warning Count: ${asText(contextProviderWarningCount, '0')}`,
+    `Context Provider Proof State: ${asText(contextProviderProofState, 'unknown')}`,
+    `Context Provider Next Actions: ${asText(contextProviderNextActions, 'none')}`,
+    `Context Provider Canon Links Count: ${asText(contextProviderCanonLinksCount, '0')}`,
     `Canonical Intent: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.label, 'unknown')}`,
     `Canonical Intent Source: ${asText(orchestrationTruth?.canonicalCurrentIntent?.operatorIntent?.source, 'unknown')}`,
     `Canonical Execution State: ${asText(orchestrationTruth?.canonicalCurrentIntent?.executionState?.status, 'unknown')}`,

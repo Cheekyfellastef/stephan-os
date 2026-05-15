@@ -1,3 +1,5 @@
+import { buildContextProviderSnapshot } from './contextProviderRegistry.js';
+
 const CHAT_CONTEXT_VERSION = 'v1';
 
 const CANON_RULES = [
@@ -141,11 +143,18 @@ export function buildChatContextPack(input = {}) {
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
     : (uiTask ? ['ui', 'proof', 'source-truth'] : ['general']);
+  const providerSnapshot = buildContextProviderSnapshot(input);
   const relevantCanon = CANON_RULES.filter((rule) => {
     if (mergeDecisionTask) return rule.tags.includes('merge') || rule.tags.includes('pr') || rule.tags.includes('codex') || rule.tags.includes('truth') || rule.tags.includes('ui') || rule.tags.includes('proof');
     if (uiTask) return rule.tags.includes('ui') || rule.tags.includes('truth') || rule.tags.includes('proof');
     return true;
   });
+
+
+  warnings.push(...providerSnapshot.providerWarnings);
+  const contextProviderProofState = providerSnapshot.contextProviderProofState;
+  const providerNextActions = providerSnapshot.providerNextActions;
+  const providerSummaries = providerSnapshot.providerSummaries;
 
   const compactSummary = {
     status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
@@ -160,6 +169,9 @@ export function buildChatContextPack(input = {}) {
       : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
     warningCount: warnings.length,
     warnings,
+    contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
+    contextProviderWarningCount: providerSnapshot.contextProviderWarningCount,
+    contextProviderProofState,
     contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
@@ -191,6 +203,12 @@ export function buildChatContextPack(input = {}) {
     missionMode: String(missionState.mode || missionState.status || 'unknown'),
     riskLevel: (uiTask || mergeDecisionTask) ? 'medium' : 'low',
     relevantCanon,
+    providerSummaries,
+    providerWarnings: providerSnapshot.providerWarnings,
+    providerNextActions,
+    contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
+    contextProviderWarningCount: providerSnapshot.contextProviderWarningCount,
+    contextProviderProofState,
     relevantMemory: Array.isArray(input.memoryState?.candidates) ? input.memoryState.candidates.slice(0, 3) : [],
     currentTruthSummary: {
       runtime: String(input.runtimeTruth?.status || 'unknown'),
@@ -232,6 +250,7 @@ export function buildChatContextPack(input = {}) {
       route: String(routeTruth.routeKind || 'unknown'),
       provider: String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown'),
       canon: relevantCanon.map((rule) => rule.text),
+      contextProviderCanonLinks: providerSnapshot.contextProviderCanonLinks,
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
     },
     classifierDebug: {

@@ -144,6 +144,11 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_next_action: chatContextPack?.recommendedNextAction || 'Answer directly with bounded confidence.',
     chat_context_warning_count: Number(chatContextPack?.compactSummary?.warningCount || 0),
     chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : 'none',
+    chat_context_provider_ids_used: Array.isArray(chatContextPack?.contextProviderIdsUsed) ? chatContextPack.contextProviderIdsUsed.join('|') : 'none',
+    chat_context_provider_warning_count: Number(chatContextPack?.contextProviderWarningCount || 0),
+    chat_context_provider_next_actions: Array.isArray(chatContextPack?.providerNextActions) ? chatContextPack.providerNextActions.slice(0, 3).join(' | ') : 'none',
+    chat_context_provider_proof_state: chatContextPack?.contextProviderProofState ? JSON.stringify(chatContextPack.contextProviderProofState) : 'unknown',
+    chat_context_provider_canon_links_count: Array.isArray(chatContextPack?.contextForPrompt?.contextProviderCanonLinks) ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length : 0,
   };
 }
 
