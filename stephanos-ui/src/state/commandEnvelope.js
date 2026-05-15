@@ -32,6 +32,7 @@ export function createCommandEnvelope(input = {}) {
     chatContinuity: { status: 'empty', summary: 'none', continuityUsed: false },
     operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
+    codexDispatch: { packetId: 'none', status: 'not-ready', approvalRequired: 'yes', targetSubsystems: [] },
   };
 }
 
@@ -76,6 +77,18 @@ export function attachChatContextToEnvelope(envelope, chatContextPack = null) {
   };
 }
 
+export function attachCodexDispatchToEnvelope(envelope, codexDispatchPacket = null) {
+  return {
+    ...envelope,
+    codexDispatch: {
+      packetId: asText(codexDispatchPacket?.packetId, 'none'),
+      status: asText(codexDispatchPacket?.status, 'not-ready'),
+      approvalRequired: codexDispatchPacket?.approvalRequired === false ? 'no' : 'yes',
+      targetSubsystems: asList(codexDispatchPacket?.targetSubsystems),
+    },
+  };
+}
+
 export function attachProviderRequestToEnvelope(envelope, providerRequestMetadata = {}) { return { ...envelope, providerRequest: { ...providerRequestMetadata } }; }
 export function attachExecutionMetadataToEnvelope(envelope, executionMetadata = {}) {
   return { ...envelope, execution: { ...envelope.execution, status: asText(executionMetadata.execution_status || executionMetadata.selected_provider_final_execution_outcome || envelope.execution.status, 'unknown'), truth: asText(executionMetadata.execution_truth || envelope.execution.truth, 'unknown'), actualProvider: asText(executionMetadata.actual_provider_used || executionMetadata.execution_selected_provider || envelope.execution.actualProvider, 'unknown'), actualModel: asText(executionMetadata.model_used || envelope.execution.actualModel, 'unknown'), elapsedMs: executionMetadata.elapsed_ms ?? envelope.execution.elapsedMs ?? null, fallbackUsed: Boolean(executionMetadata.fallback_used ?? envelope.execution.fallbackUsed), cancellationState: executionMetadata.execution_cancelled ? 'cancelled' : 'none' }, proof: { ...envelope.proof, proofStatus: asText(executionMetadata.proof_status || envelope.proof.proofStatus, 'unknown'), uiRealityStatus: asText(executionMetadata.chat_context_ui_reality_status || envelope.proof.uiRealityStatus, 'UNKNOWN') } };
@@ -108,6 +121,10 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_operator_name: asText(envelope?.operatorProfile?.operatorName, 'unknown'),
     command_envelope_operator_identity_source: asText(envelope?.operatorProfile?.source, 'none'),
     command_envelope_operator_identity_confidence: asText(envelope?.operatorProfile?.confidence, 'unknown'),
+    command_envelope_codex_dispatch_packet_id: asText(envelope?.codexDispatch?.packetId, 'none'),
+    command_envelope_codex_dispatch_status: asText(envelope?.codexDispatch?.status, 'not-ready'),
+    command_envelope_codex_dispatch_approval_required: asText(envelope?.codexDispatch?.approvalRequired, 'yes'),
+    command_envelope_codex_dispatch_target_subsystems: asList(envelope?.codexDispatch?.targetSubsystems).join('|') || 'none',
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

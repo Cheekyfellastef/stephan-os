@@ -199,3 +199,20 @@ test('AIConsole context indicator includes response planner compact fields', asy
   assert.match(rendered, /Answer Shape:/);
   assert.match(rendered, /Risk Level:/);
 });
+
+
+test('AIConsole renders codex dispatch prompt copy control and compact status', async () => {
+  const { renderAIConsole } = await importBundledModule(path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'), aliases, 'ai-console-codex-dispatch');
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
+    lastExecutionMetadata: {
+      command_envelope_codex_dispatch_status: 'ready-for-approval',
+      command_envelope_codex_dispatch_packet_id: 'cdp_3',
+      command_envelope_codex_dispatch_target_subsystems: 'ui|proof',
+      command_envelope_codex_dispatch_approval_required: 'yes',
+      codex_dispatch_prompt: 'do work',
+    },
+  });
+  const rendered = renderAIConsole();
+  assert.match(rendered, /Codex Dispatch Packet:/);
+  assert.match(rendered, /Copy Codex Dispatch Prompt/);
+});

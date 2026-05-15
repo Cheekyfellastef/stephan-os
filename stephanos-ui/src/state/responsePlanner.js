@@ -6,6 +6,7 @@ function asText(value, fallback = 'unknown') {
 const MODE_SHAPES = {
   'merge-decision': ['merge', 'reason', 'required-proof', 'risks', 'next-action'],
   'codex-prompt': ['existing-or-new-pr', 'scope', 'forbidden-actions', 'required-tests', 'acceptance', 'report-format'],
+  'codex-dispatch': ['packet-status', 'approval-needed', 'next-action', 'forbidden-actions', 'required-proof'],
   diagnosis: ['what-is-failing', 'evidence', 'likely-layer', 'fix-boundary', 'next-proof'],
   'mission-planning': ['current-mission', 'goal', 'phases', 'risks', 'first-bounded-step'],
   'architecture-guidance': ['current-architecture-read', 'missing-layer', 'recommended-model', 'build-order', 'guardrails'],
@@ -43,7 +44,7 @@ export function buildResponsePlan(input = {}) {
   let mergeDecision = 'unknown';
   let riskLevel = 'low';
   let proofRequired = 'no';
-  let codexPromptRequired = responseMode === 'codex-prompt' ? 'yes' : 'no';
+  let codexPromptRequired = (responseMode === 'codex-prompt' || responseMode === 'codex-dispatch') ? 'yes' : 'no';
   let recommendedNextAction = 'answer directly with bounded confidence';
   let identityRecallUsed = 'no';
   let operatorNameUsed = 'no';
@@ -62,6 +63,12 @@ export function buildResponsePlan(input = {}) {
     recommendedNextAction = operatorNameKnown ? 'answer directly with stored operator name' : 'ask operator for preferred name';
     identityPromptInjected = operatorNameKnown ? 'yes' : 'no';
     operatorProfilePromptLinePresent = operatorNameKnown ? 'yes' : 'no';
+  }
+
+  if (responseMode === 'codex-dispatch') {
+    riskLevel = 'medium';
+    proofRequired = 'yes';
+    recommendedNextAction = 'present dispatch packet, require operator approval, then copy prompt for manual Codex handoff';
   }
 
   if (responseMode === 'merge-decision') {

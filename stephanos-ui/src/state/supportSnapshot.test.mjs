@@ -2543,3 +2543,10 @@ test('Support Snapshot reports rehydrated operator profile storage diagnostics',
   assert.match(snapshot, /Operator Profile Storage Key: stephanos.operator.profile.v1/);
   assert.match(snapshot, /Operator Profile Storage Read Status: success/);
 });
+
+
+test('support snapshot projects codex dispatch fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { codexDispatchPacketStatus: 'ready-for-approval', codexDispatchPacketId: 'cdp_2', codexDispatchMissionTitle: 'Fix pane', codexDispatchApprovalRequired: 'yes', codexDispatchPromptAvailable: 'yes' } });
+  assert.match(snapshot, /Codex Dispatch Packet Status: ready-for-approval/);
+  assert.match(snapshot, /Codex Dispatch Packet ID: cdp_2/);
+});
