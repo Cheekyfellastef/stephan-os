@@ -580,6 +580,19 @@ export function buildSupportSnapshot({
   const commandPipelineLastInputCleared = executionMetadata?.command_pipeline_last_input_cleared || 'no';
   const commandPipelineLastInputRestoreAvailable = executionMetadata?.command_pipeline_last_input_restore_available || 'yes';
 
+
+  const activeMissionStatus = executionMetadata?.chat_context_active_mission_status || 'unknown';
+  const activeMissionId = executionMetadata?.chat_context_active_mission_id || 'unknown';
+  const activeMissionTitle = executionMetadata?.chat_context_active_mission_title || 'unknown';
+  const activeMissionPhase = executionMetadata?.chat_context_active_mission_phase || 'unknown';
+  const activeMissionCurrentFocus = executionMetadata?.chat_context_active_mission_current_focus || 'unknown';
+  const activeMissionNextStep = executionMetadata?.chat_context_active_mission_next_step || 'unknown';
+  const activeMissionProofState = executionMetadata?.chat_context_active_mission_proof_state || 'unknown';
+  const activeMissionRelatedSystems = executionMetadata?.chat_context_active_mission_related_systems || 'none';
+  const activeMissionRehydrated = executionMetadata?.chat_context_active_mission_rehydrated || 'no';
+  const activeMissionStorageKey = executionMetadata?.chat_context_active_mission_storage_key || 'stephanos.active.mission.v1';
+  const activeMissionRawTranscriptStored = executionMetadata?.chat_context_active_mission_raw_transcript_stored || 'no';
+
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
   const commandEnvelopeId = executionMetadata?.command_envelope_id || 'n/a';
@@ -1395,6 +1408,17 @@ export function buildSupportSnapshot({
     `Operator Profile Storage Read Status: ${asText(operatorProfileStorageReadStatus, 'missing')}`,
     `Operator Profile Last Read At: ${asText(operatorProfileLastReadAt, 'unknown')}`,
     `Operator Profile Last Write At: ${asText(operatorProfileLastWriteAt, 'unknown')}`,
+    `Active Mission Status: ${asText(activeMissionStatus, 'unknown')}`,
+    `Active Mission ID: ${asText(activeMissionId, 'unknown')}`,
+    `Active Mission Title: ${asText(activeMissionTitle, 'unknown')}`,
+    `Active Mission Phase: ${asText(activeMissionPhase, 'unknown')}`,
+    `Active Mission Current Focus: ${asText(activeMissionCurrentFocus, 'unknown')}`,
+    `Active Mission Next Recommended Step: ${asText(activeMissionNextStep, 'unknown')}`,
+    `Active Mission Proof State: ${asText(activeMissionProofState, 'unknown')}`,
+    `Active Mission Related Systems: ${asText(activeMissionRelatedSystems, 'none')}`,
+    `Active Mission Rehydrated: ${asText(activeMissionRehydrated, 'no')}`,
+    `Active Mission Storage Key: ${asText(activeMissionStorageKey, 'stephanos.active.mission.v1')}`,
+    `Active Mission Raw Transcript Stored: ${asText(activeMissionRawTranscriptStored, 'no')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,

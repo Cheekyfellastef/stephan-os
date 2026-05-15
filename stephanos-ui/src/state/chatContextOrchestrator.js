@@ -234,6 +234,7 @@ export function buildChatContextPack(input = {}) {
       ? input.supportSnapshot.affectedSubsystems
       : inferredSubsystems,
     missionMode: String(missionState.mode || missionState.status || 'unknown'),
+    inputMissionState: missionState,
     riskLevel: (uiTask || mergeDecisionTask) ? 'medium' : 'low',
     relevantCanon,
     providerSummaries,
@@ -293,6 +294,7 @@ export function buildChatContextPack(input = {}) {
       responseMode,
       intentClassifierMatchedRule: intent.matchedRule,
       missionMode: String(missionState.mode || missionState.status || 'unknown'),
+    inputMissionState: missionState,
       uiRealityStatus: String(uiReality.severity || 'UNKNOWN'),
       route: String(routeTruth.routeKind || 'unknown'),
       provider: String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown'),

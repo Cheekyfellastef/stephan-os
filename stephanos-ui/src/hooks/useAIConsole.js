@@ -40,6 +40,7 @@ import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
 import { buildResponsePlan } from '../state/responsePlanner.js';
 import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, seedChatContinuityFromExistingHistory } from '../state/chatContinuity.js';
 import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorProfile } from '../state/operatorProfileMemory.js';
+import { buildActiveMissionState, persistActiveMissionState, readActiveMissionState } from '../state/activeMissionState.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -175,6 +176,8 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     ? chatContextPack.providerNextActions
     : (Array.isArray(compact?.contextProviderNextActions) ? compact.contextProviderNextActions : []);
   const providerProofState = chatContextPack?.contextProviderProofState || compact?.contextProviderProofState || null;
+
+  const activeMission = chatContextPack?.providerSummaries?.missionState || {};
   const providerCanonLinksCount = Array.isArray(chatContextPack?.contextForPrompt?.contextProviderCanonLinks)
     ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length
     : Number(compact?.contextProviderCanonLinksCount || 0);
@@ -209,6 +212,17 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_provider_next_actions: providerNextActions.length ? providerNextActions.slice(0, 3).join(' | ') : 'none',
     chat_context_provider_proof_state: providerProofState ? JSON.stringify(providerProofState) : 'unknown',
     chat_context_provider_canon_links_count: providerCanonLinksCount,
+    chat_context_active_mission_status: activeMission?.activeMissionTitle && activeMission?.activeMissionTitle !== 'unknown' ? 'active' : 'unknown',
+    chat_context_active_mission_id: activeMission?.activeMissionId || 'unknown',
+    chat_context_active_mission_title: activeMission?.activeMissionTitle || 'unknown',
+    chat_context_active_mission_phase: activeMission?.canonicalMissionPhase || 'unknown',
+    chat_context_active_mission_current_focus: chatContextPack?.inputMissionState?.activeMission?.currentFocus || 'unknown',
+    chat_context_active_mission_next_step: activeMission?.missionNextAction || 'unknown',
+    chat_context_active_mission_proof_state: chatContextPack?.inputMissionState?.activeMission?.proofState || 'unknown',
+    chat_context_active_mission_related_systems: Array.isArray(chatContextPack?.inputMissionState?.activeMission?.relatedSystems) ? chatContextPack.inputMissionState.activeMission.relatedSystems.join('|') : 'none',
+    chat_context_active_mission_rehydrated: activeMission?.activeMissionRehydrated || 'no',
+    chat_context_active_mission_storage_key: chatContextPack?.inputMissionState?.activeMission?.storageKey || 'stephanos.active.mission.v1',
+    chat_context_active_mission_raw_transcript_stored: chatContextPack?.inputMissionState?.activeMission?.rawTranscriptStored || 'no',
   };
 }
 
@@ -3087,6 +3101,7 @@ export function useAIConsole() {
       const previousOperatorProfile = readOperatorProfile();
       const nextOperatorProfile = updateOperatorProfileFromMessage(previousOperatorProfile, prompt);
       persistOperatorProfile(nextOperatorProfile);
+      const previousActiveMission = readActiveMissionState();
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
@@ -3101,6 +3116,7 @@ export function useAIConsole() {
         operatorProfile: nextOperatorProfile,
         missionState: {
           status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown',
+          activeMission: previousActiveMission,
         },
         agentState: {
           actingAgentId: requestRuntimeStatus?.agentActingAgentId || 'none',
@@ -3130,6 +3146,7 @@ export function useAIConsole() {
         missionState: {
           testsPassed: requestRuntimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'yes' : 'no',
           prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
+          activeMission: previousActiveMission,
         },
       });
       const identityRecallKnownName = (
@@ -3141,6 +3158,22 @@ export function useAIConsole() {
         responsePlan.identityPromptInjected = 'yes';
         responsePlan.operatorProfilePromptLinePresent = 'yes';
       }
+      const missionIntentMatched = /mission|codex|repair|merge|architecture|workflow/i.test(String(prompt || '')) || /mission|codex|merge|repair/i.test(String(chatContextPack?.recommendedResponseMode || ''));
+      const nextActiveMission = missionIntentMatched
+        ? buildActiveMissionState({
+          missionId: previousActiveMission?.missionId && previousActiveMission.missionId !== 'unknown' ? previousActiveMission.missionId : `mission_${Date.now()}`,
+          title: previousActiveMission?.title !== 'unknown' ? previousActiveMission.title : 'Close the human-AI-Codex repair loop so Stephanos can manage build/repair workflows without the operator acting as click monkey.',
+          phase: missionPacketWorkflow?.status || 'proposed',
+          objective: previousActiveMission?.objective !== 'unknown' ? previousActiveMission.objective : 'Close the human-AI-Codex repair loop so Stephanos can manage build/repair workflows without the operator acting as click monkey.',
+          currentFocus: 'Mission Repair Loop / Codex Dispatch / PR Evidence loop',
+          lastKnownGoodStackState: requestRuntimeStatus?.uiRealityStatus?.severity || previousActiveMission?.lastKnownGoodStackState || 'unknown',
+          nextRecommendedStep: responsePlan?.recommendedNextAction || 'Collect approval-safe repair proof and update command envelope.',
+          blockedReason: missionPacketWorkflow?.status === 'blocked' ? (responsePlan?.warnings?.[0] || 'Current intent is unknown; mission cannot safely advance.') : 'none',
+          proofState: chatContextPack?.contextProviderProofState?.proofState || 'unknown',
+          relatedSystems: ['missionRepairLoopModel', 'commandEnvelope', 'responsePlanner', 'contextProviderRegistry'],
+        }, previousActiveMission)
+        : previousActiveMission;
+      persistActiveMissionState(nextActiveMission);
       const nextChatContinuity = buildChatContinuitySummary({
         previousContinuity: previousChatContinuity,
         sessionId: requestRuntimeStatus?.sessionId || 'session-local',
@@ -3149,7 +3182,7 @@ export function useAIConsole() {
         responseMode: chatContextPack?.recommendedResponseMode,
         chatContextPack,
         responsePlanner: responsePlan,
-        missionState: { status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown' },
+        missionState: { status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown', activeMission: nextActiveMission },
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
       });
       persistChatContinuity(nextChatContinuity);
