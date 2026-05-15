@@ -124,10 +124,10 @@ test('buildChatContextPack do i merge this pr emits registered and used provider
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
   assert.deepEqual(
     pack.contextProviderIdsRegistered,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'conversationContinuity', 'agentState'],
   );
   assert.deepEqual(
     pack.contextProviderIdsUsed,
-    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'agentState'],
+    ['uiReality', 'runtimeTruth', 'providerTruth', 'missionState', 'proofState', 'canonRules', 'memoryContinuity', 'conversationContinuity', 'agentState'],
   );
 });

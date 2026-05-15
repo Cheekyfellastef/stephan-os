@@ -28,6 +28,12 @@ export function buildResponsePlan(input = {}) {
   const distRebuilt = String(input?.missionState?.distRebuilt || '').toLowerCase() === 'yes';
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
+  const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
+  const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
+  const recommendedAgents = Array.isArray(input?.chatContextPack?.providerSummaries?.agentState?.recommendedAgents)
+    ? input.chatContextPack.providerSummaries.agentState.recommendedAgents
+    : [];
+
   let mergeDecision = 'unknown';
   let riskLevel = 'low';
   let proofRequired = 'no';
@@ -79,6 +85,11 @@ export function buildResponsePlan(input = {}) {
     codexPromptRequired,
     recommendedNextAction,
     warnings,
+    recommendedAgents,
+    continuitySummary,
+    priorContextUsed: continuityAvailable ? 'yes' : 'no',
+    continuityUsed: continuityAvailable,
+    agentAdviceUsed: recommendedAgents.length > 0,
     canonApplied,
     providerIdsUsed,
     sourceRefs: ['chatContextPack', 'commandEnvelope', 'contextProviderSnapshot', 'uiRealityStatus', 'missionState'],
