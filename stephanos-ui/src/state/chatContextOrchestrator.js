@@ -19,7 +19,7 @@ export const INTENT_RULES = [
   {
     id: 'merge-decision',
     responseMode: 'merge-decision',
-    pattern: /\b(do|should|can)\s+i\s+merge(?:\s+(?:this|the|that|it|one))?(?:\s+pr)?\b|\bmerge\s+(?:this|that|the)\s+(?:pr|one)\b|\bmerge\s+this\b/,
+    pattern: 'contains "merge" and merge-decision companion phrase',
   },
   {
     id: 'codex-prompt',
@@ -63,10 +63,24 @@ function normalizeIntentInputForMatching(msg = '') {
 function classifyIntent(msg = '') {
   const normalized = normalizeIntentInput(msg);
   const normalizedForMatching = normalizeIntentInputForMatching(msg);
+  const mergeRulePattern = 'contains: merge + any(pr|pull request|this|this one|this pr|should i|do i|can i)';
+  const mergeRuleMatched = normalizedForMatching.includes('merge')
+    && (
+      normalizedForMatching.includes('pr')
+      || normalizedForMatching.includes('pull request')
+      || normalizedForMatching.includes('this one')
+      || normalizedForMatching.includes('this pr')
+      || normalizedForMatching.includes('this')
+      || normalizedForMatching.includes('should i')
+      || normalizedForMatching.includes('do i')
+      || normalizedForMatching.includes('can i')
+    );
   const candidateRulesEvaluated = [];
   let matchedRule = null;
   for (const rule of INTENT_RULES) {
-    const matched = rule.pattern.test(normalizedForMatching);
+    const matched = rule.id === 'merge-decision'
+      ? mergeRuleMatched
+      : rule.pattern.test(normalizedForMatching);
     candidateRulesEvaluated.push(`${rule.id}:${matched ? '1' : '0'}`);
     if (matched && !matchedRule) matchedRule = rule;
   }
@@ -78,6 +92,10 @@ function classifyIntent(msg = '') {
     classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
     candidateRulesEvaluated,
     mergeRuleMatched: false,
+    mergeRulePattern,
+    mergeRuleTestResult: mergeRuleMatched ? 'yes' : 'no',
+    matchInput: normalizedForMatching,
+    firstMatchingRule: 'direct-answer',
     matchedRuleIndex: -1,
     matchedRegex: 'none',
     fallbackApplied: true,
@@ -91,8 +109,12 @@ function classifyIntent(msg = '') {
     classifierRuleOrder: INTENT_RULES.map((rule) => rule.id),
     candidateRulesEvaluated,
     mergeRuleMatched: matchedRule.id === 'merge-decision',
+    mergeRulePattern,
+    mergeRuleTestResult: mergeRuleMatched ? 'yes' : 'no',
+    matchInput: normalizedForMatching,
+    firstMatchingRule: matchedRule.id,
     matchedRuleIndex: INTENT_RULES.findIndex((rule) => rule.id === matchedRule.id),
-    matchedRegex: matchedRule.pattern.source,
+    matchedRegex: matchedRule.id === 'merge-decision' ? mergeRulePattern : matchedRule.pattern.source,
     normalizedForMatching,
     fallbackApplied: false,
   };
@@ -202,6 +224,10 @@ export function buildChatContextPack(input = {}) {
       classifierRegexUsed: intent.matchedRegex,
       classifierRuleIndex: intent.matchedRuleIndex,
       classifierFallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
+      classifierMatchInput: intent.matchInput || normalizedForMatching,
+      classifierMergeRulePattern: intent.mergeRulePattern || 'none',
+      classifierMergeRuleTestResult: intent.mergeRuleTestResult || 'no',
+      classifierFirstMatchingRule: intent.firstMatchingRule || intent.matchedRule,
       defaultOverrideReason: 'none',
       builderFunction: 'buildChatContextPack',
       fallbackBranchTaken: intent.fallbackApplied ? 'yes' : 'no',

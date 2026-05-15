@@ -25,12 +25,13 @@ test('live classify/build path maps exact normalized merge prompt to merge-decis
   assert.ok(Array.isArray(pack.affectedSubsystems) && pack.affectedSubsystems.length > 0);
 });
 
-test('merge-decision regex matches normalized lowercase pr form', () => {
-  const mergeRule = INTENT_RULES.find((rule) => rule.id === 'merge-decision');
-  assert.ok(mergeRule, 'merge-decision rule must exist');
+test('merge rule test returns true for do i merge this pr', () => {
   const normalizedInput = normalizeIntentInputForMatching('do I merge this PR?');
   assert.equal(normalizedInput, 'do i merge this pr');
-  assert.equal(mergeRule.pattern.test(normalizedInput), true);
+  const pack = buildChatContextPack({ operatorMessage: normalizedInput });
+  assert.equal(pack.classifierDebug.classifierMatchInput, 'do i merge this pr');
+  assert.equal(pack.classifierDebug.classifierMergeRuleTestResult, 'yes');
+  assert.equal(pack.classifierDebug.classifierFirstMatchingRule, 'merge-decision');
 });
 
 test('UI tasks include source/dist canon', () => {
@@ -57,8 +58,10 @@ test('merge-decision classifier catches common merge question variants', () => {
   const c = buildChatContextPack({ operatorMessage: 'can I merge this PR' });
   const d = buildChatContextPack({ operatorMessage: 'merge this one?' });
   const e = buildChatContextPack({ operatorMessage: 'do I merge this one?' });
+  const f = buildChatContextPack({ operatorMessage: 'merge this pr' });
+  const g = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
 
-  for (const pack of [a, b, c, d, e]) {
+  for (const pack of [a, b, c, d, e, f, g]) {
     assert.equal(pack.compactSummary.status, 'active');
     assert.equal(pack.recommendedResponseMode, 'merge-decision');
     assert.equal(pack.intentClassifierMatchedRule, 'merge-decision');
@@ -82,4 +85,6 @@ test('direct-answer remains fallback for generic prompts', () => {
   const pack = buildChatContextPack({ operatorMessage: 'hello there' });
   assert.equal(pack.recommendedResponseMode, 'direct-answer');
   assert.equal(pack.intentClassifierMatchedRule, 'direct-answer');
+  assert.equal(pack.classifierDebug.classifierFirstMatchingRule, 'direct-answer');
+  assert.equal(pack.classifierDebug.classifierMergeRuleTestResult, 'no');
 });
