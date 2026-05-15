@@ -169,6 +169,18 @@ export function buildChatContextPack(input = {}) {
     buildSource,
   };
 
+  const classifierProof = {
+    matchInput: intent.matchInput || normalizeIntentInputForMatching(operatorMessage),
+    mergeRulePattern: intent.mergeRulePattern || 'none',
+    mergeRuleTestResult: intent.mergeRuleTestResult || 'no',
+    firstMatchingRule: intent.firstMatchingRule || intent.matchedRule || 'direct-answer',
+    evaluatedRuleResults: Array.isArray(intent.candidateRulesEvaluated) ? intent.candidateRulesEvaluated : [],
+    intentClassifierMatchedRule: intent.matchedRule || responseMode || 'direct-answer',
+    responseMode,
+    defaultPackUsed: (intent.matchedRule && intent.matchedRule !== 'direct-answer') ? 'no' : 'yes',
+    fallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
+  };
+
   return {
     version: CHAT_CONTEXT_VERSION,
     compactSummary,
@@ -200,12 +212,13 @@ export function buildChatContextPack(input = {}) {
       ? ['browser-ui-reality-proof', 'source-of-truth-proof', 'targeted-tests']
       : ['targeted-evidence'],
     recommendedResponseMode: responseMode,
-    intentClassifierMatchedRule: intent.matchedRule,
-    matchInput: intent.matchInput || normalizeIntentInputForMatching(operatorMessage),
-    mergeRulePattern: intent.mergeRulePattern || 'none',
-    mergeRuleTestResult: intent.mergeRuleTestResult || 'no',
-    firstMatchingRule: intent.firstMatchingRule || intent.matchedRule || 'direct-answer',
-    evaluatedRuleResults: Array.isArray(intent.candidateRulesEvaluated) ? intent.candidateRulesEvaluated : [],
+    intentClassifierMatchedRule: classifierProof.intentClassifierMatchedRule,
+    matchInput: classifierProof.matchInput,
+    mergeRulePattern: classifierProof.mergeRulePattern,
+    mergeRuleTestResult: classifierProof.mergeRuleTestResult,
+    firstMatchingRule: classifierProof.firstMatchingRule,
+    evaluatedRuleResults: classifierProof.evaluatedRuleResults,
+    classifierProof,
     recommendedNextAction: mergeDecisionTask
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'),
@@ -229,7 +242,7 @@ export function buildChatContextPack(input = {}) {
       classifierRegexUsed: intent.matchedRegex,
       classifierRuleIndex: intent.matchedRuleIndex,
       classifierFallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
-      classifierMatchInput: intent.matchInput || normalizedForMatching,
+      classifierMatchInput: classifierProof.matchInput,
       classifierMergeRulePattern: intent.mergeRulePattern || 'none',
       classifierMergeRuleTestResult: intent.mergeRuleTestResult || 'no',
       classifierFirstMatchingRule: intent.firstMatchingRule || intent.matchedRule,
