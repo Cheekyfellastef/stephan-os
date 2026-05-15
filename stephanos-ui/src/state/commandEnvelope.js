@@ -30,6 +30,7 @@ export function createCommandEnvelope(input = {}) {
     proof: { requiredProof: 'standard', proofStatus: 'unknown', uiRealityStatus: 'UNKNOWN', buildVerifyRequired: true, browserProofRequired: false },
     supportProjection: { snapshotFields: [], warnings: [] },
     chatContinuity: { status: 'empty', summary: 'none', continuityUsed: false },
+    operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
   };
 }
@@ -58,6 +59,13 @@ export function attachChatContextToEnvelope(envelope, chatContextPack = null) {
       continuitySource: asText(chatContextPack?.providerSummaries?.conversationContinuity?.continuitySource, asText(chatContextPack?.chatContinuity?.continuitySource, 'none')),
       summaryCount: Number(chatContextPack?.chatContinuity?.summaries?.length || 0),
       rawTranscriptStored: 'no',
+    },
+    operatorProfile: {
+      known: chatContextPack?.providerSummaries?.operatorProfile?.known || 'no',
+      operatorName: chatContextPack?.providerSummaries?.operatorProfile?.operatorName || 'unknown',
+      source: chatContextPack?.providerSummaries?.operatorProfile?.source || 'none',
+      confidence: chatContextPack?.providerSummaries?.operatorProfile?.confidence || 'unknown',
+      nextAction: chatContextPack?.providerSummaries?.operatorProfile?.nextAction || 'Ask operator for preferred name when relevant.',
     },
     agentContext: {
       status: chatContextPack?.providerSummaries?.agentState ? 'ready' : 'empty',
@@ -94,6 +102,10 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     chat_continuity_source: asText(envelope?.chatContinuity?.continuitySource, 'none'),
     chat_continuity_summary_count: Number(envelope?.chatContinuity?.summaryCount || 0),
     chat_continuity_raw_transcript_stored: asText(envelope?.chatContinuity?.rawTranscriptStored, 'no'),
+    command_envelope_operator_name_known: asText(envelope?.operatorProfile?.known, 'no'),
+    command_envelope_operator_name: asText(envelope?.operatorProfile?.operatorName, 'unknown'),
+    command_envelope_operator_identity_source: asText(envelope?.operatorProfile?.source, 'none'),
+    command_envelope_operator_identity_confidence: asText(envelope?.operatorProfile?.confidence, 'unknown'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

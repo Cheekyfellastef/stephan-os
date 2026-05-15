@@ -39,6 +39,7 @@ import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../sta
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
 import { buildResponsePlan } from '../state/responsePlanner.js';
 import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, seedChatContinuityFromExistingHistory } from '../state/chatContinuity.js';
+import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorProfile } from '../state/operatorProfileMemory.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -188,6 +189,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_provider_registry_status: chatContextPack?.contextProviderRegistryStatus || compact?.contextProviderRegistryStatus || 'inactive',
     chat_context_provider_ids_registered: providerIdsRegistered.length ? providerIdsRegistered.join('|') : 'none',
     chat_context_provider_warning_count: Number(chatContextPack?.contextProviderWarningCount ?? compact?.contextProviderWarningCount ?? 0),
+    chat_context_operator_name_known: chatContextPack?.providerSummaries?.operatorProfile?.known || 'no',
+    chat_context_operator_name: chatContextPack?.providerSummaries?.operatorProfile?.operatorName || 'unknown',
+    chat_context_operator_identity_source: chatContextPack?.providerSummaries?.operatorProfile?.source || 'none',
+    chat_context_operator_identity_confidence: chatContextPack?.providerSummaries?.operatorProfile?.confidence || 'unknown',
+    chat_context_operator_identity_updated_at: chatContextPack?.providerSummaries?.operatorProfile?.updatedAt || 'unknown',
+    chat_context_operator_identity_next_action: chatContextPack?.providerSummaries?.operatorProfile?.nextAction || 'Ask operator for preferred name when relevant.',
     chat_context_provider_next_actions: providerNextActions.length ? providerNextActions.slice(0, 3).join(' | ') : 'none',
     chat_context_provider_proof_state: providerProofState ? JSON.stringify(providerProofState) : 'unknown',
     chat_context_provider_canon_links_count: providerCanonLinksCount,
@@ -3006,6 +3013,9 @@ export function useAIConsole() {
           commandHistory,
           sessionId: requestRuntimeStatus?.sessionId || 'session-local',
         });
+      const previousOperatorProfile = readOperatorProfile();
+      const nextOperatorProfile = updateOperatorProfileFromMessage(previousOperatorProfile, prompt);
+      persistOperatorProfile(nextOperatorProfile);
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
@@ -3017,6 +3027,7 @@ export function useAIConsole() {
           selectedProvider: requestRouteTruthView.selectedProvider,
         },
         chatContinuity: previousChatContinuity,
+        operatorProfile: nextOperatorProfile,
         missionState: {
           status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown',
         },
@@ -3028,6 +3039,7 @@ export function useAIConsole() {
           candidates: Array.isArray(continuityLookup?.records) ? continuityLookup.records.map((record) => record.summary).filter(Boolean) : [],
         },
         chatContinuity: previousChatContinuity,
+        operatorProfile: nextOperatorProfile,
       });
       const responsePlan = buildResponsePlan({
         operatorMessage: prompt,
@@ -3043,6 +3055,7 @@ export function useAIConsole() {
         runtimeTruth: requestRuntimeStatus || {},
         providerTruth: { executableProvider: requestRouteTruthView.executedProvider },
         chatContinuity: previousChatContinuity,
+        operatorProfile: nextOperatorProfile,
         missionState: {
           testsPassed: requestRuntimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'yes' : 'no',
           prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
