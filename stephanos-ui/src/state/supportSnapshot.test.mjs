@@ -2276,3 +2276,19 @@ test('execution metadata fixture with execution_status also includes chat_contex
   };
   assert.equal(fixture.chat_context_pack_status, 'active');
 });
+
+test('support snapshot projects rebuilt-from-final-message classifier proof fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        chat_context_pack_status: 'active',
+        chat_context_classifier_proof_source: 'rebuilt-from-final-message',
+        chat_context_rebuilt_at_final_attachment: 'yes',
+        chat_context_rebuild_source_field: 'retrieval_query',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Classifier Proof Source: rebuilt-from-final-message/);
+  assert.match(snapshot, /Chat Context Rebuilt At Final Attachment: yes/);
+  assert.match(snapshot, /Chat Context Rebuild Source Field: retrieval_query/);
+});

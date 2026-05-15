@@ -301,15 +301,38 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
   const overwrittenByDefault = validRequestPack && (isDefaultChatContextValue('chat_context_pack_status', raw.chat_context_pack_status) || isDefaultChatContextValue('chat_context_response_mode', raw.chat_context_response_mode));
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
   const requestPack = requestPayload?.chatContextPack || {};
-  const classifierProof = requestPack.classifierProof && typeof requestPack.classifierProof === 'object' ? requestPack.classifierProof : null;
+  const requestPackClassifierProof = requestPack.classifierProof && typeof requestPack.classifierProof === 'object' ? requestPack.classifierProof : null;
+  const rebuildCandidates = [
+    ['retrieval_query', normalized.retrieval_query],
+    ['raw_input', requestPayload?.raw_input],
+    ['operatorMessage', requestPayload?.operatorMessage],
+    ['prompt', requestPayload?.prompt],
+    ['chat_context_raw_operator_message_seen', raw.chat_context_raw_operator_message_seen],
+    ['chat_context_normalized_operator_message', raw.chat_context_normalized_operator_message],
+  ];
+  const rebuildSource = rebuildCandidates.find(([, value]) => normalizeChatContextOperatorMessage(value));
+  const rebuiltOperatorMessage = rebuildSource ? normalizeChatContextOperatorMessage(rebuildSource[1]) : '';
+  const rebuiltPack = (!requestPackClassifierProof && rebuiltOperatorMessage)
+    ? buildChatContextPack({
+      operatorMessage: rebuiltOperatorMessage,
+      buildSource: 'final-metadata-attachment-rebuild',
+      submissionSource: requestPayload?.submissionSource || requestPayload?.chatContextPack?.compactSummary?.buildSource || 'stephanos-mission-console',
+    })
+    : null;
+  const classifierProof = requestPackClassifierProof || (rebuiltPack?.classifierProof && typeof rebuiltPack.classifierProof === 'object' ? rebuiltPack.classifierProof : null);
+  const classifierProofSource = requestPackClassifierProof
+    ? 'request-pack'
+    : (classifierProof ? 'rebuilt-from-final-message' : 'missing');
+  const rebuiltAtFinalAttachment = (!requestPackClassifierProof && classifierProof) ? 'yes' : 'no';
+  const rebuildSourceField = rebuiltAtFinalAttachment === 'yes' ? rebuildSource?.[0] : 'none';
   const classifierProofMissing = !classifierProof;
-  const resolvedMatchInput = classifierProof?.matchInput || normalizedOperatorMessage || rawOperatorMessage || 'n/a';
+  const resolvedMatchInput = classifierProof?.matchInput || normalizedOperatorMessage || rawOperatorMessage || rebuiltOperatorMessage || 'n/a';
   const resolvedRuleResults = Array.isArray(classifierProof?.evaluatedRuleResults) ? classifierProof.evaluatedRuleResults : [];
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
     chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
-    chat_context_intent_classifier_matched_rule: classifierProof?.intentClassifierMatchedRule || requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || 'direct-answer',
+    chat_context_intent_classifier_matched_rule: classifierProof?.intentClassifierMatchedRule || requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || rebuiltPack?.intentClassifierMatchedRule || 'direct-answer',
     chat_context_match_input: resolvedMatchInput,
     chat_context_merge_rule_pattern: classifierProof?.mergeRulePattern || 'none',
     chat_context_merge_rule_test_result: classifierProof?.mergeRuleTestResult || 'no',
@@ -330,7 +353,10 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_fallback_branch_taken: classifierProof?.fallbackApplied || requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchTaken || 'no',
     chat_context_fallback_branch_reason: classifierProof?.fallbackApplied === 'yes' ? 'no-intent-rule-matched' : (requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchReason || 'none'),
     chat_context_classifier_proof_missing: classifierProofMissing ? 'yes' : 'no',
-    chat_context_classifier_proof_warning: classifierProofMissing ? 'request-pack-classifier-proof-missing' : 'none',
+    chat_context_classifier_proof_warning: classifierProofMissing ? 'classifier-proof-missing-after-final-attachment-rebuild' : 'none',
+    chat_context_rebuilt_at_final_attachment: rebuiltAtFinalAttachment,
+    chat_context_rebuild_source_field: rebuildSourceField,
+    chat_context_classifier_proof_source: classifierProofSource,
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
