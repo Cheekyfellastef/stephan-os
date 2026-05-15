@@ -2518,6 +2518,13 @@ test('support snapshot projects mission repair loop fields', () => {
   assert.match(snapshot, /Mission Repair Loop Status:/);
   assert.match(snapshot, /Mission Repair Loop Current Attempt:/);
   assert.match(snapshot, /Mission Repair Loop Merge Recommendation:/);
+  assert.match(snapshot, /Mission Repair Loop Codex Prompt Available:/);
+  assert.match(snapshot, /Mission Repair Loop Codex Prompt Summary:/);
+  assert.match(snapshot, /Mission Repair Loop Repair Boundary:/);
+  assert.match(snapshot, /Mission Repair Loop Required Tests:/);
+  assert.match(snapshot, /Mission Repair Loop Forbidden Actions:/);
+  assert.match(snapshot, /Mission Repair Loop Proof Fields Required:/);
+  assert.match(snapshot, /Mission Repair Loop Operator Approval Required:/);
   assert.match(snapshot, /Mission Repair Loop Source Truths Used:/);
   assert.match(snapshot, /Mission Repair Loop Duplicate Authority Detected: no/);
 });

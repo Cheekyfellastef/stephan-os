@@ -165,6 +165,8 @@ test('AIConsole context indicator renders active merge-decision state from execu
   assert.match(rendered, /Provider Registry: active/);
   assert.match(rendered, /Provider Warning Count: 1/);
   assert.match(rendered, /Mission Repair Loop: idle/);
+  assert.match(rendered, /Codex Prompt: no/);
+  assert.match(rendered, /Approval Required: yes/);
 });
 
 

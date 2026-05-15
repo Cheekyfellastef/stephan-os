@@ -57,6 +57,26 @@ test('next prompt is generated from failing fields', () => {
   assert.match(model.nextPrompt, /Support Snapshot acceptance mismatch/);
 });
 
+test('Mission Repair Loop generates Codex prompt when UI Reality FAIL exists', () => {
+  const model = buildMissionRepairLoopModel({
+    ...base,
+    latestSupportSnapshotStatus: { ...base.latestSupportSnapshotStatus, uiRealityStatus: 'FAIL' },
+    failingAcceptanceFields: ['UI Reality copy feedback drift'],
+  });
+  assert.equal(model.codexPromptAvailable, true);
+  assert.match(model.codexPromptDraft, /Forbidden actions:/);
+  assert.match(model.codexPromptDraft, /Required tests:/);
+  assert.match(model.codexPromptDraft, /Support snapshot proof fields:/);
+  assert.equal(model.mergeRecommendation, 'hold');
+});
+
+test('Mission Repair Loop does not generate Codex prompt when status is passed', () => {
+  const model = buildMissionRepairLoopModel(base);
+  assert.equal(model.status, 'passed');
+  assert.equal(model.codexPromptAvailable, false);
+  assert.equal(model.codexPromptDraft, '');
+});
+
 test('merge recommendation follows verification proof state', () => {
   const passModel = buildMissionRepairLoopModel(base);
   const failModel = buildMissionRepairLoopModel({ ...base, missionVerificationProofStatus: 'failed' });

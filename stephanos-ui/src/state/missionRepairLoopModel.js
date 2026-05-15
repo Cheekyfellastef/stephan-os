@@ -9,6 +9,15 @@ function asList(value) {
   return value.map((item) => asText(item)).filter(Boolean);
 }
 
+function inferLikelySubsystem(failingField, uiRealityFailed) {
+  const normalized = String(failingField || '').toLowerCase();
+  if (uiRealityFailed || normalized.includes('ui reality') || normalized.includes('pane') || normalized.includes('copy')) return 'ui-reality';
+  if (normalized.includes('support snapshot')) return 'support-snapshot';
+  if (normalized.includes('verification') || normalized.includes('proof')) return 'mission-verification-judge';
+  if (normalized.includes('pr evidence')) return 'pr-evidence';
+  return 'mission-repair-loop';
+}
+
 export function buildMissionRepairLoopModel(input = {}) {
   const missionId = asText(input.missionId, 'unknown-mission');
   const title = asText(input.title, 'Mission Repair Loop');
@@ -44,6 +53,11 @@ export function buildMissionRepairLoopModel(input = {}) {
   else if (latestBuildVerifyStatus === 'pass' && latestTestResults === 'pass' && supportAcceptanceMatch) status = 'passed';
 
   const latestFailingField = failingAcceptanceFields[0] || '';
+  const likelySubsystem = inferLikelySubsystem(latestFailingField, uiRealityFailed);
+  const repairBoundary = asText(input.repairBoundary, `Patch only ${likelySubsystem} and adjacent adapters required for proof-field parity.`);
+  const proofFieldsRequired = failingAcceptanceFields.length > 0
+    ? [...failingAcceptanceFields]
+    : asList(input.proofFieldsRequired);
   const operatorDecisionRequired = status === 'blocked';
   const mergeRecommendation = status === 'passed' && verificationProof !== 'failed' ? 'merge-candidate' : 'hold';
   const nextPrompt = status === 'passed'
@@ -53,6 +67,24 @@ export function buildMissionRepairLoopModel(input = {}) {
       : 'Collect missing proof, repair failing acceptance fields, and rerun required tests/build/verify.';
 
   const duplicateAuthorityDetected = sourceTruthsUsed.length === 0 ? 'yes' : 'no';
+  const codexPromptAvailable = status !== 'passed' && (uiRealityFailed || failingAcceptanceFields.length > 0);
+  const codexPromptSummary = codexPromptAvailable
+    ? `Repair ${latestFailingField || 'failing proof fields'} within ${repairBoundary}; rerun required tests and preserve forbidden-action guardrails.`
+    : 'No repair prompt required while proof status is passed.';
+  const codexPromptDraft = codexPromptAvailable
+    ? [
+      'Mission Repair Loop V1 Codex Handoff (read-only draft)',
+      `Failing field: ${latestFailingField || 'unknown'}`,
+      `Likely subsystem: ${likelySubsystem}`,
+      `Repair boundary: ${repairBoundary}`,
+      `Forbidden actions: ${(forbiddenActions.length > 0 ? forbiddenActions : ['No autonomous Codex execution', 'No auto merge']).join(' | ')}`,
+      `Required tests: ${(requiredProof.length > 0 ? requiredProof : ['npm run stephanos:verify']).join(' | ')}`,
+      `Support snapshot proof fields: ${(proofFieldsRequired.length > 0 ? proofFieldsRequired : ['Mission Repair Loop proof fields']).join(' | ')}`,
+      `Merge recommendation: ${mergeRecommendation} (proof-based)`,
+      'Operator approval required: yes',
+      'Instruction: Produce only bounded patch + evidence summary; do not execute Codex autonomously.',
+    ].join('\n')
+    : '';
 
   return {
     version: 'mission-repair-loop.v1',
@@ -78,5 +110,11 @@ export function buildMissionRepairLoopModel(input = {}) {
     sourceTruthsUsed,
     duplicateAuthorityDetected,
     warnings: asList(input.warnings),
+    likelySubsystem,
+    repairBoundary,
+    proofFieldsRequired,
+    codexPromptAvailable,
+    codexPromptSummary,
+    codexPromptDraft,
   };
 }
