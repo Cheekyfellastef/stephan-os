@@ -29,6 +29,8 @@ export function createCommandEnvelope(input = {}) {
     execution: { status: 'pending', truth: 'pending', actualProvider: 'unknown', actualModel: 'unknown', elapsedMs: null, fallbackUsed: false, cancellationState: 'none' },
     proof: { requiredProof: 'standard', proofStatus: 'unknown', uiRealityStatus: 'UNKNOWN', buildVerifyRequired: true, browserProofRequired: false },
     supportProjection: { snapshotFields: [], warnings: [] },
+    chatContinuity: { status: 'empty', summary: 'none', continuityUsed: false },
+    agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
   };
 }
 
@@ -47,6 +49,20 @@ export function attachChatContextToEnvelope(envelope, chatContextPack = null) {
       providerIdsUsed: asList(chatContextPack?.contextProviderIdsUsed || compact.contextProviderIdsUsed),
       warnings: asList(chatContextPack?.warnings || compact.warnings),
       nextAction: chatContextPack?.recommendedNextAction || compact.nextAction || 'Answer directly with bounded confidence.',
+    },
+    chatContinuity: {
+      status: chatContextPack?.providerSummaries?.conversationContinuity?.status || 'empty',
+      summary: chatContextPack?.providerSummaries?.conversationContinuity?.summary || 'none',
+      continuityUsed: Boolean(chatContextPack?.providerSummaries?.conversationContinuity),
+      seededFromExistingHistory: asText(chatContextPack?.providerSummaries?.conversationContinuity?.seededFromExistingHistory, asText(chatContextPack?.chatContinuity?.seededFromExistingHistory, 'no')),
+      continuitySource: asText(chatContextPack?.providerSummaries?.conversationContinuity?.continuitySource, asText(chatContextPack?.chatContinuity?.continuitySource, 'none')),
+      summaryCount: Number(chatContextPack?.chatContinuity?.summaries?.length || 0),
+      rawTranscriptStored: 'no',
+    },
+    agentContext: {
+      status: chatContextPack?.providerSummaries?.agentState ? 'ready' : 'empty',
+      recommendedAgents: asList(chatContextPack?.providerSummaries?.agentState?.recommendedAgents),
+      agentContextUsed: Boolean(chatContextPack?.providerSummaries?.agentState),
     },
   };
 }
@@ -71,6 +87,13 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_proof_status: asText(envelope?.proof?.proofStatus, 'unknown'),
     command_envelope_ui_reality_status: asText(envelope?.proof?.uiRealityStatus, 'UNKNOWN'),
     command_envelope_warnings: warnings.join(' | ') || 'none',
+    command_envelope_continuity_used: envelope?.chatContinuity?.continuityUsed ? 'yes' : 'no',
+    command_envelope_agent_context_used: envelope?.agentContext?.agentContextUsed ? 'yes' : 'no',
+    command_envelope_recommended_agents: asList(envelope?.agentContext?.recommendedAgents).join('|') || 'none',
+    chat_continuity_seeded_from_existing_history: asText(envelope?.chatContinuity?.seededFromExistingHistory, 'no'),
+    chat_continuity_source: asText(envelope?.chatContinuity?.continuitySource, 'none'),
+    chat_continuity_summary_count: Number(envelope?.chatContinuity?.summaryCount || 0),
+    chat_continuity_raw_transcript_stored: asText(envelope?.chatContinuity?.rawTranscriptStored, 'no'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

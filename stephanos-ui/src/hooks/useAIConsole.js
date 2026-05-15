@@ -38,6 +38,7 @@ import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../sta
 import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
 import { buildResponsePlan } from '../state/responsePlanner.js';
+import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, seedChatContinuityFromExistingHistory } from '../state/chatContinuity.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
@@ -2998,6 +2999,13 @@ export function useAIConsole() {
         executionModel: timeoutExecutionEnvelope.effectiveModel || '',
         providerConfigs: effectiveProviderConfigs,
       });
+      const previousChatContinuityRaw = readChatContinuity();
+      const previousChatContinuity = Array.isArray(previousChatContinuityRaw?.summaries) && previousChatContinuityRaw.summaries.length
+        ? previousChatContinuityRaw
+        : seedChatContinuityFromExistingHistory({
+          commandHistory,
+          sessionId: requestRuntimeStatus?.sessionId || 'session-local',
+        });
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
@@ -3008,6 +3016,7 @@ export function useAIConsole() {
           executableProvider: requestRouteTruthView.executedProvider,
           selectedProvider: requestRouteTruthView.selectedProvider,
         },
+        chatContinuity: previousChatContinuity,
         missionState: {
           status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown',
         },
@@ -3018,6 +3027,7 @@ export function useAIConsole() {
         memoryState: {
           candidates: Array.isArray(continuityLookup?.records) ? continuityLookup.records.map((record) => record.summary).filter(Boolean) : [],
         },
+        chatContinuity: previousChatContinuity,
       });
       const responsePlan = buildResponsePlan({
         operatorMessage: prompt,
@@ -3032,12 +3042,25 @@ export function useAIConsole() {
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
         runtimeTruth: requestRuntimeStatus || {},
         providerTruth: { executableProvider: requestRouteTruthView.executedProvider },
+        chatContinuity: previousChatContinuity,
         missionState: {
           testsPassed: requestRuntimeStatus?.missionVerificationRequiredTestsRun === 'yes' ? 'yes' : 'no',
           prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
         },
       });
-      setUiDiagnostics((prev) => ({ ...prev, chatContextPack, responsePlan }));
+      const nextChatContinuity = buildChatContinuitySummary({
+        previousContinuity: previousChatContinuity,
+        sessionId: requestRuntimeStatus?.sessionId || 'session-local',
+        operatorMessage: prompt,
+        sourceCommandId: `req_${Date.now()}`,
+        responseMode: chatContextPack?.recommendedResponseMode,
+        chatContextPack,
+        responsePlanner: responsePlan,
+        missionState: { status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown' },
+        uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+      });
+      persistChatContinuity(nextChatContinuity);
+      setUiDiagnostics((prev) => ({ ...prev, chatContextPack, responsePlan, chatContinuity: nextChatContinuity }));
 
       const requestPayload = {
         request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,

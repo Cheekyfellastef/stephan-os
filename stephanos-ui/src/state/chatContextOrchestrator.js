@@ -143,7 +143,7 @@ export function buildChatContextPack(input = {}) {
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : [];
-  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'agentState'] : [];
+  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'conversationContinuity', 'agentState'] : ['conversationContinuity', 'agentState'];
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
@@ -187,7 +187,7 @@ export function buildChatContextPack(input = {}) {
     contextProviderProofState,
     contextProviderNextActions: providerNextActions,
     contextProviderCanonLinksCount: contextProviderCanonLinks.length,
-    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
+    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'chatContinuity', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
@@ -245,6 +245,7 @@ export function buildChatContextPack(input = {}) {
       executedProvider: String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown'),
     },
     agentSummary: input.agentState || {},
+    chatContinuity: input.chatContinuity || {},
     proofRequirements: uiTask
       ? ['browser-ui-reality-proof', 'source-of-truth-proof', 'targeted-tests']
       : ['targeted-evidence'],
