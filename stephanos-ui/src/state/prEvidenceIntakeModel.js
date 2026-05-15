@@ -1,110 +1,25 @@
-function asText(value, fallback = '') {
-  if (value === null || value === undefined) return fallback;
-  const text = String(value).trim();
-  return text || fallback;
-}
-
-function asList(value) {
-  return Array.isArray(value) ? value.filter(Boolean).map((entry) => String(entry).trim()).filter(Boolean) : [];
-}
-
-function normalizeChecksStatus(status = 'unknown') {
-  const lower = asText(status, 'unknown').toLowerCase();
-  if (/fail|error|cancel/.test(lower)) return 'failed';
-  if (/pass|success|green/.test(lower)) return 'passed';
-  if (/pending|running|queued|in_progress/.test(lower)) return 'pending';
-  return 'unknown';
-}
-
-function deriveCodexTaskFields({ prMetadata = {}, prBody = '' } = {}) {
-  const directUrl = asText(prMetadata.codexTaskUrl || prMetadata.codex_task_url, '');
-  const directId = asText(prMetadata.codexTaskId || prMetadata.codex_task_id, '');
-  const body = asText(prBody || prMetadata.body || prMetadata.description, '');
-  const urlMatch = body.match(/https?:\/\/\S*codex\S*/i);
-  const idMatch = body.match(/codex(?:\s*task)?\s*[:#-]\s*([A-Za-z0-9_-]+)/i);
-  return {
-    codexTaskUrl: directUrl || asText(urlMatch?.[0], ''),
-    codexTaskId: directId || asText(idMatch?.[1], ''),
-  };
-}
-
+function asText(value, fallback = '') { if (value === null || value === undefined) return fallback; const text = String(value).trim(); return text || fallback; }
+function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map((entry) => String(entry).trim()).filter(Boolean) : []; }
+function normalizeChecksStatus(status = 'unknown') { const lower = asText(status, 'unknown').toLowerCase(); if (/fail|error|cancel/.test(lower)) return 'failed'; if (/pass|success|green/.test(lower)) return 'passed'; if (/pending|running|queued|in_progress/.test(lower)) return 'pending'; return 'unknown'; }
+function deriveCodexTaskFields({ prMetadata = {}, prBody = '' } = {}) { const directUrl = asText(prMetadata.codexTaskUrl || prMetadata.codex_task_url, ''); const directId = asText(prMetadata.codexTaskId || prMetadata.codex_task_id, ''); const body = asText(prBody || prMetadata.body || prMetadata.description, ''); const urlMatch = body.match(/https?:\/\/\S*codex\S*/i); const idMatch = body.match(/codex(?:\s*task)?\s*[:#-]\s*([A-Za-z0-9_-]+)/i); return { codexTaskUrl: directUrl || asText(urlMatch?.[0], ''), codexTaskId: directId || asText(idMatch?.[1], '') }; }
+export function parseCodexSummaryText(summaryText = '') { const text = asText(summaryText, ''); const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean); const changedFiles = [...new Set([...text.matchAll(/([\w./-]+\.(?:js|mjs|jsx|ts|tsx|json|md|css|html))/g)].map((m) => m[1]))]; const testsRun = lines.filter((line) => /(node --test|npm run|vitest|jest|pnpm test|yarn test)/i.test(line)); const buildStatus = /stephanos:build.*(pass|ok|success)|build.*(pass|ok|success)/i.test(text) ? 'passed' : (/stephanos:build|\bbuild\b/i.test(text) ? 'failed_or_unknown' : 'missing'); const verifyStatus = /stephanos:verify.*(pass|ok|success)|verify.*(pass|ok|success)/i.test(text) ? 'passed' : (/stephanos:verify|\bverify\b/i.test(text) ? 'failed_or_unknown' : 'missing'); const browserProofStatus = /ui reality.*ok|browser.*(proof|pass)|manual ui.*pass/i.test(text) ? 'passed' : (/browser|ui reality|screenshot/i.test(text) ? 'missing_or_failed' : 'unknown'); const distTouched = /apps\/stephanos\/dist|\bdist\//i.test(text) || changedFiles.some((f) => f.startsWith('apps/stephanos/dist/')); const missingProof = []; if (!testsRun.length) missingProof.push('tests'); if (buildStatus !== 'passed') missingProof.push('build'); if (verifyStatus !== 'passed') missingProof.push('verify'); if (browserProofStatus !== 'passed') missingProof.push('browser_ui_reality'); const mergeReadiness = missingProof.length === 0 ? 'merge-candidate' : 'hold'; return { prEvidenceStatus: text ? (missingProof.length ? 'incomplete' : 'parsed') : 'none', parsedPrNumber: Number(text.match(/(?:\bPR\s*#|#)(\d+)/i)?.[1] || 0) || null, changedFiles, testsRun, buildStatus, verifyStatus, browserProofStatus, sourceTruthWarnings: [], distTouched, riskFlags: /fail|error|risk/i.test(text) ? ['risk_or_failure_detected'] : [], mergeReadiness, missingProof, recommendedNextAction: missingProof.length ? 'Request Codex amendment with missing proof fields and rerun checks.' : 'Operator review and approval; do not auto-merge.' }; }
 export function buildPrEvidenceIntake({ prMetadata = null, missionSpec = {} } = {}) {
-  if (!prMetadata || typeof prMetadata !== 'object' || Object.keys(prMetadata).length === 0) {
-    return { normalizedStatus: 'no_pr_evidence', evidenceWarnings: ['No PR evidence supplied yet.'] };
-  }
+  const parsedSummary = parseCodexSummaryText(asText(prMetadata?.codexSummaryText || prMetadata?.summaryText, ''));
+  if (!prMetadata || typeof prMetadata !== 'object' || Object.keys(prMetadata).length === 0) return { normalizedStatus: 'no_pr_evidence', evidenceWarnings: ['No PR evidence supplied yet.'], ...parsedSummary };
   const finishAuthority = missionSpec?.finishAuthority || {};
-  const changedFiles = asList(prMetadata.changedFiles || prMetadata.files);
-  const generatedDistFiles = changedFiles.filter((file) => file.startsWith('apps/stephanos/dist/'));
+  const changedFiles = asList(prMetadata.changedFiles || prMetadata.files || parsedSummary.changedFiles);
+  const generatedDistFiles = changedFiles.filter((f) => f.startsWith('apps/stephanos/dist/'));
   const sourceLikely = asList(missionSpec?.repoArchitectureContext?.sourceFilesLikelyTouched);
-  const unexpectedFiles = sourceLikely.length
-    ? changedFiles.filter((file) => !sourceLikely.some((expected) => file.includes(expected) || expected.includes(file)) && !file.startsWith('apps/stephanos/dist/'))
-    : [];
-
+  const unexpectedFiles = sourceLikely.length ? changedFiles.filter((f) => !sourceLikely.some((e) => f.includes(e) || e.includes(f)) && !f.startsWith('apps/stephanos/dist/')) : [];
   const checksStatus = normalizeChecksStatus(prMetadata.checksStatus || prMetadata.checks_status);
   const requiredChecksStatus = normalizeChecksStatus(prMetadata.requiredChecksStatus || prMetadata.required_checks_status || prMetadata.requiredChecks);
   const closedState = asText(prMetadata.prState || prMetadata.state, '').toLowerCase() === 'closed';
-  const merged = prMetadata.merged === true;
-  const mergedAt = asText(prMetadata.mergedAt || prMetadata.merged_at, '');
+  const merged = prMetadata.merged === true; const mergedAt = asText(prMetadata.mergedAt || prMetadata.merged_at, '');
   const directMainCommitDetected = prMetadata.directMainCommitDetected === true || prMetadata.direct_main_commit_detected === true;
   const directMainCommitAt = asText(prMetadata.directMainCommitAt || prMetadata.direct_main_commit_at || prMetadata.commitAt || '', '');
   let normalizedStatus = 'stale_or_unknown';
-  if (merged && mergedAt) normalizedStatus = 'merged';
-  else if (directMainCommitDetected && directMainCommitAt) normalizedStatus = 'direct_main_commit';
-  else if (closedState && !merged) normalizedStatus = 'closed_unmerged';
-  else if (checksStatus === 'failed' || requiredChecksStatus === 'failed') normalizedStatus = 'checks_failed';
-  else if (checksStatus === 'pending' || requiredChecksStatus === 'pending') normalizedStatus = 'checks_pending';
-  else if (checksStatus === 'passed' || requiredChecksStatus === 'passed') normalizedStatus = 'merge_ready_candidate';
-  else if (asText(prMetadata.prState || prMetadata.state, '').toLowerCase() === 'open') normalizedStatus = 'open';
-
-  const warnings = [];
-  const autoMergeState = asText(prMetadata.autoMergeState || prMetadata.auto_merge_state, 'unknown');
-  if (autoMergeState.toLowerCase() === 'unknown') warnings.push('auto_merge_state_unknown');
-  if (merged && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) {
-    warnings.push('merged_without_recorded_mission_authority');
-  }
-  if (directMainCommitDetected && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) {
-    warnings.push('direct_main_commit_without_recorded_mission_authority');
-  }
-  if (unexpectedFiles.length > 0) warnings.push(`changed_files_outside_likely_scope:${unexpectedFiles.slice(0, 3).join(',')}`);
-  if (generatedDistFiles.length > 0) warnings.push(`generated_dist_files_detected:${generatedDistFiles.length}`);
-
+  if (merged && mergedAt) normalizedStatus = 'merged'; else if (directMainCommitDetected && directMainCommitAt) normalizedStatus = 'direct_main_commit'; else if (closedState && !merged) normalizedStatus = 'closed_unmerged'; else if (checksStatus === 'failed' || requiredChecksStatus === 'failed') normalizedStatus = 'checks_failed'; else if (checksStatus === 'pending' || requiredChecksStatus === 'pending') normalizedStatus = 'checks_pending'; else if (checksStatus === 'passed' || requiredChecksStatus === 'passed') normalizedStatus = 'merge_ready_candidate'; else if (asText(prMetadata.prState || prMetadata.state, '').toLowerCase() === 'open') normalizedStatus = 'open';
+  const warnings = []; const autoMergeState = asText(prMetadata.autoMergeState || prMetadata.auto_merge_state, 'unknown'); if (autoMergeState.toLowerCase() === 'unknown') warnings.push('auto_merge_state_unknown'); if (merged && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) warnings.push('merged_without_recorded_mission_authority'); if (directMainCommitDetected && !(finishAuthority.mergeAuthorityIncluded === true && finishAuthority.operatorApprovalRecorded === true)) warnings.push('direct_main_commit_without_recorded_mission_authority'); if (unexpectedFiles.length > 0) warnings.push(`changed_files_outside_likely_scope:${unexpectedFiles.slice(0, 3).join(',')}`); if (generatedDistFiles.length > 0) warnings.push(`generated_dist_files_detected:${generatedDistFiles.length}`);
   const codexTask = deriveCodexTaskFields({ prMetadata, prBody: prMetadata.body });
-
-  return {
-    prNumber: prMetadata.prNumber ?? prMetadata.number ?? null,
-    prUrl: asText(prMetadata.prUrl || prMetadata.url, ''),
-    prTitle: asText(prMetadata.prTitle || prMetadata.title, ''),
-    prState: asText(prMetadata.prState || prMetadata.state, 'unknown'),
-    prBranch: asText(prMetadata.prBranch || prMetadata.headRefName || prMetadata.branch, ''),
-    baseBranch: asText(prMetadata.baseBranch || prMetadata.baseRefName || '', ''),
-    headSha: asText(prMetadata.headSha || '', ''),
-    mergeCommitSha: asText(prMetadata.mergeCommitSha || '', ''),
-    createdAt: asText(prMetadata.createdAt || '', ''),
-    updatedAt: asText(prMetadata.updatedAt || '', ''),
-    closedAt: asText(prMetadata.closedAt || '', ''),
-    mergedAt,
-    merged,
-    mergedBy: asText(prMetadata.mergedBy || '', ''),
-    directMainCommitDetected,
-    directMainCommitSha: asText(prMetadata.directMainCommitSha || prMetadata.direct_main_commit_sha || prMetadata.commitSha || '', ''),
-    directMainCommitAt,
-    directMainCommitBy: asText(prMetadata.directMainCommitBy || prMetadata.direct_main_commit_by || prMetadata.commitBy || '', ''),
-    mergeSource: asText(prMetadata.mergeSource || 'unknown', 'unknown'),
-    autoMergeState,
-    checksStatus,
-    requiredChecksStatus,
-    changedFiles,
-    changedFileCount: Number(prMetadata.changedFileCount || changedFiles.length || 0),
-    commitsCount: Number(prMetadata.commitsCount || 0),
-    additions: Number(prMetadata.additions || 0),
-    deletions: Number(prMetadata.deletions || 0),
-    codexTaskUrl: codexTask.codexTaskUrl,
-    codexTaskId: codexTask.codexTaskId,
-    author: asText(prMetadata.author || '', ''),
-    actor: asText(prMetadata.actor || '', ''),
-    evidenceSource: asText(prMetadata.evidenceSource || 'operator_supplied_metadata', 'operator_supplied_metadata'),
-    evidenceFreshness: asText(prMetadata.evidenceFreshness || 'unknown', 'unknown'),
-    evidenceWarnings: warnings,
-    normalizedStatus,
-  };
+  return { prNumber: prMetadata.prNumber ?? prMetadata.number ?? parsedSummary.parsedPrNumber ?? null, codexTaskId: codexTask.codexTaskId, codexTaskUrl: codexTask.codexTaskUrl, directMainCommitDetected, evidenceWarnings: warnings, normalizedStatus, changedFiles, checksStatus, merged, mergedAt, autoMergeState, ...parsedSummary };
 }

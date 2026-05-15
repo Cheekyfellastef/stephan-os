@@ -30,6 +30,10 @@ export function buildResponsePlan(input = {}) {
   const distRebuilt = String(input?.missionState?.distRebuilt || '').toLowerCase() === 'yes';
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
+  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();
+  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || '').toLowerCase();
+  const prAlreadyMerged = String(input?.missionState?.prEvidenceStatus || '').toLowerCase() === 'merged';
+
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
   const operatorProfile = input?.chatContextPack?.providerSummaries?.operatorProfile || {};
@@ -94,8 +98,17 @@ export function buildResponsePlan(input = {}) {
       warnings.push('dist rebuild proof missing while dist is required.');
       recommendedNextAction = 'rebuild dist and rerun verify before merge';
     }
+    if (prAlreadyMerged) {
+      mergeDecision = 'already-merged';
+      recommendedNextAction = 'PR already merged; run post-merge validation and monitor regressions';
+    }
+    if (prMissingProof || ['hold','needs-amendment','incomplete'].includes(prMergeReadiness)) {
+      mergeDecision = 'wait';
+      warnings.push('PR evidence indicates missing proof or amendment required.');
+      recommendedNextAction = 'request amendment prompt with missing proof fields';
+    }
     if (!warnings.length) {
-      mergeDecision = 'yes';
+      mergeDecision = 'merge-candidate';
       riskLevel = 'low';
       proofRequired = 'no';
       recommendedNextAction = 'perform final operator check then merge';
