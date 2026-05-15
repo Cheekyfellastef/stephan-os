@@ -38,6 +38,7 @@ export function buildMissionRepairLoopModel(input = {}) {
   const browserProofAvailable = input.latestSupportSnapshotStatus?.browserProofAvailable === true;
   const verificationReady = asText(input.missionVerificationReadinessLevel, 'unknown');
   const verificationProof = asText(input.missionVerificationProofStatus, 'unknown');
+  const prEvidence = input.prEvidenceIntake || {};
   const attemptsExhausted = currentAttempt >= maxAttempts;
 
   const buildVerifyFailed = latestBuildVerifyStatus === 'fail';
@@ -58,8 +59,10 @@ export function buildMissionRepairLoopModel(input = {}) {
   const proofFieldsRequired = failingAcceptanceFields.length > 0
     ? [...failingAcceptanceFields]
     : asList(input.proofFieldsRequired);
-  const operatorDecisionRequired = status === 'blocked';
-  const mergeRecommendation = status === 'passed' && verificationProof !== 'failed' ? 'merge-candidate' : 'hold';
+  const prMergeReadiness = asText(prEvidence.mergeReadiness, 'merge-candidate');
+  const needsAmendment = prMergeReadiness === 'needs-amendment' || (Array.isArray(prEvidence.missingProof) && prEvidence.missingProof.length > 0);
+  const operatorDecisionRequired = status === 'blocked' || prMergeReadiness === 'merge-candidate';
+  const mergeRecommendation = status === 'passed' && verificationProof !== 'failed' && prMergeReadiness === 'merge-candidate' ? 'merge-candidate' : (needsAmendment ? 'amend' : 'hold');
   const nextPrompt = status === 'passed'
     ? 'All acceptance fields pass. Prepare merge evidence summary only.'
     : latestFailingField
@@ -108,6 +111,10 @@ export function buildMissionRepairLoopModel(input = {}) {
     mergeRecommendation,
     operatorDecisionRequired,
     sourceTruthsUsed,
+    latestPrEvidenceStatus: asText(prEvidence.prEvidenceStatus, 'none'),
+    latestPrEvidenceMergeReadiness: prMergeReadiness,
+    latestPrEvidenceMissingProof: asList(prEvidence.missingProof),
+    amendmentNeeded: needsAmendment,
     duplicateAuthorityDetected,
     warnings: asList(input.warnings),
     likelySubsystem,
