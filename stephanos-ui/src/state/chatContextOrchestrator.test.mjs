@@ -105,3 +105,14 @@ test('buildChatContextPack emits canonical classifierProof for do i merge this p
   assert.equal(pack.classifierProof.responseMode, 'merge-decision');
   assert.equal(pack.classifierProof.defaultPackUsed, 'no');
 });
+
+
+test('merge-decision uses required context providers and stays compact', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });
+  for (const id of ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']) {
+    assert.ok(pack.contextProviderIdsUsed.includes(id));
+  }
+  assert.ok(pack.relevantCanon.length > 0);
+  assert.equal(typeof pack.providerSummaries, 'object');
+  assert.equal(pack.providerSummaries.rawSupportSnapshot, undefined);
+});

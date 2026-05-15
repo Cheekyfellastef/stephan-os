@@ -29,6 +29,8 @@ function createBaseStore(overrides = {}) {
       chat_context_ui_reality_status: 'OK',
       chat_context_mission_state: 'draft',
       chat_context_next_action: 'Collect merge proof before deciding',
+      chat_context_provider_ids_used: 'uiReality|proofState|canonRules',
+      chat_context_provider_warning_count: 1,
     },
     ...overrides,
   };
@@ -158,4 +160,6 @@ test('AIConsole context indicator renders active merge-decision state from execu
   assert.match(rendered, /Relevant Canon Count: 2/);
   assert.match(rendered, /UI Reality Status: OK/);
   assert.match(rendered, /Next Action: Collect merge proof before deciding/);
+  assert.match(rendered, /Providers Used Count: 3/);
+  assert.match(rendered, /Provider Warning Count: 1/);
 });

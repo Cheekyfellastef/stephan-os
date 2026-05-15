@@ -2340,3 +2340,12 @@ test('support snapshot projects rebuilt-from-final-message classifier proof fiel
   assert.match(snapshot, /Chat Context Rebuilt At Final Attachment: yes/);
   assert.match(snapshot, /Chat Context Rebuild Source Field: retrieval_query/);
 });
+
+test('support snapshot reports context provider registry fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { chatContextPackStatus: 'active' } });
+  assert.match(snapshot, /Context Provider Registry Status:/);
+  assert.match(snapshot, /Context Providers Registered:/);
+  assert.match(snapshot, /Context Providers Used:/);
+  assert.match(snapshot, /Context Provider Warning Count:/);
+  assert.match(snapshot, /Context Provider Next Actions:/);
+});
