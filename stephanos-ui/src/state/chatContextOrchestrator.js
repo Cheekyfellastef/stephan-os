@@ -140,10 +140,18 @@ export function buildChatContextPack(input = {}) {
   if (String(uiReality.severity || '').toUpperCase() === 'FAIL') warnings.push('UI Reality FAIL: visual proof required before merge claims.');
   const uiTask = /\b(ui|pane|render|layout|button|console|collapse|arrange)\b/i.test(operatorMessage) || responseMode === 'diagnosis';
   const mergeDecisionTask = responseMode === 'merge-decision';
+  const requiredProviders = mergeDecisionTask
+    ? ['uiReality', 'proofState', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
+    : [];
+  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'agentState'] : [];
+  const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
     : (uiTask ? ['ui', 'proof', 'source-truth'] : ['general']);
-  const providerSnapshot = buildContextProviderSnapshot(input);
+  const providerSnapshot = buildContextProviderSnapshot({
+    ...input,
+    contextProviderIdsRequested,
+  });
   const relevantCanon = CANON_RULES.filter((rule) => {
     if (mergeDecisionTask) return rule.tags.includes('merge') || rule.tags.includes('pr') || rule.tags.includes('codex') || rule.tags.includes('truth') || rule.tags.includes('ui') || rule.tags.includes('proof');
     if (uiTask) return rule.tags.includes('ui') || rule.tags.includes('truth') || rule.tags.includes('proof');
@@ -155,6 +163,9 @@ export function buildChatContextPack(input = {}) {
   const contextProviderProofState = providerSnapshot.contextProviderProofState;
   const providerNextActions = providerSnapshot.providerNextActions;
   const providerSummaries = providerSnapshot.providerSummaries;
+  const contextProviderIdsRegistered = providerSnapshot.contextProviderIdsRegistered;
+  const contextProviderRegistryStatus = providerSnapshot.contextProviderRegistryStatus;
+  const contextProviderCanonLinks = providerSnapshot.contextProviderCanonLinks;
 
   const compactSummary = {
     status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
@@ -170,8 +181,12 @@ export function buildChatContextPack(input = {}) {
     warningCount: warnings.length,
     warnings,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
+    contextProviderIdsRegistered,
+    contextProviderRegistryStatus,
     contextProviderWarningCount: providerSnapshot.contextProviderWarningCount,
     contextProviderProofState,
+    contextProviderNextActions: providerNextActions,
+    contextProviderCanonLinksCount: contextProviderCanonLinks.length,
     contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
@@ -207,8 +222,12 @@ export function buildChatContextPack(input = {}) {
     providerWarnings: providerSnapshot.providerWarnings,
     providerNextActions,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
+    contextProviderIdsRegistered,
+    contextProviderRegistryStatus,
     contextProviderWarningCount: providerSnapshot.contextProviderWarningCount,
     contextProviderProofState,
+    contextProviderNextActions: providerNextActions,
+    contextProviderCanonLinksCount: contextProviderCanonLinks.length,
     relevantMemory: Array.isArray(input.memoryState?.candidates) ? input.memoryState.candidates.slice(0, 3) : [],
     currentTruthSummary: {
       runtime: String(input.runtimeTruth?.status || 'unknown'),
@@ -250,7 +269,7 @@ export function buildChatContextPack(input = {}) {
       route: String(routeTruth.routeKind || 'unknown'),
       provider: String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown'),
       canon: relevantCanon.map((rule) => rule.text),
-      contextProviderCanonLinks: providerSnapshot.contextProviderCanonLinks,
+      contextProviderCanonLinks,
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
     },
     classifierDebug: {

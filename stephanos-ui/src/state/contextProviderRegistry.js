@@ -37,6 +37,10 @@ export function getRegisteredContextProviders() {
 }
 
 export function buildContextProviderSnapshot(input = {}) {
+  const requestedProviderIds = normalizeList(input.contextProviderIdsRequested);
+  const selectedProviders = requestedProviderIds.length > 0
+    ? providers.filter((provider) => requestedProviderIds.includes(provider.id))
+    : providers.slice();
   const usedProviders = [];
   const warnings = [];
   const nextActions = [];
@@ -45,7 +49,7 @@ export function buildContextProviderSnapshot(input = {}) {
   const sourceRefs = new Set();
   const providerSummaries = {};
 
-  for (const provider of providers) {
+  for (const provider of selectedProviders) {
     usedProviders.push(provider.id);
     const summary = provider.getSummary(input) || {};
     providerSummaries[provider.id] = summary;
@@ -57,6 +61,8 @@ export function buildContextProviderSnapshot(input = {}) {
   }
 
   return {
+    contextProviderRegistryStatus: providers.length > 0 ? 'active' : 'inactive',
+    contextProviderIdsRegistered: providers.map((provider) => provider.id),
     providerSummaries,
     providerWarnings: warnings,
     providerNextActions: nextActions,

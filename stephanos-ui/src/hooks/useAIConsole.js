@@ -145,6 +145,8 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_warning_count: Number(chatContextPack?.compactSummary?.warningCount || 0),
     chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : 'none',
     chat_context_provider_ids_used: Array.isArray(chatContextPack?.contextProviderIdsUsed) ? chatContextPack.contextProviderIdsUsed.join('|') : 'none',
+    chat_context_provider_registry_status: chatContextPack?.contextProviderRegistryStatus || 'inactive',
+    chat_context_provider_ids_registered: Array.isArray(chatContextPack?.contextProviderIdsRegistered) ? chatContextPack.contextProviderIdsRegistered.join('|') : 'none',
     chat_context_provider_warning_count: Number(chatContextPack?.contextProviderWarningCount || 0),
     chat_context_provider_next_actions: Array.isArray(chatContextPack?.providerNextActions) ? chatContextPack.providerNextActions.slice(0, 3).join(' | ') : 'none',
     chat_context_provider_proof_state: chatContextPack?.contextProviderProofState ? JSON.stringify(chatContextPack.contextProviderProofState) : 'unknown',

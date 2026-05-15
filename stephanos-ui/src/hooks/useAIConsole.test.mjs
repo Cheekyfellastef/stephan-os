@@ -153,3 +153,14 @@ test('buildChatContextAttachmentMetadata rebuild candidate priority includes ret
   assert.match(source, /\['raw_input', requestPayload\?\.raw_input\]/);
   assert.match(source, /chat_context_intent_classifier_matched_rule: classifierProof\?\.intentClassifierMatchedRule \|\| requestPack\.intentClassifierMatchedRule \|\| requestPack\.recommendedResponseMode \|\| rebuiltPack\?\.intentClassifierMatchedRule \|\| 'direct-answer'/);
 });
+
+test('buildChatContextExecutionMetadata emits provider registry metadata fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /chat_context_provider_registry_status/);
+  assert.match(source, /chat_context_provider_ids_registered/);
+  assert.match(source, /chat_context_provider_ids_used/);
+  assert.match(source, /chat_context_provider_warning_count/);
+  assert.match(source, /chat_context_provider_proof_state/);
+  assert.match(source, /chat_context_provider_next_actions/);
+  assert.match(source, /chat_context_provider_canon_links_count/);
+});

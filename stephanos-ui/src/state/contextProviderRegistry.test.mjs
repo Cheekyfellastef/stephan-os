@@ -16,8 +16,16 @@ test('registers deterministic providers and ignores invalid shapes', () => {
 
 test('returns compact summaries and handles missing input safely', () => {
   const snapshot = buildContextProviderSnapshot();
+  assert.equal(snapshot.contextProviderRegistryStatus, 'active');
+  assert.ok(Array.isArray(snapshot.contextProviderIdsRegistered));
+  assert.ok(snapshot.contextProviderIdsRegistered.includes('uiReality'));
   assert.ok(Array.isArray(snapshot.contextProviderIdsUsed));
   assert.ok(snapshot.contextProviderIdsUsed.includes('uiReality'));
   assert.equal(typeof snapshot.providerSummaries.uiReality, 'object');
   assert.equal(typeof snapshot.contextProviderWarningCount, 'number');
+});
+
+test('requested provider ids constrain used providers safely', () => {
+  const snapshot = buildContextProviderSnapshot({ contextProviderIdsRequested: ['uiReality', 'missing-provider'] });
+  assert.deepEqual(snapshot.contextProviderIdsUsed, ['uiReality']);
 });
