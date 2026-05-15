@@ -82,11 +82,24 @@ test('buildChatContextAttachmentMetadata prefers request-pack classifier proof f
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const requestPackMatchInput = pickChatContextField\(\s*requestPack\.matchInput,\s*requestPackClassifierDebug\.classifierMatchInput,/);
   assert.match(source, /const requestPackMergeRulePattern = pickChatContextField\(\s*requestPack\.mergeRulePattern,\s*requestPackClassifierDebug\.classifierMergeRulePattern,/);
-  assert.match(source, /chat_context_match_input: requestPackMatchInput \|\| 'n\/a'/);
+  assert.match(source, /chat_context_match_input: resolvedMatchInput/);
   assert.match(source, /chat_context_merge_rule_test_result: requestPackMergeRuleTestResult \|\| 'no'/);
   assert.match(source, /chat_context_first_matching_rule: requestPackFirstMatchingRule \|\| 'direct-answer'/);
   assert.match(source, /chat_context_evaluated_rule_results: requestPackEvaluatedRuleResults\.length > 0 \? requestPackEvaluatedRuleResults\.join\(','\) : 'n\/a'/);
-  assert.match(source, /chat_context_classifier_proof_missing: classifierProofMissing \? 'yes' : 'no'/);
+  assert.match(source, /chat_context_classifier_proof_missing: resolvedProofMissing \? 'yes' : 'no'/);
+});
+
+test('buildChatContextAttachmentMetadata uses operator-message fallback + proof warning when classifier proof missing', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const resolvedMatchInput = requestPackMatchInput \|\| normalizedOperatorMessage \|\| rawOperatorMessage \|\| 'n\/a'/);
+  assert.match(source, /chat_context_match_input: resolvedMatchInput/);
+  assert.match(source, /chat_context_classifier_proof_warning: resolvedProofMissing \? 'request-pack-classifier-proof-missing' : 'none'/);
+});
+
+test('useAIConsole re-attaches chat context metadata in final execution metadata setter path', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const finalExecutionMetadata = attachChatContextToExecutionMetadata\(\{/);
+  assert.match(source, /setLastExecutionMetadata\(finalExecutionMetadata\)/);
 });
 
 test('request classifier proof wins over raw\/trace direct-answer defaults', async () => {
