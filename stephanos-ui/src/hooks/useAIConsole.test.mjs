@@ -73,9 +73,27 @@ test('useAIConsole chat context metadata includes operator message proof fields'
 test('useAIConsole live submit path preserves merge-decision metadata attachment fields', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /chat_context_response_mode:\s*pickChatContextFieldPreferRequestNonDefault/);
-  assert.match(source, /chat_context_intent_classifier_matched_rule:\s*requestPayload\?\.chatContextPack\?\.intentClassifierMatchedRule/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule:\s*requestPack\.intentClassifierMatchedRule/);
   assert.match(source, /chat_context_attachment_probe_response_mode:\s*pickChatContextFieldPreferRequestNonDefault/);
   assert.match(source, /defaultPackUsed = \(deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer'\)\s*\?\s*'no'/);
+});
+
+test('buildChatContextAttachmentMetadata prefers request-pack classifier proof fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const requestPackMatchInput = pickChatContextField\(\s*requestPack\.matchInput,\s*requestPackClassifierDebug\.classifierMatchInput,/);
+  assert.match(source, /const requestPackMergeRulePattern = pickChatContextField\(\s*requestPack\.mergeRulePattern,\s*requestPackClassifierDebug\.classifierMergeRulePattern,/);
+  assert.match(source, /chat_context_match_input: requestPackMatchInput \|\| 'n\/a'/);
+  assert.match(source, /chat_context_merge_rule_test_result: requestPackMergeRuleTestResult \|\| 'no'/);
+  assert.match(source, /chat_context_first_matching_rule: requestPackFirstMatchingRule \|\| 'direct-answer'/);
+  assert.match(source, /chat_context_evaluated_rule_results: requestPackEvaluatedRuleResults\.length > 0 \? requestPackEvaluatedRuleResults\.join\(','\) : 'n\/a'/);
+  assert.match(source, /chat_context_classifier_proof_missing: classifierProofMissing \? 'yes' : 'no'/);
+});
+
+test('request classifier proof wins over raw\/trace direct-answer defaults', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /pickChatContextFieldPreferRequestNonDefault\('chat_context_response_mode', raw\.chat_context_response_mode, trace\.chat_context_response_mode, requestChatContext\.chat_context_response_mode\)/);
+  assert.match(source, /chat_context_intent_classifier_matched_rule: requestPack\.intentClassifierMatchedRule \|\| requestPack\.recommendedResponseMode \|\| 'direct-answer'/);
+  assert.match(source, /const defaultPackUsed = \(deterministicRuleMatched && deterministicRuleMatched !== 'direct-answer'\)\s*\?\s*'no'/);
 });
 
 

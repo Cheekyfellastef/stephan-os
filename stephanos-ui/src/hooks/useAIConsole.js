@@ -300,16 +300,39 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     : (requestChatContext.chat_context_pack_status !== 'active' ? 'yes' : 'no');
   const overwrittenByDefault = validRequestPack && (isDefaultChatContextValue('chat_context_pack_status', raw.chat_context_pack_status) || isDefaultChatContextValue('chat_context_response_mode', raw.chat_context_response_mode));
   const metadataKeys = Object.keys(merged).filter((key) => key.startsWith('chat_context_') && merged[key] !== undefined && merged[key] !== null && String(merged[key]).trim() !== '');
+  const requestPack = requestPayload?.chatContextPack || {};
+  const requestPackClassifierDebug = requestPack.classifierDebug || {};
+  const requestPackMatchInput = pickChatContextField(
+    requestPack.matchInput,
+    requestPackClassifierDebug.classifierMatchInput,
+  );
+  const requestPackMergeRulePattern = pickChatContextField(
+    requestPack.mergeRulePattern,
+    requestPackClassifierDebug.classifierMergeRulePattern,
+  );
+  const requestPackMergeRuleTestResult = pickChatContextField(
+    requestPack.mergeRuleTestResult,
+    requestPackClassifierDebug.classifierMergeRuleTestResult,
+  );
+  const requestPackFirstMatchingRule = pickChatContextField(
+    requestPack.firstMatchingRule,
+    requestPackClassifierDebug.classifierFirstMatchingRule,
+    requestPack.intentClassifierMatchedRule,
+  );
+  const requestPackEvaluatedRuleResults = Array.isArray(requestPack.evaluatedRuleResults) && requestPack.evaluatedRuleResults.length > 0
+    ? requestPack.evaluatedRuleResults
+    : (Array.isArray(requestPackClassifierDebug.classifierCandidateRulesEvaluated) ? requestPackClassifierDebug.classifierCandidateRulesEvaluated : []);
+  const classifierProofMissing = !(requestPackMatchInput && requestPackMergeRulePattern && requestPackMergeRuleTestResult && requestPackFirstMatchingRule && requestPackEvaluatedRuleResults.length > 0);
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
     chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
-    chat_context_intent_classifier_matched_rule: requestPayload?.chatContextPack?.intentClassifierMatchedRule || requestPayload?.chatContextPack?.recommendedResponseMode || 'direct-answer',
-    chat_context_match_input: requestPayload?.chatContextPack?.classifierDebug?.classifierMatchInput || 'n/a',
-    chat_context_merge_rule_pattern: requestPayload?.chatContextPack?.classifierDebug?.classifierMergeRulePattern || 'none',
-    chat_context_merge_rule_test_result: requestPayload?.chatContextPack?.classifierDebug?.classifierMergeRuleTestResult || 'no',
-    chat_context_first_matching_rule: requestPayload?.chatContextPack?.classifierDebug?.classifierFirstMatchingRule || requestPayload?.chatContextPack?.intentClassifierMatchedRule || 'direct-answer',
-    chat_context_evaluated_rule_results: Array.isArray(requestPayload?.chatContextPack?.classifierDebug?.classifierCandidateRulesEvaluated) ? requestPayload.chatContextPack.classifierDebug.classifierCandidateRulesEvaluated.join(',') : 'n/a',
+    chat_context_intent_classifier_matched_rule: requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || 'direct-answer',
+    chat_context_match_input: requestPackMatchInput || 'n/a',
+    chat_context_merge_rule_pattern: requestPackMergeRulePattern || 'none',
+    chat_context_merge_rule_test_result: requestPackMergeRuleTestResult || 'no',
+    chat_context_first_matching_rule: requestPackFirstMatchingRule || 'direct-answer',
+    chat_context_evaluated_rule_results: requestPackEvaluatedRuleResults.length > 0 ? requestPackEvaluatedRuleResults.join(',') : 'n/a',
     chat_context_builder_function: requestPayload?.chatContextPack?.classifierDebug?.builderFunction || 'buildChatContextPack',
     chat_context_build_source: requestPayload?.submissionSource || requestPayload?.chatContextPack?.compactSummary?.buildSource || 'stephanos-mission-console',
     chat_context_default_pack_used: defaultPackUsed,
@@ -324,6 +347,7 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_classifier_fallback_applied: requestPayload?.chatContextPack?.classifierDebug?.classifierFallbackApplied || 'no',
     chat_context_fallback_branch_taken: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchTaken || 'no',
     chat_context_fallback_branch_reason: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchReason || 'none',
+    chat_context_classifier_proof_missing: classifierProofMissing ? 'yes' : 'no',
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
