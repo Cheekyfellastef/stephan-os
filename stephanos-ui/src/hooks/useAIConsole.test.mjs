@@ -195,3 +195,12 @@ test('useAIConsole live submit path creates and projects command envelope metada
   assert.match(source, /chat_context_response_mode/);
   assert.match(source, /let commandEnvelopeFinal = effectiveRequestPayload\?\.commandEnvelope \|\| requestPayload\.commandEnvelope \|\| null/);
 });
+
+
+test('useAIConsole wires response planner into metadata and prompt guidance', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /buildResponsePlan/);
+  assert.match(source, /response_planner_status/);
+  assert.match(source, /responsePlannerGuidance/);
+  assert.match(source, /buildResponsePlanExecutionMetadata/);
+});
