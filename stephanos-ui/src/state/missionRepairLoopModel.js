@@ -41,6 +41,7 @@ export function buildMissionRepairLoopModel(input = {}) {
   const prEvidence = input.prEvidenceIntake || {};
   const attemptsExhausted = currentAttempt >= maxAttempts;
   const prMergeReadiness = asText(prEvidence.mergeReadiness, 'merge-candidate');
+  const prEvidenceStatus = asText(prEvidence.status || prEvidence.prEvidenceStatus, 'none');
 
   const buildVerifyFailed = latestBuildVerifyStatus === 'fail';
   const testsFailed = latestTestResults === 'fail';
@@ -50,6 +51,7 @@ export function buildMissionRepairLoopModel(input = {}) {
   let status = 'active';
   if (attemptsExhausted) status = 'blocked';
   else if (buildVerifyFailed || testsFailed || verificationBlocked) status = 'blocked';
+  else if (prEvidenceStatus === 'unavailable' || prEvidenceStatus === 'needs-connector') status = 'blocked/needs-evidence';
   else if (prEvidence.checksStatus === 'failed' || prEvidence.buildStatus === 'failed' || prEvidence.verifyStatus === 'failed') status = 'needs-repair';
   else if (uiRealityFailed || !supportAcceptanceMatch || failingAcceptanceFields.length > 0) status = 'needs-repair';
   else if (browserProofRequired && !browserProofAvailable || prMergeReadiness === 'needs-proof') status = 'needs-proof';

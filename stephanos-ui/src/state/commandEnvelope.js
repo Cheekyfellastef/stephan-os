@@ -33,7 +33,7 @@ export function createCommandEnvelope(input = {}) {
     operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
     codexDispatch: { packetId: 'none', status: 'not-ready', approvalRequired: 'yes', targetSubsystems: [] },
-    prEvidence: { status: 'none', prNumber: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
+    prEvidence: { status: 'none', prNumber: 'unknown', repo: 'unknown', checksStatus: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
   };
 }
 
@@ -97,6 +97,8 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
     prEvidence: {
       status: asText(prEvidence?.status, 'none'),
       prNumber: asText(prEvidence?.prNumber, 'unknown'),
+      repo: asText(prEvidence?.repo, 'unknown'),
+      checksStatus: asText(prEvidence?.checksStatus, 'unknown'),
       mergeReadiness: asText(prEvidence?.mergeReadiness, 'wait'),
       missingProof: asList(prEvidence?.missingProof),
       nextAction: asText(prEvidence?.recommendedNextAction, 'Collect PR evidence.'),
@@ -144,6 +146,8 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_repair_loop_status: asText(envelope?.proof?.missionRepairLoopStatus || envelope?.missionRepairLoopStatus, 'unknown'),
     command_envelope_pr_evidence_status: asText(envelope?.prEvidence?.status, 'none'),
     command_envelope_pr_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
+    command_envelope_pr_repo: asText(envelope?.prEvidence?.repo, 'unknown'),
+    command_envelope_pr_checks_status: asText(envelope?.prEvidence?.checksStatus, 'unknown'),
     command_envelope_pr_merge_readiness: asText(envelope?.prEvidence?.mergeReadiness, 'wait'),
     command_envelope_pr_missing_proof: asList(envelope?.prEvidence?.missingProof).join('|') || 'none',
     command_envelope_pr_next_action: asText(envelope?.prEvidence?.nextAction, 'Collect PR evidence.'),

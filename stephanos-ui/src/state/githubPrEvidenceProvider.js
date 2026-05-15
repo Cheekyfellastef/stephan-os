@@ -20,8 +20,11 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const connector = input.connectorEvidence || {};
   const pasted = input.pastedEvidence || {};
   const promptRef = parsePrReferenceFromPrompt(input.operatorPrompt || '');
-  const source = asText(connector.source || pasted.source || (promptRef.prNumber ? 'operator-input' : ''), 'none');
+  const hasConnectorPayload = connector && Object.keys(connector).length > 0;
+  const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
+  const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : '')), 'none');
   const prNumber = connector.prNumber ?? pasted.prNumber ?? promptRef.prNumber ?? null;
+  const prUrl = asText(connector.prUrl || pasted.prUrl || promptRef.prUrl, '');
   const repo = asText(connector.repo || pasted.repo || promptRef.repo, '');
   const changedFiles = asList(connector.changedFiles || pasted.changedFiles);
   const checksStatus = asText(connector.checksStatus || pasted.checksStatus, 'unknown');
@@ -45,16 +48,19 @@ export function buildGithubPrEvidenceProvider(input = {}) {
 
   let status = 'unavailable';
   let mergeReadiness = 'wait';
-  let recommendedNextAction = 'Connect/read GitHub PR evidence or paste PR summary.';
-  if (source !== 'none' || prNumber) {
-    status = 'parsed';
+  let recommendedNextAction = 'Connect read-only GitHub PR evidence or paste PR summary.';
+  if (source !== 'none') {
+    status = 'fetched';
     recommendedNextAction = 'Collect checks/build/verify/browser proof before merge decision.';
+  } else if (prNumber || prUrl) {
+    status = 'needs-connector';
+    recommendedNextAction = 'Connector unavailable; connect read-only GitHub evidence or paste PR summary.';
   }
   if (merged) { mergeReadiness = 'already-merged'; recommendedNextAction = 'Run post-merge validation.'; }
   else if (!prNumber) { mergeReadiness = 'wait'; }
-  else if (checksStatus === 'failed' || buildStatus === 'failed' || verifyStatus === 'failed') { mergeReadiness = 'needs-amendment'; }
-  else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; }
-  else if (status === 'parsed') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator review before merge.'; }
+  else if (checksStatus === 'failed' || buildStatus === 'failed' || verifyStatus === 'failed') { mergeReadiness = 'needs-amendment'; recommendedNextAction = 'Ask Codex to amend existing PR and rerun checks.'; }
+  else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; recommendedNextAction = 'Collect missing proof fields before merge decision.'; }
+  else if (status === 'fetched') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator approval required before merge.'; }
 
-  return { status, source, repo, prNumber, prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged, headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus, codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction, parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length };
+  return { status, source, repo, prNumber, prUrl, prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged, headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus, codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction, parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length };
 }
