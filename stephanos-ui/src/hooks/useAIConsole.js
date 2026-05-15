@@ -323,12 +323,15 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     ? requestPack.evaluatedRuleResults
     : (Array.isArray(requestPackClassifierDebug.classifierCandidateRulesEvaluated) ? requestPackClassifierDebug.classifierCandidateRulesEvaluated : []);
   const classifierProofMissing = !(requestPackMatchInput && requestPackMergeRulePattern && requestPackMergeRuleTestResult && requestPackFirstMatchingRule && requestPackEvaluatedRuleResults.length > 0);
+  const resolvedMatchInput = requestPackMatchInput || normalizedOperatorMessage || rawOperatorMessage || 'n/a';
+  const resolvedProofMissing = classifierProofMissing
+    && (!normalizedOperatorMessage || resolvedMatchInput === 'n/a');
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
     chat_context_normalized_operator_message: normalizedOperatorMessage || 'n/a',
     chat_context_intent_classifier_matched_rule: requestPack.intentClassifierMatchedRule || requestPack.recommendedResponseMode || 'direct-answer',
-    chat_context_match_input: requestPackMatchInput || 'n/a',
+    chat_context_match_input: resolvedMatchInput,
     chat_context_merge_rule_pattern: requestPackMergeRulePattern || 'none',
     chat_context_merge_rule_test_result: requestPackMergeRuleTestResult || 'no',
     chat_context_first_matching_rule: requestPackFirstMatchingRule || 'direct-answer',
@@ -347,7 +350,8 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_classifier_fallback_applied: requestPayload?.chatContextPack?.classifierDebug?.classifierFallbackApplied || 'no',
     chat_context_fallback_branch_taken: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchTaken || 'no',
     chat_context_fallback_branch_reason: requestPayload?.chatContextPack?.classifierDebug?.fallbackBranchReason || 'none',
-    chat_context_classifier_proof_missing: classifierProofMissing ? 'yes' : 'no',
+    chat_context_classifier_proof_missing: resolvedProofMissing ? 'yes' : 'no',
+    chat_context_classifier_proof_warning: resolvedProofMissing ? 'request-pack-classifier-proof-missing' : 'none',
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
@@ -3235,7 +3239,13 @@ export function useAIConsole() {
         lastCheckedAt: new Date().toISOString(),
       }));
 
-      setLastExecutionMetadata(executionMetadata);
+      const finalExecutionMetadata = attachChatContextToExecutionMetadata({
+        executionMetadata,
+        rawExecutionMetadata: data?.data?.execution_metadata || {},
+        requestTrace: data?.data?.request_trace || {},
+        requestPayload: effectiveRequestPayload || {},
+      });
+      setLastExecutionMetadata(finalExecutionMetadata);
 
       setDebugData({
         request_payload: effectiveRequestPayload,
@@ -3244,9 +3254,9 @@ export function useAIConsole() {
         timing_ms: data.timing_ms ?? Math.round(performance.now() - startedAt),
         error: data.error,
         error_code: data.error_code ?? data.debug?.error_code ?? null,
-        ui_requested_provider: executionMetadata.ui_requested_provider,
-        backend_default_provider: executionMetadata.backend_default_provider,
-        requested_provider_intent: executionMetadata.requested_provider_intent,
+        ui_requested_provider: finalExecutionMetadata.ui_requested_provider,
+        backend_default_provider: finalExecutionMetadata.backend_default_provider,
+        requested_provider_intent: finalExecutionMetadata.requested_provider_intent,
         requested_provider: effectiveRequestPayload.provider,
         selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,
