@@ -124,7 +124,9 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_codex_dispatch_packet_id: asText(envelope?.codexDispatch?.packetId, 'none'),
     command_envelope_codex_dispatch_status: asText(envelope?.codexDispatch?.status, 'not-ready'),
     command_envelope_codex_dispatch_approval_required: asText(envelope?.codexDispatch?.approvalRequired, 'yes'),
+    command_envelope_operator_approval_required: asText(envelope?.codexDispatch?.approvalRequired, 'yes'),
     command_envelope_codex_dispatch_target_subsystems: asList(envelope?.codexDispatch?.targetSubsystems).join('|') || 'none',
+    command_envelope_repair_loop_status: asText(envelope?.proof?.missionRepairLoopStatus || envelope?.missionRepairLoopStatus, 'unknown'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

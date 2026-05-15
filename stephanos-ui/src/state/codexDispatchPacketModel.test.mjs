@@ -11,3 +11,22 @@ test('buildCodexDispatchPacket creates approval-gated packet with canon/tests/pr
   assert.ok(packet.canonRules.join(' ').includes('dist is never source of truth'));
   assert.equal(packet.browserProofRequired, true);
 });
+
+test('buildCodexDispatchPacket uses mission repair bridge draft and remains approval gated', () => {
+  const packet = buildCodexDispatchPacket({
+    missionRepairCodexBridge: {
+      codexDispatchPacketDraft: {
+        missionTitle: 'Repair copy feedback proof',
+        missionClass: 'ui-repair',
+        targetSubsystems: ['ui-reality'],
+        forbiddenActions: ['Do not bypass operator approval'],
+        requiredTests: ['node --test stephanos-ui/src/state/missionRepairCodexBridge.test.mjs'],
+        codexPrompt: 'Source/Dist Truth Rules: source is truth; dist is generated output only.',
+      },
+    },
+  });
+  assert.equal(packet.status, 'ready-for-approval');
+  assert.equal(packet.missionTitle, 'Repair copy feedback proof');
+  assert.equal(packet.approvalRequired, true);
+  assert.match(packet.codexPrompt, /Source\/Dist Truth Rules/);
+});

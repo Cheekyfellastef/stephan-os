@@ -2546,7 +2546,9 @@ test('Support Snapshot reports rehydrated operator profile storage diagnostics',
 
 
 test('support snapshot projects codex dispatch fields', () => {
-  const snapshot = buildSupportSnapshot({ runtimeStatus: { codexDispatchPacketStatus: 'ready-for-approval', codexDispatchPacketId: 'cdp_2', codexDispatchMissionTitle: 'Fix pane', codexDispatchApprovalRequired: 'yes', codexDispatchPromptAvailable: 'yes' } });
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { codexDispatchPacketStatus: 'ready-for-approval', codexDispatchPacketId: 'cdp_2', codexDispatchMissionTitle: 'Fix pane', codexDispatchApprovalRequired: 'yes', codexDispatchPromptAvailable: 'yes', missionRepairCodexBridgeStatus: 'ready', missionRepairCodexBridgePacketCreated: 'yes', missionRepairCodexBridgePacketId: 'cdp_2', missionRepairCodexBridgeReason: 'repair needed', missionRepairCodexBridgeFailingFields: 'UI Reality copy feedback', missionRepairCodexBridgeNextAction: 'Await operator approval before Codex handoff' } });
   assert.match(snapshot, /Codex Dispatch Packet Status: ready-for-approval/);
   assert.match(snapshot, /Codex Dispatch Packet ID: cdp_2/);
+  assert.match(snapshot, /Mission Repair Codex Bridge Status: ready/);
+  assert.match(snapshot, /Mission Repair Codex Bridge Packet Created: yes/);
 });
