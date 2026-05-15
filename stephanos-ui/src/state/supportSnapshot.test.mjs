@@ -2349,3 +2349,26 @@ test('support snapshot reports context provider registry fields', () => {
   assert.match(snapshot, /Context Provider Warning Count:/);
   assert.match(snapshot, /Context Provider Next Actions:/);
 });
+
+test('support snapshot projects context provider registry fields from execution metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      chatContextPackStatus: 'active',
+      chatContextResponseMode: 'merge-decision',
+      lastExecutionMetadata: {
+        chat_context_provider_registry_status: 'active',
+        chat_context_provider_ids_registered: 'uiReality|runtimeTruth|providerTruth|missionState|proofState|canonRules|memoryContinuity|agentState',
+        chat_context_provider_ids_used: 'uiReality|proofState|canonRules|runtimeTruth|providerTruth|missionState',
+        chat_context_provider_warning_count: 1,
+        chat_context_provider_proof_state: '{"proofState":"OK"}',
+        chat_context_provider_next_actions: 'Collect build proof',
+        chat_context_provider_canon_links_count: 2,
+      },
+    },
+    routeTruthView: { routeKind: 'cloud', routeUsableState: 'yes', backendReachableState: 'yes', selectedRouteReachableState: 'yes' },
+  });
+  assert.match(snapshot, /Context Provider Registry Status: active/);
+  assert.match(snapshot, /Context Providers Registered: uiReality\|runtimeTruth\|providerTruth\|missionState\|proofState\|canonRules\|memoryContinuity\|agentState/);
+  assert.match(snapshot, /Context Providers Used: uiReality\|proofState\|canonRules\|runtimeTruth\|providerTruth\|missionState/);
+  assert.match(snapshot, /Context Provider Canon Links Count: 2/);
+});
