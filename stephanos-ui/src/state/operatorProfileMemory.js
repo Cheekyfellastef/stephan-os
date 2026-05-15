@@ -31,6 +31,10 @@ export function createEmptyOperatorProfile() {
     warnings: [],
     rawTranscriptStored: 'no',
     storageKey: OPERATOR_PROFILE_STORAGE_KEY,
+    rehydrated: false,
+    storageReadStatus: 'missing',
+    lastReadAt: '',
+    lastWriteAt: '',
   };
 }
 
@@ -71,24 +75,53 @@ export function updateOperatorProfileFromMessage(previousProfile = {}, message =
     warnings: [],
     rawTranscriptStored: 'no',
     storageKey: OPERATOR_PROFILE_STORAGE_KEY,
+    rehydrated: false,
+    storageReadStatus: 'success',
+    lastReadAt: previousProfile?.lastReadAt || '',
+    lastWriteAt: previousProfile?.lastWriteAt || '',
   };
 }
 
 export function persistOperatorProfile(profile = {}, storage = globalThis.localStorage) {
   if (!storage?.setItem) return false;
-  storage.setItem(OPERATOR_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  const now = new Date().toISOString();
+  const normalized = {
+    ...createEmptyOperatorProfile(),
+    ...(profile && typeof profile === 'object' ? profile : {}),
+    storageKey: OPERATOR_PROFILE_STORAGE_KEY,
+    rawTranscriptStored: 'no',
+    lastWriteAt: now,
+  };
+  storage.setItem(OPERATOR_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
   return true;
 }
 
+function normalizeStoredProfile(parsed = {}) {
+  const normalized = { ...createEmptyOperatorProfile(), ...(parsed && typeof parsed === 'object' ? parsed : {}) };
+  const safeName = sanitizeName(normalized.operatorName);
+  const known = Boolean(normalized.known && safeName);
+  return {
+    ...normalized,
+    operatorName: known ? safeName : '',
+    known,
+    source: known ? String(normalized.source || 'operator explicit statement') : 'none',
+    confidence: known ? String(normalized.confidence || 'high') : 'unknown',
+    rawTranscriptStored: 'no',
+    storageKey: OPERATOR_PROFILE_STORAGE_KEY,
+  };
+}
+
 export function readOperatorProfile(storage = globalThis.localStorage) {
-  if (!storage?.getItem) return createEmptyOperatorProfile();
+  const now = new Date().toISOString();
+  if (!storage?.getItem) return { ...createEmptyOperatorProfile(), storageReadStatus: 'unavailable', lastReadAt: now };
   const raw = storage.getItem(OPERATOR_PROFILE_STORAGE_KEY);
-  if (!raw) return createEmptyOperatorProfile();
+  if (!raw) return { ...createEmptyOperatorProfile(), storageReadStatus: 'missing', lastReadAt: now };
   try {
     const parsed = JSON.parse(raw);
-    return { ...createEmptyOperatorProfile(), ...parsed, storageKey: OPERATOR_PROFILE_STORAGE_KEY, rawTranscriptStored: 'no' };
+    const normalized = normalizeStoredProfile(parsed);
+    return { ...normalized, rehydrated: normalized.known, storageReadStatus: 'success', lastReadAt: now };
   } catch {
-    return createEmptyOperatorProfile();
+    return { ...createEmptyOperatorProfile(), storageReadStatus: 'corrupt', lastReadAt: now };
   }
 }
 

@@ -14,9 +14,19 @@ test('persists and supersedes operator name without transcript storage', () => {
   persistOperatorProfile(a, storage);
   const b = readOperatorProfile(storage);
   assert.equal(b.operatorName, 'Stephan');
+  assert.equal(b.storageReadStatus, 'success');
+  assert.equal(b.rehydrated, true);
   const c = updateOperatorProfileFromMessage(b, 'my name is Alex');
   assert.equal(c.operatorName, 'Alex');
   assert.equal(c.rawTranscriptStored, 'no');
+});
+
+test('corrupt profile safely falls back to unknown', () => {
+  const storage = { getItem: () => '{bad json}', setItem: () => {} };
+  const profile = readOperatorProfile(storage);
+  assert.equal(profile.known, false);
+  assert.equal(profile.operatorName, '');
+  assert.equal(profile.storageReadStatus, 'corrupt');
 });
 
 test('missing name remains unknown safely', () => {
