@@ -19,7 +19,8 @@ export function parsePrReferenceFromPrompt(prompt = '') {
 export function buildGithubPrEvidenceProvider(input = {}) {
   const connector = input.connectorEvidence || {};
   const pasted = input.pastedEvidence || {};
-  const promptRef = parsePrReferenceFromPrompt(input.operatorPrompt || '');
+  const parseInput = input.operatorPrompt || input.operatorMessage || input.matchInput || '';
+  const promptRef = parsePrReferenceFromPrompt(parseInput);
   const hasConnectorPayload = connector && Object.keys(connector).length > 0;
   const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
   const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : '')), 'none');
@@ -62,5 +63,5 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; recommendedNextAction = 'Collect missing proof fields before merge decision.'; }
   else if (status === 'fetched') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator approval required before merge.'; }
 
-  return { status, source, repo, prNumber, prUrl, prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged, headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus, codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction, parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length };
+  return { status, source, repo, prNumber, parsedPrNumber: promptRef.prNumber ?? null, prUrl, prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged, headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus, codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction, parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length };
 }

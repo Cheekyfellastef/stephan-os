@@ -97,6 +97,7 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
     prEvidence: {
       status: asText(prEvidence?.status, 'none'),
       prNumber: asText(prEvidence?.prNumber, 'unknown'),
+      parsedPrNumber: asText(prEvidence?.parsedPrNumber, asText(prEvidence?.prNumber, 'unknown')),
       repo: asText(prEvidence?.repo, 'unknown'),
       prUrl: asText(prEvidence?.prUrl, 'n/a'),
       parseConfidence: asText(prEvidence?.parseConfidence, 'none'),
@@ -149,12 +150,16 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_pr_evidence_status: asText(envelope?.prEvidence?.status, 'none'),
     command_envelope_pr_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
     command_envelope_pr_repo: asText(envelope?.prEvidence?.repo, 'unknown'),
+    command_envelope_pr_evidence_parsed_pr_number: asText(envelope?.prEvidence?.parsedPrNumber, asText(envelope?.prEvidence?.prNumber, 'unknown')),
     command_envelope_pr_url: asText(envelope?.prEvidence?.prUrl, 'n/a'),
     command_envelope_pr_parse_confidence: asText(envelope?.prEvidence?.parseConfidence, 'none'),
     command_envelope_pr_checks_status: asText(envelope?.prEvidence?.checksStatus, 'unknown'),
     command_envelope_pr_merge_readiness: asText(envelope?.prEvidence?.mergeReadiness, 'wait'),
     command_envelope_pr_missing_proof: asList(envelope?.prEvidence?.missingProof).join('|') || 'none',
     command_envelope_pr_next_action: asText(envelope?.prEvidence?.nextAction, 'Collect PR evidence.'),
+    pr_evidence_parsed_pr_number: asText(envelope?.prEvidence?.parsedPrNumber, asText(envelope?.prEvidence?.prNumber, 'unknown')),
+    github_pr_evidence_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
+    github_pr_evidence_provider_status: asText(envelope?.prEvidence?.status, 'none'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }

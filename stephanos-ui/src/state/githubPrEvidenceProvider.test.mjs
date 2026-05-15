@@ -61,3 +61,17 @@ test('prompt PR without connector returns needs-connector', () => {
   assert.equal(r.status, 'needs-connector');
   assert.equal(r.prNumber, 123);
 });
+
+
+test('parses PR number from operatorMessage fallback and preserves parsedPrNumber', () => {
+  const r = buildGithubPrEvidenceProvider({ operatorMessage: 'do i merge PR 123' });
+  assert.equal(r.prNumber, 123);
+  assert.equal(r.parsedPrNumber, 123);
+  assert.equal(r.status, 'needs-connector');
+});
+
+test('parses PR number from matchInput fallback', () => {
+  const r = buildGithubPrEvidenceProvider({ matchInput: 'do i merge pr 456' });
+  assert.equal(r.prNumber, 456);
+  assert.equal(r.parsedPrNumber, 456);
+});
