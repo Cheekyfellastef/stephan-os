@@ -158,7 +158,7 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     command_envelope_pr_missing_proof: asList(envelope?.prEvidence?.missingProof).join('|') || 'none',
     command_envelope_pr_next_action: asText(envelope?.prEvidence?.nextAction, 'Collect PR evidence.'),
     pr_evidence_parsed_pr_number: asText(envelope?.prEvidence?.parsedPrNumber, asText(envelope?.prEvidence?.prNumber, 'unknown')),
-    github_pr_evidence_number: asText(envelope?.prEvidence?.prNumber, 'unknown'),
+    github_pr_evidence_number: asText(envelope?.prEvidence?.prNumber, asText(envelope?.prEvidence?.parsedPrNumber, 'unknown')),
     github_pr_evidence_provider_status: asText(envelope?.prEvidence?.status, 'none'),
   };
 }

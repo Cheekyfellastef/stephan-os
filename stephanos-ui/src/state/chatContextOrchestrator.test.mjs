@@ -84,6 +84,7 @@ test('buildChatContextPack keeps prEvidence provider summary with parsed PR numb
   });
   assert.equal(pack.recommendedResponseMode, 'merge-decision');
   assert.equal(pack.providerSummaries.prEvidence.prNumber, '123');
+  assert.equal(pack.providerSummaries.prEvidence.parsedPrNumber, '123');
   assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
 });
 

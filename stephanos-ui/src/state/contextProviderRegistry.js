@@ -148,7 +148,8 @@ const builtinProviders = [
       const pr = input.githubPrEvidence || input.prEvidence || {};
       return {
         status: String(pr.status || 'none'),
-        prNumber: String(pr.prNumber || 'unknown'),
+        prNumber: String(pr.prNumber || pr.parsedPrNumber || 'unknown'),
+        parsedPrNumber: String(pr.parsedPrNumber || pr.prNumber || 'unknown'),
         checksStatus: String(pr.checksStatus || 'unknown'),
         missingProof: normalizeList(pr.missingProof),
         mergeReadiness: String(pr.mergeReadiness || 'wait'),

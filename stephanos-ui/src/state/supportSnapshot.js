@@ -1306,7 +1306,7 @@ export function buildSupportSnapshot({
     `GitHub PR Evidence Provider Status: ${asText(runtimeStatus?.githubPrEvidenceProviderStatus, 'unavailable')}`,
     `GitHub PR Evidence Source: ${asText(runtimeStatus?.githubPrEvidenceSource, 'none')}`,
     `GitHub PR Evidence Repo: ${asText(runtimeStatus?.githubPrEvidenceRepo, 'unknown')}`,
-    `GitHub PR Evidence Number: ${asText(runtimeStatus?.githubPrEvidenceNumber, 'n/a')}`,
+    `GitHub PR Evidence Number: ${asText(runtimeStatus?.githubPrEvidenceNumber || runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber, 'n/a')}`,
     `GitHub PR Evidence URL: ${asText(runtimeStatus?.githubPrEvidenceUrl, 'n/a')}`,
     `GitHub PR Evidence Title: ${asText(runtimeStatus?.githubPrEvidenceTitle, 'n/a')}`,
     `GitHub PR Evidence State: ${asText(runtimeStatus?.githubPrEvidenceState, 'unknown')}`,

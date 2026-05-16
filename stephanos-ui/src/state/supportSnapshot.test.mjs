@@ -2137,6 +2137,9 @@ test('buildSupportSnapshot marks mission console multi-surface FAIL when AI Core
 test('support snapshot reads chat_context_* fields from latest execution metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         request_execution_id: 'req_123',
         chat_context_pack_status: 'active',
@@ -2269,6 +2272,9 @@ test('support snapshot projects merge proof fields over stale top-level direct-a
 test('support snapshot keeps direct-answer fallback for generic prompts without merge proof', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         chat_context_pack_status: 'unavailable',
         chat_context_response_mode: 'direct-answer',
@@ -2285,6 +2291,9 @@ test('support snapshot keeps direct-answer fallback for generic prompts without 
 test('support snapshot projects provider registry fields for active merge-decision context', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         chat_context_pack_status: 'active',
         chat_context_response_mode: 'merge-decision',
@@ -2307,6 +2316,9 @@ test('support snapshot projects provider registry fields for active merge-decisi
 test('support snapshot reports warning when command executed without chat context metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         request_execution_id: 'req_124',
         execution_status: 'ok:ollama',
@@ -2350,6 +2362,9 @@ test('execution metadata fixture with execution_status also includes chat_contex
 test('support snapshot projects rebuilt-from-final-message classifier proof fields', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         chat_context_pack_status: 'active',
         chat_context_classifier_proof_source: 'rebuilt-from-final-message',
@@ -2475,6 +2490,9 @@ test('support snapshot projects identity recall and operator name usage from ide
 test('support snapshot keeps operator name used as no when name is unknown', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
       lastExecutionMetadata: {
         response_planner_status: 'active',
         response_planner_response_mode: 'identity-recall',
@@ -2551,4 +2569,31 @@ test('support snapshot projects codex dispatch fields', () => {
   assert.match(snapshot, /Codex Dispatch Packet ID: cdp_2/);
   assert.match(snapshot, /Mission Repair Codex Bridge Status: ready/);
   assert.match(snapshot, /Mission Repair Codex Bridge Packet Created: yes/);
+});
+
+
+test('support snapshot projects parsed PR number + github PR number from command envelope aliases', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      prEvidenceParsedPrNumber: '123',
+      githubPrEvidenceNumber: '123',
+      githubPrEvidenceProviderStatus: 'unavailable',
+      lastExecutionMetadata: {
+        retrieval_query: 'do i merge PR 123',
+        chat_context_pack_status: 'active',
+        chat_context_response_mode: 'merge-decision',
+        chat_context_provider_ids_used: 'uiReality|proofState|prEvidence|canonRules|runtimeTruth|providerTruth|missionState',
+        command_envelope_pr_evidence_parsed_pr_number: '123',
+        command_envelope_pr_number: '123',
+        github_pr_evidence_number: '123',
+        github_pr_evidence_provider_status: 'unavailable',
+        response_planner_merge_decision: 'wait',
+      },
+    },
+  });
+  assert.match(snapshot, /PR Evidence Parsed PR Number: 123/);
+  assert.match(snapshot, /GitHub PR Evidence Number: 123/);
+  assert.match(snapshot, /GitHub PR Evidence Provider Status: unavailable/);
+  assert.match(snapshot, /Context Providers Used: .*prEvidence/);
+  assert.match(snapshot, /Response Planner Merge Decision: wait/);
 });
