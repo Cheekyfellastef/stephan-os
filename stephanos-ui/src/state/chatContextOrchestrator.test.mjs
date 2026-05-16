@@ -88,6 +88,13 @@ test('buildChatContextPack keeps prEvidence provider summary with parsed PR numb
   assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
 });
 
+
+test('buildChatContextPack uses retrieval_query as PR evidence parse input when operatorPrompt absent', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'do i merge this', retrieval_query: 'do i merge PR 123' });
+  assert.equal(pack.providerSummaries.prEvidence.prNumber, '123');
+  assert.equal(pack.providerSummaries.prEvidence.parsedPrNumber, '123');
+  assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
+});
 test('missing PR evidence does not downgrade merge-decision and keeps canon/subsystems', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?', supportSnapshot: {} });
   assert.equal(pack.recommendedResponseMode, 'merge-decision');
