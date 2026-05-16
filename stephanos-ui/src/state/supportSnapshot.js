@@ -27,6 +27,14 @@ function isUnknownValue(value) {
   return !text || text === 'n/a' || text === 'unknown' || text === 'none' || text === 'null';
 }
 
+
+function firstKnownValue(candidates = [], fallback = 'n/a') {
+  for (const candidate of candidates) {
+    if (!isUnknownValue(candidate)) return String(candidate).trim();
+  }
+  return fallback;
+}
+
 function derivePrFallbackFromOperatorText(executionMetadata = {}, runtimeStatus = {}) {
   const candidates = [
     { source: 'chat_context_match_input', value: executionMetadata?.chat_context_match_input },
@@ -902,24 +910,26 @@ export function buildSupportSnapshot({
       || 'none',
     'none',
   );
-  const prEvidenceParsedPrNumberDisplay = asText(
-    runtimeStatus?.prEvidenceParsedPrNumber
-      || executionMetadata?.pr_evidence_parsed_pr_number
-      || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
-      || resolvedPrEvidenceFinalMetadataNumber
-      || runtimeStatus?.prEvidenceNumber,
-    'n/a',
-  );
-  const githubPrEvidenceNumberDisplay = asText(
-    runtimeStatus?.githubPrEvidenceNumber
-      || executionMetadata?.github_pr_evidence_number
-      || executionMetadata?.command_envelope_pr_number
-      || executionMetadata?.pr_evidence_parsed_pr_number
-      || resolvedPrEvidenceFinalMetadataNumber
-      || runtimeStatus?.prEvidenceParsedPrNumber
-      || runtimeStatus?.prEvidenceNumber,
-    'n/a',
-  );
+  const prEvidenceParsedPrNumberDisplay = firstKnownValue([
+    executionMetadata?.github_pr_evidence_number,
+    runtimeStatus?.githubPrEvidenceNumber,
+    executionMetadata?.pr_evidence_parsed_pr_number,
+    runtimeStatus?.prEvidenceParsedPrNumber,
+    executionMetadata?.command_envelope_pr_number,
+    runtimeStatus?.prEvidenceNumber,
+    resolvedPrEvidenceFinalMetadataNumber,
+    prFallback.prNumber,
+  ], 'n/a');
+  const githubPrEvidenceNumberDisplay = firstKnownValue([
+    executionMetadata?.github_pr_evidence_number,
+    runtimeStatus?.githubPrEvidenceNumber,
+    executionMetadata?.pr_evidence_parsed_pr_number,
+    runtimeStatus?.prEvidenceParsedPrNumber,
+    executionMetadata?.command_envelope_pr_number,
+    runtimeStatus?.prEvidenceNumber,
+    resolvedPrEvidenceFinalMetadataNumber,
+    prFallback.prNumber,
+  ], 'n/a');
   const githubPrEvidenceProviderStatusDisplay = asText(
     runtimeStatus?.githubPrEvidenceProviderStatus
       || executionMetadata?.github_pr_evidence_provider_status
