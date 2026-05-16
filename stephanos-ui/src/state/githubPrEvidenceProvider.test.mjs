@@ -93,3 +93,13 @@ test('parses PR number from matchInput fallback', () => {
   assert.equal(r.prNumber, 456);
   assert.equal(r.parsedPrNumber, 456);
 });
+
+test('preserves parsed PR number from chat context match input when connector is unavailable', () => {
+  const r = buildGithubPrEvidenceProvider({ chat_context_match_input: 'do i merge PR 123' });
+  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.source, 'none');
+  assert.equal(r.prNumber, 123);
+  assert.equal(r.parsedPrNumber, 123);
+  assert.equal(r.parseConfidence, 'high');
+  assert.equal(r.parsedNumberSource, 'operator-input');
+});
