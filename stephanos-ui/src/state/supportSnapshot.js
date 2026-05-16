@@ -821,6 +821,68 @@ export function buildSupportSnapshot({
     ],
   });
 
+  const prEvidenceParseInput = asText(
+    executionMetadata?.pr_evidence_parse_input
+      || executionMetadata?.command_envelope_pr_evidence_parse_input
+      || runtimeStatus?.prEvidenceParseInput,
+    'n/a',
+  );
+  const prEvidenceParsedNumberSource = asText(
+    executionMetadata?.pr_evidence_parsed_number_source
+      || executionMetadata?.command_envelope_pr_evidence_parsed_number_source
+      || runtimeStatus?.prEvidenceParsedNumberSource,
+    'none',
+  );
+  const prEvidenceProviderOutputNumber = asText(
+    executionMetadata?.pr_evidence_provider_output_number
+      || executionMetadata?.command_envelope_pr_evidence_provider_output_number
+      || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
+      || runtimeStatus?.prEvidenceProviderOutputNumber
+      || runtimeStatus?.prEvidenceParsedPrNumber
+      || runtimeStatus?.prEvidenceNumber,
+    'n/a',
+  );
+  const prEvidenceFinalMetadataNumber = asText(
+    executionMetadata?.pr_evidence_parsed_pr_number
+      || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
+      || runtimeStatus?.prEvidenceParsedPrNumber
+      || runtimeStatus?.prEvidenceNumber,
+    'n/a',
+  );
+  const githubPrEvidenceProjectionSource = asText(
+    executionMetadata?.github_pr_evidence_projection_source
+      || runtimeStatus?.githubPrEvidenceProjectionSource
+      || (executionMetadata?.github_pr_evidence_number ? 'execution-metadata.github_pr_evidence_number' : '')
+      || (executionMetadata?.command_envelope_pr_number ? 'execution-metadata.command_envelope_pr_number' : '')
+      || (executionMetadata?.pr_evidence_parsed_pr_number ? 'execution-metadata.pr_evidence_parsed_pr_number' : '')
+      || (runtimeStatus?.githubPrEvidenceNumber ? 'runtimeStatus.githubPrEvidenceNumber' : '')
+      || (runtimeStatus?.prEvidenceParsedPrNumber ? 'runtimeStatus.prEvidenceParsedPrNumber' : '')
+      || 'none',
+    'none',
+  );
+  const prEvidenceParsedPrNumberDisplay = asText(
+    runtimeStatus?.prEvidenceParsedPrNumber
+      || executionMetadata?.pr_evidence_parsed_pr_number
+      || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
+      || runtimeStatus?.prEvidenceNumber,
+    'n/a',
+  );
+  const githubPrEvidenceNumberDisplay = asText(
+    runtimeStatus?.githubPrEvidenceNumber
+      || executionMetadata?.github_pr_evidence_number
+      || executionMetadata?.command_envelope_pr_number
+      || executionMetadata?.pr_evidence_parsed_pr_number
+      || runtimeStatus?.prEvidenceParsedPrNumber
+      || runtimeStatus?.prEvidenceNumber,
+    'n/a',
+  );
+  const githubPrEvidenceProviderStatusDisplay = asText(
+    runtimeStatus?.githubPrEvidenceProviderStatus
+      || executionMetadata?.github_pr_evidence_provider_status
+      || executionMetadata?.command_envelope_pr_evidence_status,
+    'unavailable',
+  );
+
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -1288,12 +1350,16 @@ export function buildSupportSnapshot({
     `PR Evidence Codex Task Present: ${asText(runtimeStatus?.prEvidenceCodexTaskPresent, 'no')}`,
     `PR Evidence Input Detected: ${asText(runtimeStatus?.prEvidenceInputDetected, 'no')}`,
     `PR Evidence Parse Confidence: ${asText(runtimeStatus?.prEvidenceParseConfidence, 'none')}`,
-    `PR Evidence Parsed PR Number: ${asText(runtimeStatus?.prEvidenceParsedPrNumber, 'n/a')}`,
+    `PR Evidence Parse Input: ${prEvidenceParseInput}`,
+    `PR Evidence Parsed Number Source: ${prEvidenceParsedNumberSource}`,
+    `PR Evidence Provider Output Number: ${prEvidenceProviderOutputNumber}`,
+    `PR Evidence Final Metadata Number: ${prEvidenceFinalMetadataNumber}`,
+    `PR Evidence Parsed PR Number: ${prEvidenceParsedPrNumberDisplay}`,
     `PR Evidence Parsed Repo: ${asText(runtimeStatus?.prEvidenceParsedRepo, 'unknown')}`,
     `PR Evidence Parse Warning Count: ${asText(runtimeStatus?.prEvidenceParseWarningCount, '0')}`,
     `PR Evidence Connector Source: ${asText(runtimeStatus?.prEvidenceConnectorSource, 'none')}`,
     `PR Evidence Status: ${asText(runtimeStatus?.prEvidenceStatus, 'none')}`,
-    `PR Evidence Parsed PR Number: ${asText(runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber, 'n/a')}`,
+    `PR Evidence Parsed PR Number: ${prEvidenceParsedPrNumberDisplay}`,
     `PR Evidence Changed File Count: ${asText(runtimeStatus?.prEvidenceChangedFileCount, '0')}`,
     `PR Evidence Tests Status: ${asText(runtimeStatus?.prEvidenceTestsStatus, 'unknown')}`,
     `PR Evidence Build Status: ${asText(runtimeStatus?.prEvidenceBuildStatus, 'unknown')}`,
@@ -1303,10 +1369,11 @@ export function buildSupportSnapshot({
     `PR Evidence Merge Readiness: ${asText(runtimeStatus?.prEvidenceMergeReadiness, 'hold')}`,
     `PR Evidence Recommended Next Action: ${asText(runtimeStatus?.prEvidenceRecommendedNextAction, 'collect PR evidence')}`,
     `Mission Repair Loop PR Evidence Linked: ${asText(runtimeStatus?.missionRepairLoopPrEvidenceLinked, 'no')}`,
-    `GitHub PR Evidence Provider Status: ${asText(runtimeStatus?.githubPrEvidenceProviderStatus, 'unavailable')}`,
+    `GitHub PR Evidence Provider Status: ${githubPrEvidenceProviderStatusDisplay}`,
+    `GitHub PR Evidence Projection Source: ${githubPrEvidenceProjectionSource}`,
     `GitHub PR Evidence Source: ${asText(runtimeStatus?.githubPrEvidenceSource, 'none')}`,
     `GitHub PR Evidence Repo: ${asText(runtimeStatus?.githubPrEvidenceRepo, 'unknown')}`,
-    `GitHub PR Evidence Number: ${asText(runtimeStatus?.githubPrEvidenceNumber || runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber, 'n/a')}`,
+    `GitHub PR Evidence Number: ${githubPrEvidenceNumberDisplay}`,
     `GitHub PR Evidence URL: ${asText(runtimeStatus?.githubPrEvidenceUrl, 'n/a')}`,
     `GitHub PR Evidence Title: ${asText(runtimeStatus?.githubPrEvidenceTitle, 'n/a')}`,
     `GitHub PR Evidence State: ${asText(runtimeStatus?.githubPrEvidenceState, 'unknown')}`,
