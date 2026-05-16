@@ -1,4 +1,5 @@
 import { buildContextProviderSnapshot } from './contextProviderRegistry.js';
+import { buildGithubPrEvidenceProvider } from './githubPrEvidenceProvider.js';
 
 const CHAT_CONTEXT_VERSION = 'v1';
 
@@ -164,8 +165,22 @@ export function buildChatContextPack(input = {}) {
     : (codexDispatchTask
       ? ['codex', 'mission-console', 'proof', 'source-truth']
       : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity', 'memory', 'operator-profile'] : ['general'])));
+  const githubPrEvidence = buildGithubPrEvidenceProvider({
+    ...(input.githubPrEvidence || {}),
+    connectorEvidence: input.githubPrEvidence?.connectorEvidence || input.connectorEvidence,
+    pastedEvidence: input.githubPrEvidence?.pastedEvidence || input.pastedEvidence,
+    operatorPrompt: input.operatorPrompt,
+    operatorMessage,
+    matchInput: intent.matchInput || normalizeIntentInputForMatching(operatorMessage),
+    chatContextMatchInput: intent.matchInput || normalizeIntentInputForMatching(operatorMessage),
+    retrieval_query: input.retrieval_query || input.retrievalQuery || operatorMessage,
+    raw_input: input.raw_input || input.rawInput || operatorMessage,
+    normalizedOperatorMessage: input.normalizedOperatorMessage || normalizeIntentInput(operatorMessage),
+  });
+
   const providerSnapshot = buildContextProviderSnapshot({
     ...input,
+    githubPrEvidence,
     contextProviderIdsRequested,
   });
   const relevantCanon = CANON_RULES.filter((rule) => {

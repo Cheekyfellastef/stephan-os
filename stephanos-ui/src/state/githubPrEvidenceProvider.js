@@ -19,16 +19,16 @@ export function parsePrReferenceFromPrompt(prompt = '') {
 function pickBestPromptSource(input = {}) {
   const candidates = [
     input.operatorPrompt,
-    input.operatorMessage,
+    input.retrievalQuery,
+    input.retrieval_query,
     input.chatContextMatchInput,
     input.chat_context_match_input,
     input.matchInput,
-    input.retrievalQuery,
-    input.retrieval_query,
     input.rawInput,
     input.raw_input,
     input.normalizedOperatorMessage,
     input.normalized_operator_message,
+    input.operatorMessage,
   ];
   for (const candidate of candidates) {
     const text = asText(candidate, '');
