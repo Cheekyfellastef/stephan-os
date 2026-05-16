@@ -24,7 +24,12 @@ function normalizeTruthText(value = '') {
 
 function isUnknownValue(value) {
   const text = String(value ?? '').trim().toLowerCase();
-  return !text || text === 'n/a' || text === 'unknown' || text === 'none' || text === 'null';
+  return !text
+    || text === 'n/a'
+    || text === 'unknown'
+    || text === 'none'
+    || text === 'null'
+    || text === 'undefined';
 }
 
 
