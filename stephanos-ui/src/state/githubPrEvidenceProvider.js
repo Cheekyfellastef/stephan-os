@@ -16,10 +16,26 @@ export function parsePrReferenceFromPrompt(prompt = '') {
   };
 }
 
+function pickBestPromptSource(input = {}) {
+  const candidates = [
+    input.operatorPrompt,
+    input.operatorMessage,
+    input.matchInput,
+    input.retrieval_query,
+    input.raw_input,
+    input.normalizedOperatorMessage,
+  ];
+  for (const candidate of candidates) {
+    const text = asText(candidate, '');
+    if (text) return text;
+  }
+  return '';
+}
+
 export function buildGithubPrEvidenceProvider(input = {}) {
   const connector = input.connectorEvidence || {};
   const pasted = input.pastedEvidence || {};
-  const parseInput = input.operatorPrompt || input.operatorMessage || input.matchInput || '';
+  const parseInput = pickBestPromptSource(input);
   const promptRef = parsePrReferenceFromPrompt(parseInput);
   const hasConnectorPayload = connector && Object.keys(connector).length > 0;
   const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
