@@ -29,3 +29,13 @@ test('requested provider ids constrain used providers safely', () => {
   const snapshot = buildContextProviderSnapshot({ contextProviderIdsRequested: ['uiReality', 'missing-provider'] });
   assert.deepEqual(snapshot.contextProviderIdsUsed, ['uiReality']);
 });
+
+
+test('prEvidence summary falls back to parsedPrNumber when prNumber is missing', () => {
+  const snapshot = buildContextProviderSnapshot({
+    contextProviderIdsRequested: ['prEvidence'],
+    githubPrEvidence: { status: 'needs-connector', parsedPrNumber: 123, mergeReadiness: 'wait' },
+  });
+  assert.equal(snapshot.providerSummaries.prEvidence.prNumber, '123');
+  assert.equal(snapshot.providerSummaries.prEvidence.parsedPrNumber, '123');
+});
