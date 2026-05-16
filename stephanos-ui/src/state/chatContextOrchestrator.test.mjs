@@ -76,6 +76,17 @@ test('merge-decision classifier catches common merge question variants', () => {
   }
 });
 
+
+test('buildChatContextPack keeps prEvidence provider summary with parsed PR number context', () => {
+  const pack = buildChatContextPack({
+    operatorMessage: 'do i merge PR 123',
+    githubPrEvidence: { status: 'needs-connector', prNumber: 123, parsedPrNumber: 123, mergeReadiness: 'wait' },
+  });
+  assert.equal(pack.recommendedResponseMode, 'merge-decision');
+  assert.equal(pack.providerSummaries.prEvidence.prNumber, '123');
+  assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
+});
+
 test('missing PR evidence does not downgrade merge-decision and keeps canon/subsystems', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?', supportSnapshot: {} });
   assert.equal(pack.recommendedResponseMode, 'merge-decision');

@@ -25,6 +25,24 @@ test('parses PR URL', () => {
   assert.equal(r.parseConfidence, 'high');
 });
 
+
+test('parses review/is-merge-ready variants', () => {
+  assert.equal(parsePrReferenceFromPrompt('review PR 321').prNumber, 321);
+  assert.equal(parsePrReferenceFromPrompt('is PR 222 merge ready').prNumber, 222);
+});
+
+test('parses retrieval/raw/normalized prompt fallbacks in precedence order', () => {
+  const viaRetrieval = buildGithubPrEvidenceProvider({ retrieval_query: 'do i merge PR 901' });
+  assert.equal(viaRetrieval.prNumber, 901);
+  assert.equal(viaRetrieval.parsedPrNumber, 901);
+
+  const viaRaw = buildGithubPrEvidenceProvider({ raw_input: 'check PR 902' });
+  assert.equal(viaRaw.prNumber, 902);
+
+  const viaNormalized = buildGithubPrEvidenceProvider({ normalizedOperatorMessage: 'do i merge pr 903' });
+  assert.equal(viaNormalized.prNumber, 903);
+});
+
 test('handles missing PR safely', () => {
   const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge this pr' });
   assert.equal(r.mergeReadiness, 'wait');
