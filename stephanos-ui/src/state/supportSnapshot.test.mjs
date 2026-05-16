@@ -2592,6 +2592,8 @@ test('support snapshot projects parsed PR number + github PR number from command
     },
   });
   assert.match(snapshot, /PR Evidence Parsed PR Number: 123/);
+  assert.equal((snapshot.match(/PR Evidence Parsed PR Number: 123/g) || []).length, 2);
+  assert.match(snapshot, /PR Evidence Number: 123/);
   assert.match(snapshot, /GitHub PR Evidence Number: 123/);
   assert.match(snapshot, /GitHub PR Evidence Provider Status: unavailable/);
   assert.match(snapshot, /Context Providers Used: .*prEvidence/);
@@ -2612,6 +2614,7 @@ test('support snapshot derives PR number fallback from retrieval query when prov
   });
   assert.match(snapshot, /PR Evidence Parse Input: do i merge PR 123/);
   assert.match(snapshot, /PR Evidence Parsed Number Source: retrieval_query/);
+  assert.match(snapshot, /PR Evidence Resolved Number Source: retrieval_query/);
   assert.match(snapshot, /PR Evidence Provider Output Number: n\/a/);
   assert.match(snapshot, /PR Evidence Final Metadata Number: 123/);
   assert.match(snapshot, /PR Evidence Parsed PR Number: 123/);
@@ -2685,6 +2688,7 @@ test('support snapshot keeps explicit provider number priority over fallback par
     },
   });
   assert.match(snapshot, /PR Evidence Provider Output Number: 456/);
+  assert.match(snapshot, /PR Evidence Resolved Number Source: explicit-parsed-pr-number/);
   assert.match(snapshot, /PR Evidence Final Metadata Number: 456/);
   assert.match(snapshot, /PR Evidence Parsed PR Number: 456/);
   assert.match(snapshot, /GitHub PR Evidence Number: 456/);

@@ -40,6 +40,33 @@ function firstKnownValue(candidates = [], fallback = 'n/a') {
   return fallback;
 }
 
+function resolvePrEvidenceNumber(executionMetadata = {}, runtimeStatus = {}, prFallback = { source: 'none', parseInput: '', prNumber: '' }) {
+  const candidates = [
+    { source: 'explicit-provider', value: executionMetadata?.github_pr_evidence_number },
+    { source: 'explicit-parsed-pr-number', value: executionMetadata?.pr_evidence_parsed_pr_number },
+    { source: 'explicit-pr-evidence-number', value: executionMetadata?.pr_evidence_number },
+    { source: 'command_envelope_pr_number', value: executionMetadata?.command_envelope_pr_number },
+    { source: 'final-metadata-number', value: executionMetadata?.command_envelope_pr_evidence_parsed_pr_number },
+    { source: 'final-metadata-number', value: runtimeStatus?.prEvidenceParsedPrNumber },
+    { source: 'final-metadata-number', value: runtimeStatus?.prEvidenceNumber },
+    { source: 'chat_context_match_input', value: prFallback?.source === 'chat_context_match_input' ? prFallback?.prNumber : '' },
+    { source: 'retrieval_query', value: prFallback?.source === 'retrieval_query' ? prFallback?.prNumber : '' },
+    { source: 'chat_context_raw_operator_message_seen', value: prFallback?.source === 'chat_context_raw_operator_message_seen' ? prFallback?.prNumber : '' },
+    { source: 'chat_context_normalized_operator_message', value: prFallback?.source === 'chat_context_normalized_operator_message' ? prFallback?.prNumber : '' },
+    { source: 'chat_context_match_input', value: prFallback?.source === 'runtimeStatus.chatContextMatchInput' ? prFallback?.prNumber : '' },
+    { source: 'retrieval_query', value: prFallback?.source === 'runtimeStatus.retrievalQuery' ? prFallback?.prNumber : '' },
+    { source: 'chat_context_raw_operator_message_seen', value: prFallback?.source === 'runtimeStatus.chatContextRawOperatorMessageSeen' ? prFallback?.prNumber : '' },
+    { source: 'chat_context_normalized_operator_message', value: prFallback?.source === 'runtimeStatus.chatContextNormalizedOperatorMessage' ? prFallback?.prNumber : '' },
+  ];
+
+  for (const candidate of candidates) {
+    if (!isUnknownValue(candidate.value)) {
+      return { prNumber: String(candidate.value).trim(), source: candidate.source };
+    }
+  }
+  return { prNumber: 'unknown', source: 'unknown' };
+}
+
 function derivePrFallbackFromOperatorText(executionMetadata = {}, runtimeStatus = {}) {
   const candidates = [
     { source: 'chat_context_match_input', value: executionMetadata?.chat_context_match_input },
@@ -900,9 +927,10 @@ export function buildSupportSnapshot({
   const prFallback = derivePrFallbackFromOperatorText(executionMetadata, runtimeStatus);
   const providerNumberKnown = !isUnknownValue(prEvidenceProviderOutputNumber);
   const metadataNumberKnown = !isUnknownValue(prEvidenceFinalMetadataNumber);
+  const resolvedPrEvidence = resolvePrEvidenceNumber(executionMetadata, runtimeStatus, prFallback);
   const resolvedPrEvidenceParseInput = !isUnknownValue(prEvidenceParseInput) ? prEvidenceParseInput : asText(prFallback.parseInput, 'n/a');
   const resolvedPrEvidenceParsedNumberSource = !isUnknownValue(prEvidenceParsedNumberSource) ? prEvidenceParsedNumberSource : asText(prFallback.source, 'none');
-  const resolvedPrEvidenceFinalMetadataNumber = metadataNumberKnown ? prEvidenceFinalMetadataNumber : asText(prFallback.prNumber, 'n/a');
+  const resolvedPrEvidenceFinalMetadataNumber = metadataNumberKnown ? prEvidenceFinalMetadataNumber : resolvedPrEvidence.prNumber;
   const githubPrEvidenceProjectionSource = asText(
     executionMetadata?.github_pr_evidence_projection_source
       || runtimeStatus?.githubPrEvidenceProjectionSource
@@ -915,26 +943,8 @@ export function buildSupportSnapshot({
       || 'none',
     'none',
   );
-  const prEvidenceParsedPrNumberDisplay = firstKnownValue([
-    executionMetadata?.github_pr_evidence_number,
-    runtimeStatus?.githubPrEvidenceNumber,
-    executionMetadata?.pr_evidence_parsed_pr_number,
-    runtimeStatus?.prEvidenceParsedPrNumber,
-    executionMetadata?.command_envelope_pr_number,
-    runtimeStatus?.prEvidenceNumber,
-    resolvedPrEvidenceFinalMetadataNumber,
-    prFallback.prNumber,
-  ], 'n/a');
-  const githubPrEvidenceNumberDisplay = firstKnownValue([
-    executionMetadata?.github_pr_evidence_number,
-    runtimeStatus?.githubPrEvidenceNumber,
-    executionMetadata?.pr_evidence_parsed_pr_number,
-    runtimeStatus?.prEvidenceParsedPrNumber,
-    executionMetadata?.command_envelope_pr_number,
-    runtimeStatus?.prEvidenceNumber,
-    resolvedPrEvidenceFinalMetadataNumber,
-    prFallback.prNumber,
-  ], 'n/a');
+  const prEvidenceParsedPrNumberDisplay = resolvedPrEvidence.prNumber;
+  const githubPrEvidenceNumberDisplay = resolvedPrEvidence.prNumber;
   const githubPrEvidenceProviderStatusDisplay = asText(
     runtimeStatus?.githubPrEvidenceProviderStatus
       || executionMetadata?.github_pr_evidence_provider_status
@@ -1399,7 +1409,7 @@ export function buildSupportSnapshot({
     `Mission Verification Changed Files In Scope: ${asText(runtimeStatus?.missionVerificationChangedFilesInScope, 'no')}`,
     `Mission Verification Required Tests Run: ${asText(runtimeStatus?.missionVerificationRequiredTestsRun, 'no')}`,
     `PR Evidence Status: ${asText(runtimeStatus?.prEvidenceStatus, 'no_pr_evidence')}`,
-    `PR Evidence Number: ${asText(runtimeStatus?.prEvidenceNumber, 'n/a')}`,
+    `PR Evidence Number: ${resolvedPrEvidence.prNumber}`,
     `PR Evidence Checks Status: ${asText(runtimeStatus?.prEvidenceChecksStatus, 'unknown')}`,
     `PR Evidence Merged: ${asText(runtimeStatus?.prEvidenceMerged, 'no')}`,
     `PR Evidence Merged By: ${asText(runtimeStatus?.prEvidenceMergedBy, 'unknown')}`,
@@ -1411,6 +1421,7 @@ export function buildSupportSnapshot({
     `PR Evidence Parse Confidence: ${asText(runtimeStatus?.prEvidenceParseConfidence, 'none')}`,
     `PR Evidence Parse Input: ${resolvedPrEvidenceParseInput}`,
     `PR Evidence Parsed Number Source: ${resolvedPrEvidenceParsedNumberSource}`,
+    `PR Evidence Resolved Number Source: ${resolvedPrEvidence.source}`,
     `PR Evidence Provider Output Number: ${prEvidenceProviderOutputNumber}`,
     `PR Evidence Final Metadata Number: ${resolvedPrEvidenceFinalMetadataNumber}`,
     `PR Evidence Parsed PR Number: ${prEvidenceParsedPrNumberDisplay}`,
