@@ -2636,6 +2636,19 @@ test('support snapshot derives PR number fallback from chat_context_match_input 
   assert.match(snapshot, /GitHub PR Evidence Number: 123/);
 });
 
+test('support snapshot derives PR number from runtimeStatus text fallback when execution metadata text is missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      githubPrEvidenceProviderStatus: 'unavailable',
+      chatContextMatchInput: 'do i merge pr 321',
+    },
+  });
+  assert.match(snapshot, /PR Evidence Parse Input: do i merge pr 321/);
+  assert.match(snapshot, /PR Evidence Parsed Number Source: runtimeStatus.chatContextMatchInput/);
+  assert.match(snapshot, /PR Evidence Final Metadata Number: 321/);
+  assert.match(snapshot, /GitHub PR Evidence Number: 321/);
+});
+
 test('support snapshot keeps explicit provider number priority over fallback parsing and does not fabricate proof fields', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

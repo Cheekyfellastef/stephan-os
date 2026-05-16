@@ -27,13 +27,16 @@ function isUnknownValue(value) {
   return !text || text === 'n/a' || text === 'unknown' || text === 'none' || text === 'null';
 }
 
-function derivePrFallbackFromOperatorText(executionMetadata = {}) {
+function derivePrFallbackFromOperatorText(executionMetadata = {}, runtimeStatus = {}) {
   const candidates = [
-    { source: 'command_envelope_pr_number', value: executionMetadata?.command_envelope_pr_number },
     { source: 'chat_context_match_input', value: executionMetadata?.chat_context_match_input },
     { source: 'retrieval_query', value: executionMetadata?.retrieval_query },
     { source: 'chat_context_raw_operator_message_seen', value: executionMetadata?.chat_context_raw_operator_message_seen },
     { source: 'chat_context_normalized_operator_message', value: executionMetadata?.chat_context_normalized_operator_message },
+    { source: 'runtimeStatus.chatContextMatchInput', value: runtimeStatus?.chatContextMatchInput },
+    { source: 'runtimeStatus.retrievalQuery', value: runtimeStatus?.retrievalQuery },
+    { source: 'runtimeStatus.chatContextRawOperatorMessageSeen', value: runtimeStatus?.chatContextRawOperatorMessageSeen },
+    { source: 'runtimeStatus.chatContextNormalizedOperatorMessage', value: runtimeStatus?.chatContextNormalizedOperatorMessage },
   ];
   for (const candidate of candidates) {
     const text = String(candidate.value ?? '').trim();
@@ -872,13 +875,16 @@ export function buildSupportSnapshot({
     'n/a',
   );
   const prEvidenceFinalMetadataNumber = asText(
-    executionMetadata?.pr_evidence_parsed_pr_number
+    executionMetadata?.github_pr_evidence_number
+      || executionMetadata?.pr_evidence_parsed_pr_number
+      || executionMetadata?.pr_evidence_number
+      || executionMetadata?.command_envelope_pr_number
       || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
       || runtimeStatus?.prEvidenceParsedPrNumber
       || runtimeStatus?.prEvidenceNumber,
     'n/a',
   );
-  const prFallback = derivePrFallbackFromOperatorText(executionMetadata);
+  const prFallback = derivePrFallbackFromOperatorText(executionMetadata, runtimeStatus);
   const providerNumberKnown = !isUnknownValue(prEvidenceProviderOutputNumber);
   const metadataNumberKnown = !isUnknownValue(prEvidenceFinalMetadataNumber);
   const resolvedPrEvidenceParseInput = !isUnknownValue(prEvidenceParseInput) ? prEvidenceParseInput : asText(prFallback.parseInput, 'n/a');
