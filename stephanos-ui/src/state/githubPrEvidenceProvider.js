@@ -20,10 +20,15 @@ function pickBestPromptSource(input = {}) {
   const candidates = [
     input.operatorPrompt,
     input.operatorMessage,
+    input.chatContextMatchInput,
+    input.chat_context_match_input,
     input.matchInput,
+    input.retrievalQuery,
     input.retrieval_query,
+    input.rawInput,
     input.raw_input,
     input.normalizedOperatorMessage,
+    input.normalized_operator_message,
   ];
   for (const candidate of candidates) {
     const text = asText(candidate, '');
@@ -41,6 +46,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
   const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : '')), 'none');
   const prNumber = connector.prNumber ?? pasted.prNumber ?? promptRef.prNumber ?? null;
+  const parsedPrNumber = promptRef.prNumber ?? connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber ?? null;
   const prUrl = asText(connector.prUrl || pasted.prUrl || promptRef.prUrl, '');
   const repo = asText(connector.repo || pasted.repo || promptRef.repo, '');
   const changedFiles = asList(connector.changedFiles || pasted.changedFiles);
@@ -79,5 +85,14 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; recommendedNextAction = 'Collect missing proof fields before merge decision.'; }
   else if (status === 'fetched') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator approval required before merge.'; }
 
-  return { status, source, repo, prNumber, parsedPrNumber: promptRef.prNumber ?? null, prUrl, prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged, headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus, codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction, parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length };
+  return {
+    status, source, repo, prNumber, parsedPrNumber, prUrl,
+    prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged,
+    headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''),
+    changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus,
+    codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''),
+    evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction,
+    parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length,
+    parseInput: asText(parseInput, ''), parsedNumberSource: parsedPrNumber ? (promptRef.prNumber ? 'operator-input' : ((connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber) ? 'evidence' : 'none')) : 'none',
+  };
 }
