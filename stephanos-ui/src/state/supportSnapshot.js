@@ -1,6 +1,7 @@
 import { buildOperatorGuidanceProjection } from './operatorGuidanceRendering.js';
 import { deriveUiRealityStatus } from './uiRealityStatus.js';
 import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
+import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
 
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
@@ -19,6 +20,34 @@ function normalizeTruthText(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized || normalized === 'n/a' || normalized === 'unknown' || normalized === 'none') return '';
   return normalized;
+}
+
+function isUnknownValue(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return !text || text === 'n/a' || text === 'unknown' || text === 'none' || text === 'null';
+}
+
+function derivePrFallbackFromOperatorText(executionMetadata = {}) {
+  const candidates = [
+    { source: 'command_envelope_pr_number', value: executionMetadata?.command_envelope_pr_number },
+    { source: 'chat_context_match_input', value: executionMetadata?.chat_context_match_input },
+    { source: 'retrieval_query', value: executionMetadata?.retrieval_query },
+    { source: 'chat_context_raw_operator_message_seen', value: executionMetadata?.chat_context_raw_operator_message_seen },
+    { source: 'chat_context_normalized_operator_message', value: executionMetadata?.chat_context_normalized_operator_message },
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate.value ?? '').trim();
+    if (!text) continue;
+    const parsed = parsePrReferenceFromPrompt(text);
+    if (parsed?.prNumber) {
+      return {
+        source: candidate.source,
+        parseInput: text,
+        prNumber: String(parsed.prNumber),
+      };
+    }
+  }
+  return { source: 'none', parseInput: '', prNumber: '' };
 }
 
 function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
@@ -849,12 +878,19 @@ export function buildSupportSnapshot({
       || runtimeStatus?.prEvidenceNumber,
     'n/a',
   );
+  const prFallback = derivePrFallbackFromOperatorText(executionMetadata);
+  const providerNumberKnown = !isUnknownValue(prEvidenceProviderOutputNumber);
+  const metadataNumberKnown = !isUnknownValue(prEvidenceFinalMetadataNumber);
+  const resolvedPrEvidenceParseInput = !isUnknownValue(prEvidenceParseInput) ? prEvidenceParseInput : asText(prFallback.parseInput, 'n/a');
+  const resolvedPrEvidenceParsedNumberSource = !isUnknownValue(prEvidenceParsedNumberSource) ? prEvidenceParsedNumberSource : asText(prFallback.source, 'none');
+  const resolvedPrEvidenceFinalMetadataNumber = metadataNumberKnown ? prEvidenceFinalMetadataNumber : asText(prFallback.prNumber, 'n/a');
   const githubPrEvidenceProjectionSource = asText(
     executionMetadata?.github_pr_evidence_projection_source
       || runtimeStatus?.githubPrEvidenceProjectionSource
       || (executionMetadata?.github_pr_evidence_number ? 'execution-metadata.github_pr_evidence_number' : '')
       || (executionMetadata?.command_envelope_pr_number ? 'execution-metadata.command_envelope_pr_number' : '')
       || (executionMetadata?.pr_evidence_parsed_pr_number ? 'execution-metadata.pr_evidence_parsed_pr_number' : '')
+      || (!isUnknownValue(prFallback.prNumber) ? `execution-metadata.${prFallback.source}` : '')
       || (runtimeStatus?.githubPrEvidenceNumber ? 'runtimeStatus.githubPrEvidenceNumber' : '')
       || (runtimeStatus?.prEvidenceParsedPrNumber ? 'runtimeStatus.prEvidenceParsedPrNumber' : '')
       || 'none',
@@ -864,6 +900,7 @@ export function buildSupportSnapshot({
     runtimeStatus?.prEvidenceParsedPrNumber
       || executionMetadata?.pr_evidence_parsed_pr_number
       || executionMetadata?.command_envelope_pr_evidence_parsed_pr_number
+      || resolvedPrEvidenceFinalMetadataNumber
       || runtimeStatus?.prEvidenceNumber,
     'n/a',
   );
@@ -872,6 +909,7 @@ export function buildSupportSnapshot({
       || executionMetadata?.github_pr_evidence_number
       || executionMetadata?.command_envelope_pr_number
       || executionMetadata?.pr_evidence_parsed_pr_number
+      || resolvedPrEvidenceFinalMetadataNumber
       || runtimeStatus?.prEvidenceParsedPrNumber
       || runtimeStatus?.prEvidenceNumber,
     'n/a',
@@ -1350,10 +1388,10 @@ export function buildSupportSnapshot({
     `PR Evidence Codex Task Present: ${asText(runtimeStatus?.prEvidenceCodexTaskPresent, 'no')}`,
     `PR Evidence Input Detected: ${asText(runtimeStatus?.prEvidenceInputDetected, 'no')}`,
     `PR Evidence Parse Confidence: ${asText(runtimeStatus?.prEvidenceParseConfidence, 'none')}`,
-    `PR Evidence Parse Input: ${prEvidenceParseInput}`,
-    `PR Evidence Parsed Number Source: ${prEvidenceParsedNumberSource}`,
+    `PR Evidence Parse Input: ${resolvedPrEvidenceParseInput}`,
+    `PR Evidence Parsed Number Source: ${resolvedPrEvidenceParsedNumberSource}`,
     `PR Evidence Provider Output Number: ${prEvidenceProviderOutputNumber}`,
-    `PR Evidence Final Metadata Number: ${prEvidenceFinalMetadataNumber}`,
+    `PR Evidence Final Metadata Number: ${resolvedPrEvidenceFinalMetadataNumber}`,
     `PR Evidence Parsed PR Number: ${prEvidenceParsedPrNumberDisplay}`,
     `PR Evidence Parsed Repo: ${asText(runtimeStatus?.prEvidenceParsedRepo, 'unknown')}`,
     `PR Evidence Parse Warning Count: ${asText(runtimeStatus?.prEvidenceParseWarningCount, '0')}`,

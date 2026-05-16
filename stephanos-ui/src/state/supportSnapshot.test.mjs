@@ -2597,3 +2597,62 @@ test('support snapshot projects parsed PR number + github PR number from command
   assert.match(snapshot, /Context Providers Used: .*prEvidence/);
   assert.match(snapshot, /Response Planner Merge Decision: wait/);
 });
+
+test('support snapshot derives PR number fallback from retrieval query when provider number fields are missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      githubPrEvidenceProviderStatus: 'needs-connector',
+      githubPrEvidenceNextAction: 'connect GitHub evidence or paste PR summary',
+      lastExecutionMetadata: {
+        retrieval_query: 'do i merge PR 123',
+        chat_context_provider_ids_used: 'uiReality|proofState|prEvidence',
+        response_planner_merge_decision: 'wait',
+      },
+    },
+  });
+  assert.match(snapshot, /PR Evidence Parse Input: do i merge PR 123/);
+  assert.match(snapshot, /PR Evidence Parsed Number Source: retrieval_query/);
+  assert.match(snapshot, /PR Evidence Provider Output Number: n\/a/);
+  assert.match(snapshot, /PR Evidence Final Metadata Number: 123/);
+  assert.match(snapshot, /PR Evidence Parsed PR Number: 123/);
+  assert.match(snapshot, /GitHub PR Evidence Number: 123/);
+  assert.match(snapshot, /GitHub PR Evidence Provider Status: needs-connector/);
+  assert.match(snapshot, /GitHub PR Evidence Next Action: connect GitHub evidence or paste PR summary/);
+  assert.match(snapshot, /Response Planner Merge Decision: wait/);
+});
+
+test('support snapshot derives PR number fallback from chat_context_match_input before retrieval_query', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      githubPrEvidenceProviderStatus: 'unavailable',
+      lastExecutionMetadata: {
+        retrieval_query: 'do i merge PR 999',
+        chat_context_match_input: 'do i merge pr 123',
+      },
+    },
+  });
+  assert.match(snapshot, /PR Evidence Parse Input: do i merge pr 123/);
+  assert.match(snapshot, /PR Evidence Parsed Number Source: chat_context_match_input/);
+  assert.match(snapshot, /GitHub PR Evidence Number: 123/);
+});
+
+test('support snapshot keeps explicit provider number priority over fallback parsing and does not fabricate proof fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      githubPrEvidenceProviderStatus: 'unavailable',
+      lastExecutionMetadata: {
+        pr_evidence_provider_output_number: '456',
+        pr_evidence_parsed_pr_number: '456',
+        retrieval_query: 'do i merge PR 123',
+      },
+    },
+  });
+  assert.match(snapshot, /PR Evidence Provider Output Number: 456/);
+  assert.match(snapshot, /PR Evidence Final Metadata Number: 456/);
+  assert.match(snapshot, /PR Evidence Parsed PR Number: 456/);
+  assert.match(snapshot, /GitHub PR Evidence Number: 456/);
+  assert.match(snapshot, /GitHub PR Evidence Title: n\/a/);
+  assert.match(snapshot, /PR Evidence Build Status: unknown/);
+  assert.match(snapshot, /PR Evidence Verify Status: unknown/);
+  assert.match(snapshot, /PR Evidence Browser Proof Status: unknown/);
+});
