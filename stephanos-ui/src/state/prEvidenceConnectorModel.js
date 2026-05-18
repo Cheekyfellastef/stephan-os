@@ -129,3 +129,45 @@ export function buildPrEvidenceFromInput({ rawPrInput = '', missionSpec = {} } =
   const prEvidenceIntake = buildPrEvidenceIntake({ prMetadata: parseResult.normalizedPrMetadata, missionSpec });
   return { parseResult, prEvidenceIntake };
 }
+
+export function normalizeLiveGithubPrEvidence(liveEvidence = null) {
+  if (!liveEvidence || typeof liveEvidence !== 'object') return null;
+  const keys = Object.keys(liveEvidence);
+  if (keys.length === 0) return null;
+
+  const changedFiles = Array.isArray(liveEvidence.changedFiles)
+    ? liveEvidence.changedFiles.filter(Boolean).map((file) => String(file).trim()).filter(Boolean)
+    : [];
+  const failingChecks = Array.isArray(liveEvidence.failingChecks)
+    ? liveEvidence.failingChecks.filter(Boolean).map((check) => String(check).trim()).filter(Boolean)
+    : [];
+  const warnings = Array.isArray(liveEvidence.warnings)
+    ? liveEvidence.warnings.filter(Boolean).map((warning) => String(warning).trim()).filter(Boolean)
+    : [];
+  const missingProof = Array.isArray(liveEvidence.missingProof)
+    ? liveEvidence.missingProof.filter(Boolean).map((proof) => String(proof).trim()).filter(Boolean)
+    : [];
+
+  return {
+    source: 'github-live-readonly',
+    repo: asText(liveEvidence.repo || liveEvidence.repository, ''),
+    prNumber: Number(liveEvidence.prNumber || liveEvidence.number || 0) || null,
+    prUrl: asText(liveEvidence.url || liveEvidence.prUrl, ''),
+    prTitle: asText(liveEvidence.title || liveEvidence.prTitle, ''),
+    prState: asText(liveEvidence.state || liveEvidence.prState, ''),
+    merged: liveEvidence.merged === true,
+    headSha: asText(liveEvidence.headSha || liveEvidence.headSHA, ''),
+    changedFiles,
+    changedFileCount: changedFiles.length,
+    checksStatus: asText(liveEvidence.checksStatus, 'unknown'),
+    failingChecks,
+    buildStatus: asText(liveEvidence.buildStatus, 'unknown'),
+    verifyStatus: asText(liveEvidence.verifyStatus, 'unknown'),
+    browserProofStatus: asText(liveEvidence.browserProofStatus, 'unknown'),
+    codexTaskPresent: asText(liveEvidence.codexTaskPresent, ''),
+    missingProof,
+    mergeReadiness: asText(liveEvidence.mergeReadiness, ''),
+    retrievedAt: asText(liveEvidence.retrievedAt, ''),
+    evidenceWarnings: warnings,
+  };
+}
