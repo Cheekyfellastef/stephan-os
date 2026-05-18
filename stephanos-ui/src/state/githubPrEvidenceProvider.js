@@ -44,7 +44,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const promptRef = parsePrReferenceFromPrompt(parseInput);
   const hasConnectorPayload = connector && Object.keys(connector).length > 0;
   const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
-  const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : '')), 'none');
+  const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : 'none')), 'none');
   const prNumber = connector.prNumber ?? pasted.prNumber ?? promptRef.prNumber ?? null;
   const parsedPrNumber = promptRef.prNumber ?? connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber ?? null;
   const prUrl = asText(connector.prUrl || pasted.prUrl || promptRef.prUrl, '');
@@ -87,6 +87,9 @@ export function buildGithubPrEvidenceProvider(input = {}) {
 
   return {
     status, source, repo, prNumber, parsedPrNumber, prUrl,
+    adapterVersion: 'github-pr-evidence-readonly.v1',
+    readOnly: true,
+    writeActionsAllowed: false,
     prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged,
     headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''),
     changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus,
