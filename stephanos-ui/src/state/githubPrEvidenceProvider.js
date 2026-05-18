@@ -1,3 +1,5 @@
+import { normalizeLiveGithubPrEvidence } from './prEvidenceConnectorModel.js';
+
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
 function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map((v) => String(v).trim()).filter(Boolean) : []; }
 
@@ -38,7 +40,8 @@ function pickBestPromptSource(input = {}) {
 }
 
 export function buildGithubPrEvidenceProvider(input = {}) {
-  const connector = input.connectorEvidence || {};
+  const normalizedLiveEvidence = normalizeLiveGithubPrEvidence(input.liveGithubPrEvidence || input.connectorEvidence?.liveGithubPrEvidence);
+  const connector = normalizedLiveEvidence || input.connectorEvidence || {};
   const pasted = input.pastedEvidence || {};
   const parseInput = pickBestPromptSource(input);
   const promptRef = parsePrReferenceFromPrompt(parseInput);
@@ -58,7 +61,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const prState = asText(connector.prState || pasted.prState, merged ? 'closed' : 'unknown');
   const failingChecks = asList(connector.failingChecks || pasted.failingChecks);
   const codexTaskRefs = asList(connector.codexTaskRefs || pasted.codexTaskRefs);
-  const codexTaskPresent = codexTaskRefs.length > 0 ? 'yes' : 'no';
+  const codexTaskPresent = asText(connector.codexTaskPresent || pasted.codexTaskPresent, codexTaskRefs.length > 0 ? 'yes' : 'no');
   const evidenceWarnings = [...asList(connector.evidenceWarnings), ...asList(pasted.evidenceWarnings)];
   const missingProof = [];
   if (!['passed','success','ok'].includes(checksStatus.toLowerCase()) && checksStatus !== 'unknown') missingProof.push('checks');

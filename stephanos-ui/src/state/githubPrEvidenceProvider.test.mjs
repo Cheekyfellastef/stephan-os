@@ -114,3 +114,48 @@ test('preserves parsed PR number from chat context match input when connector is
   assert.equal(r.parseConfidence, 'high');
   assert.equal(r.parsedNumberSource, 'operator-input');
 });
+
+test('live github read-only evidence is normalized and emitted without write actions', () => {
+  const r = buildGithubPrEvidenceProvider({
+    operatorPrompt: 'do i merge PR 123',
+    liveGithubPrEvidence: {
+      repo: 'acme/stephan-os',
+      prNumber: 123,
+      url: 'https://github.com/acme/stephan-os/pull/123',
+      title: 'Live evidence wiring',
+      state: 'open',
+      merged: false,
+      headSha: 'abc1234',
+      changedFiles: ['stephanos-ui/src/state/prEvidenceConnectorModel.js'],
+      checksStatus: 'passed',
+      buildStatus: 'passed',
+      verifyStatus: 'unknown',
+      browserProofStatus: 'unknown',
+      failingChecks: [],
+      codexTaskPresent: 'yes',
+      missingProof: ['verify', 'browser'],
+      mergeReadiness: 'hold',
+      warnings: ['connector_read_only_mode'],
+    },
+  });
+  assert.equal(r.status, 'fetched');
+  assert.equal(r.source, 'github-live-readonly');
+  assert.equal(r.repo, 'acme/stephan-os');
+  assert.equal(r.prTitle, 'Live evidence wiring');
+  assert.equal(r.writeActionsAllowed, false);
+  assert.equal(r.readOnly, true);
+  assert.equal(r.mergeReadiness, 'needs-proof');
+  assert.equal(r.evidenceWarnings.includes('connector_read_only_mode'), true);
+});
+
+test('missing proof fields remain unknown and conservative when live evidence is partial', () => {
+  const r = buildGithubPrEvidenceProvider({
+    operatorPrompt: 'do i merge PR 321',
+    liveGithubPrEvidence: { repo: 'acme/stephan-os', prNumber: 321, url: 'https://github.com/acme/stephan-os/pull/321' },
+  });
+  assert.equal(r.checksStatus, 'unknown');
+  assert.equal(r.buildStatus, 'unknown');
+  assert.equal(r.verifyStatus, 'unknown');
+  assert.equal(r.browserProofStatus, 'unknown');
+  assert.equal(r.mergeReadiness, 'needs-proof');
+});
