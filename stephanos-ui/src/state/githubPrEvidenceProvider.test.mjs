@@ -48,6 +48,17 @@ test('handles missing PR safely', () => {
   assert.equal(r.mergeReadiness, 'wait');
 });
 
+
+test('read-only adapter contract is explicit and does not allow write actions', () => {
+  const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123' });
+  assert.equal(r.adapterVersion, 'github-pr-evidence-readonly.v1');
+  assert.equal(r.readOnly, true);
+  assert.equal(r.writeActionsAllowed, false);
+  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.prTitle, '');
+  assert.equal(r.checksStatus, 'unknown');
+});
+
 test('handles unavailable connector safely', () => {
   const r = buildGithubPrEvidenceProvider({});
   assert.equal(r.status, 'unavailable');
