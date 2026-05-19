@@ -129,7 +129,7 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   const promptRef = parsePrReferenceFromPrompt(asText(input.prompt || input.operatorPrompt, ''));
   const prNumber = input.prNumber ?? promptRef.prNumber ?? null;
   const repo = asText(input.repo || promptRef.repo || input.repoConfig?.repo, '');
-  const connectorReady = input.connectorAvailable === true;
+  const connectorReady = input.connectorAvailable !== false;
   const tokenReady = input.hasToken === true;
   const fetchFn = typeof input.fetchGithubPrEvidence === 'function' ? input.fetchGithubPrEvidence : null;
 
@@ -142,7 +142,13 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   const live = fetchFn
     ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
     : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
-  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: live?.source || (fetchFn ? 'github-live-readonly' : 'github-api/fetched') }) || {};
+  const backendStatus = asText(live?.status, '');
+  const normalized = normalizeLiveGithubPrEvidence({
+    ...(live || {}),
+    repo,
+    prNumber,
+    source: live?.source || (backendStatus && backendStatus !== 'fetched' ? backendStatus : (fetchFn ? 'github-live-readonly' : 'github-api/fetched')),
+  }) || {};
   return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber };
 }
 
