@@ -136,13 +136,13 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   if (!prNumber) return { source: 'none' };
   if (!repo) return { source: 'connector-missing-repo', prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
   if (!connectorReady) return { source: 'connector-missing', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
-  if (!tokenReady || !fetchFn) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  if (fetchFn && !tokenReady) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
 
   const [owner, repoName] = repo.split('/');
   const live = fetchFn
     ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
     : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
-  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: live?.source || 'github-live-readonly' }) || {};
+  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: live?.source || (fetchFn ? 'github-live-readonly' : 'github-api/fetched') }) || {};
   return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber };
 }
 
