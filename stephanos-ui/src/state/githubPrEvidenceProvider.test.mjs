@@ -54,7 +54,7 @@ test('read-only adapter contract is explicit and does not allow write actions', 
   assert.equal(r.adapterVersion, 'github-pr-evidence-readonly.v1');
   assert.equal(r.readOnly, true);
   assert.equal(r.writeActionsAllowed, false);
-  assert.equal(r.status, 'needs-repo');
+  assert.equal(r.status, 'needs-connector');
   assert.equal(r.prTitle, '');
   assert.equal(r.checksStatus, 'unknown');
 });
@@ -87,7 +87,7 @@ test('dist-only source truth risk', () => {
 
 test('prompt PR without connector returns needs-connector', () => {
   const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123' });
-  assert.equal(r.status, 'needs-repo');
+  assert.equal(r.status, 'needs-connector');
   assert.equal(r.prNumber, 123);
 });
 
@@ -96,7 +96,7 @@ test('parses PR number from operatorMessage fallback and preserves parsedPrNumbe
   const r = buildGithubPrEvidenceProvider({ operatorMessage: 'do i merge PR 123' });
   assert.equal(r.prNumber, 123);
   assert.equal(r.parsedPrNumber, 123);
-  assert.equal(r.status, 'needs-repo');
+  assert.equal(r.status, 'needs-connector');
 });
 
 test('parses PR number from matchInput fallback', () => {
@@ -107,7 +107,7 @@ test('parses PR number from matchInput fallback', () => {
 
 test('preserves parsed PR number from chat context match input when connector is unavailable', () => {
   const r = buildGithubPrEvidenceProvider({ chat_context_match_input: 'do i merge PR 123' });
-  assert.equal(r.status, 'needs-repo');
+  assert.equal(r.status, 'needs-connector');
   assert.equal(r.source, 'none');
   assert.equal(r.prNumber, 123);
   assert.equal(r.parsedPrNumber, 123);
