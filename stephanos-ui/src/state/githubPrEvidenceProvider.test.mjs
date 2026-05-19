@@ -214,3 +214,10 @@ test('mocked read-only fetch populates title/state/checks/files and keeps no-wri
   assert.equal(r.mergeReadiness, 'needs-amendment');
   assert.equal(r.writeActionsAllowed, false);
 });
+
+
+test('backend needs-pr-number status is preserved in provider output', () => {
+  const r = buildGithubPrEvidenceProvider({ connectorEvidence: { status: 'needs-pr-number', source: 'none' }, operatorPrompt: 'merge this' });
+  assert.equal(r.status, 'needs-pr-number');
+  assert.equal(r.mergeReadiness, 'wait');
+});

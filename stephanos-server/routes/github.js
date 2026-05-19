@@ -6,7 +6,7 @@ const router = express.Router();
 router.get('/pr-evidence', async (req, res) => {
   const prNumber = Number(req.query.pr || 0) || null;
   if (!prNumber) {
-    res.status(400).json({ status: 'invalid-request', source: 'none', recommendedNextAction: 'Provide a valid PR number.' });
+    res.status(400).json({ status: 'needs-pr-number', source: 'none', recommendedNextAction: 'Provide a valid PR number.' });
     return;
   }
   const repoConfig = resolveGithubRepoConfig(process.env);

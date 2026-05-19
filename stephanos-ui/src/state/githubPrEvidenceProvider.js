@@ -48,6 +48,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const promptRef = parsePrReferenceFromPrompt(parseInput);
   const hasConnectorPayload = connector && Object.keys(connector).length > 0;
   const hasPastedPayload = pasted && Object.keys(pasted).length > 0;
+  const connectorStatus = asText(connector.status || '', '');
   const source = asText(connector.source || pasted.source || (hasConnectorPayload ? 'connector' : (hasPastedPayload ? 'pasted' : 'none')), 'none');
   const prNumber = connector.prNumber ?? pasted.prNumber ?? promptRef.prNumber ?? null;
   const parsedPrNumber = promptRef.prNumber ?? connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber ?? null;
@@ -87,15 +88,19 @@ export function buildGithubPrEvidenceProvider(input = {}) {
     status = 'needs-connector';
     recommendedNextAction = 'Configure GitHub read connector with repository context or paste PR summary.';
   }
-  if (source === 'connector-missing-repo') {
+  if (connectorStatus === 'needs-repo' || source === 'connector-missing-repo') {
     status = 'needs-repo';
     recommendedNextAction = 'Repository is required to fetch read-only GitHub PR evidence.';
   }
-  if (source === 'connector-missing-configuration') {
+  if (connectorStatus === 'needs-configuration' || source === 'connector-missing-configuration') {
     status = 'needs-configuration';
     recommendedNextAction = 'Configure read-only GitHub token/connector to fetch PR evidence.';
   }
-  if (source === 'connector-missing') {
+  if (connectorStatus === 'needs-pr-number') {
+    status = 'needs-pr-number';
+    recommendedNextAction = 'Provide a PR number to collect read-only GitHub evidence.';
+  }
+  if (connectorStatus === 'needs-connector' || source === 'connector-missing') {
     status = 'needs-connector';
     recommendedNextAction = 'Connect read-only GitHub evidence route for PR metadata/checks.';
   }

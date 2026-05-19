@@ -23,3 +23,8 @@ test('repo config resolver returns null when owner/repo unavailable', () => {
   const repo = resolveGithubRepoConfig({});
   assert.equal(repo, null);
 });
+
+
+test('github route surfaces needs-pr-number contract for missing PR query', () => {
+  assert.match(routeSource, /needs-pr-number/);
+});
