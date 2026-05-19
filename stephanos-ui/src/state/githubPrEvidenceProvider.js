@@ -83,8 +83,8 @@ export function buildGithubPrEvidenceProvider(input = {}) {
     recommendedNextAction = 'Connector unavailable; connect read-only GitHub evidence or paste PR summary.';
   }
   if ((prNumber || parsedPrNumber) && !repo && source === 'none') {
-    status = 'needs-repo';
-    recommendedNextAction = 'Repository is required to fetch read-only GitHub PR evidence.';
+    status = 'needs-connector';
+    recommendedNextAction = 'Configure GitHub read connector with repository context or paste PR summary.';
   }
   if (source === 'connector-missing-repo') {
     status = 'needs-repo';
