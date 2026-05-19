@@ -149,7 +149,7 @@ export function normalizeLiveGithubPrEvidence(liveEvidence = null) {
     : [];
 
   return {
-    source: 'github-live-readonly',
+    source: asText(liveEvidence.source, 'github-live-readonly'),
     repo: asText(liveEvidence.repo || liveEvidence.repository, ''),
     prNumber: Number(liveEvidence.prNumber || liveEvidence.number || 0) || null,
     prUrl: asText(liveEvidence.url || liveEvidence.prUrl, ''),
