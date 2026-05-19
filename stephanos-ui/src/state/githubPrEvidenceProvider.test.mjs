@@ -179,7 +179,7 @@ test('missing token/connector returns needs-configuration or needs-connector and
   assert.equal(r1.status, 'needs-connector');
   assert.equal(r1.prNumber, 123);
 
-  const missingToken = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: true, hasToken: false });
+  const missingToken = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: true, hasToken: false, fetchGithubPrEvidence: async () => ({}) });
   const r2 = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence: missingToken });
   assert.equal(r2.status, 'needs-configuration');
   assert.equal(r2.prNumber, 123);
@@ -216,6 +216,25 @@ test('mocked read-only fetch populates title/state/checks/files and keeps no-wri
 });
 
 
+
+
+test('backend fetch route feeds provider with github-api/fetched source', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ title: 'Backend PR evidence', state: 'open' }) });
+  try {
+    const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
+      prompt: 'do i merge PR 456',
+      repo: 'acme/stephan-os',
+      connectorAvailable: true,
+    });
+    const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 456', connectorEvidence });
+    assert.equal(r.status, 'fetched');
+    assert.equal(r.source, 'github-api/fetched');
+    assert.equal(r.prTitle, 'Backend PR evidence');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test('backend needs-pr-number status is preserved in provider output', () => {
   const r = buildGithubPrEvidenceProvider({ connectorEvidence: { status: 'needs-pr-number', source: 'none' }, operatorPrompt: 'merge this' });
   assert.equal(r.status, 'needs-pr-number');
