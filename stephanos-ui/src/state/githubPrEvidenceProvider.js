@@ -1,4 +1,5 @@
 import { normalizeLiveGithubPrEvidence } from './prEvidenceConnectorModel.js';
+import { buildApiUrl } from '../ai/apiConfig.js';
 
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
 function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map((v) => String(v).trim()).filter(Boolean) : []; }
@@ -132,7 +133,21 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   if (!connectorReady) return { source: 'connector-missing', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
   if (!tokenReady || !fetchFn) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
 
-  const live = await fetchFn({ repo, prNumber, readOnly: true });
-  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: 'github-live-readonly' }) || {};
+  const [owner, repoName] = repo.split('/');
+  const live = fetchFn
+    ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
+    : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
+  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: live?.source || 'github-live-readonly' }) || {};
   return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber };
+}
+
+export async function fetchGithubPrEvidenceFromBackend({ owner = '', repo = '', prNumber } = {}) {
+  const route = new URL(buildApiUrl('/api/github/pr-evidence'));
+  if (owner) route.searchParams.set('owner', owner);
+  if (repo) route.searchParams.set('repo', repo);
+  route.searchParams.set('pr', String(prNumber || ''));
+  const response = await fetch(route.href, { method: 'GET', headers: { Accept: 'application/json' } });
+  if (!response.ok) return { status: 'error', source: 'none' };
+  const payload = await response.json();
+  return payload && typeof payload === 'object' ? payload : { status: 'error', source: 'none' };
 }
