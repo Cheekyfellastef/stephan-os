@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGithubPrEvidenceProvider, parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
+import { buildGithubPrEvidenceProvider, parsePrReferenceFromPrompt, resolveGithubPrEvidenceReadOnly } from './githubPrEvidenceProvider.js';
 
 test('parses PR number from merge prompt', () => {
   const r = parsePrReferenceFromPrompt('do i merge PR 123');
@@ -54,7 +54,7 @@ test('read-only adapter contract is explicit and does not allow write actions', 
   assert.equal(r.adapterVersion, 'github-pr-evidence-readonly.v1');
   assert.equal(r.readOnly, true);
   assert.equal(r.writeActionsAllowed, false);
-  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.status, 'needs-repo');
   assert.equal(r.prTitle, '');
   assert.equal(r.checksStatus, 'unknown');
 });
@@ -87,7 +87,7 @@ test('dist-only source truth risk', () => {
 
 test('prompt PR without connector returns needs-connector', () => {
   const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123' });
-  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.status, 'needs-repo');
   assert.equal(r.prNumber, 123);
 });
 
@@ -96,7 +96,7 @@ test('parses PR number from operatorMessage fallback and preserves parsedPrNumbe
   const r = buildGithubPrEvidenceProvider({ operatorMessage: 'do i merge PR 123' });
   assert.equal(r.prNumber, 123);
   assert.equal(r.parsedPrNumber, 123);
-  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.status, 'needs-repo');
 });
 
 test('parses PR number from matchInput fallback', () => {
@@ -107,7 +107,7 @@ test('parses PR number from matchInput fallback', () => {
 
 test('preserves parsed PR number from chat context match input when connector is unavailable', () => {
   const r = buildGithubPrEvidenceProvider({ chat_context_match_input: 'do i merge PR 123' });
-  assert.equal(r.status, 'needs-connector');
+  assert.equal(r.status, 'needs-repo');
   assert.equal(r.source, 'none');
   assert.equal(r.prNumber, 123);
   assert.equal(r.parsedPrNumber, 123);
@@ -158,4 +158,59 @@ test('missing proof fields remain unknown and conservative when live evidence is
   assert.equal(r.verifyStatus, 'unknown');
   assert.equal(r.browserProofStatus, 'unknown');
   assert.equal(r.mergeReadiness, 'needs-proof');
+});
+
+test('missing repo returns needs-repo and preserves parsed PR number', async () => {
+  const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
+    prompt: 'do i merge PR 123',
+    connectorAvailable: true,
+    hasToken: true,
+    fetchGithubPrEvidence: async () => ({ title: 'unused' }),
+  });
+  const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence });
+  assert.equal(r.status, 'needs-repo');
+  assert.equal(r.prNumber, 123);
+  assert.equal(r.parsedPrNumber, 123);
+});
+
+test('missing token/connector returns needs-configuration or needs-connector and preserves PR number', async () => {
+  const missingConnector = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: false });
+  const r1 = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence: missingConnector });
+  assert.equal(r1.status, 'needs-connector');
+  assert.equal(r1.prNumber, 123);
+
+  const missingToken = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: true, hasToken: false });
+  const r2 = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence: missingToken });
+  assert.equal(r2.status, 'needs-configuration');
+  assert.equal(r2.prNumber, 123);
+});
+
+test('mocked read-only fetch populates title/state/checks/files and keeps no-write contract', async () => {
+  const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
+    prompt: 'do i merge PR 123',
+    repo: 'acme/stephan-os',
+    connectorAvailable: true,
+    hasToken: true,
+    fetchGithubPrEvidence: async () => ({
+      title: 'Wire live PR evidence',
+      state: 'open',
+      merged: false,
+      headSha: 'abc1234',
+      changedFiles: ['stephanos-ui/src/state/githubPrEvidenceProvider.js'],
+      checksStatus: 'failed',
+      failingChecks: ['build'],
+      buildStatus: 'failed',
+      verifyStatus: 'passed',
+      browserProofStatus: 'missing',
+    }),
+  });
+  const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence });
+  assert.equal(r.status, 'fetched');
+  assert.equal(r.prTitle, 'Wire live PR evidence');
+  assert.equal(r.prState, 'open');
+  assert.equal(r.changedFileCount, 1);
+  assert.equal(r.checksStatus, 'failed');
+  assert.deepEqual(r.failingChecks, ['build']);
+  assert.equal(r.mergeReadiness, 'needs-amendment');
+  assert.equal(r.writeActionsAllowed, false);
 });

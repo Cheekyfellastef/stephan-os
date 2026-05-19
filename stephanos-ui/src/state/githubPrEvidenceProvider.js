@@ -82,6 +82,22 @@ export function buildGithubPrEvidenceProvider(input = {}) {
     status = 'needs-connector';
     recommendedNextAction = 'Connector unavailable; connect read-only GitHub evidence or paste PR summary.';
   }
+  if ((prNumber || parsedPrNumber) && !repo && source === 'none') {
+    status = 'needs-repo';
+    recommendedNextAction = 'Repository is required to fetch read-only GitHub PR evidence.';
+  }
+  if (source === 'connector-missing-repo') {
+    status = 'needs-repo';
+    recommendedNextAction = 'Repository is required to fetch read-only GitHub PR evidence.';
+  }
+  if (source === 'connector-missing-configuration') {
+    status = 'needs-configuration';
+    recommendedNextAction = 'Configure read-only GitHub token/connector to fetch PR evidence.';
+  }
+  if (source === 'connector-missing') {
+    status = 'needs-connector';
+    recommendedNextAction = 'Connect read-only GitHub evidence route for PR metadata/checks.';
+  }
   if (merged) { mergeReadiness = 'already-merged'; recommendedNextAction = 'Run post-merge validation.'; }
   else if (!prNumber) { mergeReadiness = 'wait'; }
   else if (checksStatus === 'failed' || buildStatus === 'failed' || verifyStatus === 'failed') { mergeReadiness = 'needs-amendment'; recommendedNextAction = 'Ask Codex to amend existing PR and rerun checks.'; }
@@ -101,4 +117,22 @@ export function buildGithubPrEvidenceProvider(input = {}) {
     parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length,
     parseInput: asText(parseInput, ''), parsedNumberSource: parsedPrNumber ? (promptRef.prNumber ? 'operator-input' : ((connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber) ? 'evidence' : 'none')) : 'none',
   };
+}
+
+export async function resolveGithubPrEvidenceReadOnly(input = {}) {
+  const promptRef = parsePrReferenceFromPrompt(asText(input.prompt || input.operatorPrompt, ''));
+  const prNumber = input.prNumber ?? promptRef.prNumber ?? null;
+  const repo = asText(input.repo || promptRef.repo || input.repoConfig?.repo, '');
+  const connectorReady = input.connectorAvailable === true;
+  const tokenReady = input.hasToken === true;
+  const fetchFn = typeof input.fetchGithubPrEvidence === 'function' ? input.fetchGithubPrEvidence : null;
+
+  if (!prNumber) return { source: 'none' };
+  if (!repo) return { source: 'connector-missing-repo', prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  if (!connectorReady) return { source: 'connector-missing', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  if (!tokenReady || !fetchFn) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+
+  const live = await fetchFn({ repo, prNumber, readOnly: true });
+  const normalized = normalizeLiveGithubPrEvidence({ ...(live || {}), repo, prNumber, source: 'github-live-readonly' }) || {};
+  return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber };
 }
