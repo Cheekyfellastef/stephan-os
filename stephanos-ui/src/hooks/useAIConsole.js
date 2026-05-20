@@ -3105,6 +3105,11 @@ export function useAIConsole() {
       const liveGithubPrEvidence = await resolveGithubPrEvidenceReadOnly({
         prompt,
         repo: requestRuntimeStatus?.githubRepo || requestRuntimeStatus?.githubPrEvidenceRepo || '',
+        repoConfig: {
+          repo: requestRuntimeStatus?.githubRepo || requestRuntimeStatus?.githubPrEvidenceRepo || '',
+          owner: requestRuntimeStatus?.githubOwner || '',
+          name: requestRuntimeStatus?.githubRepoName || '',
+        },
         connectorAvailable: true,
       });
       const previousActiveMission = readActiveMissionState();
