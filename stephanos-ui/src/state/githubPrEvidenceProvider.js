@@ -5,6 +5,25 @@ import { resolveCanonicalRepoConfig } from './canonicalRepoConfig.js';
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
 function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map((v) => String(v).trim()).filter(Boolean) : []; }
 
+function hasFetchedProjectionGap(connector = {}, pasted = {}) {
+  const source = connector || pasted || {};
+  const required = [
+    asText(source.repo, ''),
+    asText(source.prUrl, ''),
+    asText(source.prTitle, ''),
+    asText(source.prState, ''),
+    asText(source.headSha, ''),
+    asText(source.checksStatus, ''),
+    asText(source.buildStatus, ''),
+    asText(source.verifyStatus, ''),
+    asText(source.retrievedAt, ''),
+  ];
+  const missingRequired = required.some((value) => !value);
+  const missingToken = !(source.tokenStatus && source.tokenStatus.configured === true && asText(source.tokenStatus.authority, ''));
+  const missingChangedFiles = !(Number(source.changedFileCount ?? 0) > 0 || (Array.isArray(source.changedFiles) && source.changedFiles.length > 0));
+  return missingRequired || missingToken || missingChangedFiles;
+}
+
 export function parsePrReferenceFromPrompt(prompt = '') {
   const text = asText(prompt, '');
   const prUrl = text.match(/https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:\b|[/?#])/i);
@@ -81,8 +100,8 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   let status = 'unavailable';
   let mergeReadiness = 'wait';
   let recommendedNextAction = 'Connect read-only GitHub PR evidence or paste PR summary.';
-  const requiredFetchedFieldsPresent = Boolean(asText(connector.prTitle || pasted.prTitle, '') || checksStatus !== 'unknown' || buildStatus !== 'unknown' || verifyStatus !== 'unknown' || retrievedAt || (connector?.tokenStatus && typeof connector.tokenStatus === 'object'));
-  const projectionIntegrity = connectorStatus === 'fetched' && !requiredFetchedFieldsPresent ? 'incomplete' : 'complete';
+  const fetchedPayloadIncomplete = connectorStatus === 'fetched' && hasFetchedProjectionGap(connector, pasted);
+  const projectionIntegrity = fetchedPayloadIncomplete ? 'incomplete' : 'complete';
 
   if (source !== 'none') {
     status = 'fetched';
@@ -116,7 +135,10 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   else if (checksStatus === 'failed' || buildStatus === 'failed' || verifyStatus === 'failed') { mergeReadiness = 'needs-amendment'; recommendedNextAction = 'Ask Codex to amend existing PR and rerun checks.'; }
   else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; recommendedNextAction = 'Collect missing proof fields before merge decision.'; }
   else if (status === 'fetched') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator approval required before merge.'; }
-  if (projectionIntegrity === 'incomplete') recommendedNextAction = 'repair fetched evidence projection';
+  if (projectionIntegrity === 'incomplete') {
+    recommendedNextAction = 'repair fetched evidence projection';
+    evidenceWarnings.push('fetched_payload_not_fully_projected');
+  }
 
   return {
     status, source, owner, repoName, repo, prNumber, parsedPrNumber, prUrl,
@@ -130,6 +152,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
     evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction,
     projectionIntegrity,
     fetchDiagnostics: connector.fetchDiagnostics && typeof connector.fetchDiagnostics === 'object' ? { ...connector.fetchDiagnostics } : null,
+    tokenStatus: connector.tokenStatus && typeof connector.tokenStatus === 'object' ? { ...connector.tokenStatus } : null,
     parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length,
     parseInput: asText(parseInput, ''), parsedNumberSource: parsedPrNumber ? (promptRef.prNumber ? 'operator-input' : ((connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber) ? 'evidence' : 'none')) : 'none',
   };
