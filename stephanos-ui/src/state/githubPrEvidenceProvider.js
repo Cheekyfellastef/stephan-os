@@ -54,7 +54,9 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const prNumber = connector.prNumber ?? pasted.prNumber ?? promptRef.prNumber ?? null;
   const parsedPrNumber = promptRef.prNumber ?? connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber ?? null;
   const prUrl = asText(connector.prUrl || pasted.prUrl || promptRef.prUrl, '');
-  const repo = asText(connector.repo || pasted.repo || promptRef.repo, '');
+  const owner = asText(connector.owner || pasted.owner, '');
+  const repoName = asText(connector.repoName || pasted.repoName, '');
+  const repo = asText(connector.repo || pasted.repo || promptRef.repo || ((owner && repoName) ? `${owner}/${repoName}` : ''), '');
   const changedFiles = asList(connector.changedFiles || pasted.changedFiles);
   const checksStatus = asText(connector.checksStatus || pasted.checksStatus, 'unknown');
   const buildStatus = asText(connector.buildStatus || pasted.buildStatus, 'unknown');
@@ -64,6 +66,7 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   const prState = asText(connector.prState || pasted.prState, merged ? 'closed' : 'unknown');
   const failingChecks = asList(connector.failingChecks || pasted.failingChecks);
   const codexTaskRefs = asList(connector.codexTaskRefs || pasted.codexTaskRefs);
+  const retrievedAt = asText(connector.retrievedAt || pasted.retrievedAt, '');
   const codexTaskPresent = asText(connector.codexTaskPresent || pasted.codexTaskPresent, codexTaskRefs.length > 0 ? 'yes' : 'no');
   const evidenceWarnings = [...asList(connector.evidenceWarnings), ...asList(pasted.evidenceWarnings)];
   const missingProof = [];
@@ -78,6 +81,9 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   let status = 'unavailable';
   let mergeReadiness = 'wait';
   let recommendedNextAction = 'Connect read-only GitHub PR evidence or paste PR summary.';
+  const requiredFetchedFieldsPresent = Boolean(asText(connector.prTitle || pasted.prTitle, '') || checksStatus !== 'unknown' || buildStatus !== 'unknown' || verifyStatus !== 'unknown' || retrievedAt || (connector?.tokenStatus && typeof connector.tokenStatus === 'object'));
+  const projectionIntegrity = connectorStatus === 'fetched' && !requiredFetchedFieldsPresent ? 'incomplete' : 'complete';
+
   if (source !== 'none') {
     status = 'fetched';
     recommendedNextAction = 'Collect checks/build/verify/browser proof before merge decision.';
@@ -110,17 +116,20 @@ export function buildGithubPrEvidenceProvider(input = {}) {
   else if (checksStatus === 'failed' || buildStatus === 'failed' || verifyStatus === 'failed') { mergeReadiness = 'needs-amendment'; recommendedNextAction = 'Ask Codex to amend existing PR and rerun checks.'; }
   else if (missingProof.length > 0) { mergeReadiness = 'needs-proof'; recommendedNextAction = 'Collect missing proof fields before merge decision.'; }
   else if (status === 'fetched') { mergeReadiness = 'merge-candidate'; recommendedNextAction = 'Operator approval required before merge.'; }
+  if (projectionIntegrity === 'incomplete') recommendedNextAction = 'repair fetched evidence projection';
 
   return {
-    status, source, repo, prNumber, parsedPrNumber, prUrl,
+    status, source, owner, repoName, repo, prNumber, parsedPrNumber, prUrl,
     adapterVersion: 'github-pr-evidence-readonly.v1',
     readOnly: true,
     writeActionsAllowed: false,
     prTitle: asText(connector.prTitle || pasted.prTitle, ''), prState, merged,
     headSha: asText(connector.headSha || pasted.headSha, ''), baseBranch: asText(connector.baseBranch || pasted.baseBranch, ''),
     changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus, verifyStatus, browserProofStatus,
-    codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''),
+    codexTaskPresent, codexTaskRefs, latestCommitSha: asText(connector.latestCommitSha || pasted.latestCommitSha, ''), retrievedAt,
     evidenceWarnings, missingProof, mergeReadiness, recommendedNextAction,
+    projectionIntegrity,
+    fetchDiagnostics: connector.fetchDiagnostics && typeof connector.fetchDiagnostics === 'object' ? { ...connector.fetchDiagnostics } : null,
     parseConfidence: promptRef.parseConfidence, parseWarningCount: promptRef.parseWarnings.length,
     parseInput: asText(parseInput, ''), parsedNumberSource: parsedPrNumber ? (promptRef.prNumber ? 'operator-input' : ((connector.parsedPrNumber ?? pasted.parsedPrNumber ?? prNumber) ? 'evidence' : 'none')) : 'none',
   };
@@ -141,6 +150,7 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   if (fetchFn && !tokenReady) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
 
   const [owner, repoName] = repo.split('/');
+  const fetchDiagnostics = { github_pr_evidence_fetch_attempted: 'yes', github_pr_evidence_fetch_url_or_mode: fetchFn ? 'custom-readonly-fetch' : `backend:${owner}/${repoName}#${prNumber}` };
   const live = fetchFn
     ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
     : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
@@ -152,7 +162,8 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
     prNumber,
     source: live?.source || (backendStatus && backendStatus !== 'fetched' ? backendStatus : (fetchFn ? 'github-live-readonly' : 'github-api/fetched')),
   }) || {};
-  return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  const payloadKeys = live && typeof live === 'object' ? Object.keys(live).sort() : [];
+  return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber, fetchDiagnostics: { ...fetchDiagnostics, github_pr_evidence_backend_status: asText(live?.status, 'unknown'), github_pr_evidence_backend_source: asText(live?.source, 'none'), github_pr_evidence_backend_repo: asText((live?.owner && live?.repo) ? `${live.owner}/${live.repo}` : resolvedRepo, 'unknown'), github_pr_evidence_backend_title_present: asText(live?.title || live?.prTitle ? 'yes' : 'no', 'no'), github_pr_evidence_backend_token_configured: live?.tokenStatus?.configured === true ? 'yes' : 'no', github_pr_evidence_backend_payload_keys: payloadKeys.join('|') || 'none' } };
 }
 
 export async function fetchGithubPrEvidenceFromBackend({ owner = '', repo = '', prNumber } = {}) {

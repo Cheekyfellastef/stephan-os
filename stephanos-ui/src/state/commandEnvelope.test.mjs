@@ -34,6 +34,7 @@ test('envelope attachment + projection covers chat context/provider/execution/su
   assert.equal(projected.pr_evidence_parsed_pr_number, '123');
   assert.equal(projected.github_pr_evidence_number, '123');
   assert.equal(projected.github_pr_evidence_provider_status, 'needs-connector');
+  assert.equal(projected.github_pr_evidence_projection_integrity, 'complete');
   const snapshot = projectEnvelopeToSupportSnapshot(env);
   assert.equal(snapshot.command_envelope_actual_provider, 'ollama');
   assert.equal(snapshot.chat_continuity_seeded_from_existing_history, 'yes');
@@ -62,4 +63,18 @@ test('command envelope projects PR evidence parse input metadata fields', () => 
   assert.equal(projected.pr_evidence_parsed_number_source, 'matchInput');
   assert.equal(projected.pr_evidence_provider_output_number, '123');
   assert.equal(projected.command_envelope_pr_evidence_parse_input, 'do i merge PR 123');
+});
+
+
+test('command envelope projects fetched github evidence metadata and diagnostics', () => {
+  let env = createCommandEnvelope({ operatorMessage: 'do i merge PR 970' });
+  env = attachPrEvidenceToEnvelope(env, { status: 'fetched', source: 'github-api', prNumber: 970, repo: 'Cheekyfellastef/stephan-os', prTitle: 'Fix projection', prState: 'open', merged: false, headSha: 'abc123', changedFileCount: 3, checksStatus: 'passed', buildStatus: 'passed', verifyStatus: 'passed', retrievedAt: '2026-05-20T00:00:00.000Z', projectionIntegrity: 'complete', tokenStatus: { configured: true, authority: 'backend-local-secret-store' }, fetchDiagnostics: { github_pr_evidence_fetch_attempted: 'yes', github_pr_evidence_fetch_url_or_mode: 'backend:Cheekyfellastef/stephan-os#970' } });
+  const projected = projectEnvelopeToExecutionMetadata(env);
+  assert.equal(projected.github_pr_evidence_provider_status, 'fetched');
+  assert.equal(projected.github_pr_evidence_source, 'github-api');
+  assert.equal(projected.github_pr_evidence_title, 'Fix projection');
+  assert.equal(projected.github_pr_evidence_state, 'open');
+  assert.equal(projected.github_token_configured, 'yes');
+  assert.equal(projected.github_token_authority, 'backend-local-secret-store');
+  assert.equal(projected.github_pr_evidence_fetch_attempted, 'yes');
 });
