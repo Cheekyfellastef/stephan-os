@@ -148,10 +148,15 @@ const builtinProviders = [
     getSummary: (input) => {
       const pr = projectCanonicalPrEvidence({ prEvidence: input.prEvidence || {}, githubPrEvidence: input.githubPrEvidence || {} });
       return {
-        status: String(pr.status || 'none'),
+        status: String(pr.status || pr.prEvidenceStatus || 'none'),
+        prEvidenceStatus: String(pr.prEvidenceStatus || pr.status || 'none'),
         prNumber: String(pr.prNumber || pr.parsedPrNumber || 'unknown'),
         parsedPrNumber: String(pr.parsedPrNumber || pr.prNumber || 'unknown'),
         checksStatus: String(pr.checksStatus || 'unknown'),
+        buildStatus: String(pr.buildStatus || 'unknown'),
+        verifyStatus: String(pr.verifyStatus || 'unknown'),
+        changedFileCount: Number(pr.changedFileCount ?? 0) || 0,
+        merged: pr.merged === true,
         missingProof: normalizeList(pr.missingProof),
         mergeReadiness: String(pr.mergeReadiness || 'wait'),
         nextAction: String(pr.recommendedNextAction || 'Collect PR evidence.'),

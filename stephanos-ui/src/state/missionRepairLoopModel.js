@@ -1,3 +1,5 @@
+import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
+
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -128,4 +130,3 @@ export function buildMissionRepairLoopModel(input = {}) {
     codexPromptDraft,
   };
 }
-import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';

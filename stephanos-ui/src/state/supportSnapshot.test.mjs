@@ -2710,3 +2710,33 @@ test('support snapshot flags incomplete fetched payload integrity', () => {
   assert.match(snapshot, /GitHub PR Evidence Projection Integrity: incomplete-fetched-payload/);
   assert.match(snapshot, /GitHub PR Evidence Next Action: repair fetched evidence projection/);
 });
+
+test('support snapshot promotes fetched github evidence into canonical PR evidence lines', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      prEvidenceStatus: 'no_pr_evidence',
+      prEvidenceChecksStatus: 'unknown',
+      prEvidenceBuildStatus: 'unknown',
+      prEvidenceVerifyStatus: 'unknown',
+      githubPrEvidenceProviderStatus: 'fetched',
+      githubPrEvidenceSource: 'github-api',
+      githubPrEvidenceRepo: 'Cheekyfellastef/stephan-os',
+      githubPrEvidenceNumber: '970',
+      githubPrEvidenceState: 'closed',
+      githubPrEvidenceMerged: 'yes',
+      githubPrEvidenceChangedFileCount: '4',
+      githubPrEvidenceChecksStatus: 'passed',
+      githubPrEvidenceBuildStatus: 'passed',
+      githubPrEvidenceVerifyStatus: 'passed',
+      githubPrEvidenceMergeReadiness: 'already-merged',
+    },
+  });
+  assert.match(snapshot, /PR Evidence Status: fetched/);
+  assert.match(snapshot, /PR Evidence Checks Status: passed/);
+  assert.match(snapshot, /PR Evidence Build Status: passed/);
+  assert.match(snapshot, /PR Evidence Verify Status: passed/);
+  assert.match(snapshot, /PR Evidence Changed File Count: 4/);
+  assert.match(snapshot, /PR Evidence Merged: yes/);
+  assert.match(snapshot, /PR Evidence Merge Readiness: already-merged/);
+  assert.match(snapshot, /Mission Repair Loop PR Evidence Linked: yes/);
+});

@@ -33,7 +33,20 @@ export function buildResponsePlan(input = {}) {
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
   const providerPr = input?.chatContextPack?.providerSummaries?.prEvidence || {};
-  const canonicalPr = projectCanonicalPrEvidence({ prEvidence: providerPr, githubPrEvidence: input?.githubPrEvidence || {} });
+  const snapshotPr = {
+    status: input?.supportSnapshotSummary?.prEvidenceStatus,
+    prEvidenceStatus: input?.supportSnapshotSummary?.prEvidenceStatus,
+    checksStatus: input?.supportSnapshotSummary?.prEvidenceChecksStatus,
+    buildStatus: input?.supportSnapshotSummary?.prEvidenceBuildStatus,
+    verifyStatus: input?.supportSnapshotSummary?.prEvidenceVerifyStatus,
+    changedFileCount: input?.supportSnapshotSummary?.prEvidenceChangedFileCount,
+    merged: String(input?.supportSnapshotSummary?.prEvidenceMerged || '').toLowerCase() === 'yes',
+    mergeReadiness: input?.supportSnapshotSummary?.prEvidenceMergeReadiness,
+    missingProof: String(input?.supportSnapshotSummary?.prEvidenceMissingProof || '').split('|').map((v) => v.trim()).filter(Boolean),
+    prNumber: input?.supportSnapshotSummary?.prEvidenceParsedPrNumber,
+    parsedPrNumber: input?.supportSnapshotSummary?.prEvidenceParsedPrNumber,
+  };
+  const canonicalPr = projectCanonicalPrEvidence({ prEvidence: { ...snapshotPr, ...providerPr }, githubPrEvidence: input?.githubPrEvidence || {} });
   const canonicalEvidenceDetected = ['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase());
   const prEvidenceDetected = snapshotPrEvidenceDetected || canonicalEvidenceDetected;
   const prMergeReadiness = String(canonicalPr?.mergeReadiness || input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();

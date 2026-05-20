@@ -39,3 +39,24 @@ test('prEvidence summary falls back to parsedPrNumber when prNumber is missing',
   assert.equal(snapshot.providerSummaries.prEvidence.prNumber, '123');
   assert.equal(snapshot.providerSummaries.prEvidence.parsedPrNumber, '123');
 });
+
+test('prEvidence summary carries canonical build/verify projection from fetched github evidence', () => {
+  const snapshot = buildContextProviderSnapshot({
+    contextProviderIdsRequested: ['prEvidence'],
+    githubPrEvidence: {
+      status: 'fetched',
+      parsedPrNumber: 970,
+      checksStatus: 'passed',
+      buildStatus: 'passed',
+      verifyStatus: 'passed',
+      changedFileCount: 4,
+      merged: true,
+      mergeReadiness: 'already-merged',
+    },
+  });
+  assert.equal(snapshot.providerSummaries.prEvidence.status, 'fetched');
+  assert.equal(snapshot.providerSummaries.prEvidence.buildStatus, 'passed');
+  assert.equal(snapshot.providerSummaries.prEvidence.verifyStatus, 'passed');
+  assert.equal(snapshot.providerSummaries.prEvidence.changedFileCount, 4);
+  assert.equal(snapshot.providerSummaries.prEvidence.merged, true);
+});
