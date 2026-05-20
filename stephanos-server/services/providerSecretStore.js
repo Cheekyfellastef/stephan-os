@@ -11,7 +11,8 @@ const SECRET_STORE_FILE = path.join(DATA_DIR, 'provider-secrets.json');
 const SECRET_PROVIDERS = new Set(
   Object.entries(PROVIDER_DEFINITIONS)
     .filter(([, definition]) => definition?.requiresSecret === true && definition?.secretFieldName === 'apiKey')
-    .map(([provider]) => provider),
+    .map(([provider]) => provider)
+    .concat(['github']),
 );
 
 function normalizeProviderKey(provider) {
