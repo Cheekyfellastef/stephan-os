@@ -38,7 +38,7 @@ export function buildMissionRepairLoopModel(input = {}) {
   const browserProofAvailable = input.latestSupportSnapshotStatus?.browserProofAvailable === true;
   const verificationReady = asText(input.missionVerificationReadinessLevel, 'unknown');
   const verificationProof = asText(input.missionVerificationProofStatus, 'unknown');
-  const prEvidence = input.prEvidenceIntake || {};
+  const prEvidence = projectCanonicalPrEvidence({ prEvidence: input.prEvidenceIntake || {}, githubPrEvidence: input.githubPrEvidence || {} });
   const attemptsExhausted = currentAttempt >= maxAttempts;
   const prMergeReadiness = asText(prEvidence.mergeReadiness, 'merge-candidate');
   const prEvidenceStatus = asText(prEvidence.status || prEvidence.prEvidenceStatus, 'none');
@@ -114,7 +114,7 @@ export function buildMissionRepairLoopModel(input = {}) {
     mergeRecommendation,
     operatorDecisionRequired,
     sourceTruthsUsed,
-    latestPrEvidenceStatus: asText(prEvidence.prEvidenceStatus, 'none'),
+    latestPrEvidenceStatus: asText(prEvidence.status || prEvidence.prEvidenceStatus, 'none'),
     latestPrEvidenceMergeReadiness: prMergeReadiness,
     latestPrEvidenceMissingProof: asList(prEvidence.missingProof),
     amendmentNeeded: needsAmendment,
@@ -128,3 +128,4 @@ export function buildMissionRepairLoopModel(input = {}) {
     codexPromptDraft,
   };
 }
+import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';

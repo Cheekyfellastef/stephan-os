@@ -64,5 +64,16 @@ test('unavailable github evidence keeps merge decision at wait', () => {
     uiRealityStatus: { severity: 'OK' },
   });
   assert.equal(plan.mergeDecision, 'wait');
-  assert.match(plan.recommendedNextAction, /connect read-only GitHub evidence|paste PR summary/i);
+});
+
+test('fetched merged github evidence maps to already-merged without missing evidence warning', () => {
+  const plan = buildResponsePlan({
+    chatContextPack: { recommendedResponseMode: 'merge-decision' },
+    supportSnapshotSummary: { prEvidenceInputDetected: 'yes' },
+    githubPrEvidence: { status: 'fetched', mergeReadiness: 'already-merged', merged: true, checksStatus: 'passed', buildStatus: 'passed', verifyStatus: 'passed', missingProof: [] },
+    uiRealityStatus: { severity: 'OK' },
+    missionState: { testsPassed: 'yes' },
+  });
+  assert.equal(plan.mergeDecision, 'already-merged');
+  assert.equal(plan.warnings.some((warning) => /PR evidence missing/i.test(warning)), false);
 });
