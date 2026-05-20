@@ -37,11 +37,12 @@ import { adjudicateOperatorLifecycleIntent } from '../state/operatorCommandInten
 import { buildOperatorReplyPayload, resolveOperatorReplyPromptKey } from '../state/operatorReplyAdapter.js';
 import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
+import { resolveGithubPrEvidenceReadOnly } from '../state/githubPrEvidenceProvider.js';
 import { buildResponsePlan } from '../state/responsePlanner.js';
 import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, seedChatContinuityFromExistingHistory } from '../state/chatContinuity.js';
 import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorProfile } from '../state/operatorProfileMemory.js';
 import { buildActiveMissionState, persistActiveMissionState, readActiveMissionState } from '../state/activeMissionState.js';
-import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
+import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachPrEvidenceToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -3101,6 +3102,11 @@ export function useAIConsole() {
       const previousOperatorProfile = readOperatorProfile();
       const nextOperatorProfile = updateOperatorProfileFromMessage(previousOperatorProfile, prompt);
       persistOperatorProfile(nextOperatorProfile);
+      const liveGithubPrEvidence = await resolveGithubPrEvidenceReadOnly({
+        prompt,
+        repo: requestRuntimeStatus?.githubRepo || requestRuntimeStatus?.githubPrEvidenceRepo || '',
+        connectorAvailable: true,
+      });
       const previousActiveMission = readActiveMissionState();
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
@@ -3127,6 +3133,7 @@ export function useAIConsole() {
         },
         chatContinuity: previousChatContinuity,
         operatorProfile: nextOperatorProfile,
+        connectorEvidence: liveGithubPrEvidence,
       });
       const responsePlan = buildResponsePlan({
         operatorMessage: prompt,
@@ -3251,6 +3258,7 @@ export function useAIConsole() {
         submissionRoute,
       });
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
+      commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.providerSummaries?.prEvidence || liveGithubPrEvidence || null);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
         responsePlannerGuidance: `Use ${responsePlan.answerShape} answer shape: ${responsePlan.requiredSections.join(', ')}. ${responsePlan.identityGuidance || ''} Do not invent PR status if PR evidence is missing.`,
         requestedProvider,
