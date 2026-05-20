@@ -77,3 +77,27 @@ test('fetched merged github evidence maps to already-merged without missing evid
   assert.equal(plan.mergeDecision, 'already-merged');
   assert.equal(plan.warnings.some((warning) => /PR evidence missing/i.test(warning)), false);
 });
+
+test('fetched canonical PR evidence from provider summary suppresses missing proof warning', () => {
+  const plan = buildResponsePlan({
+    chatContextPack: {
+      recommendedResponseMode: 'merge-decision',
+      providerSummaries: {
+        prEvidence: {
+          status: 'fetched',
+          prEvidenceStatus: 'fetched',
+          checksStatus: 'passed',
+          buildStatus: 'passed',
+          verifyStatus: 'passed',
+          mergeReadiness: 'already-merged',
+          merged: true,
+          missingProof: [],
+        },
+      },
+    },
+    uiRealityStatus: { severity: 'OK' },
+    missionState: { testsPassed: 'yes' },
+  });
+  assert.equal(plan.mergeDecision, 'already-merged');
+  assert.equal(plan.warnings.some((warning) => /build\/verify\/check evidence missing/i.test(warning)), false);
+});
