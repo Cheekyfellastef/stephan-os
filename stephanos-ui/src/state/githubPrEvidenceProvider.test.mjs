@@ -160,15 +160,26 @@ test('missing proof fields remain unknown and conservative when live evidence is
   assert.equal(r.mergeReadiness, 'needs-proof');
 });
 
-test('missing repo returns needs-repo and preserves parsed PR number', async () => {
+test('canonical repo fallback is used when prompt has PR number and repo is omitted', async () => {
+  let fetchArgs = null;
   const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
     prompt: 'do i merge PR 123',
     connectorAvailable: true,
     hasToken: true,
-    fetchGithubPrEvidence: async () => ({ title: 'unused' }),
+    fetchGithubPrEvidence: async (args) => {
+      fetchArgs = args;
+      return { status: 'fetched', source: 'github-api', title: 'unused' };
+    },
   });
   const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence });
-  assert.equal(r.status, 'needs-repo');
+  assert.deepEqual(fetchArgs, {
+    repo: 'Cheekyfellastef/stephan-os',
+    prNumber: 123,
+    owner: 'Cheekyfellastef',
+    repoName: 'stephan-os',
+    readOnly: true,
+  });
+  assert.equal(r.status, 'fetched');
   assert.equal(r.prNumber, 123);
   assert.equal(r.parsedPrNumber, 123);
 });
@@ -239,7 +250,7 @@ test('backend fetch route feeds provider with github-api/fetched source', async 
 test('backend route can resolve canonical repo when prompt has PR number but no repo slug', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    assert.match(String(url), /\/api\/github\/pr-evidence\?pr=970$/);
+    assert.match(String(url), /\/api\/github\/pr-evidence\?owner=Cheekyfellastef&repo=stephan-os&pr=970$/);
     return {
       ok: true,
       json: async () => ({ status: 'needs-configuration', source: 'none', owner: 'Cheekyfellastef', repo: 'stephan-os', prNumber: 970 }),

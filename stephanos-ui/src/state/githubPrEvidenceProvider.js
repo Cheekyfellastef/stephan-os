@@ -1,5 +1,6 @@
 import { normalizeLiveGithubPrEvidence } from './prEvidenceConnectorModel.js';
 import { buildApiUrl } from '../ai/apiConfig.js';
+import { resolveCanonicalRepoConfig } from './canonicalRepoConfig.js';
 
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
 function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map((v) => String(v).trim()).filter(Boolean) : []; }
@@ -128,7 +129,8 @@ export function buildGithubPrEvidenceProvider(input = {}) {
 export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   const promptRef = parsePrReferenceFromPrompt(asText(input.prompt || input.operatorPrompt, ''));
   const prNumber = input.prNumber ?? promptRef.prNumber ?? null;
-  const repo = asText(input.repo || promptRef.repo || input.repoConfig?.repo, '');
+  const canonicalRepoConfig = resolveCanonicalRepoConfig(input.repoConfig || {});
+  const repo = asText(input.repo || promptRef.repo || input.repoConfig?.repo || canonicalRepoConfig.repo, '');
   const connectorReady = input.connectorAvailable !== false;
   const tokenReady = input.hasToken === true;
   const fetchFn = typeof input.fetchGithubPrEvidence === 'function' ? input.fetchGithubPrEvidence : null;
