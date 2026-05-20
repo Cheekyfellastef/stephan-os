@@ -149,6 +149,7 @@ export function normalizeLiveGithubPrEvidence(liveEvidence = null) {
     : [];
 
   return {
+    status: asText(liveEvidence.status, ''),
     source: asText(liveEvidence.source, 'github-live-readonly'),
     repo: asText(liveEvidence.repo || liveEvidence.repository, ''),
     prNumber: Number(liveEvidence.prNumber || liveEvidence.number || 0) || null,
@@ -168,6 +169,12 @@ export function normalizeLiveGithubPrEvidence(liveEvidence = null) {
     missingProof,
     mergeReadiness: asText(liveEvidence.mergeReadiness, ''),
     retrievedAt: asText(liveEvidence.retrievedAt, ''),
+    tokenStatus: liveEvidence.tokenStatus && typeof liveEvidence.tokenStatus === 'object' ? {
+      configured: liveEvidence.tokenStatus.configured === true,
+      masked: asText(liveEvidence.tokenStatus.masked, ''),
+      authority: asText(liveEvidence.tokenStatus.authority, ''),
+      updatedAt: asText(liveEvidence.tokenStatus.updatedAt, ''),
+    } : null,
     evidenceWarnings: warnings,
   };
 }

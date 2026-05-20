@@ -952,6 +952,32 @@ export function buildSupportSnapshot({
     'unavailable',
   );
 
+  const githubTokenConfiguredDisplay = asText(
+    runtimeStatus?.githubTokenConfigured
+      || executionMetadata?.github_token_configured
+      || executionMetadata?.command_envelope_github_token_configured,
+    'no',
+  );
+  const githubTokenAuthorityDisplay = asText(
+    runtimeStatus?.githubTokenAuthority
+      || executionMetadata?.github_token_authority
+      || executionMetadata?.command_envelope_github_token_authority,
+    'none',
+  );
+  const githubTokenMaskedDisplay = asText(
+    runtimeStatus?.githubTokenMasked
+      || executionMetadata?.github_token_masked
+      || executionMetadata?.command_envelope_github_token_masked,
+    'n/a',
+  );
+  const githubTokenUpdatedAtDisplay = asText(
+    runtimeStatus?.githubTokenUpdatedAt
+      || executionMetadata?.github_token_updated_at
+      || executionMetadata?.command_envelope_github_token_updated_at,
+    'n/a',
+  );
+
+
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -1440,10 +1466,10 @@ export function buildSupportSnapshot({
     `PR Evidence Recommended Next Action: ${asText(runtimeStatus?.prEvidenceRecommendedNextAction, 'collect PR evidence')}`,
     `Mission Repair Loop PR Evidence Linked: ${asText(runtimeStatus?.missionRepairLoopPrEvidenceLinked, 'no')}`,
     `GitHub PR Evidence Provider Status: ${githubPrEvidenceProviderStatusDisplay}`,
-    `GitHub Token Configured: ${asText(runtimeStatus?.githubTokenConfigured, 'no')}`,
-    `GitHub Token Authority: ${asText(runtimeStatus?.githubTokenAuthority, 'none')}`,
-    `GitHub Token Masked: ${asText(runtimeStatus?.githubTokenMasked, 'n/a')}`,
-    `GitHub Token Updated At: ${asText(runtimeStatus?.githubTokenUpdatedAt, 'n/a')}`,
+    `GitHub Token Configured: ${githubTokenConfiguredDisplay}`,
+    `GitHub Token Authority: ${githubTokenAuthorityDisplay}`,
+    `GitHub Token Masked: ${githubTokenMaskedDisplay}`,
+    `GitHub Token Updated At: ${githubTokenUpdatedAtDisplay}`,
     `GitHub PR Evidence Projection Source: ${githubPrEvidenceProjectionSource}`,
     `GitHub PR Evidence Source: ${asText(runtimeStatus?.githubPrEvidenceSource, 'none')}`,
     `GitHub PR Evidence Repo: ${asText(runtimeStatus?.githubPrEvidenceRepo, 'unknown')}`,
