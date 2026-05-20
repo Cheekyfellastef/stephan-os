@@ -12,23 +12,31 @@ export function projectCanonicalPrEvidence({ prEvidence = {}, githubPrEvidence =
   const useGithubFetched = githubStatus === 'fetched';
   const base = prEvidence && typeof prEvidence === 'object' ? { ...prEvidence } : {};
   if (!useGithubFetched) return base;
+  const githubMerged = githubPrEvidence.merged === true;
+  const mergedState = asText(githubPrEvidence.prState, '').toLowerCase() === 'closed' && githubMerged;
+  const merged = githubMerged || mergedState || base.merged === true;
+  const mergedReadiness = merged ? 'already-merged' : '';
+  const missingProof = asList(githubPrEvidence.missingProof).length > 0 ? asList(githubPrEvidence.missingProof) : asList(base.missingProof);
+  const githubChecks = asText(githubPrEvidence.checksStatus, asText(base.checksStatus, 'unknown'));
+  const githubBuild = asText(githubPrEvidence.buildStatus, asText(base.buildStatus, 'unknown'));
+  const githubVerify = asText(githubPrEvidence.verifyStatus, asText(base.verifyStatus, 'unknown'));
   return {
     ...base,
     status: asText(githubPrEvidence.status, asText(base.status, 'none')),
     prEvidenceStatus: asText(githubPrEvidence.status, asText(base.prEvidenceStatus, 'none')),
-    checksStatus: asText(githubPrEvidence.checksStatus, asText(base.checksStatus, 'unknown')),
-    buildStatus: asText(githubPrEvidence.buildStatus, asText(base.buildStatus, 'unknown')),
-    verifyStatus: asText(githubPrEvidence.verifyStatus, asText(base.verifyStatus, 'unknown')),
+    checksStatus: githubChecks,
+    buildStatus: githubBuild,
+    verifyStatus: githubVerify,
     changedFileCount: Number(githubPrEvidence.changedFileCount ?? base.changedFileCount ?? 0) || 0,
-    merged: githubPrEvidence.merged === true ? true : (base.merged === true),
-    mergeReadiness: asText(githubPrEvidence.mergeReadiness, asText(base.mergeReadiness, 'wait')),
-    missingProof: asList(githubPrEvidence.missingProof).length > 0 ? asList(githubPrEvidence.missingProof) : asList(base.missingProof),
+    merged,
+    mergeReadiness: asText(githubPrEvidence.mergeReadiness, mergedReadiness || asText(base.mergeReadiness, 'wait')),
+    missingProof,
     prNumber: githubPrEvidence.prNumber ?? base.prNumber ?? null,
     parsedPrNumber: githubPrEvidence.parsedPrNumber ?? base.parsedPrNumber ?? base.prNumber ?? null,
     repo: asText(githubPrEvidence.repo, asText(base.repo, '')),
     prState: asText(githubPrEvidence.prState, asText(base.prState, 'unknown')),
     prTitle: asText(githubPrEvidence.prTitle, asText(base.prTitle, '')),
     source: asText(githubPrEvidence.source, asText(base.source, 'none')),
-    recommendedNextAction: asText(githubPrEvidence.recommendedNextAction, asText(base.recommendedNextAction, 'Collect PR evidence.')),
+    recommendedNextAction: asText(githubPrEvidence.recommendedNextAction, merged ? 'PR merged; run post-merge validation and monitor regressions.' : asText(base.recommendedNextAction, 'Collect PR evidence.')),
   };
 }
