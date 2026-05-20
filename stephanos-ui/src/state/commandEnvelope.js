@@ -113,6 +113,8 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
       retrievedAt: asText(prEvidence?.retrievedAt, 'n/a'),
       tokenConfigured: prEvidence?.tokenStatus?.configured === true ? 'yes' : 'no',
       tokenAuthority: asText(prEvidence?.tokenStatus?.authority, 'none'),
+      tokenMasked: asText(prEvidence?.tokenStatus?.masked, 'n/a'),
+      tokenUpdatedAt: asText(prEvidence?.tokenStatus?.updatedAt, 'n/a'),
       mergeReadiness: asText(prEvidence?.mergeReadiness, 'wait'),
       missingProof: asList(prEvidence?.missingProof),
       nextAction: asText(prEvidence?.recommendedNextAction, 'Collect PR evidence.'),
@@ -187,6 +189,12 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     github_pr_evidence_retrieved_at: asText(envelope?.prEvidence?.retrievedAt, 'n/a'),
     github_token_configured: asText(envelope?.prEvidence?.tokenConfigured, 'no'),
     github_token_authority: asText(envelope?.prEvidence?.tokenAuthority, 'none'),
+    github_token_masked: asText(envelope?.prEvidence?.tokenMasked, 'n/a'),
+    github_token_updated_at: asText(envelope?.prEvidence?.tokenUpdatedAt, 'n/a'),
+    command_envelope_github_token_configured: asText(envelope?.prEvidence?.tokenConfigured, 'no'),
+    command_envelope_github_token_authority: asText(envelope?.prEvidence?.tokenAuthority, 'none'),
+    command_envelope_github_token_masked: asText(envelope?.prEvidence?.tokenMasked, 'n/a'),
+    command_envelope_github_token_updated_at: asText(envelope?.prEvidence?.tokenUpdatedAt, 'n/a'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }
