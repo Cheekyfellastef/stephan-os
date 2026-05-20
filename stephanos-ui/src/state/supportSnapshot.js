@@ -978,6 +978,11 @@ export function buildSupportSnapshot({
   );
 
 
+
+  const githubProjectionIntegrity = asText(runtimeStatus?.githubPrEvidenceProjectionIntegrity || executionMetadata?.github_pr_evidence_projection_integrity, 'complete');
+  const githubEvidenceNextAction = githubProjectionIntegrity === 'incomplete'
+    ? 'repair fetched evidence projection'
+    : asText(runtimeStatus?.githubPrEvidenceNextAction, 'collect PR evidence');
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -1488,7 +1493,16 @@ export function buildSupportSnapshot({
     `GitHub PR Evidence Codex Task Present: ${asText(runtimeStatus?.githubPrEvidenceCodexTaskPresent, 'no')}`,
     `GitHub PR Evidence Missing Proof: ${asText(runtimeStatus?.githubPrEvidenceMissingProof, 'none')}`,
     `GitHub PR Evidence Merge Readiness: ${asText(runtimeStatus?.githubPrEvidenceMergeReadiness, 'hold')}`,
-    `GitHub PR Evidence Next Action: ${asText(runtimeStatus?.githubPrEvidenceNextAction, 'collect PR evidence')}`,
+    `GitHub PR Evidence Projection Integrity: ${githubProjectionIntegrity === 'incomplete' ? 'incomplete-fetched-payload' : githubProjectionIntegrity}` ,
+    `GitHub PR Evidence Next Action: ${githubEvidenceNextAction}`,
+    `GitHub PR Evidence Fetch Attempted: ${asText(executionMetadata?.github_pr_evidence_fetch_attempted, 'no')}`,
+    `GitHub PR Evidence Fetch URL/Mode: ${asText(executionMetadata?.github_pr_evidence_fetch_url_or_mode, 'none')}`,
+    `GitHub PR Evidence Backend Status: ${asText(executionMetadata?.github_pr_evidence_backend_status, 'unknown')}`,
+    `GitHub PR Evidence Backend Source: ${asText(executionMetadata?.github_pr_evidence_backend_source, 'none')}`,
+    `GitHub PR Evidence Backend Repo: ${asText(executionMetadata?.github_pr_evidence_backend_repo, 'unknown')}`,
+    `GitHub PR Evidence Backend Title Present: ${asText(executionMetadata?.github_pr_evidence_backend_title_present, 'no')}`,
+    `GitHub PR Evidence Backend Token Configured: ${asText(executionMetadata?.github_pr_evidence_backend_token_configured, 'no')}`,
+    `GitHub PR Evidence Backend Payload Keys: ${asText(executionMetadata?.github_pr_evidence_backend_payload_keys, 'none')}`,
     `GitHub PR Evidence Retrieved At: ${asText(runtimeStatus?.githubPrEvidenceRetrievedAt, 'n/a')}`,
     `GitHub PR Evidence Warning Count: ${asText(runtimeStatus?.githubPrEvidenceWarningCount, '0')}`,
     `GitHub PR Evidence Warnings: ${asText(runtimeStatus?.githubPrEvidenceWarnings, 'none')}`,

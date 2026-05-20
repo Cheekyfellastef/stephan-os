@@ -2697,3 +2697,16 @@ test('support snapshot keeps explicit provider number priority over fallback par
   assert.match(snapshot, /PR Evidence Verify Status: unknown/);
   assert.match(snapshot, /PR Evidence Browser Proof Status: unknown/);
 });
+
+test('support snapshot flags incomplete fetched payload integrity', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        github_pr_evidence_provider_status: 'fetched',
+        github_pr_evidence_projection_integrity: 'incomplete',
+      },
+    },
+  });
+  assert.match(snapshot, /GitHub PR Evidence Projection Integrity: incomplete-fetched-payload/);
+  assert.match(snapshot, /GitHub PR Evidence Next Action: repair fetched evidence projection/);
+});
