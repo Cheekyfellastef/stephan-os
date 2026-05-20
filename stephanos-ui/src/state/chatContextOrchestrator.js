@@ -253,6 +253,7 @@ export function buildChatContextPack(input = {}) {
     riskLevel: (uiTask || mergeDecisionTask) ? 'medium' : 'low',
     relevantCanon,
     providerSummaries,
+    githubPrEvidence,
     providerWarnings: providerSnapshot.providerWarnings,
     providerNextActions,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
