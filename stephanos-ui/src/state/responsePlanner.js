@@ -46,7 +46,10 @@ export function buildResponsePlan(input = {}) {
     prNumber: input?.supportSnapshotSummary?.prEvidenceParsedPrNumber,
     parsedPrNumber: input?.supportSnapshotSummary?.prEvidenceParsedPrNumber,
   };
-  const canonicalPr = projectCanonicalPrEvidence({ prEvidence: { ...snapshotPr, ...providerPr }, githubPrEvidence: input?.githubPrEvidence || {} });
+  const canonicalPr = projectCanonicalPrEvidence({
+    prEvidence: { ...snapshotPr, ...providerPr },
+    githubPrEvidence: input?.githubPrEvidence || input?.chatContextPack?.githubPrEvidence || {},
+  });
   const canonicalEvidenceDetected = ['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase());
   const prEvidenceDetected = snapshotPrEvidenceDetected || canonicalEvidenceDetected;
   const prMergeReadiness = String(canonicalPr?.mergeReadiness || input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();
