@@ -134,18 +134,19 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   const fetchFn = typeof input.fetchGithubPrEvidence === 'function' ? input.fetchGithubPrEvidence : null;
 
   if (!prNumber) return { source: 'none' };
-  if (!repo) return { source: 'connector-missing-repo', prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
   if (!connectorReady) return { source: 'connector-missing', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  if (fetchFn && !repo) return { source: 'connector-missing-repo', prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
   if (fetchFn && !tokenReady) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
 
   const [owner, repoName] = repo.split('/');
   const live = fetchFn
     ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
     : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
+  const resolvedRepo = asText(repo || ((live?.owner && live?.repo) ? `${live.owner}/${live.repo}` : ''), '');
   const backendStatus = asText(live?.status, '');
   const normalized = normalizeLiveGithubPrEvidence({
     ...(live || {}),
-    repo,
+    repo: resolvedRepo,
     prNumber,
     source: live?.source || (backendStatus && backendStatus !== 'fetched' ? backendStatus : (fetchFn ? 'github-live-readonly' : 'github-api/fetched')),
   }) || {};
