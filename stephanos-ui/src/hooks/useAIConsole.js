@@ -3117,6 +3117,7 @@ export function useAIConsole() {
         operatorMessage: prompt,
         buildSource: submissionSource,
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
         runtimeTruth: requestRuntimeStatus,
         routeTruth: requestRouteTruthView,
         providerTruth: {
@@ -3149,8 +3150,20 @@ export function useAIConsole() {
         },
         supportSnapshotSummary: {
           prEvidenceInputDetected: requestRuntimeStatus?.prEvidenceInputDetected || 'unknown',
+          prEvidenceStatus: chatContextPack?.githubPrEvidence?.status || requestRuntimeStatus?.prEvidenceStatus,
+          prEvidenceChecksStatus: chatContextPack?.githubPrEvidence?.checksStatus || requestRuntimeStatus?.prEvidenceChecksStatus,
+          prEvidenceBuildStatus: chatContextPack?.githubPrEvidence?.buildStatus || requestRuntimeStatus?.prEvidenceBuildStatus,
+          prEvidenceVerifyStatus: chatContextPack?.githubPrEvidence?.verifyStatus || requestRuntimeStatus?.prEvidenceVerifyStatus,
+          prEvidenceChangedFileCount: chatContextPack?.githubPrEvidence?.changedFileCount || requestRuntimeStatus?.prEvidenceChangedFileCount,
+          prEvidenceMerged: chatContextPack?.githubPrEvidence?.merged === true ? 'yes' : (requestRuntimeStatus?.prEvidenceMerged || 'no'),
+          prEvidenceMergeReadiness: chatContextPack?.githubPrEvidence?.mergeReadiness || requestRuntimeStatus?.prEvidenceMergeReadiness,
+          prEvidenceMissingProof: Array.isArray(chatContextPack?.githubPrEvidence?.missingProof)
+            ? chatContextPack.githubPrEvidence.missingProof.join('|')
+            : (requestRuntimeStatus?.prEvidenceMissingProof || ''),
+          prEvidenceParsedPrNumber: chatContextPack?.githubPrEvidence?.prNumber || requestRuntimeStatus?.prEvidenceParsedPrNumber,
         },
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
         runtimeTruth: requestRuntimeStatus || {},
         providerTruth: { executableProvider: requestRouteTruthView.executedProvider },
         chatContinuity: previousChatContinuity,
@@ -3196,6 +3209,7 @@ export function useAIConsole() {
         responsePlanner: responsePlan,
         missionState: { status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown', activeMission: nextActiveMission },
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
+        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
       });
       persistChatContinuity(nextChatContinuity);
       setUiDiagnostics((prev) => ({ ...prev, chatContextPack, responsePlan, chatContinuity: nextChatContinuity }));
