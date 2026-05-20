@@ -33,7 +33,7 @@ export function createCommandEnvelope(input = {}) {
     operatorProfile: { known: false, operatorName: 'unknown', source: 'none', confidence: 'unknown', nextAction: 'Ask operator for preferred name when relevant.' },
     agentContext: { status: 'empty', recommendedAgents: [], agentContextUsed: false },
     codexDispatch: { packetId: 'none', status: 'not-ready', approvalRequired: 'yes', targetSubsystems: [] },
-    prEvidence: { status: 'none', prNumber: 'unknown', repo: 'unknown', prUrl: 'n/a', parseConfidence: 'none', checksStatus: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.' },
+    prEvidence: { status: 'none', source: 'none', prNumber: 'unknown', repo: 'unknown', prUrl: 'n/a', parseConfidence: 'none', checksStatus: 'unknown', mergeReadiness: 'wait', missingProof: [], nextAction: 'Collect PR evidence.', tokenConfigured: 'no', tokenAuthority: 'none' },
   };
 }
 
@@ -96,6 +96,7 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
     ...envelope,
     prEvidence: {
       status: asText(prEvidence?.status, 'none'),
+      source: asText(prEvidence?.source, 'none'),
       prNumber: asText(prEvidence?.prNumber, 'unknown'),
       parsedPrNumber: asText(prEvidence?.parsedPrNumber, asText(prEvidence?.prNumber, 'unknown')),
       repo: asText(prEvidence?.repo, 'unknown'),
@@ -103,7 +104,15 @@ export function attachPrEvidenceToEnvelope(envelope, prEvidence = null) {
       parseConfidence: asText(prEvidence?.parseConfidence, 'none'),
       parseInput: asText(prEvidence?.parseInput, 'n/a'),
       parsedNumberSource: asText(prEvidence?.parsedNumberSource, 'none'),
+      prTitle: asText(prEvidence?.prTitle, ''),
+      prState: asText(prEvidence?.prState, 'unknown'),
+      merged: prEvidence?.merged === true ? 'yes' : 'no',
       checksStatus: asText(prEvidence?.checksStatus, 'unknown'),
+      buildStatus: asText(prEvidence?.buildStatus, 'unknown'),
+      verifyStatus: asText(prEvidence?.verifyStatus, 'unknown'),
+      retrievedAt: asText(prEvidence?.retrievedAt, 'n/a'),
+      tokenConfigured: prEvidence?.tokenStatus?.configured === true ? 'yes' : 'no',
+      tokenAuthority: asText(prEvidence?.tokenStatus?.authority, 'none'),
       mergeReadiness: asText(prEvidence?.mergeReadiness, 'wait'),
       missingProof: asList(prEvidence?.missingProof),
       nextAction: asText(prEvidence?.recommendedNextAction, 'Collect PR evidence.'),
@@ -168,6 +177,16 @@ export function projectEnvelopeToExecutionMetadata(envelope = {}) {
     pr_evidence_parsed_pr_number: asText(envelope?.prEvidence?.parsedPrNumber, asText(envelope?.prEvidence?.prNumber, 'unknown')),
     github_pr_evidence_number: asText(envelope?.prEvidence?.prNumber, asText(envelope?.prEvidence?.parsedPrNumber, 'unknown')),
     github_pr_evidence_provider_status: asText(envelope?.prEvidence?.status, 'none'),
+    github_pr_evidence_source: asText(envelope?.prEvidence?.source, 'none'),
+    github_pr_evidence_title: asText(envelope?.prEvidence?.prTitle, 'n/a'),
+    github_pr_evidence_state: asText(envelope?.prEvidence?.prState, 'unknown'),
+    github_pr_evidence_merged: asText(envelope?.prEvidence?.merged, 'no'),
+    github_pr_evidence_checks_status: asText(envelope?.prEvidence?.checksStatus, 'unknown'),
+    github_pr_evidence_build_status: asText(envelope?.prEvidence?.buildStatus, 'unknown'),
+    github_pr_evidence_verify_status: asText(envelope?.prEvidence?.verifyStatus, 'unknown'),
+    github_pr_evidence_retrieved_at: asText(envelope?.prEvidence?.retrievedAt, 'n/a'),
+    github_token_configured: asText(envelope?.prEvidence?.tokenConfigured, 'no'),
+    github_token_authority: asText(envelope?.prEvidence?.tokenAuthority, 'none'),
   };
 }
 export function projectEnvelopeToSupportSnapshot(envelope = {}) { return projectEnvelopeToExecutionMetadata(envelope); }
