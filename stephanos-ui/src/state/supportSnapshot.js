@@ -2,6 +2,7 @@ import { buildOperatorGuidanceProjection } from './operatorGuidanceRendering.js'
 import { deriveUiRealityStatus } from './uiRealityStatus.js';
 import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
 import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
+import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
@@ -497,6 +498,38 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const canonicalPrEvidence = projectCanonicalPrEvidence({
+    prEvidence: {
+      status: runtimeStatus?.prEvidenceStatus,
+      prEvidenceStatus: runtimeStatus?.prEvidenceStatus,
+      checksStatus: runtimeStatus?.prEvidenceChecksStatus,
+      buildStatus: runtimeStatus?.prEvidenceBuildStatus,
+      verifyStatus: runtimeStatus?.prEvidenceVerifyStatus,
+      changedFileCount: runtimeStatus?.prEvidenceChangedFileCount,
+      merged: String(runtimeStatus?.prEvidenceMerged || '').toLowerCase() === 'yes',
+      mergeReadiness: runtimeStatus?.prEvidenceMergeReadiness,
+      missingProof: String(runtimeStatus?.prEvidenceMissingProof || '').split('|').map((item) => item.trim()).filter(Boolean),
+      recommendedNextAction: runtimeStatus?.prEvidenceRecommendedNextAction,
+      prNumber: runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber,
+    },
+    githubPrEvidence: {
+      status: runtimeStatus?.githubPrEvidenceProviderStatus,
+      checksStatus: runtimeStatus?.githubPrEvidenceChecksStatus,
+      buildStatus: runtimeStatus?.githubPrEvidenceBuildStatus,
+      verifyStatus: runtimeStatus?.githubPrEvidenceVerifyStatus,
+      changedFileCount: runtimeStatus?.githubPrEvidenceChangedFileCount,
+      merged: String(runtimeStatus?.githubPrEvidenceMerged || '').toLowerCase() === 'yes',
+      mergeReadiness: runtimeStatus?.githubPrEvidenceMergeReadiness,
+      missingProof: String(runtimeStatus?.githubPrEvidenceMissingProof || '').split('|').map((item) => item.trim()).filter(Boolean),
+      recommendedNextAction: runtimeStatus?.githubPrEvidenceNextAction,
+      prNumber: runtimeStatus?.githubPrEvidenceNumber || runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber,
+      parsedPrNumber: runtimeStatus?.githubPrEvidenceNumber || runtimeStatus?.prEvidenceParsedPrNumber || runtimeStatus?.prEvidenceNumber,
+      repo: runtimeStatus?.githubPrEvidenceRepo,
+      prState: runtimeStatus?.githubPrEvidenceState,
+      prTitle: runtimeStatus?.githubPrEvidenceTitle,
+      source: runtimeStatus?.githubPrEvidenceSource,
+    },
+  });
   const chatContextFields = [
     'chat_context_pack_status',
     'chat_context_response_mode',
@@ -1451,13 +1484,13 @@ export function buildSupportSnapshot({
     `Mission Verification Proof Status: ${asText(runtimeStatus?.missionVerificationProofStatus, 'pending')}`,
     `Mission Verification Changed Files In Scope: ${asText(runtimeStatus?.missionVerificationChangedFilesInScope, 'no')}`,
     `Mission Verification Required Tests Run: ${asText(runtimeStatus?.missionVerificationRequiredTestsRun, 'no')}`,
-    `PR Evidence Status: ${asText(runtimeStatus?.prEvidenceStatus, 'no_pr_evidence')}`,
+    `PR Evidence Status: ${asText(canonicalPrEvidence.status || canonicalPrEvidence.prEvidenceStatus, 'no_pr_evidence')}`,
     `PR Evidence Number: ${resolvedPrEvidence.prNumber}`,
-    `PR Evidence Checks Status: ${asText(runtimeStatus?.prEvidenceChecksStatus, 'unknown')}`,
-    `PR Evidence Merged: ${asText(runtimeStatus?.prEvidenceMerged, 'no')}`,
+    `PR Evidence Checks Status: ${asText(canonicalPrEvidence.checksStatus, 'unknown')}`,
+    `PR Evidence Merged: ${canonicalPrEvidence.merged === true ? 'yes' : asText(runtimeStatus?.prEvidenceMerged, 'no')}`,
     `PR Evidence Merged By: ${asText(runtimeStatus?.prEvidenceMergedBy, 'unknown')}`,
     `PR Evidence Auto-Merge State: ${asText(runtimeStatus?.prEvidenceAutoMergeState, 'unknown')}`,
-    `PR Evidence Changed File Count: ${asText(runtimeStatus?.prEvidenceChangedFileCount, '0')}`,
+    `PR Evidence Changed File Count: ${asText(canonicalPrEvidence.changedFileCount, '0')}`,
     `PR Evidence Warning Count: ${asText(runtimeStatus?.prEvidenceWarningCount, '0')}`,
     `PR Evidence Codex Task Present: ${asText(runtimeStatus?.prEvidenceCodexTaskPresent, 'no')}`,
     `PR Evidence Input Detected: ${asText(runtimeStatus?.prEvidenceInputDetected, 'no')}`,
@@ -1471,17 +1504,17 @@ export function buildSupportSnapshot({
     `PR Evidence Parsed Repo: ${asText(runtimeStatus?.prEvidenceParsedRepo, 'unknown')}`,
     `PR Evidence Parse Warning Count: ${asText(runtimeStatus?.prEvidenceParseWarningCount, '0')}`,
     `PR Evidence Connector Source: ${asText(runtimeStatus?.prEvidenceConnectorSource, 'none')}`,
-    `PR Evidence Status: ${asText(runtimeStatus?.prEvidenceStatus, 'none')}`,
+    `PR Evidence Status: ${asText(canonicalPrEvidence.status || canonicalPrEvidence.prEvidenceStatus, 'none')}`,
     `PR Evidence Parsed PR Number: ${prEvidenceParsedPrNumberDisplay}`,
-    `PR Evidence Changed File Count: ${asText(runtimeStatus?.prEvidenceChangedFileCount, '0')}`,
+    `PR Evidence Changed File Count: ${asText(canonicalPrEvidence.changedFileCount, '0')}`,
     `PR Evidence Tests Status: ${asText(runtimeStatus?.prEvidenceTestsStatus, 'unknown')}`,
-    `PR Evidence Build Status: ${asText(runtimeStatus?.prEvidenceBuildStatus, 'unknown')}`,
-    `PR Evidence Verify Status: ${asText(runtimeStatus?.prEvidenceVerifyStatus, 'unknown')}`,
+    `PR Evidence Build Status: ${asText(canonicalPrEvidence.buildStatus, 'unknown')}`,
+    `PR Evidence Verify Status: ${asText(canonicalPrEvidence.verifyStatus, 'unknown')}`,
     `PR Evidence Browser Proof Status: ${asText(runtimeStatus?.prEvidenceBrowserProofStatus, 'unknown')}`,
-    `PR Evidence Missing Proof: ${asText(runtimeStatus?.prEvidenceMissingProof, 'none')}`,
-    `PR Evidence Merge Readiness: ${asText(runtimeStatus?.prEvidenceMergeReadiness, 'hold')}`,
-    `PR Evidence Recommended Next Action: ${asText(runtimeStatus?.prEvidenceRecommendedNextAction, 'collect PR evidence')}`,
-    `Mission Repair Loop PR Evidence Linked: ${asText(runtimeStatus?.missionRepairLoopPrEvidenceLinked, 'no')}`,
+    `PR Evidence Missing Proof: ${asText((canonicalPrEvidence.missingProof || []).join('|'), 'none')}`,
+    `PR Evidence Merge Readiness: ${asText(canonicalPrEvidence.mergeReadiness, 'hold')}`,
+    `PR Evidence Recommended Next Action: ${asText(canonicalPrEvidence.recommendedNextAction, 'collect PR evidence')}`,
+    `Mission Repair Loop PR Evidence Linked: ${['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPrEvidence.status || canonicalPrEvidence.prEvidenceStatus || '').toLowerCase()) ? 'yes' : asText(runtimeStatus?.missionRepairLoopPrEvidenceLinked, 'no')}`,
     `GitHub PR Evidence Provider Status: ${githubPrEvidenceProviderStatusDisplay}`,
     `GitHub Token Configured: ${githubTokenConfiguredDisplay}`,
     `GitHub Token Authority: ${githubTokenAuthorityDisplay}`,

@@ -36,9 +36,9 @@ export function buildResponsePlan(input = {}) {
   const canonicalPr = projectCanonicalPrEvidence({ prEvidence: providerPr, githubPrEvidence: input?.githubPrEvidence || {} });
   const canonicalEvidenceDetected = ['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase());
   const prEvidenceDetected = snapshotPrEvidenceDetected || canonicalEvidenceDetected;
-  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || canonicalPr?.mergeReadiness || '').toLowerCase();
-  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (canonicalPr?.missingProof || []).join('|') || '').toLowerCase();
-  const prStatus = String(input?.missionState?.prEvidenceStatus || canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase();
+  const prMergeReadiness = String(canonicalPr?.mergeReadiness || input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();
+  const prMissingProof = String((canonicalPr?.missingProof || []).join('|') || input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || '').toLowerCase();
+  const prStatus = String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || input?.missionState?.prEvidenceStatus || '').toLowerCase();
   const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged' || canonicalPr?.merged === true;
   const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
   const canonicalChecksPassed = ['passed', 'success'].includes(String(canonicalPr?.checksStatus || '').toLowerCase());
