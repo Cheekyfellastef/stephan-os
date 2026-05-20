@@ -235,6 +235,29 @@ test('backend fetch route feeds provider with github-api/fetched source', async 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('backend route can resolve canonical repo when prompt has PR number but no repo slug', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /\/api\/github\/pr-evidence\?pr=970$/);
+    return {
+      ok: true,
+      json: async () => ({ status: 'needs-configuration', source: 'none', owner: 'Cheekyfellastef', repo: 'stephan-os', prNumber: 970 }),
+    };
+  };
+  try {
+    const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
+      prompt: 'do i merge PR 970',
+      connectorAvailable: true,
+    });
+    const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 970', connectorEvidence });
+    assert.equal(r.status, 'needs-configuration');
+    assert.equal(r.repo, 'Cheekyfellastef/stephan-os');
+    assert.equal(r.prNumber, 970);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test('backend needs-pr-number status is preserved in provider output', () => {
   const r = buildGithubPrEvidenceProvider({ connectorEvidence: { status: 'needs-pr-number', source: 'none' }, operatorPrompt: 'merge this' });
   assert.equal(r.status, 'needs-pr-number');
