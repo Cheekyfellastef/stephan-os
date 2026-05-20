@@ -27,18 +27,24 @@ export function buildResponsePlan(input = {}) {
   const canonApplied = Array.isArray(input?.chatContextPack?.relevantCanon) ? input.chatContextPack.relevantCanon.map((rule) => rule.id) : [];
   const checksKnownFail = String(proofState?.buildVerifyStatus || '').toLowerCase() === 'failed';
   const checksUnknown = !proofState || String(proofState?.buildVerifyStatus || '').trim() === '' || String(proofState?.buildVerifyStatus || '').toLowerCase() === 'unknown';
-  const prEvidenceDetected = String(input?.supportSnapshotSummary?.prEvidenceInputDetected || input?.missionState?.prEvidenceInputDetected || '').toLowerCase() === 'yes';
+  const snapshotPrEvidenceDetected = String(input?.supportSnapshotSummary?.prEvidenceInputDetected || input?.missionState?.prEvidenceInputDetected || '').toLowerCase() === 'yes';
   const distRequired = String(input?.missionState?.distRequired || '').toLowerCase() === 'yes';
   const distRebuilt = String(input?.missionState?.distRebuilt || '').toLowerCase() === 'yes';
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
   const providerPr = input?.chatContextPack?.providerSummaries?.prEvidence || {};
   const canonicalPr = projectCanonicalPrEvidence({ prEvidence: providerPr, githubPrEvidence: input?.githubPrEvidence || {} });
+  const canonicalEvidenceDetected = ['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase());
+  const prEvidenceDetected = snapshotPrEvidenceDetected || canonicalEvidenceDetected;
   const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || canonicalPr?.mergeReadiness || '').toLowerCase();
   const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (canonicalPr?.missingProof || []).join('|') || '').toLowerCase();
   const prStatus = String(input?.missionState?.prEvidenceStatus || canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase();
-  const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged';
+  const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged' || canonicalPr?.merged === true;
   const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
+  const canonicalChecksPassed = ['passed', 'success'].includes(String(canonicalPr?.checksStatus || '').toLowerCase());
+  const canonicalBuildPassed = ['passed', 'success'].includes(String(canonicalPr?.buildStatus || '').toLowerCase());
+  const canonicalVerifyPassed = ['passed', 'success'].includes(String(canonicalPr?.verifyStatus || '').toLowerCase());
+  const proofsKnownPassed = canonicalChecksPassed && canonicalBuildPassed && canonicalVerifyPassed;
 
   const continuitySummary = input?.chatContinuity?.summaries?.[0]?.summary || 'none';
   const continuityAvailable = Boolean(input?.chatContinuity?.summaries?.length);
@@ -94,7 +100,7 @@ export function buildResponsePlan(input = {}) {
       warnings.push('GitHub evidence unavailable; request connector or pasted PR summary.');
       recommendedNextAction = 'connect read-only GitHub evidence or paste PR summary';
     }
-    if (!prEvidenceUnavailable && (checksKnownFail || checksUnknown || !testsPassed || prMergeReadiness === 'needs-amendment')) {
+    if (!prEvidenceUnavailable && (checksKnownFail || (!proofsKnownPassed && (checksUnknown || !testsPassed)) || prMergeReadiness === 'needs-amendment')) {
       mergeDecision = prMergeReadiness === 'needs-amendment' || checksKnownFail ? 'no' : (mergeDecision === 'unknown' ? 'wait' : mergeDecision);
       warnings.push('build/verify/check evidence missing or failing.');
       recommendedNextAction = 'run build/verify checks and attach results';
@@ -118,7 +124,7 @@ export function buildResponsePlan(input = {}) {
       warnings.push('PR evidence indicates missing proof or amendment required.');
       recommendedNextAction = 'request amendment prompt with missing proof fields';
     }
-    if (!warnings.length) {
+    if (!warnings.length && !prAlreadyMerged) {
       mergeDecision = 'merge-candidate';
       riskLevel = 'low';
       proofRequired = 'no';
