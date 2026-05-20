@@ -983,6 +983,18 @@ export function buildSupportSnapshot({
   const githubEvidenceNextAction = githubProjectionIntegrity === 'incomplete'
     ? 'repair fetched evidence projection'
     : asText(runtimeStatus?.githubPrEvidenceNextAction, 'collect PR evidence');
+  const githubEvidenceSourceDisplay = asText(runtimeStatus?.githubPrEvidenceSource || executionMetadata?.github_pr_evidence_source, 'none');
+  const githubEvidenceRepoDisplay = asText(runtimeStatus?.githubPrEvidenceRepo || executionMetadata?.command_envelope_pr_repo, 'unknown');
+  const githubEvidenceUrlDisplay = asText(runtimeStatus?.githubPrEvidenceUrl || executionMetadata?.command_envelope_pr_url, 'n/a');
+  const githubEvidenceTitleDisplay = asText(runtimeStatus?.githubPrEvidenceTitle || executionMetadata?.github_pr_evidence_title, 'n/a');
+  const githubEvidenceStateDisplay = asText(runtimeStatus?.githubPrEvidenceState || executionMetadata?.github_pr_evidence_state, 'unknown');
+  const githubEvidenceMergedDisplay = asText(runtimeStatus?.githubPrEvidenceMerged || executionMetadata?.github_pr_evidence_merged, 'no');
+  const githubEvidenceHeadShaDisplay = asText(runtimeStatus?.githubPrEvidenceHeadSha || executionMetadata?.command_envelope_pr_head_sha, 'n/a');
+  const githubEvidenceChangedFileCountDisplay = asText(runtimeStatus?.githubPrEvidenceChangedFileCount || executionMetadata?.command_envelope_pr_changed_file_count, '0');
+  const githubEvidenceChecksStatusDisplay = asText(runtimeStatus?.githubPrEvidenceChecksStatus || executionMetadata?.github_pr_evidence_checks_status, 'unknown');
+  const githubEvidenceBuildStatusDisplay = asText(runtimeStatus?.githubPrEvidenceBuildStatus || executionMetadata?.github_pr_evidence_build_status, 'unknown');
+  const githubEvidenceVerifyStatusDisplay = asText(runtimeStatus?.githubPrEvidenceVerifyStatus || executionMetadata?.github_pr_evidence_verify_status, 'unknown');
+  const githubEvidenceRetrievedAtDisplay = asText(runtimeStatus?.githubPrEvidenceRetrievedAt || executionMetadata?.github_pr_evidence_retrieved_at, 'n/a');
   const lines = [
     'Stephanos Support Snapshot',
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
@@ -1476,19 +1488,19 @@ export function buildSupportSnapshot({
     `GitHub Token Masked: ${githubTokenMaskedDisplay}`,
     `GitHub Token Updated At: ${githubTokenUpdatedAtDisplay}`,
     `GitHub PR Evidence Projection Source: ${githubPrEvidenceProjectionSource}`,
-    `GitHub PR Evidence Source: ${asText(runtimeStatus?.githubPrEvidenceSource, 'none')}`,
-    `GitHub PR Evidence Repo: ${asText(runtimeStatus?.githubPrEvidenceRepo, 'unknown')}`,
+    `GitHub PR Evidence Source: ${githubEvidenceSourceDisplay}`,
+    `GitHub PR Evidence Repo: ${githubEvidenceRepoDisplay}`,
     `GitHub PR Evidence Number: ${githubPrEvidenceNumberDisplay}`,
-    `GitHub PR Evidence URL: ${asText(runtimeStatus?.githubPrEvidenceUrl, 'n/a')}`,
-    `GitHub PR Evidence Title: ${asText(runtimeStatus?.githubPrEvidenceTitle, 'n/a')}`,
-    `GitHub PR Evidence State: ${asText(runtimeStatus?.githubPrEvidenceState, 'unknown')}`,
-    `GitHub PR Evidence Merged: ${asText(runtimeStatus?.githubPrEvidenceMerged, 'no')}`,
-    `GitHub PR Evidence Head SHA: ${asText(runtimeStatus?.githubPrEvidenceHeadSha, 'n/a')}`,
-    `GitHub PR Evidence Changed File Count: ${asText(runtimeStatus?.githubPrEvidenceChangedFileCount, '0')}`,
-    `GitHub PR Evidence Checks Status: ${asText(runtimeStatus?.githubPrEvidenceChecksStatus, 'unknown')}`,
+    `GitHub PR Evidence URL: ${githubEvidenceUrlDisplay}`,
+    `GitHub PR Evidence Title: ${githubEvidenceTitleDisplay}`,
+    `GitHub PR Evidence State: ${githubEvidenceStateDisplay}`,
+    `GitHub PR Evidence Merged: ${githubEvidenceMergedDisplay}`,
+    `GitHub PR Evidence Head SHA: ${githubEvidenceHeadShaDisplay}`,
+    `GitHub PR Evidence Changed File Count: ${githubEvidenceChangedFileCountDisplay}`,
+    `GitHub PR Evidence Checks Status: ${githubEvidenceChecksStatusDisplay}`,
     `GitHub PR Evidence Failing Checks: ${asText(runtimeStatus?.githubPrEvidenceFailingChecks, 'none')}`,
-    `GitHub PR Evidence Build Status: ${asText(runtimeStatus?.githubPrEvidenceBuildStatus, 'unknown')}`,
-    `GitHub PR Evidence Verify Status: ${asText(runtimeStatus?.githubPrEvidenceVerifyStatus, 'unknown')}`,
+    `GitHub PR Evidence Build Status: ${githubEvidenceBuildStatusDisplay}`,
+    `GitHub PR Evidence Verify Status: ${githubEvidenceVerifyStatusDisplay}`,
     `GitHub PR Evidence Browser Proof Status: ${asText(runtimeStatus?.githubPrEvidenceBrowserProofStatus, 'unknown')}`,
     `GitHub PR Evidence Codex Task Present: ${asText(runtimeStatus?.githubPrEvidenceCodexTaskPresent, 'no')}`,
     `GitHub PR Evidence Missing Proof: ${asText(runtimeStatus?.githubPrEvidenceMissingProof, 'none')}`,
@@ -1503,7 +1515,7 @@ export function buildSupportSnapshot({
     `GitHub PR Evidence Backend Title Present: ${asText(executionMetadata?.github_pr_evidence_backend_title_present, 'no')}`,
     `GitHub PR Evidence Backend Token Configured: ${asText(executionMetadata?.github_pr_evidence_backend_token_configured, 'no')}`,
     `GitHub PR Evidence Backend Payload Keys: ${asText(executionMetadata?.github_pr_evidence_backend_payload_keys, 'none')}`,
-    `GitHub PR Evidence Retrieved At: ${asText(runtimeStatus?.githubPrEvidenceRetrievedAt, 'n/a')}`,
+    `GitHub PR Evidence Retrieved At: ${githubEvidenceRetrievedAtDisplay}`,
     `GitHub PR Evidence Warning Count: ${asText(runtimeStatus?.githubPrEvidenceWarningCount, '0')}`,
     `GitHub PR Evidence Warnings: ${asText(runtimeStatus?.githubPrEvidenceWarnings, 'none')}`,
     `Memory Librarian Pending Count: ${asText(runtimeStatus?.memoryLibrarianPendingCount, '0')}`,

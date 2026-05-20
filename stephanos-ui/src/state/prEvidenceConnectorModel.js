@@ -162,7 +162,7 @@ export function normalizeLiveGithubPrEvidence(liveEvidence = null) {
     headSha: asText(liveEvidence.headSha || liveEvidence.headSHA, ''),
     baseBranch: asText(liveEvidence.baseBranch, ''),
     changedFiles,
-    changedFileCount: changedFiles.length,
+    changedFileCount: Number(liveEvidence.changedFileCount ?? changedFiles.length) || 0,
     checksStatus: asText(liveEvidence.checksStatus, 'unknown'),
     failingChecks,
     buildStatus: asText(liveEvidence.buildStatus, 'unknown'),

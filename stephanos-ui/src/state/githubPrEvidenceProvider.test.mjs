@@ -229,7 +229,7 @@ test('mocked read-only fetch populates title/state/checks/files and keeps no-wri
 
 
 
-test('backend fetch route feeds provider with github-api/fetched source', async () => {
+test('backend fetch route feeds provider with github-api source', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ title: 'Backend PR evidence', state: 'open' }) });
   try {
@@ -240,7 +240,7 @@ test('backend fetch route feeds provider with github-api/fetched source', async 
     });
     const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 456', connectorEvidence });
     assert.equal(r.status, 'fetched');
-    assert.equal(r.source, 'github-api/fetched');
+    assert.equal(r.source, 'github-api');
     assert.equal(r.prTitle, 'Backend PR evidence');
   } finally {
     globalThis.fetch = originalFetch;
