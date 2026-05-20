@@ -160,7 +160,7 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
     ...(live || {}),
     repo: resolvedRepo,
     prNumber,
-    source: live?.source || (backendStatus && backendStatus !== 'fetched' ? backendStatus : (fetchFn ? 'github-live-readonly' : 'github-api/fetched')),
+    source: live?.source || (backendStatus && backendStatus !== 'fetched' ? backendStatus : (fetchFn ? 'github-live-readonly' : 'github-api')),
   }) || {};
   const payloadKeys = live && typeof live === 'object' ? Object.keys(live).sort() : [];
   return { ...normalized, parsedPrNumber: promptRef.prNumber ?? prNumber, fetchDiagnostics: { ...fetchDiagnostics, github_pr_evidence_backend_status: asText(live?.status, 'unknown'), github_pr_evidence_backend_source: asText(live?.source, 'none'), github_pr_evidence_backend_repo: asText((live?.owner && live?.repo) ? `${live.owner}/${live.repo}` : resolvedRepo, 'unknown'), github_pr_evidence_backend_title_present: asText(live?.title || live?.prTitle ? 'yes' : 'no', 'no'), github_pr_evidence_backend_token_configured: live?.tokenStatus?.configured === true ? 'yes' : 'no', github_pr_evidence_backend_payload_keys: payloadKeys.join('|') || 'none' } };
