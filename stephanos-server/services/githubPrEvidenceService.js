@@ -30,6 +30,17 @@ function normalizeChecksState(conclusions = []) {
   return 'unknown';
 }
 
+export function resolveGithubTokenConfig({ env = process.env, secretStoreToken = '' } = {}) {
+  const envToken = asText(env.GITHUB_TOKEN || env.STEPHANOS_GITHUB_TOKEN, '');
+  const secretToken = asText(secretStoreToken, '');
+  const token = secretToken || envToken;
+  const authority = secretToken
+    ? 'backend-local-secret-store'
+    : (envToken ? 'env' : 'none');
+  const updatedAt = secretToken ? new Date().toISOString() : null;
+  return { token, configured: Boolean(token), authority, updatedAt };
+}
+
 export async function fetchGithubPrEvidence({ owner, repo, prNumber, token }) {
   const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
   const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });

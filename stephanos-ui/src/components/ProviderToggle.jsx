@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   clearLocalProviderSecret,
   getApiRuntimeConfig,
+  getLocalProviderSecretStatus,
   setLocalProviderSecret,
   testHostedCloudWorkerConnection,
 } from '../ai/aiClient';
@@ -206,6 +207,15 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
   const [secretDrafts, setSecretDrafts] = useState({});
   const [secretSaveStatus, setSecretSaveStatus] = useState({});
   const [hostedProviderTestStatus, setHostedProviderTestStatus] = useState({});
+  const [githubTokenDraft, setGithubTokenDraft] = useState('');
+  const [githubTokenStatus, setGithubTokenStatus] = useState({ configured: false, masked: '', authority: 'none', updatedAt: null });
+  const [githubTokenSaveFeedback, setGithubTokenSaveFeedback] = useState('');
+
+  const refreshGithubTokenStatus = async () => {
+    const status = await getLocalProviderSecretStatus(runtimeConfig);
+    const provider = status?.data?.providers?.github || null;
+    if (provider) setGithubTokenStatus(provider);
+  };
 
   useEffect(() => {
     const syncResult = resolveHomeNodeDraftSync({
@@ -227,6 +237,10 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: true, providerToggleMarker: PROVIDER_COMPONENT_MARKER }));
     return () => setUiDiagnostics((prev) => ({ ...prev, providerToggleMounted: false }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    refreshGithubTokenStatus();
+  }, []);
 
   useEffect(() => {
     const ollamaDraft = getDraftProviderConfig('ollama');
@@ -297,6 +311,20 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     setSecretDrafts((prev) => ({ ...prev, [providerKey]: '' }));
     setSecretSaveStatus((prev) => ({ ...prev, [providerKey]: { ...feedback, message: `${feedback.message}${saveWarning}` } }));
     setUiDiagnostics((prev) => ({ ...prev, providerSecretSaveError: '' }));
+    await onTestConnection();
+  };
+
+  const handleSaveGithubToken = async () => {
+    const token = String(githubTokenDraft || '').trim();
+    if (!token) return;
+    const save = await setLocalProviderSecret('github', token, runtimeConfig);
+    if (!save.ok) {
+      setGithubTokenSaveFeedback(save.error || 'Failed to save GitHub token.');
+      return;
+    }
+    setGithubTokenDraft('');
+    setGithubTokenSaveFeedback('GitHub token saved to backend local secret store.');
+    await refreshGithubTokenStatus();
     await onTestConnection();
   };
 
@@ -618,6 +646,21 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
         </p>
       ) : null}
       <section className="provider-hint-box hosted-cloud-cognition-pane">
+        <div className="provider-help-panel">
+          <strong>GitHub PR Evidence Token</strong>
+          <p>Status: {githubTokenStatus?.configured ? 'configured' : 'missing'}</p>
+          <p>Authority: {githubTokenStatus?.authority || 'none'}</p>
+          <p>Masked: {githubTokenStatus?.masked || 'n/a'}</p>
+          <label>
+            <span>Read-only GitHub token</span>
+            <input type="password" value={githubTokenDraft} autoComplete="off" onChange={(event) => setGithubTokenDraft(event.target.value)} placeholder="ghp_…" />
+          </label>
+          <div className="provider-quick-actions">
+            <button type="button" className="ghost-button" onClick={handleSaveGithubToken} disabled={!String(githubTokenDraft || '').trim()}>Save GitHub Token</button>
+            <button type="button" className="ghost-button" onClick={refreshGithubTokenStatus}>Refresh Token Status</button>
+          </div>
+          {githubTokenSaveFeedback ? <p>{githubTokenSaveFeedback}</p> : null}
+        </div>
         <div className="provider-help-panel">
           <strong>Hosted Cloud Cognition</strong>
           <p>Hosted-safe reasoning through Worker-backed providers. This is cognition-only authority and never local execution authority.</p>
