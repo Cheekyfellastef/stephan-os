@@ -93,3 +93,13 @@ test('duplicate authority is not introduced when source truths are declared', ()
   const model = buildMissionRepairLoopModel(base);
   assert.equal(model.duplicateAuthorityDetected, 'no');
 });
+
+test('fetched github PR evidence is linked as canonical evidence for loop state', () => {
+  const model = buildMissionRepairLoopModel({
+    ...base,
+    prEvidenceIntake: { status: 'no_pr_evidence', mergeReadiness: 'hold' },
+    githubPrEvidence: { status: 'fetched', mergeReadiness: 'already-merged', checksStatus: 'passed', buildStatus: 'passed', verifyStatus: 'passed', merged: true, missingProof: [] },
+  });
+  assert.equal(model.latestPrEvidenceStatus, 'fetched');
+  assert.equal(model.latestPrEvidenceMergeReadiness, 'already-merged');
+});

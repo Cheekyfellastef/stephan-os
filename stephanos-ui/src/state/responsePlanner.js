@@ -1,3 +1,5 @@
+import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
+
 function asText(value, fallback = 'unknown') {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -30,10 +32,11 @@ export function buildResponsePlan(input = {}) {
   const distRebuilt = String(input?.missionState?.distRebuilt || '').toLowerCase() === 'yes';
   const testsPassed = String(input?.missionState?.testsPassed || '').toLowerCase() === 'yes';
 
-  const providerPr = input?.githubPrEvidence || input?.chatContextPack?.providerSummaries?.prEvidence || {};
-  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || providerPr?.mergeReadiness || '').toLowerCase();
-  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (providerPr?.missingProof || []).join('|') || '').toLowerCase();
-  const prStatus = String(input?.missionState?.prEvidenceStatus || providerPr?.status || '').toLowerCase();
+  const providerPr = input?.chatContextPack?.providerSummaries?.prEvidence || {};
+  const canonicalPr = projectCanonicalPrEvidence({ prEvidence: providerPr, githubPrEvidence: input?.githubPrEvidence || {} });
+  const prMergeReadiness = String(input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || canonicalPr?.mergeReadiness || '').toLowerCase();
+  const prMissingProof = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || (canonicalPr?.missingProof || []).join('|') || '').toLowerCase();
+  const prStatus = String(input?.missionState?.prEvidenceStatus || canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase();
   const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged';
   const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
 
