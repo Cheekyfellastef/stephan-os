@@ -4,7 +4,12 @@ function asText(value, fallback = '') {
 }
 
 function asList(value) {
-  return Array.isArray(value) ? value.map((item) => asText(item)).filter(Boolean) : [];
+  return Array.isArray(value)
+    ? value
+      .map((item) => asText(item))
+      .filter(Boolean)
+      .filter((item) => !['none', 'n/a', 'na', 'unknown'].includes(item.toLowerCase()))
+    : [];
 }
 
 export function projectCanonicalPrEvidence({ prEvidence = {}, githubPrEvidence = {} } = {}) {

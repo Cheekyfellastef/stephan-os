@@ -53,7 +53,17 @@ export function buildResponsePlan(input = {}) {
   const canonicalEvidenceDetected = ['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || '').toLowerCase());
   const prEvidenceDetected = snapshotPrEvidenceDetected || canonicalEvidenceDetected;
   const prMergeReadiness = String(canonicalPr?.mergeReadiness || input?.missionState?.prEvidenceMergeReadiness || input?.supportSnapshotSummary?.prEvidenceMergeReadiness || '').toLowerCase();
-  const prMissingProof = String((canonicalPr?.missingProof || []).join('|') || input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || '').toLowerCase();
+  const prMissingProof = (() => {
+    const canonicalList = Array.isArray(canonicalPr?.missingProof) ? canonicalPr.missingProof : [];
+    if (canonicalList.length > 0) return canonicalList;
+    const fallbackRaw = String(input?.missionState?.prEvidenceMissingProof || input?.supportSnapshotSummary?.prEvidenceMissingProof || '');
+    if (!fallbackRaw) return [];
+    return fallbackRaw
+      .split('|')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item) => !['none', 'unknown', 'n/a', 'na'].includes(item.toLowerCase()));
+  })();
   const prStatus = String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || input?.missionState?.prEvidenceStatus || '').toLowerCase();
   const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged' || canonicalPr?.merged === true;
   const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
@@ -135,7 +145,7 @@ export function buildResponsePlan(input = {}) {
       mergeDecision = 'already-merged';
       recommendedNextAction = 'PR already merged; run post-merge validation and monitor regressions';
     }
-    if (prMissingProof || ['hold','needs-proof','incomplete'].includes(prMergeReadiness)) {
+    if (!prAlreadyMerged && (prMissingProof.length > 0 || ['hold','needs-proof','incomplete'].includes(prMergeReadiness))) {
       mergeDecision = 'wait';
       warnings.push('PR evidence indicates missing proof or amendment required.');
       recommendedNextAction = 'request amendment prompt with missing proof fields';
