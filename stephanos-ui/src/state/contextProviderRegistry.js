@@ -1,3 +1,4 @@
+import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 const PROVIDER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/;
 
 const requiredMethods = [
@@ -145,7 +146,7 @@ const builtinProviders = [
   {
     id: 'prEvidence', label: 'PR Evidence', priority: 55,
     getSummary: (input) => {
-      const pr = input.githubPrEvidence || input.prEvidence || {};
+      const pr = projectCanonicalPrEvidence({ prEvidence: input.prEvidence || {}, githubPrEvidence: input.githubPrEvidence || {} });
       return {
         status: String(pr.status || 'none'),
         prNumber: String(pr.prNumber || pr.parsedPrNumber || 'unknown'),
@@ -157,9 +158,9 @@ const builtinProviders = [
         warnings: normalizeList(pr.evidenceWarnings),
       };
     },
-    getWarnings: (input) => normalizeList((input.githubPrEvidence || input.prEvidence || {}).evidenceWarnings),
-    getNextAction: (input) => normalizeList([(input.githubPrEvidence || input.prEvidence || {}).recommendedNextAction]),
-    getProofState: (input) => String((input.githubPrEvidence || input.prEvidence || {}).mergeReadiness || 'unknown'),
+    getWarnings: (input) => normalizeList(projectCanonicalPrEvidence({ prEvidence: input.prEvidence || {}, githubPrEvidence: input.githubPrEvidence || {} }).evidenceWarnings),
+    getNextAction: (input) => normalizeList([projectCanonicalPrEvidence({ prEvidence: input.prEvidence || {}, githubPrEvidence: input.githubPrEvidence || {} }).recommendedNextAction]),
+    getProofState: (input) => String(projectCanonicalPrEvidence({ prEvidence: input.prEvidence || {}, githubPrEvidence: input.githubPrEvidence || {} }).mergeReadiness || 'unknown'),
     getCanonLinks: () => ['canon.merge_block_failed_checks', 'canon.dist_not_truth'],
     getSourceRefs: () => ['githubPrEvidence', 'prEvidence'],
   },
