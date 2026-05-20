@@ -3263,7 +3263,7 @@ export function useAIConsole() {
         submissionRoute,
       });
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
-      commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.providerSummaries?.prEvidence || liveGithubPrEvidence || null);
+      commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.githubPrEvidence || liveGithubPrEvidence || chatContextPack?.providerSummaries?.prEvidence || null);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
         responsePlannerGuidance: `Use ${responsePlan.answerShape} answer shape: ${responsePlan.requiredSections.join(', ')}. ${responsePlan.identityGuidance || ''} Do not invent PR status if PR evidence is missing.`,
         requestedProvider,
