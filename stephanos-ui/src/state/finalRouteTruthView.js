@@ -46,6 +46,10 @@ function isRouteBlockedBeforeProvider(executionMetadata = {}) {
     || (finalizationPath === 'error' && (failureReason === 'route_unavailable' || failureReason === 'backend-route-unavailable'));
 }
 
+function normalizeRouteFailureReason(value) {
+  return String(value || '').trim().toLowerCase().replace(/_/g, '-');
+}
+
 function normalizeRouteBlockedProviderTruth({ runtimeStatus = {}, canonicalTruth = {}, selectedProvider = 'unknown', executedProvider = 'unknown' } = {}) {
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
@@ -188,6 +192,11 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
       : isKnownProvider(selectedProvider)
         ? 'blocked'
         : 'pending-selection';
+  const lastFailureReason = normalizeRouteFailureReason(runtimeStatus?.lastExecutionMetadata?.command_pipeline_last_failure_reason);
+  const staleRouteFailurePresent = backendReachable && (
+    lastFailureReason === 'route-unavailable'
+    || lastFailureReason === 'backend-route-unavailable'
+  );
 
   return {
     routeKind,
@@ -231,6 +240,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeLayerStatus,
     backendExecutionContractStatus,
     providerExecutionGateStatus,
+    staleRouteFailurePresent,
     providerState,
     fastResponseLaneEligible: canonicalTruth.fastResponseLaneEligible === true,
     fastResponseLaneActive: canonicalTruth.fastResponseLaneActive === true,
