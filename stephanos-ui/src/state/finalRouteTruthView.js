@@ -132,6 +132,8 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const executableProviderValid = isKnownProvider(providerTruth.executedProvider);
   const backendReachable = canonicalTruth.backendReachable === true;
   const networkReachabilityState = pickTruth(canonicalTruth.networkReachabilityState) || 'unknown';
+  const currentBackendHealthFresh = pickTruth(canonicalTruth.currentBackendHealthFresh) || 'no';
+  const routeTruthHealthSource = pickTruth(canonicalTruth.routeTruthHealthSource) || 'stale-route-candidate';
   const browserDirectAccessState = pickTruth(canonicalTruth.browserDirectAccessState)
     || (canonicalTruth.sessionKind === 'hosted-web' ? 'unknown' : 'compatible');
   const transportCompatibilityLayer = pickTruth(canonicalTruth.transportCompatibilityLayer) || 'not-required';
@@ -203,6 +205,8 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     fallbackActive: canonicalTruth.fallbackActive === true,
     backendReachableState: asBooleanState(canonicalTruth.backendReachable),
     networkReachabilityState,
+    currentBackendHealthFresh,
+    routeTruthHealthSource,
     browserDirectAccessState,
     transportCompatibilityLayer,
     uiReachableState,

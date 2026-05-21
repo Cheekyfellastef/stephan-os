@@ -29,6 +29,7 @@ import { buildAIMindRegistry } from './aiMindRegistry.mjs';
 import { buildRealityUpgradeOrchestrator } from './realityUpgradeOrchestrator.mjs';
 
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
+const BACKEND_HEALTH_FRESHNESS_MS = 2 * 60 * 1000;
 
 function isBrowserStorageAvailable(storage) {
   return storage && typeof storage.getItem === 'function';
@@ -148,6 +149,23 @@ function parseHostname(value = '') {
   } catch {
     return '';
   }
+}
+
+function deriveBackendHealthProbeTruth(runtimeContext = {}) {
+  const probe = runtimeContext?.healthProbeTruth && typeof runtimeContext.healthProbeTruth === 'object'
+    ? runtimeContext.healthProbeTruth
+    : {};
+  const lastProbeAt = String(probe.lastBackendHealthProbeAt || '').trim();
+  const result = String(probe.lastBackendHealthProbeResult || '').trim().toLowerCase();
+  const source = String(probe.currentBackendHealthSource || '').trim() || 'stale-route-candidate';
+  const parsedAt = lastProbeAt ? Date.parse(lastProbeAt) : NaN;
+  const fresh = Number.isFinite(parsedAt) && (Date.now() - parsedAt) <= BACKEND_HEALTH_FRESHNESS_MS;
+  const ok = result === 'ok:true';
+  return {
+    ok,
+    fresh,
+    routeTruthHealthSource: fresh ? source : 'stale-route-candidate',
+  };
 }
 
 function isStaticGithubPagesOrigin(value = '') {
@@ -2306,6 +2324,8 @@ export function buildFinalRouteTruth({
     actualTargetUsed: finalRoute?.actualTarget || '',
     source: finalRoute?.source || runtimeContext.nodeAddressSource || 'route-diagnostics',
     backendReachable: Boolean(backendAvailable),
+    currentBackendHealthFresh: String(runtimeContext?.currentBackendHealthFresh || '').trim() || 'no',
+    routeTruthHealthSource: String(runtimeContext?.routeTruthHealthSource || '').trim() || 'stale-route-candidate',
     networkReachabilityState,
     browserDirectAccessState,
     transportCompatibilityLayer,
@@ -2476,13 +2496,15 @@ export function createRuntimeStatusModel({
   const health = normalizeProviderHealth(providerHealth);
   const localPending = LOCAL_PROVIDER_KEYS.some((providerKey) => health[providerKey]?.state === 'SEARCHING');
   const normalizedRuntimeContext = normalizeRuntimeContext(runtimeContext, { backendAvailable });
+  const healthProbeTruth = deriveBackendHealthProbeTruth(normalizedRuntimeContext);
   const hostedCanonicalBridgeBackendReachable = normalizedRuntimeContext.sessionKind === 'hosted-web'
     && normalizedRuntimeContext.bridgeTransportTruth?.bridgeMemoryTransport === 'tailscale'
     && normalizedRuntimeContext.bridgeTransportTruth?.bridgeMemoryReconciliationState === 'remembered-revalidated'
     && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.accepted === true
     && normalizedRuntimeContext.bridgeTransportTruth?.tailscale?.reachable === true
     && Boolean(normalizedRuntimeContext.backendTargetResolvedUrl);
-  const effectiveBackendAvailable = backendAvailable || hostedCanonicalBridgeBackendReachable;
+  const backendReachableByFreshHealthProbe = healthProbeTruth.ok && healthProbeTruth.fresh;
+  const effectiveBackendAvailable = backendAvailable || hostedCanonicalBridgeBackendReachable || backendReachableByFreshHealthProbe;
   const routePlan = deriveRoutePlan({
     selectedProvider: normalizedProvider,
     routeMode,
@@ -2670,6 +2692,8 @@ export function createRuntimeStatusModel({
     attemptOrder: routePlan.attemptOrder,
     runtimeContext: {
       ...gatedRuntimeContext,
+      currentBackendHealthFresh: healthProbeTruth.fresh ? 'yes' : 'no',
+      routeTruthHealthSource: healthProbeTruth.routeTruthHealthSource,
       canonicalHostedRouteTruth,
       finalRoute,
       routeCandidates: nodeRoute.routeCandidates || [],
