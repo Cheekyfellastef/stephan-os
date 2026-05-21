@@ -1,10 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
 const psScript = path.join(repoRoot, 'scripts', 'windows', 'repair-stephanos-battle-bridge.ps1');
 const logsDir = path.join(repoRoot, 'logs', 'battle-bridge');
+const healthUrl = 'http://127.0.0.1:8787/api/health';
 
 function findPowerShell() {
   for (const cmd of ['powershell', 'pwsh']) {
@@ -17,7 +18,7 @@ function findPowerShell() {
 async function waitForHealth(timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const res = spawnSync('curl', ['-sS', '-o', '/tmp/stephanos-health.json', '-w', '%{http_code}', 'http://127.0.0.1:8787/api/health'], { encoding: 'utf8' });
+    const res = spawnSync('curl', ['-sS', '-o', '/tmp/stephanos-health.json', '-w', '%{http_code}', healthUrl], { encoding: 'utf8' });
     if ((res.stdout || '').trim() === '200') return true;
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -35,21 +36,34 @@ mkdirSync(logsDir, { recursive: true });
 
 const healthOk = await waitForHealth(2000);
 if (healthOk) {
-  console.log('Backend already healthy at http://127.0.0.1:8787/api/health');
+  console.log(`Backend already healthy at ${healthUrl}`);
   process.exit(0);
 }
+
+const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+const stdoutPath = path.join(logsDir, `backend-start-${timestamp}.stdout.log`);
+const stderrPath = path.join(logsDir, `backend-start-${timestamp}.stderr.log`);
+const stdoutStream = createWriteStream(stdoutPath, { flags: 'a' });
+const stderrStream = createWriteStream(stderrPath, { flags: 'a' });
 
 const child = spawn('node', ['stephanos-server/server.js'], {
   cwd: repoRoot,
   detached: true,
-  stdio: 'ignore',
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
+child.stdout.pipe(stdoutStream);
+child.stderr.pipe(stderrStream);
 child.unref();
+
+console.log(`Portable backend start launched (pid=${child.pid ?? 'unknown'}).`);
+console.log(`stdout log: ${path.relative(repoRoot, stdoutPath)}`);
+console.log(`stderr log: ${path.relative(repoRoot, stderrPath)}`);
 
 const recovered = await waitForHealth();
 if (!recovered) {
-  console.error('Failed to recover backend health at http://127.0.0.1:8787/api/health');
+  console.error(`Failed to recover backend health at ${healthUrl}`);
+  console.error(`Inspect stderr tail at ${path.relative(repoRoot, stderrPath)}`);
   process.exit(1);
 }
-console.log('Backend recovered and healthy at http://127.0.0.1:8787/api/health');
+console.log(`Backend recovered and healthy at ${healthUrl}`);
 console.log('Note: Tailscale serve mapping is not managed in portable fallback mode.');
