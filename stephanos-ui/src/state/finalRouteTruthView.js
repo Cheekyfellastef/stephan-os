@@ -54,9 +54,26 @@ function normalizeRouteBlockedProviderTruth({ runtimeStatus = {}, canonicalTruth
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const routeLayerHealthy = canonicalTruth?.routeReachable === true
+    && canonicalTruth?.routeUsable === true
+    && canonicalTruth?.backendReachable === true;
+  const lastFailureReason = normalizeRouteFailureReason(executionMetadata?.command_pipeline_last_failure_reason);
+  const routeFailureIsHistorical = routeLayerHealthy
+    && (lastFailureReason === 'route-unavailable' || lastFailureReason === 'backend-route-unavailable');
+  if (routeFailureIsHistorical) {
+    return {
+      routeBlockedBeforeProvider: false,
+      routeFailureIsHistorical: true,
+      selectedProvider: 'none',
+      executedProvider: 'none',
+      fallbackActive: false,
+      actualTarget: pickTruth(canonicalTruth.actualTarget) || 'unavailable',
+    };
+  }
   if (!isRouteBlockedBeforeProvider(executionMetadata)) {
     return {
       routeBlockedBeforeProvider: false,
+      routeFailureIsHistorical: false,
       selectedProvider,
       executedProvider,
       fallbackActive: canonicalTruth.fallbackActive === true,
@@ -65,6 +82,7 @@ function normalizeRouteBlockedProviderTruth({ runtimeStatus = {}, canonicalTruth
   }
   return {
     routeBlockedBeforeProvider: true,
+    routeFailureIsHistorical: false,
     selectedProvider: 'none',
     executedProvider: 'none',
     fallbackActive: false,
@@ -148,7 +166,10 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const routeReconciled = routeUsabilityConflict;
   const routeReconciliationReason = routeReconciled ? 'live-backend+provider-confirmed' : '';
   const routeUsableState = routeReconciled ? 'yes' : preReconciliationRouteUsableState;
-  const providerMismatch = isKnownProvider(providerTruth.selectedProvider) && isKnownProvider(providerTruth.executedProvider) && providerTruth.selectedProvider !== providerTruth.executedProvider;
+  const providerMismatch = !providerTruth.routeFailureIsHistorical
+    && isKnownProvider(providerTruth.selectedProvider)
+    && isKnownProvider(providerTruth.executedProvider)
+    && providerTruth.selectedProvider !== providerTruth.executedProvider;
   const truthInconsistent = routeUsabilityConflict;
   const blockingIssuesPresent = hasBlockingIssues(runtimeDiagnosticsTruth, canonicalTruth);
   const routeUsabilityVetoReason = routeUsableState === 'no'

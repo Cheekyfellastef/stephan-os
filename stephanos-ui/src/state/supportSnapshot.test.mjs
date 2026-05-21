@@ -2680,7 +2680,16 @@ test('buildSupportSnapshot treats stale ROUTE_UNAVAILABLE metadata as historical
   assert.match(snapshot, /Historical Command Failure Reason: ROUTE_UNAVAILABLE/);
   assert.match(snapshot, /Current Command Pipeline State: idle \/ no-current-failure/);
   assert.match(snapshot, /Current Provider Execution Truth: none \/ idle \/ not-executed/);
-  assert.match(snapshot, /Execution Truth: ok:ollama/);
+  assert.match(snapshot, /Active Provider: none/);
+  assert.match(snapshot, /Fallback Active: no/);
+  assert.match(snapshot, /Last Executable Provider: none/);
+  assert.match(snapshot, /Last Actual Provider Used: none/);
+  assert.match(snapshot, /Last Actual Model Used: n\/a/);
+  assert.match(snapshot, /Last Timeout Effective Provider: none/);
+  assert.match(snapshot, /Last Timeout Effective Model: n\/a/);
+  assert.match(snapshot, /Execution Truth: none \/ idle \/ not-executed/);
+  assert.match(snapshot, /Provider Mismatch: historical-stale-provider-suppressed/);
+  assert.match(snapshot, /Executable Provider: none/);
   assert.doesNotMatch(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
   assert.match(snapshot, /Response Planner Status: active/);
   assert.match(snapshot, /Chat Context Pack Status: active/);

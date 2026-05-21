@@ -619,21 +619,24 @@ export function buildSupportSnapshot({
     || executionTruthState === 'no-provider-executed'
     || executionTruthState === 'blocked-before-provider / no-provider-executed'
     || routeUnavailableFailurePresent);
-  const visibleActiveProvider = routeBlockedBeforeProvider ? 'none' : asText(routeTruthView?.executedProvider);
-  const visibleFallbackActive = routeBlockedBeforeProvider ? 'no' : (routeTruthView?.fallbackActive ? 'yes' : 'no');
-  const visibleLastExecutableProvider = routeBlockedBeforeProvider ? 'none' : asText(runtimeStatus?.lastExecutableProvider);
+  const providerExecutionIsSuppressed = routeBlockedBeforeProvider || suppressStaleExecutionMetadata;
+  const visibleActiveProvider = providerExecutionIsSuppressed ? 'none' : asText(routeTruthView?.executedProvider);
+  const visibleFallbackActive = providerExecutionIsSuppressed ? 'no' : (routeTruthView?.fallbackActive ? 'yes' : 'no');
+  const visibleLastExecutableProvider = providerExecutionIsSuppressed ? 'none' : asText(runtimeStatus?.lastExecutableProvider);
   const visibleLastActualProviderUsed = routeBlockedBeforeProvider
     ? 'none'
-    : asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider);
+    : (suppressStaleExecutionMetadata ? 'none' : asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider));
   const visibleExecutionTruth = routeBlockedBeforeProvider
     ? 'blocked-before-provider / no-provider-executed'
-    : asText(runtimeStatus?.executionTruth);
-  const visibleLastActualModelUsed = routeBlockedBeforeProvider
+    : (suppressStaleExecutionMetadata
+      ? 'none / idle / not-executed'
+      : asText(runtimeStatus?.executionTruth));
+  const visibleLastActualModelUsed = providerExecutionIsSuppressed
     ? 'n/a'
     : asText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed);
-  const visibleLastModelUsed = routeBlockedBeforeProvider ? 'n/a' : asText(runtimeStatus?.lastModelUsed);
-  const visibleLastTimeoutEffectiveProvider = routeBlockedBeforeProvider ? 'none' : asText(runtimeStatus?.lastTimeoutEffectiveProvider);
-  const visibleLastTimeoutEffectiveModel = routeBlockedBeforeProvider ? 'n/a' : asText(runtimeStatus?.lastTimeoutEffectiveModel);
+  const visibleLastModelUsed = providerExecutionIsSuppressed ? 'n/a' : asText(runtimeStatus?.lastModelUsed);
+  const visibleLastTimeoutEffectiveProvider = providerExecutionIsSuppressed ? 'none' : asText(runtimeStatus?.lastTimeoutEffectiveProvider);
+  const visibleLastTimeoutEffectiveModel = providerExecutionIsSuppressed ? 'n/a' : asText(runtimeStatus?.lastTimeoutEffectiveModel);
   const executeActualTargetUsed = asText(executionMetadata?.execute_actual_target_used, 'n/a');
   const visibleActualTargetUsed = routeBlockedBeforeProvider
     ? executeActualTargetUsed
@@ -2128,9 +2131,9 @@ export function buildSupportSnapshot({
     `Route Reconciliation Reason: ${asText(routeTruthView?.routeReconciliationReason, 'n/a')}`,
     `Truth Inconsistent: ${routeTruthView?.truthInconsistent ? 'yes' : 'no'}`,
     `Route Usability Conflict: ${routeTruthView?.routeUsabilityConflict ? 'yes' : 'no'}`,
-    `Provider Mismatch: ${routeBlockedBeforeProvider ? 'route-blocked/no-provider-executed' : (routeTruthView?.providerMismatch ? 'yes' : 'no')}`,
+    `Provider Mismatch: ${providerExecutionIsSuppressed ? (routeBlockedBeforeProvider ? 'route-blocked/no-provider-executed' : 'historical-stale-provider-suppressed') : (routeTruthView?.providerMismatch ? 'yes' : 'no')}`,
     `Home Available: ${asYesNoUnknown(runtimeStatus?.homeNodeReachable)}`,
-    `Executable Provider: ${routeBlockedBeforeProvider ? 'none' : asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
+    `Executable Provider: ${providerExecutionIsSuppressed ? 'none' : asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
     '',
     'routeDiagnosticsSummary:',
     ...effectiveRouteDiagnosticsSummary,
