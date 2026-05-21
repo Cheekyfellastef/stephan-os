@@ -2903,6 +2903,15 @@ export function useAIConsole() {
 
     const normalizedPrompt = prompt.toLowerCase();
     let submitAccepted = false;
+    let submitAttempted = true;
+    let submitBlockReason = 'none';
+    let executeHandlerEarlyReturnReason = 'none';
+    const executeInputPresent = prompt.length > 0;
+    const executeInputLength = prompt.length;
+    let commandEnvelopeBuildAttempted = 'no';
+    let commandEnvelopeBuildError = 'none';
+    let dispatchGateAllowed = 'unknown';
+    let dispatchGateReason = 'none';
     let lastFinalizationPath = 'unknown';
     const appendLocalOperatorEntry = (outputText) => {
       const entry = {
@@ -3455,13 +3464,20 @@ export function useAIConsole() {
         ollama_fetch_aborted: false,
         ollama_reader_cancelled: false,
       };
-      let commandEnvelope = createCommandEnvelope({
-        operatorMessage: prompt,
-        normalizedOperatorMessage: normalizeChatContextOperatorMessage(prompt),
-        commandId: requestPayload.request_execution_id,
-        submissionSource,
-        submissionRoute,
-      });
+      let commandEnvelope = null;
+      commandEnvelopeBuildAttempted = 'yes';
+      try {
+        commandEnvelope = createCommandEnvelope({
+          operatorMessage: prompt,
+          normalizedOperatorMessage: normalizeChatContextOperatorMessage(prompt),
+          commandId: requestPayload.request_execution_id,
+          submissionSource,
+          submissionRoute,
+        });
+      } catch (error) {
+        commandEnvelopeBuildError = error?.message || 'command-envelope-build-failed';
+        throw error;
+      }
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
       commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.githubPrEvidence || liveGithubPrEvidence || chatContextPack?.providerSummaries?.prEvidence || null);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
@@ -3526,6 +3542,8 @@ export function useAIConsole() {
         runtimeStatus: requestRuntimeStatus,
       });
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
+      dispatchGateAllowed = requestDispatchGate.dispatchAllowed === true ? 'yes' : 'no';
+      dispatchGateReason = requestDispatchGate.reasonCode || 'none';
       const runtimeConfigWithExecutionTruth = {
         ...finalizedRequestContext,
         preferredTarget: requestRouteTruthView.preferredTarget || finalizedRequestContext.preferredTarget || '',
@@ -3536,6 +3554,9 @@ export function useAIConsole() {
       };
       inFlightRuntimeContext = runtimeConfigWithExecutionTruth;
       const routeDispatchBlocked = requestDispatchGate.dispatchAllowed !== true;
+      if (routeDispatchBlocked) {
+        submitBlockReason = requestDispatchGate.reasonCode || 'dispatch-gate-blocked';
+      }
       console.info('[Stephanos UI] Request dispatch gate evaluated', {
         dispatchAllowed: requestDispatchGate.dispatchAllowed === true,
         reasonCode: requestDispatchGate.reasonCode || null,
@@ -3574,8 +3595,8 @@ export function useAIConsole() {
         : null;
       const streamEntryId = `cmd_${Date.now()}_stream`;
       let streamBuffer = '';
+      submitAccepted = true;
       if (!routeUnavailableResult && !identityRecallDeterministicResult) {
-        submitAccepted = true;
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
           raw_input: prompt,
@@ -3812,6 +3833,16 @@ export function useAIConsole() {
       });
 
       finalExecutionMetadata.command_pipeline_last_submit_accepted = submitAccepted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_submit_attempted = submitAttempted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_submit_block_reason = submitBlockReason;
+      finalExecutionMetadata.command_envelope_build_attempted = commandEnvelopeBuildAttempted;
+      finalExecutionMetadata.command_envelope_build_error = commandEnvelopeBuildError;
+      finalExecutionMetadata.dispatch_gate_allowed = dispatchGateAllowed;
+      finalExecutionMetadata.dispatch_gate_reason = dispatchGateReason;
+      finalExecutionMetadata.execute_input_present = executeInputPresent ? 'yes' : 'no';
+      finalExecutionMetadata.execute_input_length = executeInputLength;
+      finalExecutionMetadata.execute_handler_early_return_reason = executeHandlerEarlyReturnReason;
+      finalExecutionMetadata.direct_answer_submit_allowed = 'yes';
       finalExecutionMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = data.success ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = data.success ? 'yes' : 'no';
@@ -3908,6 +3939,16 @@ export function useAIConsole() {
         },
       });
       timeoutFailureMetadata.command_pipeline_last_submit_accepted = submitAccepted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_last_submit_attempted = submitAttempted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_submit_block_reason = submitBlockReason;
+      timeoutFailureMetadata.command_envelope_build_attempted = commandEnvelopeBuildAttempted;
+      timeoutFailureMetadata.command_envelope_build_error = commandEnvelopeBuildError;
+      timeoutFailureMetadata.dispatch_gate_allowed = dispatchGateAllowed;
+      timeoutFailureMetadata.dispatch_gate_reason = dispatchGateReason;
+      timeoutFailureMetadata.execute_input_present = executeInputPresent ? 'yes' : 'no';
+      timeoutFailureMetadata.execute_input_length = executeInputLength;
+      timeoutFailureMetadata.execute_handler_early_return_reason = executeHandlerEarlyReturnReason;
+      timeoutFailureMetadata.direct_answer_submit_allowed = 'yes';
       timeoutFailureMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
       timeoutFailureMetadata.command_pipeline_last_assistant_answer_generated = 'no';
       timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'yes';
