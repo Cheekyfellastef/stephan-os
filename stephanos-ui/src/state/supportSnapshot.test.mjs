@@ -1207,6 +1207,76 @@ test('buildSupportSnapshot reconciles local-desktop diagnostics when candidate i
   assert.match(snapshot, /Route Diagnostics Candidate Reconciled: yes/);
 });
 
+test('buildSupportSnapshot applies fresh health probe truth to local-desktop candidate', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: { sessionKind: 'local-desktop' },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      networkReachabilityState: 'reachable',
+    },
+    runtimeSessionTruth: { sessionKind: 'local-desktop' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {
+      routeCandidates: [{ routeKind: 'local-desktop', configured: true, reason: 'backend is offline' }],
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: '2026-05-21T00:00:20.000Z',
+        lastBackendHealthProbeResult: 'ok:true',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-05-21T00:00:30.000Z'),
+  });
+
+  assert.match(snapshot, /Local Desktop Candidate Source: health-probe-fresh/);
+  assert.match(snapshot, /Local Desktop Candidate Health Probe Applied: yes/);
+  assert.match(snapshot, /Route Candidates:\n- local-desktop \[local-desktop\/direct\] rank=n\/a score=n\/a state=usable/);
+  assert.match(snapshot, /Backend Reachable: yes/);
+  assert.match(snapshot, /Network Reachability Truth: reachable/);
+});
+
+test('buildSupportSnapshot does not promote stale health probe truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: { sessionKind: 'local-desktop' },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      backendReachableState: 'no',
+      networkReachabilityState: 'unreachable',
+    },
+    runtimeSessionTruth: { sessionKind: 'local-desktop' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {
+      routeCandidates: [{ routeKind: 'local-desktop', configured: true, reason: 'backend is offline' }],
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: '2026-05-21T00:00:00.000Z',
+        lastBackendHealthProbeResult: 'ok:true',
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-05-21T00:01:00.000Z'),
+  });
+
+  assert.match(snapshot, /Local Desktop Candidate Source: stale-route-candidate/);
+  assert.match(snapshot, /Local Desktop Candidate Health Probe Applied: no/);
+  assert.match(snapshot, /Backend Reachable: no/);
+});
+
 test('buildSupportSnapshot reports parity state from runtime truth markers', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
