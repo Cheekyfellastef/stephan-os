@@ -611,6 +611,7 @@ export function buildSupportSnapshot({
   const routeUnavailableFailurePresent = commandPipelineFailureReason === 'backend-route-unavailable'
     || commandPipelineFailureReason === 'route_unavailable';
   const routeFailureIsHistorical = routeTruthHealthy && routeUnavailableFailurePresent;
+  const suppressStaleExecutionMetadata = routeFailureIsHistorical;
   const routeBlockedBeforeProvider = !routeFailureIsHistorical && (executionMetadata?.provider_fallback_blocked_by_route === true
     || providerExecutionGateStatus === 'blocked-by-route'
     || providerExecutionGateStatus === 'route-blocked'
@@ -722,13 +723,15 @@ export function buildSupportSnapshot({
   const chatContextMetadataSource = executionHasChatContext
     ? 'final-execution-metadata'
     : (runtimeHasChatContext ? 'runtime-status-model' : 'none');
-  const chatContextStatus = hasMergeDecisionProof
-    ? 'active'
-    : (executionHasChatContext
-      ? (executionMetadata.chat_context_pack_status || 'active')
-      : (runtimeHasChatContext
-        ? runtimeStatus.chatContextPackStatus
-        : (commandExecutedWithoutContext ? 'warning' : 'unavailable')));
+  const chatContextStatus = suppressStaleExecutionMetadata
+    ? (runtimeStatus?.chatContextPackStatus || 'active')
+    : (hasMergeDecisionProof
+      ? 'active'
+      : (executionHasChatContext
+        ? (executionMetadata.chat_context_pack_status || 'active')
+        : (runtimeHasChatContext
+          ? runtimeStatus.chatContextPackStatus
+          : (commandExecutedWithoutContext ? 'warning' : 'unavailable'))));
   const chatContextVersion = executionHasChatContext ? (executionMetadata.chat_context_version || runtimeStatus?.chatContextVersion || 'v1') : (runtimeStatus?.chatContextVersion || (commandExecutedWithoutContext ? 'v1' : 'n/a'));
   const chatContextResponseMode = hasMergeDecisionProof ? 'merge-decision' : (executionHasChatContext ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer') : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
   const chatContextRelevantCanonCount = hasMergeDecisionProof ? derivedMergeCanonCount : (executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0));
@@ -792,7 +795,7 @@ export function buildSupportSnapshot({
   const chatContextOperatorProfileUsed = (executionMetadata?.chat_context_provider_ids_used || '').includes('operatorProfile') ? 'yes' : 'no';
   const chatContextOperatorNameAvailable = operatorNameKnown === 'yes' ? 'yes' : 'no';
 
-  const responsePlannerStatus = executionMetadata?.response_planner_status || 'unavailable';
+  const responsePlannerStatus = suppressStaleExecutionMetadata ? 'active' : (executionMetadata?.response_planner_status || 'unavailable');
   const responsePlannerVersion = executionMetadata?.response_planner_version || 'n/a';
   const responsePlannerResponseMode = executionMetadata?.response_planner_response_mode || chatContextResponseMode || 'direct-answer';
   const responsePlannerAnswerShape = executionMetadata?.response_planner_answer_shape || 'direct-answer';
@@ -822,7 +825,16 @@ export function buildSupportSnapshot({
   const commandPipelineLastUserMessageRecorded = executionMetadata?.command_pipeline_last_user_message_recorded || 'no';
   const commandPipelineLastAssistantAnswerGenerated = executionMetadata?.command_pipeline_last_assistant_answer_generated || 'no';
   const commandPipelineLastAnswerPaneRendered = executionMetadata?.command_pipeline_last_answer_pane_rendered || 'no';
-  const commandPipelineLastFailureReason = executionMetadata?.command_pipeline_last_failure_reason || 'none';
+  const commandPipelineLastFailureReason = suppressStaleExecutionMetadata ? 'none' : (executionMetadata?.command_pipeline_last_failure_reason || 'none');
+  const historicalCommandFailureReason = suppressStaleExecutionMetadata
+    ? (executionMetadata?.command_pipeline_last_failure_reason || 'none')
+    : 'none';
+  const currentCommandPipelineState = routeBlockedBeforeProvider
+    ? 'route-blocked'
+    : (suppressStaleExecutionMetadata ? 'idle / no-current-failure' : 'ready');
+  const currentProviderExecutionTruth = routeBlockedBeforeProvider
+    ? 'blocked-before-provider / no-provider-executed'
+    : (suppressStaleExecutionMetadata ? 'none / idle / not-executed' : 'executed-or-pending');
   const commandPipelineLastFinalizationPath = executionMetadata?.command_pipeline_last_finalization_path || 'unknown';
   const commandPipelineLastInputCleared = executionMetadata?.command_pipeline_last_input_cleared || 'no';
   const commandPipelineLastInputRestoreAvailable = executionMetadata?.command_pipeline_last_input_restore_available || 'yes';
@@ -850,10 +862,10 @@ export function buildSupportSnapshot({
   const commandEnvelopeExecutionStatus = executionMetadata?.command_envelope_execution_status || executionMetadata?.execution_status || 'unknown';
   const commandEnvelopeActualProvider = routeBlockedBeforeProvider
     ? 'none'
-    : (executionMetadata?.command_envelope_actual_provider || executionMetadata?.actual_provider_used || 'unknown');
+    : (suppressStaleExecutionMetadata ? 'none' : (executionMetadata?.command_envelope_actual_provider || executionMetadata?.actual_provider_used || 'unknown'));
   const commandEnvelopeActualModel = routeBlockedBeforeProvider
     ? 'n/a'
-    : (executionMetadata?.command_envelope_actual_model || executionMetadata?.model_used || 'unknown');
+    : (suppressStaleExecutionMetadata ? 'n/a' : (executionMetadata?.command_envelope_actual_model || executionMetadata?.model_used || 'unknown'));
   const commandEnvelopeProofStatus = executionMetadata?.command_envelope_proof_status || 'unknown';
   const commandEnvelopeUiRealityStatus = executionMetadata?.command_envelope_ui_reality_status || chatContextUiRealityStatus || 'UNKNOWN';
   const commandEnvelopeWarnings = executionMetadata?.command_envelope_warnings || (commandEnvelopeStatus === 'unavailable' ? 'command-envelope-missing' : 'none');
@@ -1884,6 +1896,9 @@ export function buildSupportSnapshot({
     `Command Pipeline Last Assistant Answer Generated: ${asText(commandPipelineLastAssistantAnswerGenerated, 'no')}`,
     `Command Pipeline Last Answer Pane Rendered: ${asText(commandPipelineLastAnswerPaneRendered, 'no')}`,
     `Command Pipeline Last Failure Reason: ${asText(commandPipelineLastFailureReason, 'none')}`,
+    `Historical Command Failure Reason: ${asText(historicalCommandFailureReason, 'none')}`,
+    `Current Command Pipeline State: ${asText(currentCommandPipelineState, 'ready')}`,
+    `Current Provider Execution Truth: ${asText(currentProviderExecutionTruth, 'none / idle / not-executed')}`,
     `Command Pipeline Last Finalization Path: ${asText(commandPipelineLastFinalizationPath, 'unknown')}`,
     `Command Pipeline Last Input Cleared: ${asText(commandPipelineLastInputCleared, 'no')}`,
     `Command Pipeline Last Input Restore Available: ${asText(commandPipelineLastInputRestoreAvailable, 'yes')}`,
