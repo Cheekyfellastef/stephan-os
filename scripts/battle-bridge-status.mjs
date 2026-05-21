@@ -39,9 +39,16 @@ const httpCode = (health.stdout || '').trim();
 console.log(`Local backend /api/health HTTP status: ${httpCode || 'unreachable'}`);
 
 const stderrTail = latestTail(/^backend-start-.*\.stderr\.log$/);
+const stdoutTail = latestTail(/^backend-start-.*\.stdout\.log$/);
 if (stderrTail) {
   console.log(`\nLatest backend stderr tail (${stderrTail.file}):`);
   console.log(stderrTail.lines || '(empty)');
 } else {
   console.log('\nNo backend-start stderr logs found under logs/battle-bridge.');
+}
+if (stdoutTail) {
+  console.log(`\nLatest backend stdout tail (${stdoutTail.file}):`);
+  console.log(stdoutTail.lines || '(empty)');
+} else {
+  console.log('\nNo backend-start stdout logs found under logs/battle-bridge.');
 }
