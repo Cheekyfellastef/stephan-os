@@ -2939,7 +2939,9 @@ export function useAIConsole() {
       setCommandHistory((prev) => appendCommandHistory(prev, entry));
       setLastRoute('assistant');
       setStatus('idle');
-      submitAccepted = !routeUnavailableResult;
+      // Local deterministic replies finalize before route dispatch state exists.
+      // Keep submit acceptance independent from later routeUnavailableResult initialization.
+      submitAccepted = true;
       lastFinalizationPath = 'deterministic-identity';
     };
     const runtimeSelectors = orchestrationTruth?.selectors || null;
