@@ -1823,12 +1823,23 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     ? ''
     : localDesktopProbeGapBlockedReason;
   const localDesktopExplicitBlockedReason = String(localDesktopProbe.blockedReason || '').trim();
+  const localDesktopOfflineProbeBlocker = /^backend is offline$/i.test(localDesktopExplicitBlockedReason)
+    || /backend is offline/i.test(localDesktopExplicitBlockedReason);
   const localDesktopHasExplicitBlocker = Boolean(
     localDesktopExplicitBlockedReason
+    && !(backendAvailable && localDesktopOfflineProbeBlocker)
     && localDesktopExplicitBlockedReason !== localDesktopProbeGapBlockedReason,
   );
+  const localDesktopResolvedBlockedReason = backendAvailable && localDesktopOfflineProbeBlocker
+    ? localDesktopBlockedReason
+    : localDesktopExplicitBlockedReason;
+  const localDesktopUsableExplicitlyFalse = localDesktopProbe.usable === false;
+  const localDesktopStaleOfflineUsabilityVeto = backendAvailable
+    && localDesktopUsableExplicitlyFalse
+    && localDesktopOfflineProbeBlocker;
   const localDesktopUsable = localDesktopAvailable && !(
-    localDesktopProbe.usable === false
+    localDesktopUsableExplicitlyFalse
+    && !localDesktopStaleOfflineUsabilityVeto
     && localDesktopHasExplicitBlocker
   );
 
@@ -1846,7 +1857,7 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : 'Current session is not a local desktop browser',
       blockedReason: localDesktopSession
         ? (backendAvailable
-          ? (localDesktopProbe.blockedReason || localDesktopBlockedReason)
+          ? (localDesktopResolvedBlockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session',
       usable: localDesktopUsable,
@@ -1862,7 +1873,7 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : 'Current session is not a local desktop browser'),
       blockedReason: localDesktopProbe.blockedReason || (localDesktopSession
         ? (backendAvailable
-          ? localDesktopBlockedReason
+          ? (localDesktopResolvedBlockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session'),
       usable: localDesktopUsable,
