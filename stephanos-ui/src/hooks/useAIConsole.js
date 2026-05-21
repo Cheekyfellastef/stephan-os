@@ -1559,7 +1559,14 @@ function createRouteUnavailableResult({
   const blockedBeforeProvider = fallbackReason === 'backend-route-unavailable'
     || fallbackReason === 'backend-unreachable'
     || fallbackReason === 'battle-bridge-unreachable-hosted-cloud-cognition-available';
-  const normalizedFailureCode = blockedBeforeProvider
+  const routeFailureIndicatesBackendUnavailable = (
+    blockedBeforeProvider
+    || (
+      String(requestDispatchGate.backendReachabilityState || '').trim().toLowerCase() === 'no'
+      && /route[_-]unavailable/i.test(String(fallbackReason || ''))
+    )
+  );
+  const normalizedFailureCode = routeFailureIndicatesBackendUnavailable
     ? 'backend-route-unavailable'
     : fallbackReason;
   const errorCode = dispatchBlockedDespiteUsableRoute
