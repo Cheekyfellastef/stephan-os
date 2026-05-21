@@ -3719,9 +3719,9 @@ export function useAIConsole() {
         data.output_text = `[Freshness warning] ${freshnessRouteDecision.freshnessWarning}\n\n${data.output_text}`;
       }
 
-      const providerHealth = data.data?.provider_health || {};
-      if (Object.keys(providerHealth).length) {
-        setProviderHealth(providerHealth);
+      const responseProviderHealth = data.data?.provider_health || {};
+      if (Object.keys(responseProviderHealth).length) {
+        setProviderHealth(responseProviderHealth);
       }
 
       const executionMetadataBase = normalizeExecutionMetadata({
@@ -3971,7 +3971,7 @@ export function useAIConsole() {
         execution_metadata: executionMetadata,
         providerSelectionSource,
         activeProviderConfigSource: getActiveProviderConfigSource(),
-        provider_health: providerHealth,
+        provider_health: responseProviderHealth,
         provider_diagnostics: data.data?.provider_diagnostics || null,
         frontend_origin: finalizedRequestContext.frontendOrigin,
         frontend_api_base_url: finalizedRequestContext.baseUrl,

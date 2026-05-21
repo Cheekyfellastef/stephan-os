@@ -260,6 +260,15 @@ test('submitPrompt includes explicit execute packet route map ordering comment',
   assert.match(source, /16\) bottom\/status widget projection/);
 });
 
+
+test('submitPrompt avoids providerHealth TDZ shadowing before envelope build path', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const refreshedProviderHealth = refreshedProviderHealthResult\?\.data && typeof refreshedProviderHealthResult\.data === 'object'/);
+  assert.match(source, /const responseProviderHealth = data\.data\?\.provider_health \|\| \{\};/);
+  assert.match(source, /provider_health: responseProviderHealth,/);
+  assert.doesNotMatch(source, /const providerHealth = data\.data\?\.provider_health \|\| \{\};/);
+});
+
 test('pre-envelope exceptions preserve exception truth and do not masquerade as ROUTE_UNAVAILABLE', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const preEnvelopeStageReached = executeStageLastReached === 'input-normalized'/);
