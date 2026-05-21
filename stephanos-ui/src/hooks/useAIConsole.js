@@ -2955,7 +2955,21 @@ export function useAIConsole() {
 
     try {
       const { runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig();
-      const finalizedRequestContext = finalizeRuntimeContext(resolvedRuntimeContext).runtimeContext;
+      const submitHealth = await checkApiHealth(resolvedRuntimeContext).catch((error) => {
+        console.warn('[Stephanos UI] Backend health probe failed at submit-time', {
+          message: error?.message || 'unknown-error',
+          code: error?.code || '',
+        });
+        return { ok: false, status: 0, data: null };
+      });
+      const submitHydratedRuntimeContext = submitHealth?.ok
+        ? buildRuntimeContextFromHealth(resolvedRuntimeContext, submitHealth)
+        : resolvedRuntimeContext;
+      const finalizedRequestContext = finalizeRuntimeContext(
+        submitHydratedRuntimeContext,
+        providerHealth,
+        submitHealth?.ok === true,
+      ).runtimeContext;
       inFlightRuntimeContext = finalizedRequestContext;
       const requestBaselineRuntimeStatus = finalizeRuntimeContext(finalizedRequestContext).runtimeStatus;
       const routeTruthView = buildFinalRouteTruthView(requestBaselineRuntimeStatus);

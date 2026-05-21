@@ -67,7 +67,7 @@ export function evaluateRequestDispatchGate({
   const routeUsableState = resolveRouteUsableState(routeTruthView, canonicalRouteTruth);
   const backendReachabilityState = resolveBackendReachabilityState(routeTruthView, runtimeStatus, canonicalRouteTruth);
   const hostedCloudPathAvailable = routeDecision?.hostedCloudPathAvailable === true;
-  const backendReachable = backendReachabilityState !== 'no' || hostedCloudPathAvailable;
+  const backendReachable = backendReachabilityState !== 'no';
   const explicitBackendUnreachable = backendReachabilityState === 'no';
 
   const freshRouteViable = routeDecision?.freshRouteAvailable === true && backendReachable;
@@ -114,6 +114,24 @@ export function evaluateRequestDispatchGate({
     };
   }
 
+  if (explicitBackendUnreachable) {
+    return {
+      dispatchAllowed: false,
+      reasonCode: 'backend-route-unavailable',
+      selectedAnswerMode: effectiveAnswerMode,
+      freshRouteViable,
+      cloudRouteViable,
+      localRouteViable,
+      backendReachable,
+      backendReachabilityState,
+      hostedCloudPathAvailable,
+      selectedRouteKind,
+      selectedRouteUsable: routeUsableState === 'yes',
+      routeUsableState,
+      fallbackVetoReason: 'backend-route-unavailable',
+    };
+  }
+
   const dispatchAllowedByMode = modeRequiresFreshRoute
     ? freshRouteViable || localRouteViable
     : modeRequiresCloudRoute
@@ -145,9 +163,7 @@ export function evaluateRequestDispatchGate({
   }
 
   const reasonCode = fallbackVetoReason
-    || (explicitBackendUnreachable
-      ? (hostedCloudPathAvailable ? 'battle-bridge-unreachable-hosted-cloud-cognition-available' : 'backend-route-unavailable')
-      : modeRequiresFreshRoute
+    || (modeRequiresFreshRoute
         ? routeDecision?.fallbackReasonCode || 'fresh-route-unavailable'
         : modeRequiresCloudRoute
           ? routeDecision?.fallbackReasonCode || 'no-viable-execution-path'

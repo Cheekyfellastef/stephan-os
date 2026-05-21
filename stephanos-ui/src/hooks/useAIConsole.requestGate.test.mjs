@@ -167,7 +167,7 @@ test('blocks dispatch when backend reachability is explicitly no', () => {
   assert.equal(gate.backendReachabilityState, 'no');
 });
 
-test('allows hosted cloud cognition dispatch when backend is unreachable but hosted cloud path is available', () => {
+test('blocks hosted cloud cognition dispatch when backend is unreachable even if hosted cloud path is available', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
       selectedAnswerMode: 'cloud-basic',
@@ -183,8 +183,8 @@ test('allows hosted cloud cognition dispatch when backend is unreachable but hos
     },
   });
 
-  assert.equal(gate.dispatchAllowed, true);
-  assert.equal(gate.reasonCode, null);
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'backend-route-unavailable');
   assert.equal(gate.hostedCloudPathAvailable, true);
 });
 
