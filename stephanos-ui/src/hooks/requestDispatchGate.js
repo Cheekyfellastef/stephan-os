@@ -45,7 +45,7 @@ function resolveFallbackVetoReason({
     routeTruthView?.routeUsabilityVetoReason
     || canonicalRouteTruth?.fallbackReason
     || canonicalRouteTruth?.winningReason
-    || (backendReachabilityState === 'no' ? 'backend-unreachable' : '')
+    || (backendReachabilityState === 'no' ? 'backend-route-unavailable' : '')
     || (selectedRouteKind === 'unavailable' ? 'no-canonical-winning-route' : '')
     || 'canonical-route-unusable'
     || '',
@@ -146,7 +146,7 @@ export function evaluateRequestDispatchGate({
 
   const reasonCode = fallbackVetoReason
     || (explicitBackendUnreachable
-      ? (hostedCloudPathAvailable ? 'battle-bridge-unreachable-hosted-cloud-cognition-available' : 'backend-unreachable')
+      ? (hostedCloudPathAvailable ? 'battle-bridge-unreachable-hosted-cloud-cognition-available' : 'backend-route-unavailable')
       : modeRequiresFreshRoute
         ? routeDecision?.fallbackReasonCode || 'fresh-route-unavailable'
         : modeRequiresCloudRoute

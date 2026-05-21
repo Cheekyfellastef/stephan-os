@@ -1751,6 +1751,11 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const homeNodeProbe = diagnostics['home-node'] || {};
   const backendTargetProbe = diagnostics['backend-target'] || {};
   const homeNodeBridgeProbe = diagnostics['home-node-bridge'] || {};
+  const homeNodeBackendReachable = homeNodeProbe.backendReachable === true
+    ? true
+    : homeNodeProbe.backendReachable === false
+      ? false
+      : null;
   const bridgeReachable = homeNodeBridgeProbe.available === true
     || runtimeContext.homeNodeBridge?.reachability === 'reachable'
     || runtimeContext.bridgeTransportTruth?.tailscale?.reachable === true;
@@ -1876,10 +1881,10 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : effectiveHomeNodeConfigured
         ? (homeNodeProbe.blockedReason || (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route'))
         : 'home node is not configured',
-      backendReachable: effectiveHomeNodeReachable,
+      backendReachable: homeNodeBackendReachable,
       usable: hostedTransportCompatibilityRequired
-        ? (effectiveHomeNodeReachable && !homeNodePublicationBlocked)
-        : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked),
+        ? (effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)
+        : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked),
     }, {
       ...homeNodeProbe,
       configured: effectiveHomeNodeConfigured || hostedResolvedBackendCandidate,
@@ -1912,12 +1917,12 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : homeNodeProbe.blockedReason || (effectiveHomeNodeConfigured
         ? (effectiveHomeNodeReachable ? '' : 'health probe could not confirm the home-node route')
         : 'home node is not configured'),
-      backendReachable: effectiveHomeNodeReachable,
+      backendReachable: homeNodeBackendReachable,
       usable: homeNodeProbe.usable === false
         ? false
         : (hostedTransportCompatibilityRequired
-          ? (effectiveHomeNodeReachable && !homeNodePublicationBlocked)
-          : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked)),
+          ? (effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)
+          : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)),
     }),
     'home-node-bridge': createRouteEvaluation('home-node-bridge', {
       configured: homeNodeBridgeProbe.configured === true || runtimeContext.homeNodeBridge?.configured === true,
