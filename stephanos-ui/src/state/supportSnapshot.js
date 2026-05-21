@@ -511,6 +511,22 @@ export function buildSupportSnapshot({
   const visibleLastActualProviderUsed = routeBlockedBeforeProvider
     ? 'none'
     : asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider);
+  const visibleExecutionTruth = routeBlockedBeforeProvider
+    ? 'blocked-before-provider / no-provider-executed'
+    : asText(runtimeStatus?.executionTruth);
+  const visibleLastActualModelUsed = routeBlockedBeforeProvider
+    ? 'n/a'
+    : asText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed);
+  const visibleLastModelUsed = routeBlockedBeforeProvider ? 'n/a' : asText(runtimeStatus?.lastModelUsed);
+  const visibleLastTimeoutEffectiveProvider = routeBlockedBeforeProvider ? 'none' : asText(runtimeStatus?.lastTimeoutEffectiveProvider);
+  const visibleLastTimeoutEffectiveModel = routeBlockedBeforeProvider ? 'n/a' : asText(runtimeStatus?.lastTimeoutEffectiveModel);
+  const executeActualTargetUsed = asText(executionMetadata?.execute_actual_target_used, 'n/a');
+  const visibleActualTargetUsed = routeBlockedBeforeProvider
+    ? executeActualTargetUsed
+    : asText(routeTruthView?.actualTarget, 'n/a');
+  const visibleBackendTargetResolvedUrl = routeBlockedBeforeProvider
+    ? asText(executionMetadata?.execute_actual_target_used, 'n/a')
+    : backendTargetResolvedUrl;
   const canonicalPrEvidence = projectCanonicalPrEvidence({
     prEvidence: {
       status: runtimeStatus?.prEvidenceStatus,
@@ -719,8 +735,12 @@ export function buildSupportSnapshot({
   const commandEnvelopeResponseMode = executionMetadata?.command_envelope_response_mode || chatContextResponseMode || 'direct-answer';
   const commandEnvelopeContextProvidersUsed = executionMetadata?.command_envelope_context_providers_used || contextProvidersUsed || 'none';
   const commandEnvelopeExecutionStatus = executionMetadata?.command_envelope_execution_status || executionMetadata?.execution_status || 'unknown';
-  const commandEnvelopeActualProvider = executionMetadata?.command_envelope_actual_provider || executionMetadata?.actual_provider_used || 'unknown';
-  const commandEnvelopeActualModel = executionMetadata?.command_envelope_actual_model || executionMetadata?.model_used || 'unknown';
+  const commandEnvelopeActualProvider = routeBlockedBeforeProvider
+    ? 'none'
+    : (executionMetadata?.command_envelope_actual_provider || executionMetadata?.actual_provider_used || 'unknown');
+  const commandEnvelopeActualModel = routeBlockedBeforeProvider
+    ? 'n/a'
+    : (executionMetadata?.command_envelope_actual_model || executionMetadata?.model_used || 'unknown');
   const commandEnvelopeProofStatus = executionMetadata?.command_envelope_proof_status || 'unknown';
   const commandEnvelopeUiRealityStatus = executionMetadata?.command_envelope_ui_reality_status || chatContextUiRealityStatus || 'UNKNOWN';
   const commandEnvelopeWarnings = executionMetadata?.command_envelope_warnings || (commandEnvelopeStatus === 'unavailable' ? 'command-envelope-missing' : 'none');
@@ -1266,8 +1286,8 @@ export function buildSupportSnapshot({
     `Last Selected Provider: ${asText(runtimeStatus?.lastSelectedProvider || routeTruthView?.executedProvider || routeTruthView?.selectedProvider)}`,
     `Last Executable Provider: ${visibleLastExecutableProvider}`,
     `Last Actual Provider Used: ${visibleLastActualProviderUsed}`,
-    `Last Actual Model Used: ${asText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed)}`,
-    `Last Model Used: ${asText(runtimeStatus?.lastModelUsed)}`,
+    `Last Actual Model Used: ${visibleLastActualModelUsed}`,
+    `Last Model Used: ${visibleLastModelUsed}`,
     `Last Provider Override Reason: ${asText(runtimeStatus?.lastProviderOverrideReason)}`,
     `Last Ollama Default Model: ${asText(runtimeStatus?.lastOllamaModelDefault)}`,
     `Last Ollama Preferred Model: ${asText(runtimeStatus?.lastOllamaModelPreferred)}`,
@@ -1294,8 +1314,8 @@ export function buildSupportSnapshot({
     `Last Provider Timeout (ms): ${asText(runtimeStatus?.lastProviderTimeoutMs)}`,
     `Last Model Timeout (ms): ${asText(runtimeStatus?.lastModelTimeoutMs)}`,
     `Last Timeout Policy Source: ${asText(runtimeStatus?.lastTimeoutPolicySource)}`,
-    `Last Timeout Effective Provider: ${asText(runtimeStatus?.lastTimeoutEffectiveProvider)}`,
-    `Last Timeout Effective Model: ${asText(runtimeStatus?.lastTimeoutEffectiveModel)}`,
+    `Last Timeout Effective Provider: ${visibleLastTimeoutEffectiveProvider}`,
+    `Last Timeout Effective Model: ${visibleLastTimeoutEffectiveModel}`,
     `Timeout Truth Degraded By Route Usability: ${timeoutTruthDegradedByRouteUsability ? 'yes' : 'no'}`,
     `Timeout Truth Degradation Reason: ${timeoutTruthDegradationReason}`,
     `Last Timeout Override Applied: ${asText(runtimeStatus?.lastTimeoutOverrideApplied)}`,
@@ -1809,7 +1829,7 @@ export function buildSupportSnapshot({
     `Retrieval Source Ref: ${asText(runtimeStatus?.lastRetrievalSourceRef)}`,
     `AI Policy Mode: ${asText(runtimeStatus?.lastAiPolicyMode, 'local-first-cloud-when-needed')}`,
     `AI Policy Reason: ${asText(runtimeStatus?.lastAiPolicyReason, 'Local-first policy applied.')}`,
-    `Execution Truth: ${asText(runtimeStatus?.executionTruth)}`,
+    `Execution Truth: ${visibleExecutionTruth}`,
     `Execution Status: ${asText(runtimeStatus?.executionStatus)}`,
     `Route: ${asText(runtimeStatus?.route)}`,
     `Commands: ${asText(runtimeStatus?.commands)}`,
@@ -1858,7 +1878,7 @@ export function buildSupportSnapshot({
     `UI Source Fingerprint: ${asText(runtimeStatus?.uiSourceFingerprint)}`,
     `Debug Console: ${asText(runtimeStatus?.debugConsole)}`,
     `Backend Target Resolution Source: ${backendTargetResolutionSource}`,
-    `Backend Target Resolved URL: ${backendTargetResolvedUrl}`,
+    `Backend Target Resolved URL: ${visibleBackendTargetResolvedUrl}`,
     `Backend Target Fallback Used: ${backendTargetFallbackUsed ? 'yes' : 'no'}`,
     `Backend Target Invalid Reason: ${backendTargetInvalidReason}`,
     `Route Winner Kind: ${asText(runtimeContext?.routeCandidateWinner?.routeKind || routeTruthView?.routeKind)}`,
@@ -1940,7 +1960,7 @@ export function buildSupportSnapshot({
     ...backendTargetCandidatesSummary,
     `Selected Route Kind: ${selectedRouteKind}`,
     `Preferred Target: ${asText(routeTruthView?.preferredTarget, 'n/a')}`,
-    `Actual Target Used: ${asText(routeTruthView?.actualTarget, 'n/a')}`,
+    `Actual Target Used: ${visibleActualTargetUsed}`,
     `Winning Reason: ${asText(runtimeRouteTruth?.winningReason || routeTruthView?.winnerReason, 'n/a')}`,
     `UI Reachable: ${asText(runtimeReachabilityTruth?.uiReachableState || routeTruthView?.uiReachableState)}`,
     `Selected Route Reachable: ${asText(routeTruthView?.selectedRouteReachableState)}`,
