@@ -1883,8 +1883,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
         : 'home node is not configured',
       backendReachable: homeNodeBackendReachable,
       usable: hostedTransportCompatibilityRequired
-        ? (effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)
-        : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked),
+        ? (effectiveHomeNodeReachable && !homeNodePublicationBlocked)
+        : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked),
     }, {
       ...homeNodeProbe,
       configured: effectiveHomeNodeConfigured || hostedResolvedBackendCandidate,
@@ -1921,8 +1921,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
       usable: homeNodeProbe.usable === false
         ? false
         : (hostedTransportCompatibilityRequired
-          ? (effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)
-          : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && homeNodeBackendReachable === true && !homeNodePublicationBlocked)),
+          ? (effectiveHomeNodeReachable && !homeNodePublicationBlocked)
+          : (!hostedExecutionIncompatible && effectiveHomeNodeReachable && !homeNodePublicationBlocked)),
     }),
     'home-node-bridge': createRouteEvaluation('home-node-bridge', {
       configured: homeNodeBridgeProbe.configured === true || runtimeContext.homeNodeBridge?.configured === true,
