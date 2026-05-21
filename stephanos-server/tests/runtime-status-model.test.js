@@ -572,3 +572,53 @@ test('backend reachable state clears stale local-desktop offline route blocker',
   assert.equal(localDesktop.usable, true);
   assert.notEqual(localDesktop.state, 'configured-unreachable');
 });
+
+test('fresh local-desktop health probe outranks home-node/manual in local sessions', () => {
+  const nowIso = new Date().toISOString();
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      groq: { ok: false },
+    },
+    backendAvailable: false,
+    validationState: 'healthy',
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: false,
+          usable: false,
+          blockedReason: 'backend is offline',
+          reason: 'stale diagnostics',
+        },
+        'home-node': {
+          configured: true,
+          available: true,
+          usable: true,
+          backendReachable: true,
+          uiReachable: true,
+          source: 'manual',
+          target: 'http://192.168.0.198:8787',
+          actualTarget: 'http://192.168.0.198:8787',
+          reason: 'Home PC node is reachable on the LAN',
+        },
+      },
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: nowIso,
+        lastBackendHealthProbeResult: 'ok:true',
+        currentBackendHealthSource: 'refresh-health-poll',
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.preferredRoute, 'local-desktop');
+  assert.equal(model.routeCandidateWinner?.candidateKey, 'local-desktop');
+  assert.equal(model.routeEvaluations['local-desktop'].backendReachable, true);
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+  assert.equal(model.finalRouteTruth.networkReachabilityState, 'reachable');
+});

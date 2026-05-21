@@ -1209,6 +1209,9 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     surfaceAwareness,
     surfaceRoutingBiasHint,
     providerExecutionIntent,
+    healthProbeTruth: runtimeContext.healthProbeTruth && typeof runtimeContext.healthProbeTruth === 'object'
+      ? { ...runtimeContext.healthProbeTruth }
+      : {},
     hostedCloudConfig: runtimeContext.hostedCloudConfig && typeof runtimeContext.hostedCloudConfig === 'object'
       ? runtimeContext.hostedCloudConfig
       : {},
@@ -1650,7 +1653,12 @@ function buildRouteCandidates({ runtimeContext = {}, evaluations = {}, preferenc
   const ranked = [...candidates]
     .sort((a, b) => (b.score - a.score) || a.candidateKey.localeCompare(b.candidateKey))
     .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
-  const winner = ranked.find((candidate) => candidate.usable === true) || null;
+  const localDesktopSession = runtimeContext.sessionKind === 'local-desktop'
+    || runtimeContext.deviceContext === 'pc-local-browser';
+  const localDesktopUsableCandidate = localDesktopSession
+    ? ranked.find((candidate) => candidate.candidateKey === 'local-desktop' && candidate.usable === true)
+    : null;
+  const winner = localDesktopUsableCandidate || ranked.find((candidate) => candidate.usable === true) || null;
   const withActive = ranked.map((candidate) => ({ ...candidate, active: winner?.candidateKey === candidate.candidateKey }));
   const autoSwitch = runtimeContext.finalRoute?.routeKind
     && winner
@@ -1807,7 +1815,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
   const homeNodePublicationBlocked = homeNodeProbe.misconfigured === true
     || (homeNodeProbe.backendReachable === true && homeNodeProbe.uiReachable === false);
   const distProbe = diagnostics.dist || {};
-  const localDesktopAvailable = localDesktopSession && backendAvailable;
+  const healthProbeTruth = deriveBackendHealthProbeTruth(runtimeContext);
+  const localDesktopAvailable = localDesktopSession && (backendAvailable || (healthProbeTruth.ok && healthProbeTruth.fresh));
   const localDesktopProbeAvailable = localDesktopProbe.available === true;
   const localDesktopClassificationFailed = localDesktopSession && backendAvailable && localDesktopProbe.available === false;
   const localDesktopSource = localDesktopProbe.source && localDesktopProbe.source !== 'not-applicable'
@@ -1830,11 +1839,11 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
     && !(backendAvailable && localDesktopOfflineProbeBlocker)
     && localDesktopExplicitBlockedReason !== localDesktopProbeGapBlockedReason,
   );
-  const localDesktopResolvedBlockedReason = backendAvailable && localDesktopOfflineProbeBlocker
+  const localDesktopResolvedBlockedReason = localDesktopAvailable && localDesktopOfflineProbeBlocker
     ? localDesktopBlockedReason
     : localDesktopExplicitBlockedReason;
   const localDesktopUsableExplicitlyFalse = localDesktopProbe.usable === false;
-  const localDesktopStaleOfflineUsabilityVeto = backendAvailable
+  const localDesktopStaleOfflineUsabilityVeto = localDesktopAvailable
     && localDesktopUsableExplicitlyFalse
     && localDesktopOfflineProbeBlocker;
   const localDesktopUsable = localDesktopAvailable && !(
@@ -1860,6 +1869,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           ? (localDesktopResolvedBlockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session',
+      backendReachable: localDesktopAvailable,
+      uiReachable: localDesktopProbeAvailable ? true : null,
       usable: localDesktopUsable,
     }, {
       ...localDesktopProbe,
@@ -1876,6 +1887,8 @@ function deriveRouteEvaluations({ runtimeContext, backendAvailable, cloudAvailab
           ? (localDesktopResolvedBlockedReason || localDesktopBlockedReason)
           : 'backend is offline')
         : 'not a local desktop session'),
+      backendReachable: localDesktopAvailable,
+      uiReachable: localDesktopProbeAvailable ? true : null,
       usable: localDesktopUsable,
     }),
     'home-node': createRouteEvaluation('home-node', {
