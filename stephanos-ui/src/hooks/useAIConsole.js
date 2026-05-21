@@ -2945,6 +2945,13 @@ export function useAIConsole() {
     const runtimeSelectors = orchestrationTruth?.selectors || null;
     executeStageLastReached = 'input-normalized';
 
+    // Execute packet route map (operator input -> provider dispatch):
+    // 1) AIConsole input state -> 2) Execute click handler -> 3) submitPrompt entry
+    // 4) input normalization -> 5) submit acceptance metadata -> 6) user message record
+    // 7) chat context pack build/use -> 8) response planner build/use -> 9) command envelope build
+    // 10) request dispatch gate -> 11) backend target selection -> 12) /api/ai/chat dispatch
+    // 13) provider selection/execution -> 14) final metadata normalization
+    // 15) Support Snapshot projection -> 16) bottom/status widget projection.
 
     if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
       const explanation = explainMemoryToOperator({ mode: 'summary' });
@@ -4010,12 +4017,23 @@ export function useAIConsole() {
       timeoutFailureMetadata.command_pipeline_last_assistant_answer_generated = 'no';
       timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'yes';
       timeoutFailureMetadata.command_pipeline_last_failure_reason = uiError.errorCode || uiError.error || 'unknown';
-      if (commandEnvelopeBuildAttempted === 'no') {
+      const preEnvelopeStageReached = executeStageLastReached === 'input-normalized'
+        || executeStageLastReached === 'submit-accepted'
+        || executeStageLastReached === 'message-recorded'
+        || executeStageLastReached === 'envelope-build-started';
+      if (commandEnvelopeBuildAttempted === 'no' || preEnvelopeStageReached) {
         timeoutFailureMetadata.command_pipeline_last_finalization_path = 'pre-envelope-error';
         preEnvelopeExceptionName = error?.name || 'Error';
         preEnvelopeExceptionMessage = error?.message || 'pre-envelope-error';
         commandEnvelopeBuildError = `${preEnvelopeExceptionName}: ${preEnvelopeExceptionMessage}`;
         envelopeBuildSkippedReason = envelopeBuildSkippedReason === 'none' ? 'pre-envelope-exception' : envelopeBuildSkippedReason;
+        const normalizedPreEnvelopeCode = preEnvelopeExceptionName === 'ReferenceError'
+          ? 'PRE_ENVELOPE_REFERENCE_ERROR'
+          : 'PRE_ENVELOPE_EXCEPTION';
+        executeStageFailureReason = executeStageFailureReason === 'none'
+          ? `${normalizedPreEnvelopeCode}:${preEnvelopeExceptionMessage}`
+          : executeStageFailureReason;
+        timeoutFailureMetadata.command_pipeline_last_failure_reason = `${normalizedPreEnvelopeCode}:${preEnvelopeExceptionName}`;
       } else {
         timeoutFailureMetadata.command_pipeline_last_finalization_path = 'error';
       }
