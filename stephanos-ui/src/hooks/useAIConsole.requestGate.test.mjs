@@ -217,6 +217,34 @@ test('local-desktop execute lock disables cloud viability and blocks before prov
   assert.equal(gate.freshRouteViable, false);
 });
 
+
+test('healthy local-desktop route truth still dispatches when stale localRouteAvailable is false', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'local-private',
+      localRouteAvailable: false,
+      freshRouteAvailable: false,
+      fallbackReasonCode: 'no-viable-execution-path',
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'local-desktop',
+        routeUsable: true,
+        backendReachable: true,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.localRouteViable, true);
+  assert.equal(gate.reasonCode, null);
+});
+
 test('canonical local-desktop winner cannot be overridden by stale home-node route decision at dispatch time', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
