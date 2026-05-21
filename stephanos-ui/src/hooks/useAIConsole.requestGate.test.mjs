@@ -215,6 +215,33 @@ test('canonical local-desktop winner cannot be overridden by stale home-node rou
   assert.equal(gate.selectedRouteKind, 'local-desktop');
 });
 
+test('live local-desktop route truth overrides stale canonical home-node winner during dispatch', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'local-private',
+      localRouteAvailable: true,
+      freshRouteAvailable: false,
+      requestRouteTruth: {
+        routeKind: 'home-node',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+    },
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'home-node',
+        routeUsable: false,
+      },
+    },
+  });
+
+  assert.equal(gate.dispatchAllowed, true);
+  assert.equal(gate.selectedRouteKind, 'local-desktop');
+});
+
 test('hosted session with no usable home-node is reported truthfully as unavailable', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
