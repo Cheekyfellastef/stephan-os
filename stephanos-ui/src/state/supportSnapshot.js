@@ -548,7 +548,13 @@ export function buildSupportSnapshot({
     : canonicalRouteCandidates;
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
   const routeCandidateSummary = summarizeRouteCandidates(mergedRouteCandidates);
-  const backendReachableState = safeApiStatus?.backendReachable === true
+  const currentRouteLayerHealthy = String(routeTruthView?.routeLayerStatus || '').trim().toLowerCase() === 'healthy';
+  const currentSelectedRouteReachable = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes';
+  const currentSelectedRouteUsable = String(routeTruthView?.routeUsableState || '').trim().toLowerCase() === 'yes';
+  const routeTruthHealthy = currentRouteLayerHealthy || (currentSelectedRouteReachable && currentSelectedRouteUsable);
+  const backendReachableState = routeTruthHealthy
+    ? 'yes'
+    : safeApiStatus?.backendReachable === true
     ? 'yes'
     : safeApiStatus?.backendReachable === false && !healthProbeFreshAndOk
       ? 'no'
@@ -602,14 +608,16 @@ export function buildSupportSnapshot({
   const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
   const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const executionTruthState = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
-  const routeBlockedBeforeProvider = executionMetadata?.provider_fallback_blocked_by_route === true
+  const routeUnavailableFailurePresent = commandPipelineFailureReason === 'backend-route-unavailable'
+    || commandPipelineFailureReason === 'route_unavailable';
+  const routeFailureIsHistorical = routeTruthHealthy && routeUnavailableFailurePresent;
+  const routeBlockedBeforeProvider = !routeFailureIsHistorical && (executionMetadata?.provider_fallback_blocked_by_route === true
     || providerExecutionGateStatus === 'blocked-by-route'
     || providerExecutionGateStatus === 'route-blocked'
     || executionTruthState === 'blocked-before-provider'
     || executionTruthState === 'no-provider-executed'
     || executionTruthState === 'blocked-before-provider / no-provider-executed'
-    || commandPipelineFailureReason === 'backend-route-unavailable'
-    || commandPipelineFailureReason === 'route_unavailable';
+    || routeUnavailableFailurePresent);
   const visibleActiveProvider = routeBlockedBeforeProvider ? 'none' : asText(routeTruthView?.executedProvider);
   const visibleFallbackActive = routeBlockedBeforeProvider ? 'no' : (routeTruthView?.fallbackActive ? 'yes' : 'no');
   const visibleLastExecutableProvider = routeBlockedBeforeProvider ? 'none' : asText(runtimeStatus?.lastExecutableProvider);
@@ -1362,6 +1370,7 @@ export function buildSupportSnapshot({
     `Last Backend Health Probe Result: ${asText(liveHealthProbeTruth?.lastBackendHealthProbeResult, 'unknown')}`,
     `Route Health Revalidated After Failure: ${asText(liveHealthProbeTruth?.routeHealthRevalidatedAfterFailure, 'no')}`,
     `Stale Route Failure Present: ${asText(routeTruthView?.staleRouteFailurePresent === true ? 'yes' : 'no')}`,
+    `Last Route Failure Is Historical: ${asText(routeFailureIsHistorical ? 'yes' : 'no')}`,
     `Current Backend Health Source: ${asText(liveHealthProbeTruth?.currentBackendHealthSource, 'unknown')}`,
     `Network Reachability Truth: ${asText(routeTruthView?.networkReachabilityState, 'unknown')}`,
     `Browser Direct Access: ${asText(routeTruthView?.browserDirectAccessState, 'unknown')}`,
