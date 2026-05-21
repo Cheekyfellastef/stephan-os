@@ -668,18 +668,26 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestTrace.requested_provider_for_request
     || requestPayload.routeDecision?.requestedProviderForRequest
     || requestPayload.provider;
-  const selectedProvider = executionMetadata.selected_provider
-    || requestTrace.selected_provider
-    || requestPayload.routeDecision?.selectedProvider
-    || requestPayload.provider;
-  const executionSelectedProvider = executionMetadata.execution_selected_provider
-    || requestTrace.execution_selected_provider
-    || requestPayload.runtimeContext?.finalRouteTruth?.executedProvider
-    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
-    || requestPayload.runtimeContext?.finalRouteTruth?.selectedProvider
-    || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
-    || actualProviderUsed
-    || selectedProvider;
+  const selectedProvider = blockedBeforeProvider
+    ? 'none'
+    : (
+      executionMetadata.selected_provider
+      || requestTrace.selected_provider
+      || requestPayload.routeDecision?.selectedProvider
+      || requestPayload.provider
+    );
+  const executionSelectedProvider = blockedBeforeProvider
+    ? 'none'
+    : (
+      executionMetadata.execution_selected_provider
+      || requestTrace.execution_selected_provider
+      || requestPayload.runtimeContext?.finalRouteTruth?.executedProvider
+      || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
+      || requestPayload.runtimeContext?.finalRouteTruth?.selectedProvider
+      || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
+      || actualProviderUsed
+      || selectedProvider
+    );
   const timeoutEffectiveProvider = actualProviderUsed
     || executionSelectedProvider
     || executionMetadata.timeout_provider
