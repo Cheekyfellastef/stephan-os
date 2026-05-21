@@ -14,21 +14,38 @@ function asList(value) {
 
 export function projectCanonicalPrEvidence({ prEvidence = {}, githubPrEvidence = {} } = {}) {
   const githubStatus = asText(githubPrEvidence.status, '').toLowerCase();
-  const useGithubFetched = githubStatus === 'fetched';
   const base = prEvidence && typeof prEvidence === 'object' ? { ...prEvidence } : {};
-  if (!useGithubFetched) return base;
+  const githubSource = asText(githubPrEvidence.source, '').toLowerCase();
+  const hasGithubEvidence = ['fetched', 'available', 'received', 'manual', 'operator-supplied-readonly', 'github-live-readonly', 'github-api'].includes(githubStatus)
+    || ['operator-supplied-readonly', 'github-live-readonly', 'github-api', 'manual'].includes(githubSource);
+  if (!hasGithubEvidence) {
+    if (githubStatus === 'needs-connector') {
+      return {
+        ...base,
+        status: 'evidence-unavailable',
+        prEvidenceStatus: 'evidence-unavailable',
+        mergeReadiness: 'hold',
+        merged: base.merged === true ? true : null,
+        recommendedNextAction: 'Live GitHub evidence is disabled; supply operator read-only PR evidence or enable read-only fetch.',
+        evidenceTruthStatus: 'unknown-disabled',
+        verificationSource: 'parsed-only',
+      };
+    }
+    return base;
+  }
   const githubMerged = githubPrEvidence.merged === true;
   const mergedState = asText(githubPrEvidence.prState, '').toLowerCase() === 'closed' && githubMerged;
   const merged = githubMerged || mergedState || base.merged === true;
-  const mergedReadiness = merged ? 'already-merged' : '';
+  const prState = asText(githubPrEvidence.prState, asText(base.prState, 'unknown')).toLowerCase();
+  const mergedReadiness = merged ? 'already-merged' : (prState === 'closed' ? 'closed-unmerged' : '');
   const missingProof = asList(githubPrEvidence.missingProof).length > 0 ? asList(githubPrEvidence.missingProof) : asList(base.missingProof);
   const githubChecks = asText(githubPrEvidence.checksStatus, asText(base.checksStatus, 'unknown'));
   const githubBuild = asText(githubPrEvidence.buildStatus, asText(base.buildStatus, 'unknown'));
   const githubVerify = asText(githubPrEvidence.verifyStatus, asText(base.verifyStatus, 'unknown'));
   return {
     ...base,
-    status: asText(githubPrEvidence.status, asText(base.status, 'none')),
-    prEvidenceStatus: asText(githubPrEvidence.status, asText(base.prEvidenceStatus, 'none')),
+    status: merged ? 'merged' : asText(githubPrEvidence.status, asText(base.status, 'none')),
+    prEvidenceStatus: merged ? 'merged' : asText(githubPrEvidence.status, asText(base.prEvidenceStatus, 'none')),
     checksStatus: githubChecks,
     buildStatus: githubBuild,
     verifyStatus: githubVerify,
@@ -42,6 +59,15 @@ export function projectCanonicalPrEvidence({ prEvidence = {}, githubPrEvidence =
     prState: asText(githubPrEvidence.prState, asText(base.prState, 'unknown')),
     prTitle: asText(githubPrEvidence.prTitle, asText(base.prTitle, '')),
     source: asText(githubPrEvidence.source, asText(base.source, 'none')),
-    recommendedNextAction: asText(githubPrEvidence.recommendedNextAction, merged ? 'PR merged; run post-merge validation and monitor regressions.' : asText(base.recommendedNextAction, 'Collect PR evidence.')),
+    recommendedNextAction: asText(
+      githubPrEvidence.recommendedNextAction,
+      merged
+        ? 'No merge action required; PR is already merged. Optional: verify local/main alignment.'
+        : (prState === 'closed'
+          ? 'PR is closed without merge; do not merge this PR.'
+          : asText(base.recommendedNextAction, 'Collect PR evidence.')),
+    ),
+    evidenceTruthStatus: merged ? 'known-merged' : (prState === 'open' ? 'known-open' : (prState === 'closed' ? 'known-closed-unmerged' : 'known')),
+    verificationSource: asText(githubPrEvidence.source, 'live-fetch'),
   };
 }

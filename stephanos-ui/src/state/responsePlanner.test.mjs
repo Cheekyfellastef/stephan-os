@@ -64,6 +64,7 @@ test('unavailable github evidence keeps merge decision at wait', () => {
     uiRealityStatus: { severity: 'OK' },
   });
   assert.equal(plan.mergeDecision, 'wait');
+  assert.match(plan.recommendedNextAction, /hold merge/i);
 });
 
 test('fetched merged github evidence maps to already-merged without missing evidence warning', () => {
@@ -76,6 +77,17 @@ test('fetched merged github evidence maps to already-merged without missing evid
   });
   assert.equal(plan.mergeDecision, 'already-merged');
   assert.equal(plan.warnings.some((warning) => /PR evidence missing/i.test(warning)), false);
+  assert.match(plan.recommendedNextAction, /No merge action required/i);
+});
+
+test('closed unmerged evidence maps to no merge recommendation', () => {
+  const plan = buildResponsePlan({
+    chatContextPack: { recommendedResponseMode: 'merge-decision' },
+    uiRealityStatus: { severity: 'OK' },
+    missionState: { testsPassed: 'yes' },
+    githubPrEvidence: { status: 'fetched', prState: 'closed', merged: false, mergeReadiness: 'closed-unmerged', checksStatus: 'passed', buildStatus: 'passed', verifyStatus: 'passed' },
+  });
+  assert.equal(plan.mergeDecision, 'no');
 });
 
 test('fetched canonical PR evidence from provider summary suppresses missing proof warning', () => {

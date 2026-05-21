@@ -66,7 +66,8 @@ export function buildResponsePlan(input = {}) {
   })();
   const prStatus = String(canonicalPr?.status || canonicalPr?.prEvidenceStatus || input?.missionState?.prEvidenceStatus || '').toLowerCase();
   const prAlreadyMerged = prStatus === 'merged' || prMergeReadiness === 'already-merged' || canonicalPr?.merged === true;
-  const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence'].includes(prStatus);
+  const prClosedUnmerged = prMergeReadiness === 'closed-unmerged' || (String(canonicalPr?.prState || '').toLowerCase() === 'closed' && canonicalPr?.merged !== true);
+  const prEvidenceUnavailable = ['unavailable', 'needs-connector', 'needs-evidence', 'evidence-unavailable'].includes(prStatus);
   const canonicalChecksPassed = ['passed', 'success'].includes(String(canonicalPr?.checksStatus || '').toLowerCase());
   const canonicalBuildPassed = ['passed', 'success'].includes(String(canonicalPr?.buildStatus || '').toLowerCase());
   const canonicalVerifyPassed = ['passed', 'success'].includes(String(canonicalPr?.verifyStatus || '').toLowerCase());
@@ -123,8 +124,8 @@ export function buildResponsePlan(input = {}) {
     }
     if (prEvidenceUnavailable) {
       mergeDecision = 'wait';
-      warnings.push('GitHub evidence unavailable; request connector or pasted PR summary.');
-      recommendedNextAction = 'connect read-only GitHub evidence or paste PR summary';
+      warnings.push('PR number parsed but live GitHub evidence is disabled/unavailable; cannot verify merge/check truth from inside Stephanos.');
+      recommendedNextAction = 'hold merge; enable read-only fetch or paste operator-supplied read-only PR evidence';
     }
     if (!prEvidenceUnavailable && (checksKnownFail || (!proofsKnownPassed && (checksUnknown || !testsPassed)) || prMergeReadiness === 'needs-amendment')) {
       mergeDecision = prMergeReadiness === 'needs-amendment' || checksKnownFail ? 'no' : (mergeDecision === 'unknown' ? 'wait' : mergeDecision);
@@ -143,14 +144,18 @@ export function buildResponsePlan(input = {}) {
     }
     if (prAlreadyMerged) {
       mergeDecision = 'already-merged';
-      recommendedNextAction = 'PR already merged; run post-merge validation and monitor regressions';
+      recommendedNextAction = 'No merge action required; PR already merged. Optional: pull main and verify local/dist alignment.';
     }
-    if (!prAlreadyMerged && (prMissingProof.length > 0 || ['hold','needs-proof','incomplete'].includes(prMergeReadiness))) {
+    if (!prAlreadyMerged && prClosedUnmerged) {
+      mergeDecision = 'no';
+      recommendedNextAction = 'PR is closed without merge; do not merge and decide whether to reopen or replace.';
+    }
+    if (!prAlreadyMerged && !prEvidenceUnavailable && (prMissingProof.length > 0 || ['hold','needs-proof','incomplete'].includes(prMergeReadiness))) {
       mergeDecision = 'wait';
       warnings.push('PR evidence indicates missing proof or amendment required.');
       recommendedNextAction = 'request amendment prompt with missing proof fields';
     }
-    if (!warnings.length && !prAlreadyMerged) {
+    if (!warnings.length && !prAlreadyMerged && !prClosedUnmerged && !prEvidenceUnavailable) {
       mergeDecision = 'merge-candidate';
       riskLevel = 'low';
       proofRequired = 'no';
