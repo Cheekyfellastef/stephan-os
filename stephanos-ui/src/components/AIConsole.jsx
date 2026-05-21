@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
@@ -53,6 +53,31 @@ export default function AIConsole({
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
   const showStartupPlaceholder = safeCommandHistory.length === 0
     && (runtimeStatus.appLaunchState === 'pending' || safeApiStatus.state === 'checking');
+
+  const isAssistantHistoryEntry = (entry) => {
+    const responseType = String(entry?.response?.type || '').trim().toLowerCase();
+    const route = String(entry?.route || '').trim().toLowerCase();
+    return responseType === 'assistant_response' || route === 'assistant';
+  };
+
+  const hasFinalAssistantAnswerText = (entry) => {
+    if (!isAssistantHistoryEntry(entry)) return false;
+    const text = String(entry?.output_text || '').trim();
+    return text.length > 0 && entry?.stream_finalized !== false;
+  };
+
+  const latestAssistantAnswerId = useMemo(() => {
+    for (let index = safeCommandHistory.length - 1; index >= 0; index -= 1) {
+      const entry = safeCommandHistory[index];
+      if (hasFinalAssistantAnswerText(entry)) {
+        return String(entry.id || '');
+      }
+    }
+    return '';
+  }, [safeCommandHistory]);
+
+  const latestAssistantAnswerRef = useRef(null);
+
   recordPerfCounter('render', 'AIConsole');
 
   useEffect(() => {
@@ -109,12 +134,17 @@ export default function AIConsole({
     lastHistoryRenderKeyRef.current = historyRenderKey;
     recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
-    scrollMessageContainerToBottom('smooth');
+    const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
+    if (latestAssistantAnswerEl) {
+      latestAssistantAnswerEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+      scrollMessageContainerToBottom('smooth');
+    }
     requestAnimationFrame(() => {
       recordPerfCounter('timers', 'ai_core.autoscroll_raf');
       restoreDocumentScrollPosition();
     });
-  }, [autoScrollEnabled, historyRenderKey]);
+  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -243,7 +273,25 @@ export default function AIConsole({
               <span>{runtimeStatus.dependencySummary || 'Stephanos is loading runtime diagnostics and provider reachability.'}</span>
             </div>
           ) : null}
-          {safeCommandHistory.length === 0 ? <p className="muted">Ready. Ask Stephanos anything.</p> : safeCommandHistory.map((entry) => <CommandResultCard key={entry.id} entry={entry} />)}
+          {safeCommandHistory.length === 0 ? <p className="muted">Ready. Ask Stephanos anything.</p> : safeCommandHistory.map((entry) => {
+            if (isAssistantHistoryEntry(entry)) {
+              const isLatestAssistantAnswer = latestAssistantAnswerId && String(entry.id || '') === latestAssistantAnswerId;
+              return (
+                <div
+                  key={entry.id || `${entry.timestamp || 'entry'}-${entry.raw_input || ''}`}
+                  data-testid={isLatestAssistantAnswer ? 'latest-assistant-answer-pane' : 'assistant-answer-pane'}
+                  ref={isLatestAssistantAnswer ? latestAssistantAnswerRef : null}
+                >
+                  <CommandResultCard entry={entry} />
+                </div>
+              );
+            }
+            return (
+              <div key={entry.id || `${entry.timestamp || 'entry'}-${entry.raw_input || ''}`} className="result-row result-row--operator" data-testid="operator-prompt-row">
+                <p className="result-input">{entry.raw_input}</p>
+              </div>
+            );
+          })}
           {latestCommand?.continuity_context ? (
             <details>
               <summary>Continuity Context Used ({continuityRecords.length})</summary>

@@ -60,9 +60,11 @@ test('AIConsole renders mission console shell with internal message region and a
   assert.match(rendered, /Context Used/);
 });
 
-test('AIConsole avoids viewport-targeting scrollIntoView calls for message updates', async () => {
+test('AIConsole scroll targeting binds to latest assistant answer pane ref rather than generic latest history item', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
-  assert.doesNotMatch(source, /scrollIntoView\s*\(/);
+  assert.match(source, /latestAssistantAnswerRef/);
+  assert.match(source, /latestAssistantAnswerEl\.scrollIntoView/);
+  assert.match(source, /data-testid=\{isLatestAssistantAnswer \? 'latest-assistant-answer-pane' : 'assistant-answer-pane'\}/);
 });
 
 test('Mission console collapsed panel body does not keep reserved height when hidden', async () => {
