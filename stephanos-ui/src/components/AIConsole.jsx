@@ -77,12 +77,46 @@ export default function AIConsole({
   }, [safeCommandHistory]);
 
   const latestAssistantAnswerRef = useRef(null);
+  const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
 
   recordPerfCounter('render', 'AIConsole');
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
   }, [setUiDiagnostics]);
+
+  useEffect(() => {
+    const answerHistorySummary = safeCommandHistory.reduce((acc, entry) => {
+      const isAssistant = isAssistantHistoryEntry(entry);
+      const hasText = String(entry?.output_text || '').trim().length > 0;
+      const isPendingShell = isAssistant && !hasText;
+      const isAssistantPane = isAssistant && hasText;
+      const isPromptOnly = !isAssistant;
+      if (isAssistantPane) acc.assistantPaneCount += 1;
+      if (isPromptOnly) acc.promptOnlyCount += 1;
+      if (isPendingShell) acc.pendingPaneCount += 1;
+      return acc;
+    }, { assistantPaneCount: 0, promptOnlyCount: 0, pendingPaneCount: 0 });
+    const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => hasFinalAssistantAnswerText(entry)) || null;
+    const duplicateAnswerPaneDetected = answerHistorySummary.assistantPaneCount > 1 && safeCommandHistory.length <= 2;
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      aiConsoleAnswerHistory: {
+        totalItemCount: safeCommandHistory.length,
+        assistantPaneCount: answerHistorySummary.assistantPaneCount,
+        promptOnlyPaneCount: answerHistorySummary.promptOnlyCount,
+        pendingPaneCount: answerHistorySummary.pendingPaneCount,
+        latestAnswerPaneId: latestAssistantEntry?.id || 'none',
+        latestAnswerEnvelopeId: latestAssistantEntry?.envelope_id || latestAssistantEntry?.envelopeId || 'none',
+        scrollTargetKind: latestScrollTargetRef.current.kind || 'none',
+        scrollTargetId: latestScrollTargetRef.current.id || 'none',
+        scrollTargetIsLatestAssistantAnswer: latestScrollTargetRef.current.kind === 'assistant-answer-pane' && String(latestScrollTargetRef.current.id || '') === String(latestAssistantEntry?.id || ''),
+        duplicateAnswerPaneDetected,
+        duplicateAnswerPaneReason: duplicateAnswerPaneDetected ? 'multiple-assistant-answer-panes-for-single-execute-window' : 'none',
+        promptOnlyRenderedAsAnswerPane: false,
+      },
+    }));
+  }, [safeCommandHistory, setUiDiagnostics]);
 
   useEffect(() => {
     setPerfIdentityField('component.AIConsole.mounted', true);
@@ -136,8 +170,10 @@ export default function AIConsole({
     preserveDocumentScrollPosition();
     const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
     if (latestAssistantAnswerEl) {
+      latestScrollTargetRef.current = { kind: 'assistant-answer-pane', id: latestAssistantAnswerId || '' };
       latestAssistantAnswerEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     } else {
+      latestScrollTargetRef.current = { kind: 'history-bottom-fallback', id: 'answer-history' };
       scrollMessageContainerToBottom('smooth');
     }
     requestAnimationFrame(() => {
@@ -274,7 +310,9 @@ export default function AIConsole({
             </div>
           ) : null}
           {safeCommandHistory.length === 0 ? <p className="muted">Ready. Ask Stephanos anything.</p> : safeCommandHistory.map((entry) => {
-            if (isAssistantHistoryEntry(entry)) {
+            const isAssistantEntry = isAssistantHistoryEntry(entry);
+            const hasAssistantText = String(entry?.output_text || '').trim().length > 0;
+            if (isAssistantEntry && hasAssistantText) {
               const isLatestAssistantAnswer = latestAssistantAnswerId && String(entry.id || '') === latestAssistantAnswerId;
               return (
                 <div
@@ -283,6 +321,13 @@ export default function AIConsole({
                   ref={isLatestAssistantAnswer ? latestAssistantAnswerRef : null}
                 >
                   <CommandResultCard entry={entry} />
+                </div>
+              );
+            }
+            if (isAssistantEntry) {
+              return (
+                <div key={entry.id || `${entry.timestamp || 'entry'}-${entry.raw_input || ''}`} className="result-row result-row--pending" data-testid="pending-answer-pane">
+                  <p className="muted">Awaiting assistant answer…</p>
                 </div>
               );
             }

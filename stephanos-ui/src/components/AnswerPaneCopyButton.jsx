@@ -58,6 +58,7 @@ export default function AnswerPaneCopyButton({ message }) {
       <button
         type="button"
         className={`answer-pane-copy-button ${answerCopyState}`}
+        data-testid="answer-pane-copy-button"
         aria-label="Copy answer"
         title={answerCopyLabel}
         onClick={() => handleCopy('answer')}
