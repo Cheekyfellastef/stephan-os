@@ -2676,7 +2676,10 @@ test('buildSupportSnapshot treats stale ROUTE_UNAVAILABLE metadata as historical
 
   assert.match(snapshot, /Backend Reachable: yes/);
   assert.match(snapshot, /Last Route Failure Is Historical: yes/);
-  assert.match(snapshot, /Command Pipeline Last Failure Reason: ROUTE_UNAVAILABLE/);
+  assert.match(snapshot, /Command Pipeline Last Failure Reason: none/);
+  assert.match(snapshot, /Historical Command Failure Reason: ROUTE_UNAVAILABLE/);
+  assert.match(snapshot, /Current Command Pipeline State: idle \/ no-current-failure/);
+  assert.match(snapshot, /Current Provider Execution Truth: none \/ idle \/ not-executed/);
   assert.match(snapshot, /Execution Truth: ok:ollama/);
   assert.doesNotMatch(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
   assert.match(snapshot, /Response Planner Status: active/);
