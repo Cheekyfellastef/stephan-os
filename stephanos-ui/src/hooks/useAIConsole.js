@@ -2307,6 +2307,12 @@ export function useAIConsole() {
       resolvedRuntimeContext.actualTargetUsed || adoptedHomeNode.homeNode?.backendUrl || resolvedRuntimeContext.homeNode?.backendUrl || '',
       { allowLoopback: localDesktopSession },
     );
+    const baseRouteDiagnostics = { ...(resolvedRuntimeContext.routeDiagnostics || {}) };
+    if (localDesktopSession) {
+      delete baseRouteDiagnostics['home-node'];
+    } else {
+      delete baseRouteDiagnostics['local-desktop'];
+    }
 
     return {
       ...resolvedRuntimeContext,
@@ -2322,7 +2328,7 @@ export function useAIConsole() {
         ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
         : (resolvedRuntimeContext.restoreDecision || ''),
       routeDiagnostics: {
-        ...(resolvedRuntimeContext.routeDiagnostics || {}),
+        ...baseRouteDiagnostics,
         ...(localDesktopSession && resolvedRuntimeContext.homeNodeOperatorOverrideActive ? {
           'home-node': {
             configured: Boolean(resolvedRuntimeContext.homeNodeOperatorOverrideNodeConfigured),
