@@ -66,7 +66,8 @@ function Write-Log {
 }
 
 Write-Log "Stephanos Battle Bridge backend start requested. Repo root: $repoRoot"
-Write-Log "Health endpoint: $healthUrl"
+Write-Log "Backend health endpoint: $healthUrl"
+Write-Log "Frontend/dist server not started by this backend script (port 4173)."
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
 
 try {
@@ -89,7 +90,7 @@ if (-not $npmCommand) {
     exit 1
 }
 
-$arguments = @('run', 'stephanos:serve')
+$arguments = @('run', 'stephanos:backend')
 Write-Log ("Starting backend with command: {0} {1}" -f $npmCommand, ($arguments -join ' '))
 
 if ($PSCmdlet.ShouldProcess("$npmCommand $($arguments -join ' ')", 'Start Stephanos backend')) {

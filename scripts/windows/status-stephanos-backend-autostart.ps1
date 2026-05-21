@@ -131,6 +131,9 @@ if ($task) {
 
 $localResult = Test-Url -Url $localHealthUrl -TimeoutSeconds $HttpTimeoutSeconds
 
+$frontendDistUrl = 'http://127.0.0.1:4173/'
+$frontendResult = Test-Url -Url $frontendDistUrl -TimeoutSeconds $HttpTimeoutSeconds
+
 $tailscaleCommand = Get-Command tailscale -ErrorAction SilentlyContinue
 $tailscaleCliPresent = $null -ne $tailscaleCommand
 $tailscaleStatusText = $null
@@ -187,6 +190,16 @@ Write-Host '--- Scheduled Task ---'
     LastTaskResult = if ($taskInfo) { [string]$taskInfo.LastTaskResult } else { 'n/a' }
     LastRunTime = if ($taskInfo) { [string]$taskInfo.LastRunTime } else { 'n/a' }
     NextRunTime = if ($taskInfo) { [string]$taskInfo.NextRunTime } else { 'n/a' }
+} | Format-List
+
+
+Write-Host '--- Frontend Dist Server ---'
+[PSCustomObject]@{
+    Url = $frontendDistUrl
+    Reachable = Format-Boolean -Value $frontendResult.Healthy
+    StatusCode = if ($null -ne $frontendResult.StatusCode) { [string]$frontendResult.StatusCode } else { 'n/a' }
+    Error = if ($frontendResult.Error) { $frontendResult.Error } else { 'none' }
+    Role = 'Static launcher/dist server only (must be separate from backend API)'
 } | Format-List
 
 Write-Host '--- Local Backend ---'
