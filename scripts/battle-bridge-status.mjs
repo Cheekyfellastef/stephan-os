@@ -35,8 +35,12 @@ console.log('=== Stephanos Battle Bridge Status (portable fallback) ===');
 console.log('PowerShell is unavailable; running Linux/macOS diagnostics fallback.');
 
 const health = spawnSync('curl', ['-sS', '-o', '/tmp/stephanos-health.json', '-w', '%{http_code}', 'http://127.0.0.1:8787/api/health'], { encoding: 'utf8' });
+const frontend = spawnSync('curl', ['-sS', '-o', '/tmp/stephanos-frontend-health.html', '-w', '%{http_code}', 'http://127.0.0.1:4173/'], { encoding: 'utf8' });
 const httpCode = (health.stdout || '').trim();
+const frontendCode = (frontend.stdout || '').trim();
 console.log(`Local backend /api/health HTTP status: ${httpCode || 'unreachable'}`);
+console.log(`Frontend/dist server (4173) HTTP status: ${frontendCode || 'unreachable'}`);
+console.log('Tailscale Serve proxy target should be backend (127.0.0.1:8787), not frontend/dist (4173).');
 
 const stderrTail = latestTail(/^backend-start-.*\.stderr\.log$/);
 const stdoutTail = latestTail(/^backend-start-.*\.stdout\.log$/);

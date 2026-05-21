@@ -32,6 +32,8 @@ if (ps) {
 }
 
 console.log('PowerShell is unavailable; running portable backend-only repair.');
+console.log(`Backend health endpoint: ${healthUrl}`);
+console.log('Frontend/dist server not started by this backend repair fallback (port 4173).');
 mkdirSync(logsDir, { recursive: true });
 
 const healthOk = await waitForHealth(2000);
