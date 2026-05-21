@@ -3111,6 +3111,8 @@ export function useAIConsole() {
           name: requestRuntimeStatus?.githubRepoName || '',
         },
         connectorAvailable: true,
+        enableLiveGithubPrEvidenceFetch: false,
+        liveFetchDisabledReason: 'live-fetch-disabled-by-default',
       });
       const previousActiveMission = readActiveMissionState();
       const chatContextPack = buildChatContextPack({

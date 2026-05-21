@@ -166,14 +166,31 @@ export async function resolveGithubPrEvidenceReadOnly(input = {}) {
   const connectorReady = input.connectorAvailable !== false;
   const tokenReady = input.hasToken === true;
   const fetchFn = typeof input.fetchGithubPrEvidence === 'function' ? input.fetchGithubPrEvidence : null;
+  const liveFetchEnabled = input.enableLiveGithubPrEvidenceFetch === true;
+  const disabledReason = asText(input.liveFetchDisabledReason, 'live-fetch-disabled-by-default');
 
   if (!prNumber) return { source: 'none' };
   if (!connectorReady) return { source: 'connector-missing', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
+  if (!liveFetchEnabled) {
+    return {
+      source: 'connector-manual-disabled',
+      status: 'needs-connector',
+      repo,
+      prNumber,
+      parsedPrNumber: promptRef.prNumber ?? prNumber,
+      fetchDiagnostics: {
+        github_pr_evidence_fetch_attempted: 'no',
+        github_pr_evidence_fetch_url_or_mode: 'manual-readonly-only',
+        github_pr_evidence_fetch_disabled: 'yes',
+        github_pr_evidence_fetch_disabled_reason: disabledReason,
+      },
+    };
+  }
   if (fetchFn && !repo) return { source: 'connector-missing-repo', prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
   if (fetchFn && !tokenReady) return { source: 'connector-missing-configuration', repo, prNumber, parsedPrNumber: promptRef.prNumber ?? prNumber };
 
   const [owner, repoName] = repo.split('/');
-  const fetchDiagnostics = { github_pr_evidence_fetch_attempted: 'yes', github_pr_evidence_fetch_url_or_mode: fetchFn ? 'custom-readonly-fetch' : `backend:${owner}/${repoName}#${prNumber}` };
+  const fetchDiagnostics = { github_pr_evidence_fetch_attempted: 'yes', github_pr_evidence_fetch_url_or_mode: fetchFn ? 'custom-readonly-fetch' : `backend:${owner}/${repoName}#${prNumber}`, github_pr_evidence_fetch_disabled: 'no', github_pr_evidence_fetch_disabled_reason: 'none' };
   const live = fetchFn
     ? await fetchFn({ repo, prNumber, owner, repoName, readOnly: true })
     : await fetchGithubPrEvidenceFromBackend({ owner, repo: repoName, prNumber });
@@ -194,7 +211,17 @@ export async function fetchGithubPrEvidenceFromBackend({ owner = '', repo = '', 
   if (owner) route.searchParams.set('owner', owner);
   if (repo) route.searchParams.set('repo', repo);
   route.searchParams.set('pr', String(prNumber || ''));
-  const response = await fetch(route.href, { method: 'GET', headers: { Accept: 'application/json' } });
+  const timeoutMs = 6500;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('github_pr_evidence_timeout')), timeoutMs);
+  let response;
+  try {
+    response = await fetch(route.href, { method: 'GET', headers: { Accept: 'application/json' }, signal: controller.signal });
+  } catch {
+    return { status: 'error', source: 'none' };
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) return { status: 'error', source: 'none' };
   const payload = await response.json();
   return payload && typeof payload === 'object' ? payload : { status: 'error', source: 'none' };

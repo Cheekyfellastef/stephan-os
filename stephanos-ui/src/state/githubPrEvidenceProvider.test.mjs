@@ -166,6 +166,7 @@ test('canonical repo fallback is used when prompt has PR number and repo is omit
     prompt: 'do i merge PR 123',
     connectorAvailable: true,
     hasToken: true,
+    enableLiveGithubPrEvidenceFetch: true,
     fetchGithubPrEvidence: async (args) => {
       fetchArgs = args;
       return { status: 'fetched', source: 'github-api', title: 'unused' };
@@ -190,7 +191,7 @@ test('missing token/connector returns needs-configuration or needs-connector and
   assert.equal(r1.status, 'needs-connector');
   assert.equal(r1.prNumber, 123);
 
-  const missingToken = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: true, hasToken: false, fetchGithubPrEvidence: async () => ({}) });
+  const missingToken = await resolveGithubPrEvidenceReadOnly({ prompt: 'do i merge PR 123', repo: 'acme/stephan-os', connectorAvailable: true, hasToken: false, enableLiveGithubPrEvidenceFetch: true, fetchGithubPrEvidence: async () => ({}) });
   const r2 = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 123', connectorEvidence: missingToken });
   assert.equal(r2.status, 'needs-configuration');
   assert.equal(r2.prNumber, 123);
@@ -202,6 +203,7 @@ test('mocked read-only fetch populates title/state/checks/files and keeps no-wri
     repo: 'acme/stephan-os',
     connectorAvailable: true,
     hasToken: true,
+    enableLiveGithubPrEvidenceFetch: true,
     fetchGithubPrEvidence: async () => ({
       title: 'Wire live PR evidence',
       state: 'open',
@@ -237,6 +239,7 @@ test('backend fetch route feeds provider with github-api source', async () => {
       prompt: 'do i merge PR 456',
       repo: 'acme/stephan-os',
       connectorAvailable: true,
+      enableLiveGithubPrEvidenceFetch: true,
     });
     const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 456', connectorEvidence });
     assert.equal(r.status, 'fetched');
@@ -260,6 +263,7 @@ test('backend route can resolve canonical repo when prompt has PR number but no 
     const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
       prompt: 'do i merge PR 970',
       connectorAvailable: true,
+      enableLiveGithubPrEvidenceFetch: true,
     });
     const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 970', connectorEvidence });
     assert.equal(r.status, 'needs-configuration');
@@ -268,6 +272,19 @@ test('backend route can resolve canonical repo when prompt has PR number but no 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('live fetch disabled by default preserves parsed number and disabled diagnostics', async () => {
+  const connectorEvidence = await resolveGithubPrEvidenceReadOnly({
+    prompt: 'do i merge PR 970',
+    connectorAvailable: true,
+  });
+  const r = buildGithubPrEvidenceProvider({ operatorPrompt: 'do i merge PR 970', connectorEvidence });
+  assert.equal(r.prNumber, 970);
+  assert.equal(r.status, 'needs-connector');
+  assert.equal(connectorEvidence.fetchDiagnostics.github_pr_evidence_fetch_attempted, 'no');
+  assert.equal(connectorEvidence.fetchDiagnostics.github_pr_evidence_fetch_disabled, 'yes');
+  assert.equal(connectorEvidence.fetchDiagnostics.github_pr_evidence_fetch_disabled_reason, 'live-fetch-disabled-by-default');
 });
 test('backend needs-pr-number status is preserved in provider output', () => {
   const r = buildGithubPrEvidenceProvider({ connectorEvidence: { status: 'needs-pr-number', source: 'none' }, operatorPrompt: 'merge this' });
