@@ -498,6 +498,19 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
+  const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
+  const routeBlockedBeforeProvider = executionMetadata?.provider_fallback_blocked_by_route === true
+    || providerExecutionGateStatus === 'blocked-by-route'
+    || providerExecutionGateStatus === 'route-blocked'
+    || commandPipelineFailureReason === 'backend-route-unavailable'
+    || commandPipelineFailureReason === 'route_unavailable';
+  const visibleActiveProvider = routeBlockedBeforeProvider ? 'none' : asText(routeTruthView?.executedProvider);
+  const visibleFallbackActive = routeBlockedBeforeProvider ? 'no' : (routeTruthView?.fallbackActive ? 'yes' : 'no');
+  const visibleLastExecutableProvider = routeBlockedBeforeProvider ? 'none' : asText(runtimeStatus?.lastExecutableProvider);
+  const visibleLastActualProviderUsed = routeBlockedBeforeProvider
+    ? 'none'
+    : asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider);
   const canonicalPrEvidence = projectCanonicalPrEvidence({
     prEvidence: {
       status: runtimeStatus?.prEvidenceStatus,
@@ -1193,8 +1206,8 @@ export function buildSupportSnapshot({
     `UI Reality Diagnostics Available: ${uiRealityDiagnosticsAvailable}`,
     `UI Reality Next Action: ${uiRealityNextAction}`,
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
-    `Active Provider: ${asText(routeTruthView?.executedProvider)}`,
-    `Fallback Active: ${routeTruthView?.fallbackActive ? 'yes' : 'no'}`,
+    `Active Provider: ${visibleActiveProvider}`,
+    `Fallback Active: ${visibleFallbackActive}`,
     `Backend Reachable: ${asText(routeTruthView?.backendReachableState)}`,
     `Network Reachability Truth: ${asText(routeTruthView?.networkReachabilityState, 'unknown')}`,
     `Browser Direct Access: ${asText(routeTruthView?.browserDirectAccessState, 'unknown')}`,
@@ -1251,8 +1264,8 @@ export function buildSupportSnapshot({
     `Last Request-Side Selected Provider: ${asText(runtimeStatus?.lastRequestSelectedProvider)}`,
     `Last Router Selected Provider: ${asText(runtimeStatus?.lastRouterSelectedProvider)}`,
     `Last Selected Provider: ${asText(runtimeStatus?.lastSelectedProvider || routeTruthView?.executedProvider || routeTruthView?.selectedProvider)}`,
-    `Last Executable Provider: ${asText(runtimeStatus?.lastExecutableProvider)}`,
-    `Last Actual Provider Used: ${asText(runtimeStatus?.lastActualProviderUsed || routeTruthView?.executedProvider)}`,
+    `Last Executable Provider: ${visibleLastExecutableProvider}`,
+    `Last Actual Provider Used: ${visibleLastActualProviderUsed}`,
     `Last Actual Model Used: ${asText(runtimeStatus?.lastActualModelUsed || runtimeStatus?.lastModelUsed)}`,
     `Last Model Used: ${asText(runtimeStatus?.lastModelUsed)}`,
     `Last Provider Override Reason: ${asText(runtimeStatus?.lastProviderOverrideReason)}`,
