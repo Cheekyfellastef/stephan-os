@@ -560,14 +560,28 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestPayload.ui_requested_provider
     || requestPayload.provider,
   );
+  const providerFallbackBlockedByRoute = Boolean(
+    executionMetadata.provider_fallback_blocked_by_route
+    ?? requestTrace.provider_fallback_blocked_by_route
+    ?? false,
+  );
+  const providerExecutionGateStatus = String(
+    executionMetadata.provider_execution_gate_status
+    || requestTrace.provider_execution_gate_status
+    || '',
+  ).trim().toLowerCase();
+  const blockedBeforeProvider = providerFallbackBlockedByRoute || providerExecutionGateStatus === 'blocked-by-route';
+
   const requestSideSelectedProvider = normalizeProviderKey(
     executionMetadata.request_side_selected_provider
     || requestTrace.request_side_selected_provider
     || requestPayload.request_side_selected_provider
     || requestPayload.provider,
   );
-  const executableProvider = normalizeProviderKey(
-    executionMetadata.executable_provider
+  const executableProvider = blockedBeforeProvider
+    ? 'none'
+    : normalizeProviderKey(
+      executionMetadata.executable_provider
     || requestTrace.executable_provider
     || requestPayload.runtimeContext?.finalRouteTruth?.executedProvider
     || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.executedProvider
@@ -575,14 +589,16 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestPayload.runtimeContext?.canonicalRouteRuntimeTruth?.selectedProvider
     || requestSideSelectedProvider
     || uiRequestedProvider,
-  );
-  const actualProviderUsed = normalizeProviderKey(
-    executionMetadata.actual_provider_used
+    );
+  const actualProviderUsed = blockedBeforeProvider
+    ? 'none'
+    : normalizeProviderKey(
+      executionMetadata.actual_provider_used
     || data.data?.actual_provider_used
     || data.data?.provider
     || executableProvider
     || null,
-  );
+    );
   const fallbackUsedForRouter = Boolean(
     executionMetadata.fallback_used
     ?? requestTrace.fallback_used
@@ -1625,14 +1641,20 @@ function createRouteUnavailableResult({
           selected_route_usable_state: routeUsableState,
           route_unavailable_reason: normalizedFailureCode || fallbackReason,
           provider_execution_block_reason: dispatchBlockedDespiteUsableRoute ? fallbackReason : null,
+          provider_fallback_blocked_by_route: blockedBeforeProvider,
           route_provider_mismatch_blocker: routeProviderMismatchBlocker,
           fallback_veto_reason: fallbackVetoReason,
         },
         execution_metadata: {
           executable_provider: 'none',
           execution_selected_provider: 'none',
+          selected_provider: 'none',
           actual_provider_used: 'none',
+          fallback_active: false,
+          provider_fallback_blocked_by_route: blockedBeforeProvider,
+          provider_execution_gate_status: blockedBeforeProvider ? 'blocked-by-route' : 'unavailable',
           command_pipeline_last_failure_reason: normalizedFailureCode || fallbackReason || 'route-unavailable',
+          command_pipeline_last_finalization_path: 'error',
           command_pipeline_last_input_restore_available: 'yes',
           response_planner_status: blockedBeforeProvider ? 'blocked-before-provider' : 'unavailable',
           github_pr_evidence_fetch_attempted: 'no',
