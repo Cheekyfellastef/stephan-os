@@ -163,7 +163,7 @@ test('blocks dispatch when backend reachability is explicitly no', () => {
   });
 
   assert.equal(gate.dispatchAllowed, false);
-  assert.equal(gate.reasonCode, 'backend-unreachable');
+  assert.equal(gate.reasonCode, 'backend-route-unavailable');
   assert.equal(gate.backendReachabilityState, 'no');
 });
 
@@ -250,7 +250,7 @@ test('hosted session with no usable home-node is reported truthfully as unavaila
       localRouteAvailable: true,
       cloudRouteAvailable: false,
       freshRouteAvailable: false,
-      fallbackReasonCode: 'backend-unreachable',
+      fallbackReasonCode: 'backend-route-unavailable',
       requestRouteTruth: {
         routeKind: 'home-node',
       },
@@ -285,12 +285,12 @@ test('provider intent stays distinct when route is canonically unusable', () => 
       localRouteAvailable: false,
       cloudRouteAvailable: true,
       freshRouteAvailable: true,
-      fallbackReasonCode: 'backend-unreachable',
+      fallbackReasonCode: 'backend-route-unavailable',
     },
     routeTruthView: {
       routeKind: 'home-node',
       routeUsableState: 'no',
-      routeUsabilityVetoReason: 'backend-unreachable',
+      routeUsabilityVetoReason: 'backend-route-unavailable',
       backendReachableState: 'no',
     },
     runtimeStatus: {
@@ -303,7 +303,7 @@ test('provider intent stays distinct when route is canonically unusable', () => 
   });
 
   assert.equal(gate.dispatchAllowed, false);
-  assert.equal(gate.reasonCode, 'backend-unreachable');
+  assert.equal(gate.reasonCode, 'backend-route-unavailable');
   assert.equal(gate.selectedRouteUsable, false);
 });
 

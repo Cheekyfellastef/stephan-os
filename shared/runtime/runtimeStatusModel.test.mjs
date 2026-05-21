@@ -230,6 +230,7 @@ test('createRuntimeStatusModel adopts a reachable manual LAN home-node route and
         'home-node': {
           configured: true,
           available: true,
+          backendReachable: true,
           source: 'manual',
           target: 'http://192.168.0.198:8787',
           actualTarget: 'http://192.168.0.198:8787',
@@ -318,6 +319,7 @@ test('createRuntimeStatusModel keeps local-first provider routing for reachable 
         'home-node': {
           configured: true,
           available: true,
+          backendReachable: true,
           source: 'manual',
           target: 'http://192.168.0.198:8787',
           actualTarget: 'http://192.168.0.198:8787',
@@ -969,6 +971,7 @@ test('createRuntimeStatusModel resolves hosted backend target from published hom
           configured: true,
           available: true,
           usable: true,
+          backendReachable: true,
           source: 'manual',
           target: 'http://192.168.0.44:8787',
           actualTarget: 'http://192.168.0.44:8787',

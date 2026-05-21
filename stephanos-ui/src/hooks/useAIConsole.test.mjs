@@ -220,7 +220,13 @@ test('deterministic identity recall appends assistant answer through command his
 });
 
 test('command input clearing is gated by submit acceptance return contract', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   const aiConsoleSource = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'components/AIConsole.jsx'), 'utf8');
+  assert.match(source, /submitAccepted = !routeUnavailableResult;/);
+  assert.match(source, /command_pipeline_last_input_restore_available:\s*'yes'/);
+  assert.match(source, /command_pipeline_last_failure_reason:\s*normalizedFailureCode \|\| fallbackReason \|\| 'route-unavailable'/);
+  assert.match(source, /response_planner_status:\s*blockedBeforeProvider \? 'blocked-before-provider' : 'unavailable'/);
+  assert.match(source, /actual_provider_used:\s*'none'/);
   assert.match(aiConsoleSource, /if \(submitResult\?\.inputCleared === true \|\| submitResult\?\.submitAccepted === true\) \{/);
   assert.match(aiConsoleSource, /else if \(submitResult\?\.restoreInput === true\) \{/);
 });
