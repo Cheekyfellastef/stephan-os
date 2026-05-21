@@ -136,6 +136,42 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
   }).backendUrl;
 }
 
+function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null } = {}) {
+  const status = runtimeStatus && typeof runtimeStatus === 'object' ? runtimeStatus : {};
+  const view = routeTruthView && typeof routeTruthView === 'object' ? routeTruthView : {};
+  const runtimeContext = status.runtimeContext && typeof status.runtimeContext === 'object' ? status.runtimeContext : {};
+  const canonicalRouteTruth = status.canonicalRouteRuntimeTruth && typeof status.canonicalRouteRuntimeTruth === 'object'
+    ? status.canonicalRouteRuntimeTruth
+    : {};
+  const routeCandidates = Array.isArray(status?.runtimeTruth?.routeCandidates) ? status.runtimeTruth.routeCandidates : [];
+  const sessionKind = String(runtimeContext.sessionKind || canonicalRouteTruth.sessionKind || '').trim();
+  const deviceContext = String(runtimeContext.deviceContext || canonicalRouteTruth.deviceContext || '').trim();
+  const localDesktopSession = sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser';
+  if (!localDesktopSession) return view;
+  const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop' && candidate?.usable === true);
+  if (!localDesktopCandidate) return view;
+
+  const localDesktopTarget = String(
+    runtimeContext.routeDiagnostics?.['local-desktop']?.actualTarget
+    || runtimeContext.routeDiagnostics?.['local-desktop']?.target
+    || runtimeContext.backendBaseUrl
+    || runtimeContext.baseUrl
+    || canonicalRouteTruth.actualTarget
+    || '',
+  ).trim();
+  return {
+    ...view,
+    routeKind: 'local-desktop',
+    preferredRoute: 'local-desktop',
+    selectedRouteReachableState: 'yes',
+    routeUsableState: 'yes',
+    backendReachableState: 'yes',
+    preferredTarget: localDesktopTarget || view.preferredTarget,
+    actualTarget: localDesktopTarget || view.actualTarget,
+    winnerReason: localDesktopCandidate.reason || view.winnerReason,
+  };
+}
+
 export function buildResponsePlanExecutionMetadata(responsePlan = null) {
   const plan = responsePlan && typeof responsePlan === 'object' ? responsePlan : {};
   const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
@@ -1588,6 +1624,7 @@ function createRouteUnavailableResult({
   const errorCode = dispatchBlockedDespiteUsableRoute
     ? 'PROVIDER_EXECUTION_CONTRACT_MISMATCH'
     : (normalizedFailureCode || 'ROUTE_UNAVAILABLE');
+  const blockedProviderState = blockedBeforeProvider ? 'none' : (routeDecision?.selectedProvider || requestPayload.provider);
 
   return {
     data: {
@@ -1601,9 +1638,9 @@ function createRouteUnavailableResult({
       data: {
         request_trace: {
           ui_default_provider: requestPayload.routeDecision?.defaultProvider || requestPayload.provider,
-          requested_provider_for_request: requestPayload.routeDecision?.requestedProviderForRequest || requestPayload.provider,
-          requested_provider: requestPayload.provider,
-          selected_provider: routeDecision?.selectedProvider || requestPayload.provider,
+          requested_provider_for_request: blockedBeforeProvider ? 'none' : (requestPayload.routeDecision?.requestedProviderForRequest || requestPayload.provider),
+          requested_provider: blockedBeforeProvider ? 'none' : requestPayload.provider,
+          selected_provider: blockedProviderState,
           fallback_used: routeDecision?.selectedAnswerMode === 'fallback-stale-risk',
           fallback_reason: fallbackReason,
           freshness_need: requestPayload.freshnessContext?.freshnessNeed || 'low',
@@ -3051,7 +3088,10 @@ export function useAIConsole() {
       }
 
       const requestRuntimeStatus = finalizeRuntimeContext(finalizedRequestContext, refreshedProviderHealth).runtimeStatus;
-      const requestRouteTruthView = buildFinalRouteTruthView(requestRuntimeStatus);
+      const requestRouteTruthView = resolveExecuteRouteTruth({
+        runtimeStatus: requestRuntimeStatus,
+        routeTruthView: buildFinalRouteTruthView(requestRuntimeStatus),
+      });
       const requestRouteTruth = {
         routeKind: requestRouteTruthView.routeKind,
         routeUsableState: requestRouteTruthView.routeUsableState,
@@ -3404,6 +3444,8 @@ export function useAIConsole() {
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
       const runtimeConfigWithExecutionTruth = {
         ...finalizedRequestContext,
+        preferredTarget: requestRouteTruthView.preferredTarget || finalizedRequestContext.preferredTarget || '',
+        actualTargetUsed: requestRouteTruthView.actualTarget || finalizedRequestContext.actualTargetUsed || '',
         finalRouteTruth: requestRuntimeStatus?.finalRouteTruth || finalizedRequestContext?.finalRouteTruth || {},
         canonicalRouteRuntimeTruth: requestRuntimeStatus?.canonicalRouteRuntimeTruth || finalizedRequestContext?.canonicalRouteRuntimeTruth || {},
         timeoutExecutionEnvelope,
