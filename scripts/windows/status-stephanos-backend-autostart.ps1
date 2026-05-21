@@ -93,9 +93,37 @@ function Test-ExpectedServeMapping {
     return ($hostOk -and $targetOk)
 }
 
+function Get-LatestBackendStderrTail {
+    param(
+        [string]$RootPath,
+        [int]$TailLineCount = 50
+    )
+
+    $logsDir = Join-Path $RootPath 'logs\battle-bridge'
+    if (-not (Test-Path -LiteralPath $logsDir)) {
+        return $null
+    }
+
+    $latestStderr = Get-ChildItem -Path $logsDir -Filter 'backend-start-*.stderr.log' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if (-not $latestStderr) {
+        return $null
+    }
+
+    $tail = Get-Content -Path $latestStderr.FullName -Tail $TailLineCount -ErrorAction SilentlyContinue
+    return [PSCustomObject]@{
+        Path = $latestStderr.FullName
+        Tail = ($tail -join "`n")
+    }
+}
+
 Write-Host '=== Stephanos Battle Bridge Status ==='
 
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 $taskInfo = $null
 if ($task) {
     $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName
@@ -226,6 +254,15 @@ Write-Host '--- OpenClaw Readonly Stub ---'
 
 if ($openClawStubStatusError) {
     Write-Host "openclaw stub status error: $openClawStubStatusError"
+}
+
+if (-not $localResult.Healthy) {
+    $stderrTail = Get-LatestBackendStderrTail -RootPath $repoRoot
+    if ($stderrTail) {
+        Write-Host '--- Latest Backend stderr tail ---'
+        Write-Host "Log: $($stderrTail.Path)"
+        Write-Host $stderrTail.Tail
+    }
 }
 Write-Host '--- Overall ---'
 [PSCustomObject]@{
