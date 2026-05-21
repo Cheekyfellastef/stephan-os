@@ -1704,6 +1704,8 @@ export function buildSupportSnapshot({
     `PR Evidence Browser Proof Status: ${asText(runtimeStatus?.prEvidenceBrowserProofStatus, 'unknown')}`,
     `PR Evidence Missing Proof: ${asText((canonicalPrEvidence.missingProof || []).join('|'), 'none')}`,
     `PR Evidence Merge Readiness: ${asText(canonicalPrEvidence.mergeReadiness, 'hold')}`,
+    `PR Evidence Already Merged: ${canonicalPrEvidence.merged === true ? 'yes' : (canonicalPrEvidence.merged === false ? 'no' : 'unknown')}`,
+    `PR Evidence Verification Source: ${asText(canonicalPrEvidence.verificationSource, (asText(canonicalPrEvidence.source, 'none') === 'none' ? 'parsed-only' : canonicalPrEvidence.source))}`,
     `PR Evidence Recommended Next Action: ${asText(canonicalPrEvidence.recommendedNextAction, 'collect PR evidence')}`,
     `Mission Repair Loop PR Evidence Linked: ${['fetched', 'available', 'parsed', 'received', 'merge_ready_candidate', 'merged'].includes(String(canonicalPrEvidence.status || canonicalPrEvidence.prEvidenceStatus || '').toLowerCase()) ? 'yes' : asText(runtimeStatus?.missionRepairLoopPrEvidenceLinked, 'no')}`,
     `GitHub PR Evidence Provider Status: ${githubPrEvidenceProviderStatusDisplay}`,
@@ -1734,6 +1736,15 @@ export function buildSupportSnapshot({
     `GitHub PR Evidence Fetch Attempted: ${asText(executionMetadata?.github_pr_evidence_fetch_attempted, 'no')}`,
     `GitHub PR Evidence Fetch Disabled: ${asText(executionMetadata?.github_pr_evidence_fetch_disabled, 'yes')}`,
     `GitHub PR Evidence Fetch Disabled Reason: ${asText(executionMetadata?.github_pr_evidence_fetch_disabled_reason, 'live-fetch-disabled-by-default')}`,
+    `GitHub PR Evidence Availability: ${asText(
+      (asText(executionMetadata?.github_pr_evidence_fetch_disabled, 'yes') === 'yes')
+        ? 'disabled'
+        : (githubEvidenceSourceDisplay.includes('operator') ? 'manual' : (githubEvidenceSourceDisplay === 'none' ? 'unavailable' : 'live')),
+      'unavailable',
+    )}`,
+    `GitHub PR Evidence Truth Status: ${asText(canonicalPrEvidence.evidenceTruthStatus, (asText(executionMetadata?.github_pr_evidence_fetch_disabled, 'yes') === 'yes' ? 'unknown-disabled' : 'unknown'))}`,
+    `PR Evidence Disabled Explanation: ${asText(executionMetadata?.github_pr_evidence_fetch_disabled_reason, 'live-fetch-disabled-by-default')}`,
+    `PR Evidence Operator Action: ${canonicalPrEvidence.mergeReadiness === 'already-merged' ? 'no merge required' : ((asText(executionMetadata?.github_pr_evidence_fetch_disabled, 'yes') === 'yes') ? 'enable read-only fetch / paste PR evidence' : 'paste PR evidence')}`,
     `GitHub PR Evidence Fetch URL/Mode: ${asText(executionMetadata?.github_pr_evidence_fetch_url_or_mode, 'none')}`,
     `GitHub PR Evidence Backend Status: ${asText(executionMetadata?.github_pr_evidence_backend_status, 'unknown')}`,
     `GitHub PR Evidence Backend Source: ${asText(executionMetadata?.github_pr_evidence_backend_source, 'none')}`,

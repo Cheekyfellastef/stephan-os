@@ -278,6 +278,8 @@ test('buildSupportSnapshot prefers canonical truth and labels unavailable fields
   assert.match(snapshot, /Streaming Requested: false/);
   assert.match(snapshot, /Streaming Mode Preference: auto/);
   assert.match(snapshot, /Streaming Preference Rehydrated: no/);
+  assert.match(snapshot, /GitHub PR Evidence Availability: disabled/);
+  assert.match(snapshot, /GitHub PR Evidence Truth Status: unknown-disabled/);
   assert.match(snapshot, /Streaming Persistence Source: default\/auto/);
   assert.match(snapshot, /Streaming Request Source: auto-default-off/);
   assert.match(snapshot, /Surface Routing Bias Hint: home-node-first/);
@@ -2982,7 +2984,7 @@ test('support snapshot promotes fetched github evidence into canonical PR eviden
       githubPrEvidenceMergeReadiness: 'already-merged',
     },
   });
-  assert.match(snapshot, /PR Evidence Status: fetched/);
+  assert.match(snapshot, /PR Evidence Status: merged/);
   assert.match(snapshot, /PR Evidence Checks Status: passed/);
   assert.match(snapshot, /PR Evidence Build Status: passed/);
   assert.match(snapshot, /PR Evidence Verify Status: passed/);
