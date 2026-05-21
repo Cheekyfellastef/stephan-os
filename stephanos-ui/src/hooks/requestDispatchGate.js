@@ -59,9 +59,9 @@ export function evaluateRequestDispatchGate({
 } = {}) {
   const canonicalRouteTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
   const selectedRouteKind = String(
-    canonicalRouteTruth?.winningRoute
-    || routeTruthView?.routeKind
+    routeTruthView?.routeKind
     || routeDecision?.requestRouteTruth?.routeKind
+    || canonicalRouteTruth?.winningRoute
     || 'unavailable',
   ).trim() || 'unavailable';
   const routeUsableState = resolveRouteUsableState(routeTruthView, canonicalRouteTruth);
