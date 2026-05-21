@@ -157,12 +157,11 @@ function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null 
   const deviceContext = String(runtimeContext.deviceContext || canonicalRouteTruth.deviceContext || '').trim();
   const localDesktopSession = sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser';
   if (!localDesktopSession) return view;
-  const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop');
-  if (!localDesktopCandidate) return view;
-
   const localDesktopDiagnostics = runtimeContext.routeDiagnostics?.['local-desktop'] || {};
+  const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop') || null;
   const localDesktopReachable = localDesktopDiagnostics.available === true || localDesktopDiagnostics.backendReachable === true;
-  const localDesktopUsable = localDesktopCandidate?.usable === true && localDesktopReachable;
+  const localDesktopUsable = localDesktopCandidate?.usable === true || localDesktopDiagnostics.usable === true || localDesktopReachable;
+  if (!localDesktopCandidate && !localDesktopReachable) return view;
 
   const localDesktopTarget = String(
     runtimeContext.routeDiagnostics?.['local-desktop']?.actualTarget
@@ -181,7 +180,7 @@ function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null 
     backendReachableState: localDesktopReachable ? 'yes' : 'no',
     preferredTarget: localDesktopTarget || view.preferredTarget,
     actualTarget: localDesktopTarget || view.actualTarget,
-    winnerReason: localDesktopCandidate.reason || view.winnerReason,
+    winnerReason: localDesktopCandidate?.reason || localDesktopDiagnostics.reason || view.winnerReason,
     routeUsabilityVetoReason: localDesktopUsable ? null : 'backend-route-unavailable',
   }, runtimeContext);
 }
