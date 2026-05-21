@@ -3501,9 +3501,12 @@ export function useAIConsole() {
       userMessageRecordAttempted = 'yes';
       try {
         const queuedMessageId = `cmd_${Date.now()}_queued`;
+        const queuedRequestId = requestPayload.request_execution_id;
         userMessageRecordId = queuedMessageId;
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: queuedMessageId,
+          request_id: queuedRequestId,
+          role: 'operator',
           raw_input: prompt,
           parsed_command: parsed,
           route: 'assistant',
@@ -3517,7 +3520,7 @@ export function useAIConsole() {
           timestamp: new Date().toISOString(),
           error: null,
           error_code: null,
-          response: { type: 'assistant_response', route: 'assistant', success: true, output_text: '' },
+          response: { type: 'operator_prompt', route: 'operator', success: true, output_text: '' },
           continuity_mode: continuityMode,
           continuity_context: continuityContext,
           continuity_retrieval_state: continuityLookup.retrievalState,
@@ -3693,7 +3696,7 @@ export function useAIConsole() {
           timestamp: new Date().toISOString(),
           error: null,
           error_code: null,
-          response: { type: 'assistant_response', route: 'assistant', success: true, output_text: '' },
+          response: { type: 'operator_prompt', route: 'operator', success: true, output_text: '' },
           continuity_mode: continuityMode,
           continuity_context: continuityContext,
           continuity_retrieval_state: continuityLookup.retrievalState,
