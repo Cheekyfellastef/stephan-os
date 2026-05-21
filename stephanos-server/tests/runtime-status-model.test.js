@@ -534,3 +534,41 @@ test('local operator override removes home-node usability from final truth on lo
   assert.equal(model.finalRouteTruth.homeNodeUsable, false);
   assert.equal(model.finalRouteTruth.routeKind, 'local-desktop');
 });
+
+test('backend reachable state clears stale local-desktop offline route blocker', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      groq: { ok: false },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: false,
+          usable: false,
+          blockedReason: 'backend is offline',
+          reason: 'stale diagnostics',
+        },
+      },
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: '',
+        lastBackendHealthProbeResult: 'ok:true',
+        routeTruthHealthSource: 'refresh-health-poll',
+      },
+    },
+  });
+
+  const localDesktop = model.routeCandidates.find((candidate) => candidate.candidateKey === 'local-desktop');
+  assert.equal(model.routeKind, 'local-desktop');
+  assert.equal(model.finalRouteTruth.backendReachable, true);
+  assert.equal(localDesktop.reachable, true);
+  assert.equal(localDesktop.usable, true);
+  assert.notEqual(localDesktop.state, 'configured-unreachable');
+});

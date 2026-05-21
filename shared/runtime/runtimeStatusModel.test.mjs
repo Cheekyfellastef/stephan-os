@@ -1392,3 +1392,37 @@ test('createRuntimeStatusModel defensively projects fast lane truth from execute
   assert.equal(status.finalRouteTruth.fastResponseLaneActive, true);
   assert.equal(status.finalRouteTruth.fastResponseModel, 'llama3.2:3b');
 });
+
+test('createRuntimeStatusModel clears stale local-desktop offline blocker when backend is currently reachable', () => {
+  const status = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    providerHealth: { groq: { ok: false } },
+    backendAvailable: true,
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      deviceContext: 'pc-local-browser',
+      routeDiagnostics: {
+        'local-desktop': {
+          configured: true,
+          available: false,
+          usable: false,
+          blockedReason: 'backend is offline',
+          reason: 'stale snapshot',
+        },
+      },
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: '',
+        lastBackendHealthProbeResult: 'ok:true',
+        routeTruthHealthSource: 'refresh-health-poll',
+      },
+    },
+  });
+
+  const localDesktop = status.routeCandidates.find((candidate) => candidate.candidateKey === 'local-desktop');
+  assert.equal(status.routeKind, 'local-desktop');
+  assert.equal(status.finalRouteTruth.backendReachable, true);
+  assert.equal(localDesktop?.reachable, true);
+  assert.equal(localDesktop?.usable, true);
+  assert.notEqual(localDesktop?.state, 'configured-unreachable');
+});
