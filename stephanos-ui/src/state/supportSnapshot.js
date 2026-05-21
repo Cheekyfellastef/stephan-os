@@ -153,10 +153,8 @@ function summarizeRouteDiagnostics(routeDiagnostics, {
     return ['- n/a'];
   }
 
-  const localDesktopCandidate = Array.isArray(routeCandidates)
-    ? routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop')
-    : null;
-  const localDesktopCandidateState = String(localDesktopCandidate?.state || '').trim().toLowerCase();
+  const localDesktopCandidate = findLocalDesktopRouteCandidate(routeCandidates);
+  const localDesktopCandidateState = deriveRouteCandidateState(localDesktopCandidate);
   const localDesktopCandidateUnavailable = ['configured-unreachable', 'not-configured', 'unavailable'].includes(localDesktopCandidateState);
 
   const selectedKey = String(selectedRouteKind || '').trim();
@@ -197,6 +195,34 @@ function summarizeRouteDiagnostics(routeDiagnostics, {
   });
 
   return entries.length > 0 ? entries : ['- n/a'];
+}
+
+function findLocalDesktopRouteCandidate(routeCandidates = []) {
+  if (!Array.isArray(routeCandidates)) {
+    return null;
+  }
+
+  return routeCandidates.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return false;
+    const routeKind = String(candidate.routeKind || '').trim().toLowerCase();
+    const candidateKey = String(candidate.candidateKey || '').trim().toLowerCase();
+    return routeKind === 'local-desktop' || candidateKey === 'local-desktop';
+  }) || null;
+}
+
+function deriveRouteCandidateState(candidate = null) {
+  if (!candidate || typeof candidate !== 'object') {
+    return '';
+  }
+  const explicitState = String(candidate.state || '').trim().toLowerCase();
+  if (explicitState) {
+    return explicitState;
+  }
+  if (candidate.active === true) return 'active';
+  if (candidate.usable === true) return 'usable';
+  if (candidate.reachable === true) return 'reachable-not-usable';
+  if (candidate.configured === true) return 'configured-unreachable';
+  return 'not-configured';
 }
 
 
@@ -794,10 +820,8 @@ export function buildSupportSnapshot({
   const localDesktopSummaryLine = Array.isArray(routeDiagnosticsSummary)
     ? routeDiagnosticsSummary.find((line) => line.startsWith('- local-desktop '))
     : '';
-  const localDesktopCandidateForSummary = Array.isArray(mergedRouteCandidates)
-    ? mergedRouteCandidates.find((candidate) => candidate?.routeKind === 'local-desktop') || null
-    : null;
-  const localDesktopCandidateStateUsedForSummary = asText(localDesktopCandidateForSummary?.state, 'n/a');
+  const localDesktopCandidateForSummary = findLocalDesktopRouteCandidate(mergedRouteCandidates);
+  const localDesktopCandidateStateUsedForSummary = asText(deriveRouteCandidateState(localDesktopCandidateForSummary), 'n/a');
   const routeDiagnosticsCandidateReconciled = String(localDesktopSummaryLine || '').includes('local-desktop-candidate-summary-mismatch')
     ? 'yes'
     : 'no';

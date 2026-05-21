@@ -1164,6 +1164,49 @@ test('buildSupportSnapshot reconciles stale local-desktop diagnostics against st
   assert.match(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
 });
 
+test('buildSupportSnapshot reconciles local-desktop diagnostics when candidate identity is keyed by candidateKey', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      canonicalRouteRuntimeTruth: { sessionKind: 'local-desktop' },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      backendReachableState: 'no',
+    },
+    runtimeSessionTruth: { sessionKind: 'local-desktop' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {
+      routeCandidates: [
+        {
+          candidateKey: 'local-desktop',
+          transportKind: 'direct',
+          configured: true,
+          reason: 'backend is offline',
+        },
+      ],
+      routeDiagnostics: {
+        'local-desktop': {
+          available: true,
+          reason: 'Backend online locally; provider/router is using the live local-desktop backend session',
+        },
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-05-21T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /Route Candidates:\n- local-desktop \[n\/a\/direct\] rank=n\/a score=n\/a state=configured-unreachable \(backend is offline\)/);
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- local-desktop \[candidate\]: unavailable \(local-desktop-candidate-summary-mismatch: structured candidate state=configured-unreachable\)/);
+  assert.match(snapshot, /Local Desktop Candidate State Used For Summary: configured-unreachable/);
+  assert.match(snapshot, /Route Diagnostics Candidate Reconciled: yes/);
+});
+
 test('buildSupportSnapshot reports parity state from runtime truth markers', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
