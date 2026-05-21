@@ -500,9 +500,13 @@ export function buildSupportSnapshot({
     : {};
   const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
   const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
+  const executionTruthState = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
   const routeBlockedBeforeProvider = executionMetadata?.provider_fallback_blocked_by_route === true
     || providerExecutionGateStatus === 'blocked-by-route'
     || providerExecutionGateStatus === 'route-blocked'
+    || executionTruthState === 'blocked-before-provider'
+    || executionTruthState === 'no-provider-executed'
+    || executionTruthState === 'blocked-before-provider / no-provider-executed'
     || commandPipelineFailureReason === 'backend-route-unavailable'
     || commandPipelineFailureReason === 'route_unavailable';
   const visibleActiveProvider = routeBlockedBeforeProvider ? 'none' : asText(routeTruthView?.executedProvider);
@@ -1970,9 +1974,9 @@ export function buildSupportSnapshot({
     `Route Reconciliation Reason: ${asText(routeTruthView?.routeReconciliationReason, 'n/a')}`,
     `Truth Inconsistent: ${routeTruthView?.truthInconsistent ? 'yes' : 'no'}`,
     `Route Usability Conflict: ${routeTruthView?.routeUsabilityConflict ? 'yes' : 'no'}`,
-    `Provider Mismatch: ${routeTruthView?.providerMismatch ? 'yes' : 'no'}`,
+    `Provider Mismatch: ${routeBlockedBeforeProvider ? 'route-blocked/no-provider-executed' : (routeTruthView?.providerMismatch ? 'yes' : 'no')}`,
     `Home Available: ${asYesNoUnknown(runtimeStatus?.homeNodeReachable)}`,
-    `Executable Provider: ${asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
+    `Executable Provider: ${routeBlockedBeforeProvider ? 'none' : asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
     '',
     'routeDiagnosticsSummary:',
     ...effectiveRouteDiagnosticsSummary,
