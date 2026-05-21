@@ -3,6 +3,7 @@ import { deriveUiRealityStatus } from './uiRealityStatus.js';
 import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
 import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
 import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
+const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
   if (value === null || value === undefined) return fallback;
@@ -223,6 +224,29 @@ function deriveRouteCandidateState(candidate = null) {
   if (candidate.reachable === true) return 'reachable-not-usable';
   if (candidate.configured === true) return 'configured-unreachable';
   return 'not-configured';
+}
+
+function isFreshBackendHealthProbe(probeTruth = {}, now = Date.now()) {
+  const lastProbeAt = String(probeTruth?.lastBackendHealthProbeAt || '').trim();
+  const parsedAt = lastProbeAt ? Date.parse(lastProbeAt) : NaN;
+  if (!Number.isFinite(parsedAt)) return false;
+  return (now - parsedAt) <= BACKEND_HEALTH_FRESHNESS_MS;
+}
+
+function synthesizeFreshLocalDesktopCandidate(candidate = null) {
+  const base = candidate && typeof candidate === 'object' ? candidate : {};
+  return {
+    ...base,
+    candidateKey: 'local-desktop',
+    routeKind: 'local-desktop',
+    transportKind: base.transportKind || 'direct',
+    configured: true,
+    reachable: true,
+    usable: true,
+    state: 'usable',
+    blockedReason: '',
+    reason: 'fresh backend health probe confirmed local-desktop backend reachability',
+  };
 }
 
 
@@ -494,11 +518,6 @@ export function buildSupportSnapshot({
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const runtimeContextRouteCandidates = Array.isArray(runtimeContext?.routeCandidates) ? runtimeContext.routeCandidates : [];
   const runtimeTruthRouteCandidates = Array.isArray(runtimeStatus?.runtimeTruth?.routeCandidates) ? runtimeStatus.runtimeTruth.routeCandidates : [];
-  const mergedRouteCandidates = runtimeTruthRouteCandidates.length > 0
-    ? runtimeTruthRouteCandidates
-    : runtimeContextRouteCandidates;
-  const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
-  const routeCandidateSummary = summarizeRouteCandidates(mergedRouteCandidates);
 
   const liveRuntimeContext = safeApiStatus?.runtimeContext && typeof safeApiStatus.runtimeContext === 'object'
     ? safeApiStatus.runtimeContext
@@ -507,9 +526,31 @@ export function buildSupportSnapshot({
     ? liveRuntimeContext.healthProbeTruth
     : {};
   const healthProbeReportsOk = String(liveHealthProbeTruth?.lastBackendHealthProbeResult || '').trim().toLowerCase() === 'ok:true';
+  const healthProbeFresh = isFreshBackendHealthProbe(liveHealthProbeTruth, now instanceof Date ? now.getTime() : Date.now());
+  const healthProbeFreshAndOk = healthProbeReportsOk && healthProbeFresh;
+  const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
+  const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
+  const localDesktopSession = String(sessionKind || '').trim() === 'local-desktop'
+    || String(runtimeContext?.deviceContext || '').trim() === 'pc-local-browser';
+  const canonicalRouteCandidates = runtimeTruthRouteCandidates.length > 0
+    ? runtimeTruthRouteCandidates
+    : runtimeContextRouteCandidates;
+  const mergedRouteCandidates = healthProbeFreshAndOk && localDesktopSession
+    ? [
+      synthesizeFreshLocalDesktopCandidate(findLocalDesktopRouteCandidate(canonicalRouteCandidates)),
+      ...canonicalRouteCandidates.filter((candidate) => {
+        if (!candidate || typeof candidate !== 'object') return false;
+        const routeKind = String(candidate.routeKind || '').trim().toLowerCase();
+        const candidateKey = String(candidate.candidateKey || '').trim().toLowerCase();
+        return routeKind !== 'local-desktop' && candidateKey !== 'local-desktop';
+      }),
+    ]
+    : canonicalRouteCandidates;
+  const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
+  const routeCandidateSummary = summarizeRouteCandidates(mergedRouteCandidates);
   const backendReachableState = safeApiStatus?.backendReachable === true
     ? 'yes'
-    : safeApiStatus?.backendReachable === false && !healthProbeReportsOk
+    : safeApiStatus?.backendReachable === false && !healthProbeFreshAndOk
       ? 'no'
       : routeTruthView?.backendReachableState;
 
@@ -542,8 +583,6 @@ export function buildSupportSnapshot({
   const latestFriction = recentFrictionEvents[recentFrictionEvents.length - 1] || null;
   const latestPattern = detectedFrictionPatterns[detectedFrictionPatterns.length - 1] || null;
 
-  const selectedRouteKind = asText(routeTruthView?.routeKind, 'n/a');
-  const sessionKind = canonicalTruth.sessionKind || runtimeSessionTruth?.sessionKind || runtimeStatus?.sessionKind;
   const executableProvider = canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider || routeTruthView?.executedProvider;
   const hostedCloudCanonicalReady = isHostedCloudCanonicalReady({
     sessionKind,
@@ -835,18 +874,20 @@ export function buildSupportSnapshot({
     : '';
   const localDesktopCandidateForSummary = findLocalDesktopRouteCandidate(mergedRouteCandidates);
   const localDesktopCandidateStateUsedForSummary = asText(deriveRouteCandidateState(localDesktopCandidateForSummary), 'n/a');
-  const localDesktopCandidateSource = runtimeTruthRouteCandidates.length > 0
+  const localDesktopCandidateSource = healthProbeFreshAndOk && localDesktopSession
     ? 'health-probe-fresh'
     : (runtimeContextRouteCandidates.length > 0 ? 'stale-route-candidate' : 'none');
-  const localDesktopCandidateHealthProbeApplied = runtimeTruthRouteCandidates.length > 0 ? 'yes' : 'no';
-  const effectiveBackendAvailableSource = healthProbeReportsOk
+  const localDesktopCandidateHealthProbeApplied = healthProbeFreshAndOk && localDesktopSession ? 'yes' : 'no';
+  const effectiveBackendAvailableSource = healthProbeFreshAndOk
     ? 'health-probe-fresh'
     : (safeApiStatus?.backendReachable === true ? 'safeApiStatus.backendReachable' : 'route-truth-view');
   const routeDiagnosticsCandidateReconciled = String(localDesktopSummaryLine || '').includes('local-desktop-candidate-summary-mismatch')
     ? 'yes'
     : 'no';
-  const routeDiagnosticsSummarySource = runtimeTruthRouteCandidates.length > 0
-    ? 'runtimeStatus.runtimeTruth.routeCandidates'
+  const routeDiagnosticsSummarySource = healthProbeFreshAndOk && localDesktopSession
+    ? 'health-probe-fresh/local-desktop-override'
+    : runtimeTruthRouteCandidates.length > 0
+      ? 'runtimeStatus.runtimeTruth.routeCandidates'
     : runtimeContextRouteCandidates.length > 0
       ? 'runtimeContext.routeCandidates'
       : 'routeDiagnostics-only';
