@@ -494,9 +494,9 @@ export function buildSupportSnapshot({
   const backendTargetInvalidReason = asText(runtimeContext?.backendTargetInvalidReason, 'n/a');
   const runtimeContextRouteCandidates = Array.isArray(runtimeContext?.routeCandidates) ? runtimeContext.routeCandidates : [];
   const runtimeTruthRouteCandidates = Array.isArray(runtimeStatus?.runtimeTruth?.routeCandidates) ? runtimeStatus.runtimeTruth.routeCandidates : [];
-  const mergedRouteCandidates = runtimeContextRouteCandidates.length > 0
-    ? runtimeContextRouteCandidates
-    : runtimeTruthRouteCandidates;
+  const mergedRouteCandidates = runtimeTruthRouteCandidates.length > 0
+    ? runtimeTruthRouteCandidates
+    : runtimeContextRouteCandidates;
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
   const routeCandidateSummary = summarizeRouteCandidates(mergedRouteCandidates);
 
@@ -835,13 +835,20 @@ export function buildSupportSnapshot({
     : '';
   const localDesktopCandidateForSummary = findLocalDesktopRouteCandidate(mergedRouteCandidates);
   const localDesktopCandidateStateUsedForSummary = asText(deriveRouteCandidateState(localDesktopCandidateForSummary), 'n/a');
+  const localDesktopCandidateSource = runtimeTruthRouteCandidates.length > 0
+    ? 'health-probe-fresh'
+    : (runtimeContextRouteCandidates.length > 0 ? 'stale-route-candidate' : 'none');
+  const localDesktopCandidateHealthProbeApplied = runtimeTruthRouteCandidates.length > 0 ? 'yes' : 'no';
+  const effectiveBackendAvailableSource = healthProbeReportsOk
+    ? 'health-probe-fresh'
+    : (safeApiStatus?.backendReachable === true ? 'safeApiStatus.backendReachable' : 'route-truth-view');
   const routeDiagnosticsCandidateReconciled = String(localDesktopSummaryLine || '').includes('local-desktop-candidate-summary-mismatch')
     ? 'yes'
     : 'no';
-  const routeDiagnosticsSummarySource = runtimeContextRouteCandidates.length > 0
-    ? 'runtimeContext.routeCandidates'
-    : runtimeTruthRouteCandidates.length > 0
-      ? 'runtimeStatus.runtimeTruth.routeCandidates'
+  const routeDiagnosticsSummarySource = runtimeTruthRouteCandidates.length > 0
+    ? 'runtimeStatus.runtimeTruth.routeCandidates'
+    : runtimeContextRouteCandidates.length > 0
+      ? 'runtimeContext.routeCandidates'
       : 'routeDiagnostics-only';
   const effectiveRouteDiagnosticsSummary = hasMeaningfulDiagnostics(routeDiagnosticsSummary)
     ? routeDiagnosticsSummary
@@ -2065,6 +2072,9 @@ export function buildSupportSnapshot({
     `Route Diagnostics Summary Source: ${routeDiagnosticsSummarySource}`,
     `Route Diagnostics Candidate Reconciled: ${routeDiagnosticsCandidateReconciled}`,
     `Local Desktop Candidate State Used For Summary: ${localDesktopCandidateStateUsedForSummary}`,
+    `Local Desktop Candidate Source: ${localDesktopCandidateSource}`,
+    `Local Desktop Candidate Health Probe Applied: ${localDesktopCandidateHealthProbeApplied}`,
+    `Effective Backend Available Source: ${effectiveBackendAvailableSource}`,
     `Local Desktop Runtime Diagnostic State: ${asText(localDesktopRuntimeDiagnostics?.available === true ? 'available' : localDesktopRuntimeDiagnostics?.available === false ? 'unavailable' : localDesktopRuntimeDiagnostics?.usable === true ? 'usable' : localDesktopRuntimeDiagnostics?.usable === false ? 'blocked' : '', 'n/a')}`,
     '',
     'blockingIssues:',
