@@ -1113,6 +1113,57 @@ test('buildSupportSnapshot reports non-degraded launch state for healthy idle lo
   assert.match(snapshot, /Execution Status: idle/);
 });
 
+test('buildSupportSnapshot reconciles stale local-desktop diagnostics against structured candidate truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'unavailable',
+      canonicalRouteRuntimeTruth: {
+        sessionKind: 'local-desktop',
+      },
+      executionTruth: 'blocked-before-provider / no-provider-executed',
+      lastExecutionMetadata: {
+        provider_execution_gate_status: 'blocked-by-route',
+        command_pipeline_last_input_restore_available: 'yes',
+      },
+    },
+    routeTruthView: {
+      routeKind: 'unavailable',
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      backendReachableState: 'no',
+    },
+    runtimeSessionTruth: { sessionKind: 'local-desktop' },
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {
+      routeCandidates: [
+        {
+          routeKind: 'local-desktop',
+          state: 'configured-unreachable',
+          reason: 'backend is offline',
+        },
+      ],
+      routeDiagnostics: {
+        'local-desktop': {
+          available: true,
+          reason: 'Backend online locally; provider/router is using the live local-desktop backend session',
+        },
+      },
+    },
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-05-21T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /routeDiagnosticsSummary:\n- local-desktop \[candidate\]: unavailable \(local-desktop-candidate-summary-mismatch: structured candidate state=configured-unreachable\)/);
+  assert.doesNotMatch(snapshot, /routeDiagnosticsSummary:\n- local-desktop \[candidate\]: available \(Backend online locally; provider\/router is using the live local-desktop backend session\)/);
+  assert.match(snapshot, /Active Provider: none/);
+  assert.match(snapshot, /Fallback Active: no/);
+  assert.match(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
+});
+
 test('buildSupportSnapshot reports parity state from runtime truth markers', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
