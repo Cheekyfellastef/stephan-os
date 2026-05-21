@@ -153,14 +153,23 @@ function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null 
     ? status.canonicalRouteRuntimeTruth
     : {};
   const routeCandidates = Array.isArray(status?.runtimeTruth?.routeCandidates) ? status.runtimeTruth.routeCandidates : [];
+  const routeDiagnosticsSummary = Array.isArray(runtimeContext.routeDiagnosticsSummary) ? runtimeContext.routeDiagnosticsSummary : [];
   const sessionKind = String(runtimeContext.sessionKind || canonicalRouteTruth.sessionKind || '').trim();
   const deviceContext = String(runtimeContext.deviceContext || canonicalRouteTruth.deviceContext || '').trim();
   const localDesktopSession = sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser';
   if (!localDesktopSession) return view;
   const localDesktopDiagnostics = runtimeContext.routeDiagnostics?.['local-desktop'] || {};
   const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop') || null;
-  const localDesktopReachable = localDesktopDiagnostics.available === true || localDesktopDiagnostics.backendReachable === true;
-  const localDesktopUsable = localDesktopCandidate?.usable === true || localDesktopDiagnostics.usable === true || localDesktopReachable;
+  const localDesktopSummaryLine = routeDiagnosticsSummary.find((line) => /-\s*local-desktop\b/i.test(String(line || ''))) || '';
+  const localDesktopSummaryAvailable = /\b(available|usable)\b/i.test(localDesktopSummaryLine) && !/\bunavailable|blocked\b/i.test(localDesktopSummaryLine);
+  const localDesktopSummaryBlocked = /\bblocked\b/i.test(localDesktopSummaryLine);
+  const localDesktopReachable = localDesktopDiagnostics.available === true
+    || localDesktopDiagnostics.backendReachable === true
+    || localDesktopSummaryAvailable;
+  const localDesktopUsable = localDesktopCandidate?.usable === true
+    || localDesktopDiagnostics.usable === true
+    || (localDesktopSummaryAvailable && !localDesktopSummaryBlocked)
+    || localDesktopReachable;
   if (!localDesktopCandidate && !localDesktopReachable) return view;
 
   const localDesktopTarget = String(
