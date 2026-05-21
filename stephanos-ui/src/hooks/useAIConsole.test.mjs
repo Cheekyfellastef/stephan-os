@@ -226,7 +226,9 @@ test('command input clearing is gated by submit acceptance return contract', asy
   assert.match(source, /command_pipeline_last_input_restore_available:\s*'yes'/);
   assert.match(source, /command_pipeline_last_failure_reason:\s*normalizedFailureCode \|\| fallbackReason \|\| 'route-unavailable'/);
   assert.match(source, /response_planner_status:\s*blockedBeforeProvider \? 'blocked-before-provider' : 'unavailable'/);
+  assert.match(source, /execution_selected_provider:\s*'none'/);
   assert.match(source, /actual_provider_used:\s*'none'/);
+  assert.match(source, /fallback_active:\s*false/);
   assert.match(aiConsoleSource, /if \(submitResult\?\.inputCleared === true \|\| submitResult\?\.submitAccepted === true\) \{/);
   assert.match(aiConsoleSource, /else if \(submitResult\?\.restoreInput === true\) \{/);
 });
