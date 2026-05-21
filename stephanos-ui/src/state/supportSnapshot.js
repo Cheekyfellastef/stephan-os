@@ -1541,6 +1541,8 @@ export function buildSupportSnapshot({
     `GitHub PR Evidence Projection Integrity: ${githubProjectionIntegrity === 'incomplete' ? 'incomplete-fetched-payload' : githubProjectionIntegrity}` ,
     `GitHub PR Evidence Next Action: ${githubEvidenceNextAction}`,
     `GitHub PR Evidence Fetch Attempted: ${asText(executionMetadata?.github_pr_evidence_fetch_attempted, 'no')}`,
+    `GitHub PR Evidence Fetch Disabled: ${asText(executionMetadata?.github_pr_evidence_fetch_disabled, 'yes')}`,
+    `GitHub PR Evidence Fetch Disabled Reason: ${asText(executionMetadata?.github_pr_evidence_fetch_disabled_reason, 'live-fetch-disabled-by-default')}`,
     `GitHub PR Evidence Fetch URL/Mode: ${asText(executionMetadata?.github_pr_evidence_fetch_url_or_mode, 'none')}`,
     `GitHub PR Evidence Backend Status: ${asText(executionMetadata?.github_pr_evidence_backend_status, 'unknown')}`,
     `GitHub PR Evidence Backend Source: ${asText(executionMetadata?.github_pr_evidence_backend_source, 'none')}`,
