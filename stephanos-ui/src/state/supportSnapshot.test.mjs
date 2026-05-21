@@ -2650,6 +2650,39 @@ test('buildSupportSnapshot normalizes route-blocked execution truth and envelope
   assert.match(snapshot, /Backend Target Resolved URL: n\/a/);
 });
 
+test('buildSupportSnapshot treats stale ROUTE_UNAVAILABLE metadata as historical when route is currently healthy', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      executionTruth: 'ok:ollama',
+      chatContextPackStatus: 'active',
+      lastExecutionMetadata: {
+        provider_execution_gate_status: 'blocked-by-route',
+        command_pipeline_last_failure_reason: 'ROUTE_UNAVAILABLE',
+        response_planner_status: 'active',
+      },
+    },
+    routeTruthView: {
+      routeLayerStatus: 'healthy',
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'yes',
+      backendReachableState: 'yes',
+      executedProvider: 'ollama',
+      fallbackActive: false,
+    },
+    safeApiStatus: {
+      backendReachable: false,
+    },
+  });
+
+  assert.match(snapshot, /Backend Reachable: yes/);
+  assert.match(snapshot, /Last Route Failure Is Historical: yes/);
+  assert.match(snapshot, /Command Pipeline Last Failure Reason: ROUTE_UNAVAILABLE/);
+  assert.match(snapshot, /Execution Truth: ok:ollama/);
+  assert.doesNotMatch(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
+  assert.match(snapshot, /Response Planner Status: active/);
+  assert.match(snapshot, /Chat Context Pack Status: active/);
+});
+
 
 
 test('support snapshot projects identity recall and operator name usage from identity-recall planner mode', () => {
