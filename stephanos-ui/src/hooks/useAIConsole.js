@@ -136,6 +136,15 @@ function resolveLocalDesktopBackendBaseUrl(frontendOrigin = '') {
   }).backendUrl;
 }
 
+function enforceLocalDesktopExecuteRoute(routeTruthView = {}, runtimeContext = {}) {
+  const forcedLocalDesktopTarget = resolveLocalDesktopBackendBaseUrl(runtimeContext.frontendOrigin || '');
+  return {
+    ...routeTruthView,
+    preferredTarget: forcedLocalDesktopTarget || routeTruthView.preferredTarget || '',
+    actualTarget: forcedLocalDesktopTarget || routeTruthView.actualTarget || '',
+  };
+}
+
 function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null } = {}) {
   const status = runtimeStatus && typeof runtimeStatus === 'object' ? runtimeStatus : {};
   const view = routeTruthView && typeof routeTruthView === 'object' ? routeTruthView : {};
@@ -148,8 +157,12 @@ function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null 
   const deviceContext = String(runtimeContext.deviceContext || canonicalRouteTruth.deviceContext || '').trim();
   const localDesktopSession = sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser';
   if (!localDesktopSession) return view;
-  const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop' && candidate?.usable === true);
+  const localDesktopCandidate = routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop');
   if (!localDesktopCandidate) return view;
+
+  const localDesktopDiagnostics = runtimeContext.routeDiagnostics?.['local-desktop'] || {};
+  const localDesktopReachable = localDesktopDiagnostics.available === true || localDesktopDiagnostics.backendReachable === true;
+  const localDesktopUsable = localDesktopCandidate?.usable === true && localDesktopReachable;
 
   const localDesktopTarget = String(
     runtimeContext.routeDiagnostics?.['local-desktop']?.actualTarget
@@ -159,17 +172,18 @@ function resolveExecuteRouteTruth({ runtimeStatus = null, routeTruthView = null 
     || canonicalRouteTruth.actualTarget
     || '',
   ).trim();
-  return {
+  return enforceLocalDesktopExecuteRoute({
     ...view,
     routeKind: 'local-desktop',
     preferredRoute: 'local-desktop',
     selectedRouteReachableState: 'yes',
-    routeUsableState: 'yes',
-    backendReachableState: 'yes',
+    routeUsableState: localDesktopUsable ? 'yes' : 'no',
+    backendReachableState: localDesktopReachable ? 'yes' : 'no',
     preferredTarget: localDesktopTarget || view.preferredTarget,
     actualTarget: localDesktopTarget || view.actualTarget,
     winnerReason: localDesktopCandidate.reason || view.winnerReason,
-  };
+    routeUsabilityVetoReason: localDesktopUsable ? null : 'backend-route-unavailable',
+  }, runtimeContext);
 }
 
 export function buildResponsePlanExecutionMetadata(responsePlan = null) {

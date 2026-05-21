@@ -188,6 +188,35 @@ test('blocks hosted cloud cognition dispatch when backend is unreachable even if
   assert.equal(gate.hostedCloudPathAvailable, true);
 });
 
+test('local-desktop execute lock disables cloud viability and blocks before provider when backend unreachable', () => {
+  const gate = evaluateRequestDispatchGate({
+    routeDecision: {
+      selectedAnswerMode: 'cloud-basic',
+      localRouteAvailable: true,
+      cloudRouteAvailable: true,
+      freshRouteAvailable: true,
+      hostedCloudPathAvailable: true,
+    },
+    routeTruthView: {
+      backendReachableState: 'no',
+      routeUsableState: 'no',
+    },
+    runtimeStatus: {
+      sessionKind: 'local-desktop',
+      runtimeContext: {
+        sessionKind: 'local-desktop',
+        deviceContext: 'pc-local-browser',
+      },
+    },
+  });
+
+  assert.equal(gate.localDesktopExecuteLocked, true);
+  assert.equal(gate.dispatchAllowed, false);
+  assert.equal(gate.reasonCode, 'backend-route-unavailable');
+  assert.equal(gate.cloudRouteViable, false);
+  assert.equal(gate.freshRouteViable, false);
+});
+
 test('canonical local-desktop winner cannot be overridden by stale home-node route decision at dispatch time', () => {
   const gate = evaluateRequestDispatchGate({
     routeDecision: {
