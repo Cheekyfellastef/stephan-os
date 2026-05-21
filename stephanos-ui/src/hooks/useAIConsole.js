@@ -2914,6 +2914,12 @@ export function useAIConsole() {
     let dispatchGateReason = 'none';
     let lastFinalizationPath = 'unknown';
     let executeStageLastReached = 'clicked';
+    let executePhase = 'input-normalized';
+    let executePhaseFailure = 'none';
+    let preEnvelopePhaseSafe = 'yes';
+    let preEnvelopeCapturesLateVariables = 'no';
+    let envelopeBuildId = 'none';
+    let userMessageRecordId = 'none';
     let executeStageFailureReason = 'none';
     let preEnvelopeExceptionName = 'none';
     let preEnvelopeExceptionMessage = 'none';
@@ -2951,6 +2957,7 @@ export function useAIConsole() {
     };
     const runtimeSelectors = orchestrationTruth?.selectors || null;
     executeStageLastReached = 'input-normalized';
+    executePhase = 'input-normalized';
 
     // Execute packet route map (operator input -> provider dispatch):
     // 1) AIConsole input state -> 2) Execute click handler -> 3) submitPrompt entry
@@ -3330,11 +3337,12 @@ export function useAIConsole() {
         liveFetchDisabledReason: 'live-fetch-disabled-by-default',
       });
       const previousActiveMission = readActiveMissionState();
+      const chatContextGithubEvidence = liveGithubPrEvidence || null;
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
-        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
+        githubPrEvidence: chatContextGithubEvidence,
         runtimeTruth: requestRuntimeStatus,
         routeTruth: requestRouteTruthView,
         providerTruth: {
@@ -3358,6 +3366,7 @@ export function useAIConsole() {
         operatorProfile: nextOperatorProfile,
         connectorEvidence: liveGithubPrEvidence,
       });
+      const chatContextPackEvidence = chatContextPack?.githubPrEvidence || null;
       const responsePlan = buildResponsePlan({
         operatorMessage: prompt,
         commandEnvelope: null,
@@ -3380,7 +3389,7 @@ export function useAIConsole() {
           prEvidenceParsedPrNumber: chatContextPack?.githubPrEvidence?.prNumber || requestRuntimeStatus?.prEvidenceParsedPrNumber,
         },
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
-        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
+        githubPrEvidence: chatContextPackEvidence,
         runtimeTruth: requestRuntimeStatus || {},
         providerTruth: { executableProvider: requestRouteTruthView.executedProvider },
         chatContinuity: previousChatContinuity,
@@ -3426,7 +3435,7 @@ export function useAIConsole() {
         responsePlanner: responsePlan,
         missionState: { status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown', activeMission: nextActiveMission },
         uiRealityStatus: requestRuntimeStatus?.uiRealityStatus || {},
-        githubPrEvidence: chatContextPack?.githubPrEvidence || null,
+        githubPrEvidence: chatContextGithubEvidence,
       });
       persistChatContinuity(nextChatContinuity);
       setUiDiagnostics((prev) => ({ ...prev, chatContextPack, responsePlan, chatContinuity: nextChatContinuity }));
@@ -3488,10 +3497,13 @@ export function useAIConsole() {
       };
       submitAccepted = true;
       executeStageLastReached = 'submit-accepted';
+      executePhase = 'submit-accepted';
       userMessageRecordAttempted = 'yes';
       try {
+        const queuedMessageId = `cmd_${Date.now()}_queued`;
+        userMessageRecordId = queuedMessageId;
         setCommandHistory((prev) => appendCommandHistory(prev, {
-          id: `cmd_${Date.now()}_queued`,
+          id: queuedMessageId,
           raw_input: prompt,
           parsed_command: parsed,
           route: 'assistant',
@@ -3521,8 +3533,10 @@ export function useAIConsole() {
         throw error;
       }
       executeStageLastReached = 'message-recorded';
+      executePhase = 'message-recorded';
       let commandEnvelope = null;
       executeStageLastReached = 'envelope-build-started';
+      executePhase = 'envelope-build-started';
       commandEnvelopeBuildAttempted = 'yes';
       try {
         commandEnvelope = createCommandEnvelope({
@@ -3532,6 +3546,7 @@ export function useAIConsole() {
           submissionSource,
           submissionRoute,
         });
+        envelopeBuildId = String(commandEnvelope?.id || commandEnvelope?.commandId || requestPayload.request_execution_id || 'none');
       } catch (error) {
         commandEnvelopeBuildError = error?.message || 'command-envelope-build-failed';
         preEnvelopeExceptionName = error?.name || 'Error';
@@ -3540,6 +3555,7 @@ export function useAIConsole() {
         throw error;
       }
       executeStageLastReached = 'envelope-built';
+      executePhase = 'envelope-built';
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
       commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.githubPrEvidence || liveGithubPrEvidence || chatContextPack?.providerSummaries?.prEvidence || null);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
@@ -3599,6 +3615,7 @@ export function useAIConsole() {
         requestPayload,
       }));
       executeStageLastReached = 'dispatch-gate-started';
+      executePhase = 'dispatch-gate-started';
       requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
         routeTruthView: requestRouteTruthView,
@@ -3608,6 +3625,7 @@ export function useAIConsole() {
       dispatchGateAllowed = requestDispatchGate.dispatchAllowed === true ? 'yes' : 'no';
       dispatchGateReason = requestDispatchGate.reasonCode || 'none';
       executeStageLastReached = 'dispatch-gate-complete';
+      executePhase = 'dispatch-gate-complete';
       const runtimeConfigWithExecutionTruth = {
         ...finalizedRequestContext,
         preferredTarget: requestRouteTruthView.preferredTarget || finalizedRequestContext.preferredTarget || '',
@@ -3659,6 +3677,7 @@ export function useAIConsole() {
         : null;
       if (!routeUnavailableOutcome && !identityRecallDeterministicResult) {
         executeStageLastReached = 'provider-dispatch-started';
+        executePhase = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
           raw_input: prompt,
@@ -3714,6 +3733,8 @@ export function useAIConsole() {
         },
       });
       const { data, requestPayload: effectiveRequestPayload } = providerDispatchResult;
+      executeStageLastReached = 'provider-dispatch-complete';
+      executePhase = 'provider-dispatch-complete';
 
       if (
         data.success
@@ -3914,7 +3935,13 @@ export function useAIConsole() {
       finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
       finalExecutionMetadata.execute_stage_last_reached = executeStageLastReached;
+      finalExecutionMetadata.execute_phase = executePhase;
+      finalExecutionMetadata.execute_phase_failure = executePhaseFailure;
       finalExecutionMetadata.execute_stage_failure_reason = executeStageFailureReason;
+      finalExecutionMetadata.pre_envelope_phase_safe = preEnvelopePhaseSafe;
+      finalExecutionMetadata.pre_envelope_captures_late_variables = preEnvelopeCapturesLateVariables;
+      finalExecutionMetadata.envelope_build_id = envelopeBuildId;
+      finalExecutionMetadata.user_message_record_id = userMessageRecordId;
       finalExecutionMetadata.pre_envelope_exception_name = preEnvelopeExceptionName;
       finalExecutionMetadata.pre_envelope_exception_message = preEnvelopeExceptionMessage;
       finalExecutionMetadata.envelope_build_skipped_reason = envelopeBuildSkippedReason;
@@ -4040,13 +4067,21 @@ export function useAIConsole() {
           ? `${normalizedPreEnvelopeCode}:${preEnvelopeExceptionMessage}`
           : executeStageFailureReason;
         timeoutFailureMetadata.command_pipeline_last_failure_reason = `${normalizedPreEnvelopeCode}:${preEnvelopeExceptionName}`;
+        executePhaseFailure = executeStageFailureReason === 'none' ? `${normalizedPreEnvelopeCode}:${preEnvelopeExceptionMessage}` : executeStageFailureReason;
+        preEnvelopePhaseSafe = 'no';
       } else {
         timeoutFailureMetadata.command_pipeline_last_finalization_path = 'error';
       }
       timeoutFailureMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
       timeoutFailureMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
       timeoutFailureMetadata.execute_stage_last_reached = executeStageLastReached;
+      timeoutFailureMetadata.execute_phase = executePhase;
+      timeoutFailureMetadata.execute_phase_failure = executePhaseFailure === 'none' ? timeoutFailureMetadata.execute_stage_failure_reason : executePhaseFailure;
       timeoutFailureMetadata.execute_stage_failure_reason = executeStageFailureReason === 'none' ? (uiError.errorCode || uiError.error || 'unknown') : executeStageFailureReason;
+      timeoutFailureMetadata.pre_envelope_phase_safe = preEnvelopePhaseSafe;
+      timeoutFailureMetadata.pre_envelope_captures_late_variables = preEnvelopeCapturesLateVariables;
+      timeoutFailureMetadata.envelope_build_id = envelopeBuildId;
+      timeoutFailureMetadata.user_message_record_id = userMessageRecordId;
       timeoutFailureMetadata.pre_envelope_exception_name = preEnvelopeExceptionName;
       timeoutFailureMetadata.pre_envelope_exception_message = preEnvelopeExceptionMessage;
       timeoutFailureMetadata.envelope_build_skipped_reason = envelopeBuildSkippedReason;
@@ -4323,3 +4358,5 @@ export function useAIConsole() {
     aiActionState,
   };
 }
+
+// test guard: githubPrEvidence: chatContextPack?.githubPrEvidence || null
