@@ -2583,7 +2583,16 @@ export function useAIConsole() {
         healthEndpoint: finalized.runtimeContext.healthEndpoint,
         backendReachable: health.ok,
         backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext: finalized.runtimeContext,
+        runtimeContext: {
+          ...finalized.runtimeContext,
+          healthProbeTruth: {
+            ...(finalized.runtimeContext?.healthProbeTruth || {}),
+            lastBackendHealthProbeAt: new Date().toISOString(),
+            lastBackendHealthProbeResult: health.ok ? 'ok:true' : `ok:false:http-${health.status || 0}`,
+            routeHealthRevalidatedAfterFailure: health.ok ? 'yes' : 'no',
+            currentBackendHealthSource: 'refresh-health-poll',
+          },
+        },
         lastCheckedAt: new Date().toISOString(),
         meta: {
           ...(health.data || {}),
@@ -2608,7 +2617,16 @@ export function useAIConsole() {
         healthEndpoint: resolvedRuntimeContext.healthEndpoint || runtimeConfig.healthEndpoint,
         backendReachable: false,
         backendDefaultProvider: 'unknown',
-        runtimeContext: finalized.runtimeContext,
+        runtimeContext: {
+          ...finalized.runtimeContext,
+          healthProbeTruth: {
+            ...(finalized.runtimeContext?.healthProbeTruth || {}),
+            lastBackendHealthProbeAt: new Date().toISOString(),
+            lastBackendHealthProbeResult: 'ok:false:error',
+            routeHealthRevalidatedAfterFailure: 'no',
+            currentBackendHealthSource: 'refresh-health-poll',
+          },
+        },
         lastCheckedAt: new Date().toISOString(),
         meta: null,
       });
@@ -3148,7 +3166,26 @@ export function useAIConsole() {
       activeRouteDecision = freshnessRouteDecision;
       setApiStatus((prev) => ({
         ...prev,
-        runtimeContext: finalizedRequestContext,
+        state: submitHealth?.ok ? 'online' : prev.state,
+        label: submitHealth?.ok ? `Connected to ${submitHealth.target || prev.target || 'backend'} API` : prev.label,
+        detail: submitHealth?.ok
+          ? `Backend reachable. Default provider: ${submitHealth.data?.default_provider || prev.backendDefaultProvider || 'mock'}.`
+          : prev.detail,
+        target: submitHealth?.target || prev.target,
+        baseUrl: submitHealth?.baseUrl || prev.baseUrl,
+        backendReachable: submitHealth?.ok === true ? true : prev.backendReachable,
+        backendDefaultProvider: submitHealth?.data?.default_provider || prev.backendDefaultProvider,
+        lastCheckedAt: new Date().toISOString(),
+        runtimeContext: {
+          ...finalizedRequestContext,
+          healthProbeTruth: {
+            ...(finalizedRequestContext?.healthProbeTruth || {}),
+            lastBackendHealthProbeAt: new Date().toISOString(),
+            lastBackendHealthProbeResult: submitHealth?.ok === true ? 'ok:true' : 'ok:false',
+            routeHealthRevalidatedAfterFailure: submitHealth?.ok === true ? 'yes' : 'no',
+            currentBackendHealthSource: 'submit-time-probe',
+          },
+        },
       }));
       const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
         || freshnessRouteDecision.selectedProvider
