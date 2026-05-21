@@ -80,7 +80,12 @@ export function evaluateRequestDispatchGate({
   const cloudRouteViable = localDesktopExecuteLocked
     ? false
     : ((routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true && backendReachable);
-  const localRouteViable = routeDecision?.localRouteAvailable === true && backendReachable;
+  const selectedLocalDesktopRoute = selectedRouteKind === 'local-desktop';
+  const selectedRouteUsable = routeUsableState === 'yes';
+  const localRouteViable = (
+    routeDecision?.localRouteAvailable === true
+    || (selectedLocalDesktopRoute && selectedRouteUsable)
+  ) && backendReachable;
   const selectedAnswerMode = routeDecision?.selectedAnswerMode || 'local-private';
   const selectedProvider = String(routeDecision?.selectedProvider || '').trim().toLowerCase();
   const shouldPromoteToCloudBasic = (
@@ -116,7 +121,7 @@ export function evaluateRequestDispatchGate({
       backendReachable,
       backendReachabilityState,
       selectedRouteKind,
-      selectedRouteUsable: routeUsableState === 'yes',
+      selectedRouteUsable,
       routeUsableState,
       fallbackVetoReason,
     };
@@ -134,7 +139,7 @@ export function evaluateRequestDispatchGate({
       backendReachabilityState,
       hostedCloudPathAvailable,
       selectedRouteKind,
-      selectedRouteUsable: routeUsableState === 'yes',
+      selectedRouteUsable,
       routeUsableState,
       fallbackVetoReason: 'backend-route-unavailable',
       localDesktopExecuteLocked,
