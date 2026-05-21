@@ -2920,6 +2920,11 @@ export function useAIConsole() {
     let envelopeBuildSkippedReason = 'none';
     let userMessageRecordAttempted = 'no';
     let userMessageRecordError = 'none';
+    let requestDispatchGate = null;
+    let routeUnavailableOutcome = null;
+    let providerDispatchResult = null;
+    let streamEntryId = `cmd_${Date.now()}_stream`;
+    let streamBuffer = '';
     const appendLocalOperatorEntry = (outputText) => {
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -3594,7 +3599,7 @@ export function useAIConsole() {
         requestPayload,
       }));
       executeStageLastReached = 'dispatch-gate-started';
-      const requestDispatchGate = evaluateRequestDispatchGate({
+      requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
         routeTruthView: requestRouteTruthView,
         runtimeStatus: requestRuntimeStatus,
@@ -3630,7 +3635,7 @@ export function useAIConsole() {
         timeoutExecutionProvider: timeoutExecutionEnvelope.effectiveProvider || 'unknown',
         timeoutExecutionModel: timeoutExecutionEnvelope.effectiveModel || null,
       });
-      const routeUnavailableResult = routeDispatchBlocked
+      routeUnavailableOutcome = routeDispatchBlocked
         ? createRouteUnavailableResult({
           prompt,
           parsed,
@@ -3642,7 +3647,7 @@ export function useAIConsole() {
           requestPayload,
         })
         : null;
-      const identityRecallDeterministicResult = (!routeUnavailableResult && identityRecallDeterministicEligible)
+      const identityRecallDeterministicResult = (!routeUnavailableOutcome && identityRecallDeterministicEligible)
         ? createIdentityRecallDeterministicResult({
           prompt,
           parsed,
@@ -3652,9 +3657,7 @@ export function useAIConsole() {
           operatorProfileSource: chatContextPack?.providerSummaries?.operatorProfile?.source || 'operator profile',
         })
         : null;
-      const streamEntryId = `cmd_${Date.now()}_stream`;
-      let streamBuffer = '';
-      if (!routeUnavailableResult && !identityRecallDeterministicResult) {
+      if (!routeUnavailableOutcome && !identityRecallDeterministicResult) {
         executeStageLastReached = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
@@ -3678,7 +3681,7 @@ export function useAIConsole() {
           continuity_retrieval_reason: continuityLookup.reason,
         }));
       }
-      const { data, requestPayload: effectiveRequestPayload } = routeUnavailableResult || identityRecallDeterministicResult || await sendPrompt({
+      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
         uiRequestedProvider: requestPayload.ui_requested_provider,
@@ -3710,6 +3713,7 @@ export function useAIConsole() {
             : entry));
         },
       });
+      const { data, requestPayload: effectiveRequestPayload } = providerDispatchResult;
 
       if (
         data.success
@@ -3837,7 +3841,7 @@ export function useAIConsole() {
       console.debug('[Stephanos UI] Received AI response', executionMetadata);
 
       const entry = {
-        id: routeUnavailableResult ? `cmd_${Date.now()}` : streamEntryId,
+        id: routeUnavailableOutcome ? `cmd_${Date.now()}` : streamEntryId,
         raw_input: prompt,
         parsed_command: parsed,
         route: data.route,
@@ -3859,11 +3863,11 @@ export function useAIConsole() {
       };
 
       setCommandHistory((prev) => {
-        if (routeUnavailableResult || identityRecallDeterministicResult) return appendCommandHistory(prev, entry);
+        if (routeUnavailableOutcome || identityRecallDeterministicResult) return appendCommandHistory(prev, entry);
         return prev.map((existing) => existing.id === streamEntryId ? entry : existing);
       });
-      submitAccepted = !routeUnavailableResult;
-      lastFinalizationPath = routeUnavailableResult ? 'error' : (identityRecallDeterministicResult ? 'deterministic-identity' : 'provider');
+      submitAccepted = !routeUnavailableOutcome;
+      lastFinalizationPath = routeUnavailableOutcome ? 'error' : (identityRecallDeterministicResult ? 'deterministic-identity' : 'provider');
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 
@@ -4048,6 +4052,17 @@ export function useAIConsole() {
       timeoutFailureMetadata.envelope_build_skipped_reason = envelopeBuildSkippedReason;
       timeoutFailureMetadata.user_message_record_attempted = userMessageRecordAttempted;
       timeoutFailureMetadata.user_message_record_error = userMessageRecordError;
+      const preEnvelopeFailureActive = String(timeoutFailureMetadata.command_pipeline_last_finalization_path || '') === 'pre-envelope-error';
+      if (preEnvelopeFailureActive) {
+        timeoutFailureMetadata.active_provider = 'none';
+        timeoutFailureMetadata.fallback_used = 'no';
+        timeoutFailureMetadata.last_executable_provider = 'none';
+        timeoutFailureMetadata.actual_provider_used = 'none';
+        timeoutFailureMetadata.command_envelope_actual_provider = 'none';
+        timeoutFailureMetadata.execution_truth = 'pre-envelope-error';
+        timeoutFailureMetadata.provider_mismatch = 'no';
+        timeoutFailureMetadata.executable_provider = 'none';
+      }
       setLastExecutionMetadata(attachChatContextToExecutionMetadata({
         executionMetadata: timeoutFailureMetadata,
         requestPayload: inFlightRequestPayload || {},
