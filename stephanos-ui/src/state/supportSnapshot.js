@@ -145,10 +145,19 @@ function deriveExecutionTruthInvariantWarnings(runtimeStatus = {}) {
   return warnings;
 }
 
-function summarizeRouteDiagnostics(routeDiagnostics, { selectedRouteKind = '' } = {}) {
+function summarizeRouteDiagnostics(routeDiagnostics, {
+  selectedRouteKind = '',
+  routeCandidates = [],
+} = {}) {
   if (!routeDiagnostics || typeof routeDiagnostics !== 'object') {
     return ['- n/a'];
   }
+
+  const localDesktopCandidate = Array.isArray(routeCandidates)
+    ? routeCandidates.find((candidate) => candidate?.routeKind === 'local-desktop')
+    : null;
+  const localDesktopCandidateState = String(localDesktopCandidate?.state || '').trim().toLowerCase();
+  const localDesktopCandidateUnavailable = ['configured-unreachable', 'not-configured', 'unavailable'].includes(localDesktopCandidateState);
 
   const selectedKey = String(selectedRouteKind || '').trim();
   const orderedEntries = Object.entries(routeDiagnostics).sort(([left], [right]) => {
@@ -160,7 +169,7 @@ function summarizeRouteDiagnostics(routeDiagnostics, { selectedRouteKind = '' } 
     if (!details || typeof details !== 'object') {
       return `- ${key}: n/a`;
     }
-    const state = details.usable === true
+    let state = details.usable === true
       ? 'usable'
       : details.usable === false
         ? 'blocked'
@@ -169,7 +178,16 @@ function summarizeRouteDiagnostics(routeDiagnostics, { selectedRouteKind = '' } 
           : details.available === false
             ? 'unavailable'
             : 'unknown';
-    const reason = asText(details.reason || details.blockedReason || details.operatorReason, 'n/a');
+    let reason = asText(details.reason || details.blockedReason || details.operatorReason, 'n/a');
+    if (key === 'local-desktop' && localDesktopCandidateUnavailable) {
+      const staleSummary = state === 'available' || state === 'usable';
+      if (staleSummary) {
+        state = 'unavailable';
+        reason = `local-desktop-candidate-summary-mismatch: structured candidate state=${localDesktopCandidateState}`;
+      } else if (reason === 'n/a') {
+        reason = `structured candidate state=${localDesktopCandidateState}`;
+      }
+    }
     const routeLabel = key === selectedKey
       ? `${key} [selected]`
       : selectedKey
@@ -765,6 +783,7 @@ export function buildSupportSnapshot({
   });
   const routeDiagnosticsSummary = summarizeRouteDiagnostics(runtimeContext?.routeDiagnostics, {
     selectedRouteKind,
+    routeCandidates: runtimeContext?.routeCandidates,
   });
   const effectiveRouteDiagnosticsSummary = hasMeaningfulDiagnostics(routeDiagnosticsSummary)
     ? routeDiagnosticsSummary
