@@ -500,6 +500,18 @@ export function buildSupportSnapshot({
   const backendTargetCandidatesSummary = summarizeBackendTargetCandidates(runtimeContext?.backendTargetCandidates);
   const routeCandidateSummary = summarizeRouteCandidates(mergedRouteCandidates);
 
+  const liveRuntimeContext = safeApiStatus?.runtimeContext && typeof safeApiStatus.runtimeContext === 'object'
+    ? safeApiStatus.runtimeContext
+    : runtimeContext;
+  const liveHealthProbeTruth = liveRuntimeContext?.healthProbeTruth && typeof liveRuntimeContext.healthProbeTruth === 'object'
+    ? liveRuntimeContext.healthProbeTruth
+    : {};
+  const backendReachableState = safeApiStatus?.backendReachable === true
+    ? 'yes'
+    : safeApiStatus?.backendReachable === false
+      ? 'no'
+      : routeTruthView?.backendReachableState;
+
   const bridgeTransportTruth = runtimeContext?.bridgeTransportTruth && typeof runtimeContext.bridgeTransportTruth === 'object'
     ? runtimeContext.bridgeTransportTruth
     : {};
@@ -1296,12 +1308,12 @@ export function buildSupportSnapshot({
     `Selected Provider: ${asText(routeTruthView?.selectedProvider)}`,
     `Active Provider: ${visibleActiveProvider}`,
     `Fallback Active: ${visibleFallbackActive}`,
-    `Backend Reachable: ${asText(routeTruthView?.backendReachableState)}`,
-    `Last Backend Health Probe At: ${asText(runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt, 'n/a')}`,
-    `Last Backend Health Probe Result: ${asText(runtimeContext?.healthProbeTruth?.lastBackendHealthProbeResult, 'unknown')}`,
-    `Route Health Revalidated After Failure: ${asText(runtimeContext?.healthProbeTruth?.routeHealthRevalidatedAfterFailure, 'no')}`,
+    `Backend Reachable: ${asText(backendReachableState)}`,
+    `Last Backend Health Probe At: ${asText(liveHealthProbeTruth?.lastBackendHealthProbeAt, 'n/a')}`,
+    `Last Backend Health Probe Result: ${asText(liveHealthProbeTruth?.lastBackendHealthProbeResult, 'unknown')}`,
+    `Route Health Revalidated After Failure: ${asText(liveHealthProbeTruth?.routeHealthRevalidatedAfterFailure, 'no')}`,
     `Stale Route Failure Present: ${asText(routeTruthView?.staleRouteFailurePresent === true ? 'yes' : 'no')}`,
-    `Current Backend Health Source: ${asText(runtimeContext?.healthProbeTruth?.currentBackendHealthSource, 'unknown')}`,
+    `Current Backend Health Source: ${asText(liveHealthProbeTruth?.currentBackendHealthSource, 'unknown')}`,
     `Network Reachability Truth: ${asText(routeTruthView?.networkReachabilityState, 'unknown')}`,
     `Browser Direct Access: ${asText(routeTruthView?.browserDirectAccessState, 'unknown')}`,
     `Transport Compatibility Layer: ${asText(routeTruthView?.transportCompatibilityLayer, 'not-required')}`,
