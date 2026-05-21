@@ -94,6 +94,32 @@ function Get-TailscaleCommand {
     return $null
 }
 
+function Write-LatestBackendErrorTail {
+    param(
+        [string]$RootLogsDir,
+        [int]$TailLineCount = 80
+    )
+
+    if (-not (Test-Path -LiteralPath $RootLogsDir)) {
+        Write-Log "No backend log directory found at $RootLogsDir"
+        return
+    }
+
+    $latestStderr = Get-ChildItem -Path $RootLogsDir -Filter 'backend-start-*.stderr.log' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if (-not $latestStderr) {
+        Write-Log 'No backend stderr log found to tail.'
+        return
+    }
+
+    Write-Log ("Latest backend stderr log: {0}" -f $latestStderr.FullName)
+    Write-Log ("----- stderr tail (last {0} lines) -----" -f $TailLineCount)
+    Get-Content -Path $latestStderr.FullName -Tail $TailLineCount | ForEach-Object { Write-Log $_ }
+    Write-Log '----- end stderr tail -----'
+}
+
 Write-Log "Stephanos Battle Bridge repair started. Repo root: $repoRoot"
 Write-Log "Task: $taskName"
 Write-Log "Expected Serve mapping: $expectedServeHost/ -> $expectedServeTarget"
@@ -138,6 +164,7 @@ else {
     $localResult = Test-Url -Url $localHealthUrl
     if (-not $localResult.Healthy) {
         Write-Log "ERROR: Backend remains unhealthy after starter run: $($localResult.Error)"
+        Write-LatestBackendErrorTail -RootLogsDir $logsDir
         exit 1
     }
 
