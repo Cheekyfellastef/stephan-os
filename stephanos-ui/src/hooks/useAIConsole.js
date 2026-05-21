@@ -284,6 +284,20 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
 
 
 
+
+function reconcileBackendHealthTruth({ runtimeContext = {}, healthOk = false, source = 'unknown', status = 0, hadRouteUnavailableFailure = false } = {}) {
+  const previous = runtimeContext?.healthProbeTruth && typeof runtimeContext.healthProbeTruth === 'object'
+    ? runtimeContext.healthProbeTruth
+    : {};
+  return {
+    ...previous,
+    lastBackendHealthProbeAt: new Date().toISOString(),
+    lastBackendHealthProbeResult: healthOk ? 'ok:true' : (status ? `ok:false:http-${status}` : 'ok:false:error'),
+    routeHealthRevalidatedAfterFailure: healthOk && hadRouteUnavailableFailure ? 'yes' : (healthOk ? (previous.routeHealthRevalidatedAfterFailure || 'no') : 'no'),
+    currentBackendHealthSource: source,
+  };
+}
+
 function adoptRemoteHomeNodeFromHealth(resolvedRuntimeContext, health = {}) {
   const frontendHost = extractHostname(resolvedRuntimeContext.frontendOrigin);
   const localDesktopSession = isLoopbackHost(frontendHost);
@@ -2585,13 +2599,13 @@ export function useAIConsole() {
         backendDefaultProvider: health.data?.default_provider || 'mock',
         runtimeContext: {
           ...finalized.runtimeContext,
-          healthProbeTruth: {
-            ...(finalized.runtimeContext?.healthProbeTruth || {}),
-            lastBackendHealthProbeAt: new Date().toISOString(),
-            lastBackendHealthProbeResult: health.ok ? 'ok:true' : `ok:false:http-${health.status || 0}`,
-            routeHealthRevalidatedAfterFailure: health.ok ? 'yes' : 'no',
-            currentBackendHealthSource: 'refresh-health-poll',
-          },
+          healthProbeTruth: reconcileBackendHealthTruth({
+            runtimeContext: finalized.runtimeContext,
+            healthOk: health.ok === true,
+            source: 'refresh-health-poll',
+            status: health.status || 0,
+            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
+          }),
         },
         lastCheckedAt: new Date().toISOString(),
         meta: {
@@ -2619,13 +2633,13 @@ export function useAIConsole() {
         backendDefaultProvider: 'unknown',
         runtimeContext: {
           ...finalized.runtimeContext,
-          healthProbeTruth: {
-            ...(finalized.runtimeContext?.healthProbeTruth || {}),
-            lastBackendHealthProbeAt: new Date().toISOString(),
-            lastBackendHealthProbeResult: 'ok:false:error',
-            routeHealthRevalidatedAfterFailure: 'no',
-            currentBackendHealthSource: 'refresh-health-poll',
-          },
+          healthProbeTruth: reconcileBackendHealthTruth({
+            runtimeContext: finalized.runtimeContext,
+            healthOk: false,
+            source: 'refresh-health-poll',
+            status: 0,
+            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
+          }),
         },
         lastCheckedAt: new Date().toISOString(),
         meta: null,
@@ -2634,7 +2648,7 @@ export function useAIConsole() {
     } finally {
       healthRefreshInFlightRef.current = false;
     }
-  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth]);
+  }, [runtimeConfig, setApiStatus, provider, routeMode, effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, setProviderHealth, resolveRuntimeConfig, buildRuntimeContextFromHealth, setHomeNodeLastKnown, setHomeNodeStatus, finalizeRuntimeContext, setHostedCloudCognitionHealth, lastExecutionMetadata?.command_pipeline_last_failure_reason]);
 
 
   useEffect(() => {
@@ -3178,13 +3192,13 @@ export function useAIConsole() {
         lastCheckedAt: new Date().toISOString(),
         runtimeContext: {
           ...finalizedRequestContext,
-          healthProbeTruth: {
-            ...(finalizedRequestContext?.healthProbeTruth || {}),
-            lastBackendHealthProbeAt: new Date().toISOString(),
-            lastBackendHealthProbeResult: submitHealth?.ok === true ? 'ok:true' : 'ok:false',
-            routeHealthRevalidatedAfterFailure: submitHealth?.ok === true ? 'yes' : 'no',
-            currentBackendHealthSource: 'submit-time-probe',
-          },
+          healthProbeTruth: reconcileBackendHealthTruth({
+            runtimeContext: finalizedRequestContext,
+            healthOk: submitHealth?.ok === true,
+            source: 'submit-time-probe',
+            status: submitHealth?.status || 0,
+            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
+          }),
         },
       }));
       const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
