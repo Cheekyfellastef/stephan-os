@@ -1556,7 +1556,15 @@ function createRouteUnavailableResult({
     : dispatchBlockedDespiteUsableRoute
       ? 'Route truth is healthy, but backend execution contract is stale or incompatible. Rebuild/restart Battle Bridge and retry provider dispatch.'
     : `Selected route unusable at request time (${routeKind}).`;
-  const errorCode = dispatchBlockedDespiteUsableRoute ? 'PROVIDER_EXECUTION_CONTRACT_MISMATCH' : 'ROUTE_UNAVAILABLE';
+  const blockedBeforeProvider = fallbackReason === 'backend-route-unavailable'
+    || fallbackReason === 'backend-unreachable'
+    || fallbackReason === 'battle-bridge-unreachable-hosted-cloud-cognition-available';
+  const normalizedFailureCode = blockedBeforeProvider
+    ? 'backend-route-unavailable'
+    : fallbackReason;
+  const errorCode = dispatchBlockedDespiteUsableRoute
+    ? 'PROVIDER_EXECUTION_CONTRACT_MISMATCH'
+    : (normalizedFailureCode || 'ROUTE_UNAVAILABLE');
 
   return {
     data: {
@@ -1608,10 +1616,19 @@ function createRouteUnavailableResult({
           selected_route_kind: routeKind,
           selected_route_usable: routeUsableState === 'yes',
           selected_route_usable_state: routeUsableState,
-          route_unavailable_reason: fallbackReason,
+          route_unavailable_reason: normalizedFailureCode || fallbackReason,
           provider_execution_block_reason: dispatchBlockedDespiteUsableRoute ? fallbackReason : null,
           route_provider_mismatch_blocker: routeProviderMismatchBlocker,
           fallback_veto_reason: fallbackVetoReason,
+        },
+        execution_metadata: {
+          executable_provider: 'none',
+          execution_selected_provider: 'none',
+          actual_provider_used: 'none',
+          command_pipeline_last_failure_reason: normalizedFailureCode || fallbackReason || 'route-unavailable',
+          command_pipeline_last_input_restore_available: 'yes',
+          response_planner_status: blockedBeforeProvider ? 'blocked-before-provider' : 'unavailable',
+          github_pr_evidence_fetch_attempted: 'no',
         },
       },
     },
@@ -2775,7 +2792,7 @@ export function useAIConsole() {
       setCommandHistory((prev) => appendCommandHistory(prev, entry));
       setLastRoute('assistant');
       setStatus('idle');
-      submitAccepted = true;
+      submitAccepted = !routeUnavailableResult;
       lastFinalizationPath = 'deterministic-identity';
     };
     const runtimeSelectors = orchestrationTruth?.selectors || null;
@@ -3596,7 +3613,7 @@ export function useAIConsole() {
         if (routeUnavailableResult || identityRecallDeterministicResult) return appendCommandHistory(prev, entry);
         return prev.map((existing) => existing.id === streamEntryId ? entry : existing);
       });
-      submitAccepted = true;
+      submitAccepted = !routeUnavailableResult;
       lastFinalizationPath = routeUnavailableResult ? 'error' : (identityRecallDeterministicResult ? 'deterministic-identity' : 'provider');
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
