@@ -2913,6 +2913,13 @@ export function useAIConsole() {
     let dispatchGateAllowed = 'unknown';
     let dispatchGateReason = 'none';
     let lastFinalizationPath = 'unknown';
+    let executeStageLastReached = 'clicked';
+    let executeStageFailureReason = 'none';
+    let preEnvelopeExceptionName = 'none';
+    let preEnvelopeExceptionMessage = 'none';
+    let envelopeBuildSkippedReason = 'none';
+    let userMessageRecordAttempted = 'no';
+    let userMessageRecordError = 'none';
     const appendLocalOperatorEntry = (outputText) => {
       const entry = {
         id: `cmd_${Date.now()}`,
@@ -2936,6 +2943,7 @@ export function useAIConsole() {
       lastFinalizationPath = 'deterministic-identity';
     };
     const runtimeSelectors = orchestrationTruth?.selectors || null;
+    executeStageLastReached = 'input-normalized';
 
 
     if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
@@ -3464,7 +3472,43 @@ export function useAIConsole() {
         ollama_fetch_aborted: false,
         ollama_reader_cancelled: false,
       };
+      submitAccepted = true;
+      executeStageLastReached = 'submit-accepted';
+      userMessageRecordAttempted = 'yes';
+      try {
+        setCommandHistory((prev) => appendCommandHistory(prev, {
+          id: `cmd_${Date.now()}_queued`,
+          raw_input: prompt,
+          parsed_command: parsed,
+          route: 'assistant',
+          tool_used: null,
+          success: true,
+          output_text: '',
+          stream_buffer_text: '',
+          stream_finalized: false,
+          data_payload: { stage: 'queued' },
+          timing_ms: 0,
+          timestamp: new Date().toISOString(),
+          error: null,
+          error_code: null,
+          response: { type: 'assistant_response', route: 'assistant', success: true, output_text: '' },
+          continuity_mode: continuityMode,
+          continuity_context: continuityContext,
+          continuity_retrieval_state: continuityLookup.retrievalState,
+          continuity_retrieval_reason: continuityLookup.reason,
+        }));
+      } catch (error) {
+        userMessageRecordError = error?.message || 'message-record-failed';
+        submitAccepted = false;
+        submitBlockReason = 'user-message-record-failed';
+        executeStageFailureReason = userMessageRecordError;
+        executeHandlerEarlyReturnReason = 'user-message-record-failed';
+        envelopeBuildSkippedReason = 'user-message-record-failed';
+        throw error;
+      }
+      executeStageLastReached = 'message-recorded';
       let commandEnvelope = null;
+      executeStageLastReached = 'envelope-build-started';
       commandEnvelopeBuildAttempted = 'yes';
       try {
         commandEnvelope = createCommandEnvelope({
@@ -3476,8 +3520,12 @@ export function useAIConsole() {
         });
       } catch (error) {
         commandEnvelopeBuildError = error?.message || 'command-envelope-build-failed';
+        preEnvelopeExceptionName = error?.name || 'Error';
+        preEnvelopeExceptionMessage = error?.message || 'command-envelope-build-failed';
+        executeStageFailureReason = commandEnvelopeBuildError;
         throw error;
       }
+      executeStageLastReached = 'envelope-built';
       commandEnvelope = attachChatContextToEnvelope(commandEnvelope, chatContextPack);
       commandEnvelope = attachPrEvidenceToEnvelope(commandEnvelope, chatContextPack?.githubPrEvidence || liveGithubPrEvidence || chatContextPack?.providerSummaries?.prEvidence || null);
       commandEnvelope = attachProviderRequestToEnvelope(commandEnvelope, {
@@ -3536,6 +3584,7 @@ export function useAIConsole() {
         },
         requestPayload,
       }));
+      executeStageLastReached = 'dispatch-gate-started';
       const requestDispatchGate = evaluateRequestDispatchGate({
         routeDecision: freshnessRouteDecision,
         routeTruthView: requestRouteTruthView,
@@ -3544,6 +3593,7 @@ export function useAIConsole() {
       freshnessRouteDecision.requestDispatchGate = requestDispatchGate;
       dispatchGateAllowed = requestDispatchGate.dispatchAllowed === true ? 'yes' : 'no';
       dispatchGateReason = requestDispatchGate.reasonCode || 'none';
+      executeStageLastReached = 'dispatch-gate-complete';
       const runtimeConfigWithExecutionTruth = {
         ...finalizedRequestContext,
         preferredTarget: requestRouteTruthView.preferredTarget || finalizedRequestContext.preferredTarget || '',
@@ -3595,8 +3645,8 @@ export function useAIConsole() {
         : null;
       const streamEntryId = `cmd_${Date.now()}_stream`;
       let streamBuffer = '';
-      submitAccepted = true;
       if (!routeUnavailableResult && !identityRecallDeterministicResult) {
+        executeStageLastReached = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
           id: streamEntryId,
           raw_input: prompt,
@@ -3843,13 +3893,20 @@ export function useAIConsole() {
       finalExecutionMetadata.execute_input_length = executeInputLength;
       finalExecutionMetadata.execute_handler_early_return_reason = executeHandlerEarlyReturnReason;
       finalExecutionMetadata.direct_answer_submit_allowed = 'yes';
-      finalExecutionMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_user_message_recorded = userMessageRecordAttempted === 'yes' && userMessageRecordError === 'none' ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = data.success ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = data.success ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_failure_reason = data.success ? 'none' : (data.error_code || data.error || 'unknown');
       finalExecutionMetadata.command_pipeline_last_finalization_path = lastFinalizationPath;
       finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
+      finalExecutionMetadata.execute_stage_last_reached = executeStageLastReached;
+      finalExecutionMetadata.execute_stage_failure_reason = executeStageFailureReason;
+      finalExecutionMetadata.pre_envelope_exception_name = preEnvelopeExceptionName;
+      finalExecutionMetadata.pre_envelope_exception_message = preEnvelopeExceptionMessage;
+      finalExecutionMetadata.envelope_build_skipped_reason = envelopeBuildSkippedReason;
+      finalExecutionMetadata.user_message_record_attempted = userMessageRecordAttempted;
+      finalExecutionMetadata.user_message_record_error = userMessageRecordError;
       setLastExecutionMetadata(finalExecutionMetadata);
 
       setDebugData({
@@ -3949,13 +4006,28 @@ export function useAIConsole() {
       timeoutFailureMetadata.execute_input_length = executeInputLength;
       timeoutFailureMetadata.execute_handler_early_return_reason = executeHandlerEarlyReturnReason;
       timeoutFailureMetadata.direct_answer_submit_allowed = 'yes';
-      timeoutFailureMetadata.command_pipeline_last_user_message_recorded = submitAccepted ? 'yes' : 'no';
+      timeoutFailureMetadata.command_pipeline_last_user_message_recorded = userMessageRecordAttempted === 'yes' && userMessageRecordError === 'none' ? 'yes' : 'no';
       timeoutFailureMetadata.command_pipeline_last_assistant_answer_generated = 'no';
       timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'yes';
       timeoutFailureMetadata.command_pipeline_last_failure_reason = uiError.errorCode || uiError.error || 'unknown';
-      timeoutFailureMetadata.command_pipeline_last_finalization_path = 'error';
+      if (commandEnvelopeBuildAttempted === 'no') {
+        timeoutFailureMetadata.command_pipeline_last_finalization_path = 'pre-envelope-error';
+        preEnvelopeExceptionName = error?.name || 'Error';
+        preEnvelopeExceptionMessage = error?.message || 'pre-envelope-error';
+        commandEnvelopeBuildError = `${preEnvelopeExceptionName}: ${preEnvelopeExceptionMessage}`;
+        envelopeBuildSkippedReason = envelopeBuildSkippedReason === 'none' ? 'pre-envelope-exception' : envelopeBuildSkippedReason;
+      } else {
+        timeoutFailureMetadata.command_pipeline_last_finalization_path = 'error';
+      }
       timeoutFailureMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
       timeoutFailureMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
+      timeoutFailureMetadata.execute_stage_last_reached = executeStageLastReached;
+      timeoutFailureMetadata.execute_stage_failure_reason = executeStageFailureReason === 'none' ? (uiError.errorCode || uiError.error || 'unknown') : executeStageFailureReason;
+      timeoutFailureMetadata.pre_envelope_exception_name = preEnvelopeExceptionName;
+      timeoutFailureMetadata.pre_envelope_exception_message = preEnvelopeExceptionMessage;
+      timeoutFailureMetadata.envelope_build_skipped_reason = envelopeBuildSkippedReason;
+      timeoutFailureMetadata.user_message_record_attempted = userMessageRecordAttempted;
+      timeoutFailureMetadata.user_message_record_error = userMessageRecordError;
       setLastExecutionMetadata(attachChatContextToExecutionMetadata({
         executionMetadata: timeoutFailureMetadata,
         requestPayload: inFlightRequestPayload || {},
