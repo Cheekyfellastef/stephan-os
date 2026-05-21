@@ -2444,6 +2444,48 @@ test('Support Snapshot reports command-envelope-missing when envelope metadata i
   assert.match(snapshot, /Command Envelope Warnings: command-envelope-missing/);
 });
 
+test('buildSupportSnapshot normalizes route-blocked execution truth and envelope/provider model fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      executionTruth: 'gemini answered',
+      lastExecutableProvider: 'gemini',
+      lastActualProviderUsed: 'gemini',
+      lastActualModelUsed: 'gemini-2.5-flash',
+      lastModelUsed: 'gemini-2.5-flash',
+      lastTimeoutEffectiveProvider: 'gemini',
+      lastTimeoutEffectiveModel: 'gemini-2.5-flash',
+      actualTargetUsed: 'http://192.168.0.198:8787',
+      lastExecutionMetadata: {
+        provider_execution_gate_status: 'blocked-by-route',
+        command_pipeline_last_failure_reason: 'ROUTE_UNAVAILABLE',
+        command_envelope_actual_provider: 'gemini',
+        command_envelope_actual_model: 'gemini-2.5-flash',
+      },
+    },
+    routeTruthView: {
+      actualTarget: 'http://192.168.0.198:8787',
+      executedProvider: 'gemini',
+      fallbackActive: true,
+    },
+    runtimeContext: {
+      backendTargetResolvedUrl: 'http://192.168.0.198:8787',
+    },
+  });
+  assert.match(snapshot, /Active Provider: none/);
+  assert.match(snapshot, /Fallback Active: no/);
+  assert.match(snapshot, /Last Executable Provider: none/);
+  assert.match(snapshot, /Last Actual Provider Used: none/);
+  assert.match(snapshot, /Command Envelope Actual Provider: none/);
+  assert.match(snapshot, /Command Envelope Actual Model: n\/a/);
+  assert.match(snapshot, /Execution Truth: blocked-before-provider \/ no-provider-executed/);
+  assert.match(snapshot, /Last Actual Model Used: n\/a/);
+  assert.match(snapshot, /Last Model Used: n\/a/);
+  assert.match(snapshot, /Last Timeout Effective Provider: none/);
+  assert.match(snapshot, /Last Timeout Effective Model: n\/a/);
+  assert.match(snapshot, /Actual Target Used: n\/a/);
+  assert.match(snapshot, /Backend Target Resolved URL: n\/a/);
+});
+
 
 
 test('support snapshot projects identity recall and operator name usage from identity-recall planner mode', () => {
