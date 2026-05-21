@@ -58,6 +58,10 @@ export function evaluateRequestDispatchGate({
   runtimeStatus = {},
 } = {}) {
   const canonicalRouteTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
+  const runtimeContext = runtimeStatus?.runtimeContext || {};
+  const sessionKind = String(runtimeStatus?.sessionKind || runtimeContext?.sessionKind || canonicalRouteTruth?.sessionKind || '').trim().toLowerCase();
+  const deviceContext = String(runtimeContext?.deviceContext || canonicalRouteTruth?.deviceContext || '').trim().toLowerCase();
+  const localDesktopExecuteLocked = sessionKind === 'local-desktop' || deviceContext === 'pc-local-browser';
   const selectedRouteKind = String(
     routeTruthView?.routeKind
     || routeDecision?.requestRouteTruth?.routeKind
@@ -70,8 +74,12 @@ export function evaluateRequestDispatchGate({
   const backendReachable = backendReachabilityState !== 'no';
   const explicitBackendUnreachable = backendReachabilityState === 'no';
 
-  const freshRouteViable = routeDecision?.freshRouteAvailable === true && backendReachable;
-  const cloudRouteViable = (routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true && backendReachable;
+  const freshRouteViable = localDesktopExecuteLocked
+    ? false
+    : (routeDecision?.freshRouteAvailable === true && backendReachable);
+  const cloudRouteViable = localDesktopExecuteLocked
+    ? false
+    : ((routeDecision?.cloudRouteAvailable ?? routeDecision?.freshRouteAvailable) === true && backendReachable);
   const localRouteViable = routeDecision?.localRouteAvailable === true && backendReachable;
   const selectedAnswerMode = routeDecision?.selectedAnswerMode || 'local-private';
   const selectedProvider = String(routeDecision?.selectedProvider || '').trim().toLowerCase();
@@ -129,6 +137,7 @@ export function evaluateRequestDispatchGate({
       selectedRouteUsable: routeUsableState === 'yes',
       routeUsableState,
       fallbackVetoReason: 'backend-route-unavailable',
+      localDesktopExecuteLocked,
     };
   }
 
@@ -159,6 +168,7 @@ export function evaluateRequestDispatchGate({
       selectedRouteUsable: true,
       routeUsableState,
       fallbackVetoReason: null,
+      localDesktopExecuteLocked,
     };
   }
 
@@ -183,5 +193,6 @@ export function evaluateRequestDispatchGate({
     selectedRouteUsable: routeUsableState === 'yes',
     routeUsableState,
     fallbackVetoReason,
+    localDesktopExecuteLocked,
   };
 }
