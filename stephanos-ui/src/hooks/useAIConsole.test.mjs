@@ -250,3 +250,21 @@ test('useAIConsole startup rehydrates operator profile metadata for support snap
   assert.match(source, /chat_context_operator_profile_last_write_at/);
   assert.match(source, /setLastExecutionMetadata\(\(prev = \{\}\) => \(\{/);
 });
+
+
+test('submitPrompt includes explicit execute packet route map ordering comment', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /Execute packet route map \(operator input -> provider dispatch\)/);
+  assert.match(source, /1\) AIConsole input state -> 2\) Execute click handler -> 3\) submitPrompt entry/);
+  assert.match(source, /9\) command envelope build/);
+  assert.match(source, /16\) bottom\/status widget projection/);
+});
+
+test('pre-envelope exceptions preserve exception truth and do not masquerade as ROUTE_UNAVAILABLE', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const preEnvelopeStageReached = executeStageLastReached === 'input-normalized'/);
+  assert.match(source, /const normalizedPreEnvelopeCode = preEnvelopeExceptionName === 'ReferenceError'\s*\?\s*'PRE_ENVELOPE_REFERENCE_ERROR'/);
+  assert.match(source, /timeoutFailureMetadata\.command_pipeline_last_failure_reason = `\$\{normalizedPreEnvelopeCode\}:\$\{preEnvelopeExceptionName\}`;/);
+  assert.match(source, /executeStageFailureReason = executeStageFailureReason === 'none'/);
+  assert.doesNotMatch(source, /dt/);
+});
