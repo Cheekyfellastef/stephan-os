@@ -23,12 +23,12 @@ test('useAIConsole request path includes chat context pack metadata', async () =
   assert.match(source, /chat_context_response_mode/);
 });
 
-test('resolveExecuteRouteTruth promotes local-desktop execute route from routeDiagnosticsSummary candidate evidence', async () => {
+test('resolveExecuteRouteTruth promotes local-desktop execute route from structured candidate data', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /const routeDiagnosticsSummary = Array\.isArray\(runtimeContext\.routeDiagnosticsSummary\) \? runtimeContext\.routeDiagnosticsSummary : \[\]/);
-  assert.match(source, /const localDesktopSummaryLine = routeDiagnosticsSummary\.find\(\(line\) => \/-\\s\*local-desktop\\b\/i\.test\(String\(line \|\| ''\)\)\) \|\| ''/);
-  assert.match(source, /const localDesktopSummaryAvailable = \/\\b\(available\|usable\)\\b\/i\.test\(localDesktopSummaryLine\) && !\/\\bunavailable\|blocked\\b\/i\.test\(localDesktopSummaryLine\)/);
-  assert.match(source, /const localDesktopReachable = localDesktopDiagnostics\.available === true[\s\S]*\|\| localDesktopSummaryAvailable;/);
+  assert.match(source, /const runtimeTruthRouteCandidates = Array\.isArray\(status\?\.runtimeTruth\?\.routeCandidates\) \? status\.runtimeTruth\.routeCandidates : \[\]/);
+  assert.match(source, /const runtimeContextRouteCandidates = Array\.isArray\(runtimeContext\?\.routeCandidates\) \? runtimeContext\.routeCandidates : \[\]/);
+  assert.match(source, /const routeCandidates = \[\.\.\.runtimeTruthRouteCandidates, \.\.\.runtimeContextRouteCandidates\];/);
+  assert.doesNotMatch(source, /routeDiagnosticsSummary/);
 });
 
 
