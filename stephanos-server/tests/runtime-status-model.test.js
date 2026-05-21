@@ -251,6 +251,46 @@ test('ipad/lan context prefers home-node when it is reachable', () => {
   assert.equal(model.routeKind, 'home-node');
 });
 
+test('home-node route selection remains independent from backend executable diagnostics', () => {
+  const model = createRuntimeStatusModel({
+    selectedProvider: 'groq',
+    routeMode: 'auto',
+    fallbackEnabled: true,
+    providerHealth: {
+      groq: { ok: true },
+    },
+    backendAvailable: true,
+    validationState: 'healthy',
+    runtimeContext: {
+      frontendOrigin: 'https://stephanos.example',
+      apiBaseUrl: 'http://192.168.1.42:8787',
+      homeNode: { host: '192.168.1.42', source: 'lastKnown', reachable: true },
+      routeDiagnostics: {
+        'home-node': {
+          configured: true,
+          available: true,
+          source: 'lastKnown',
+          reason: 'Home PC node is reachable on the LAN',
+          backendReachable: true,
+          backendExecutable: false,
+        },
+        cloud: {
+          configured: true,
+          available: true,
+          source: 'hosted-dist-entry',
+          reason: 'Hosted/cloud Stephanos entry is available for fallback',
+          backendReachable: true,
+          backendExecutable: true,
+        },
+      },
+    },
+  });
+
+  assert.equal(model.routeKind, 'home-node');
+  assert.equal(model.preferredRoute, 'home-node');
+  assert.equal(model.routeEvaluations['home-node'].backendReachable, true);
+});
+
 test('hosted session ignores stale local-desktop diagnostics from restored state', () => {
   const model = createRuntimeStatusModel({
     selectedProvider: 'ollama',
