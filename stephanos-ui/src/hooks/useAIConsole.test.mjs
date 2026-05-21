@@ -223,14 +223,14 @@ test('useAIConsole wires response planner into metadata and prompt guidance', as
 
 test('deterministic identity recall appends assistant answer through command history path', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /if \(routeUnavailableResult \|\| identityRecallDeterministicResult\) return appendCommandHistory\(prev, entry\);/);
-  assert.match(source, /lastFinalizationPath = routeUnavailableResult \? 'error' : \(identityRecallDeterministicResult \? 'deterministic-identity' : 'provider'\);/);
+  assert.match(source, /if \(routeUnavailableOutcome \|\| identityRecallDeterministicResult\) return appendCommandHistory\(prev, entry\);/);
+  assert.match(source, /lastFinalizationPath = routeUnavailableOutcome \? 'error' : \(identityRecallDeterministicResult \? 'deterministic-identity' : 'provider'\);/);
 });
 
 test('command input clearing is gated by submit acceptance return contract', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   const aiConsoleSource = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'components/AIConsole.jsx'), 'utf8');
-  assert.match(source, /submitAccepted = !routeUnavailableResult;/);
+  assert.match(source, /submitAccepted = !routeUnavailableOutcome;/);
   assert.match(source, /command_pipeline_last_input_restore_available:\s*'yes'/);
   assert.match(source, /command_pipeline_last_failure_reason:\s*normalizedFailureCode \|\| fallbackReason \|\| 'route-unavailable'/);
   assert.match(source, /response_planner_status:\s*blockedBeforeProvider \? 'blocked-before-provider' : 'unavailable'/);
@@ -276,4 +276,19 @@ test('pre-envelope exceptions preserve exception truth and do not masquerade as 
   assert.match(source, /timeoutFailureMetadata\.command_pipeline_last_failure_reason = `\$\{normalizedPreEnvelopeCode\}:\$\{preEnvelopeExceptionName\}`;/);
   assert.match(source, /executeStageFailureReason = executeStageFailureReason === 'none'/);
   assert.doesNotMatch(source, /dt/);
+});
+
+test('submitPrompt pre-envelope path keeps submit-wide symbols initialized and clears stale provider projection', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /let requestDispatchGate = null;/);
+  assert.match(source, /let routeUnavailableOutcome = null;/);
+  assert.match(source, /let providerDispatchResult = null;/);
+  assert.match(source, /let streamBuffer = '';/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| await sendPrompt\(/);
+  assert.match(source, /const \{ data, requestPayload: effectiveRequestPayload \} = providerDispatchResult;/);
+  assert.match(source, /const preEnvelopeFailureActive = String\(timeoutFailureMetadata\.command_pipeline_last_finalization_path \|\| ''\) === 'pre-envelope-error';/);
+  assert.match(source, /timeoutFailureMetadata\.active_provider = 'none';/);
+  assert.match(source, /timeoutFailureMetadata\.actual_provider_used = 'none';/);
+  assert.match(source, /timeoutFailureMetadata\.execution_truth = 'pre-envelope-error';/);
+  assert.match(source, /timeoutFailureMetadata\.provider_mismatch = 'no';/);
 });
