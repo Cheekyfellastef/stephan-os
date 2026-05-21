@@ -34,6 +34,40 @@ function normalizeProviderState(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+
+function isRouteBlockedBeforeProvider(executionMetadata = {}) {
+  const gate = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
+  const blockedByRoute = executionMetadata?.provider_fallback_blocked_by_route === true;
+  const finalizationPath = String(executionMetadata?.command_pipeline_last_finalization_path || '').trim().toLowerCase();
+  const failureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
+  return blockedByRoute
+    || gate === 'blocked-by-route'
+    || gate === 'route-blocked'
+    || (finalizationPath === 'error' && (failureReason === 'route_unavailable' || failureReason === 'backend-route-unavailable'));
+}
+
+function normalizeRouteBlockedProviderTruth({ runtimeStatus = {}, canonicalTruth = {}, selectedProvider = 'unknown', executedProvider = 'unknown' } = {}) {
+  const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
+    ? runtimeStatus.lastExecutionMetadata
+    : {};
+  if (!isRouteBlockedBeforeProvider(executionMetadata)) {
+    return {
+      routeBlockedBeforeProvider: false,
+      selectedProvider,
+      executedProvider,
+      fallbackActive: canonicalTruth.fallbackActive === true,
+      actualTarget: pickTruth(canonicalTruth.actualTarget) || 'unavailable',
+    };
+  }
+  return {
+    routeBlockedBeforeProvider: true,
+    selectedProvider: 'none',
+    executedProvider: 'none',
+    fallbackActive: false,
+    actualTarget: pickTruth(executionMetadata.actual_target_used) || pickTruth(executionMetadata.execution_target_used) || pickTruth(canonicalTruth.actualTarget) || 'unavailable',
+  };
+}
+
 function hasBlockingIssues(runtimeDiagnosticsTruth = {}, canonicalTruth = {}) {
   if (Array.isArray(runtimeDiagnosticsTruth?.blockingIssues) && runtimeDiagnosticsTruth.blockingIssues.length > 0) {
     return true;
@@ -68,7 +102,6 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
 
   const routeKind = pickTruth(canonicalTruth.winningRoute) || 'unavailable';
   const preferredTarget = pickTruth(canonicalTruth.preferredTarget) || 'unavailable';
-  const actualTarget = pickTruth(canonicalTruth.actualTarget) || 'unavailable';
   const source = pickTruth(canonicalTruth.routeSource) || 'unknown';
 
   const uiReachableState = runtimeStatus.appLaunchState === 'pending' || routeKind === 'unavailable'
@@ -88,10 +121,11 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     : asBooleanState(reconciledRouteUsable);
   const selectedProvider = pickTruth(canonicalTruth.selectedProvider) || 'unknown';
   const executedProvider = pickTruth(canonicalTruth.executedProvider) || 'unknown';
+  const providerTruth = normalizeRouteBlockedProviderTruth({ runtimeStatus, canonicalTruth, selectedProvider, executedProvider });
   const providerState = normalizeProviderState(
     pickTruth(canonicalTruth.providerHealthState),
   );
-  const executableProviderValid = isKnownProvider(executedProvider);
+  const executableProviderValid = isKnownProvider(providerTruth.executedProvider);
   const backendReachable = canonicalTruth.backendReachable === true;
   const networkReachabilityState = pickTruth(canonicalTruth.networkReachabilityState) || 'unknown';
   const browserDirectAccessState = pickTruth(canonicalTruth.browserDirectAccessState)
@@ -108,7 +142,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   const routeReconciled = routeUsabilityConflict;
   const routeReconciliationReason = routeReconciled ? 'live-backend+provider-confirmed' : '';
   const routeUsableState = routeReconciled ? 'yes' : preReconciliationRouteUsableState;
-  const providerMismatch = isKnownProvider(selectedProvider) && isKnownProvider(executedProvider) && selectedProvider !== executedProvider;
+  const providerMismatch = isKnownProvider(providerTruth.selectedProvider) && isKnownProvider(providerTruth.executedProvider) && providerTruth.selectedProvider !== providerTruth.executedProvider;
   const truthInconsistent = routeUsabilityConflict;
   const blockingIssuesPresent = hasBlockingIssues(runtimeDiagnosticsTruth, canonicalTruth);
   const routeUsabilityVetoReason = routeUsableState === 'no'
@@ -166,8 +200,8 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     routeUsableState,
     homeNodeUsableState: asBooleanState(canonicalTruth.homeNodeAvailable),
     requestedProvider: pickTruth(canonicalTruth.requestedProvider) || 'unknown',
-    selectedProvider,
-    executedProvider,
+    selectedProvider: providerTruth.selectedProvider,
+    executedProvider: providerTruth.executedProvider,
     providerConfigured: canonicalTruth.providerConfigured === true,
     executableViaBackend: canonicalTruth.executableViaBackend === true,
     executableViaHostedCloud: canonicalTruth.executableViaHostedCloud === true,
@@ -178,7 +212,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
     hostedCloudPathAvailable: canonicalTruth.hostedCloudPathAvailable === true,
     hostedCloudSecretPathKind: pickTruth(canonicalTruth.hostedCloudSecretPathKind) || 'none',
     preferredTarget,
-    actualTarget,
+    actualTarget: providerTruth.actualTarget,
     source,
     preferredRoute: pickTruth(canonicalTruth.winningRoute) || routeKind,
     winnerReason: pickTruth(canonicalTruth.winningReason) || 'n/a',
