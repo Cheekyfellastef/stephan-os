@@ -506,9 +506,10 @@ export function buildSupportSnapshot({
   const liveHealthProbeTruth = liveRuntimeContext?.healthProbeTruth && typeof liveRuntimeContext.healthProbeTruth === 'object'
     ? liveRuntimeContext.healthProbeTruth
     : {};
+  const healthProbeReportsOk = String(liveHealthProbeTruth?.lastBackendHealthProbeResult || '').trim().toLowerCase() === 'ok:true';
   const backendReachableState = safeApiStatus?.backendReachable === true
     ? 'yes'
-    : safeApiStatus?.backendReachable === false
+    : safeApiStatus?.backendReachable === false && !healthProbeReportsOk
       ? 'no'
       : routeTruthView?.backendReachableState;
 
