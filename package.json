@@ -37,7 +37,8 @@
     "openclaw:stub:ensure": "node scripts/openclaw-readonly-adapter-ensure.mjs",
     "test:ui:reality": "playwright test",
     "stephanos:ignite": "npm run stephanos:serve",
-    "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs"
+    "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs",
+    "stephanos:guard:pr-clean": "node scripts/guard-pr-clean.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
