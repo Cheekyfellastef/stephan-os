@@ -6,6 +6,7 @@ import {
   autoPublishDistWithDeps,
   canAutoPublishDist,
   checkpointAndRemoveTransientRootData,
+  classifyIgnitionDirtPath,
   classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
@@ -205,6 +206,17 @@ test('ignition status evaluator classifies secrets and unknown binary as forbidd
   ].join('\n'));
   assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
   assert.equal(evaluation.meaningfulEntries.length, 2);
+});
+
+test('ignition dirt classifier maps required categories', () => {
+  assert.equal(classifyIgnitionDirtPath('apps/stephanos/dist/index.html'), 'AUTO_CLEAN_GENERATED');
+  assert.equal(classifyIgnitionDirtPath('apps/stephanos/dist/assets/chunk-a.js'), 'AUTO_CLEAN_GENERATED');
+  assert.equal(classifyIgnitionDirtPath('stephanos-server/data/memory/durable-memory.json'), 'RUNTIME_CHECKPOINT_CLEAN');
+  assert.equal(classifyIgnitionDirtPath('stephanos-ui/node_modules/foo/index.js'), 'DEPENDENCY_WARNING');
+  assert.equal(classifyIgnitionDirtPath('stephanos-ui/src/App.jsx'), 'SOURCE_DIRT');
+  assert.equal(classifyIgnitionDirtPath('package.json'), 'SOURCE_DIRT');
+  assert.equal(classifyIgnitionDirtPath('.env.local'), 'HARD_BLOCK');
+  assert.equal(classifyIgnitionDirtPath('unknown/payload.bin'), 'HARD_BLOCK');
 });
 
 test('preflight restores approved tracked generated dirt before pull', () => {
