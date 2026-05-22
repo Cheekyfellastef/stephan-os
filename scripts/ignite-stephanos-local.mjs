@@ -394,9 +394,12 @@ function collectAllowlistedUntrackedPaths(statusAssessment) {
     .sort();
 }
 
-function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root' } = {}) {
+function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root', allowDirtySource = String(process.env.STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE || '') === '1' } = {}) {
   const autoCleanedFiles = [];
-  const blockedFiles = statusAssessment.meaningfulEntries.flatMap((entry) => entry.paths);
+  const blockedFiles = allowDirtySource ? statusAssessment.forbiddenOrUnknownEntries.flatMap((entry) => entry.paths) : statusAssessment.meaningfulEntries.flatMap((entry) => entry.paths);
+  const sourceDirtFiles = statusAssessment.meaningfulEntries
+    .filter((entry) => entry.category === 'meaningful-source-dirt')
+    .flatMap((entry) => entry.paths);
   const dependencyWarnings = statusAssessment.dependencyEntries.flatMap((entry) => entry.paths);
   const untrackedDist = collectAllowlistedUntrackedPaths(statusAssessment);
   if (untrackedDist.length > 0 && mode !== 'auto-publish') {
@@ -405,19 +408,22 @@ function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = 
     autoCleanedFiles.push(...untrackedDist);
   }
   return {
-    cleanlinessVerdict: blockedFiles.length > 0 ? 'blocked' : 'clean-or-autocleaned',
+    cleanlinessVerdict: blockedFiles.length > 0 ? 'blocked' : (sourceDirtFiles.length > 0 ? 'held-source-dirt' : 'clean-or-autocleaned'),
     autoCleanedFiles,
     checkpointedRuntimeFiles: collectRuntimeStatePaths(statusAssessment),
     blockedFiles,
     dependencyWarnings,
-    nextOperatorAction: blockedFiles.length > 0 ? 'Commit/stash/discard source/forbidden dirt or run with explicit dirty-source intent.' : 'Continue ignition.',
+    nextOperatorAction: blockedFiles.length > 0 ? 'Remove/resolve hard-block dirt (secrets/unknown binaries/unclassified risky files). Ignition is blocked.' : (sourceDirtFiles.length > 0 ? 'Source dirt detected. Commit/stash/discard source dirt or rerun with STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE=1.' : 'Continue ignition.'),
     ignitionStatusModel: {
-      ignitionStatus: blockedFiles.length > 0 ? 'HELD_OR_BLOCKED' : 'READY',
-      ignitionPhase: 'preflight-cleanliness',
-      ignitionSteps: ['classify-dirt', 'auto-clean-generated', 'checkpoint-runtime'],
-      ignitionBlockedReason: blockedFiles.length > 0 ? 'Source/forbidden dirt detected' : '',
+      ignitionStatus: blockedFiles.length > 0 ? 'BLOCKED' : (sourceDirtFiles.length > 0 ? 'HELD' : 'READY'),
+      ignitionPhase: blockedFiles.length > 0 ? 'blocked' : (sourceDirtFiles.length > 0 ? 'held-source-dirt' : 'ready'),
+      ignitionSteps: ['Inspect repo', 'Clean generated dirt', 'Checkpoint runtime memory', 'Validate PR cleanliness', 'Check backend route', 'Check provider route', 'Check Command Deck protected canon', blockedFiles.length > 0 ? 'Blocked' : (sourceDirtFiles.length > 0 ? 'Held' : 'Ready')],
+      ignitionCleanlinessVerdict: blockedFiles.length > 0 ? 'blocked' : (sourceDirtFiles.length > 0 ? 'held' : 'ready'),
+      ignitionBlockedReason: blockedFiles.length > 0 ? 'Hard-block dirt detected' : (sourceDirtFiles.length > 0 ? 'Source dirt detected' : ''),
+      ignitionWarnings: dependencyWarnings,
       ignitionAutoCleaned: autoCleanedFiles.length,
-      ignitionOperatorAction: blockedFiles.length > 0 ? 'Operator approval required for source dirt.' : 'Continue ignition.',
+      ignitionNextOperatorAction: blockedFiles.length > 0 ? 'Remove hard-block files from working tree and PR range.' : (sourceDirtFiles.length > 0 ? 'Commit/stash/discard source dirt or set STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE=1.' : 'Continue ignition.'),
+      ignitionReadyToEnterCommandDeck: blockedFiles.length === 0 && sourceDirtFiles.length === 0,
     },
   };
 }
@@ -613,7 +619,7 @@ export function runGitPullPreflightWithDeps({
     }
   }
 
-  if (statusAssessment.meaningfulEntries.length > 0) {
+  if (statusAssessment.meaningfulEntries.length > 0 && String(process.env.STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE || '') !== '1') {
     console.error('[IGNITION] meaningful local dirt detected');
     for (const entry of statusAssessment.meaningfulEntries) {
       console.error(`[IGNITION] meaningful local dirt: ${entry.status} ${entry.paths.join(' -> ')}`);
@@ -882,7 +888,7 @@ export async function run() {
       if (statusAssessment.runtimeStateEntries.length > 0) {
         throw new Error('blocked for safety: runtime data changed after housekeeping; dist auto-publish refused.');
       }
-      if (statusAssessment.meaningfulEntries.length > 0) {
+      if (statusAssessment.meaningfulEntries.length > 0 && String(process.env.STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE || '') !== '1') {
         throw new Error(`blocked for safety: dist auto-publish refused due to non-dist dirt (${statusAssessment.meaningfulEntries.map((entry) => entry.rawLine).join(', ')}).`);
       }
 
