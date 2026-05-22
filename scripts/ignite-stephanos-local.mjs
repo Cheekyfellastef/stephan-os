@@ -556,17 +556,6 @@ export function runGitPullPreflightWithDeps({
   }
 
   if (approvedTrackedGeneratedRestorePaths.length > 0) {
-    if (shouldAutoPublishDist()) {
-      const distOnlyDirt = statusAssessment.entries.every((entry) => entry.category === 'approved-generated-dist');
-      if (!distOnlyDirt) {
-        throw new Error('blocked for safety: dist auto-publish requires generated dist-only local dirt.');
-      }
-      autoPublishDistWithDeps({ statusAssessment, captureStep, runStepFn });
-    }
-    else {
-      console.log('[IGNITION] dist auto-publish disabled');
-      console.log('[IGNITION] approved generated dist present; operator can run with STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1 or commit dist manually');
-    }
     console.log(`[IGNITION] approved tracked generated dirt detected (${approvedTrackedGeneratedRestorePaths.length} paths)`);
     console.log(`[IGNITION] restoring approved tracked generated dirt: ${approvedTrackedGeneratedRestorePaths.join(', ')}`);
     runStepFn('git-restore-approved-tracked-generated-dirt', 'git', ['restore', '--worktree', '--staged', '--', ...approvedTrackedGeneratedRestorePaths]);
@@ -671,7 +660,7 @@ export function canAutoPublishDist({ statusAssessment, branch, upstream, stagedP
   if (branch !== 'main') return { ok: false, reason: 'branch-not-main' };
   if (upstream !== 'origin/main') return { ok: false, reason: 'upstream-not-origin-main' };
   if (statusAssessment.meaningfulEntries.length > 0) return { ok: false, reason: 'source-dirt' };
-  if (stagedPaths.some((p) => p === RUNTIME_MEMORY_PATH || p.startsWith('data/') || p.includes('node_modules'))) return { ok: false, reason: 'unsafe-staged-paths' };
+  if (stagedPaths.some((p) => p === RUNTIME_MEMORY_PATH || p === 'data' || p.startsWith('data/') || p.includes('node_modules') || p.includes('secrets') || p.includes('token'))) return { ok: false, reason: 'unsafe-staged-paths' };
   if (stagedPaths.some((p) => !isApprovedGeneratedDistPath(p))) return { ok: false, reason: 'staged-outside-dist' };
   return { ok: true, reason: 'ok' };
 }
@@ -682,15 +671,17 @@ function captureBranchAndUpstream(captureStep = runStepCapture) {
   return { branch, upstream };
 }
 
-export function autoPublishDistWithDeps({ statusAssessment, captureStep = runStepCapture, runStepFn = runStep } = {}) {
+export function autoPublishDistWithDeps({ statusAssessment, captureStep = runStepCapture, runStepFn = runStep, reuseVerifyResult = true } = {}) {
   const { branch, upstream } = captureBranchAndUpstream(captureStep);
   const gate = canAutoPublishDist({ statusAssessment, branch, upstream, stagedPaths: [] });
   if (!gate.ok) throw new Error(`blocked for safety: dist auto-publish denied (${gate.reason}).`);
 
-  try {
-    runStepFn('verify', npmCommand, ['run', 'stephanos:verify']);
-  } catch {
-    runStepFn('build', npmCommand, ['run', 'stephanos:build']);
+  const hasOnlyDistDirt = statusAssessment.entries.length > 0 && statusAssessment.entries.every((entry) => entry.category === 'approved-generated-dist');
+  if (!hasOnlyDistDirt) {
+    throw new Error('blocked for safety: dist auto-publish requires generated dist-only local dirt.');
+  }
+
+  if (!reuseVerifyResult) {
     runStepFn('verify', npmCommand, ['run', 'stephanos:verify']);
   }
 
@@ -791,6 +782,29 @@ export async function run() {
       }
       verifyResult = 'passed';
       console.log('[IGNITION] verify passed');
+    },
+    runPostVerify: async () => {
+      if (!shouldAutoPublishDist()) {
+        console.log('[IGNITION] dist auto-publish disabled');
+        return;
+      }
+
+      console.log('[IGNITION] dist auto-publish phase starting');
+      const statusResult = runStepCapture('git-status-post-verify', 'git', ['status', '--porcelain']);
+      const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
+
+      if (statusAssessment.transientRootDataEntries.length > 0) {
+        throw new Error('blocked for safety: root data/ exists after housekeeping; dist auto-publish refused.');
+      }
+      if (statusAssessment.runtimeStateEntries.length > 0) {
+        throw new Error('blocked for safety: runtime data changed after housekeeping; dist auto-publish refused.');
+      }
+      if (statusAssessment.meaningfulEntries.length > 0) {
+        throw new Error(`blocked for safety: dist auto-publish refused due to non-dist dirt (${statusAssessment.meaningfulEntries.map((entry) => entry.rawLine).join(', ')}).`);
+      }
+
+      autoPublishDistWithDeps({ statusAssessment, reuseVerifyResult: true });
+      console.log('[IGNITION] dist auto-publish phase passed');
     },
     runServe: async () => {
       console.log('[IGNITION] launch continuing');

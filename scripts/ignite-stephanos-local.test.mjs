@@ -442,13 +442,13 @@ test('auto-publish stages dist only and pushes after verify pass', () => {
       calls.push({ label, command, commandArgs });
     },
   });
-  assert.ok(calls.some((call) => call.label === 'verify'));
+  assert.equal(calls.some((call) => call.label === 'verify'), false);
   assert.ok(calls.some((call) => call.label === 'git-add-dist-only' && call.commandArgs.join(' ') === 'add --all -- apps/stephanos/dist'));
   assert.ok(calls.some((call) => call.label === 'git-push' && call.commandArgs.join(' ') === 'push origin main'));
   assert.ok(calls.every((call) => !(call.command === 'git' && call.commandArgs.join(' ') === 'add .')));
 });
 
-test('auto-publish stale verify runs build then verify', () => {
+test('auto-publish can require fresh verify when verify result is stale', () => {
   const calls = [];
   autoPublishDistWithDeps({
     statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n'),
@@ -458,14 +458,10 @@ test('auto-publish stale verify runs build then verify', () => {
       if (label === 'git-diff-staged-names') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
       throw new Error(`unexpected capture label: ${label}`);
     },
-    runStepFn: (label) => {
-      calls.push(label);
-      if (label === 'verify' && calls.filter((name) => name === 'verify').length === 1) {
-        throw new Error('stale dist metadata');
-      }
-    },
+    runStepFn: (label) => calls.push(label),
+    reuseVerifyResult: false,
   });
-  assert.deepEqual(calls.slice(0, 3), ['verify', 'build', 'verify']);
+  assert.equal(calls[0], 'verify');
 });
 
 test('auto-publish remote moved retries with rebase/build/verify and no force push', () => {
@@ -486,6 +482,38 @@ test('auto-publish remote moved retries with rebase/build/verify and no force pu
   assert.ok(calls.some((call) => call.label === 'git-pull-rebase-main'));
   assert.ok(calls.some((call) => call.label === 'git-push-retry'));
   assert.ok(calls.every((call) => !(call.command === 'git' && call.commandArgs.includes('--force'))));
+});
+
+
+
+test('auto-publish reuses existing verify result when current', () => {
+  const calls = [];
+  autoPublishDistWithDeps({
+    statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n'),
+    captureStep: (label) => {
+      if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-diff-staged-names') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label) => calls.push(label),
+    reuseVerifyResult: true,
+  });
+
+  assert.equal(calls.includes('verify'), false);
+  assert.ok(calls.includes('git-add-dist-only'));
+});
+
+test('auto-publish blocks runtime/root/source dirt categories', () => {
+  const status = evaluateGitStatusForIgnition([
+    ' M stephanos-server/data/memory/durable-memory.json',
+    '?? data/session.json',
+    ' M scripts/ignite-stephanos-local.mjs',
+  ].join('\n'));
+
+  assert.equal(status.runtimeStateEntries.length > 0, true);
+  assert.equal(status.transientRootDataEntries.length > 0, true);
+  assert.equal(status.meaningfulEntries.length > 0, true);
 });
 
 test('preflight blocks when require-published-head is enabled and branch is ahead', () => {
