@@ -9,6 +9,7 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Merge Safety Verdict/);
   assert.match(source, /Next Best Action/);
   assert.match(source, /Mission Brain \/ Next Action/);
+  assert.match(source, /Top 3 Problems \/ Next Moves/);
   assert.match(source, /Evidence gaps count:/);
   assert.match(source, /Copy Next Codex Prompt/);
   assert.match(source, /Copy Repair Prompt/);

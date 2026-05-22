@@ -16,6 +16,7 @@ test('intent detection routes explanation prompts and supports detailed mode', (
   assert.equal(detectOperatorExplanationIntent('explain what just happened').matched, true);
   assert.equal(detectOperatorExplanationIntent('translate that into monkey brain').matched, true);
   assert.equal(detectOperatorExplanationIntent('show evidence and give me the detail').mode, 'detailed');
+  assert.equal(detectOperatorExplanationIntent('what are the next 3 problems?').matched, true);
   assert.equal(detectOperatorExplanationIntent('write me a poem').matched, false);
   assert.equal(detectOperatorExplanationIntent('what does this repo contain').matched, false);
 });
@@ -42,5 +43,6 @@ test('formatter compact and detailed remain bounded and include key sections', (
   assert.match(compact, /Next action:/);
   assert.match(detailed, /Evidence:/);
   assert.match(detailed, /Missing proof:/);
+  assert.match(detailed, /Top 3 Problems:/);
   assert.equal(detailed.length <= 2200, true);
 });
