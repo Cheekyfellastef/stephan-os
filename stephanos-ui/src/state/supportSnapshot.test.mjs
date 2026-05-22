@@ -3019,3 +3019,27 @@ test('support snapshot promotes fetched github evidence into canonical PR eviden
   assert.match(snapshot, /PR Evidence Merge Readiness: already-merged/);
   assert.match(snapshot, /Mission Repair Loop PR Evidence Linked: yes/);
 });
+
+
+test('buildSupportSnapshot includes compact ignition cleanliness fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      ignitionCleanlinessVerdict: 'READY',
+      ignitionAutoCleaned: '4',
+      ignitionRuntimeCheckpointCount: '1',
+      ignitionSourceDirtCount: '0',
+      ignitionDependencyWarningCount: '2',
+      ignitionHardBlockCount: '0',
+      ignitionPrRangeGuardStatus: 'enforced',
+      ignitionNextOperatorAction: 'Continue ignition.',
+    },
+  });
+  assert.match(snapshot, /Ignition Cleanliness Status: READY/);
+  assert.match(snapshot, /Ignition Auto-Cleaned Generated Count: 4/);
+  assert.match(snapshot, /Ignition Runtime Checkpoint Count: 1/);
+  assert.match(snapshot, /Ignition Source Dirt Count: 0/);
+  assert.match(snapshot, /Ignition Dependency Warning Count: 2/);
+  assert.match(snapshot, /Ignition Hard Block Count: 0/);
+  assert.match(snapshot, /Ignition PR Range Guard Status: enforced/);
+  assert.match(snapshot, /Ignition Next Operator Action: Continue ignition\./);
+});
