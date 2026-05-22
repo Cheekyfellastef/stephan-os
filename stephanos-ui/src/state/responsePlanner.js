@@ -15,6 +15,7 @@ const MODE_SHAPES = {
   'research-scouting': ['research-target', 'sources-context-needed', 'hypotheses', 'next-collection-step', 'applicability-to-stephanos'],
   'direct-answer': ['direct-answer', 'confidence-caveat', 'optional-next-action'],
   'identity-recall': ['direct-answer', 'identity-source', 'optional-next-action'],
+  'operator-explanation': ['verdict', 'what-matters', 'risk', 'next-action'],
 };
 
 export function buildResponsePlan(input = {}) {

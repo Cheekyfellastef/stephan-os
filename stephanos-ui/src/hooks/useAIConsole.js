@@ -243,6 +243,8 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_pack_status: compact?.status || (hasPack ? 'active' : 'unavailable'),
     chat_context_version: chatContextPack?.version || 'n/a',
     chat_context_response_mode: chatContextPack?.recommendedResponseMode || compact?.responseMode || 'direct-answer',
+    chat_context_operator_explanation_intent_detected: chatContextPack?.operatorExplanationIntentDetected || 'no',
+    chat_context_operator_explanation_mode: chatContextPack?.operatorExplanationMode || 'compact',
     chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : Number(compact?.relevantCanonCount || 0),
     chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : (Array.isArray(compact?.affectedSubsystems) ? compact.affectedSubsystems.join('|') : 'none'),
     chat_context_sources_used: Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.join('|') : 'none',
