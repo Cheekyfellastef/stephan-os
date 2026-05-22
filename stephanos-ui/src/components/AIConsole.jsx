@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getOllamaUiState } from '../ai/ollamaUx';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
@@ -78,6 +78,38 @@ export default function AIConsole({
 
   const latestAssistantAnswerRef = useRef(null);
   const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
+  const answerScrollDiagnosticsRef = useRef({
+    targetKind: 'none',
+    targetId: 'none',
+    containerKind: 'none',
+    method: 'none',
+    completed: 'no',
+    topVisible: 'no',
+    bottomVisible: 'no',
+    fullyVisible: 'no',
+    occlusionReason: 'none',
+    lastRequestedAt: 'none',
+    lastCompletedAt: 'none',
+  });
+
+  const getAnswerHistoryScrollContainer = () => {
+    const el = containerRef.current;
+    if (!el) return null;
+    const style = window.getComputedStyle(el);
+    const canScroll = /(auto|scroll|overlay)/.test(style.overflowY || '') && el.scrollHeight > el.clientHeight;
+    if (canScroll) return el;
+    return el;
+  };
+
+  const computeAnswerScrollVisibility = (targetRect, containerRect) => {
+    const topVisible = targetRect.top >= containerRect.top;
+    const bottomVisible = targetRect.bottom <= containerRect.bottom;
+    const fullyVisible = topVisible && bottomVisible;
+    const occlusionReason = fullyVisible
+      ? 'none'
+      : (!topVisible && !bottomVisible ? 'target-larger-than-container-or-clipped-both-edges' : (!topVisible ? 'target-top-clipped' : 'target-bottom-clipped'));
+    return { topVisible, bottomVisible, fullyVisible, occlusionReason };
+  };
 
   recordPerfCounter('render', 'AIConsole');
 
@@ -110,7 +142,7 @@ export default function AIConsole({
         latestAnswerEnvelopeId: latestAssistantEntry?.envelope_id || latestAssistantEntry?.envelopeId || 'none',
         scrollTargetKind: latestScrollTargetRef.current.kind || 'none',
         scrollTargetId: latestScrollTargetRef.current.id || 'none',
-        scrollTargetIsLatestAssistantAnswer: latestScrollTargetRef.current.kind === 'assistant-answer-pane' && String(latestScrollTargetRef.current.id || '') === String(latestAssistantEntry?.id || ''),
+        scrollTargetIsLatestAssistantAnswer: latestScrollTargetRef.current.kind === 'latest-assistant-answer-pane' && String(latestScrollTargetRef.current.id || '') === String(latestAssistantEntry?.id || ''),
         duplicateAnswerPaneDetected,
         duplicateAnswerPaneReason: duplicateAnswerPaneDetected ? 'multiple-assistant-answer-panes-for-single-execute-window' : 'none',
         promptOnlyRenderedAsAnswerPane: false,
@@ -159,7 +191,7 @@ export default function AIConsole({
     restoreDocumentScrollPosition();
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!autoScrollEnabled) return;
     if (lastHistoryRenderKeyRef.current === historyRenderKey) {
       recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_history');
@@ -168,19 +200,50 @@ export default function AIConsole({
     lastHistoryRenderKeyRef.current = historyRenderKey;
     recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
+
+    const nowIso = new Date().toISOString();
     const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
-    if (latestAssistantAnswerEl) {
-      latestScrollTargetRef.current = { kind: 'assistant-answer-pane', id: latestAssistantAnswerId || '' };
-      latestAssistantAnswerEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const scrollContainer = getAnswerHistoryScrollContainer();
+
+    const applyScrollDiagnostics = (targetEl, method, completed) => {
+      const containerRect = scrollContainer?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
+      const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
+      const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
+      answerScrollDiagnosticsRef.current = {
+        targetKind: latestScrollTargetRef.current.kind || 'none',
+        targetId: latestScrollTargetRef.current.id || 'none',
+        containerKind: scrollContainer === window ? 'window' : 'answer-history-container',
+        method,
+        completed: completed ? 'yes' : 'no',
+        topVisible: visibility.topVisible ? 'yes' : 'no',
+        bottomVisible: visibility.bottomVisible ? 'yes' : 'no',
+        fullyVisible: visibility.fullyVisible ? 'yes' : 'no',
+        occlusionReason: visibility.occlusionReason,
+        lastRequestedAt: answerScrollDiagnosticsRef.current.lastRequestedAt || nowIso,
+        lastCompletedAt: completed ? new Date().toISOString() : 'none',
+      };
+      setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+    };
+
+    if (latestAssistantAnswerEl && scrollContainer) {
+      latestScrollTargetRef.current = { kind: 'latest-assistant-answer-pane', id: latestAssistantAnswerId || '' };
+      answerScrollDiagnosticsRef.current.lastRequestedAt = nowIso;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        latestAssistantAnswerEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        recordPerfCounter('timers', 'ai_core.autoscroll_raf');
+        applyScrollDiagnostics(latestAssistantAnswerEl, 'scrollIntoView(start,smooth)', true);
+        restoreDocumentScrollPosition();
+      }));
     } else {
       latestScrollTargetRef.current = { kind: 'history-bottom-fallback', id: 'answer-history' };
+      answerScrollDiagnosticsRef.current.lastRequestedAt = nowIso;
       scrollMessageContainerToBottom('smooth');
+      requestAnimationFrame(() => {
+        applyScrollDiagnostics(scrollContainer, 'scrollToBottomFallback(smooth)', true);
+        restoreDocumentScrollPosition();
+      });
     }
-    requestAnimationFrame(() => {
-      recordPerfCounter('timers', 'ai_core.autoscroll_raf');
-      restoreDocumentScrollPosition();
-    });
-  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId]);
+  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, setUiDiagnostics]);
 
   const handleScroll = () => {
     const el = containerRef.current;

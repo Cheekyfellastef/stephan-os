@@ -4595,6 +4595,11 @@ pre {
   gap: 0.6rem;
 }
 
+
+[data-testid="latest-assistant-answer-pane"] {
+  scroll-margin-top: 0.75rem;
+  scroll-margin-bottom: 1.25rem;
+}
 .mission-console__input-row,
 .mission-console__action-row,
 .mission-console__safety-row {
