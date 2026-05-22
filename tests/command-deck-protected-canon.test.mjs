@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 const aiConsolePath = new URL('../stephanos-ui/src/components/AIConsole.jsx', import.meta.url);
 const stylesPath = new URL('../stephanos-ui/src/styles.css', import.meta.url);
 
+const missionConsoleTilePath = new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url);
+
 async function read(fileUrl) {
   return fs.readFile(fileUrl, 'utf8');
 }
@@ -72,4 +74,25 @@ test('protected canon: no silent none scroll reason after final assistant answer
   assert.match(source, /requestReason: 'already-visible-confirmed'/);
   assert.match(source, /requestReason: 'explicit-render-diagnostic-failure'/);
   assert.doesNotMatch(source, /same-answer-signature-already-scrolled'\s*\}\)/);
+});
+
+
+test('protected canon: mission brain top-3 stays inside existing operator relief surface with no parallel command deck framework', async () => {
+  const source = await read(missionConsoleTilePath);
+  assert.match(source, /title="Operator Relief v2 · Mission Brain"/);
+  assert.match(source, /Top 3 Problems \/ Next Moves/);
+  assert.match(source, /<div data-testid="mission-console-inner-command-deck">/);
+  assert.match(source, /<MissionCommandDeck/);
+  assert.match(source, /<AIConsole/);
+  assert.doesNotMatch(source, /mission-console-duplicate-pane/i);
+  assert.doesNotMatch(source, /parallel-pane-framework/i);
+
+  const aiConsoleMatches = source.match(/<AIConsole/g) || [];
+  const commandDeckMatches = source.match(/<MissionCommandDeck/g) || [];
+  assert.equal(aiConsoleMatches.length, 1);
+  assert.equal(commandDeckMatches.length, 1);
+
+  const top3Index = source.indexOf('Top 3 Problems / Next Moves');
+  const operatorReliefIndex = source.indexOf('mission-console-section--operator-relief');
+  assert.ok(top3Index > operatorReliefIndex);
 });
