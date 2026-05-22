@@ -1096,6 +1096,14 @@ function MissionConsoleTile({
             <li><strong>Merge readiness:</strong> {operatorReliefProjection.missionBrainNextAction?.mergeReadiness || 'unknown'}</li>
             <li><strong>Risk level:</strong> {operatorReliefProjection.missionBrainNextAction?.riskLevel || 'unknown'}</li>
           </ul>
+          <p><strong>Top 3 Problems / Next Moves</strong></p>
+          <ul className="mission-console__status-list">
+            {(operatorReliefProjection.topProblemsProjection || []).slice(0, 3).map((problem, index) => (
+              <li key={problem.id || `top-problem-${index}`}>
+                <strong>{index + 1}. {problem.title}</strong> — {problem.nextBestAction || 'Review mission evidence'}
+              </li>
+            ))}
+          </ul>
           </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleNextCodexPromptPanel"

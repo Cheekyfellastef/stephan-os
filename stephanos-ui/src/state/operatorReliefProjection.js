@@ -158,6 +158,62 @@ function buildMissionApprovalQueue({ missionBrainNextAction = {}, agentWorkRouti
   return { queue, topRecommendation: queue[0] || null, approvalRequired: true };
 }
 
+function buildTopProblemsProjection({ missionBrainNextAction = {}, supportSnapshot = {}, verificationReturnIntake = {}, browserMissing = [] } = {}) {
+  const problems = [];
+  if (browserMissing.length > 0) {
+    problems.push({
+      id: 'browser-proof-pending',
+      title: 'Command Deck browser proof still pending',
+      severity: 'high',
+      layer: 'ui-proof',
+      whyItMatters: 'Protected cockpit canon cannot be merged without live browser proof.',
+      evidence: [`missingBrowserChecks:${browserMissing.length}`, 'proof_of_done.browserChecksObserved'],
+      nextBestAction: 'Run browser checklist and paste a fresh Support Snapshot.',
+      recommendedAgent: 'manual-operator',
+      proofRequired: 'browser-proof-checklist',
+      blockedReason: 'Browser evidence missing.',
+      professionalisationOpportunity: 'Replace telemetry-only claims with reality proof.',
+      codexPromptCandidate: '',
+      operatorDecisionRequired: true,
+    });
+  }
+  if (asText(supportSnapshot?.runtimeStatus?.ignitionCleanlinessVerdict || supportSnapshot?.ignitionCleanlinessVerdict, 'unknown').toLowerCase() !== 'ready') {
+    problems.push({
+      id: 'ignition-cleanliness-not-ready',
+      title: 'Ignition cleanliness requires operator attention',
+      severity: 'high',
+      layer: 'ignition',
+      whyItMatters: 'Generated/runtime dirt repeatedly blocks safe startup and PR flow.',
+      evidence: ['support_snapshot.runtimeStatus.ignitionCleanlinessVerdict', 'ignitionStatusModel'],
+      nextBestAction: asText(supportSnapshot?.runtimeStatus?.ignitionNextOperatorAction || supportSnapshot?.ignitionNextOperatorAction, 'Review ignition cleanliness report and clear blockers.'),
+      recommendedAgent: 'manual-operator',
+      proofRequired: 'ignition-cleanliness-status',
+      blockedReason: asText(supportSnapshot?.runtimeStatus?.ignitionBlockedReason || supportSnapshot?.ignitionBlockedReason, 'Ignition status not ready.'),
+      professionalisationOpportunity: 'Keep ignition deterministic with autoclean/checkpoint guardrails.',
+      codexPromptCandidate: '',
+      operatorDecisionRequired: true,
+    });
+  }
+  if ((verificationReturnIntake?.missingEvidence || []).length > 0) {
+    problems.push({
+      id: 'evidence-gaps-open',
+      title: 'Verification evidence gaps remain open',
+      severity: 'medium',
+      layer: 'verification',
+      whyItMatters: 'Missing proof creates repeated regressions and ambiguous merge readiness.',
+      evidence: verificationReturnIntake?.missingEvidence || [],
+      nextBestAction: 'Close missing build/verify/proof evidence before approval.',
+      recommendedAgent: 'codex',
+      proofRequired: 'build-verify-proof-complete',
+      blockedReason: 'Verification return intake reports missing evidence.',
+      professionalisationOpportunity: 'Promote compact, operator-readable proof summaries.',
+      codexPromptCandidate: asText(missionBrainNextAction?.codexPromptCandidate, ''),
+      operatorDecisionRequired: true,
+    });
+  }
+  return problems.slice(0, 3);
+}
+
 export function deriveOperatorReliefProjection(models = {}) {
   const { intentToBuildModel = {}, taskFinisherModel = {}, missionEvidenceLedgerModel = {}, prEvidenceModel = {}, proofOfDoneModel = {}, operatorDecisionQueue = {}, memoryLibrarianQueue = {}, supportSnapshot = {} } = models;
   const missionSpec = intentToBuildModel?.missionSpec || {};
@@ -248,6 +304,7 @@ export function deriveOperatorReliefProjection(models = {}) {
 
   const missionHandoff = { title: asText(missionSpec.title, 'Mission handoff'), objective: asText(missionSpec.objective, missionSpec.rawIntent || 'Not provided'), currentState: missionState, mergeSafety: verification.mergeReadyCandidate ? 'merge-candidate' : 'blocked', nextBestAction, evidenceSummary: { testsPassed, buildRun: parsed.buildRun === true, verifyRun: parsed.verifyRun === true, browserObserved: browserObserved.length }, evidenceGaps, repairPrompt: { available: repairPromptAvailable, title: 'Operator Relief V2 Repair Prompt', body: repairPromptBody, sourceEvidence: evidenceGaps.map((g) => g.source), copyLabel: 'Copy Repair Prompt' }, browserProofChecklist: { required: browserRequired, reason: browserRequired ? 'UI-facing mission requires browser proof before merge.' : 'Non-UI mission.', checklistItems: UI_BROWSER_CHECKLIST, observedItems: browserObserved, missingItems: browserMissing }, operatorDecisionQueue: operatorDecisionQueueV2, canonConstraints: ['No duplicate Mission Console shells/panes.', 'Merge is never automatic.', 'Operator remains final approver.'], requiredCommands: ['node --test tests/operator-relief-projection.test.mjs tests/operator-relief-merge-safety.test.mjs tests/operator-relief-repair-prompt.test.mjs tests/operator-relief-music-failure-pack.test.mjs tests/mission-console-operator-relief-panel.test.mjs','node --test stephanos-ui/src/components/MissionConsoleTile.render.test.mjs stephanos-ui/src/components/AIConsole.render.test.mjs stephanos-ui/src/components/AnswerPaneCopyButton.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs stephanos-ui/src/components/CollapsiblePanel.render.test.mjs stephanos-ui/src/components/stephanosPaneCanon.test.mjs','npm run stephanos:build','npm run stephanos:verify'] };
   const missionApprovalQueue = buildMissionApprovalQueue({ missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, repairPrompt: { prompt: repairPromptBody }, missionState, browserProof: missionHandoff.browserProofChecklist, missionHandoff, tests: { passed: testsPassed, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true } });
+  const topProblemsProjection = buildTopProblemsProjection({ missionBrainNextAction, supportSnapshot, verificationReturnIntake, browserMissing });
 
-  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue };
+  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection };
 }
