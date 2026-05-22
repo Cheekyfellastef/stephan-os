@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
+  canAutoPublishDist,
   classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
@@ -12,6 +13,7 @@ import {
   isMainModule,
   runGitPullPreflightWithDeps,
   resolveStepExecution,
+  shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
 
@@ -53,19 +55,16 @@ test('isGitWorkingTreeClean returns false when meaningful changes are present', 
   assert.equal(isGitWorkingTreeClean(' M scripts/ignite-stephanos-local.mjs\n'), false);
 });
 
-test('ignition status evaluator allows approved local node_modules and lockfile dirt', () => {
+test('ignition status evaluator allows dependency dirt but not lockfile source dirt', () => {
   const evaluation = evaluateGitStatusForIgnition([
     '?? node_modules/foo/index.js',
     ' M stephanos-server/package-lock.json',
     '?? stephanos-ui/node_modules/bar/package.json',
   ].join('\n'));
 
-  assert.equal(evaluation.meaningfulEntries.length, 0);
-  assert.equal(evaluation.approvedEntries.length, 3);
-  assert.equal(isGitWorkingTreeClean([
-    '?? node_modules/foo/index.js',
-    ' M stephanos-server/package-lock.json',
-  ].join('\n')), true);
+  assert.equal(evaluation.meaningfulEntries.length, 1);
+  assert.equal(evaluation.approvedEntries.length, 2);
+  assert.equal(isGitWorkingTreeClean('?? node_modules/foo/index.js\n'), true);
 });
 
 test('ignition status evaluator allows approved generated dist dirt', () => {
@@ -81,15 +80,15 @@ test('ignition status evaluator allows approved generated dist dirt', () => {
 
 test('ignition status evaluator classifies backend runtime data dirt separately', () => {
   const evaluation = evaluateGitStatusForIgnition([
-    ' M stephanos-server/data/activity/events.json',
-    '?? stephanos-server/data/memory/durable-memory.json',
+    ' M stephanos-server/data/memory/durable-memory.json',
+    '?? data/session-cache.json',
   ].join('\n'));
 
-  assert.equal(evaluation.runtimeStateEntries.length, 2);
+  assert.equal(evaluation.runtimeStateEntries.length, 1);
+  assert.equal(evaluation.transientRootDataEntries.length, 1);
   assert.equal(evaluation.meaningfulEntries.length, 0);
   assert.equal(evaluation.approvedEntries.length, 0);
   assert.deepEqual(collectRuntimeStatePaths(evaluation), [
-    'stephanos-server/data/activity/events.json',
     'stephanos-server/data/memory/durable-memory.json',
   ]);
 });
@@ -230,8 +229,7 @@ test('runtime state dirt is checkpointed and does not block launch preflight', (
       if (label === 'git-status') {
         return {
           stdout: [
-            ' M stephanos-server/data/activity/events.json',
-            '?? stephanos-server/data/memory/durable-memory.json',
+            ' M stephanos-server/data/memory/durable-memory.json',
           ].join('\n'),
           stderr: '',
         };
@@ -262,16 +260,13 @@ test('runtime state dirt is checkpointed and does not block launch preflight', (
     },
   });
 
-  assert.deepEqual(createdPaths, [
-    'stephanos-server/data/activity/events.json',
-    'stephanos-server/data/memory/durable-memory.json',
-  ]);
+  assert.deepEqual(createdPaths, ['stephanos-server/data/memory/durable-memory.json']);
   assert.equal(restored, true);
   assert.deepEqual(steps, [
     {
       label: 'git-restore-runtime-state-before-pull',
       command: 'git',
-      args: ['restore', '--worktree', '--staged', '--', 'stephanos-server/data/activity/events.json'],
+      args: ['restore', '--worktree', '--staged', '--', 'stephanos-server/data/memory/durable-memory.json'],
     },
     {
       label: 'git-fetch',
@@ -323,9 +318,9 @@ test('checkpoint failure blocks safely before pull', () => {
   assert.throws(
     () => runGitPullPreflightWithDeps({
       captureStep: (label) => {
-        if (label === 'git-status') {
+      if (label === 'git-status') {
           return {
-            stdout: ' M stephanos-server/data/activity/events.json\n',
+            stdout: ' M stephanos-server/data/memory/durable-memory.json\n',
             stderr: '',
           };
         }
@@ -340,6 +335,23 @@ test('checkpoint failure blocks safely before pull', () => {
     }),
     /runtime state checkpoint failed/,
   );
+});
+
+test('auto-publish requires explicit env flag', () => {
+  assert.equal(shouldAutoPublishDist({}), false);
+  assert.equal(shouldAutoPublishDist({ STEPHANOS_IGNITION_AUTOPUBLISH_DIST: '1' }), true);
+});
+
+test('auto-publish gate blocks non-main/non-origin and unsafe staged paths', () => {
+  const cleanStatus = evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n');
+  assert.equal(canAutoPublishDist({ statusAssessment: cleanStatus, branch: 'feature/x', upstream: 'origin/main' }).ok, false);
+  assert.equal(canAutoPublishDist({ statusAssessment: cleanStatus, branch: 'main', upstream: 'upstream/main' }).ok, false);
+  assert.equal(canAutoPublishDist({
+    statusAssessment: cleanStatus,
+    branch: 'main',
+    upstream: 'origin/main',
+    stagedPaths: ['stephanos-server/data/memory/durable-memory.json'],
+  }).ok, false);
 });
 
 test('preflight blocks when require-published-head is enabled and branch is ahead', () => {
