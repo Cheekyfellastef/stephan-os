@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
@@ -473,11 +473,33 @@ export function restoreRuntimeStateCheckpoint(checkpointState, options = {}) {
   }
 }
 
+
+export function checkpointAndRemoveTransientRootData(options = {}) {
+  const {
+    timestamp = () => new Date().toISOString().replace(/[:.]/g, '-'),
+    makeDir = (dirPath) => mkdirSync(dirPath, { recursive: true }),
+    copyPath = (fromPath, toPath) => cpSync(fromPath, toPath, { recursive: true, force: true }),
+    removePath = (targetPath) => rmSync(targetPath, { recursive: true, force: true }),
+    log = (message) => console.log(message),
+  } = options;
+
+  const stamp = timestamp();
+  const checkpointPath = `.stephanos/local-state-checkpoints/${stamp}/root-data/data`;
+  log('[IGNITION] transient root data detected: data/');
+  makeDir(checkpointPath.slice(0, checkpointPath.lastIndexOf('/')));
+  copyPath('data', checkpointPath);
+  log(`[IGNITION] transient root data checkpointed: ${checkpointPath}`);
+  removePath('data');
+  log('[IGNITION] transient root data removed');
+  return checkpointPath;
+}
+
 export function runGitPullPreflightWithDeps({
   captureStep = runStepCapture,
   runStepFn = runStep,
   createCheckpoint = createRuntimeStateCheckpoint,
   restoreCheckpoint = restoreRuntimeStateCheckpoint,
+  checkpointRootData = checkpointAndRemoveTransientRootData,
   argvArgs = args,
 } = {}) {
   console.log('[IGNITION] git status check starting');
@@ -489,14 +511,8 @@ export function runGitPullPreflightWithDeps({
   let runtimeCheckpointState = null;
 
   if (statusAssessment.transientRootDataEntries.length > 0) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const checkpointRoot = `.stephanos/local-state-checkpoints/${stamp}/root-data`;
-    runStepFn('mkdir-root-data-checkpoint', process.execPath, ['-e', `require('fs').mkdirSync('${checkpointRoot}',{recursive:true})`]);
-    runStepFn('checkpoint-root-data', 'cp', ['-R', 'data', `${checkpointRoot}/data`]);
-    console.log('[IGNITION] transient root data checkpointed');
-    runStepFn('remove-root-data', 'rm', ['-rf', 'data']);
-    console.log('[IGNITION] transient root data removed');
-    console.log('[IGNITION] transient root data cleaned');
+    checkpointRootData();
+    console.log('[IGNITION] git status rechecked after housekeeping');
   }
 
   if (statusAssessment.approvedEntries.length > 0) {
