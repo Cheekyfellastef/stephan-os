@@ -155,8 +155,8 @@ test('embedded mission console answer history keeps larger viewport and visible 
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*height:\s*auto;/m);
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*overflow-y:\s*visible;/m);
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*flex:\s*1\s+1\s+auto;/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(12\.5rem,\s*32vh,\s*24rem\);/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(17\.5rem,\s*50vh,\s*36rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(15\.5rem,\s*40vh,\s*30rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(21\.75rem,\s*62vh,\s*42rem\);/m);
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
   assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
 });
@@ -176,6 +176,11 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /effectFiredAt/);
   assert.match(source, /commandDeckComposerFound: 'no'/);
   assert.match(source, /latestAssistantAnswerDomFound: 'no'/);
+  assert.match(source, /latestAnswerCardClientHeight/);
+  assert.match(source, /answerViewportClientHeight/);
+  assert.match(source, /answerViewportFitsLatestAnswer/);
+  assert.match(source, /answerViewportFitVerdict/);
+  assert.match(source, /long-answer-internal-scroll/);
 });
 
 test('latest assistant answer pane provides safe scroll margins', async () => {

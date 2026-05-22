@@ -4591,12 +4591,13 @@ pre {
 
 .mission-console-pane__body.mission-console__history {
   flex: 1 1 auto;
-  min-height: clamp(12.5rem, 32vh, 24rem);
-  max-height: clamp(17.5rem, 50vh, 36rem);
+  min-height: clamp(15.5rem, 40vh, 30rem);
+  max-height: clamp(21.75rem, 62vh, 42rem);
   height: auto;
   overflow-y: auto;
   margin-bottom: 0;
-  padding-bottom: 0.55rem;
+  padding-bottom: 0.9rem;
+  padding-inline: 0.4rem;
 }
 
 .mission-console-input,
