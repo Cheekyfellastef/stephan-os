@@ -60,3 +60,11 @@ test('protected canon: dev-mode inline failure marker exists if composer contrac
   assert.match(source, /Command Deck composer missing — protected canon failure\./);
   assert.match(source, /setComposerContractFailure\(/);
 });
+
+
+test('protected canon: no silent none scroll reason after final assistant answer render path', async () => {
+  const source = await read(aiConsolePath);
+  assert.match(source, /requestReason: 'already-visible-confirmed'/);
+  assert.match(source, /requestReason: 'explicit-render-diagnostic-failure'/);
+  assert.doesNotMatch(source, /same-answer-signature-already-scrolled'\s*\}\)/);
+});
