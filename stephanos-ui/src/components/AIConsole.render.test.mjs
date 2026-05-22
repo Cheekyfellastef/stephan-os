@@ -167,11 +167,15 @@ test('embedded mission console answer history keeps larger viewport and visible 
 test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /targetKind = latestAssistantAnswerId \? 'latest-assistant-answer-pane' : 'none'/);
+  assert.match(source, /resolveVisibleAnswerHistoryContainer/);
+  assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
   assert.match(source, /method: 'inner-container-scroll\|outer-viewport-reveal'/);
   assert.match(source, /method: 'skipped-no-target-after-raf'/);
   assert.match(source, /aiConsoleAnswerScroll/);
   assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);
+  assert.match(source, /requestReason: 'already-visible-confirmed'/);
   assert.match(source, /skipReason: 'same-answer-signature-already-scrolled'/);
+  assert.match(source, /requestReason: 'explicit-render-diagnostic-failure'/);
   assert.match(source, /currentSignature/);
   assert.match(source, /effectFiredAt/);
   assert.match(source, /commandDeckComposerFound: 'no'/);

@@ -122,7 +122,7 @@ export default function AIConsole({
     viewPaneHeight: 0,
   });
 
-  const getAnswerHistoryScrollContainer = () => containerRef.current || null;
+  const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
   const isElementActuallyVisible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect?.();
@@ -136,6 +136,28 @@ export default function AIConsole({
   const resolveVisibleCommandDeckRoot = () => {
     const roots = Array.from(document.querySelectorAll('[data-testid="command-deck-root"]'));
     return roots.find((root) => isElementActuallyVisible(root)) || roots[0] || null;
+  };
+
+  const resolveVisibleAnswerHistoryContainer = () => {
+    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    if (!visibleDeckRoot) return null;
+    const historyNodes = Array.from(visibleDeckRoot.querySelectorAll('[data-testid="command-deck-answer-history"]'));
+    return historyNodes.find((node) => isElementActuallyVisible(node)) || historyNodes[0] || null;
+  };
+
+  const resolveLatestVisibleAssistantAnswerElement = (assistantAnswerId = '') => {
+    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    if (!visibleDeckRoot) return null;
+    const historyContainer = resolveVisibleAnswerHistoryContainer();
+    const queryRoot = historyContainer || visibleDeckRoot;
+    const finalAssistantAnswers = Array.from(queryRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]'))
+      .filter((node) => isElementActuallyVisible(node));
+    if (finalAssistantAnswers.length === 0) return null;
+    if (assistantAnswerId) {
+      const idMatch = finalAssistantAnswers.find((node) => String(node.getAttribute('data-assistant-answer-id') || '') === String(assistantAnswerId));
+      if (idMatch) return idMatch;
+    }
+    return finalAssistantAnswers[finalAssistantAnswers.length - 1] || null;
   };
 
 
@@ -267,9 +289,7 @@ export default function AIConsole({
       const targetElFromRef = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
       const visibleDeckRoot = resolveVisibleCommandDeckRoot();
-      const visibleLatestAssistantAnswerEl = visibleDeckRoot
-        ? visibleDeckRoot.querySelector(`[data-assistant-answer-id="${String(latestAssistantAnswerId || '')}"][data-answer-role="assistant"][data-answer-final="true"]`)
-        : null;
+      const visibleLatestAssistantAnswerEl = resolveLatestVisibleAssistantAnswerElement(latestAssistantAnswerId);
       const targetEl = visibleLatestAssistantAnswerEl || targetElFromRef;
       const visibleAnswerPanes = visibleDeckRoot ? Array.from(visibleDeckRoot.querySelectorAll('[data-testid="assistant-answer-pane"], [data-testid="latest-assistant-answer-pane"]')).filter((node) => isElementActuallyVisible(node)) : [];
       const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
@@ -409,7 +429,7 @@ export default function AIConsole({
     }
     if (!signatureChanged) {
       recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_signature');
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'same-answer-signature-already-scrolled' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'already-visible-confirmed', skipReason: 'same-answer-signature-already-scrolled', completed: 'yes', method: 'already-visible-confirmed' });
       return;
     }
     lastHistoryRenderKeyRef.current = historyRenderKey;
@@ -420,14 +440,14 @@ export default function AIConsole({
 
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try {
-        const latestAssistantAnswerTarget = latestAssistantAnswerRef.current;
+        const latestAssistantAnswerTarget = resolveLatestVisibleAssistantAnswerElement(latestAssistantAnswerId) || latestAssistantAnswerRef.current;
         const scrollContainerEl = getAnswerHistoryScrollContainer();
         if (!latestAssistantAnswerTarget) {
-          publishScrollDiagnostics({ method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
+          publishScrollDiagnostics({ requested: 'yes', requestReason: 'explicit-render-diagnostic-failure', method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
               return;
         }
         if (!scrollContainerEl) {
-          publishScrollDiagnostics({ method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
+          publishScrollDiagnostics({ requested: 'yes', requestReason: 'explicit-render-diagnostic-failure', method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
               return;
         }
         const latestScrollKey = `${latestAnswerEnvelopeId}|${latestAssistantAnswerId}|${latestAssistantText.length}|final`;
