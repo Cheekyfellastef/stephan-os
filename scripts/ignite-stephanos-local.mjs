@@ -290,6 +290,8 @@ const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
 const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
+const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
+const ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES = [APPROVED_GENERATED_DIST_PREFIX];
 
 function normalizeGitPath(rawPath) {
   const trimmed = String(rawPath || '').trim();
@@ -329,12 +331,19 @@ function isTransientRootDataPath(path) {
 }
 
 function classifyStatusEntry(entry) {
+  if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
   if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
+  if (entry.status.includes('?') && entry.paths.some((path) => path.includes('.'))) {
+    const ext = entry.paths[0].split('.').pop()?.toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf', 'wasm', 'zip', '7z', 'tar', 'gz', 'pdf'].includes(ext)) {
+      return 'forbidden-or-unknown';
+    }
+  }
   const tracked = !entry.status.includes('?');
-  return tracked ? 'meaningful-source-dirt' : 'unknown-dirt';
+  return tracked ? 'meaningful-source-dirt' : 'forbidden-or-unknown';
 }
 
 function parsePorcelainStatusLine(line) {
@@ -356,9 +365,38 @@ export function evaluateGitStatusForIgnition(statusOutput) {
   const runtimeStateEntries = entries.filter((entry) => entry.category === 'runtime-state');
   const transientRootDataEntries = entries.filter((entry) => entry.category === 'transient-root-data');
   const dependencyEntries = entries.filter((entry) => entry.category === 'dependency-dirt');
-  const meaningfulEntries = entries.filter((entry) => entry.category === 'meaningful-source-dirt' || entry.category === 'unknown-dirt');
+  const forbiddenOrUnknownEntries = entries.filter((entry) => entry.category === 'forbidden-or-unknown');
+  const meaningfulEntries = entries.filter((entry) => entry.category === 'meaningful-source-dirt' || entry.category === 'forbidden-or-unknown');
 
-  return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, meaningfulEntries };
+  return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
+}
+
+function collectAllowlistedUntrackedPaths(statusAssessment) {
+  return statusAssessment.entries
+    .filter((entry) => entry.status.includes('?'))
+    .flatMap((entry) => entry.paths)
+    .filter((path) => ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES.some((prefix) => path.startsWith(prefix)))
+    .sort();
+}
+
+function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root' } = {}) {
+  const autoCleanedFiles = [];
+  const blockedFiles = statusAssessment.meaningfulEntries.flatMap((entry) => entry.paths);
+  const dependencyWarnings = statusAssessment.dependencyEntries.flatMap((entry) => entry.paths);
+  const untrackedDist = collectAllowlistedUntrackedPaths(statusAssessment);
+  if (untrackedDist.length > 0 && mode !== 'auto-publish') {
+    runStepFn('git-clean-preview-dist-untracked', 'git', ['clean', '-nd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    autoCleanedFiles.push(...untrackedDist);
+  }
+  return {
+    cleanlinessVerdict: blockedFiles.length > 0 ? 'blocked' : 'clean-or-autocleaned',
+    autoCleanedFiles,
+    checkpointedRuntimeFiles: collectRuntimeStatePaths(statusAssessment),
+    blockedFiles,
+    dependencyWarnings,
+    nextOperatorAction: blockedFiles.length > 0 ? 'Commit/stash/discard source/forbidden dirt or run with explicit dirty-source intent.' : 'Continue ignition.',
+  };
 }
 
 function isTrackedStatus(status) {
@@ -505,6 +543,13 @@ export function runGitPullPreflightWithDeps({
   console.log('[IGNITION] git status check starting');
   const statusResult = captureStep('git-status', 'git', ['status', '--porcelain']);
   const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
+  const cleanlinessReport = runCleanlinessGovernor({ statusAssessment, runStepFn });
+  console.log(`[IGNITION] cleanlinessVerdict=${cleanlinessReport.cleanlinessVerdict}`);
+  console.log(`[IGNITION] autoCleanedFiles=${cleanlinessReport.autoCleanedFiles.join(',') || 'none'}`);
+  console.log(`[IGNITION] checkpointedRuntimeFiles=${cleanlinessReport.checkpointedRuntimeFiles.join(',') || 'none'}`);
+  console.log(`[IGNITION] blockedFiles=${cleanlinessReport.blockedFiles.join(',') || 'none'}`);
+  console.log(`[IGNITION] dependencyWarnings=${cleanlinessReport.dependencyWarnings.join(',') || 'none'}`);
+  console.log(`[IGNITION] nextOperatorAction=${cleanlinessReport.nextOperatorAction}`);
   console.log('[IGNITION] housekeeping enabled');
   const approvedTrackedGeneratedRestorePaths = collectApprovedTrackedGeneratedRestorePaths(statusAssessment);
   const runtimeStatePaths = collectRuntimeStatePaths(statusAssessment);
@@ -707,6 +752,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
+  const ignitionMode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
   let publicationTruth = null;
 
   if (args.has('--probe-existing-server')) {
@@ -784,6 +830,18 @@ export async function run() {
       console.log('[IGNITION] verify passed');
     },
     runPostVerify: async () => {
+      if (ignitionMode === 'pr-clean') {
+        runStep('guard-pr-clean', npmCommand, ['run', 'stephanos:guard:pr-clean']);
+        const status = runStepCapture('git-status-pr-clean-post-verify', 'git', ['status', '--porcelain']);
+        const assessment = evaluateGitStatusForIgnition(status.stdout);
+        const restorePaths = collectApprovedTrackedGeneratedRestorePaths(assessment);
+        if (restorePaths.length > 0) {
+          runStep('git-restore-pr-clean-dist', 'git', ['restore', '--worktree', '--staged', '--', ...restorePaths]);
+        }
+        runStep('git-clean-pr-clean-dist-preview', 'git', ['clean', '-nd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+        runStep('git-clean-pr-clean-dist', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+        runStep('guard-pr-clean-final', npmCommand, ['run', 'stephanos:guard:pr-clean']);
+      }
       if (!shouldAutoPublishDist()) {
         console.log('[IGNITION] dist auto-publish disabled');
         return;
