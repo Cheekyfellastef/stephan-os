@@ -24,6 +24,8 @@ Run these from the repository root:
 - `npm run stephanos:build` — rebuild `apps/stephanos/dist/**` from the live `stephanos-ui` source.
 - `npm run stephanos:verify` — fail fast if dist is missing, incomplete, stale, or built from the wrong source.
 - `npm run stephanos:serve` — rebuild, verify, and serve the project so the generated runtime can be checked at `/apps/stephanos/dist/`.
+- `npm run stephanos:ignite` — alias for the same local ignition flow.
+- `npm run stephanos:ignite:auto-publish` — ignition flow with dist auto-publish enabled through a Node wrapper that sets `STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1`.
 - `npm run deploy` — enforced publish gate; runs build + verify before any publish step.
 - `npm run stephanos:precommit` — lightweight manual pre-commit check for source + dist sync.
 

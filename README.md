@@ -50,6 +50,8 @@ windows\Launch-Stephanos-Local.cmd
 - `npm run stephanos:build` — rebuild `stephanos-ui` into `apps/stephanos/dist/**` and stamp it with runtime metadata.
 - `npm run stephanos:verify` — validate that dist exists, asset references resolve, and build metadata/fingerprint still match the current source.
 - `npm run stephanos:serve` — rebuild, verify, and serve the repository so the generated runtime can be checked in a browser.
+- `npm run stephanos:ignite` — alias for the local ignition flow (same behavior as `stephanos:serve`).
+- `npm run stephanos:ignite:auto-publish` — local ignition flow with `STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1` enabled via a Node wrapper for cross-platform use.
 
 ## Required workflow after editing Stephanos UI source
 
