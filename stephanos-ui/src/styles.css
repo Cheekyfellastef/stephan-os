@@ -4569,13 +4569,15 @@ pre {
 .mission-console .panel-body {
   display: flex;
   flex-direction: column;
-  min-height: clamp(24rem, 56vh, 40rem);
+  min-height: clamp(20rem, 52vh, 36rem);
   height: min(72vh, 760px);
   max-height: min(72vh, 760px);
   overflow: hidden;
 }
 
 .mission-console-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -4583,9 +4585,9 @@ pre {
 
 .mission-console-pane__body.mission-console__history {
   flex: 1 1 auto;
-  min-height: clamp(14rem, 34vh, 24rem);
-  max-height: min(62vh, 760px);
-  height: 100%;
+  min-height: clamp(10rem, 26vh, 20rem);
+  max-height: none;
+  height: auto;
   overflow-y: auto;
   margin-bottom: 0;
   padding-bottom: 0.55rem;
@@ -4593,6 +4595,8 @@ pre {
 
 .mission-console-input,
 .mission-console__composer {
+  flex: 0 0 auto;
+  flex-shrink: 0;
   position: static;
   background: rgba(2, 8, 18, 0.55);
   border-top: 1px solid rgba(88, 148, 220, 0.35);

@@ -144,12 +144,12 @@ test('AIConsole exposes Copy Perf Diagnostics control for AI core surface instru
 
 test('embedded mission console answer history keeps larger viewport and visible composer', async () => {
   const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
-  assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*min-height:\s*clamp\(24rem,\s*56vh,\s*40rem\);/m);
+  assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*min-height:\s*clamp\(20rem,\s*52vh,\s*36rem\);/m);
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*height:\s*min\(72vh,\s*760px\);/m);
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*overflow:\s*hidden;/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(14rem,\s*34vh,\s*24rem\);/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*height:\s*100%;/m);
-  assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*position:\s*static;/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(10rem,\s*26vh,\s*20rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
+  assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
 });
 
 
