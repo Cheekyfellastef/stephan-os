@@ -14,6 +14,10 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Copy Repair Prompt/);
   assert.match(source, /Lesson Candidates/);
   assert.match(source, /Mission Handoff Pack/);
+  assert.match(source, /Work Routing Candidate/);
+  assert.match(source, /Verification Return Intake/);
+  assert.match(source, /Copy Codex Packet/);
+  assert.match(source, /Copy Operator Proof Checklist/);
   assert.match(source, /operator_relief\.browser_proof_missing/);
 });
 
