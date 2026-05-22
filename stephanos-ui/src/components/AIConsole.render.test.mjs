@@ -63,7 +63,7 @@ test('AIConsole renders mission console shell with internal message region and a
 test('AIConsole scroll targeting binds to latest assistant answer pane ref rather than generic latest history item', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /latestAssistantAnswerRef/);
-  assert.match(source, /scrollContainer\.scrollTo\(\{ top: nextScrollTop, behavior: 'auto' \}\)/);
+  assert.match(source, /scrollContainerEl\.scrollTo\(\{ top: nextScrollTop, behavior: 'auto' \}\)/);
   assert.match(source, /data-testid=\{isLatestAssistantAnswer \? 'latest-assistant-answer-pane' : 'assistant-answer-pane'\}/);
 });
 
@@ -154,10 +154,14 @@ test('embedded mission console answer history keeps larger viewport and visible 
 
 test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
-  assert.match(source, /targetKind = latestAssistantAnswerEl \? 'latest-assistant-answer-pane' : 'none'/);
+  assert.match(source, /targetKind = latestAssistantAnswerId \? 'latest-assistant-answer-pane' : 'none'/);
   assert.match(source, /method: 'container\.scrollTo\(computed,auto\)'/);
-  assert.match(source, /method: 'skipped-no-target'/);
+  assert.match(source, /method: 'skipped-no-target-after-raf'/);
   assert.match(source, /aiConsoleAnswerScroll/);
+  assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);
+  assert.match(source, /skipReason: 'same-answer-signature-already-scrolled'/);
+  assert.match(source, /currentSignature/);
+  assert.match(source, /effectFiredAt/);
 });
 
 test('latest assistant answer pane provides safe scroll margins', async () => {

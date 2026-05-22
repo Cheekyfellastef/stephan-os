@@ -78,6 +78,7 @@ export default function AIConsole({
 
   const latestAssistantAnswerRef = useRef(null);
   const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
+  const lastScrolledAnswerSignatureRef = useRef('');
   const answerScrollDiagnosticsRef = useRef({
     targetKind: 'none',
     targetId: 'none',
@@ -90,6 +91,16 @@ export default function AIConsole({
     occlusionReason: 'none',
     lastRequestedAt: 'none',
     lastCompletedAt: 'none',
+    skipReason: 'effect-not-fired-yet',
+    latestAssistantAnswerId: 'none',
+    latestAssistantAnswerPresent: 'no',
+    latestAssistantAnswerFinal: 'no',
+    latestAssistantAnswerTextLength: 0,
+    lastSeenSignature: 'none',
+    currentSignature: 'none',
+    signatureChanged: 'no',
+    effectFired: 'no',
+    effectFiredAt: 'none',
   });
 
   const getAnswerHistoryScrollContainer = () => containerRef.current || null;
@@ -186,9 +197,18 @@ export default function AIConsole({
 
   useLayoutEffect(() => {
     const nowIso = new Date().toISOString();
+    const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => isAssistantHistoryEntry(entry)) || null;
+    const latestAssistantText = String(latestAssistantEntry?.output_text || '').trim();
+    const latestAssistantAnswerFinal = !!latestAssistantEntry && latestAssistantText.length > 0 && latestAssistantEntry?.stream_finalized !== false;
+    const latestAnswerEnvelopeId = String(latestAssistantEntry?.envelope_id || latestAssistantEntry?.envelopeId || 'none');
+    const latestAnswerIdForSig = String(latestAssistantEntry?.id || 'none');
+    const currentSignature = latestAssistantAnswerFinal
+      ? `${latestAnswerEnvelopeId}|${latestAnswerIdForSig}|${latestAssistantText.length}|final`
+      : 'none';
+    const signatureChanged = currentSignature !== 'none' && currentSignature !== lastScrolledAnswerSignatureRef.current;
     const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
     const scrollContainer = getAnswerHistoryScrollContainer();
-    const targetKind = latestAssistantAnswerEl ? 'latest-assistant-answer-pane' : 'none';
+    const targetKind = latestAssistantAnswerId ? 'latest-assistant-answer-pane' : 'none';
     const targetId = latestAssistantAnswerId || 'none';
     latestScrollTargetRef.current = { kind: targetKind, id: targetId };
 
@@ -203,6 +223,7 @@ export default function AIConsole({
       answerScrollDiagnosticsRef.current = {
         requested: previous.requested || 'no',
         requestReason: previous.requestReason || 'none',
+        skipReason: previous.skipReason || 'effect-not-fired-yet',
         targetKind,
         targetId,
         targetFound: targetEl ? 'yes' : 'no',
@@ -219,61 +240,86 @@ export default function AIConsole({
         occlusionReason: visibility.occlusionReason,
         lastRequestedAt: previous.lastRequestedAt || 'none',
         lastCompletedAt: previous.lastCompletedAt || 'none',
+        latestAssistantAnswerId: latestAssistantAnswerId || 'none',
+        latestAssistantAnswerPresent: latestAssistantEntry ? 'yes' : 'no',
+        latestAssistantAnswerFinal: latestAssistantAnswerFinal ? 'yes' : 'no',
+        latestAssistantAnswerTextLength: latestAssistantText.length,
+        lastSeenSignature: lastScrolledAnswerSignatureRef.current || 'none',
+        currentSignature,
+        signatureChanged: signatureChanged ? 'yes' : 'no',
+        effectFired: 'yes',
+        effectFiredAt: nowIso,
         ...overrides,
       };
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
     };
 
     if (!autoScrollEnabled) {
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'autoscroll-disabled' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'autoscroll-disabled' });
       return;
     }
-    if (lastHistoryRenderKeyRef.current === historyRenderKey) {
-      recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_history');
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'same-history-key' });
+    if (!latestAssistantEntry) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'no-final-assistant-answer' });
+      return;
+    }
+    if (!latestAssistantAnswerFinal) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'pending-answer-only' });
+      return;
+    }
+    if (!latestAssistantAnswerId) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'latest-assistant-id-missing' });
+      return;
+    }
+    if (!signatureChanged) {
+      recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_signature');
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'same-answer-signature-already-scrolled' });
       return;
     }
     lastHistoryRenderKeyRef.current = historyRenderKey;
     recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
 
-    publishScrollDiagnostics({ requested: 'yes', requestReason: 'latest-assistant-answer-finalized', lastRequestedAt: nowIso });
+    publishScrollDiagnostics({ requested: 'yes', requestReason: 'final-assistant-answer-rendered', skipReason: 'none', lastRequestedAt: nowIso });
 
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try {
-        if (!latestAssistantAnswerEl) {
-          publishScrollDiagnostics({ method: 'skipped-no-target', completed: 'no' });
+        const latestAssistantAnswerTarget = latestAssistantAnswerRef.current;
+        const scrollContainerEl = getAnswerHistoryScrollContainer();
+        if (!latestAssistantAnswerTarget) {
+          publishScrollDiagnostics({ method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
           restoreDocumentScrollPosition();
           return;
         }
-        if (!scrollContainer) {
-          publishScrollDiagnostics({ method: 'skipped-no-container', completed: 'no' });
+        if (!scrollContainerEl) {
+          publishScrollDiagnostics({ method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
           restoreDocumentScrollPosition();
           return;
         }
-        const previousScrollTop = scrollContainer.scrollTop;
+        const latestScrollKey = `${latestAnswerEnvelopeId}|${latestAssistantAnswerId}|${latestAssistantText.length}|final`;
+        lastScrolledAnswerSignatureRef.current = latestScrollKey;
+        const previousScrollTop = scrollContainerEl.scrollTop;
         const safeTopPadding = 12;
-        const targetRect = latestAssistantAnswerEl.getBoundingClientRect();
-        const containerRect = scrollContainer.getBoundingClientRect();
-        const targetTopRelativeToContainer = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+        const targetRect = latestAssistantAnswerTarget.getBoundingClientRect();
+        const containerRect = scrollContainerEl.getBoundingClientRect();
+        const targetTopRelativeToContainer = targetRect.top - containerRect.top + scrollContainerEl.scrollTop;
         const targetHeight = Math.max(0, targetRect.height || (targetRect.bottom - targetRect.top));
-        const containerHeight = Math.max(1, scrollContainer.clientHeight);
-        const maxTop = Math.max(0, scrollContainer.scrollHeight - containerHeight);
+        const containerHeight = Math.max(1, scrollContainerEl.clientHeight);
+        const maxTop = Math.max(0, scrollContainerEl.scrollHeight - containerHeight);
         let nextScrollTop = Math.max(0, targetTopRelativeToContainer - safeTopPadding);
         if (targetHeight <= containerHeight) {
           const bottomAligned = Math.max(0, targetTopRelativeToContainer + targetHeight - containerHeight + safeTopPadding);
           nextScrollTop = Math.min(nextScrollTop, bottomAligned);
         }
         nextScrollTop = Math.min(maxTop, Math.max(0, nextScrollTop));
-        scrollContainer.scrollTo({ top: nextScrollTop, behavior: 'auto' });
+        scrollContainerEl.scrollTo({ top: nextScrollTop, behavior: 'auto' });
         recordPerfCounter('timers', 'ai_core.autoscroll_raf');
-        publishScrollDiagnostics({ method: 'container.scrollTo(computed,auto)', previousScrollTop, nextScrollTop, completed: 'yes', lastCompletedAt: new Date().toISOString() });
+        publishScrollDiagnostics({ method: 'container.scrollTo(computed,auto)', previousScrollTop, nextScrollTop, completed: 'yes', skipReason: 'none', lastCompletedAt: new Date().toISOString() });
       } catch (error) {
-        publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', occlusionReason: String(error?.message || 'scroll-exception') });
+        publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', skipReason: 'scroll-exception', occlusionReason: String(error?.message || 'scroll-exception') });
       }
       restoreDocumentScrollPosition();
     }));
-  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, setUiDiagnostics]);
+  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, safeCommandHistory, setUiDiagnostics]);
 
   const handleScroll = () => {
     const el = containerRef.current;
