@@ -155,8 +155,8 @@ test('embedded mission console answer history keeps larger viewport and visible 
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*height:\s*auto;/m);
   assert.match(stylesSource, /\.mission-console \.panel-body[\s\S]*overflow-y:\s*visible;/m);
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*flex:\s*1\s+1\s+auto;/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(19\.5rem,\s*50vh,\s*36rem\);/m);
-  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(27rem,\s*74vh,\s*52rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(24rem,\s*58vh,\s*42rem\);/m);
+  assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(34rem,\s*82vh,\s*62rem\);/m);
   assert.match(stylesSource, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
   assert.match(stylesSource, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
 });
@@ -180,6 +180,8 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /answerViewportClientHeight/);
   assert.match(source, /answerViewportFitsLatestAnswer/);
   assert.match(source, /answerViewportFitVerdict/);
+  assert.match(source, /standardAnswerFitTarget/);
+  assert.match(source, /standardTenItemAnswerFitVerdict/);
   assert.match(source, /long-answer-internal-scroll/);
 });
 
