@@ -2703,6 +2703,28 @@ test('support snapshot projects identity recall and operator name usage from ide
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
       chatContextResponseMode: 'identity-recall',
+      uiDiagnostics: {
+        aiConsoleAnswerScroll: {
+          requested: 'yes',
+          requestReason: 'latest-assistant-answer-finalized',
+          targetKind: 'latest-assistant-answer-pane',
+          targetId: 'assistant-1',
+          targetFound: 'yes',
+          containerKind: 'answer-history-container',
+          containerFound: 'yes',
+          containerScrollable: 'yes',
+          method: 'container.scrollTo(computed,auto)',
+          previousScrollTop: '12',
+          nextScrollTop: '280',
+          completed: 'yes',
+          topVisible: 'yes',
+          bottomVisible: 'yes',
+          fullyVisible: 'yes',
+          occlusionReason: 'none',
+          lastRequestedAt: '2026-05-22T00:00:00.000Z',
+          lastCompletedAt: '2026-05-22T00:00:00.100Z',
+        },
+      },
       lastExecutionMetadata: {
         response_planner_status: 'active',
         response_planner_response_mode: 'identity-recall',
@@ -2738,6 +2760,10 @@ test('support snapshot projects identity recall and operator name usage from ide
   assert.match(snapshot, /Command Pipeline Last Assistant Answer Generated: yes/);
   assert.match(snapshot, /Command Pipeline Last Answer Pane Rendered: yes/);
   assert.match(snapshot, /Command Pipeline Last Finalization Path: deterministic-identity/);
+  assert.match(snapshot, /Answer Scroll Requested: yes/);
+  assert.match(snapshot, /Answer Scroll Target Kind: latest-assistant-answer-pane/);
+  assert.match(snapshot, /Answer Scroll Method: container\.scrollTo\(computed,auto\)/);
+  assert.match(snapshot, /Answer Scroll Completed: yes/);
 });
 
 test('support snapshot keeps operator name used as no when name is unknown', () => {

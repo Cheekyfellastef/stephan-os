@@ -92,14 +92,7 @@ export default function AIConsole({
     lastCompletedAt: 'none',
   });
 
-  const getAnswerHistoryScrollContainer = () => {
-    const el = containerRef.current;
-    if (!el) return null;
-    const style = window.getComputedStyle(el);
-    const canScroll = /(auto|scroll|overlay)/.test(style.overflowY || '') && el.scrollHeight > el.clientHeight;
-    if (canScroll) return el;
-    return el;
-  };
+  const getAnswerHistoryScrollContainer = () => containerRef.current || null;
 
   const computeAnswerScrollVisibility = (targetRect, containerRect) => {
     const topVisible = targetRect.top >= containerRect.top;
@@ -192,57 +185,94 @@ export default function AIConsole({
   }, []);
 
   useLayoutEffect(() => {
-    if (!autoScrollEnabled) return;
+    const nowIso = new Date().toISOString();
+    const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
+    const scrollContainer = getAnswerHistoryScrollContainer();
+    const targetKind = latestAssistantAnswerEl ? 'latest-assistant-answer-pane' : 'none';
+    const targetId = latestAssistantAnswerId || 'none';
+    latestScrollTargetRef.current = { kind: targetKind, id: targetId };
+
+    const publishScrollDiagnostics = (overrides = {}) => {
+      const targetEl = latestAssistantAnswerRef.current;
+      const containerEl = getAnswerHistoryScrollContainer();
+      const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
+      const containerRect = containerEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
+      const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
+      const containerScrollable = !!(containerEl && containerEl.scrollHeight > containerEl.clientHeight);
+      const previous = answerScrollDiagnosticsRef.current || {};
+      answerScrollDiagnosticsRef.current = {
+        requested: previous.requested || 'no',
+        requestReason: previous.requestReason || 'none',
+        targetKind,
+        targetId,
+        targetFound: targetEl ? 'yes' : 'no',
+        containerKind: containerEl ? 'answer-history-container' : 'none',
+        containerFound: containerEl ? 'yes' : 'no',
+        containerScrollable: containerScrollable ? 'yes' : 'no',
+        method: previous.method || 'none',
+        previousScrollTop: previous.previousScrollTop ?? 'n/a',
+        nextScrollTop: previous.nextScrollTop ?? 'n/a',
+        completed: previous.completed || 'no',
+        topVisible: visibility.topVisible ? 'yes' : 'no',
+        bottomVisible: visibility.bottomVisible ? 'yes' : 'no',
+        fullyVisible: visibility.fullyVisible ? 'yes' : 'no',
+        occlusionReason: visibility.occlusionReason,
+        lastRequestedAt: previous.lastRequestedAt || 'none',
+        lastCompletedAt: previous.lastCompletedAt || 'none',
+        ...overrides,
+      };
+      setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+    };
+
+    if (!autoScrollEnabled) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'autoscroll-disabled' });
+      return;
+    }
     if (lastHistoryRenderKeyRef.current === historyRenderKey) {
       recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_history');
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'same-history-key' });
       return;
     }
     lastHistoryRenderKeyRef.current = historyRenderKey;
     recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
 
-    const nowIso = new Date().toISOString();
-    const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
-    const scrollContainer = getAnswerHistoryScrollContainer();
+    publishScrollDiagnostics({ requested: 'yes', requestReason: 'latest-assistant-answer-finalized', lastRequestedAt: nowIso });
 
-    const applyScrollDiagnostics = (targetEl, method, completed) => {
-      const containerRect = scrollContainer?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
-      const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
-      const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
-      answerScrollDiagnosticsRef.current = {
-        targetKind: latestScrollTargetRef.current.kind || 'none',
-        targetId: latestScrollTargetRef.current.id || 'none',
-        containerKind: scrollContainer === window ? 'window' : 'answer-history-container',
-        method,
-        completed: completed ? 'yes' : 'no',
-        topVisible: visibility.topVisible ? 'yes' : 'no',
-        bottomVisible: visibility.bottomVisible ? 'yes' : 'no',
-        fullyVisible: visibility.fullyVisible ? 'yes' : 'no',
-        occlusionReason: visibility.occlusionReason,
-        lastRequestedAt: answerScrollDiagnosticsRef.current.lastRequestedAt || nowIso,
-        lastCompletedAt: completed ? new Date().toISOString() : 'none',
-      };
-      setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
-    };
-
-    if (latestAssistantAnswerEl && scrollContainer) {
-      latestScrollTargetRef.current = { kind: 'latest-assistant-answer-pane', id: latestAssistantAnswerId || '' };
-      answerScrollDiagnosticsRef.current.lastRequestedAt = nowIso;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        latestAssistantAnswerEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try {
+        if (!latestAssistantAnswerEl) {
+          publishScrollDiagnostics({ method: 'skipped-no-target', completed: 'no' });
+          restoreDocumentScrollPosition();
+          return;
+        }
+        if (!scrollContainer) {
+          publishScrollDiagnostics({ method: 'skipped-no-container', completed: 'no' });
+          restoreDocumentScrollPosition();
+          return;
+        }
+        const previousScrollTop = scrollContainer.scrollTop;
+        const safeTopPadding = 12;
+        const targetRect = latestAssistantAnswerEl.getBoundingClientRect();
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const targetTopRelativeToContainer = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+        const targetHeight = Math.max(0, targetRect.height || (targetRect.bottom - targetRect.top));
+        const containerHeight = Math.max(1, scrollContainer.clientHeight);
+        const maxTop = Math.max(0, scrollContainer.scrollHeight - containerHeight);
+        let nextScrollTop = Math.max(0, targetTopRelativeToContainer - safeTopPadding);
+        if (targetHeight <= containerHeight) {
+          const bottomAligned = Math.max(0, targetTopRelativeToContainer + targetHeight - containerHeight + safeTopPadding);
+          nextScrollTop = Math.min(nextScrollTop, bottomAligned);
+        }
+        nextScrollTop = Math.min(maxTop, Math.max(0, nextScrollTop));
+        scrollContainer.scrollTo({ top: nextScrollTop, behavior: 'auto' });
         recordPerfCounter('timers', 'ai_core.autoscroll_raf');
-        applyScrollDiagnostics(latestAssistantAnswerEl, 'scrollIntoView(start,smooth)', true);
-        restoreDocumentScrollPosition();
-      }));
-    } else {
-      latestScrollTargetRef.current = { kind: 'history-bottom-fallback', id: 'answer-history' };
-      answerScrollDiagnosticsRef.current.lastRequestedAt = nowIso;
-      scrollMessageContainerToBottom('smooth');
-      requestAnimationFrame(() => {
-        applyScrollDiagnostics(scrollContainer, 'scrollToBottomFallback(smooth)', true);
-        restoreDocumentScrollPosition();
-      });
-    }
+        publishScrollDiagnostics({ method: 'container.scrollTo(computed,auto)', previousScrollTop, nextScrollTop, completed: 'yes', lastCompletedAt: new Date().toISOString() });
+      } catch (error) {
+        publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', occlusionReason: String(error?.message || 'scroll-exception') });
+      }
+      restoreDocumentScrollPosition();
+    }));
   }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, setUiDiagnostics]);
 
   const handleScroll = () => {

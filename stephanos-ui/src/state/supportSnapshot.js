@@ -605,6 +605,9 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
+    ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
+    : {};
   const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
   const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const executionTruthState = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
@@ -1918,6 +1921,24 @@ export function buildSupportSnapshot({
     `Command Pipeline Last Finalization Path: ${asText(commandPipelineLastFinalizationPath, 'unknown')}`,
     `Command Pipeline Last Input Cleared: ${asText(commandPipelineLastInputCleared, 'no')}`,
     `Command Pipeline Last Input Restore Available: ${asText(commandPipelineLastInputRestoreAvailable, 'yes')}`,
+    `Answer Scroll Requested: ${asText(aiConsoleAnswerScroll?.requested, 'no')}`,
+    `Answer Scroll Request Reason: ${asText(aiConsoleAnswerScroll?.requestReason, 'none')}`,
+    `Answer Scroll Target Kind: ${asText(aiConsoleAnswerScroll?.targetKind, 'none')}`,
+    `Answer Scroll Target ID: ${asText(aiConsoleAnswerScroll?.targetId, 'none')}`,
+    `Answer Scroll Target Found: ${asText(aiConsoleAnswerScroll?.targetFound, 'no')}`,
+    `Answer Scroll Container Kind: ${asText(aiConsoleAnswerScroll?.containerKind, 'none')}`,
+    `Answer Scroll Container Found: ${asText(aiConsoleAnswerScroll?.containerFound, 'no')}`,
+    `Answer Scroll Container Scrollable: ${asText(aiConsoleAnswerScroll?.containerScrollable, 'no')}`,
+    `Answer Scroll Method: ${asText(aiConsoleAnswerScroll?.method, 'none')}`,
+    `Answer Scroll Previous Scroll Top: ${asText(aiConsoleAnswerScroll?.previousScrollTop, 'n/a')}`,
+    `Answer Scroll Next Scroll Top: ${asText(aiConsoleAnswerScroll?.nextScrollTop, 'n/a')}`,
+    `Answer Scroll Completed: ${asText(aiConsoleAnswerScroll?.completed, 'no')}`,
+    `Answer Scroll Target Top Visible: ${asText(aiConsoleAnswerScroll?.topVisible, 'no')}`,
+    `Answer Scroll Target Bottom Visible: ${asText(aiConsoleAnswerScroll?.bottomVisible, 'no')}`,
+    `Answer Scroll Target Fully Visible: ${asText(aiConsoleAnswerScroll?.fullyVisible, 'no')}`,
+    `Answer Scroll Occlusion Reason: ${asText(aiConsoleAnswerScroll?.occlusionReason, 'none')}`,
+    `Answer Scroll Last Requested At: ${asText(aiConsoleAnswerScroll?.lastRequestedAt, 'none')}`,
+    `Answer Scroll Last Completed At: ${asText(aiConsoleAnswerScroll?.lastCompletedAt, 'none')}`,
     `Command Envelope Build Attempted: ${asText(executionMetadata?.command_envelope_build_attempted, 'no')}`,
     `Command Envelope Build Error: ${asText(executionMetadata?.command_envelope_build_error, 'none')}`,
     `Dispatch Gate Allowed: ${asText(executionMetadata?.dispatch_gate_allowed, 'unknown')}`,
