@@ -58,6 +58,82 @@ function deriveAiConsoleAutoscrollProof(supportSnapshot = {}) {
   return { complete: missing.length === 0, missing, source: 'support_snapshot.aiConsoleScrollDiagnostics' };
 }
 
+function buildAgentWorkRoutingProjection({ missionBrainNextAction = {}, missionSpec = {}, supportSnapshot = {} } = {}) {
+  const nextAction = asText(missionBrainNextAction.nextBestAction, '').toLowerCase();
+  const isManualTask = /browser|proof|merge|visual|ignition/.test(nextAction);
+  const readiness = asText(supportSnapshot.openClawReadiness || supportSnapshot.openClawIntegrationMode, 'not-proven');
+  const targetAgentType = isManualTask ? 'manual-operator' : 'codex';
+  const promptPayload = truncateText([
+    `Mission objective: ${asText(missionBrainNextAction.missionObjective, missionSpec.objective || 'not provided')}`,
+    `Current phase: ${asText(missionBrainNextAction.currentPhase, 'unknown')}`,
+    `Next best action: ${asText(missionBrainNextAction.nextBestAction, 'review evidence')}`,
+    `Evidence gaps: ${asList(missionBrainNextAction.openEvidenceGaps).map((gap) => `${gap.id}:${gap.label}`).join(' | ') || 'none'}`,
+    'Constraints: no autonomous execution, no auto-merge, operator approval required.',
+  ].join('\n'), 2400);
+  return {
+    routingObjective: asText(missionBrainNextAction.nextBestAction, 'Review mission evidence and decide operator path.'),
+    sourceMissionBrainPhase: asText(missionBrainNextAction.currentPhase, 'unknown'),
+    targetAgentType: readiness.includes('ready') && !isManualTask ? 'openclaw-policy-only' : targetAgentType,
+    recommendedAgent: targetAgentType === 'manual-operator' ? 'manual-operator' : 'codex',
+    taskType: isManualTask ? 'proof-or-approval' : 'bounded-source-task',
+    riskLevel: asText(missionBrainNextAction.riskLevel, 'medium'),
+    approvalRequired: true,
+    operatorDecisionRequired: true,
+    promptPayload,
+    filesToInspectFirst: [
+      'stephanos-ui/src/state/operatorReliefProjection.js',
+      'stephanos-ui/src/components/MissionConsoleTile.jsx',
+      'tests/operator-relief-projection.test.mjs',
+    ],
+    filesToAvoidUnlessNeeded: ['apps/stephanos/dist/**', 'node_modules/**', 'runtime/**', 'root data/**'],
+    requiredProof: ['browser-proof-checklist', 'copy-button-success-state', 'single-answer-pane-autoscroll'],
+    requiredTests: ['node --test tests/operator-relief-projection.test.mjs tests/mission-console-operator-relief-panel.test.mjs stephanos-ui/src/components/AIConsole.render.test.mjs', 'npm run stephanos:build', 'npm run stephanos:verify'],
+    mergeReadinessGate: 'operator-approval-required',
+    rollbackOrAbortConditions: ['forbidden-artifacts-staged', 'build-or-verify-failure', 'missing-browser-proof-for-ui-change'],
+    sourceEvidence: asList(missionBrainNextAction.sourceEvidence),
+    blockedReason: asText(missionBrainNextAction.blockedReason, ''),
+  };
+}
+
+function buildVerificationReturnIntake({ prEvidenceModel = {}, parsed = {}, missionState = 'active', missionBrainNextAction = {} } = {}) {
+  const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
+  const forbiddenPattern = /(apps\/stephanos\/dist\/|node_modules\/|runtime\/|root data\/|secret|token)/i;
+  const forbiddenArtifactRisk = changedFiles.some((file) => forbiddenPattern.test(file));
+  const buildObserved = parsed.buildRun === true;
+  const verifyObserved = parsed.verifyRun === true;
+  const browserProofObserved = missionBrainNextAction?.openEvidenceGaps?.some((gap) => gap.id === 'browser-proof-missing') ? 'missing' : 'reported';
+  const missingEvidence = [];
+  if (!buildObserved) missingEvidence.push('build evidence missing');
+  if (!verifyObserved) missingEvidence.push('verify evidence missing');
+  if (browserProofObserved === 'missing') missingEvidence.push('browser proof missing for UI mission');
+  const technicallyCleanButProofPending = buildObserved && verifyObserved && !forbiddenArtifactRisk && browserProofObserved === 'missing';
+  const returnStatus = forbiddenArtifactRisk
+    ? 'blocked-forbidden-artifacts'
+    : technicallyCleanButProofPending
+      ? 'technically-clean-but-proof-pending'
+      : (missingEvidence.length === 0 ? 'merge-candidate-operator-approval-required' : missionState);
+  const mergeRecommendation = forbiddenArtifactRisk
+    ? 'blocked'
+    : technicallyCleanButProofPending
+      ? 'blocked-pending-browser-proof'
+      : (missingEvidence.length === 0 ? 'review-required' : 'needs-repair');
+  return {
+    returnStatus,
+    evidenceCompleteness: missingEvidence.length === 0 ? 'complete' : 'incomplete',
+    changedFiles,
+    testsObserved: asList(parsed.testsRun),
+    buildObserved,
+    verifyObserved,
+    browserProofObserved,
+    forbiddenArtifactRisk,
+    mergeRecommendation,
+    requiredOperatorAction: mergeRecommendation === 'needs-repair' ? 'request-repair' : 'operator-review-and-approve',
+    missingEvidence,
+    repairPromptCandidate: mergeRecommendation === 'needs-repair' ? `Repair required.\nMissing evidence: ${missingEvidence.join(' | ') || 'none'}\nEnsure source-only files, rerun tests/build/verify, and include browser proof checklist for UI changes.` : '',
+    sourceEvidence: ['proof_of_done.verificationJudge', 'pr_evidence.changedFiles', 'operator_relief.missionBrainNextAction'],
+  };
+}
+
 export function deriveOperatorReliefProjection(models = {}) {
   const { intentToBuildModel = {}, taskFinisherModel = {}, missionEvidenceLedgerModel = {}, prEvidenceModel = {}, proofOfDoneModel = {}, operatorDecisionQueue = {}, memoryLibrarianQueue = {}, supportSnapshot = {} } = models;
   const missionSpec = intentToBuildModel?.missionSpec || {};
@@ -140,11 +216,13 @@ export function deriveOperatorReliefProjection(models = {}) {
     proofRequiredBeforeMerge: evidenceGaps.map((gap) => gap.requiredAction),
     sourceEvidence: [...new Set([...completedProofs.map((p) => p.source), ...evidenceGaps.map((g) => g.source)])],
   };
+  const agentWorkRoutingProjection = buildAgentWorkRoutingProjection({ missionBrainNextAction, missionSpec, supportSnapshot });
+  const verificationReturnIntake = buildVerificationReturnIntake({ prEvidenceModel, parsed, missionState, missionBrainNextAction });
   const lessonCandidates = asList(memoryLibrarianQueue.queue).map((c, i) => ({ id: c.id || `lesson-${i + 1}`, title: c.title || c.summary || 'Lesson candidate', reason: c.reason || 'Derived from mission evidence.', source: c.source || 'memory_librarian', approvalRequired: true }));
   const repairPromptBodyRaw = repairPromptAvailable ? [`Mission objective: ${asText(missionSpec.objective, missionSpec.rawIntent || 'unknown')}`,`Current state: ${missionState}`,`Failing layer: ${evidenceGaps[0]?.label || 'unknown'}`,`Evidence gaps: ${evidenceGaps.map((g) => g.label).join(' | ') || 'none'}`, runtimeEvidence.consoleErrors.length ? `Observed runtime/browser errors: ${runtimeEvidence.consoleErrors.join(' | ')}` : null,'Constraint: Do not create new canon; audit existing working surface first.','Acceptance criteria: close all evidence gaps, keep operator approval required, no auto-merge.','Required tests: node --test ... operator relief + mission console suites.','Build/verify: npm run stephanos:build && npm run stephanos:verify',`Browser proof required: ${browserRequired ? 'yes' : 'no'}.`].join('\n') : '';
   const repairPromptBody = truncateText(repairPromptBodyRaw, MAX_REPAIR_PROMPT_LENGTH);
 
   const missionHandoff = { title: asText(missionSpec.title, 'Mission handoff'), objective: asText(missionSpec.objective, missionSpec.rawIntent || 'Not provided'), currentState: missionState, mergeSafety: verification.mergeReadyCandidate ? 'merge-candidate' : 'blocked', nextBestAction, evidenceSummary: { testsPassed, buildRun: parsed.buildRun === true, verifyRun: parsed.verifyRun === true, browserObserved: browserObserved.length }, evidenceGaps, repairPrompt: { available: repairPromptAvailable, title: 'Operator Relief V2 Repair Prompt', body: repairPromptBody, sourceEvidence: evidenceGaps.map((g) => g.source), copyLabel: 'Copy Repair Prompt' }, browserProofChecklist: { required: browserRequired, reason: browserRequired ? 'UI-facing mission requires browser proof before merge.' : 'Non-UI mission.', checklistItems: UI_BROWSER_CHECKLIST, observedItems: browserObserved, missingItems: browserMissing }, operatorDecisionQueue: operatorDecisionQueueV2, canonConstraints: ['No duplicate Mission Console shells/panes.', 'Merge is never automatic.', 'Operator remains final approver.'], requiredCommands: ['node --test tests/operator-relief-projection.test.mjs tests/operator-relief-merge-safety.test.mjs tests/operator-relief-repair-prompt.test.mjs tests/operator-relief-music-failure-pack.test.mjs tests/mission-console-operator-relief-panel.test.mjs','node --test stephanos-ui/src/components/MissionConsoleTile.render.test.mjs stephanos-ui/src/components/AIConsole.render.test.mjs stephanos-ui/src/components/AnswerPaneCopyButton.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs stephanos-ui/src/components/CollapsiblePanel.render.test.mjs stephanos-ui/src/components/stephanosPaneCanon.test.mjs','npm run stephanos:build','npm run stephanos:verify'] };
 
-  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction };
+  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake };
 }

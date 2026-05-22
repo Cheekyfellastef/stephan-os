@@ -41,3 +41,24 @@ test('Projection reports missing-live-proof evidence gap and bounded codex promp
   assert.match(r.missionBrainNextAction.codexPromptCandidate, /Tests required:/);
   assert.match(r.missionBrainNextAction.codexPromptCandidate, /Definition of done:/);
 });
+
+test('Layer 5 routing and Layer 6 verification intake classify proof pending for UI work', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'UI fix mission', repoArchitectureContext: { testsLikelyRequired: ['node --test tests/a.test.mjs'] } } },
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.agentWorkRoutingProjection.approvalRequired, true);
+  assert.equal(r.agentWorkRoutingProjection.requiredTests.length > 0, true);
+  assert.equal(r.verificationReturnIntake.returnStatus, 'technically-clean-but-proof-pending');
+  assert.equal(r.verificationReturnIntake.mergeRecommendation, 'blocked-pending-browser-proof');
+});
+
+test('Layer 6 verification intake blocks forbidden artifacts', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['apps/stephanos/dist/index.js', 'runtime/session.log'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.verificationReturnIntake.mergeRecommendation, 'blocked');
+  assert.equal(r.verificationReturnIntake.forbiddenArtifactRisk, true);
+});

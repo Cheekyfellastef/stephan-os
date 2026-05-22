@@ -134,6 +134,8 @@ function MissionConsoleTile({
   const { copyState: repairPromptCopyState, setCopyState: setRepairPromptCopyState } = useClipboardButtonState();
   const { copyState: missionHandoffCopyState, setCopyState: setMissionHandoffCopyState } = useClipboardButtonState();
   const { copyState: nextCodexPromptCopyState, setCopyState: setNextCodexPromptCopyState } = useClipboardButtonState();
+  const { copyState: codexPacketCopyState, setCopyState: setCodexPacketCopyState } = useClipboardButtonState();
+  const { copyState: operatorChecklistCopyState, setCopyState: setOperatorChecklistCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
@@ -898,6 +900,10 @@ function MissionConsoleTile({
     ? uiLayout.missionConsoleEvidenceGapsPanel !== false
     : uiLayout.missionConsoleEvidenceGapsPanel === true;
   const nextCodexPromptPanelOpen = uiLayout.missionConsoleNextCodexPromptPanel === true;
+  const workRoutingPanelOpen = uiLayout.missionConsoleWorkRoutingCandidatePanel !== false;
+  const workRoutingPayloadOpen = uiLayout.missionConsoleWorkRoutingPacketPreviewPanel === true;
+  const verificationReturnPanelOpen = uiLayout.missionConsoleVerificationReturnIntakePanel !== false;
+  const verificationReturnPayloadOpen = uiLayout.missionConsoleVerificationReturnPayloadPanel === true;
   const supportSnapshotPanelOpen = uiLayout.missionConsoleSupportSnapshotPanel === true;
   const repairPromptPanelOpen = uiLayout.missionConsoleRepairPromptPanel === true;
   const missionHandoffPanelOpen = uiLayout.missionConsoleMissionHandoffPanel === true;
@@ -1082,6 +1088,45 @@ function MissionConsoleTile({
           <button type="button" className={`status-panel-copy-button ${nextCodexPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.missionBrainNextAction?.codexPromptCandidate || '', setNextCodexPromptCopyState, 'MissionConsoleTile.copyNextCodexPrompt')}>
             {nextCodexPromptCopyState === COPY_STATE.SUCCESS ? 'Next Codex Prompt Copied' : nextCodexPromptCopyState === COPY_STATE.FAILURE ? 'Copy Next Codex Prompt failed' : 'Copy Next Codex Prompt'}
           </button>
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            panelId="missionConsoleWorkRoutingCandidatePanel"
+            title="Work Routing Candidate"
+            isOpen={workRoutingPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingCandidatePanel')}
+          >
+            <ul className="mission-console__status-list">
+              <li><strong>Recommended agent:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.recommendedAgent || 'unknown'}</li>
+              <li><strong>Task type:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.taskType || 'unknown'}</li>
+              <li><strong>Risk level:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.riskLevel || 'unknown'}</li>
+              <li><strong>Approval required:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.approvalRequired ? 'true' : 'false'}</li>
+              <li><strong>Proof required:</strong> {(operatorReliefProjection.agentWorkRoutingProjection?.requiredProof || []).join(' · ') || 'none'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyCodexPacket')}>
+              {codexPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Packet Copied' : codexPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Packet failed' : 'Copy Codex Packet'}
+            </button>
+            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard((operatorReliefProjection.agentWorkRoutingProjection?.requiredProof || []).join('\n'), setOperatorChecklistCopyState, 'MissionConsoleTile.copyOperatorChecklist')}>
+              {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Operator Proof Checklist Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Operator Proof Checklist failed' : 'Copy Operator Proof Checklist'}
+            </button>
+            <CollapsiblePanel panelId="missionConsoleWorkRoutingPacketPreviewPanel" title="Work Routing Packet Payload Preview" isOpen={workRoutingPayloadOpen} onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingPacketPreviewPanel')}>
+              <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection || {}, null, 2)}</pre>
+            </CollapsiblePanel>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleVerificationReturnIntakePanel" title="Verification Return Intake" isOpen={verificationReturnPanelOpen} onToggle={() => dispatchPanelToggle('missionConsoleVerificationReturnIntakePanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Return status:</strong> {operatorReliefProjection.verificationReturnIntake?.returnStatus || 'unknown'}</li>
+              <li><strong>Merge recommendation:</strong> {operatorReliefProjection.verificationReturnIntake?.mergeRecommendation || 'unknown'}</li>
+              <li><strong>Missing evidence count:</strong> {operatorReliefProjection.verificationReturnIntake?.missingEvidence?.length || 0}</li>
+              <li><strong>Required operator action:</strong> {operatorReliefProjection.verificationReturnIntake?.requiredOperatorAction || 'unknown'}</li>
+            </ul>
+            {operatorReliefProjection.verificationReturnIntake?.repairPromptCandidate ? (
+              <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.verificationReturnIntake?.repairPromptCandidate || '', setRepairPromptCopyState, 'MissionConsoleTile.copyVerificationRepairPrompt')}>
+                {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : repairPromptCopyState === COPY_STATE.FAILURE ? 'Copy Repair Prompt failed' : 'Copy Repair Prompt'}
+              </button>
+            ) : null}
+            <CollapsiblePanel panelId="missionConsoleVerificationReturnPayloadPanel" title="Verification Intake Payload Preview" isOpen={verificationReturnPayloadOpen} onToggle={() => dispatchPanelToggle('missionConsoleVerificationReturnPayloadPanel')}>
+              <pre>{JSON.stringify(operatorReliefProjection.verificationReturnIntake || {}, null, 2)}</pre>
+            </CollapsiblePanel>
           </CollapsiblePanel>
           <h5>Codex Change Summary</h5>
           <p><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
