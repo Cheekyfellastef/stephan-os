@@ -104,6 +104,21 @@ export default function AIConsole({
   });
 
   const getAnswerHistoryScrollContainer = () => containerRef.current || null;
+  const isElementActuallyVisible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect?.();
+    if (!rect) return false;
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    return true;
+  };
+
+  const resolveVisibleCommandDeckRoot = () => {
+    const roots = Array.from(document.querySelectorAll('[data-testid="command-deck-root"]'));
+    return roots.find((root) => isElementActuallyVisible(root)) || roots[0] || null;
+  };
+
 
   const computeAnswerScrollVisibility = (targetRect, containerRect) => {
     const topVisible = targetRect.top >= containerRect.top;
@@ -217,9 +232,10 @@ export default function AIConsole({
     const publishScrollDiagnostics = (overrides = {}) => {
       const targetEl = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
-      const composerEl = document.querySelector('[data-testid="command-deck-composer"]');
-      const inputEl = document.querySelector('[data-testid="command-deck-input"]');
-      const executeButtonEl = document.querySelector('[data-testid="command-deck-execute"]');
+      const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+      const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
+      const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
+      const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
       const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
       const containerRect = containerEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
       const viewRect = viewPaneEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
@@ -271,14 +287,14 @@ export default function AIConsole({
         answerContainerOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
         answerPaneClippedReason: visibility.occlusionReason,
         commandDeckComposerFound: composerEl ? 'yes' : 'no',
-        commandDeckComposerVisible: composerEl ? 'yes' : 'no',
+        commandDeckComposerVisible: isElementActuallyVisible(composerEl) ? 'yes' : 'no',
         commandDeckComposerBottomWithinView: composerBottomWithinView ? 'yes' : 'no',
         commandDeckInputFound: inputEl ? 'yes' : 'no',
-        commandDeckInputVisible: inputVisible ? 'yes' : 'no',
-        commandDeckExecuteButtonVisible: executeVisible ? 'yes' : 'no',
+        commandDeckInputVisible: isElementActuallyVisible(inputEl) && inputVisible ? 'yes' : 'no',
+        commandDeckExecuteButtonVisible: isElementActuallyVisible(executeButtonEl) && executeVisible ? 'yes' : 'no',
         commandDeckPaneClientHeight: viewPaneEl?.clientHeight ?? 0,
-        commandDeckBodyClientHeight: containerEl?.closest('.mission-console-shell')?.clientHeight ?? 0,
-        commandDeckBodyScrollHeight: containerEl?.closest('.mission-console-shell')?.scrollHeight ?? 0,
+        commandDeckBodyClientHeight: visibleDeckRoot?.clientHeight ?? 0,
+        commandDeckBodyScrollHeight: visibleDeckRoot?.scrollHeight ?? 0,
         answerHistoryClientHeight: containerEl?.clientHeight ?? 0,
         answerHistoryScrollHeight: containerEl?.scrollHeight ?? 0,
         answerHistoryOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
@@ -443,7 +459,7 @@ export default function AIConsole({
       isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div className="mission-console-shell">
+      <div className="mission-console-shell" data-testid="command-deck-root">
         <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
           <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
           <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
@@ -479,7 +495,7 @@ export default function AIConsole({
             </span>
           </div>
         ) : null}
-        <section className="mission-console-pane" data-pane-id="answer-history">
+        <section className="mission-console-pane" data-pane-id="answer-history" data-testid="command-deck-body">
           <header className="mission-console-pane__header">
             <strong>Answer History</strong>
           </header>
@@ -487,6 +503,7 @@ export default function AIConsole({
             ref={containerRef}
             onScroll={handleScroll}
             className="output-panel ai-console-messages mission-console__history mission-console-pane__body"
+            data-testid="command-deck-answer-history"
           >
           {showStartupPlaceholder ? (
             <div className="api-banner degraded" role="status" aria-live="polite">
