@@ -20,7 +20,7 @@ test('Projection promotes AIConsole autoscroll proof into completed proofs when 
   const r = deriveOperatorReliefProjection({
     intentToBuildModel: { missionSpec: { objective: 'Climb Layer 3/4', repoArchitectureContext: { testsLikelyRequired: [] } } },
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
-    supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
+    supportSnapshot: { routeStatus: 'ready', providerStatus: 'ready', aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
   });
   assert.equal(r.missionBrainNextAction.completedProofs.some((proof) => proof.id === 'aiconsole-answer-pane-autoscroll'), true);
   assert.equal(r.missionBrainNextAction.currentPhase, 'Layer 3 → Layer 4 climb');
@@ -61,4 +61,36 @@ test('Layer 6 verification intake blocks forbidden artifacts', () => {
   });
   assert.equal(r.verificationReturnIntake.mergeRecommendation, 'blocked');
   assert.equal(r.verificationReturnIntake.forbiddenArtifactRisk, true);
+});
+
+test('Layer 7 queue emits browser-proof action when proof is pending', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.missionApprovalQueue.queue.some((item) => item.actionType === 'run-browser-proof'), true);
+});
+
+test('Layer 7 queue emits hold/request-repair items for forbidden artifacts and missing evidence with bounded payload', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['apps/stephanos/dist/index.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: false, verifyRun: false } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.missionApprovalQueue.queue.some((item) => item.actionType === 'hold-merge'), true);
+  assert.equal(r.missionApprovalQueue.queue.some((item) => item.actionType === 'request-repair'), true);
+  assert.equal(r.missionApprovalQueue.queue.every((item) => (item.copyPayload || '').length <= 2400), true);
+  assert.equal(r.missionApprovalQueue.queue.every((item) => Array.isArray(item.sourceEvidence)), true);
+});
+
+test('Layer 7 queue emits approve-merge-review when browser proof passed and no gaps while approval remains required', () => {
+  const observed = ['Mission Console opens from landing tile','Operator Relief panel visible','idle state renders','active/fixture state renders','merge safety verdict visible','browser proof gaps visible','repair prompt visible/copyable','no red console errors','no broken chevron/collapse','existing Mission Console controls still work'];
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] }, mergeReadyCandidate: true }, browserChecksObserved: observed },
+    supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
+    operatorDecisionQueue: { decisions: [{ id: 'd1', decisionType: 'approve-merge', label: 'Approve merge', recommendedChoice: 'approve-merge' }] },
+  });
+  const item = r.missionApprovalQueue.queue.find((entry) => entry.actionType === 'approve-merge-review');
+  assert.equal(Boolean(item), true);
+  assert.equal(item.approvalRequired, true);
 });

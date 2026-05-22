@@ -180,11 +180,29 @@ function MissionConsoleTile({
   const [prEvidenceParseResult, setPrEvidenceParseResult] = useState(() => parsePrEvidenceInput(''));
   const [showRepairPromptBody, setShowRepairPromptBody] = useState(false);
   const [showMissionHandoffJson, setShowMissionHandoffJson] = useState(false);
+  const [missionApprovalDecisionState, setMissionApprovalDecisionState] = useState(() => ({ selectedDecision: 'hold', timestamp: '', sourceQueueItemId: '' }));
 
   const operatorReliefPresenceSignatureRef = useRef('');
   const intentUpdateSignatureRef = useRef('');
   const openClawIntegrationSignatureRef = useRef('');
   const missionBridgeSignatureRef = useRef('');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem('missionConsoleApprovalDecisionState');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') setMissionApprovalDecisionState({
+        selectedDecision: parsed.selectedDecision || 'hold',
+        timestamp: parsed.timestamp || '',
+        sourceQueueItemId: parsed.sourceQueueItemId || '',
+      });
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('missionConsoleApprovalDecisionState', JSON.stringify(missionApprovalDecisionState));
+  }, [missionApprovalDecisionState]);
 
   const compactVerificationSummary = useMemo(() => {
     const summary = agentTaskProjection?.readinessSummary || {};
@@ -1111,6 +1129,28 @@ function MissionConsoleTile({
             <CollapsiblePanel panelId="missionConsoleWorkRoutingPacketPreviewPanel" title="Work Routing Packet Payload Preview" isOpen={workRoutingPayloadOpen} onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingPacketPreviewPanel')}>
               <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection || {}, null, 2)}</pre>
             </CollapsiblePanel>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleMissionApprovalQueuePanel" title="Mission Approval Queue" isOpen={uiLayout.missionConsoleMissionApprovalQueuePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMissionApprovalQueuePanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Top recommended decision:</strong> {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.recommendedDecision || 'hold'}</li>
+              <li><strong>Risk level:</strong> {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.riskLevel || 'unknown'}</li>
+              <li><strong>Approval required:</strong> {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.approvalRequired ? 'true' : 'false'}</li>
+              <li><strong>Blocked reason:</strong> {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.blockedReason || 'none'}</li>
+              <li><strong>Required proof before approval:</strong> {(operatorReliefProjection.missionApprovalQueue?.topRecommendation?.requiredProofBeforeApproval || []).join(' · ') || 'none'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.missionApprovalQueue?.topRecommendation?.copyPayload || '', setCodexPacketCopyState, 'MissionConsoleTile.copyMissionApprovalActionPacket')}>{codexPacketCopyState === COPY_STATE.SUCCESS ? 'Action Packet Copied' : codexPacketCopyState === COPY_STATE.FAILURE ? 'Copy Action Packet failed' : 'Copy Action Packet'}</button>
+            {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.actionType === 'request-repair' || operatorReliefProjection.verificationReturnIntake?.repairPromptCandidate ? (
+              <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.verificationReturnIntake?.repairPromptCandidate || operatorReliefProjection.repairPrompt?.prompt || '', setRepairPromptCopyState, 'MissionConsoleTile.copyQueueRepairPrompt')}>{repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : repairPromptCopyState === COPY_STATE.FAILURE ? 'Copy Repair Prompt failed' : 'Copy Repair Prompt'}</button>
+            ) : null}
+            <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.missionApprovalQueue?.queue?.find((item) => item.actionType === 'update-handoff')?.copyPayload || '', setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionHandoffUpdate')}>{missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Handoff Update Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Handoff Update failed' : 'Copy Mission Handoff Update'}</button>
+            <p><strong>Selected decision (local):</strong> {missionApprovalDecisionState.selectedDecision} · <strong>timestamp:</strong> {missionApprovalDecisionState.timestamp || 'none'} · <strong>source queue item:</strong> {missionApprovalDecisionState.sourceQueueItemId || 'none'}</p>
+            <div className="mission-console__button-row">
+              {['approve', 'hold', 'needs-repair'].map((choice) => (
+                <button key={choice} type="button" onClick={() => setMissionApprovalDecisionState({ selectedDecision: choice, timestamp: new Date().toISOString(), sourceQueueItemId: operatorReliefProjection.missionApprovalQueue?.topRecommendation?.id || '' })}>
+                  {choice}
+                </button>
+              ))}
+            </div>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleVerificationReturnIntakePanel" title="Verification Return Intake" isOpen={verificationReturnPanelOpen} onToggle={() => dispatchPanelToggle('missionConsoleVerificationReturnIntakePanel')}>
             <ul className="mission-console__status-list">
