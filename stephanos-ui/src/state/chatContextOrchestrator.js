@@ -1,5 +1,6 @@
 import { buildContextProviderSnapshot } from './contextProviderRegistry.js';
 import { buildGithubPrEvidenceProvider } from './githubPrEvidenceProvider.js';
+import { detectOperatorExplanationIntent } from './operatorExplanationProjection.js';
 
 const CHAT_CONTEXT_VERSION = 'v1';
 
@@ -38,6 +39,11 @@ export const INTENT_RULES = [
     id: 'codex-prompt',
     responseMode: 'codex-prompt',
     pattern: /\b(give|make)\b[^.!?]{0,60}\b(codex )?prompt\b|\bcodex prompt\b/,
+  },
+  {
+    id: 'operator-explanation',
+    responseMode: 'operator-explanation',
+    pattern: 'detected by operator explanation intent projection',
   },
   {
     id: 'diagnosis',
@@ -91,10 +97,11 @@ function classifyIntent(msg = '') {
     );
   const candidateRulesEvaluated = [];
   let matchedRule = null;
+  const explanationMatched = detectOperatorExplanationIntent(normalizedForMatching).matched;
   for (const rule of INTENT_RULES) {
     const matched = rule.id === 'merge-decision'
       ? mergeRuleMatched
-      : rule.pattern.test(normalizedForMatching);
+      : (rule.id === 'operator-explanation' ? explanationMatched : rule.pattern.test(normalizedForMatching));
     candidateRulesEvaluated.push(`${rule.id}:${matched ? '1' : '0'}`);
     if (matched && !matchedRule) matchedRule = rule;
   }
@@ -146,6 +153,7 @@ export function buildChatContextPack(input = {}) {
   const providerTruth = input.providerTruth || {};
   const missionState = input.missionState || {};
   const intent = classifyIntent(operatorMessage);
+  const explanationIntent = detectOperatorExplanationIntent(operatorMessage);
   const buildSource = String(input.buildSource || input.submissionSource || 'unknown').trim() || 'unknown';
   const responseMode = intent.responseMode;
   const warnings = [];
@@ -155,6 +163,7 @@ export function buildChatContextPack(input = {}) {
   const mergeDecisionTask = responseMode === 'merge-decision';
   const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
+  const operatorExplanationTask = responseMode === 'operator-explanation' || explanationIntent.matched;
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : [];
@@ -164,7 +173,9 @@ export function buildChatContextPack(input = {}) {
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
     : (codexDispatchTask
       ? ['codex', 'mission-console', 'proof', 'source-truth']
-      : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity', 'memory', 'operator-profile'] : ['general'])));
+      : (operatorExplanationTask
+        ? ['operator-relief', 'support-snapshot', 'proof', 'source-truth']
+        : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity', 'memory', 'operator-profile'] : ['general']))));
   const githubPrEvidence = buildGithubPrEvidenceProvider({
     ...(input.githubPrEvidence || {}),
     connectorEvidence: input.githubPrEvidence?.connectorEvidence || input.connectorEvidence,
@@ -210,7 +221,9 @@ export function buildChatContextPack(input = {}) {
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (codexDispatchTask
         ? 'Build a Codex Dispatch Packet draft and wait for operator approval.'
-        : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.')),
+        : (operatorExplanationTask
+          ? 'Provide compact operator explanation and next bounded action.'
+          : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'))),
     warningCount: warnings.length,
     warnings,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
@@ -239,6 +252,8 @@ export function buildChatContextPack(input = {}) {
     responseMode,
     defaultPackUsed: (intent.matchedRule && intent.matchedRule !== 'direct-answer') ? 'no' : 'yes',
     fallbackApplied: intent.fallbackApplied ? 'yes' : 'no',
+    operatorExplanationIntentDetected: explanationIntent.matched ? 'yes' : 'no',
+    operatorExplanationMode: explanationIntent.mode || 'compact',
   };
 
   return {
@@ -292,6 +307,8 @@ export function buildChatContextPack(input = {}) {
       ? ['browser-ui-reality-proof', 'source-of-truth-proof', 'targeted-tests']
       : ['targeted-evidence'],
     recommendedResponseMode: responseMode,
+    operatorExplanationIntentDetected: explanationIntent.matched ? 'yes' : 'no',
+    operatorExplanationMode: explanationIntent.mode || 'compact',
     intentClassifierMatchedRule: classifierProof.intentClassifierMatchedRule,
     matchInput: classifierProof.matchInput,
     mergeRulePattern: classifierProof.mergeRulePattern,

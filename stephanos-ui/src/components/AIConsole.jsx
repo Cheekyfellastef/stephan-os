@@ -197,7 +197,7 @@ export default function AIConsole({
 
   useLayoutEffect(() => {
     const nowIso = new Date().toISOString();
-    const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => isAssistantHistoryEntry(entry)) || null;
+    const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => hasFinalAssistantAnswerText(entry)) || null;
     const latestAssistantText = String(latestAssistantEntry?.output_text || '').trim();
     const latestAssistantAnswerFinal = !!latestAssistantEntry && latestAssistantText.length > 0 && latestAssistantEntry?.stream_finalized !== false;
     const latestAnswerEnvelopeId = String(latestAssistantEntry?.envelope_id || latestAssistantEntry?.envelopeId || 'none');
@@ -210,6 +210,8 @@ export default function AIConsole({
     const scrollContainer = getAnswerHistoryScrollContainer();
     const targetKind = latestAssistantAnswerId ? 'latest-assistant-answer-pane' : 'none';
     const targetId = latestAssistantAnswerId || 'none';
+    const viewPaneEl = containerRef.current?.closest?.('.panel-body') || null;
+    const answerPaneCount = safeCommandHistory.filter((entry) => isAssistantHistoryEntry(entry) && String(entry?.output_text || '').trim().length > 0).length;
     latestScrollTargetRef.current = { kind: targetKind, id: targetId };
 
     const publishScrollDiagnostics = (overrides = {}) => {
@@ -249,6 +251,18 @@ export default function AIConsole({
         signatureChanged: signatureChanged ? 'yes' : 'no',
         effectFired: 'yes',
         effectFiredAt: nowIso,
+        answerPaneCount,
+        latestAssistantAnswerDomFound: targetEl ? 'yes' : 'no',
+        latestAssistantAnswerVisible: visibility.fullyVisible ? 'yes' : 'no',
+        answerPaneClientHeight: targetEl?.clientHeight ?? 0,
+        answerPaneScrollHeight: targetEl?.scrollHeight ?? 0,
+        answerContainerClientHeight: containerEl?.clientHeight ?? 0,
+        answerContainerScrollHeight: containerEl?.scrollHeight ?? 0,
+        answerContainerOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
+        answerPaneClippedReason: visibility.occlusionReason,
+        composerVisible: document.querySelector('.mission-console__composer') ? 'yes' : 'no',
+        viewPaneHeight: viewPaneEl?.clientHeight ?? 0,
+        viewPaneAvailableHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
         ...overrides,
       };
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
