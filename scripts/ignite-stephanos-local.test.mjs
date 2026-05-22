@@ -113,6 +113,7 @@ test('package scripts include plain ignition aliases with expected targets', asy
   assert.equal(packageJson.scripts['stephanos:serve'], 'node scripts/ignite-stephanos-local.mjs');
   assert.equal(packageJson.scripts['stephanos:ignite'], 'npm run stephanos:serve');
   assert.equal(packageJson.scripts['stephanos:ignite:auto-publish'], 'node scripts/ignite-stephanos-local-autopublish.mjs');
+  assert.equal(packageJson.scripts['stephanos:ignite:pr-clean'], 'STEPHANOS_IGNITION_MODE=pr-clean node scripts/ignite-stephanos-local.mjs');
 });
 test('isGitWorkingTreeClean returns true for empty porcelain output', () => {
   assert.equal(isGitWorkingTreeClean(''), true);
@@ -197,6 +198,15 @@ test('ignition status evaluator blocks unexpected tracked deletions outside allo
   ].join('\n')), false);
 });
 
+test('ignition status evaluator classifies secrets and unknown binary as forbidden/blocked', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    '?? .env.local',
+    '?? mystery.bin',
+  ].join('\n'));
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
+});
+
 test('preflight restores approved tracked generated dirt before pull', () => {
   const steps = [];
   runGitPullPreflightWithDeps({
@@ -275,6 +285,16 @@ test('preflight keeps approved untracked local noise non-blocking without restor
   });
 
   assert.deepEqual(steps, [
+    {
+      label: 'git-clean-preview-dist-untracked',
+      command: 'git',
+      args: ['clean', '-nd', '--', 'apps/stephanos/dist/'],
+    },
+    {
+      label: 'git-clean-dist-untracked',
+      command: 'git',
+      args: ['clean', '-fd', '--', 'apps/stephanos/dist/'],
+    },
     {
       label: 'git-fetch',
       command: 'git',
