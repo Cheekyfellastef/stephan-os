@@ -67,7 +67,11 @@ test('AIConsole scroll targeting binds to latest assistant answer pane ref rathe
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /latestAssistantAnswerRef/);
   assert.match(source, /scrollContainerEl\.scrollTo\(\{ top: nextScrollTop, behavior: 'auto' \}\)/);
+  assert.match(source, /scrollIntoView\?\.\(\{ block: 'nearest', inline: 'nearest', behavior: 'smooth' \}\)/);
   assert.match(source, /data-testid=\{isLatestAssistantAnswer \? 'latest-assistant-answer-pane' : 'assistant-answer-pane'\}/);
+  assert.match(source, /data-assistant-answer-id=\{String\(entry.id \|\| ''\)\}/);
+  assert.match(source, /data-answer-final=\{entry\?\.stream_finalized === false \? 'false' : 'true'\}/);
+  assert.match(source, /data-answer-role=\"assistant\"/);
 });
 
 test('Mission console collapsed panel body does not keep reserved height when hidden', async () => {
@@ -163,7 +167,7 @@ test('embedded mission console answer history keeps larger viewport and visible 
 test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /targetKind = latestAssistantAnswerId \? 'latest-assistant-answer-pane' : 'none'/);
-  assert.match(source, /method: 'container\.scrollTo\(computed,auto\)'/);
+  assert.match(source, /method: 'inner-container-scroll\|outer-viewport-reveal'/);
   assert.match(source, /method: 'skipped-no-target-after-raf'/);
   assert.match(source, /aiConsoleAnswerScroll/);
   assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);

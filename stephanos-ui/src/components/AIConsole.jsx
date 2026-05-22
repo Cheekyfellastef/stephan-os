@@ -57,8 +57,13 @@ export default function AIConsole({
 
   const isAssistantHistoryEntry = (entry) => {
     const responseType = String(entry?.response?.type || '').trim().toLowerCase();
-    const route = String(entry?.route || '').trim().toLowerCase();
-    return responseType === 'assistant_response' || route === 'assistant';
+    const route = String(entry?.route || entry?.response?.route || '').trim().toLowerCase();
+    const role = String(entry?.role || entry?.response?.role || entry?.message?.role || '').trim().toLowerCase();
+    const selectedSubsystem = String(entry?.response?.debug?.selected_subsystem || '').trim().toLowerCase();
+    return responseType === 'assistant_response'
+      || route === 'assistant'
+      || role === 'assistant'
+      || selectedSubsystem === 'assistant';
   };
 
   const hasFinalAssistantAnswerText = (entry) => {
@@ -262,6 +267,7 @@ export default function AIConsole({
       const targetEl = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
       const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+      const visibleAnswerPanes = visibleDeckRoot ? Array.from(visibleDeckRoot.querySelectorAll('[data-testid="assistant-answer-pane"], [data-testid="latest-assistant-answer-pane"]')).filter((node) => isElementActuallyVisible(node)) : [];
       const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
       const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
       const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
@@ -306,7 +312,7 @@ export default function AIConsole({
         signatureChanged: signatureChanged ? 'yes' : 'no',
         effectFired: 'yes',
         effectFiredAt: nowIso,
-        answerPaneCount,
+        answerPaneCount: visibleAnswerPanes.length || answerPaneCount,
         latestAssistantAnswerDomFound: targetEl ? 'yes' : 'no',
         latestAssistantAnswerVisible: visibility.fullyVisible ? 'yes' : 'no',
         answerPaneClientHeight: targetEl?.clientHeight ?? 0,
@@ -378,13 +384,11 @@ export default function AIConsole({
         const scrollContainerEl = getAnswerHistoryScrollContainer();
         if (!latestAssistantAnswerTarget) {
           publishScrollDiagnostics({ method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
-          restoreDocumentScrollPosition();
-          return;
+              return;
         }
         if (!scrollContainerEl) {
           publishScrollDiagnostics({ method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
-          restoreDocumentScrollPosition();
-          return;
+              return;
         }
         const latestScrollKey = `${latestAnswerEnvelopeId}|${latestAssistantAnswerId}|${latestAssistantText.length}|final`;
         lastScrolledAnswerSignatureRef.current = latestScrollKey;
@@ -403,12 +407,14 @@ export default function AIConsole({
         }
         nextScrollTop = Math.min(maxTop, Math.max(0, nextScrollTop));
         scrollContainerEl.scrollTo({ top: nextScrollTop, behavior: 'auto' });
+        const viewRoot = resolveVisibleCommandDeckRoot();
+        const revealTarget = latestAssistantAnswerTarget.closest('[data-testid="command-deck-body"]') || viewRoot || latestAssistantAnswerTarget;
+        revealTarget?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         recordPerfCounter('timers', 'ai_core.autoscroll_raf');
-        publishScrollDiagnostics({ method: 'container.scrollTo(computed,auto)', previousScrollTop, nextScrollTop, completed: 'yes', skipReason: 'none', lastCompletedAt: new Date().toISOString() });
+        publishScrollDiagnostics({ method: 'inner-container-scroll|outer-viewport-reveal', previousScrollTop, nextScrollTop, completed: 'yes', skipReason: 'none', lastCompletedAt: new Date().toISOString() });
       } catch (error) {
         publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', skipReason: 'scroll-exception', occlusionReason: String(error?.message || 'scroll-exception') });
       }
-      restoreDocumentScrollPosition();
     }));
   }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, safeCommandHistory, setUiDiagnostics]);
 
@@ -549,6 +555,9 @@ export default function AIConsole({
                 <div
                   key={entry.id || `${entry.timestamp || 'entry'}-${entry.raw_input || ''}`}
                   data-testid={isLatestAssistantAnswer ? 'latest-assistant-answer-pane' : 'assistant-answer-pane'}
+                  data-assistant-answer-id={String(entry.id || '')}
+                  data-answer-final={entry?.stream_finalized === false ? 'false' : 'true'}
+                  data-answer-role="assistant"
                   ref={isLatestAssistantAnswer ? latestAssistantAnswerRef : null}
                 >
                   <CommandResultCard entry={entry} />
