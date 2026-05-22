@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import {
   autoPublishDistWithDeps,
   canAutoPublishDist,
+  checkpointAndRemoveTransientRootData,
   classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
@@ -47,6 +48,72 @@ test('resolveStepExecution keeps non-Windows commands direct', () => {
   assert.deepEqual(resolved.commandArgs, ['run', 'stephanos:verify']);
 });
 
+
+
+test('checkpointAndRemoveTransientRootData uses cross-platform fs copy and remove', () => {
+  const calls = [];
+  const logs = [];
+  const checkpointPath = checkpointAndRemoveTransientRootData({
+    timestamp: () => '2026-05-22T00-00-00-000Z',
+    makeDir: (dirPath) => calls.push(['mkdir', dirPath]),
+    copyPath: (fromPath, toPath) => calls.push(['copy', fromPath, toPath]),
+    removePath: (targetPath) => calls.push(['remove', targetPath]),
+    log: (message) => logs.push(message),
+  });
+
+  assert.equal(checkpointPath, '.stephanos/local-state-checkpoints/2026-05-22T00-00-00-000Z/root-data/data');
+  assert.deepEqual(calls, [
+    ['mkdir', '.stephanos/local-state-checkpoints/2026-05-22T00-00-00-000Z/root-data'],
+    ['copy', 'data', '.stephanos/local-state-checkpoints/2026-05-22T00-00-00-000Z/root-data/data'],
+    ['remove', 'data'],
+  ]);
+  assert.deepEqual(logs, [
+    '[IGNITION] transient root data detected: data/',
+    '[IGNITION] transient root data checkpointed: .stephanos/local-state-checkpoints/2026-05-22T00-00-00-000Z/root-data/data',
+    '[IGNITION] transient root data removed',
+  ]);
+});
+
+test('preflight housekeeping works without shell cp on Windows-style environment', () => {
+  const steps = [];
+  runGitPullPreflightWithDeps({
+    captureStep: (label) => {
+      if (label === 'git-status') return { stdout: '?? data/session-cache.json\n', stderr: '' };
+      if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-ahead-behind') return { stdout: '0\t0\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command) => {
+      steps.push({ label, command });
+      if (command === 'cp' || command === 'rm') throw new Error('unix command not allowed');
+    },
+    checkpointRootData: () => {
+      steps.push({ label: 'checkpoint-root-data-fs', command: 'node-fs' });
+    },
+    createCheckpoint: () => null,
+    restoreCheckpoint: () => {},
+  });
+
+  assert.ok(steps.some((step) => step.label === 'git-fetch'));
+  assert.ok(steps.some((step) => step.label === 'git-pull-ff-only'));
+  assert.ok(steps.every((step) => step.command !== 'cp'));
+  assert.ok(steps.every((step) => step.command !== 'rm'));
+});
+
+test('server runtime data path is classified as runtime-state not transient root data', () => {
+  const evaluation = evaluateGitStatusForIgnition(' M stephanos-server/data/memory/durable-memory.json\n');
+  assert.equal(evaluation.runtimeStateEntries.length, 1);
+  assert.equal(evaluation.transientRootDataEntries.length, 0);
+});
+
+test('package scripts include plain ignition aliases with expected targets', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(packageJson.scripts['stephanos:serve'], 'node scripts/ignite-stephanos-local.mjs');
+  assert.equal(packageJson.scripts['stephanos:ignite'], 'npm run stephanos:serve');
+  assert.equal(packageJson.scripts['stephanos:ignite:auto-publish'], 'node scripts/ignite-stephanos-local-autopublish.mjs');
+});
 test('isGitWorkingTreeClean returns true for empty porcelain output', () => {
   assert.equal(isGitWorkingTreeClean(''), true);
   assert.equal(isGitWorkingTreeClean('\n\n'), true);
