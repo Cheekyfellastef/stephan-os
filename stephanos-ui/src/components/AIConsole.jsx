@@ -264,9 +264,13 @@ export default function AIConsole({
     latestScrollTargetRef.current = { kind: targetKind, id: targetId };
 
     const publishScrollDiagnostics = (overrides = {}) => {
-      const targetEl = latestAssistantAnswerRef.current;
+      const targetElFromRef = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
       const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+      const visibleLatestAssistantAnswerEl = visibleDeckRoot
+        ? visibleDeckRoot.querySelector(`[data-assistant-answer-id="${String(latestAssistantAnswerId || '')}"][data-answer-role="assistant"][data-answer-final="true"]`)
+        : null;
+      const targetEl = visibleLatestAssistantAnswerEl || targetElFromRef;
       const visibleAnswerPanes = visibleDeckRoot ? Array.from(visibleDeckRoot.querySelectorAll('[data-testid="assistant-answer-pane"], [data-testid="latest-assistant-answer-pane"]')).filter((node) => isElementActuallyVisible(node)) : [];
       const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
       const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
@@ -294,6 +298,8 @@ export default function AIConsole({
         && answerViewportClientHeight >= (latestAnswerCardClientHeight + normalCardPaddingAllowance);
       const latestAnswerIsLong = latestAnswerCardScrollHeight > latestAnswerCardClientHeight + 16;
       const answerHistoryOverflowY = containerEl ? getComputedStyle(containerEl).overflowY : 'none';
+      const standardAnswerFitTarget = 'standard-10-item-answer-card';
+      const standardTenItemAnswerFitVerdict = answerViewportFitsLatestAnswer ? 'pass' : (latestAnswerIsLong ? 'long-answer-internal-scroll' : 'fail');
       const answerViewportFitVerdict = answerViewportFitsLatestAnswer
         ? 'fits-normal-answer-card'
         : (latestAnswerIsLong && (answerHistoryOverflowY === 'auto' || answerHistoryOverflowY === 'scroll'))
@@ -351,6 +357,8 @@ export default function AIConsole({
         answerViewportFitsLatestAnswer: answerViewportFitsLatestAnswer ? 'yes' : 'no',
         answerViewportFitRatio,
         answerViewportFitVerdict,
+        standardAnswerFitTarget,
+        standardTenItemAnswerFitVerdict,
         answerViewportTooSmallReason,
         answerPaneClippedReason: visibility.occlusionReason,
         commandDeckComposerFound: composerEl ? 'yes' : 'no',
