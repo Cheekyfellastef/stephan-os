@@ -8,7 +8,8 @@ export function detectOperatorExplanationIntent(prompt='') {
   const compact = text.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   const detailed = /\b(give me the detail|show evidence|detailed|full detail)\b/.test(compact);
   const patterns = [
-    /what does (all )?this mean/, /explain this/, /translate the telemetry/, /monkey brain/, /operator view/,
+    /what does (all )?this mean/, /what does that mean/, /what does the above mean/, /explain this/, /explain that/,
+    /explain what just happened/, /translate the telemetry/, /translate that into monkey brain/, /monkey brain/, /operator view/,
     /summari[sz]e the snapshot/, /is this safe to merge/, /what is blocking us/, /what should i do next/,
     /explain the codex return/, /summari[sz]e mission state/
   ];

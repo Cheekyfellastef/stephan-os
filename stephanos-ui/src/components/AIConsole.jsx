@@ -102,6 +102,19 @@ export default function AIConsole({
     signatureChanged: 'no',
     effectFired: 'no',
     effectFiredAt: 'none',
+    commandDeckComposerFound: 'no',
+    commandDeckComposerVisible: 'no',
+    commandDeckInputFound: 'no',
+    commandDeckInputVisible: 'no',
+    commandDeckExecuteButtonVisible: 'no',
+    commandDeckPaneClientHeight: 0,
+    commandDeckBodyClientHeight: 0,
+    answerHistoryClientHeight: 0,
+    answerHistoryOverflowY: 'none',
+    answerPaneCount: 0,
+    latestAssistantAnswerDomFound: 'no',
+    latestAssistantAnswerVisible: 'no',
+    viewPaneHeight: 0,
   });
 
   const getAnswerHistoryScrollContainer = () => containerRef.current || null;
