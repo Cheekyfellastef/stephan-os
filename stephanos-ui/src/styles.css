@@ -4591,8 +4591,8 @@ pre {
 
 .mission-console-pane__body.mission-console__history {
   flex: 1 1 auto;
-  min-height: clamp(24rem, 58vh, 42rem);
-  max-height: clamp(34rem, 82vh, 62rem);
+  min-height: clamp(20rem, 46vh, 34rem);
+  max-height: clamp(28rem, 66vh, 50rem);
   height: auto;
   overflow-y: auto;
   margin-bottom: 0;

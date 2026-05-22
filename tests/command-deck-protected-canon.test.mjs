@@ -45,8 +45,8 @@ test('protected canon: answer history scrolls while composer is fixed in flow an
   const styles = await read(stylesPath);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*flex:\s*1\s+1\s+auto;/m);
-  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(24rem,\s*58vh,\s*42rem\);/m);
-  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(34rem,\s*82vh,\s*62rem\);/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(20rem,\s*46vh,\s*34rem\);/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(28rem,\s*66vh,\s*50rem\);/m);
   assert.match(styles, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
 });
 
