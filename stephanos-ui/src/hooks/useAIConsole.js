@@ -39,6 +39,7 @@ import { recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../sta
 import { buildChatContextPack } from '../state/chatContextOrchestrator.js';
 import { resolveGithubPrEvidenceReadOnly } from '../state/githubPrEvidenceProvider.js';
 import { buildResponsePlan } from '../state/responsePlanner.js';
+import { buildOperatorExplanationProjection, detectOperatorExplanationIntent, formatOperatorExplanation } from '../state/operatorExplanationProjection.js';
 import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, seedChatContinuityFromExistingHistory } from '../state/chatContinuity.js';
 import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorProfile } from '../state/operatorProfileMemory.js';
 import { buildActiveMissionState, persistActiveMissionState, readActiveMissionState } from '../state/activeMissionState.js';
@@ -1796,6 +1797,39 @@ function createIdentityRecallDeterministicResult({
     requestPayload: {
       ...requestPayload,
     },
+  };
+}
+
+function createOperatorExplanationDeterministicResult({
+  prompt,
+  parsed,
+  startedAt,
+  requestPayload,
+  projection = {},
+  output = '',
+}) {
+  return {
+    data: {
+      type: 'assistant_response',
+      route: 'assistant',
+      success: true,
+      output_text: output,
+      error: null,
+      error_code: null,
+      timing_ms: Math.round(performance.now() - startedAt),
+      data: {
+        operator_explanation_projection: projection,
+        execution_metadata: {
+          operator_explanation_mode: projection?.mode || 'compact',
+          operator_explanation_verdict: projection?.verdict || 'unknown',
+          operator_explanation_triggered: 'yes',
+        },
+      },
+      raw_input: prompt,
+      parsed_command: parsed,
+      request_execution_id: requestPayload?.request_execution_id || null,
+    },
+    requestPayload: { ...requestPayload },
   };
 }
 
@@ -3678,7 +3712,30 @@ export function useAIConsole() {
           operatorProfileSource: chatContextPack?.providerSummaries?.operatorProfile?.source || 'operator profile',
         })
         : null;
-      if (!routeUnavailableOutcome && !identityRecallDeterministicResult) {
+      const explanationIntent = detectOperatorExplanationIntent(prompt);
+      const operatorExplanationProjection = explanationIntent.matched
+        ? buildOperatorExplanationProjection({
+          intentToBuildModel: requestRuntimeStatus?.intentToBuildModel || {},
+          taskFinisherModel: requestRuntimeStatus?.taskFinisherModel || {},
+          missionEvidenceLedgerModel: requestRuntimeStatus?.missionEvidenceLedgerModel || {},
+          prEvidenceModel: requestRuntimeStatus?.prEvidenceModel || {},
+          proofOfDoneModel: requestRuntimeStatus?.proofOfDoneModel || {},
+          operatorDecisionQueue: requestRuntimeStatus?.operatorDecisionQueue || {},
+          memoryLibrarianQueue: requestRuntimeStatus?.memoryLibrarianQueue || {},
+          supportSnapshot: requestRuntimeStatus?.supportSnapshot || requestRuntimeStatus || {},
+        }, prompt)
+        : null;
+      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && explanationIntent.matched)
+        ? createOperatorExplanationDeterministicResult({
+          prompt,
+          parsed,
+          startedAt,
+          requestPayload,
+          projection: operatorExplanationProjection,
+          output: formatOperatorExplanation(operatorExplanationProjection, { mode: explanationIntent.mode }),
+        })
+        : null;
+      if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !operatorExplanationDeterministicResult) {
         executeStageLastReached = 'provider-dispatch-started';
         executePhase = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
@@ -3703,7 +3760,7 @@ export function useAIConsole() {
           continuity_retrieval_reason: continuityLookup.reason,
         }));
       }
-      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || await sendPrompt({
+      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
         provider: requestedProvider,
         uiRequestedProvider: requestPayload.ui_requested_provider,

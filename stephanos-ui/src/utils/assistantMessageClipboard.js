@@ -39,6 +39,20 @@ export function buildAssistantMessageClipboardPayload(message) {
 
 export function buildAssistantAnswerClipboardPayload(message) {
   const answerText = normalizeAnswerText(message);
+  const projection = message?.data?.operator_explanation_projection || message?.response?.data?.operator_explanation_projection;
+  if (projection && typeof projection === 'object') {
+    const evidence = Array.isArray(projection.sourceEvidence) ? projection.sourceEvidence.slice(0, 5).join(' | ') : 'none';
+    const missing = Array.isArray(projection.missingEvidence) ? projection.missingEvidence.slice(0, 5).join(' | ') : 'none';
+    const codexAction = String(projection.nextCodexAction || '').trim();
+    return [
+      answerText,
+      '',
+      `[Evidence] ${evidence}`,
+      `[Next Operator Action] ${String(projection.nextOperatorAction || 'Review evidence.')}`,
+      codexAction ? `[Next Codex Action] ${codexAction}` : '',
+      `[Missing Proof] ${missing}`,
+    ].filter(Boolean).join('\n').slice(0, 2600);
+  }
   return answerText;
 }
 
