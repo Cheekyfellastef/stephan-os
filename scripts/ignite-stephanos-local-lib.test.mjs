@@ -96,12 +96,15 @@ test('current build still runs build then verify then serve', async () => {
     runVerify: async () => {
       calls.push('verify');
     },
+    runPostVerify: async () => {
+      calls.push('post-verify');
+    },
     runServe: async () => {
       calls.push('serve');
     },
   });
 
-  assert.deepEqual(calls, ['preflight', 'build', 'verify', 'serve']);
+  assert.deepEqual(calls, ['preflight', 'build', 'verify', 'post-verify', 'serve']);
 });
 
 test('stale build runs build then verify then serve', async () => {
@@ -117,10 +120,31 @@ test('stale build runs build then verify then serve', async () => {
     runVerify: async () => {
       calls.push('verify');
     },
+    runPostVerify: async () => {
+      calls.push('post-verify');
+    },
     runServe: async () => {
       calls.push('serve');
     },
   });
 
-  assert.deepEqual(calls, ['preflight', 'build', 'verify', 'serve']);
+  assert.deepEqual(calls, ['preflight', 'build', 'verify', 'post-verify', 'serve']);
+});
+
+
+test('failed post-verify blocks serve after successful verify', async () => {
+  const calls = [];
+  await assert.rejects(() => runIgnitionPlan({
+    preflightState: { decision: { state: 'build-current', action: 'skip-build' } },
+    runPreflight: async () => calls.push('preflight'),
+    runBuild: async () => calls.push('build'),
+    runVerify: async () => calls.push('verify'),
+    runPostVerify: async () => {
+      calls.push('post-verify');
+      throw new Error('publish failed');
+    },
+    runServe: async () => calls.push('serve'),
+  }));
+
+  assert.deepEqual(calls, ['preflight', 'build', 'verify', 'post-verify']);
 });

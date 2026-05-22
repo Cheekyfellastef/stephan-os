@@ -14,6 +14,7 @@ export async function runIgnitionPlan({
   runBuild,
   runVerify,
   runServe,
+  runPostVerify = async () => {},
 }) {
   const plan = createIgnitionPlan(preflightState.decision);
 
@@ -26,5 +27,6 @@ export async function runIgnitionPlan({
   }
 
   await runVerify();
+  await runPostVerify();
   await runServe();
 }
