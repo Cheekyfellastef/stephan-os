@@ -133,6 +133,7 @@ function MissionConsoleTile({
   const { copyState: packetJsonCopyState, setCopyState: setPacketJsonCopyState } = useClipboardButtonState();
   const { copyState: repairPromptCopyState, setCopyState: setRepairPromptCopyState } = useClipboardButtonState();
   const { copyState: missionHandoffCopyState, setCopyState: setMissionHandoffCopyState } = useClipboardButtonState();
+  const { copyState: nextCodexPromptCopyState, setCopyState: setNextCodexPromptCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
@@ -1024,6 +1025,18 @@ function MissionConsoleTile({
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
           <p><strong>Phase:</strong> {operatorReliefProjection.mission.currentPhase}</p>
+          <h5>Mission Brain / Next Action</h5>
+          <ul className="mission-console__status-list">
+            <li><strong>Current phase:</strong> {operatorReliefProjection.missionBrainNextAction?.currentPhase || 'unknown'}</li>
+            <li><strong>Layer status:</strong> {Object.entries(operatorReliefProjection.missionBrainNextAction?.layerStatus || {}).map(([layer, status]) => `L${layer}:${status}`).join(' · ') || 'unknown'}</li>
+            <li><strong>Next best action:</strong> {operatorReliefProjection.missionBrainNextAction?.nextBestAction || operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'}</li>
+            <li><strong>Evidence gaps count:</strong> {operatorReliefProjection.missionBrainNextAction?.openEvidenceGaps?.length || 0}</li>
+            <li><strong>Merge readiness:</strong> {operatorReliefProjection.missionBrainNextAction?.mergeReadiness || 'unknown'}</li>
+            <li><strong>Risk level:</strong> {operatorReliefProjection.missionBrainNextAction?.riskLevel || 'unknown'}</li>
+          </ul>
+          <button type="button" className={`status-panel-copy-button ${nextCodexPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.missionBrainNextAction?.codexPromptCandidate || '', setNextCodexPromptCopyState, 'MissionConsoleTile.copyNextCodexPrompt')}>
+            {nextCodexPromptCopyState === COPY_STATE.SUCCESS ? 'Next Codex Prompt Copied' : nextCodexPromptCopyState === COPY_STATE.FAILURE ? 'Copy Next Codex Prompt failed' : 'Copy Next Codex Prompt'}
+          </button>
           <h5>Codex Change Summary</h5>
           <p><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
           <p>{operatorReliefProjection.codex.deltaSummary}</p>
