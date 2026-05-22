@@ -1,94 +1,54 @@
-# Stephanos repository agent guardrails
+# Stephanos OS — Project Intent Pack (Codex Guardrails)
 
-Stephanos OS is a launcher-shell + runtime system with strict truth boundaries. Treat this file as the fast operating map before edits.
+Stephanos is a launcher-shell + runtime system with strict truth boundaries. Read this first, then any task-specific docs.
 
-## Fast repo map (what is what)
+## Stephanos OS North Star
+Build a persistent, cross-device human+AI mission operating system that preserves operator intent, reduces cognitive load, enforces architectural canon, verifies reality, and compounds professional quality over time.
 
-- **Launcher shell (root, tile-first):** `index.html`, `main.js`, `modules/command-deck/**`, `system/workspace.js`.
-- **Live Stephanos UI authoring source:** `stephanos-ui/src/**`.
-- **Generated runtime output (not hand-edited):** `apps/stephanos/dist/**`.
-- **Build + serve + verify truth gates:** `scripts/build-stephanos-ui.mjs`, `scripts/serve-stephanos-dist.mjs`, `scripts/verify-stephanos-dist.mjs`.
-- **Validation/normalization truth:** `system/apps/app_validator.js`.
-- **Constitutional law source:** `shared/runtime/stephanosLaws.mjs`.
+## Roles
+- **Operator:** sets mission intent, approves direction, defines quality bar.
+- **Codex:** executes bounded changes that preserve canon/truth, proves outcomes, avoids local symptom-only fixes.
+- **OpenClaw/Harness direction:** evolve toward approval-gated orchestration where Codex/OpenClaw/future agents run through shared truth + evidence contracts.
 
-## Mandatory architecture invariants
+## Architecture canon (must preserve)
+- Launcher shell (`/`) and Mission Console/runtime remain separate responsibilities.
+- Keep `launchEntry`, `runtimeEntry`, `launcherEntry` distinct (`entry` is compatibility fallback only).
+- Dist (`apps/stephanos/dist/**`) is generated output, never source truth.
+- Runtime adjudication/truth systems remain canonical; UI consumes final projected truth.
+- Keep provider intent/selected/executable/actual truths distinct.
+- Keep reachability/usability/browser compatibility truths distinct.
 
-1. Never collapse launch semantics into one field.
-   - Keep `launcherEntry`, `runtimeEntry`, `launchEntry` distinct.
-   - `entry` is compatibility-only and non-authoritative.
-2. Root launcher (`/`) is launcher-shell truth and remains tile-first.
-3. Mission Console/runtime target is separate from launcher shell target.
-4. Secondary diagnostics/status UI must not render in the primary launcher body by default.
-5. Localhost health alone is not truth. Source/build/served markers + MIME checks gate trust/reuse.
+## Anti-native doctrine (non-negotiable)
+Do **not** “go native” with local one-off state, pane logic, route logic, provider shortcuts, duplicate surfaces, or isolated telemetry walls. Extend canonical models and shared projections instead.
 
-## Route and target resolution rules (must preserve)
+## Protected Command Deck rules
+- Treat composer/input/execute flow as protected surface.
+- Preserve answer pane visibility, scrollability, and autoscroll to latest final answer.
+- Use pane canon primitives (CollapsiblePanel), not ad hoc replacements.
+- Clipboard copy UX must provide success confirmation (green state) after successful write.
 
-- Launch resolution order is fixed:
-  1. `launchEntry`
-  2. `runtimeEntry`
-  3. `entry` (compatibility fallback only)
-- Never treat backend reachability as route launchability without UI/client reachability truth.
-- Never let hosted/remote sessions inherit loopback assumptions from localhost sessions.
-- Dist fallback is valid when preferred runtime route is unlaunchable, but it must stay explicitly labeled as fallback.
+## Browser proof + evidence rules
+- UI claims require browser proof (not logs only).
+- Support Snapshot / UI Reality are evidence surfaces, not decoration.
+- Never report healthy/current states without reality proof.
 
-## Truth model rules
+## Ignition + housekeeping direction
+- Keep ignition/startup clean, deterministic, and truth-preserving.
+- Prefer small guard additions for repeated failure patterns over broad refactors.
+- Do not loosen validation to “make it pass.”
 
-- Do not treat generated dist as equivalent to live runtime truth.
-- Keep source truth, built truth, served truth, and browser-loaded truth separated in analysis.
-- Reality Sync (`shared/runtime/realitySync.mjs`) and Truth Engine (`shared/runtime/truthEngine.mjs`) are guardrails, not cosmetic status.
-- Hosted/local/home-node truth differs by session context; do not poison remote clients with localhost assumptions.
+## PR hygiene rules
+- Default to bounded, source-only changes unless explicitly requested.
+- Never stage generated dist/runtime artifacts, `node_modules`, secrets, or root data dumps in source-only PRs.
+- PR range must be clean: `origin/main...HEAD`.
+- Explain root cause, assumptions, regression risks, and proof.
 
-## Memory and continuity rules
+## Professionalisation clause
+Every task should move Stephanos toward production-grade reliability, maintainability, and operator trust—not just local symptom relief.
 
-- Keep **session/UI memory** (`shared/runtime/stephanosSessionMemory.mjs`) separate from **durable Stephanos memory** (`shared/runtime/stephanosMemory.mjs`).
-- Keep continuity/service context (`shared/runtime/stephanosContinuity.mjs`) separate from durable record storage.
-- Use shared memory contracts for AI/tile data; do not add ad hoc storage contracts.
-- Do not imply cross-device sync unless a real server adapter exists.
-
-## Provider/backend truth rules
-
-- Provider intent, selected provider, and executable provider are distinct truths.
-- Backend reachable != provider semantically configured.
-- Do not display fallback/provider stage labels as if they were primary route truth.
-
-## Stephanos laws policy (mandatory)
-
-1. Treat `shared/runtime/stephanosLaws.mjs` as repository policy, not optional commentary.
-2. Before launcher/runtime/routing/build-truth edits, consult law IDs + related files.
-3. If invariant-sensitive behavior changes, update laws/docs/tests in the same pass.
-4. Do not ship behavior that violates active law status unless the law itself is explicitly updated.
-5. Keep launcher-visible laws UI sourced from the structured law file.
-
-## Debugging discipline (required)
-
-- Inspect before editing; do not assume root cause.
-- Preserve architecture and prefer minimal, truth-preserving fixes.
-- Add diagnostics when ambiguity blocks reliable triage.
-- Prevent split-brain truth surfaces (one concern, one authoritative model).
-- Never loosen validation just to make checks pass.
-
-## Implementation discipline (required)
-
-- Avoid parallel competing state models.
-- Prefer one authoritative model per concern and projection-only adapters for compatibility.
-- Preserve GitHub Pages/subfolder-safe relative asset behavior.
-- Do not silently introduce fake “healthy/current” states.
-- Keep imports at the top of JS/MJS files; duplicate imports are forbidden.
-
-Historical failure reminder (2026-03-27): duplicate/late imports in `modules/command-deck/command-deck.js` produced `Tile registry entries: 0` while diagnostics/laws still rendered.
-
-## Required checks before claiming success
-
-At minimum for launcher/runtime/guardrail edits:
-- syntax check for touched JS/MJS,
-- targeted tests for affected guardrails,
-- `npm run stephanos:verify` (and `npm run stephanos:build` if dist truth changed),
-- stale-process reuse guard tests,
-- import guard checks.
-
-## Response discipline for future Codex passes
-
-- Explain root cause, not only symptom.
-- Call out key assumptions and confidence boundaries.
-- Name likely regression risks from the proposed change.
-- When relevant, include adjacent hardening ideas that preserve existing truth boundaries.
+## Definition of done
+A change is done when it:
+1. preserves canon/truth boundaries,
+2. includes appropriate checks (and browser proof for UI),
+3. keeps PR scope clean and reviewable,
+4. leaves clear evidence and no hidden side effects.
