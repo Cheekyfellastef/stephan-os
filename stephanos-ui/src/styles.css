@@ -4590,9 +4590,9 @@ pre {
 }
 
 .mission-console-pane__body.mission-console__history {
-  flex: 0 1 auto;
-  min-height: clamp(10rem, 26vh, 20rem);
-  max-height: clamp(14rem, 40vh, 30rem);
+  flex: 1 1 auto;
+  min-height: clamp(12.5rem, 32vh, 24rem);
+  max-height: clamp(17.5rem, 50vh, 36rem);
   height: auto;
   overflow-y: auto;
   margin-bottom: 0;

@@ -11,8 +11,13 @@ const baseModels = {
 
 test('intent detection routes explanation prompts and supports detailed mode', () => {
   assert.equal(detectOperatorExplanationIntent('what does this mean?').matched, true);
+  assert.equal(detectOperatorExplanationIntent('what does that mean').matched, true);
+  assert.equal(detectOperatorExplanationIntent('what does the above mean').matched, true);
+  assert.equal(detectOperatorExplanationIntent('explain what just happened').matched, true);
+  assert.equal(detectOperatorExplanationIntent('translate that into monkey brain').matched, true);
   assert.equal(detectOperatorExplanationIntent('show evidence and give me the detail').mode, 'detailed');
   assert.equal(detectOperatorExplanationIntent('write me a poem').matched, false);
+  assert.equal(detectOperatorExplanationIntent('what does this repo contain').matched, false);
 });
 
 test('projection marks source-clean but proof pending when browser proof missing', () => {
