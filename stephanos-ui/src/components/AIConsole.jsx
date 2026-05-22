@@ -120,6 +120,18 @@ export default function AIConsole({
     latestAssistantAnswerDomFound: 'no',
     latestAssistantAnswerVisible: 'no',
     viewPaneHeight: 0,
+    outerRevealRequested: 'no',
+    outerRevealSkipped: 'no',
+    outerRevealSkipReason: 'none',
+    outerRevealMethod: 'none',
+    outerRevealBlockMode: 'none',
+    answerAlreadyVisibleBeforeOuterReveal: 'no',
+    latestAnswerVisibleRatio: 0,
+    commandDeckVisibleRatio: 0,
+    pageScrollDeltaY: 0,
+    pageJumpPrevented: 'no',
+    innerHistoryScrollRequested: 'no',
+    innerHistoryScrollCompleted: 'no',
   });
 
   const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
@@ -169,6 +181,15 @@ export default function AIConsole({
       ? 'none'
       : (!topVisible && !bottomVisible ? 'target-larger-than-container-or-clipped-both-edges' : (!topVisible ? 'target-top-clipped' : 'target-bottom-clipped'));
     return { topVisible, bottomVisible, fullyVisible, occlusionReason };
+  };
+  const computeVisibleRatio = (rect, viewportRect) => {
+    if (!rect || !viewportRect) return 0;
+    const rectHeight = Math.max(0, rect.height || (rect.bottom - rect.top));
+    if (rectHeight <= 0) return 0;
+    const visibleTop = Math.max(rect.top, viewportRect.top);
+    const visibleBottom = Math.min(rect.bottom, viewportRect.bottom);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    return Number((visibleHeight / rectHeight).toFixed(3));
   };
 
   recordPerfCounter('render', 'AIConsole');
@@ -298,6 +319,7 @@ export default function AIConsole({
       const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
       const containerRect = containerEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
       const viewRect = viewPaneEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
+      const viewportRect = { top: 0, bottom: window.innerHeight };
       const composerRect = composerEl?.getBoundingClientRect?.() || { top: 0, bottom: 0, height: 0 };
       const inputRect = inputEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
       const executeRect = executeButtonEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
@@ -305,6 +327,9 @@ export default function AIConsole({
       const inputVisible = !!inputEl && inputRect.bottom > viewRect.top && inputRect.top < viewRect.bottom;
       const executeVisible = !!executeButtonEl && executeRect.bottom > viewRect.top && executeRect.top < viewRect.bottom;
       const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
+      const latestAnswerVisibleRatio = targetEl ? computeVisibleRatio(targetRect, viewportRect) : 0;
+      const commandDeckRect = visibleDeckRoot?.getBoundingClientRect?.() || null;
+      const commandDeckVisibleRatio = commandDeckRect ? computeVisibleRatio(commandDeckRect, viewportRect) : 0;
       const containerScrollable = !!(containerEl && containerEl.scrollHeight > containerEl.clientHeight);
       const latestAnswerCardClientHeight = targetEl?.clientHeight ?? 0;
       const latestAnswerCardScrollHeight = targetEl?.scrollHeight ?? 0;
@@ -406,6 +431,18 @@ export default function AIConsole({
                 : (viewPaneEl?.clientHeight ?? 0) <= 0 ? 'view-pane-zero-height'
                   : (containerEl?.clientHeight ?? 0) <= 0 ? 'answer-history-zero-height'
                     : 'none',
+        outerRevealRequested: previous.outerRevealRequested || 'no',
+        outerRevealSkipped: previous.outerRevealSkipped || 'no',
+        outerRevealSkipReason: previous.outerRevealSkipReason || 'none',
+        outerRevealMethod: previous.outerRevealMethod || 'none',
+        outerRevealBlockMode: previous.outerRevealBlockMode || 'none',
+        answerAlreadyVisibleBeforeOuterReveal: previous.answerAlreadyVisibleBeforeOuterReveal || 'no',
+        latestAnswerVisibleRatio,
+        commandDeckVisibleRatio,
+        pageScrollDeltaY: previous.pageScrollDeltaY ?? 0,
+        pageJumpPrevented: previous.pageJumpPrevented || 'no',
+        innerHistoryScrollRequested: previous.innerHistoryScrollRequested || 'no',
+        innerHistoryScrollCompleted: previous.innerHistoryScrollCompleted || 'no',
         ...overrides,
       };
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
@@ -440,6 +477,7 @@ export default function AIConsole({
 
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try {
+        const pageScrollBefore = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0;
         const latestAssistantAnswerTarget = resolveLatestVisibleAssistantAnswerElement(latestAssistantAnswerId) || latestAssistantAnswerRef.current;
         const scrollContainerEl = getAnswerHistoryScrollContainer();
         if (!latestAssistantAnswerTarget) {
@@ -466,12 +504,52 @@ export default function AIConsole({
           nextScrollTop = Math.min(nextScrollTop, bottomAligned);
         }
         nextScrollTop = Math.min(maxTop, Math.max(0, nextScrollTop));
+        const innerScrollNeeded = Math.abs(nextScrollTop - previousScrollTop) >= 1;
         scrollContainerEl.scrollTo({ top: nextScrollTop, behavior: 'auto' });
-        const viewRoot = resolveVisibleCommandDeckRoot();
-        const revealTarget = latestAssistantAnswerTarget.closest('[data-testid="command-deck-body"]') || viewRoot || latestAssistantAnswerTarget;
-        revealTarget?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const viewportRect = { top: 0, bottom: window.innerHeight };
+        const latestAnswerRect = latestAssistantAnswerTarget.getBoundingClientRect();
+        const commandDeckRoot = resolveVisibleCommandDeckRoot();
+        const commandDeckRect = commandDeckRoot?.getBoundingClientRect?.() || null;
+        const latestAnswerVisibleRatio = computeVisibleRatio(latestAnswerRect, viewportRect);
+        const commandDeckVisibleRatio = commandDeckRect ? computeVisibleRatio(commandDeckRect, viewportRect) : 0;
+        const answerAlreadyVisibleEnough = latestAnswerVisibleRatio >= 0.6 || commandDeckVisibleRatio >= 0.8;
+        const prefersReducedMotion = typeof window !== 'undefined'
+          && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const outerBehavior = prefersReducedMotion ? 'auto' : 'smooth';
+        const outerBlockMode = 'nearest';
+        let outerRevealSkipped = 'no';
+        let outerRevealSkipReason = 'none';
+        let outerRevealMethod = `scrollIntoView:${outerBehavior}`;
+        if (answerAlreadyVisibleEnough) {
+          outerRevealSkipped = 'yes';
+          outerRevealSkipReason = 'already-visible-confirmed';
+          outerRevealMethod = 'already-visible-confirmed';
+        } else {
+          const revealTarget = latestAssistantAnswerTarget.closest('[data-testid="command-deck-body"]') || commandDeckRoot || latestAssistantAnswerTarget;
+          revealTarget?.scrollIntoView?.({ block: outerBlockMode, inline: 'nearest', behavior: outerBehavior });
+        }
+        const pageScrollAfter = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0;
+        const pageScrollDeltaY = Math.round(pageScrollAfter - pageScrollBefore);
         recordPerfCounter('timers', 'ai_core.autoscroll_raf');
-        publishScrollDiagnostics({ method: 'inner-container-scroll|outer-viewport-reveal', previousScrollTop, nextScrollTop, completed: 'yes', skipReason: 'none', lastCompletedAt: new Date().toISOString() });
+        publishScrollDiagnostics({
+          method: 'inner-container-scroll|conditional-outer-reveal',
+          previousScrollTop,
+          nextScrollTop,
+          completed: 'yes',
+          skipReason: 'none',
+          lastCompletedAt: new Date().toISOString(),
+          outerRevealRequested: answerAlreadyVisibleEnough ? 'no' : 'yes',
+          outerRevealSkipped,
+          outerRevealSkipReason,
+          outerRevealMethod,
+          outerRevealBlockMode: outerBlockMode,
+          answerAlreadyVisibleBeforeOuterReveal: answerAlreadyVisibleEnough ? 'yes' : 'no',
+          pageScrollDeltaY,
+          pageJumpPrevented: (answerAlreadyVisibleEnough || Math.abs(pageScrollDeltaY) < 160) ? 'yes' : 'no',
+          innerHistoryScrollRequested: innerScrollNeeded ? 'yes' : 'no',
+          innerHistoryScrollCompleted: innerScrollNeeded ? 'yes' : 'no',
+        });
       } catch (error) {
         publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', skipReason: 'scroll-exception', occlusionReason: String(error?.message || 'scroll-exception') });
       }

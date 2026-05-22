@@ -67,7 +67,10 @@ test('AIConsole scroll targeting binds to latest assistant answer pane ref rathe
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /latestAssistantAnswerRef/);
   assert.match(source, /scrollContainerEl\.scrollTo\(\{ top: nextScrollTop, behavior: 'auto' \}\)/);
-  assert.match(source, /scrollIntoView\?\.\(\{ block: 'nearest', inline: 'nearest', behavior: 'smooth' \}\)/);
+  assert.match(source, /const answerAlreadyVisibleEnough = latestAnswerVisibleRatio >= 0\.6 \|\| commandDeckVisibleRatio >= 0\.8/);
+  assert.match(source, /if \(answerAlreadyVisibleEnough\) \{/);
+  assert.match(source, /outerRevealSkipReason = 'already-visible-confirmed'/);
+  assert.match(source, /scrollIntoView\?\.\(\{ block: outerBlockMode, inline: 'nearest', behavior: outerBehavior \}\)/);
   assert.match(source, /data-testid=\{isLatestAssistantAnswer \? 'latest-assistant-answer-pane' : 'assistant-answer-pane'\}/);
   assert.match(source, /data-assistant-answer-id=\{String\(entry.id \|\| ''\)\}/);
   assert.match(source, /data-answer-final=\{entry\?\.stream_finalized === false \? 'false' : 'true'\}/);
@@ -169,7 +172,7 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /targetKind = latestAssistantAnswerId \? 'latest-assistant-answer-pane' : 'none'/);
   assert.match(source, /resolveVisibleAnswerHistoryContainer/);
   assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
-  assert.match(source, /method: 'inner-container-scroll\|outer-viewport-reveal'/);
+  assert.match(source, /method: 'inner-container-scroll\|conditional-outer-reveal'/);
   assert.match(source, /method: 'skipped-no-target-after-raf'/);
   assert.match(source, /aiConsoleAnswerScroll/);
   assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);
@@ -187,6 +190,19 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /standardAnswerFitTarget/);
   assert.match(source, /standardTenItemAnswerFitVerdict/);
   assert.match(source, /long-answer-internal-scroll/);
+  assert.match(source, /outerRevealRequested/);
+  assert.match(source, /outerRevealSkipped/);
+  assert.match(source, /outerRevealSkipReason/);
+  assert.match(source, /outerRevealMethod/);
+  assert.match(source, /outerRevealBlockMode/);
+  assert.match(source, /answerAlreadyVisibleBeforeOuterReveal/);
+  assert.match(source, /latestAnswerVisibleRatio/);
+  assert.match(source, /commandDeckVisibleRatio/);
+  assert.match(source, /pageScrollDeltaY/);
+  assert.match(source, /pageJumpPrevented/);
+  assert.match(source, /innerHistoryScrollRequested/);
+  assert.match(source, /innerHistoryScrollCompleted/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
 });
 
 test('latest assistant answer pane provides safe scroll margins', async () => {

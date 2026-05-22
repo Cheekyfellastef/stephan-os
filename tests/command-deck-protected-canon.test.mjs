@@ -34,6 +34,11 @@ test('protected canon: layout diagnostics include visibility and non-zero-height
   assert.match(source, /standardAnswerFitTarget/);
   assert.match(source, /standardTenItemAnswerFitVerdict/);
   assert.match(source, /answerViewportTooSmallReason/);
+  assert.match(source, /outerRevealRequested/);
+  assert.match(source, /outerRevealSkipped/);
+  assert.match(source, /outerRevealSkipReason/);
+  assert.match(source, /pageJumpPrevented/);
+  assert.match(source, /innerHistoryScrollCompleted/);
 });
 
 test('protected canon: answer history scrolls while composer is fixed in flow and non-shrinking', async () => {
