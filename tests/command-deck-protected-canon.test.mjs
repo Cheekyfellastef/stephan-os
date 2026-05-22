@@ -35,5 +35,21 @@ test('protected canon: answer history scrolls while composer is fixed in flow an
   const styles = await read(stylesPath);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
   assert.match(styles, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
-  assert.match(styles, /\.mission-console \.panel-body[\s\S]*height:\s*min\(72vh,\s*760px\);/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(14rem,\s*40vh,\s*30rem\);/m);
+});
+
+test('protected canon: composer sits after answer history inside command deck and before lower status/tools surfaces', async () => {
+  const source = await read(aiConsolePath);
+  const historyIndex = source.lastIndexOf('data-testid="command-deck-answer-history"');
+  const composerIndex = source.lastIndexOf('data-testid="command-deck-composer"');
+  const executeIndex = source.lastIndexOf('data-testid="command-deck-execute"');
+  assert.ok(historyIndex >= 0);
+  assert.ok(composerIndex > historyIndex);
+  assert.ok(executeIndex > composerIndex);
+});
+
+test('protected canon: dev-mode inline failure marker exists if composer contract breaks', async () => {
+  const source = await read(aiConsolePath);
+  assert.match(source, /Command Deck composer missing — protected canon failure\./);
+  assert.match(source, /setComposerContractFailure\(/);
 });
