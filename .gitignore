@@ -1,3 +1,6 @@
-
 logs/
 .stephanos/local-state-checkpoints/
+
+# Dependency artifacts (generated)
+node_modules/
+**/node_modules/
