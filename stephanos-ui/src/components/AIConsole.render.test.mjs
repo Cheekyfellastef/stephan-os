@@ -63,7 +63,7 @@ test('AIConsole renders mission console shell with internal message region and a
 test('AIConsole scroll targeting binds to latest assistant answer pane ref rather than generic latest history item', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /latestAssistantAnswerRef/);
-  assert.match(source, /latestAssistantAnswerEl\.scrollIntoView/);
+  assert.match(source, /latestAssistantAnswerEl\.scrollIntoView\(\{ block: 'start', behavior: 'smooth' \}\)/);
   assert.match(source, /data-testid=\{isLatestAssistantAnswer \? 'latest-assistant-answer-pane' : 'assistant-answer-pane'\}/);
 });
 
@@ -150,6 +150,22 @@ test('embedded mission console answer history keeps larger viewport and visible 
 });
 
 
+
+
+test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
+  const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
+  assert.match(source, /kind: 'latest-assistant-answer-pane'/);
+  assert.match(source, /kind: 'history-bottom-fallback'/);
+  assert.match(source, /if \(latestAssistantAnswerEl && scrollContainer\)/);
+  assert.match(source, /aiConsoleAnswerScroll/);
+});
+
+test('latest assistant answer pane provides safe scroll margins', async () => {
+  const stylesSource = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
+  assert.match(stylesSource, /\[data-testid="latest-assistant-answer-pane"\]\s*\{/);
+  assert.match(stylesSource, /scroll-margin-top:\s*0\.75rem;/);
+  assert.match(stylesSource, /scroll-margin-bottom:\s*1\.25rem;/);
+});
 test('AIConsole context indicator renders active merge-decision state from execution metadata', async () => {
   const { renderAIConsole } = await importBundledModule(
     path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'),
