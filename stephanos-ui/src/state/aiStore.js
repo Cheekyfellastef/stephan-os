@@ -126,6 +126,7 @@ const DEFAULT_UI_LAYOUT = {
   missionConsoleEvidenceGapsPanel: false,
   missionConsoleNextCodexPromptPanel: false,
   missionConsoleWorkRoutingCandidatePanel: true,
+  missionConsoleMissionApprovalQueuePanel: false,
   missionConsoleWorkRoutingPacketPreviewPanel: false,
   missionConsoleVerificationReturnIntakePanel: true,
   missionConsoleVerificationReturnPayloadPanel: false,
