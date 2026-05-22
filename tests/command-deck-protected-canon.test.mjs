@@ -11,6 +11,9 @@ async function read(fileUrl) {
 
 test('protected canon: command deck composer/input/execute selectors are present for DOM proof', async () => {
   const source = await read(aiConsolePath);
+  assert.match(source, /data-testid="command-deck-root"/);
+  assert.match(source, /data-testid="command-deck-body"/);
+  assert.match(source, /data-testid="command-deck-answer-history"/);
   assert.match(source, /data-testid="command-deck-composer"/);
   assert.match(source, /data-testid="command-deck-input"/);
   assert.match(source, /data-testid="command-deck-execute"/);
@@ -18,6 +21,7 @@ test('protected canon: command deck composer/input/execute selectors are present
 
 test('protected canon: layout diagnostics include visibility and non-zero-height verdict fields', async () => {
   const source = await read(aiConsolePath);
+  assert.match(source, /resolveVisibleCommandDeckRoot/);
   assert.match(source, /commandDeckComposerBottomWithinView/);
   assert.match(source, /commandDeckInputVisible/);
   assert.match(source, /commandDeckExecuteButtonVisible/);

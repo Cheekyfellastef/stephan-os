@@ -52,6 +52,9 @@ test('AIConsole renders mission console shell with internal message region and a
 
   const rendered = renderAIConsole();
   assert.match(rendered, /mission-console-shell/);
+  assert.match(rendered, /data-testid="command-deck-root"/);
+  assert.match(rendered, /data-testid="command-deck-body"/);
+  assert.match(rendered, /data-testid="command-deck-answer-history"/);
   assert.match(rendered, /output-panel ai-console-messages/);
   assert.match(rendered, /command-form mission-console-input/);
   assert.match(rendered, /mission-console__input-row/);
