@@ -29,14 +29,17 @@ test('protected canon: layout diagnostics include visibility and non-zero-height
   assert.match(source, /commandDeckLayoutBlocker/);
   assert.match(source, /viewPaneHeight/);
   assert.match(source, /latestAssistantAnswerDomFound/);
+  assert.match(source, /answerViewportFitsLatestAnswer/);
+  assert.match(source, /answerViewportFitVerdict/);
+  assert.match(source, /answerViewportTooSmallReason/);
 });
 
 test('protected canon: answer history scrolls while composer is fixed in flow and non-shrinking', async () => {
   const styles = await read(stylesPath);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*flex:\s*1\s+1\s+auto;/m);
-  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(12\.5rem,\s*32vh,\s*24rem\);/m);
-  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(17\.5rem,\s*50vh,\s*36rem\);/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*min-height:\s*clamp\(15\.5rem,\s*40vh,\s*30rem\);/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*max-height:\s*clamp\(21\.75rem,\s*62vh,\s*42rem\);/m);
   assert.match(styles, /\.mission-console-input,[\s\S]*\.mission-console__composer[\s\S]*flex-shrink:\s*0;/m);
 });
 

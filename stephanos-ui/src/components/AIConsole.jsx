@@ -282,6 +282,30 @@ export default function AIConsole({
       const executeVisible = !!executeButtonEl && executeRect.bottom > viewRect.top && executeRect.top < viewRect.bottom;
       const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
       const containerScrollable = !!(containerEl && containerEl.scrollHeight > containerEl.clientHeight);
+      const latestAnswerCardClientHeight = targetEl?.clientHeight ?? 0;
+      const latestAnswerCardScrollHeight = targetEl?.scrollHeight ?? 0;
+      const answerViewportClientHeight = containerEl?.clientHeight ?? 0;
+      const answerViewportScrollHeight = containerEl?.scrollHeight ?? 0;
+      const normalCardPaddingAllowance = 24;
+      const answerViewportFitRatio = latestAnswerCardClientHeight > 0
+        ? Number((answerViewportClientHeight / latestAnswerCardClientHeight).toFixed(3))
+        : 0;
+      const answerViewportFitsLatestAnswer = latestAnswerCardClientHeight > 0
+        && answerViewportClientHeight >= (latestAnswerCardClientHeight + normalCardPaddingAllowance);
+      const latestAnswerIsLong = latestAnswerCardScrollHeight > latestAnswerCardClientHeight + 16;
+      const answerHistoryOverflowY = containerEl ? getComputedStyle(containerEl).overflowY : 'none';
+      const answerViewportFitVerdict = answerViewportFitsLatestAnswer
+        ? 'fits-normal-answer-card'
+        : (latestAnswerIsLong && (answerHistoryOverflowY === 'auto' || answerHistoryOverflowY === 'scroll'))
+          ? 'long-answer-internal-scroll'
+          : 'viewport-too-small-for-latest-answer';
+      const answerViewportTooSmallReason = answerViewportFitsLatestAnswer
+        ? 'none'
+        : latestAnswerIsLong
+          ? (answerHistoryOverflowY === 'auto' || answerHistoryOverflowY === 'scroll')
+            ? 'none'
+            : 'long-answer-without-internal-scroll'
+          : 'normal-answer-card-clipped';
       const previous = answerScrollDiagnosticsRef.current || {};
       answerScrollDiagnosticsRef.current = {
         requested: previous.requested || 'no',
@@ -315,11 +339,19 @@ export default function AIConsole({
         answerPaneCount: visibleAnswerPanes.length || answerPaneCount,
         latestAssistantAnswerDomFound: targetEl ? 'yes' : 'no',
         latestAssistantAnswerVisible: visibility.fullyVisible ? 'yes' : 'no',
-        answerPaneClientHeight: targetEl?.clientHeight ?? 0,
-        answerPaneScrollHeight: targetEl?.scrollHeight ?? 0,
-        answerContainerClientHeight: containerEl?.clientHeight ?? 0,
-        answerContainerScrollHeight: containerEl?.scrollHeight ?? 0,
-        answerContainerOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
+        answerPaneClientHeight: latestAnswerCardClientHeight,
+        answerPaneScrollHeight: latestAnswerCardScrollHeight,
+        answerContainerClientHeight: answerViewportClientHeight,
+        answerContainerScrollHeight: answerViewportScrollHeight,
+        answerContainerOverflowY: answerHistoryOverflowY,
+        latestAnswerCardClientHeight,
+        latestAnswerCardScrollHeight,
+        answerViewportClientHeight,
+        answerViewportScrollHeight,
+        answerViewportFitsLatestAnswer: answerViewportFitsLatestAnswer ? 'yes' : 'no',
+        answerViewportFitRatio,
+        answerViewportFitVerdict,
+        answerViewportTooSmallReason,
         answerPaneClippedReason: visibility.occlusionReason,
         commandDeckComposerFound: composerEl ? 'yes' : 'no',
         commandDeckComposerVisible: isElementActuallyVisible(composerEl) ? 'yes' : 'no',
@@ -530,6 +562,10 @@ export default function AIConsole({
             </span>
           </div>
         ) : null}
+        {/* Protected Command Deck Answer Viewport Canon:
+            keep a professionally sized answer viewport (clamp min/ideal/max),
+            keep composer visible below it, fit normal latest answer cards,
+            and let long answers scroll internally instead of collapsing viewport. */}
         <section className="mission-console-pane" data-pane-id="answer-history" data-testid="command-deck-body">
           <header className="mission-console-pane__header">
             <strong>Answer History</strong>
