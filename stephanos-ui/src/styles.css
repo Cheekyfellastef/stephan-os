@@ -4568,8 +4568,8 @@ pre {
 
 .mission-console .panel-body {
   height: auto;
-  max-height: none;
-  overflow: visible;
+  max-height: min(68vh, 820px);
+  overflow: auto;
 }
 
 .mission-console-shell {
@@ -4622,9 +4622,17 @@ pre {
 }
 
 .mission-console-section--operator-relief pre {
-  max-height: 240px;
+  max-height: 180px;
   overflow: auto;
   white-space: pre-wrap;
+}
+
+.mission-console-section {
+  margin-bottom: 0.5rem;
+}
+
+.mission-console-workspace .panel .panel {
+  margin: 0.45rem 0;
 }
 
 .ui-reality-status-panel {

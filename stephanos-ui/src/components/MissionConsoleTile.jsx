@@ -892,6 +892,15 @@ function MissionConsoleTile({
 
   const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout[panelId] !== false;
   const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
+  const missionBrainPanelOpen = uiLayout.missionConsoleMissionBrainPanel !== false;
+  const operatorReliefSummaryPanelOpen = uiLayout.missionConsoleOperatorReliefSummaryPanel !== false;
+  const evidenceGapsPanelOpen = (operatorReliefProjection.evidenceGaps || []).length > 0
+    ? uiLayout.missionConsoleEvidenceGapsPanel !== false
+    : uiLayout.missionConsoleEvidenceGapsPanel === true;
+  const nextCodexPromptPanelOpen = uiLayout.missionConsoleNextCodexPromptPanel === true;
+  const supportSnapshotPanelOpen = uiLayout.missionConsoleSupportSnapshotPanel === true;
+  const repairPromptPanelOpen = uiLayout.missionConsoleRepairPromptPanel === true;
+  const missionHandoffPanelOpen = uiLayout.missionConsoleMissionHandoffPanel === true;
   const updatePaneDiagnostics = (patch = {}) => {
     if (typeof window === 'undefined') return;
     const snapshot = window.__STEPHANOS_PANE_DIAGNOSTICS__ || {};
@@ -915,8 +924,24 @@ function MissionConsoleTile({
       togglePanelKey: panelId,
       visibleChevronLayer: 'MissionConsoleTile.CollapsiblePanel.header',
       visibleContentLayer: 'MissionConsoleTile.CollapsiblePanel.body',
+      missionConsolePaneCount: 6,
+      collapsibleSectionIds: [
+        'missionConsoleOperatorOverviewPanel',
+        'missionConsoleRuntimeRouteStatusPanel',
+        'missionConsoleOperatorReliefPanel',
+        'missionConsoleIntentToBuildPanel',
+        'missionConsoleSecondaryDiagnosticsPanel',
+        'missionConsoleConnectedTileContextsPanel',
+      ],
+      collapsibleSectionStates: {
+        missionConsoleMissionBrainPanel: missionBrainPanelOpen,
+        missionConsoleOperatorReliefSummaryPanel: operatorReliefSummaryPanelOpen,
+        missionConsoleEvidenceGapsPanel: evidenceGapsPanelOpen,
+        missionConsoleNextCodexPromptPanel: nextCodexPromptPanelOpen,
+        missionConsoleSupportSnapshotPanel: supportSnapshotPanelOpen,
+      },
     });
-  }, [forcePanelOpen, missionConsolePanelOpen, panelId, uiLayout]);
+  }, [evidenceGapsPanelOpen, forcePanelOpen, missionBrainPanelOpen, missionConsolePanelOpen, nextCodexPromptPanelOpen, operatorReliefSummaryPanelOpen, panelId, supportSnapshotPanelOpen, uiLayout]);
 
   const handleMissionConsolePanelToggle = () => {
     if (forcePanelOpen) {
@@ -1021,10 +1046,23 @@ function MissionConsoleTile({
           isOpen={uiLayout.missionConsoleOperatorReliefPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefPanel')}
         >
+          <CollapsiblePanel
+            panelId="missionConsoleOperatorReliefSummaryPanel"
+            title="Operator Relief Summary"
+            isOpen={operatorReliefSummaryPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefSummaryPanel')}
+          >
           <h5>Current Mission Summary</h5>
           <p><strong>{operatorReliefProjection.mission.title}</strong></p>
           <p>{operatorReliefProjection.mission.objective}</p>
           <p><strong>Phase:</strong> {operatorReliefProjection.mission.currentPhase}</p>
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            panelId="missionConsoleMissionBrainPanel"
+            title="Mission Brain / Next Action"
+            isOpen={missionBrainPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleMissionBrainPanel')}
+          >
           <h5>Mission Brain / Next Action</h5>
           <ul className="mission-console__status-list">
             <li><strong>Current phase:</strong> {operatorReliefProjection.missionBrainNextAction?.currentPhase || 'unknown'}</li>
@@ -1034,9 +1072,17 @@ function MissionConsoleTile({
             <li><strong>Merge readiness:</strong> {operatorReliefProjection.missionBrainNextAction?.mergeReadiness || 'unknown'}</li>
             <li><strong>Risk level:</strong> {operatorReliefProjection.missionBrainNextAction?.riskLevel || 'unknown'}</li>
           </ul>
+          </CollapsiblePanel>
+          <CollapsiblePanel
+            panelId="missionConsoleNextCodexPromptPanel"
+            title="Next Codex Prompt Candidate"
+            isOpen={nextCodexPromptPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleNextCodexPromptPanel')}
+          >
           <button type="button" className={`status-panel-copy-button ${nextCodexPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.missionBrainNextAction?.codexPromptCandidate || '', setNextCodexPromptCopyState, 'MissionConsoleTile.copyNextCodexPrompt')}>
             {nextCodexPromptCopyState === COPY_STATE.SUCCESS ? 'Next Codex Prompt Copied' : nextCodexPromptCopyState === COPY_STATE.FAILURE ? 'Copy Next Codex Prompt failed' : 'Copy Next Codex Prompt'}
           </button>
+          </CollapsiblePanel>
           <h5>Codex Change Summary</h5>
           <p><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
           <p>{operatorReliefProjection.codex.deltaSummary}</p>
@@ -1055,6 +1101,12 @@ function MissionConsoleTile({
           <p><strong>{operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'}</strong> — {operatorReliefProjection.nextBestAction?.reason}</p>
           <h5>Secondary Actions</h5>
           <ul>{operatorReliefProjection.nextActions.slice(1).map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
+          <CollapsiblePanel
+            panelId="missionConsoleRepairPromptPanel"
+            title="Repair Prompt"
+            isOpen={repairPromptPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleRepairPromptPanel')}
+          >
           <h5>Repair Prompt</h5>
           <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.repairPrompt.prompt || '', setRepairPromptCopyState, 'MissionConsoleTile.copyRepairPrompt')}>
             {repairPromptCopyState === COPY_STATE.SUCCESS ? 'Repair Prompt Copied' : repairPromptCopyState === COPY_STATE.FAILURE ? 'Copy Repair Prompt failed' : 'Copy Repair Prompt'}
@@ -1065,19 +1117,34 @@ function MissionConsoleTile({
           {showRepairPromptBody ? (
             <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
           ) : null}
+          </CollapsiblePanel>
           <h5>Lesson Candidates</h5>
           <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}</ul>
+          <CollapsiblePanel
+            panelId="missionConsoleEvidenceGapsPanel"
+            title="Evidence Gaps / Proof Requirements"
+            isOpen={evidenceGapsPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleEvidenceGapsPanel')}
+          >
           <h5>Evidence Gaps</h5>
           <ul>{(operatorReliefProjection.evidenceGaps || []).map((gap) => <li key={gap.id}><strong>{gap.label}</strong>: {gap.reason}</li>)}</ul>
+          </CollapsiblePanel>
           <h5>Operator Decision Queue</h5>
           <p>Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
           <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
+          <CollapsiblePanel
+            panelId="missionConsoleMissionHandoffPanel"
+            title="Mission Handoff Pack"
+            isOpen={missionHandoffPanelOpen}
+            onToggle={() => dispatchPanelToggle('missionConsoleMissionHandoffPanel')}
+          >
           <h5>Mission Handoff Pack</h5>
           <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} data-testid="copy-button-mission-handoff" onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionHandoff')}>{missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Handoff Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Handoff failed' : 'Copy Mission Handoff'}</button>
           <button type="button" onClick={() => setShowMissionHandoffJson((prev) => !prev)}>
             {showMissionHandoffJson ? 'Hide Mission Handoff JSON' : 'Show Mission Handoff JSON'}
           </button>
           {showMissionHandoffJson ? <pre>{JSON.stringify(operatorReliefProjection.missionHandoff || {}, null, 2)}</pre> : null}
+          </CollapsiblePanel>
         </CollapsiblePanel>
       </section>
 
