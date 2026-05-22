@@ -3990,8 +3990,9 @@ export function useAIConsole() {
       finalExecutionMetadata.execute_handler_early_return_reason = executeHandlerEarlyReturnReason;
       finalExecutionMetadata.direct_answer_submit_allowed = 'yes';
       finalExecutionMetadata.command_pipeline_last_user_message_recorded = userMessageRecordAttempted === 'yes' && userMessageRecordError === 'none' ? 'yes' : 'no';
-      finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = data.success ? 'yes' : 'no';
-      finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = data.success ? 'yes' : 'no';
+      const finalAssistantAnswerVisibleCandidate = data.success && String(effectiveOutputText || '').trim().length > 0 && streamFinalizationMissing !== true;
+      finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = finalAssistantAnswerVisibleCandidate ? 'yes' : 'no';
+      finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = finalAssistantAnswerVisibleCandidate ? 'yes' : 'no';
       finalExecutionMetadata.command_pipeline_last_failure_reason = data.success ? 'none' : (data.error_code || data.error || 'unknown');
       finalExecutionMetadata.command_pipeline_last_finalization_path = lastFinalizationPath;
       finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
@@ -4110,7 +4111,7 @@ export function useAIConsole() {
       timeoutFailureMetadata.direct_answer_submit_allowed = 'yes';
       timeoutFailureMetadata.command_pipeline_last_user_message_recorded = userMessageRecordAttempted === 'yes' && userMessageRecordError === 'none' ? 'yes' : 'no';
       timeoutFailureMetadata.command_pipeline_last_assistant_answer_generated = 'no';
-      timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'yes';
+      timeoutFailureMetadata.command_pipeline_last_answer_pane_rendered = 'no';
       timeoutFailureMetadata.command_pipeline_last_failure_reason = uiError.errorCode || uiError.error || 'unknown';
       const preEnvelopeStageReached = executeStageLastReached === 'input-normalized'
         || executeStageLastReached === 'submit-accepted'

@@ -227,6 +227,14 @@ test('deterministic identity recall appends assistant answer through command his
   assert.match(source, /lastFinalizationPath = routeUnavailableOutcome \? 'error' : \(identityRecallDeterministicResult \? 'deterministic-identity' : 'provider'\);/);
 });
 
+test('command pipeline render truth only reports rendered when final assistant text exists', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const finalAssistantAnswerVisibleCandidate = data\.success && String\(effectiveOutputText \|\| ''\)\.trim\(\)\.length > 0 && streamFinalizationMissing !== true;/);
+  assert.match(source, /command_pipeline_last_assistant_answer_generated = finalAssistantAnswerVisibleCandidate \? 'yes' : 'no';/);
+  assert.match(source, /command_pipeline_last_answer_pane_rendered = finalAssistantAnswerVisibleCandidate \? 'yes' : 'no';/);
+  assert.match(source, /timeoutFailureMetadata\.command_pipeline_last_answer_pane_rendered = 'no';/);
+});
+
 test('command input clearing is gated by submit acceptance return contract', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   const aiConsoleSource = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'components/AIConsole.jsx'), 'utf8');
@@ -284,7 +292,7 @@ test('submitPrompt pre-envelope path keeps submit-wide symbols initialized and c
   assert.match(source, /let routeUnavailableOutcome = null;/);
   assert.match(source, /let providerDispatchResult = null;/);
   assert.match(source, /let streamBuffer = '';/);
-  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| await sendPrompt\(/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt\(/);
   assert.match(source, /const \{ data, requestPayload: effectiveRequestPayload \} = providerDispatchResult;/);
   assert.match(source, /const preEnvelopeFailureActive = String\(timeoutFailureMetadata\.command_pipeline_last_finalization_path \|\| ''\) === 'pre-envelope-error';/);
   assert.match(source, /timeoutFailureMetadata\.active_provider = 'none';/);
