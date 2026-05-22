@@ -292,6 +292,8 @@ const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
 const ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES = [APPROVED_GENERATED_DIST_PREFIX];
+const KNOWN_SOURCE_PREFIXES = ['stephanos-ui/src/', 'scripts/', 'tests/', 'shared/'];
+const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
 
 function normalizeGitPath(rawPath) {
   const trimmed = String(rawPath || '').trim();
@@ -332,6 +334,7 @@ function isTransientRootDataPath(path) {
 
 function classifyStatusEntry(entry) {
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
+  if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
@@ -344,6 +347,18 @@ function classifyStatusEntry(entry) {
   }
   const tracked = !entry.status.includes('?');
   return tracked ? 'meaningful-source-dirt' : 'forbidden-or-unknown';
+}
+
+export function classifyIgnitionDirtPath(path) {
+  const normalized = normalizeGitPath(path);
+  if (SECRETS_PATTERN.test(normalized)) return 'HARD_BLOCK';
+  if (normalized === RUNTIME_MEMORY_PATH) return 'RUNTIME_CHECKPOINT_CLEAN';
+  if (isDependencyDirtPath(normalized)) return 'DEPENDENCY_WARNING';
+  if (isApprovedGeneratedDistPath(normalized)) return 'AUTO_CLEAN_GENERATED';
+  if (KNOWN_SOURCE_FILES.has(normalized) || KNOWN_SOURCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return 'SOURCE_DIRT';
+  const extension = normalized.includes('.') ? normalized.split('.').pop()?.toLowerCase() : '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf', 'wasm', 'zip', '7z', 'tar', 'gz', 'pdf', 'bin', 'exe', 'dll'].includes(extension)) return 'HARD_BLOCK';
+  return 'HARD_BLOCK';
 }
 
 function parsePorcelainStatusLine(line) {
@@ -396,6 +411,14 @@ function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = 
     blockedFiles,
     dependencyWarnings,
     nextOperatorAction: blockedFiles.length > 0 ? 'Commit/stash/discard source/forbidden dirt or run with explicit dirty-source intent.' : 'Continue ignition.',
+    ignitionStatusModel: {
+      ignitionStatus: blockedFiles.length > 0 ? 'HELD_OR_BLOCKED' : 'READY',
+      ignitionPhase: 'preflight-cleanliness',
+      ignitionSteps: ['classify-dirt', 'auto-clean-generated', 'checkpoint-runtime'],
+      ignitionBlockedReason: blockedFiles.length > 0 ? 'Source/forbidden dirt detected' : '',
+      ignitionAutoCleaned: autoCleanedFiles.length,
+      ignitionOperatorAction: blockedFiles.length > 0 ? 'Operator approval required for source dirt.' : 'Continue ignition.',
+    },
   };
 }
 
@@ -550,6 +573,7 @@ export function runGitPullPreflightWithDeps({
   console.log(`[IGNITION] blockedFiles=${cleanlinessReport.blockedFiles.join(',') || 'none'}`);
   console.log(`[IGNITION] dependencyWarnings=${cleanlinessReport.dependencyWarnings.join(',') || 'none'}`);
   console.log(`[IGNITION] nextOperatorAction=${cleanlinessReport.nextOperatorAction}`);
+  console.log(`[IGNITION] ignitionStatus=${cleanlinessReport.ignitionStatusModel.ignitionStatus}`);
   console.log('[IGNITION] housekeeping enabled');
   const approvedTrackedGeneratedRestorePaths = collectApprovedTrackedGeneratedRestorePaths(statusAssessment);
   const runtimeStatePaths = collectRuntimeStatePaths(statusAssessment);
@@ -752,7 +776,8 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
-  const ignitionMode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
+  const ignitionModeRaw = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
+  const ignitionMode = ignitionModeRaw === 'pr-clean' ? 'PR_CLEAN_ROOM' : (shouldAutoPublishDist() ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION');
   let publicationTruth = null;
 
   if (args.has('--probe-existing-server')) {
@@ -830,7 +855,7 @@ export async function run() {
       console.log('[IGNITION] verify passed');
     },
     runPostVerify: async () => {
-      if (ignitionMode === 'pr-clean') {
+      if (ignitionMode === 'PR_CLEAN_ROOM') {
         runStep('guard-pr-clean', npmCommand, ['run', 'stephanos:guard:pr-clean']);
         const status = runStepCapture('git-status-pr-clean-post-verify', 'git', ['status', '--porcelain']);
         const assessment = evaluateGitStatusForIgnition(status.stdout);
@@ -867,6 +892,13 @@ export async function run() {
     runServe: async () => {
       console.log('[IGNITION] launch continuing');
       const refreshedState = readLocalBuildState();
+      const finalStatus = {
+        ignitionMode,
+        IgnitionCleanlinessVerdict: verifyResult === 'passed' ? 'READY' : 'HELD',
+        PRGuardStatus: ignitionMode === 'PR_CLEAN_ROOM' ? 'enforced' : 'not-applicable',
+        StartupDecision: 'START',
+      };
+      console.log(`[IGNITION] status-report=${JSON.stringify(finalStatus)}`);
       printPreflightSummary({
         ...refreshedState,
         publicationTruth,
