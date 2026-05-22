@@ -286,23 +286,10 @@ function shouldRequirePublishedHead(argvArgs = args) {
   return argvArgs.has('--require-published-head');
 }
 
-const APPROVED_LOCAL_DIR_PREFIXES = [
-  'node_modules/',
-  'stephanos-server/node_modules/',
-  'stephanos-ui/node_modules/',
-  'apps/stephanos/dist/',
-];
-
-const APPROVED_TRACKED_GENERATED_DIR_PREFIXES = [
-  'apps/stephanos/dist/',
-];
-const RUNTIME_STATE_DIR_PREFIX = 'stephanos-server/data/';
-
-const APPROVED_LOCAL_FILE_PATHS = new Set([
-  'package-lock.json',
-  'stephanos-server/package-lock.json',
-  'stephanos-ui/package-lock.json',
-]);
+const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
+const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
+const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
+const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 
 function normalizeGitPath(rawPath) {
   const trimmed = String(rawPath || '').trim();
@@ -328,6 +315,28 @@ function isRuntimeStatePath(path) {
   return path.startsWith(RUNTIME_STATE_DIR_PREFIX);
 }
 
+
+function isApprovedGeneratedDistPath(path) {
+  return path.startsWith(APPROVED_GENERATED_DIST_PREFIX);
+}
+
+function isDependencyDirtPath(path) {
+  return DEPENDENCY_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+function isTransientRootDataPath(path) {
+  return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
+}
+
+function classifyStatusEntry(entry) {
+  if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
+  if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
+  if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
+  if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
+  const tracked = !entry.status.includes('?');
+  return tracked ? 'meaningful-source-dirt' : 'unknown-dirt';
+}
+
 function parsePorcelainStatusLine(line) {
   const status = line.slice(0, 2);
   const pathSegment = line.slice(3).trim();
@@ -342,33 +351,14 @@ export function evaluateGitStatusForIgnition(statusOutput) {
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
 
-  const entries = lines.map(parsePorcelainStatusLine);
-  const approvedEntries = [];
-  const runtimeStateEntries = [];
-  const meaningfulEntries = [];
+  const entries = lines.map(parsePorcelainStatusLine).map((entry) => ({ ...entry, category: classifyStatusEntry(entry) }));
+  const approvedEntries = entries.filter((entry) => entry.category === 'approved-generated-dist' || entry.category === 'dependency-dirt');
+  const runtimeStateEntries = entries.filter((entry) => entry.category === 'runtime-state');
+  const transientRootDataEntries = entries.filter((entry) => entry.category === 'transient-root-data');
+  const dependencyEntries = entries.filter((entry) => entry.category === 'dependency-dirt');
+  const meaningfulEntries = entries.filter((entry) => entry.category === 'meaningful-source-dirt' || entry.category === 'unknown-dirt');
 
-  for (const entry of entries) {
-    const runtimeState = entry.paths.every((path) => isRuntimeStatePath(path));
-    if (runtimeState) {
-      runtimeStateEntries.push(entry);
-      continue;
-    }
-
-    const approved = entry.paths.every((path) => isApprovedLocalDirtPath(path));
-    if (approved) {
-      approvedEntries.push(entry);
-    }
-    else {
-      meaningfulEntries.push(entry);
-    }
-  }
-
-  return {
-    entries,
-    approvedEntries,
-    runtimeStateEntries,
-    meaningfulEntries,
-  };
+  return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, meaningfulEntries };
 }
 
 function isTrackedStatus(status) {
@@ -382,7 +372,7 @@ export function collectApprovedTrackedGeneratedRestorePaths(statusAssessment) {
       continue;
     }
 
-    const approvedGeneratedOnly = entry.paths.every((path) => isApprovedTrackedGeneratedPath(path));
+    const approvedGeneratedOnly = entry.paths.every((path) => isApprovedGeneratedDistPath(path));
     if (!approvedGeneratedOnly) {
       continue;
     }
@@ -493,9 +483,21 @@ export function runGitPullPreflightWithDeps({
   console.log('[IGNITION] git status check starting');
   const statusResult = captureStep('git-status', 'git', ['status', '--porcelain']);
   const statusAssessment = evaluateGitStatusForIgnition(statusResult.stdout);
+  console.log('[IGNITION] housekeeping enabled');
   const approvedTrackedGeneratedRestorePaths = collectApprovedTrackedGeneratedRestorePaths(statusAssessment);
   const runtimeStatePaths = collectRuntimeStatePaths(statusAssessment);
   let runtimeCheckpointState = null;
+
+  if (statusAssessment.transientRootDataEntries.length > 0) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const checkpointRoot = `.stephanos/local-state-checkpoints/${stamp}/root-data`;
+    runStepFn('mkdir-root-data-checkpoint', process.execPath, ['-e', `require('fs').mkdirSync('${checkpointRoot}',{recursive:true})`]);
+    runStepFn('checkpoint-root-data', 'cp', ['-R', 'data', `${checkpointRoot}/data`]);
+    console.log('[IGNITION] transient root data checkpointed');
+    runStepFn('remove-root-data', 'rm', ['-rf', 'data']);
+    console.log('[IGNITION] transient root data removed');
+    console.log('[IGNITION] transient root data cleaned');
+  }
 
   if (statusAssessment.approvedEntries.length > 0) {
     console.log(`[IGNITION] approved local dirt ignored (${statusAssessment.approvedEntries.length} entries)`);
@@ -519,10 +521,10 @@ export function runGitPullPreflightWithDeps({
     }
 
     if (runtimeCheckpointState?.checkpointDir) {
-      console.log(`[IGNITION] checkpoint created: ${runtimeCheckpointState.checkpointDir}`);
+      console.log('[IGNITION] runtime memory checkpointed');
     }
     else {
-      console.log('[IGNITION] checkpoint created');
+      console.log('[IGNITION] runtime memory checkpointed');
     }
   }
 
@@ -550,7 +552,7 @@ export function runGitPullPreflightWithDeps({
   });
 
   if (runtimeTrackedRestorePaths.length > 0) {
-    console.log(`[IGNITION] restoring runtime state paths before pull: ${runtimeTrackedRestorePaths.join(', ')}`);
+    console.log('[IGNITION] runtime memory restored from source truth');
     runStepFn('git-restore-runtime-state-before-pull', 'git', ['restore', '--worktree', '--staged', '--', ...runtimeTrackedRestorePaths]);
   }
 
@@ -633,6 +635,19 @@ function printPreflightSummary({
   console.log(`[IGNITION PREFLIGHT] final launch: ${finalResult}`);
 }
 
+
+export function shouldAutoPublishDist(env = process.env) {
+  return String(env.STEPHANOS_IGNITION_AUTOPUBLISH_DIST || '') === '1';
+}
+
+export function canAutoPublishDist({ statusAssessment, branch, upstream, stagedPaths = [] }) {
+  if (branch !== 'main') return { ok: false, reason: 'branch-not-main' };
+  if (upstream !== 'origin/main') return { ok: false, reason: 'upstream-not-origin-main' };
+  if (statusAssessment.meaningfulEntries.length > 0) return { ok: false, reason: 'source-dirt' };
+  if (stagedPaths.some((p) => p === RUNTIME_MEMORY_PATH || p.startsWith('data/') || p.includes('node_modules'))) return { ok: false, reason: 'unsafe-staged-paths' };
+  return { ok: true, reason: 'ok' };
+}
+
 export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
@@ -668,6 +683,7 @@ export async function run() {
   await runIgnitionPlan({
     preflightState,
     runPreflight: async () => {
+      console.log(`[IGNITION] dist auto-publish ${shouldAutoPublishDist() ? 'enabled' : 'disabled'}`);
       if (autoPullEnabled) {
         publicationTruth = runGitPullPreflightWithDeps();
       }
