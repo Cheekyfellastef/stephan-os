@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
+  autoPublishDistWithDeps,
   canAutoPublishDist,
   classifyPublicationTruth,
   collectApprovedTrackedGeneratedRestorePaths,
@@ -352,6 +353,72 @@ test('auto-publish gate blocks non-main/non-origin and unsafe staged paths', () 
     upstream: 'origin/main',
     stagedPaths: ['stephanos-server/data/memory/durable-memory.json'],
   }).ok, false);
+  assert.equal(canAutoPublishDist({
+    statusAssessment: cleanStatus,
+    branch: 'main',
+    upstream: 'origin/main',
+    stagedPaths: ['scripts/ignite-stephanos-local.mjs'],
+  }).ok, false);
+});
+
+test('auto-publish stages dist only and pushes after verify pass', () => {
+  const calls = [];
+  autoPublishDistWithDeps({
+    statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n'),
+    captureStep: (label) => {
+      if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-diff-staged-names') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, commandArgs) => {
+      calls.push({ label, command, commandArgs });
+    },
+  });
+  assert.ok(calls.some((call) => call.label === 'verify'));
+  assert.ok(calls.some((call) => call.label === 'git-add-dist-only' && call.commandArgs.join(' ') === 'add --all -- apps/stephanos/dist'));
+  assert.ok(calls.some((call) => call.label === 'git-push' && call.commandArgs.join(' ') === 'push origin main'));
+  assert.ok(calls.every((call) => !(call.command === 'git' && call.commandArgs.join(' ') === 'add .')));
+});
+
+test('auto-publish stale verify runs build then verify', () => {
+  const calls = [];
+  autoPublishDistWithDeps({
+    statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n'),
+    captureStep: (label) => {
+      if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-diff-staged-names') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label) => {
+      calls.push(label);
+      if (label === 'verify' && calls.filter((name) => name === 'verify').length === 1) {
+        throw new Error('stale dist metadata');
+      }
+    },
+  });
+  assert.deepEqual(calls.slice(0, 3), ['verify', 'build', 'verify']);
+});
+
+test('auto-publish remote moved retries with rebase/build/verify and no force push', () => {
+  const calls = [];
+  autoPublishDistWithDeps({
+    statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n'),
+    captureStep: (label) => {
+      if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-diff-staged-names') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, commandArgs) => {
+      calls.push({ label, command, commandArgs });
+      if (label === 'git-push') throw new Error('non-fast-forward');
+    },
+  });
+  assert.ok(calls.some((call) => call.label === 'git-pull-rebase-main'));
+  assert.ok(calls.some((call) => call.label === 'git-push-retry'));
+  assert.ok(calls.every((call) => !(call.command === 'git' && call.commandArgs.includes('--force'))));
 });
 
 test('preflight blocks when require-published-head is enabled and branch is ahead', () => {

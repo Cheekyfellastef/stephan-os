@@ -540,6 +540,17 @@ export function runGitPullPreflightWithDeps({
   }
 
   if (approvedTrackedGeneratedRestorePaths.length > 0) {
+    if (shouldAutoPublishDist()) {
+      const distOnlyDirt = statusAssessment.entries.every((entry) => entry.category === 'approved-generated-dist');
+      if (!distOnlyDirt) {
+        throw new Error('blocked for safety: dist auto-publish requires generated dist-only local dirt.');
+      }
+      autoPublishDistWithDeps({ statusAssessment, captureStep, runStepFn });
+    }
+    else {
+      console.log('[IGNITION] dist auto-publish disabled');
+      console.log('[IGNITION] approved generated dist present; operator can run with STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1 or commit dist manually');
+    }
     console.log(`[IGNITION] approved tracked generated dirt detected (${approvedTrackedGeneratedRestorePaths.length} paths)`);
     console.log(`[IGNITION] restoring approved tracked generated dirt: ${approvedTrackedGeneratedRestorePaths.join(', ')}`);
     runStepFn('git-restore-approved-tracked-generated-dirt', 'git', ['restore', '--worktree', '--staged', '--', ...approvedTrackedGeneratedRestorePaths]);
@@ -645,7 +656,45 @@ export function canAutoPublishDist({ statusAssessment, branch, upstream, stagedP
   if (upstream !== 'origin/main') return { ok: false, reason: 'upstream-not-origin-main' };
   if (statusAssessment.meaningfulEntries.length > 0) return { ok: false, reason: 'source-dirt' };
   if (stagedPaths.some((p) => p === RUNTIME_MEMORY_PATH || p.startsWith('data/') || p.includes('node_modules'))) return { ok: false, reason: 'unsafe-staged-paths' };
+  if (stagedPaths.some((p) => !isApprovedGeneratedDistPath(p))) return { ok: false, reason: 'staged-outside-dist' };
   return { ok: true, reason: 'ok' };
+}
+
+function captureBranchAndUpstream(captureStep = runStepCapture) {
+  const branch = normalizeCaptureStdout(captureStep('git-branch', 'git', ['rev-parse', '--abbrev-ref', 'HEAD']));
+  const upstream = normalizeCaptureStdout(captureStep('git-upstream', 'git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']));
+  return { branch, upstream };
+}
+
+export function autoPublishDistWithDeps({ statusAssessment, captureStep = runStepCapture, runStepFn = runStep } = {}) {
+  const { branch, upstream } = captureBranchAndUpstream(captureStep);
+  const gate = canAutoPublishDist({ statusAssessment, branch, upstream, stagedPaths: [] });
+  if (!gate.ok) throw new Error(`blocked for safety: dist auto-publish denied (${gate.reason}).`);
+
+  try {
+    runStepFn('verify', npmCommand, ['run', 'stephanos:verify']);
+  } catch {
+    runStepFn('build', npmCommand, ['run', 'stephanos:build']);
+    runStepFn('verify', npmCommand, ['run', 'stephanos:verify']);
+  }
+
+  runStepFn('git-add-dist-only', 'git', ['add', '--all', '--', 'apps/stephanos/dist']);
+  const stagedPaths = normalizeCaptureStdout(captureStep('git-diff-staged-names', 'git', ['diff', '--cached', '--name-only']))
+    .split('\n').map((line) => line.trim()).filter(Boolean);
+  const stagedGate = canAutoPublishDist({ statusAssessment, branch, upstream, stagedPaths });
+  if (!stagedGate.ok) throw new Error(`blocked for safety: dist auto-publish denied (${stagedGate.reason}).`);
+
+  runStepFn('git-commit-dist', 'git', ['commit', '-m', 'Refresh Stephanos dist after ignition build']);
+  try {
+    runStepFn('git-push', 'git', ['push', 'origin', 'main']);
+  } catch {
+    runStepFn('git-pull-rebase-main', 'git', ['pull', '--rebase', 'origin', 'main']);
+    runStepFn('build', npmCommand, ['run', 'stephanos:build']);
+    runStepFn('verify', npmCommand, ['run', 'stephanos:verify']);
+    runStepFn('git-add-dist-only-retry', 'git', ['add', '--all', '--', 'apps/stephanos/dist']);
+    runStepFn('git-commit-dist-retry', 'git', ['commit', '--amend', '--no-edit']);
+    runStepFn('git-push-retry', 'git', ['push', 'origin', 'main']);
+  }
 }
 
 export async function run() {
