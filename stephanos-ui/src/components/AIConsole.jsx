@@ -24,6 +24,7 @@ export default function AIConsole({
   const [perfCopyState, setPerfCopyState] = useState('idle');
   const [perfCopyMessage, setPerfCopyMessage] = useState('');
   const [codexDispatchCopyState, setCodexDispatchCopyState] = useState('idle');
+  const [composerContractFailure, setComposerContractFailure] = useState(false);
   const lastHistoryRenderKeyRef = useRef('');
   const {
     isBusy,
@@ -177,6 +178,21 @@ export default function AIConsole({
       recordPerfCounter('surface_mount', 'AIConsole.unmount');
     };
   }, []);
+
+  useEffect(() => {
+    const viteEnvFromGlobal = typeof globalThis !== 'undefined' ? globalThis.__STEPHANOS_IMPORT_META_ENV__ : undefined;
+    const viteEnvFromImportMeta = typeof import.meta !== 'undefined' ? import.meta.env : undefined;
+    const viteEnv = viteEnvFromGlobal || viteEnvFromImportMeta;
+    const isViteDev = Boolean(viteEnv && viteEnv.DEV);
+    const isNodeDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production';
+    const isDevMode = Boolean(isViteDev || isNodeDev);
+    if (!isDevMode) return;
+    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
+    const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
+    const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
+    setComposerContractFailure(!(composerEl && inputEl && executeButtonEl));
+  }, [safeUiLayout.commandDeck, safeCommandHistory.length, isBusy]);
 
   const preserveDocumentScrollPosition = () => {
     if (typeof window === 'undefined') return;
@@ -550,6 +566,11 @@ export default function AIConsole({
           ) : null}
           </div>
         </section>
+        {composerContractFailure ? (
+          <div className="mission-console-composer-failure" role="alert">
+            Command Deck composer missing — protected canon failure.
+          </div>
+        ) : null}
         <form className="command-form mission-console-input paneFormLayout mission-console__composer" data-testid="command-deck-composer" onSubmit={onSubmit}>
           <div className="mission-console__input-row">
             <input

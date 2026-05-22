@@ -4570,9 +4570,9 @@ pre {
   display: flex;
   flex-direction: column;
   min-height: clamp(20rem, 52vh, 36rem);
-  height: min(72vh, 760px);
-  max-height: min(72vh, 760px);
-  overflow: hidden;
+  height: auto;
+  max-height: none;
+  overflow-y: visible;
 }
 
 .mission-console-shell {
@@ -4580,13 +4580,19 @@ pre {
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.mission-console-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .mission-console-pane__body.mission-console__history {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: clamp(10rem, 26vh, 20rem);
-  max-height: none;
+  max-height: clamp(14rem, 40vh, 30rem);
   height: auto;
   overflow-y: auto;
   margin-bottom: 0;
@@ -4603,6 +4609,15 @@ pre {
   padding-top: 0.8rem;
   margin-top: 0.8rem;
   gap: 0.6rem;
+}
+
+.mission-console-composer-failure {
+  border: 1px solid rgba(255, 150, 64, 0.8);
+  background: rgba(72, 28, 0, 0.65);
+  color: #ffd8a8;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.5rem;
 }
 
 

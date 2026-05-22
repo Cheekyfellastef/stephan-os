@@ -30,7 +30,21 @@ const surfaces = [
   { name: 'staged', files: listFiles('git diff --cached --name-only --diff-filter=ACMR') },
   { name: 'unstaged', files: listFiles('git diff --name-only --diff-filter=ACMR') },
   { name: 'untracked', files: listFiles('git ls-files --others --exclude-standard') },
+  { name: 'PR range', files: listFiles('git diff --name-only origin/main...HEAD --diff-filter=ACMR') },
 ];
+
+const prRangeNumstat = (() => {
+  try {
+    return execSync('git diff --numstat origin/main...HEAD', { encoding: 'utf8' })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch (error) {
+    console.error('PR clean guard failed: unable to inspect origin/main...HEAD. Ensure origin/main exists and is fetchable before make_pr.');
+    if (error?.message) console.error(error.message.trim());
+    process.exit(1);
+  }
+})();
 
 const offendersBySurface = [];
 for (const surface of surfaces) {
@@ -43,12 +57,31 @@ for (const surface of surfaces) {
 }
 
 if (offendersBySurface.length > 0) {
-  console.error('PR clean guard failed: forbidden files are present before make_pr. Remove generated dist/node_modules/runtime data before PR creation.');
+  const hasPrRangeOffenders = offendersBySurface.some((group) => group.surface === 'PR range');
+  if (hasPrRangeOffenders) {
+    console.error('PR clean guard failed: forbidden files are present in the PR branch diff against origin/main.');
+  } else {
+    console.error('PR clean guard failed: forbidden files are present before make_pr. Remove generated dist/node_modules/runtime data before PR creation.');
+  }
   for (const group of offendersBySurface) {
     console.error(`- surface=${group.surface}`);
     for (const offender of group.offenders) {
       console.error(`  - ${offender.file} (${offender.matches.join(', ')})`);
     }
+  }
+  process.exit(1);
+}
+
+const prRangeBinaryRows = prRangeNumstat
+  .map((row) => row.split('\t'))
+  .filter((parts) => parts.length >= 3)
+  .filter(([added, removed]) => added === '-' || removed === '-')
+  .map((parts) => parts[2]);
+if (prRangeBinaryRows.length > 0) {
+  console.error('PR clean guard failed: forbidden files are present in the PR branch diff against origin/main.');
+  console.error('- surface=PR range');
+  for (const file of prRangeBinaryRows) {
+    console.error(`  - ${file} (binary-numstat-entry)`);
   }
   process.exit(1);
 }
@@ -79,4 +112,4 @@ if (touchedProtectedFile && !hasProofSignal) {
   process.exit(1);
 }
 
-console.log('[stephanos:guard:pr-clean] OK: no forbidden artifacts in HEAD/staged/unstaged/untracked surfaces.');
+console.log('[stephanos:guard:pr-clean] OK: no forbidden artifacts in PR range/HEAD/staged/unstaged/untracked surfaces.');
