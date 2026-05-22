@@ -15,3 +15,29 @@ test('Projection composes mission objective, codex delta, and test/build/verify 
   assert.equal(r.mission.title, 'Music tile fix');
   assert.equal(r.codex.prTitle, 'Fix panel routing');
 });
+
+test('Projection promotes AIConsole autoscroll proof into completed proofs when diagnostics are complete', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Climb Layer 3/4', repoArchitectureContext: { testsLikelyRequired: [] } } },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+    supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
+  });
+  assert.equal(r.missionBrainNextAction.completedProofs.some((proof) => proof.id === 'aiconsole-answer-pane-autoscroll'), true);
+  assert.equal(r.missionBrainNextAction.currentPhase, 'Layer 3 → Layer 4 climb');
+});
+
+test('Projection reports missing-live-proof evidence gap and bounded codex prompt when autoscroll proof is missing', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Climb Layer 3/4', repoArchitectureContext: { testsLikelyRequired: ['node --test tests/a.test.mjs'] } } },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: false, verifyRun: false } } },
+    supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 2, requested: 'no' } },
+  });
+  assert.equal(r.missionBrainNextAction.openEvidenceGaps.some((gap) => gap.id === 'missing-live-proof'), true);
+  assert.equal(r.missionBrainNextAction.mergeReadiness, 'blocked');
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Mission objective:/);
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Completed proofs:/);
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Evidence gaps:/);
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Constraints:/);
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Tests required:/);
+  assert.match(r.missionBrainNextAction.codexPromptCandidate, /Definition of done:/);
+});

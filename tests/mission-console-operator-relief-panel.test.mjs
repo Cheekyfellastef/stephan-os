@@ -8,6 +8,9 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Operator Relief v2 · Mission Brain/);
   assert.match(source, /Merge Safety Verdict/);
   assert.match(source, /Next Best Action/);
+  assert.match(source, /Mission Brain \/ Next Action/);
+  assert.match(source, /Evidence gaps count:/);
+  assert.match(source, /Copy Next Codex Prompt/);
   assert.match(source, /Copy Repair Prompt/);
   assert.match(source, /Lesson Candidates/);
   assert.match(source, /Mission Handoff Pack/);
@@ -18,5 +21,5 @@ test('Mission Console operator relief panel renders mission brain sections and c
 test('Mission Console operator relief uses canonical collapsible panel wiring with persisted layout key', () => {
   assert.match(source, /panelId=\"missionConsoleOperatorReliefPanel\"/);
   assert.match(source, /isOpen=\{uiLayout\.missionConsoleOperatorReliefPanel !== false\}/);
-  assert.equal(source.includes("togglePanel('missionConsoleOperatorReliefPanel')"), true);
+  assert.equal(source.includes("dispatchPanelToggle('missionConsoleOperatorReliefPanel')"), true);
 });
