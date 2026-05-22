@@ -44,4 +44,28 @@ if (offenders.length > 0) {
   process.exit(1);
 }
 
+const protectedCommandDeckFiles = [
+  'stephanos-ui/src/components/AIConsole.jsx',
+  'stephanos-ui/src/hooks/useAIConsole.js',
+  'stephanos-ui/src/components/MissionConsoleTile.jsx',
+  'stephanos-ui/src/styles.css',
+  'stephanos-ui/src/components/CollapsiblePanel.jsx',
+  'stephanos-ui/src/state/aiStore.js',
+  'stephanos-ui/src/state/supportSnapshot.js',
+  'stephanos-ui/src/state/uiRealityStatus.js',
+];
+const proofSignals = [
+  'tests/command-deck-protected-canon.test.mjs',
+  'stephanos-ui/src/components/AIConsole.render.test.mjs',
+  'playwright.config',
+  '.spec.',
+];
+const touchedProtectedFile = filesToCheck.some((file) => protectedCommandDeckFiles.some((protectedFile) => file === protectedFile || file.startsWith(`${protectedFile.replace(/\\/g, '/')}/`)));
+const hasProofSignal = filesToCheck.some((file) => proofSignals.some((signal) => file.includes(signal)));
+if (touchedProtectedFile && !hasProofSignal) {
+  console.error('[stephanos:guard:pr-clean] Protected Command Deck files changed without UI proof updates.');
+  console.error('Required: include command-deck protected canon test/harness updates (e.g. tests/command-deck-protected-canon.test.mjs).');
+  process.exit(1);
+}
+
 console.log('[stephanos:guard:pr-clean] OK: no forbidden staged/HEAD artifacts detected.');

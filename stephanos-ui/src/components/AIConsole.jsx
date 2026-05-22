@@ -217,8 +217,18 @@ export default function AIConsole({
     const publishScrollDiagnostics = (overrides = {}) => {
       const targetEl = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
+      const composerEl = document.querySelector('[data-testid="command-deck-composer"]');
+      const inputEl = document.querySelector('[data-testid="command-deck-input"]');
+      const executeButtonEl = document.querySelector('[data-testid="command-deck-execute"]');
       const targetRect = targetEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
       const containerRect = containerEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
+      const viewRect = viewPaneEl?.getBoundingClientRect?.() || { top: 0, bottom: window.innerHeight };
+      const composerRect = composerEl?.getBoundingClientRect?.() || { top: 0, bottom: 0, height: 0 };
+      const inputRect = inputEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
+      const executeRect = executeButtonEl?.getBoundingClientRect?.() || { top: 0, bottom: 0 };
+      const composerBottomWithinView = !!composerEl && composerRect.bottom <= viewRect.bottom && composerRect.top >= viewRect.top;
+      const inputVisible = !!inputEl && inputRect.bottom > viewRect.top && inputRect.top < viewRect.bottom;
+      const executeVisible = !!executeButtonEl && executeRect.bottom > viewRect.top && executeRect.top < viewRect.bottom;
       const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
       const containerScrollable = !!(containerEl && containerEl.scrollHeight > containerEl.clientHeight);
       const previous = answerScrollDiagnosticsRef.current || {};
@@ -260,9 +270,31 @@ export default function AIConsole({
         answerContainerScrollHeight: containerEl?.scrollHeight ?? 0,
         answerContainerOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
         answerPaneClippedReason: visibility.occlusionReason,
-        composerVisible: document.querySelector('.mission-console__composer') ? 'yes' : 'no',
+        commandDeckComposerFound: composerEl ? 'yes' : 'no',
+        commandDeckComposerVisible: composerEl ? 'yes' : 'no',
+        commandDeckComposerBottomWithinView: composerBottomWithinView ? 'yes' : 'no',
+        commandDeckInputFound: inputEl ? 'yes' : 'no',
+        commandDeckInputVisible: inputVisible ? 'yes' : 'no',
+        commandDeckExecuteButtonVisible: executeVisible ? 'yes' : 'no',
+        commandDeckPaneClientHeight: viewPaneEl?.clientHeight ?? 0,
+        commandDeckBodyClientHeight: containerEl?.closest('.mission-console-shell')?.clientHeight ?? 0,
+        commandDeckBodyScrollHeight: containerEl?.closest('.mission-console-shell')?.scrollHeight ?? 0,
+        answerHistoryClientHeight: containerEl?.clientHeight ?? 0,
+        answerHistoryScrollHeight: containerEl?.scrollHeight ?? 0,
+        answerHistoryOverflowY: containerEl ? getComputedStyle(containerEl).overflowY : 'none',
+        composerClientHeight: composerEl?.clientHeight ?? 0,
+        composerBottom: Math.round(composerRect.bottom ?? 0),
+        composerVisible: composerEl ? 'yes' : 'no',
         viewPaneHeight: viewPaneEl?.clientHeight ?? 0,
         viewPaneAvailableHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
+        commandDeckLayoutVerdict: (composerEl && inputVisible && executeVisible && (viewPaneEl?.clientHeight ?? 0) > 0 && (containerEl?.clientHeight ?? 0) > 0) ? 'pass' : 'fail',
+        commandDeckLayoutBlocker: !composerEl ? 'composer-missing'
+          : !composerBottomWithinView ? 'composer-clipped-outside-view'
+            : !inputVisible ? 'input-not-visible'
+              : !executeVisible ? 'execute-not-visible'
+                : (viewPaneEl?.clientHeight ?? 0) <= 0 ? 'view-pane-zero-height'
+                  : (containerEl?.clientHeight ?? 0) <= 0 ? 'answer-history-zero-height'
+                    : 'none',
         ...overrides,
       };
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
@@ -501,10 +533,11 @@ export default function AIConsole({
           ) : null}
           </div>
         </section>
-        <form className="command-form mission-console-input paneFormLayout mission-console__composer" onSubmit={onSubmit}>
+        <form className="command-form mission-console-input paneFormLayout mission-console__composer" data-testid="command-deck-composer" onSubmit={onSubmit}>
           <div className="mission-console__input-row">
             <input
               className="paneInput paneControl"
+              data-testid="command-deck-input"
               ref={inputRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
@@ -513,7 +546,7 @@ export default function AIConsole({
             />
           </div>
           <div className="mission-console__action-row">
-            <button type="submit" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
+            <button type="submit" data-testid="command-deck-execute" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
             {isBusy ? (
               <button type="button" className="ghost-button" onClick={() => cancelActivePrompt?.()}>
                 Stop generating
