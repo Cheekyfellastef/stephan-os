@@ -857,6 +857,14 @@ export function buildSupportSnapshot({
   const activeMissionRehydrated = executionMetadata?.chat_context_active_mission_rehydrated || 'no';
   const activeMissionStorageKey = executionMetadata?.chat_context_active_mission_storage_key || 'stephanos.active.mission.v1';
   const activeMissionRawTranscriptStored = executionMetadata?.chat_context_active_mission_raw_transcript_stored || 'no';
+  const projectAwarenessPackStatus = executionMetadata?.project_awareness_pack_status || 'unavailable';
+  const projectAwarenessSourcesUsed = executionMetadata?.project_awareness_sources_used || 'none';
+  const projectAwarenessCurrentMission = executionMetadata?.project_awareness_current_mission || 'unknown';
+  const projectAwarenessNextBestAction = executionMetadata?.project_awareness_next_best_action || 'unknown';
+  const projectAwarenessOperatorWorkflowPreference = executionMetadata?.project_awareness_operator_workflow_preference || 'unknown';
+  const projectAwarenessCodexRole = executionMetadata?.project_awareness_codex_role || 'unknown';
+  const projectAwarenessOpenClawRole = executionMetadata?.project_awareness_openclaw_role || 'unknown';
+  const projectAwarenessWarningCount = executionMetadata?.project_awareness_warning_count ?? 0;
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1874,6 +1882,14 @@ export function buildSupportSnapshot({
     `Active Mission Rehydrated: ${asText(activeMissionRehydrated, 'no')}`,
     `Active Mission Storage Key: ${asText(activeMissionStorageKey, 'stephanos.active.mission.v1')}`,
     `Active Mission Raw Transcript Stored: ${asText(activeMissionRawTranscriptStored, 'no')}`,
+    `Project Awareness Pack Status: ${asText(projectAwarenessPackStatus, 'unavailable')}`,
+    `Project Awareness Sources Used: ${asText(projectAwarenessSourcesUsed, 'none')}`,
+    `Project Awareness Current Mission: ${asText(projectAwarenessCurrentMission, 'unknown')}`,
+    `Project Awareness Next Best Action: ${asText(projectAwarenessNextBestAction, 'unknown')}`,
+    `Project Awareness Operator Workflow Preference: ${asText(projectAwarenessOperatorWorkflowPreference, 'unknown')}`,
+    `Project Awareness Codex Role: ${asText(projectAwarenessCodexRole, 'unknown')}`,
+    `Project Awareness OpenClaw Role: ${asText(projectAwarenessOpenClawRole, 'unknown')}`,
+    `Project Awareness Warning Count: ${asText(projectAwarenessWarningCount, '0')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,

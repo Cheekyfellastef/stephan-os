@@ -171,6 +171,14 @@ test('buildChatContextExecutionMetadata emits provider registry metadata fields'
   assert.match(source, /chat_context_provider_proof_state/);
   assert.match(source, /chat_context_provider_next_actions/);
   assert.match(source, /chat_context_provider_canon_links_count/);
+  assert.match(source, /project_awareness_pack_status/);
+  assert.match(source, /project_awareness_sources_used/);
+  assert.match(source, /project_awareness_current_mission/);
+  assert.match(source, /project_awareness_next_best_action/);
+  assert.match(source, /project_awareness_operator_workflow_preference/);
+  assert.match(source, /project_awareness_codex_role/);
+  assert.match(source, /project_awareness_openclaw_role/);
+  assert.match(source, /project_awareness_warning_count/);
 });
 
 test('buildChatContextAttachmentMetadata rebuild path rehydrates provider registry fields', async () => {
