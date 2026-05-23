@@ -221,6 +221,69 @@ export function buildResponsePlanExecutionMetadata(responsePlan = null) {
   };
 }
 
+
+function toTruthyValue(value = '') {
+  const normalized = String(value ?? '').trim();
+  return normalized && normalized !== 'unknown' && normalized !== 'none' ? normalized : '';
+}
+
+export function normalizeProjectAwarenessMetadata({
+  responseMode = 'direct-answer',
+  compact = {},
+  projectAwareness = {},
+  providerIdsUsed = [],
+  missionState = {},
+  boundedMissionSummary = 'unknown',
+} = {}) {
+  const missionSummaryFallback = toTruthyValue(projectAwareness.currentMissionSummary)
+    || toTruthyValue(boundedMissionSummary)
+    || toTruthyValue(missionState?.activeMission?.summary)
+    || 'unknown';
+  const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : [];
+  const hasMeaningfulField = Boolean(
+    toTruthyValue(projectAwareness.nextBestAction)
+    || toTruthyValue(projectAwareness.operatorWorkflowPreference)
+    || toTruthyValue(projectAwareness.codexRole)
+    || toTruthyValue(projectAwareness.openClawRole)
+    || sources.length,
+  );
+  const warnings = [];
+  let status = projectAwareness.status || 'unavailable';
+  if (hasMeaningfulField && status === 'unavailable') status = 'degraded';
+  if (hasMeaningfulField && missionSummaryFallback === 'unknown') {
+    status = 'degraded';
+    warnings.push('project awareness current mission summary unavailable');
+  }
+  if (hasMeaningfulField && !sources.length) sources.push('projectAwarenessDerived');
+  const boundedMissionKnown = toTruthyValue(boundedMissionSummary);
+  const missionProviderReady = providerIdsUsed.includes('missionState');
+  let chatContextMissionState = compact?.missionStateAtBuild || 'unknown';
+  if ((missionProviderReady || boundedMissionKnown) && chatContextMissionState === 'unknown') {
+    chatContextMissionState = boundedMissionKnown || 'degraded';
+  }
+  const sourceSet = new Set(Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.filter(Boolean) : []);
+  if (responseMode === 'mission-planning' && status !== 'unavailable') sourceSet.add('projectAwareness');
+  if (responseMode === 'mission-planning' && boundedMissionKnown) sourceSet.add('missionIntelligence');
+  const chatContextSourcesUsed = Array.from(sourceSet);
+  const chatContextPackStatus = compact?.status === 'unavailable' && responseMode === 'mission-planning' && providerIdsUsed.length
+    ? 'degraded'
+    : (compact?.status || 'unavailable');
+
+  return {
+    projectAwarenessStatus: status,
+    projectAwarenessSourcesUsed: sources,
+    projectAwarenessCurrentMission: missionSummaryFallback,
+    projectAwarenessNextAction: projectAwareness.nextBestAction || 'unknown',
+    projectAwarenessWorkflowPreference: projectAwareness.operatorWorkflowPreference || 'unknown',
+    projectAwarenessCodexRole: projectAwareness.codexRole || 'unknown',
+    projectAwarenessOpenClawRole: projectAwareness.openClawRole || 'unknown',
+    projectAwarenessWarnings: warnings,
+    chatContextMissionState,
+    chatContextSourcesUsed,
+    chatContextPackStatus,
+  };
+}
+
 export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const hasPack = chatContextPack && typeof chatContextPack === 'object';
   const compact = chatContextPack?.compactSummary || {};
@@ -240,18 +303,26 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length
     : Number(compact?.contextProviderCanonLinksCount || 0);
   const projectAwareness = compact?.projectAwareness || chatContextPack?.contextForPrompt?.projectAwareness || {};
+  const projectAwarenessTruth = normalizeProjectAwarenessMetadata({
+    responseMode: chatContextPack?.recommendedResponseMode || compact?.responseMode || 'direct-answer',
+    compact,
+    projectAwareness,
+    providerIdsUsed,
+    missionState: chatContextPack?.inputMissionState || {},
+    boundedMissionSummary: compact?.missionIntelligence?.missionSummary || 'unknown',
+  });
 
   return {
-    chat_context_pack_status: compact?.status || (hasPack ? 'active' : 'unavailable'),
+    chat_context_pack_status: projectAwarenessTruth.chatContextPackStatus || compact?.status || (hasPack ? 'active' : 'unavailable'),
     chat_context_version: chatContextPack?.version || 'n/a',
     chat_context_response_mode: chatContextPack?.recommendedResponseMode || compact?.responseMode || 'direct-answer',
     chat_context_operator_explanation_intent_detected: chatContextPack?.operatorExplanationIntentDetected || 'no',
     chat_context_operator_explanation_mode: chatContextPack?.operatorExplanationMode || 'compact',
     chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : Number(compact?.relevantCanonCount || 0),
     chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : (Array.isArray(compact?.affectedSubsystems) ? compact.affectedSubsystems.join('|') : 'none'),
-    chat_context_sources_used: Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.join('|') : 'none',
+    chat_context_sources_used: projectAwarenessTruth.chatContextSourcesUsed.length ? projectAwarenessTruth.chatContextSourcesUsed.join('|') : 'none',
     chat_context_ui_reality_status: compact?.uiRealityStatusAtBuild || 'UNKNOWN',
-    chat_context_mission_state: compact?.missionStateAtBuild || 'unknown',
+    chat_context_mission_state: projectAwarenessTruth.chatContextMissionState || 'unknown',
     chat_context_next_action: chatContextPack?.recommendedNextAction || compact?.nextAction || 'Answer directly with bounded confidence.',
     chat_context_warning_count: Number(compact?.warningCount || 0),
     chat_context_warnings: Array.isArray(chatContextPack?.warnings) ? chatContextPack.warnings.join(' | ') : (Array.isArray(compact?.warnings) ? compact.warnings.join(' | ') : 'none'),
@@ -284,14 +355,14 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_active_mission_rehydrated: activeMission?.activeMissionRehydrated || 'no',
     chat_context_active_mission_storage_key: chatContextPack?.inputMissionState?.activeMission?.storageKey || 'stephanos.active.mission.v1',
     chat_context_active_mission_raw_transcript_stored: chatContextPack?.inputMissionState?.activeMission?.rawTranscriptStored || 'no',
-    project_awareness_pack_status: projectAwareness.status || 'unavailable',
-    project_awareness_sources_used: Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.join('|') : 'none',
-    project_awareness_current_mission: projectAwareness.currentMissionSummary || 'unknown',
-    project_awareness_next_best_action: projectAwareness.nextBestAction || 'unknown',
-    project_awareness_operator_workflow_preference: projectAwareness.operatorWorkflowPreference || 'unknown',
-    project_awareness_codex_role: projectAwareness.codexRole || 'unknown',
-    project_awareness_openclaw_role: projectAwareness.openClawRole || 'unknown',
-    project_awareness_warning_count: Number(projectAwareness.warningCount || 0),
+    project_awareness_pack_status: projectAwarenessTruth.projectAwarenessStatus || 'unavailable',
+    project_awareness_sources_used: projectAwarenessTruth.projectAwarenessSourcesUsed.length ? projectAwarenessTruth.projectAwarenessSourcesUsed.join('|') : 'none',
+    project_awareness_current_mission: projectAwarenessTruth.projectAwarenessCurrentMission || 'unknown',
+    project_awareness_next_best_action: projectAwarenessTruth.projectAwarenessNextAction || 'unknown',
+    project_awareness_operator_workflow_preference: projectAwarenessTruth.projectAwarenessWorkflowPreference || 'unknown',
+    project_awareness_codex_role: projectAwarenessTruth.projectAwarenessCodexRole || 'unknown',
+    project_awareness_openclaw_role: projectAwarenessTruth.projectAwarenessOpenClawRole || 'unknown',
+    project_awareness_warning_count: Number((projectAwareness.warningCount || 0) + projectAwarenessTruth.projectAwarenessWarnings.length),
   };
 }
 

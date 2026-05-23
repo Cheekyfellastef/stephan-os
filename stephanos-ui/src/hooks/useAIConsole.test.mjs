@@ -16,6 +16,17 @@ test('appendCommandHistory keeps command history bounded', () => {
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+
+
+test('useAIConsole includes project awareness truth contract normalization helper', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /export function normalizeProjectAwarenessMetadata/);
+  assert.match(source, /if \(hasMeaningfulField && status === 'unavailable'\) status = 'degraded';/);
+  assert.match(source, /if \(responseMode === 'mission-planning' && status !== 'unavailable'\) sourceSet\.add\('projectAwareness'\);/);
+  assert.match(source, /chatContextMissionState = boundedMissionKnown \|\| 'degraded';/);
+  assert.match(source, /project awareness current mission summary unavailable/);
+});
+
 test('useAIConsole request path includes chat context pack metadata', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /buildChatContextPack/);
