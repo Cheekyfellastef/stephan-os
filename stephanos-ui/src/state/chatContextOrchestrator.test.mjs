@@ -112,6 +112,32 @@ test('direct-answer remains fallback for generic prompts', () => {
   assert.equal(pack.classifierDebug.classifierMergeRuleTestResult, 'no');
 });
 
+test('mission-state questions route to mission-planning with mission intelligence context', () => {
+  const pack = buildChatContextPack({
+    operatorMessage: 'What is the current main mission and what is the next best action?',
+    missionState: {
+      mode: 'active',
+      operatorReliefProjection: {
+        missionIntelligenceSummary: {
+          currentMissionSummary: 'Reduce operator complexity while keeping main-first/main-only.',
+          nextBestAction: 'Bridge Mission Brain context into Command Deck response planner.',
+          codexReady: 'yes',
+          openClawReady: 'pending',
+        },
+      },
+    },
+  });
+  assert.equal(pack.recommendedResponseMode, 'mission-planning');
+  assert.equal(pack.intentClassifierMatchedRule, 'mission-planning');
+  assert.equal(pack.classifierDebug.classifierFirstMatchingRule, 'mission-planning');
+  assert.ok(pack.compactSummary.contextSourcesUsed.includes('missionIntelligence'));
+  assert.equal(pack.compactSummary.missionIntelligence.missionSummary, 'Reduce operator complexity while keeping main-first/main-only.');
+  assert.equal(pack.compactSummary.missionIntelligence.nextBestAction, 'Bridge Mission Brain context into Command Deck response planner.');
+  for (const id of ['missionState', 'proofState', 'canonRules']) {
+    assert.ok(pack.contextProviderIdsUsed.includes(id));
+  }
+});
+
 
 test('buildChatContextPack emits canonical classifierProof for do i merge this pr', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this pr' });

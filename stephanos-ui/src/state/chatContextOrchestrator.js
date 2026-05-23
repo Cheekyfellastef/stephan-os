@@ -53,7 +53,7 @@ export const INTENT_RULES = [
   {
     id: 'mission-planning',
     responseMode: 'mission-planning',
-    pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b/,
+    pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b|\bcurrent main mission\b|\bnext best action\b|\bwhat should we do next\b|\breduce operator complexity\b|\bcan (codex|openclaw) help\b/,
   },
   {
     id: 'architecture-guidance',
@@ -164,10 +164,13 @@ export function buildChatContextPack(input = {}) {
   const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
   const operatorExplanationTask = responseMode === 'operator-explanation' || explanationIntent.matched;
+  const missionPlanningTask = responseMode === 'mission-planning';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
-    : [];
-  const optionalProviders = mergeDecisionTask ? ['memoryContinuity', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState'];
+    : (missionPlanningTask ? ['missionState', 'proofState', 'canonRules'] : []);
+  const optionalProviders = mergeDecisionTask
+    ? ['memoryContinuity', 'conversationContinuity', 'operatorProfile', 'agentState']
+    : (missionPlanningTask ? ['runtimeTruth', 'providerTruth', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState']);
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
   const inferredSubsystems = mergeDecisionTask
     ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
@@ -252,7 +255,12 @@ export function buildChatContextPack(input = {}) {
     contextProviderProofState,
     contextProviderNextActions: providerNextActions,
     contextProviderCanonLinksCount: contextProviderCanonLinks.length,
-    contextSourcesUsed: ['uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'chatContinuity', 'operatorProfile', 'agentState'].filter((key) => input[key] && typeof input[key] === 'object'),
+    contextSourcesUsed: [
+      'uiRealityStatus', 'routeTruth', 'providerTruth', 'missionState', 'supportSnapshot', 'memoryState', 'chatContinuity', 'operatorProfile', 'agentState',
+      ...(boundedMissionIntelligenceContext.missionSummary !== 'unknown' || boundedMissionIntelligenceContext.nextBestAction !== 'Review mission intelligence summary in Mission Brain.'
+        ? ['missionIntelligence']
+        : []),
+    ].filter((key) => key === 'missionIntelligence' || (input[key] && typeof input[key] === 'object')),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
