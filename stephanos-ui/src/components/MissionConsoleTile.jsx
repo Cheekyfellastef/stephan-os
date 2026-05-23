@@ -1187,6 +1187,19 @@ function MissionConsoleTile({
               <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection?.copyCodexWorkPacket || {}, null, 2)}</pre>
             </CollapsiblePanel>
           </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleCoBuilderLoopPanel" title="Co-Builder Loop V1" isOpen={uiLayout.missionConsoleCoBuilderLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleCoBuilderLoopPanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Co-Builder Loop Status:</strong> {operatorReliefProjection.coBuilderLoopProjection?.coBuilderStatus || 'inactive'}</li>
+              <li><strong>Round:</strong> {operatorReliefProjection.coBuilderLoopProjection?.loopRound || 1} / {operatorReliefProjection.coBuilderLoopProjection?.maxRounds || 3}</li>
+              <li><strong>Recommended Next Worker:</strong> {operatorReliefProjection.coBuilderLoopProjection?.recommendedNextWorker || 'hold'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.coBuilderLoopProjection?.copyOpenClawResearchPacket || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyOpenClawResearchPacket')}>Copy OpenClaw Research Packet</button>
+            <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.coBuilderLoopProjection?.copyCodexImplementationPacket || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyCodexImplementationPacket')}>Copy Codex Implementation Packet</button>
+            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.coBuilderLoopProjection?.copyVerificationPacket || {}, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyVerificationPacket')}>Copy Verification Packet</button>
+            {operatorReliefProjection.coBuilderLoopProjection?.repairPacketAvailable === 'yes' ? (
+              <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.coBuilderLoopProjection?.copyRepairPacket || {}, null, 2), setRepairPromptCopyState, 'MissionConsoleTile.copyRepairPacket')}>Copy Repair Packet</button>
+            ) : null}
+          </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleMissionApprovalQueuePanel" title="Mission Approval Queue" isOpen={uiLayout.missionConsoleMissionApprovalQueuePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMissionApprovalQueuePanel')}>
             <ul className="mission-console__status-list">
               <li><strong>Top recommended decision:</strong> {operatorReliefProjection.missionApprovalQueue?.topRecommendation?.recommendedDecision || 'hold'}</li>

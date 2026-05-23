@@ -220,3 +220,17 @@ test('Mission Intelligence Summary is derived and deterministic from existing pr
   assert.equal(Array.isArray(r.missionIntelligenceSummary?.currentBlockers), true);
   assert.match(r.missionIntelligenceSummary?.nextBestAction || '', /./);
 });
+
+
+test('Co-Builder Loop projection is deterministic, approval-gated, and bounded to maxRounds default 3', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Build co-builder loop', repoArchitectureContext: { testsLikelyRequired: ['node --test tests/a.test.mjs'] } } },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } }, browserChecksObserved: [] },
+    supportSnapshot: { coBuilderLoopRound: 4 },
+  });
+  assert.equal(r.coBuilderLoopProjection.maxRounds, 3);
+  assert.equal(r.coBuilderLoopProjection.coBuilderStatus, 'blocked');
+  assert.equal(r.coBuilderLoopProjection.openClawExecutionPacketAvailable, 'no');
+  assert.equal(r.coBuilderLoopProjection.operatorApprovalRequired, 'yes');
+  assert.equal(r.coBuilderLoopProjection.repairPacketAvailable, 'yes');
+});

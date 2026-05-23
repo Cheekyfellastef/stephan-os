@@ -244,6 +244,47 @@ function buildAgentWorkRoutingProjection({ missionBrainNextAction = {}, missionS
   };
 }
 
+
+function buildCoBuilderLoopProjection({ missionIntelligenceSummary = {}, harnessAgentProjection = {}, agentWorkRoutingProjection = {}, verificationReturnIntake = {}, missionBrainNextAction = {}, supportSnapshot = {} } = {}) {
+  const maxRounds = 3;
+  const loopRound = Number(supportSnapshot?.coBuilderLoopRound || supportSnapshot?.loopRound || 1) || 1;
+  const blockers = [];
+  const warnings = [];
+  if (!asList(harnessAgentProjection.protectedCanonClauses).length) blockers.push('Harness clauses missing.');
+  if (!asList(agentWorkRoutingProjection.requiredProof).length) blockers.push('Proof requirements are unclear.');
+  const exceededRounds = loopRound > maxRounds;
+  if (exceededRounds) blockers.push('Max rounds exceeded; route to operator/hold.');
+  const proofMissing = asList(verificationReturnIntake.missingEvidence);
+  const repairNeeded = verificationReturnIntake.mergeRecommendation === 'needs-repair' || proofMissing.length > 0;
+  const blocked = blockers.length > 0;
+  const coBuilderStatus = blocked ? 'blocked' : (repairNeeded ? 'repair-needed' : (verificationReturnIntake.evidenceCompleteness === 'complete' ? 'ready' : 'awaiting-proof'));
+  const recommendedLead = blocked ? 'hold' : (repairNeeded ? 'codex-repair' : (agentWorkRoutingProjection.recommendedRoute === 'openclaw-research' ? 'openclaw-research' : 'codex-implementation'));
+  return {
+    coBuilderStatus, loopRound, maxRounds,
+    currentObjective: missionIntelligenceSummary.currentMissionSummary || missionBrainNextAction.missionObjective || 'unknown',
+    recommendedLead,
+    recommendedNextWorker: recommendedLead === 'hold' ? 'hold' : (recommendedLead.startsWith('openclaw') ? 'openclaw' : 'codex'),
+    recommendedNextAction: blocked ? 'hold and restore canon/proof boundaries' : (repairNeeded ? 'copy repair packet and request bounded codex repair' : 'copy next packet and request approval-gated execution'),
+    operatorApprovalRequired: 'yes',
+    codexPacketAvailable: 'yes',
+    openClawResearchPacketAvailable: 'yes',
+    openClawExecutionPacketAvailable: agentWorkRoutingProjection.openClawExecutionReady === 'yes' ? 'yes' : 'no',
+    verificationPacketAvailable: 'yes',
+    repairPacketAvailable: repairNeeded ? 'yes' : 'no',
+    requiredProof: asList(agentWorkRoutingProjection.requiredProof),
+    acceptanceCriteria: asList(harnessAgentProjection.definitionOfDone),
+    protectedCanonSummary: asList(harnessAgentProjection.protectedCanonClauses),
+    allowedScopeSummary: agentWorkRoutingProjection.allowedScopeSummary || 'Bounded source-only scope.',
+    forbiddenScopeSummary: agentWorkRoutingProjection.forbiddenScopeSummary || 'No generated/runtime artifacts or duplicate systems.',
+    blockers, warnings,
+    stopConditions: ['maxRounds exceeded', 'harness/proof contradictions', 'forbidden scope touched'],
+    finalOperatorDecisionNeeded: 'approve | hold | copy packet',
+    copyOpenClawResearchPacket: { objective: missionIntelligenceSummary.nextBestAction || missionBrainNextAction.nextBestAction || 'Read-only audit and proof collection.', readOnlyScope: ['stephanos-ui/src/state/**', 'stephanos-ui/src/components/**', 'tests/**', 'scripts/**'], filesOrAreasToInspect: ['operatorReliefProjection', 'MissionConsoleTile', 'chatContextOrchestrator', 'supportSnapshot'], canonToPreserve: asList(harnessAgentProjection.protectedCanonClauses), proofToCollect: asList(agentWorkRoutingProjection.requiredProof), explicitForbiddenActions: ['No source mutation.', 'No branch/merge choreography.', 'No auto-dispatch.'], noMutationReminder: 'Read-only audit only.', outputFormatRequired: 'Findings + file map + proof checklist + blockers/warnings.', stopConditions: ['Harness/proof contradictions', 'forbidden file touch risk', 'scope ambiguity'], operatorApprovalReminder: 'Operator approval required before any execution handoff.' },
+    copyCodexImplementationPacket: { objective: missionIntelligenceSummary.nextBestAction || missionBrainNextAction.nextBestAction || 'Bounded implementation packet.', auditFindingsToUse: asList(agentWorkRoutingProjection.sourceEvidence), allowedFiles: asList(harnessAgentProjection.allowedFileScopes), forbiddenFiles: asList(harnessAgentProjection.forbiddenFileScopes).concat(asList(harnessAgentProjection.forbiddenFiles)), protectedCanonClauses: asList(harnessAgentProjection.protectedCanonClauses), smallestBoundedChange: agentWorkRoutingProjection.smallestNextWorkPacket || 'Fix the smallest correct thing.', requiredTests: asList(harnessAgentProjection.requiredTests), buildVerifyPrCleanRequirements: ['npm run stephanos:build', 'npm run stephanos:verify', 'npm run stephanos:guard:pr-clean'], noGeneratedRuntimeArtifacts: 'Do not stage dist/runtime/root data/node_modules/secrets.', finalReportRequirements: asList(harnessAgentProjection.finalReportRequirements), operatorWorkflowPreference: 'main-first/main-only' },
+    copyVerificationPacket: { requiredChecks: asList(agentWorkRoutingProjection.requiredTests).concat(asList(agentWorkRoutingProjection.requiredProof)), snapshotBrowserProofRequirements: ['Support Snapshot projection fields', 'browser proof checklist for UI claims'], exactFieldsToConfirm: ['coBuilderStatus', 'recommendedLead', 'requiredProof', 'Mission Planning Prompt Context Used', 'Project Awareness Prompt Sources'], expectedPassFailOutcomes: ['pass when checks + proof complete and no forbidden files', 'fail when evidence gaps remain'], proofFailureAction: 'Generate repair packet preserving Harness contract.' },
+    copyRepairPacket: repairNeeded ? { failingProof: proofMissing, likelyRepairBoundary: 'mission/operator-relief projection + related tests only', allowedFiles: asList(harnessAgentProjection.allowedFileScopes), forbiddenFiles: asList(harnessAgentProjection.forbiddenFileScopes).concat(asList(harnessAgentProjection.forbiddenFiles)), requiredTests: asList(harnessAgentProjection.requiredTests), rule: 'Fix smallest correct thing; do not broaden scope.' } : null,
+  };
+}
 function buildVerificationReturnIntake({ prEvidenceModel = {}, parsed = {}, missionState = 'active', missionBrainNextAction = {} } = {}) {
   const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
   const forbiddenPattern = /(apps\/stephanos\/dist\/|node_modules\/|runtime\/|root data\/|secret|token)/i;
@@ -476,8 +517,8 @@ export function deriveOperatorReliefProjection(models = {}) {
     currentBlockers: evidenceGaps.map((gap) => gap.label),
     nextBestAction: nextBestAction.label,
     operatorDecisionRequired: true,
-    codexReady: evidenceGaps.length === 0 ? 'yes' : 'no',
-    openClawReady: evidenceGaps.length === 0 ? 'yes' : 'no',
+    codexReady: agentWorkRoutingProjection.codexReady || (evidenceGaps.length === 0 ? 'yes' : 'no'),
+    openClawReady: agentWorkRoutingProjection.openClawResearchReady || (evidenceGaps.length === 0 ? 'yes' : 'no'),
     harnessContractAvailable: true,
     protectedCanonSummary: protectedCanonClauses.join(' | ') || 'No additional protected canon clauses derived.',
     proofRequiredSummary: missionHandoff.browserProofChecklist.required ? 'browser-proof + targeted tests + build/verify + pr-clean' : 'targeted tests + build/verify + pr-clean',
@@ -518,7 +559,8 @@ export function deriveOperatorReliefProjection(models = {}) {
       ? 'Review conservative canon fallback, provide/approve mission scope, then proceed.'
       : (protectedCanonWarning ? 'Protected canon clauses need review before merge recommendation.' : (missionApprovalQueue.topRecommendation?.title || 'Review harness contract.')),
   };
+  const coBuilderLoopProjection = buildCoBuilderLoopProjection({ missionIntelligenceSummary, harnessAgentProjection, agentWorkRoutingProjection, verificationReturnIntake, missionBrainNextAction, supportSnapshot });
 
   return { status: missionState,
-    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary };
+    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection };
 }
