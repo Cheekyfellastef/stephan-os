@@ -850,6 +850,8 @@ export function buildSupportSnapshot({
   });
   const chatContextStatus = projectAwarenessProjection.chatContextPackStatus || rawChatContextStatus;
   const chatContextSourcesUsed = projectAwarenessProjection.chatContextSourcesUsed || rawChatContextSourcesUsed;
+  const chatContextCoBuilderContextIncluded = /\bcoBuilderLoop\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
+  const chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
   const chatContextMissionState = projectAwarenessProjection.chatContextMissionState || rawChatContextMissionState;
   const contextProviderRegistryStatus = executionMetadata?.chat_context_provider_registry_status || (chatContextStatus === 'active' ? 'active' : 'unavailable');
   const contextProvidersRegistered = executionMetadata?.chat_context_provider_ids_registered || 'none';
@@ -1918,6 +1920,8 @@ export function buildSupportSnapshot({
     `Chat Context Relevant Canon Count: ${asText(chatContextRelevantCanonCount, '0')}`,
     `Chat Context Affected Subsystems: ${asText(chatContextAffectedSubsystems, 'none')}`,
     `Chat Context Sources Used: ${asText(chatContextSourcesUsed, 'none')}`,
+    `Chat Context Co-Builder Context Included: ${asText(chatContextCoBuilderContextIncluded, 'no')}`,
+    `Chat Context Agent Work Routing Context Included: ${asText(chatContextAgentWorkRoutingContextIncluded, 'no')}`,
     `Chat Context UI Reality Status: ${asText(chatContextUiRealityStatus, 'UNKNOWN')}`,
     `Chat Context Mission State: ${asText(chatContextMissionState, 'unknown')}`,
     `Chat Context Next Action: ${asText(chatContextNextAction, 'Submit a Command Deck message to generate context pack.')}`,

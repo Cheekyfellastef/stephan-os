@@ -142,6 +142,38 @@ test('mission-state questions route to mission-planning with mission intelligenc
   }
 });
 
+test('codex/openclaw routing prompts classify as work-routing and include co-builder context', () => {
+  const prompts = [
+    'Can Codex and OpenClaw help with the next task, and who should do what?',
+    'Who should do the next task?',
+    'Should Codex or OpenClaw handle this?',
+    'What packet should I copy next?',
+    'Can OpenClaw help with this?',
+    'Can Codex help with this?',
+    'What should the next round be?',
+    'How do I avoid becoming the click monkey again?',
+  ];
+  const missionState = {
+    mode: 'active',
+    operatorReliefProjection: {
+      missionIntelligenceSummary: { currentMissionSummary: 'Route correctly.', nextBestAction: 'Use Co-Builder packets.' },
+      agentWorkRoutingProjection: { openClawExecutionReady: 'no', operatorApprovalRequired: 'yes', openClawResearchReady: 'yes', codexReady: 'yes' },
+      coBuilderLoopProjection: { openClawResearchPacketAvailable: 'yes', codexPacketAvailable: 'yes', verificationPacketAvailable: 'yes', repairPacketAvailable: 'no' },
+    },
+  };
+  for (const operatorMessage of prompts) {
+    const pack = buildChatContextPack({ operatorMessage, missionState });
+    assert.equal(pack.recommendedResponseMode, 'work-routing');
+    assert.equal(pack.intentClassifierMatchedRule, 'work-routing');
+    assert.ok(pack.compactSummary.contextSourcesUsed.includes('coBuilderLoop'));
+    assert.ok(pack.compactSummary.contextSourcesUsed.includes('agentWorkRouting'));
+    assert.equal(pack.compactSummary.missionIntelligence.agentWorkRouting.openClawExecutionReady, 'no');
+    assert.equal(pack.compactSummary.missionIntelligence.agentWorkRouting.operatorApprovalRequired, 'yes');
+    assert.equal(pack.compactSummary.missionIntelligence.coBuilderLoop.packetAvailability.openClawResearch, 'yes');
+    assert.equal(pack.compactSummary.missionIntelligence.coBuilderLoop.packetAvailability.codexImplementation, 'yes');
+  }
+});
+
 test('project awareness degrades truthfully when mission intelligence is missing', () => {
   const pack = buildChatContextPack({ operatorMessage: 'what is the current main mission?', missionState: { mode: 'active' } });
   assert.equal(pack.compactSummary.projectAwareness.status, 'degraded');

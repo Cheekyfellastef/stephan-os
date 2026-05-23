@@ -51,6 +51,11 @@ export const INTENT_RULES = [
     pattern: /\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/,
   },
   {
+    id: 'work-routing',
+    responseMode: 'work-routing',
+    pattern: /\b(who should do (the )?next task|should (codex|openclaw)\b[^.!?]{0,40}\b(handle|do)\b|what packet should i copy next|can (codex|openclaw) help with this|what should the next round be|click monkey|can codex and openclaw help with the next task)\b/,
+  },
+  {
     id: 'mission-planning',
     responseMode: 'mission-planning',
     pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b|\bcurrent main mission\b|\bnext best action\b|\bwhat should we do next\b|\breduce operator complexity\b|\bcan (codex|openclaw) help\b/,
@@ -203,7 +208,7 @@ export function buildChatContextPack(input = {}) {
   const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
   const operatorExplanationTask = responseMode === 'operator-explanation' || explanationIntent.matched;
-  const missionPlanningTask = responseMode === 'mission-planning';
+  const missionPlanningTask = responseMode === 'mission-planning' || responseMode === 'work-routing';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
     : (missionPlanningTask ? ['missionState', 'proofState', 'canonRules'] : []);
@@ -334,7 +339,12 @@ export function buildChatContextPack(input = {}) {
         ? ['missionIntelligence']
         : []),
       ...(projectAwareness.status !== 'unavailable' ? ['projectAwareness'] : []),
-    ].filter((key) => key === 'missionIntelligence' || key === 'projectAwareness' || (input[key] && typeof input[key] === 'object')),
+      ...(missionPlanningTask ? ['agentWorkRouting', 'coBuilderLoop'] : []),
+    ].filter((key) => key === 'missionIntelligence'
+      || key === 'projectAwareness'
+      || key === 'agentWorkRouting'
+      || key === 'coBuilderLoop'
+      || (input[key] && typeof input[key] === 'object')),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: boundedMissionIntelligenceContext.missionSummary !== 'unknown' ? 'known' : String(missionState.mode || missionState.status || 'unknown'),
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
