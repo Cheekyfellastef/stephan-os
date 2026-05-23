@@ -9,7 +9,8 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Merge Safety Verdict/);
   assert.match(source, /Next Best Action/);
   assert.match(source, /Mission Brain \/ Next Action/);
-  assert.match(source, /Harness Agent V1.1/);
+  assert.match(source, /Harness Agent/);
+  assert.match(source, /V1\.2/);
   assert.match(source, /Harness Status:/);
   assert.match(source, /Risk Level:/);
   assert.match(source, /Protected Canon At Risk:/);
