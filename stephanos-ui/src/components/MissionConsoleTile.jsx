@@ -1106,6 +1106,32 @@ function MissionConsoleTile({
           </ul>
           </CollapsiblePanel>
           <CollapsiblePanel
+            panelId="missionConsoleHarnessAgentPanel"
+            title="Harness Agent V1"
+            isOpen={uiLayout.missionConsoleHarnessAgentPanel !== false}
+            onToggle={() => dispatchPanelToggle('missionConsoleHarnessAgentPanel')}
+          >
+            <ul className="mission-console__status-list">
+              <li><strong>Harness Status:</strong> {operatorReliefProjection.harnessAgentProjection?.harnessStatus || 'unknown'}</li>
+              <li><strong>Risk Level:</strong> {operatorReliefProjection.harnessAgentProjection?.harnessStatus === 'blocked-until-proof' ? 'high' : (operatorReliefProjection.missionBrainNextAction?.riskLevel || 'medium')}</li>
+              <li><strong>Protected Canon At Risk:</strong> {(operatorReliefProjection.harnessAgentProjection?.protectedCanonAtRisk || []).join(' · ') || 'none'}</li>
+              <li><strong>Required Proof:</strong> {operatorReliefProjection.harnessAgentProjection?.browserProofRequired ? 'browser-proof + targeted tests + build/verify + pr-clean' : 'targeted tests + build/verify + pr-clean'}</li>
+              <li><strong>Merge Recommendation:</strong> {operatorReliefProjection.harnessAgentProjection?.mergeRecommendation || 'unknown'}</li>
+              <li><strong>Next Operator Action:</strong> {operatorReliefProjection.harnessAgentProjection?.nextOperatorAction || 'Review contract and decide.'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify({
+              missionSummary: operatorReliefProjection.harnessAgentProjection?.currentMissionSummary || '',
+              allowedFiles: operatorReliefProjection.harnessAgentProjection?.allowedFileScopes || [],
+              forbiddenFiles: operatorReliefProjection.harnessAgentProjection?.forbiddenFileScopes || [],
+              protectedCanonClauses: operatorReliefProjection.harnessAgentProjection?.protectedCanonAtRisk || [],
+              requiredTests: operatorReliefProjection.harnessAgentProjection?.requiredTests || [],
+              definitionOfDone: 'Preserve canon/truth boundaries, include required checks/proof, keep source-only PR clean, no hidden side effects.',
+              finalReportRequirements: ['audit findings', 'files changed', 'risk rules', 'tests', 'build/verify/pr-clean', 'staging notes', 'next operator action'],
+            }, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyHarnessContract')}>
+              {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Harness Contract Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Harness Contract failed' : 'Copy Harness Contract'}
+            </button>
+          </CollapsiblePanel>
+          <CollapsiblePanel
             panelId="missionConsoleNextCodexPromptPanel"
             title="Next Codex Prompt Candidate"
             isOpen={nextCodexPromptPanelOpen}
