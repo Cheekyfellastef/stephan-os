@@ -20,6 +20,7 @@ import {
   shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
+import { isStephanosDebugEnabled } from './stephanos-build-utils.mjs';
 
 test('isMainModule matches direct script execution path', () => {
   const scriptPath = resolve('scripts/ignite-stephanos-local.mjs');
@@ -48,6 +49,13 @@ test('resolveStepExecution keeps non-Windows commands direct', () => {
   assert.equal(resolved.mode, 'direct');
   assert.equal(resolved.command, 'npm');
   assert.deepEqual(resolved.commandArgs, ['run', 'stephanos:verify']);
+});
+
+test('stephanos debug gate defaults to off and enables via --debug or STEPHANOS_DEBUG=1', () => {
+  assert.equal(isStephanosDebugEnabled({ argv: [], env: {} }), false);
+  assert.equal(isStephanosDebugEnabled({ argv: ['--debug'], env: {} }), true);
+  assert.equal(isStephanosDebugEnabled({ argv: [], env: { STEPHANOS_DEBUG: '1' } }), true);
+  assert.equal(isStephanosDebugEnabled({ argv: [], env: { STEPHANOS_DEBUG: 'true' } }), false);
 });
 
 
