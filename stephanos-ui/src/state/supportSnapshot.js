@@ -34,6 +34,56 @@ function isUnknownValue(value) {
     || text === 'undefined';
 }
 
+function normalizeProjectAwarenessProjection({
+  responseMode = 'direct-answer',
+  metadata = {},
+  providerIdsUsed = [],
+} = {}) {
+  const asKnown = (value) => {
+    const normalized = String(value ?? '').trim();
+    return normalized && !isUnknownValue(normalized) ? normalized : '';
+  };
+  const sources = String(metadata?.project_awareness_sources_used || '')
+    .split('|')
+    .map((item) => item.trim())
+    .filter((item) => item && item !== 'none');
+  const hasMeaningfulField = Boolean(
+    sources.length
+    || asKnown(metadata?.project_awareness_next_best_action)
+    || asKnown(metadata?.project_awareness_operator_workflow_preference)
+    || asKnown(metadata?.project_awareness_codex_role)
+    || asKnown(metadata?.project_awareness_openclaw_role),
+  );
+  let projectAwarenessStatus = metadata?.project_awareness_pack_status || 'unavailable';
+  if (projectAwarenessStatus === 'unavailable' && hasMeaningfulField) {
+    projectAwarenessStatus = 'degraded';
+  }
+  const sourceSet = new Set(
+    String(metadata?.chat_context_sources_used || '')
+      .split('|')
+      .map((item) => item.trim())
+      .filter((item) => item && item !== 'none'),
+  );
+  if (responseMode === 'mission-planning' && projectAwarenessStatus !== 'unavailable') {
+    sourceSet.add('projectAwareness');
+  }
+  const missionProviderReady = providerIdsUsed.includes('missionState');
+  let chatContextMissionState = metadata?.chat_context_mission_state || 'unknown';
+  if (responseMode === 'mission-planning' && missionProviderReady && isUnknownValue(chatContextMissionState)) {
+    chatContextMissionState = 'degraded';
+  }
+  let chatContextPackStatus = metadata?.chat_context_pack_status || 'unavailable';
+  if (chatContextPackStatus === 'unavailable' && responseMode === 'mission-planning' && providerIdsUsed.length > 0) {
+    chatContextPackStatus = 'degraded';
+  }
+  return {
+    projectAwarenessStatus,
+    chatContextPackStatus,
+    chatContextMissionState,
+    chatContextSourcesUsed: sourceSet.size > 0 ? Array.from(sourceSet).join('|') : 'none',
+  };
+}
+
 
 function firstKnownValue(candidates = [], fallback = 'n/a') {
   for (const candidate of candidates) {
@@ -729,7 +779,7 @@ export function buildSupportSnapshot({
   const chatContextMetadataSource = executionHasChatContext
     ? 'final-execution-metadata'
     : (runtimeHasChatContext ? 'runtime-status-model' : 'none');
-  const chatContextStatus = suppressStaleExecutionMetadata
+  const rawChatContextStatus = suppressStaleExecutionMetadata
     ? (runtimeStatus?.chatContextPackStatus || 'active')
     : (hasMergeDecisionProof
       ? 'active'
@@ -742,9 +792,9 @@ export function buildSupportSnapshot({
   const chatContextResponseMode = hasMergeDecisionProof ? 'merge-decision' : (executionHasChatContext ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer') : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
   const chatContextRelevantCanonCount = hasMergeDecisionProof ? derivedMergeCanonCount : (executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0));
   const chatContextAffectedSubsystems = hasMergeDecisionProof ? derivedMergeAffectedSubsystems : (executionHasChatContext ? (executionMetadata.chat_context_affected_subsystems || runtimeStatus?.chatContextAffectedSubsystems || 'none') : (runtimeStatus?.chatContextAffectedSubsystems || 'none'));
-  const chatContextSourcesUsed = hasMergeDecisionProof ? derivedMergeSourcesUsed : (executionHasChatContext ? (executionMetadata.chat_context_sources_used || runtimeStatus?.chatContextSourcesUsed || 'none') : (runtimeStatus?.chatContextSourcesUsed || 'none'));
+  const rawChatContextSourcesUsed = hasMergeDecisionProof ? derivedMergeSourcesUsed : (executionHasChatContext ? (executionMetadata.chat_context_sources_used || runtimeStatus?.chatContextSourcesUsed || 'none') : (runtimeStatus?.chatContextSourcesUsed || 'none'));
   const chatContextUiRealityStatus = hasMergeDecisionProof ? derivedMergeUiRealityStatus : (executionHasChatContext ? (executionMetadata.chat_context_ui_reality_status || runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN') : (runtimeStatus?.chatContextUiRealityStatus || 'UNKNOWN'));
-  const chatContextMissionState = executionHasChatContext ? (executionMetadata.chat_context_mission_state || runtimeStatus?.chatContextMissionState || 'unknown') : (runtimeStatus?.chatContextMissionState || 'unknown');
+  const rawChatContextMissionState = executionHasChatContext ? (executionMetadata.chat_context_mission_state || runtimeStatus?.chatContextMissionState || 'unknown') : (runtimeStatus?.chatContextMissionState || 'unknown');
   const chatContextNextAction = hasMergeDecisionProof
     ? derivedMergeNextAction
     : (executionHasChatContext
@@ -752,7 +802,7 @@ export function buildSupportSnapshot({
       : ((runtimeStatus?.chatContextNextAction)
         || (commandExecutedWithoutContext
           ? 'Command executed without chat context metadata; regenerate context pack on next submission.'
-          : (chatContextStatus === 'unavailable' ? 'Submit an operator command to generate context pack.' : 'Answer directly with bounded confidence.'))));
+          : (rawChatContextStatus === 'unavailable' ? 'Submit an operator command to generate context pack.' : 'Answer directly with bounded confidence.'))));
   const chatContextWarningCount = executionHasChatContext ? (executionMetadata.chat_context_warning_count ?? runtimeStatus?.chatContextWarningCount ?? 0) : (runtimeStatus?.chatContextWarningCount ?? (commandExecutedWithoutContext ? 1 : 0));
   const chatContextWarnings = executionHasChatContext ? (executionMetadata.chat_context_warnings || runtimeStatus?.chatContextWarnings || 'none') : (runtimeStatus?.chatContextWarnings || (commandExecutedWithoutContext ? 'command executed without chat context metadata' : 'none'));
 
@@ -778,9 +828,24 @@ export function buildSupportSnapshot({
   const chatContextRebuiltAtFinalAttachment = executionMetadata?.chat_context_rebuilt_at_final_attachment || 'no';
   const chatContextRebuildSourceField = executionMetadata?.chat_context_rebuild_source_field || 'none';
   const chatContextClassifierProofSource = executionMetadata?.chat_context_classifier_proof_source || 'missing';
+  const rawProviderIdsUsed = executionMetadata?.chat_context_provider_ids_used || 'none';
+  const providerIdsUsedList = String(rawProviderIdsUsed).split('|').map((item) => item.trim()).filter(Boolean);
+  const projectAwarenessProjection = normalizeProjectAwarenessProjection({
+    responseMode: chatContextResponseMode,
+    metadata: {
+      ...executionMetadata,
+      chat_context_pack_status: rawChatContextStatus,
+      chat_context_sources_used: rawChatContextSourcesUsed,
+      chat_context_mission_state: rawChatContextMissionState,
+    },
+    providerIdsUsed: providerIdsUsedList,
+  });
+  const chatContextStatus = projectAwarenessProjection.chatContextPackStatus || rawChatContextStatus;
+  const chatContextSourcesUsed = projectAwarenessProjection.chatContextSourcesUsed || rawChatContextSourcesUsed;
+  const chatContextMissionState = projectAwarenessProjection.chatContextMissionState || rawChatContextMissionState;
   const contextProviderRegistryStatus = executionMetadata?.chat_context_provider_registry_status || (chatContextStatus === 'active' ? 'active' : 'unavailable');
   const contextProvidersRegistered = executionMetadata?.chat_context_provider_ids_registered || 'none';
-  const contextProvidersUsed = executionMetadata?.chat_context_provider_ids_used || 'none';
+  const contextProvidersUsed = rawProviderIdsUsed;
   const contextProviderWarningCount = executionMetadata?.chat_context_provider_warning_count ?? 0;
   const contextProviderProofState = executionMetadata?.chat_context_provider_proof_state || 'unknown';
   const contextProviderNextActions = executionMetadata?.chat_context_provider_next_actions || 'none';
@@ -857,7 +922,7 @@ export function buildSupportSnapshot({
   const activeMissionRehydrated = executionMetadata?.chat_context_active_mission_rehydrated || 'no';
   const activeMissionStorageKey = executionMetadata?.chat_context_active_mission_storage_key || 'stephanos.active.mission.v1';
   const activeMissionRawTranscriptStored = executionMetadata?.chat_context_active_mission_raw_transcript_stored || 'no';
-  const projectAwarenessPackStatus = executionMetadata?.project_awareness_pack_status || 'unavailable';
+  const projectAwarenessPackStatus = projectAwarenessProjection.projectAwarenessStatus || executionMetadata?.project_awareness_pack_status || 'unavailable';
   const projectAwarenessSourcesUsed = executionMetadata?.project_awareness_sources_used || 'none';
   const projectAwarenessCurrentMission = executionMetadata?.project_awareness_current_mission || 'unknown';
   const projectAwarenessNextBestAction = executionMetadata?.project_awareness_next_best_action || 'unknown';
