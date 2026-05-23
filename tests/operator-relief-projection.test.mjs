@@ -207,3 +207,16 @@ test('Harness Agent V1.2 hydrates protected canon clauses by subsystem and risk'
   assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('Answer Delivery Contract')), false);
   assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('Housekeeper preflight')), false);
 });
+
+
+test('Mission Intelligence Summary is derived and deterministic from existing projections', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { title: 'Mission A', objective: 'Integrate projections' } },
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(typeof r.missionIntelligenceSummary?.missionIntelligenceStatus, 'string');
+  assert.equal(r.missionIntelligenceSummary?.commandDeckContextAvailable, true);
+  assert.equal(Array.isArray(r.missionIntelligenceSummary?.currentBlockers), true);
+  assert.match(r.missionIntelligenceSummary?.nextBestAction || '', /./);
+});
