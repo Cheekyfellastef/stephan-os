@@ -17,6 +17,7 @@ import {
   resolveIgnitionMode,
   runGitPullPreflightWithDeps,
   resolveStepExecution,
+  runIgnitionHousekeep,
   shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
@@ -247,6 +248,52 @@ test('ignition dirt classifier maps required categories', () => {
   assert.equal(classifyIgnitionDirtPath('unknown/payload.bin'), 'HARD_BLOCK');
 });
 
+
+
+test('housekeep auto-cleans allowlisted root runtime data and stays READY', () => {
+  const steps = [];
+  runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label) => {
+      if (label === 'git-status') return { stdout: '?? data/\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: [
+        'data/activity/events.json',
+        'data/knowledge-graph/nodes.json',
+        'data/knowledge-graph/edges.json',
+        'data/proposals/proposals.json',
+        'data/roadmap/roadmap.json',
+        'data/simulations/history.json',
+      ].join('\n'), stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, args) => steps.push({ label, command, args }),
+  });
+
+  const cleanStep = steps.find((step) => step.label === 'git-clean-runtime-untracked');
+  assert.ok(cleanStep);
+  assert.deepEqual(cleanStep.args, ['clean', '-fd', '--',
+    'data/activity/events.json',
+    'data/knowledge-graph/nodes.json',
+    'data/knowledge-graph/edges.json',
+    'data/proposals/proposals.json',
+    'data/roadmap/roadmap.json',
+    'data/simulations/history.json',
+  ]);
+});
+
+test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths', () => {
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label) => {
+      if (label === 'git-status') return { stdout: '?? data/\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: 'data/unknown.bin\ndata/secrets.json\ndata/random.txt\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: () => {},
+  }), /housekeep blocked/);
+});
 test('preflight restores approved tracked generated dirt before pull', () => {
   const steps = [];
   runGitPullPreflightWithDeps({
