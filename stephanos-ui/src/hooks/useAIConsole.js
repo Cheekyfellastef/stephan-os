@@ -227,6 +227,34 @@ function toTruthyValue(value = '') {
   return normalized && normalized !== 'unknown' && normalized !== 'none' ? normalized : '';
 }
 
+function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '') {
+  const responseMode = String(chatContextPack?.recommendedResponseMode || '').trim().toLowerCase();
+  const normalizedPrompt = String(prompt || '').trim().toLowerCase();
+  const missionPlanningEligible = responseMode === 'mission-planning'
+    || /\b(mission|project|build|next best action|next action|workflow|codex|openclaw)\b/.test(normalizedPrompt);
+  if (!missionPlanningEligible) {
+    return { block: '', injected: 'no', sources: [], missionPlanningContextUsed: 'no' };
+  }
+  const projectAwareness = chatContextPack?.contextForPrompt?.projectAwareness || chatContextPack?.compactSummary?.projectAwareness || {};
+  const missionIntelligence = chatContextPack?.contextForPrompt?.missionIntelligence || chatContextPack?.compactSummary?.missionIntelligence || {};
+  const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : [];
+  const blockLines = [
+    '[Project Awareness Context: bounded truth for mission-planning only]',
+    `- project north star: ${projectAwareness.projectNorthStar || 'unknown'}`,
+    `- operator workflow preference: ${projectAwareness.operatorWorkflowPreference || 'unknown'}`,
+    `- project awareness status: ${projectAwareness.status || 'unavailable'}`,
+    `- current mission: ${projectAwareness.currentMissionSummary || missionIntelligence.missionSummary || 'unknown (warning: degraded context)'}`,
+    `- next best action: ${projectAwareness.nextBestAction || missionIntelligence.nextBestAction || 'unknown'}`,
+    `- codex role: ${projectAwareness.codexRole || 'unknown'}`,
+    `- openclaw role: ${projectAwareness.openClawRole || 'unknown'}`,
+    `- protected canon summary: ${projectAwareness.protectedCanonSummary || 'Preserve launcher/runtime separation, truth boundaries, and command deck protections.'}`,
+    `- forbidden complexity warnings: ${projectAwareness.forbiddenComplexityWarnings || 'Do not add panes/systems or duplicate mission/chat/memory surfaces.'}`,
+    `- relevant mission/proof/canon sources: ${sources.length ? sources.join('|') : 'none'}`,
+  ];
+  const block = blockLines.join('\n');
+  return { block, injected: 'yes', sources, missionPlanningContextUsed: 'yes' };
+}
+
 export function normalizeProjectAwarenessMetadata({
   responseMode = 'direct-answer',
   compact = {},
@@ -363,6 +391,10 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     project_awareness_codex_role: projectAwarenessTruth.projectAwarenessCodexRole || 'unknown',
     project_awareness_openclaw_role: projectAwarenessTruth.projectAwarenessOpenClawRole || 'unknown',
     project_awareness_warning_count: Number((projectAwareness.warningCount || 0) + projectAwarenessTruth.projectAwarenessWarnings.length),
+    project_awareness_prompt_injected: 'no',
+    project_awareness_prompt_block_length: 0,
+    project_awareness_prompt_sources: 'none',
+    mission_planning_prompt_context_used: 'no',
   };
 }
 
@@ -738,6 +770,10 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     project_awareness_codex_role: resolvedProjectAwarenessCodexRole,
     project_awareness_openclaw_role: resolvedProjectAwarenessOpenClawRole,
     project_awareness_warning_count: resolvedProjectAwarenessWarningCount,
+    project_awareness_prompt_injected: String(requestPayload?.project_awareness_prompt_injected || 'no'),
+    project_awareness_prompt_block_length: Number(requestPayload?.project_awareness_prompt_block_length || 0),
+    project_awareness_prompt_sources: String(requestPayload?.project_awareness_prompt_sources || 'none'),
+    mission_planning_prompt_context_used: String(requestPayload?.mission_planning_prompt_context_used || 'no'),
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
@@ -3763,11 +3799,19 @@ export function useAIConsole() {
       });
       const identityRecallDeterministicEligible = responsePlan?.responseMode === 'identity-recall'
         && responsePlan?.operatorNameUsed === 'yes';
+      const projectAwarenessPromptContext = buildProjectAwarenessPromptContext(chatContextPack, prompt);
+      const promptWithProjectAwareness = projectAwarenessPromptContext.injected === 'yes'
+        ? `${prompt}\n\n${projectAwarenessPromptContext.block}`
+        : prompt;
       if (identityRecallDeterministicEligible) {
         responsePlan.finalAnswerUsedOperatorProfile = 'yes';
         responsePlan.identityRecallDeterministicAnswerUsed = 'yes';
       }
       requestPayload.commandEnvelope = commandEnvelope;
+      requestPayload.project_awareness_prompt_injected = projectAwarenessPromptContext.injected;
+      requestPayload.project_awareness_prompt_block_length = projectAwarenessPromptContext.block.length;
+      requestPayload.project_awareness_prompt_sources = projectAwarenessPromptContext.sources.length ? projectAwarenessPromptContext.sources.join('|') : 'none';
+      requestPayload.mission_planning_prompt_context_used = projectAwarenessPromptContext.missionPlanningContextUsed;
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
         executionMetadata: {
@@ -3919,7 +3963,9 @@ export function useAIConsole() {
         }));
       }
       providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
-        prompt: contextAssembly.truthMetadata.augmented_prompt_used ? contextAssembly.augmentedPrompt : prompt,
+        prompt: contextAssembly.truthMetadata.augmented_prompt_used
+          ? contextAssembly.augmentedPrompt.replace(prompt, promptWithProjectAwareness)
+          : promptWithProjectAwareness,
         provider: requestedProvider,
         uiRequestedProvider: requestPayload.ui_requested_provider,
         requestSideSelectedProvider: requestPayload.request_side_selected_provider,
@@ -3939,6 +3985,7 @@ export function useAIConsole() {
         routeDecision: freshnessRouteDecision,
         contextAssembly,
         chatContextPack,
+        projectAwarenessPromptContext,
         streamingMode,
         ollamaLoadMode: requestPayload.ollama_load_mode || ollamaLoadMode,
         abortSignal: activePromptRequestRef.current?.signal || null,

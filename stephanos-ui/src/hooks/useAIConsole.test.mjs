@@ -365,3 +365,13 @@ test('chat context pack includes bounded mission intelligence context for projec
   assert.match(source, /operatorApprovalRequired/);
   assert.match(source, /codexOpenClawReadiness/);
 });
+
+test('useAIConsole injects bounded project awareness prompt context for mission-planning and records proof metadata', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /function buildProjectAwarenessPromptContext\(chatContextPack = null, prompt = ''\)/);
+  assert.match(source, /responseMode === 'mission-planning'/);
+  assert.match(source, /forbidden complexity warnings:/);
+  assert.match(source, /requestPayload\.project_awareness_prompt_injected = projectAwarenessPromptContext\.injected;/);
+  assert.match(source, /requestPayload\.mission_planning_prompt_context_used = projectAwarenessPromptContext\.missionPlanningContextUsed;/);
+  assert.match(source, /promptWithProjectAwareness/);
+});
