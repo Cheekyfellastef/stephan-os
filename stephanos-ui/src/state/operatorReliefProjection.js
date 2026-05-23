@@ -146,40 +146,101 @@ function deriveAiConsoleAutoscrollProof(supportSnapshot = {}) {
   return { complete: missing.length === 0, missing, source: 'support_snapshot.aiConsoleScrollDiagnostics' };
 }
 
-function buildAgentWorkRoutingProjection({ missionBrainNextAction = {}, missionSpec = {}, supportSnapshot = {} } = {}) {
+function buildAgentWorkRoutingProjection({ missionBrainNextAction = {}, missionSpec = {}, supportSnapshot = {}, harnessAgentProjection = {} } = {}) {
   const nextAction = asText(missionBrainNextAction.nextBestAction, '').toLowerCase();
-  const isManualTask = /browser|proof|merge|visual|ignition/.test(nextAction);
-  const readiness = asText(supportSnapshot.openClawReadiness || supportSnapshot.openClawIntegrationMode, 'not-proven');
-  const targetAgentType = isManualTask ? 'manual-operator' : 'codex';
-  const promptPayload = truncateText([
-    `Mission objective: ${asText(missionBrainNextAction.missionObjective, missionSpec.objective || 'not provided')}`,
-    `Current phase: ${asText(missionBrainNextAction.currentPhase, 'unknown')}`,
-    `Next best action: ${asText(missionBrainNextAction.nextBestAction, 'review evidence')}`,
-    `Evidence gaps: ${asList(missionBrainNextAction.openEvidenceGaps).map((gap) => `${gap.id}:${gap.label}`).join(' | ') || 'none'}`,
-    'Constraints: no autonomous execution, no auto-merge, operator approval required.',
-  ].join('\n'), 2400);
+  const gaps = asList(missionBrainNextAction.openEvidenceGaps || []);
+  const blockers = [];
+  const warnings = [];
+  const browserProofNeeded = /browser|proof|visual/.test(nextAction) || gaps.some((gap) => String(gap.id || '').includes('browser'));
+  const routeUnknown = /unknown|n\/a/.test(asText(supportSnapshot?.routeStatus, 'unknown'));
+  const hasHarnessClauses = asList(harnessAgentProjection.protectedCanonClauses).length > 0;
+  const hasForbiddenFiles = asList(harnessAgentProjection.forbiddenFiles).length > 0;
+  const openClawExecutionReady = false;
+
+  if (!hasHarnessClauses) blockers.push('Harness Agent protected canon clauses missing.');
+  if (routeUnknown) warnings.push('Runtime route/provider truth is partially unknown.');
+  if (hasForbiddenFiles) warnings.push('Forbidden file scopes are present and must remain untouched.');
+
+  let recommendedRoute = 'codex';
+  let workRoutingStatus = 'ready';
+  let recommendedRouteReason = 'Bounded source/test/projection work packet is available and approval-gated for Codex.';
+
+  if (!hasHarnessClauses) {
+    recommendedRoute = 'hold';
+    workRoutingStatus = 'blocked';
+    recommendedRouteReason = 'Hold until Harness Agent clauses and proof boundaries are present.';
+  } else if (browserProofNeeded) {
+    recommendedRoute = 'manual-operator';
+    workRoutingStatus = 'degraded';
+    recommendedRouteReason = 'Manual operator/browser proof is required before final merge claims.';
+  } else if (/audit|discover|map|research/.test(nextAction)) {
+    recommendedRoute = 'openclaw-research';
+    workRoutingStatus = 'degraded';
+    recommendedRouteReason = 'Task is reconnaissance/audit oriented and should remain read-only.';
+  }
+
+  const codexReady = recommendedRoute === 'codex' ? 'yes' : 'no';
+  const openClawResearchReady = recommendedRoute === 'openclaw-research' ? 'yes' : 'no';
+  if (!openClawExecutionReady) warnings.push('OpenClaw execution: not ready; research/audit only unless policy harness approves.');
+
+  const missionSummary = asText(missionBrainNextAction.missionObjective, missionSpec.objective || 'Mission summary unavailable.');
+  const smallestNextWorkPacket = asText(missionBrainNextAction.nextBestAction, 'Review mission evidence and prepare bounded patch packet.');
+  const requiredProof = browserProofNeeded
+    ? ['targeted tests', 'build', 'verify', 'browser proof checklist', 'pr-clean']
+    : ['targeted tests', 'build', 'verify', 'pr-clean'];
+  const protectedSubsystems = Array.from(new Set(asList(harnessAgentProjection.protectedSubsystems).concat(['MISSION_BRAIN', 'COMMAND_DECK', 'IGNITION'])));
+  const allowedScopeSummary = 'Bounded source-only edits in mission/operator-relief projections, mission console surface, context wiring, and tests.';
+  const forbiddenScopeSummary = 'No dist/runtime/root-data/node_modules/secrets; no provider/backend execution routing rewires; no new panes; no branch choreography burden.';
+  const nextOperatorAction = recommendedRoute === 'hold'
+    ? 'Hold and restore proof/canon boundaries first.'
+    : 'Approve/copy the bounded Codex packet for the smallest integration step, or hold. Do not manually juggle branches.';
+
+  const codexPacket = {
+    missionSummary,
+    smallestNextWorkPacket,
+    allowedFiles: asList(harnessAgentProjection.allowedFileScopes),
+    forbiddenFiles: asList(harnessAgentProjection.forbiddenFileScopes),
+    harnessAgentClauses: asList(harnessAgentProjection.protectedCanonClauses),
+    requiredTests: asList(harnessAgentProjection.requiredTests).length ? asList(harnessAgentProjection.requiredTests) : ['node --test tests/operator-relief-projection.test.mjs tests/mission-console-operator-relief-panel.test.mjs', 'npm run stephanos:build', 'npm run stephanos:verify'],
+    requiredProof,
+    definitionOfDone: asList(harnessAgentProjection.definitionOfDone),
+    finalReportRequirements: asList(harnessAgentProjection.finalReportRequirements),
+    operatorWorkflowPreference: 'main-first/main-only',
+  };
+  const openClawResearchPacket = {
+    researchObjective: 'Read-only audit/recon for mission routing and proof state; no execution.',
+    allowedReadOnlyScope: ['stephanos-ui/src/state/**', 'stephanos-ui/src/components/**', 'tests/**', 'scripts/**'],
+    forbiddenMutations: ['no writes', 'no branch/merge actions', 'no provider/backend execution changes'],
+    proofToCollect: requiredProof,
+    approvalGateReminder: 'Operator approval required before any execution-oriented handoff.',
+    stopConditions: ['scope ambiguity', 'canon/proof contradiction', 'forbidden file touch detected'],
+    killSwitchPolicyReminder: 'OpenClaw execution remains blocked until explicit policy/readiness true.',
+  };
+
   return {
-    routingObjective: asText(missionBrainNextAction.nextBestAction, 'Review mission evidence and decide operator path.'),
-    sourceMissionBrainPhase: asText(missionBrainNextAction.currentPhase, 'unknown'),
-    targetAgentType: readiness.includes('ready') && !isManualTask ? 'openclaw-policy-only' : targetAgentType,
-    recommendedAgent: targetAgentType === 'manual-operator' ? 'manual-operator' : 'codex',
-    taskType: isManualTask ? 'proof-or-approval' : 'bounded-source-task',
-    riskLevel: asText(missionBrainNextAction.riskLevel, 'medium'),
+    workRoutingStatus,
+    recommendedRoute,
+    recommendedRouteReason,
+    codexReady,
+    openClawResearchReady,
+    openClawExecutionReady: openClawExecutionReady ? 'yes' : 'no',
+    operatorApprovalRequired: 'yes',
     approvalRequired: true,
-    operatorDecisionRequired: true,
-    promptPayload,
-    filesToInspectFirst: [
-      'stephanos-ui/src/state/operatorReliefProjection.js',
-      'stephanos-ui/src/components/MissionConsoleTile.jsx',
-      'tests/operator-relief-projection.test.mjs',
-    ],
-    filesToAvoidUnlessNeeded: ['apps/stephanos/dist/**', 'node_modules/**', 'runtime/**', 'root data/**'],
-    requiredProof: ['browser-proof-checklist', 'copy-button-success-state', 'single-answer-pane-autoscroll'],
-    requiredTests: ['node --test tests/operator-relief-projection.test.mjs tests/mission-console-operator-relief-panel.test.mjs stephanos-ui/src/components/AIConsole.render.test.mjs', 'npm run stephanos:build', 'npm run stephanos:verify'],
-    mergeReadinessGate: 'operator-approval-required',
-    rollbackOrAbortConditions: ['forbidden-artifacts-staged', 'build-or-verify-failure', 'missing-browser-proof-for-ui-change'],
+    riskLevel: asText(missionBrainNextAction.riskLevel, 'medium'),
+    protectedSubsystems,
+    allowedScopeSummary,
+    forbiddenScopeSummary,
+    requiredProof,
+    smallestNextWorkPacket,
+    requiredTests: asList(harnessAgentProjection.requiredTests).length ? asList(harnessAgentProjection.requiredTests) : ['node --test tests/operator-relief-projection.test.mjs tests/mission-console-operator-relief-panel.test.mjs', 'npm run stephanos:build', 'npm run stephanos:verify'],
+    copyCodexPacketAvailable: 'yes',
+    copyOpenClawPacketAvailable: 'yes',
+    blockers,
+    warnings,
+    nextOperatorAction,
+    copyCodexWorkPacket: codexPacket,
+    copyOpenClawResearchPacket: openClawResearchPacket,
     sourceEvidence: asList(missionBrainNextAction.sourceEvidence),
-    blockedReason: asText(missionBrainNextAction.blockedReason, ''),
   };
 }
 
@@ -238,7 +299,7 @@ function buildMissionApprovalQueue({ missionBrainNextAction = {}, agentWorkRouti
   if (missionState === 'needs-browser-proof' || verificationReturnIntake.mergeRecommendation === 'blocked-pending-browser-proof') queue.push({ ...base, id: 'mq-run-browser-proof', title: 'Run browser proof checklist before approval', actionType: 'run-browser-proof', recommendedDecision: 'mark-proof-pending', reason: 'UI proof checklist is incomplete and merge review is blocked pending browser proof.', sourceEvidence: ['mission_brain.next_action', 'verification_return_intake', 'proof_of_done.browserChecksObserved'], copyPayload: truncateText(JSON.stringify({ actionType: 'run-browser-proof', checklist: browserProof?.missingItems || [], requiredProofBeforeApproval }, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });
   if (verificationReturnIntake.forbiddenArtifactRisk) queue.push({ ...base, id: 'mq-hold-merge', title: 'Hold merge and request source-truth repair', actionType: 'hold-merge', recommendedDecision: 'needs-repair', riskLevel: 'high', reason: 'Verification intake detected forbidden artifact risk.', sourceEvidence: verificationReturnIntake.sourceEvidence || [], copyPayload: truncateText(JSON.stringify({ actionType: 'hold-merge', changedFiles: verificationReturnIntake.changedFiles || [], reason: 'Forbidden artifacts present in staged files.' }, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });
   if ((verificationReturnIntake.missingEvidence || []).length > 0) queue.push({ ...base, id: 'mq-request-repair', title: 'Request repair packet for missing evidence', actionType: 'request-repair', recommendedDecision: 'needs-repair', reason: 'Evidence gaps remain unresolved and repair packet is required before approval.', sourceEvidence: verificationReturnIntake.sourceEvidence || [], copyPayload: truncateText(verificationReturnIntake.repairPromptCandidate || repairPrompt?.prompt || '', MAX_QUEUE_PAYLOAD_LENGTH) });
-  if (agentWorkRoutingProjection.recommendedAgent === 'codex') queue.push({ ...base, id: 'mq-approve-codex-packet', title: 'Approve Codex packet draft for manual handoff', actionType: 'approve-codex-packet', recommendedDecision: 'approve', reason: 'Work routing produced a bounded Codex packet candidate that remains operator-gated.', sourceEvidence: agentWorkRoutingProjection.sourceEvidence || [], copyPayload: truncateText(JSON.stringify(agentWorkRoutingProjection || {}, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });
+  if (agentWorkRoutingProjection.recommendedRoute === 'codex') queue.push({ ...base, id: 'mq-approve-codex-packet', title: 'Approve Codex packet draft for manual handoff', actionType: 'approve-codex-packet', recommendedDecision: 'approve', reason: 'Work routing produced a bounded Codex packet candidate that remains operator-gated.', sourceEvidence: agentWorkRoutingProjection.sourceEvidence || [], copyPayload: truncateText(JSON.stringify(agentWorkRoutingProjection || {}, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });
   if (verificationReturnIntake.mergeRecommendation === 'review-required') queue.push({ ...base, id: 'mq-approve-merge-review', title: 'Approve merge-review step', actionType: 'approve-merge-review', recommendedDecision: 'approve', reason: 'Verification indicates merge candidate readiness, pending explicit operator decision only.', sourceEvidence: verificationReturnIntake.sourceEvidence || [], copyPayload: truncateText(JSON.stringify({ actionType: 'approve-merge-review', mergeRecommendation: verificationReturnIntake.mergeRecommendation, requiredOperatorAction: verificationReturnIntake.requiredOperatorAction }, null, 2), MAX_QUEUE_PAYLOAD_LENGTH), blockedReason: '' });
   queue.push({ ...base, id: 'mq-update-handoff', title: 'Update mission handoff payload', actionType: 'update-handoff', recommendedDecision: 'copy-prompt', reason: 'Create bounded handoff/update payload for continuity and explicit operator actions.', sourceEvidence: ['mission_handoff', 'mission_brain.next_action', 'verification_return_intake'], copyPayload: truncateText(JSON.stringify({ currentLayer: missionBrainNextAction.currentPhase || 'unknown', completedSystems: ['Layer 3/4 Mission Brain', 'Layer 5 Work Routing Candidate', 'Layer 6 Verification Return Intake', 'Layer 7 Mission Approval Queue (read-only/operator-gated)'], pendingProof: requiredProofBeforeApproval, nextOperatorAction: queue[0]?.title || 'Review mission evidence', mergeRecommendation: verificationReturnIntake.mergeRecommendation || 'unknown', risks: [asText(missionBrainNextAction.riskLevel, 'medium'), blockedReason || 'none'], testsBuildVerifyStatus: { testsPassed: tests.passed || 0, buildPassed: tests.buildPassed === true, verifyPassed: tests.verifyPassed === true }, browserProofStatus: { required: browserProof.required === true, missingItems: browserProof.missingItems || [] } }, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });
   queue.push({ ...base, id: 'mq-manual-ignition', title: 'Manual ignition checkpoint', actionType: 'manual-ignition', recommendedDecision: 'hold', reason: 'Execution remains manual-only and operator intent must be explicit.', sourceEvidence: ['mission_brain.next_action'], copyPayload: truncateText(JSON.stringify({ actionType: 'manual-ignition', status: 'operator-gated-no-execution', nextAction: missionBrainNextAction.nextBestAction || 'Review evidence' }, null, 2), MAX_QUEUE_PAYLOAD_LENGTH) });

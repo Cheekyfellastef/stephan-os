@@ -254,6 +254,7 @@ export function buildChatContextPack(input = {}) {
   const missionIntelligence = missionState?.operatorReliefProjection?.missionIntelligenceSummary
     || missionState?.missionIntelligenceSummary
     || {};
+  const agentWorkRouting = missionState?.operatorReliefProjection?.agentWorkRoutingProjection || missionState?.agentWorkRoutingProjection || {};
   const boundedMissionIntelligenceContext = {
     missionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
     nextBestAction: missionIntelligence.nextBestAction || 'Review mission intelligence summary in Mission Brain.',
@@ -267,6 +268,17 @@ export function buildChatContextPack(input = {}) {
       openClawReady: missionIntelligence.openClawReady || 'unknown',
     },
     operatorApprovalRequired: missionIntelligence.operatorDecisionRequired !== false,
+    agentWorkRouting: missionPlanningTask ? {
+      workRoutingStatus: agentWorkRouting.workRoutingStatus || 'unknown',
+      recommendedRoute: agentWorkRouting.recommendedRoute || 'unknown',
+      recommendedRouteReason: agentWorkRouting.recommendedRouteReason || 'unknown',
+      codexReady: agentWorkRouting.codexReady || 'unknown',
+      openClawResearchReady: agentWorkRouting.openClawResearchReady || 'unknown',
+      openClawExecutionReady: agentWorkRouting.openClawExecutionReady || 'no',
+      operatorApprovalRequired: agentWorkRouting.operatorApprovalRequired || 'yes',
+      requiredProof: Array.isArray(agentWorkRouting.requiredProof) ? agentWorkRouting.requiredProof : [],
+      nextOperatorAction: agentWorkRouting.nextOperatorAction || 'Review mission routing summary and hold or approve bounded packet.',
+    } : undefined,
   };
   const projectAwareness = buildProjectAwarenessPack({ missionState, missionIntelligence, proofState: contextProviderProofState, operatorProfile: input.operatorProfile || {} });
 
