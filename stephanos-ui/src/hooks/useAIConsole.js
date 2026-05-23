@@ -3717,7 +3717,9 @@ export function useAIConsole() {
         })
         : null;
       const explanationIntent = detectOperatorExplanationIntent(prompt);
-      const operatorExplanationProjection = explanationIntent.matched
+      const operatorExplanationModeClassified = String(chatContextPack?.recommendedResponseMode || responsePlan?.responseMode || '').trim().toLowerCase() === 'operator-explanation';
+      const operatorExplanationDeterministicEligible = operatorExplanationModeClassified || explanationIntent.matched;
+      const operatorExplanationProjection = operatorExplanationDeterministicEligible
         ? buildOperatorExplanationProjection({
           intentToBuildModel: requestRuntimeStatus?.intentToBuildModel || {},
           taskFinisherModel: requestRuntimeStatus?.taskFinisherModel || {},
@@ -3729,14 +3731,14 @@ export function useAIConsole() {
           supportSnapshot: requestRuntimeStatus?.supportSnapshot || requestRuntimeStatus || {},
         }, prompt)
         : null;
-      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && explanationIntent.matched)
+      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && operatorExplanationDeterministicEligible)
         ? createOperatorExplanationDeterministicResult({
           prompt,
           parsed,
           startedAt,
           requestPayload,
           projection: operatorExplanationProjection,
-          output: formatOperatorExplanation(operatorExplanationProjection, { mode: explanationIntent.mode }),
+          output: formatOperatorExplanation(operatorExplanationProjection, { mode: operatorExplanationProjection?.mode || explanationIntent.mode }),
         })
         : null;
       if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !operatorExplanationDeterministicResult) {
@@ -3999,7 +4001,7 @@ export function useAIConsole() {
         finalAssistantPayload: data?.structured_output || data?.output_payload || data?.data?.output_payload || data?.data?.structured_output || null,
         providerExecutionStatus: finalExecutionMetadata.command_envelope_execution_status || finalExecutionMetadata.execution_status || 'unknown',
         answerPaneRendered: finalAssistantAnswerVisibleCandidate,
-        responseMode: finalExecutionMetadata.chat_context_response_mode || 'direct-answer',
+        responseMode: finalExecutionMetadata.chat_context_response_mode || finalExecutionMetadata.response_planner_response_mode || 'direct-answer',
         operatorExplanationIntentDetected: (finalExecutionMetadata.chat_context_operator_explanation_intent_detected || 'no') === 'yes',
         operatorExplanationProjectionUsed: (finalExecutionMetadata.operator_explanation_projection_used || finalExecutionMetadata.operator_explanation_triggered || 'no') === 'yes',
         operatorExplanationAnswerGenerated: (finalExecutionMetadata.operator_explanation_triggered || 'no') === 'yes',

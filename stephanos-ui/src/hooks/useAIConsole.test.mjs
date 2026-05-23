@@ -310,3 +310,10 @@ test('submitPrompt pre-envelope path keeps submit-wide symbols initialized and c
   assert.match(source, /timeoutFailureMetadata\.execution_truth = 'pre-envelope-error';/);
   assert.match(source, /timeoutFailureMetadata\.provider_mismatch = 'no';/);
 });
+
+test('operator explanation deterministic path is eligible from classified response mode without second detector veto', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const operatorExplanationModeClassified = String\(chatContextPack\?\.recommendedResponseMode \|\| responsePlan\?\.responseMode \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'operator-explanation';/);
+  assert.match(source, /const operatorExplanationDeterministicEligible = operatorExplanationModeClassified \|\| explanationIntent\.matched;/);
+  assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && operatorExplanationDeterministicEligible\)/);
+});
