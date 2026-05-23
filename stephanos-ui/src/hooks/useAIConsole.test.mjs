@@ -374,4 +374,7 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /requestPayload\.project_awareness_prompt_injected = projectAwarenessPromptContext\.injected;/);
   assert.match(source, /requestPayload\.mission_planning_prompt_context_used = projectAwarenessPromptContext\.missionPlanningContextUsed;/);
   assert.match(source, /promptWithProjectAwareness/);
+  assert.match(source, /strategicMissionFallback/);
+  assert.match(source, /reduce operator complexity by wiring Mission Brain, Harness Agent, proof, canon, and project awareness into the existing Command Deck AI path/);
+  assert.match(source, /answer synthesis directive \(mission-planning only\)/);
 });

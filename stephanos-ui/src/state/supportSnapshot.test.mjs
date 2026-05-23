@@ -3111,3 +3111,33 @@ test('buildSupportSnapshot includes compact ignition cleanliness fields', () => 
   assert.match(snapshot, /Ignition PR Range Guard Status: enforced/);
   assert.match(snapshot, /Ignition Next Operator Action: Continue ignition\./);
 });
+
+test('support snapshot normalizes mission-planning prompt proof and chat-context truth when prompt block is present', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        retrieval_query: 'What is the current main mission and what is the next best action?\n[Project Awareness Context: bounded truth for mission-planning only]\n- next best action: Integrate Mission Brain, Harness, proof, and canon context into existing path.',
+        command_envelope_response_mode: 'mission-planning',
+        response_planner_response_mode: 'mission-planning',
+        chat_context_response_mode: 'direct-answer',
+        chat_context_pack_status: 'unavailable',
+        chat_context_sources_used: 'none',
+        chat_context_mission_state: 'unknown',
+        project_awareness_pack_status: 'degraded',
+        project_awareness_sources_used: 'missionState|missionIntelligence|canonRules',
+        project_awareness_next_best_action: 'Integrate Mission Brain, Harness, proof, and canon context into existing path.',
+        project_awareness_operator_workflow_preference: 'Operator prefers main-first/main-only simplicity.',
+        project_awareness_codex_role: 'Codex executes bounded proof work under approval gates.',
+        project_awareness_openclaw_role: 'OpenClaw supports orchestration under approval gates.',
+      },
+    },
+  });
+  assert.match(snapshot, /Project Awareness Prompt Injected: yes/);
+  assert.match(snapshot, /Project Awareness Prompt Block Length: [1-9]\d*/);
+  assert.match(snapshot, /Project Awareness Prompt Sources: missionState\|missionIntelligence\|canonRules/);
+  assert.match(snapshot, /Mission Planning Prompt Context Used: yes/);
+  assert.match(snapshot, /Chat Context Response Mode: mission-planning/);
+  assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
+  assert.match(snapshot, /Chat Context Sources Used: .*projectAwareness/);
+  assert.doesNotMatch(snapshot, /Chat Context Mission State: unknown/);
+});

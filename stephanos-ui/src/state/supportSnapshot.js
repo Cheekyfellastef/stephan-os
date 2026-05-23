@@ -69,7 +69,7 @@ function normalizeProjectAwarenessProjection({
   }
   const missionProviderReady = providerIdsUsed.includes('missionState');
   let chatContextMissionState = metadata?.chat_context_mission_state || 'unknown';
-  if (responseMode === 'mission-planning' && missionProviderReady && isUnknownValue(chatContextMissionState)) {
+  if (responseMode === 'mission-planning' && (missionProviderReady || projectAwarenessStatus !== 'unavailable') && isUnknownValue(chatContextMissionState)) {
     chatContextMissionState = 'degraded';
   }
   let chatContextPackStatus = metadata?.chat_context_pack_status || 'unavailable';
@@ -789,7 +789,15 @@ export function buildSupportSnapshot({
           ? runtimeStatus.chatContextPackStatus
           : (commandExecutedWithoutContext ? 'warning' : 'unavailable'))));
   const chatContextVersion = executionHasChatContext ? (executionMetadata.chat_context_version || runtimeStatus?.chatContextVersion || 'v1') : (runtimeStatus?.chatContextVersion || (commandExecutedWithoutContext ? 'v1' : 'n/a'));
-  const chatContextResponseMode = hasMergeDecisionProof ? 'merge-decision' : (executionHasChatContext ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer') : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
+  const rawChatContextResponseMode = hasMergeDecisionProof
+    ? 'merge-decision'
+    : (executionHasChatContext
+      ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer')
+      : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
+  const plannerOrEnvelopeMode = executionMetadata?.response_planner_response_mode || executionMetadata?.command_envelope_response_mode || '';
+  const chatContextResponseMode = rawChatContextResponseMode === 'direct-answer' && plannerOrEnvelopeMode === 'mission-planning'
+    ? 'mission-planning'
+    : rawChatContextResponseMode;
   const chatContextRelevantCanonCount = hasMergeDecisionProof ? derivedMergeCanonCount : (executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0));
   const chatContextAffectedSubsystems = hasMergeDecisionProof ? derivedMergeAffectedSubsystems : (executionHasChatContext ? (executionMetadata.chat_context_affected_subsystems || runtimeStatus?.chatContextAffectedSubsystems || 'none') : (runtimeStatus?.chatContextAffectedSubsystems || 'none'));
   const rawChatContextSourcesUsed = hasMergeDecisionProof ? derivedMergeSourcesUsed : (executionHasChatContext ? (executionMetadata.chat_context_sources_used || runtimeStatus?.chatContextSourcesUsed || 'none') : (runtimeStatus?.chatContextSourcesUsed || 'none'));
@@ -930,10 +938,21 @@ export function buildSupportSnapshot({
   const projectAwarenessCodexRole = executionMetadata?.project_awareness_codex_role || 'unknown';
   const projectAwarenessOpenClawRole = executionMetadata?.project_awareness_openclaw_role || 'unknown';
   const projectAwarenessWarningCount = executionMetadata?.project_awareness_warning_count ?? 0;
-  const projectAwarenessPromptInjected = executionMetadata?.project_awareness_prompt_injected || 'no';
-  const projectAwarenessPromptBlockLength = executionMetadata?.project_awareness_prompt_block_length ?? 0;
-  const projectAwarenessPromptSources = executionMetadata?.project_awareness_prompt_sources || 'none';
-  const missionPlanningPromptContextUsed = executionMetadata?.mission_planning_prompt_context_used || 'no';
+  const retrievalQueryText = String(executionMetadata?.retrieval_query || executionMetadata?.prompt || '').trim();
+  const promptInjectionMarker = '[Project Awareness Context: bounded truth for mission-planning only]';
+  const hasPromptInjectionMarker = retrievalQueryText.includes(promptInjectionMarker);
+  const inferredPromptSources = executionMetadata?.project_awareness_sources_used || projectAwarenessProjection.projectAwarenessSourcesUsed || 'none';
+  const missionPlanningModeActive = (chatContextResponseMode === 'mission-planning')
+    || (responsePlannerResponseMode === 'mission-planning');
+  const projectAwarenessPromptInjected = executionMetadata?.project_awareness_prompt_injected
+    || (hasPromptInjectionMarker ? 'yes' : 'no');
+  const projectAwarenessPromptBlockLength = Number(executionMetadata?.project_awareness_prompt_block_length ?? 0) > 0
+    ? Number(executionMetadata?.project_awareness_prompt_block_length ?? 0)
+    : (hasPromptInjectionMarker ? promptInjectionMarker.length : 0);
+  const projectAwarenessPromptSources = executionMetadata?.project_awareness_prompt_sources
+    || (hasPromptInjectionMarker ? inferredPromptSources : 'none');
+  const missionPlanningPromptContextUsed = executionMetadata?.mission_planning_prompt_context_used
+    || ((hasPromptInjectionMarker && missionPlanningModeActive) ? 'yes' : 'no');
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
