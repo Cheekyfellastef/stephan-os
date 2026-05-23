@@ -2370,6 +2370,10 @@ test('support snapshot prints project awareness fields from final execution meta
         project_awareness_codex_role: 'Codex executes bounded source-only changes with proof.',
         project_awareness_openclaw_role: 'OpenClaw orchestrates approval-gated execution through shared truth contracts.',
         project_awareness_warning_count: 0,
+        project_awareness_prompt_injected: 'yes',
+        project_awareness_prompt_block_length: 640,
+        project_awareness_prompt_sources: 'missionState|proofState|canonRules',
+        mission_planning_prompt_context_used: 'yes',
       },
     },
   });
@@ -2382,6 +2386,8 @@ test('support snapshot prints project awareness fields from final execution meta
   assert.match(snapshot, /Project Awareness Operator Workflow Preference: Operator prefers main-first\/main-only simplicity\./);
   assert.match(snapshot, /Project Awareness Codex Role: Codex executes bounded source-only changes with proof\./);
   assert.match(snapshot, /Project Awareness OpenClaw Role: OpenClaw orchestrates approval-gated execution through shared truth contracts\./);
+  assert.match(snapshot, /Project Awareness Prompt Injected: yes/);
+  assert.match(snapshot, /Mission Planning Prompt Context Used: yes/);
 });
 
 test('support snapshot normalizes live mission-planning contradiction when project awareness fields are populated', () => {

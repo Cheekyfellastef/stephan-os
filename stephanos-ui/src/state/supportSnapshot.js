@@ -930,6 +930,10 @@ export function buildSupportSnapshot({
   const projectAwarenessCodexRole = executionMetadata?.project_awareness_codex_role || 'unknown';
   const projectAwarenessOpenClawRole = executionMetadata?.project_awareness_openclaw_role || 'unknown';
   const projectAwarenessWarningCount = executionMetadata?.project_awareness_warning_count ?? 0;
+  const projectAwarenessPromptInjected = executionMetadata?.project_awareness_prompt_injected || 'no';
+  const projectAwarenessPromptBlockLength = executionMetadata?.project_awareness_prompt_block_length ?? 0;
+  const projectAwarenessPromptSources = executionMetadata?.project_awareness_prompt_sources || 'none';
+  const missionPlanningPromptContextUsed = executionMetadata?.mission_planning_prompt_context_used || 'no';
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1955,6 +1959,10 @@ export function buildSupportSnapshot({
     `Project Awareness Codex Role: ${asText(projectAwarenessCodexRole, 'unknown')}`,
     `Project Awareness OpenClaw Role: ${asText(projectAwarenessOpenClawRole, 'unknown')}`,
     `Project Awareness Warning Count: ${asText(projectAwarenessWarningCount, '0')}`,
+    `Project Awareness Prompt Injected: ${asText(projectAwarenessPromptInjected, 'no')}`,
+    `Project Awareness Prompt Block Length: ${asText(projectAwarenessPromptBlockLength, '0')}`,
+    `Project Awareness Prompt Sources: ${asText(projectAwarenessPromptSources, 'none')}`,
+    `Mission Planning Prompt Context Used: ${asText(missionPlanningPromptContextUsed, 'no')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,
