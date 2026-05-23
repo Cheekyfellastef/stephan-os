@@ -239,6 +239,7 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const providerCanonLinksCount = Array.isArray(chatContextPack?.contextForPrompt?.contextProviderCanonLinks)
     ? chatContextPack.contextForPrompt.contextProviderCanonLinks.length
     : Number(compact?.contextProviderCanonLinksCount || 0);
+  const projectAwareness = compact?.projectAwareness || chatContextPack?.contextForPrompt?.projectAwareness || {};
 
   return {
     chat_context_pack_status: compact?.status || (hasPack ? 'active' : 'unavailable'),
@@ -283,6 +284,14 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_active_mission_rehydrated: activeMission?.activeMissionRehydrated || 'no',
     chat_context_active_mission_storage_key: chatContextPack?.inputMissionState?.activeMission?.storageKey || 'stephanos.active.mission.v1',
     chat_context_active_mission_raw_transcript_stored: chatContextPack?.inputMissionState?.activeMission?.rawTranscriptStored || 'no',
+    project_awareness_pack_status: projectAwareness.status || 'unavailable',
+    project_awareness_sources_used: Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.join('|') : 'none',
+    project_awareness_current_mission: projectAwareness.currentMissionSummary || 'unknown',
+    project_awareness_next_best_action: projectAwareness.nextBestAction || 'unknown',
+    project_awareness_operator_workflow_preference: projectAwareness.operatorWorkflowPreference || 'unknown',
+    project_awareness_codex_role: projectAwareness.codexRole || 'unknown',
+    project_awareness_openclaw_role: projectAwareness.openClawRole || 'unknown',
+    project_awareness_warning_count: Number(projectAwareness.warningCount || 0),
   };
 }
 

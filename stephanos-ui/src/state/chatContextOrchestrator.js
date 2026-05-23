@@ -146,6 +146,45 @@ function pickResponseMode(msg = '') {
   return classifyIntent(msg).responseMode;
 }
 
+function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}, proofState = {}, operatorProfile = {} } = {}) {
+  const sourcesUsed = [];
+  if (missionState && Object.keys(missionState).length) sourcesUsed.push('missionState');
+  if (missionIntelligence && Object.keys(missionIntelligence).length) sourcesUsed.push('missionIntelligence');
+  if (missionState?.operatorReliefProjection?.harnessAgentProjection || missionState?.harnessAgentProjection) sourcesUsed.push('harnessAgentProjection');
+  if (proofState && Object.keys(proofState).length) sourcesUsed.push('proofState');
+  if (operatorProfile && Object.keys(operatorProfile).length) sourcesUsed.push('operatorProfile');
+  sourcesUsed.push('canonRules');
+
+  const warnings = [
+    'Do not add new panes when existing Mission Brain / Operator Relief / Command Deck surfaces can be extended.',
+    'Do not ask operator to manually juggle multiple branches.',
+    'Do not create dashboards that only report toil back to the operator.',
+    'Prefer distilled next actions and approval-gated automation.',
+    'Keep merge authority with operator.',
+    'Preserve source-only PR hygiene.',
+  ];
+  const hasMissionIntelligence = missionIntelligence && Object.keys(missionIntelligence).length > 0;
+  const hasMissionState = missionState && Object.keys(missionState).length > 0;
+  const hasHarness = Boolean(missionState?.operatorReliefProjection?.harnessAgentProjection || missionState?.harnessAgentProjection);
+  return {
+    status: hasMissionIntelligence && hasHarness ? 'available' : (hasMissionState ? 'degraded' : 'unavailable'),
+    sourcesUsed,
+    projectNorthStar: 'Stephanos OS is being built into an operator-relief AI cockpit where the user remains the intent engine while Stephanos, Codex, OpenClaw, and assistant intelligence handle increasing amounts of planning, proof, orchestration, coding, and housework under approval gates.',
+    operatorWorkflowPreference: missionIntelligence.operatorWorkflowPreference || 'Operator prefers main-first/main-only simplicity for now. Avoid branch-management-heavy workflows until Stephanos/OpenClaw can handle branch creation, PR hygiene, merge/rebase/conflict management, and proof collection automatically.',
+    currentMissionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
+    missionIntelligenceSummary: missionIntelligence.missionIntelligenceStatus || 'unknown',
+    harnessAgentSummary: missionState?.operatorReliefProjection?.harnessAgentProjection?.harnessVersion || missionState?.harnessAgentProjection?.harnessVersion || 'unavailable',
+    protectedCanonSummary: missionIntelligence.protectedCanonSummary || 'Preserve launcher/runtime separation and protected command deck canon boundaries.',
+    currentProofState: missionIntelligence.proofRequiredSummary || proofState?.buildVerifyStatus || 'unknown',
+    currentBlockers: Array.isArray(missionIntelligence.currentBlockers) ? missionIntelligence.currentBlockers : [],
+    codexRole: 'Codex executes bounded implementation/proof work under approval gates; no autonomous execution or merge authority.',
+    openClawRole: 'OpenClaw supports orchestration/research/proof under approval gates without bypassing operator merge authority.',
+    nextBestAction: missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
+    forbiddenComplexityWarnings: warnings,
+    warningCount: warnings.length,
+  };
+}
+
 export function buildChatContextPack(input = {}) {
   const operatorMessage = String(input.operatorMessage || '').trim();
   const uiReality = input.uiRealityStatus || {};
@@ -229,6 +268,7 @@ export function buildChatContextPack(input = {}) {
     },
     operatorApprovalRequired: missionIntelligence.operatorDecisionRequired !== false,
   };
+  const projectAwareness = buildProjectAwarenessPack({ missionState, missionIntelligence, proofState: contextProviderProofState, operatorProfile: input.operatorProfile || {} });
 
   const compactSummary = {
     status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
@@ -248,6 +288,7 @@ export function buildChatContextPack(input = {}) {
     warningCount: warnings.length,
     warnings,
     missionIntelligence: boundedMissionIntelligenceContext,
+    projectAwareness,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
     contextProviderIdsRegistered,
     contextProviderRegistryStatus,
@@ -260,9 +301,10 @@ export function buildChatContextPack(input = {}) {
       ...(boundedMissionIntelligenceContext.missionSummary !== 'unknown' || boundedMissionIntelligenceContext.nextBestAction !== 'Review mission intelligence summary in Mission Brain.'
         ? ['missionIntelligence']
         : []),
-    ].filter((key) => key === 'missionIntelligence' || (input[key] && typeof input[key] === 'object')),
+      ...(projectAwareness.status !== 'unavailable' ? ['projectAwareness'] : []),
+    ].filter((key) => key === 'missionIntelligence' || key === 'projectAwareness' || (input[key] && typeof input[key] === 'object')),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
-    missionStateAtBuild: String(missionState.mode || missionState.status || 'unknown'),
+    missionStateAtBuild: boundedMissionIntelligenceContext.missionSummary !== 'unknown' ? 'known' : String(missionState.mode || missionState.status || 'unknown'),
     providerRouteSummaryAtBuild: `${String(routeTruth.routeKind || 'unknown')}:${String(routeTruth.executedProvider || providerTruth.executableProvider || 'unknown')}:${String(routeTruth.routeUsableState || 'unknown')}`,
     createdAt: new Date().toISOString(),
     requestId: String(input.requestId || input.commandId || '').trim() || null,
@@ -363,6 +405,7 @@ export function buildChatContextPack(input = {}) {
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
       operatorProfileLine: providerSummaries?.operatorProfile?.known === 'yes' ? `Operator profile indicates the operator's name is ${providerSummaries.operatorProfile.operatorName}. Use this if asked about the operator's name.` : 'Operator profile does not include a known operator name yet.',
       missionIntelligence: boundedMissionIntelligenceContext,
+      projectAwareness,
     },
     classifierDebug: {
       classifierFunctionSource: intent.classifierFunctionSource,

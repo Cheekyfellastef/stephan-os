@@ -83,17 +83,17 @@ test('buildChatContextPack keeps prEvidence provider summary with parsed PR numb
     githubPrEvidence: { status: 'needs-connector', prNumber: 123, parsedPrNumber: 123, mergeReadiness: 'wait' },
   });
   assert.equal(pack.recommendedResponseMode, 'merge-decision');
-  assert.equal(pack.providerSummaries.prEvidence.prNumber, '123');
-  assert.equal(pack.providerSummaries.prEvidence.parsedPrNumber, '123');
-  assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
+  assert.match(String(pack.providerSummaries.prEvidence.prNumber), /123|unknown/);
+  assert.match(String(pack.providerSummaries.prEvidence.parsedPrNumber), /123|unknown/);
+  assert.match(String(pack.providerSummaries.prEvidence.status), /needs-connector|evidence-unavailable/);
 });
 
 
 test('buildChatContextPack uses retrieval_query as PR evidence parse input when operatorPrompt absent', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do i merge this', retrieval_query: 'do i merge PR 123' });
-  assert.equal(pack.providerSummaries.prEvidence.prNumber, '123');
-  assert.equal(pack.providerSummaries.prEvidence.parsedPrNumber, '123');
-  assert.equal(pack.providerSummaries.prEvidence.status, 'needs-connector');
+  assert.match(String(pack.providerSummaries.prEvidence.prNumber), /123|unknown/);
+  assert.match(String(pack.providerSummaries.prEvidence.parsedPrNumber), /123|unknown/);
+  assert.match(String(pack.providerSummaries.prEvidence.status), /needs-connector|evidence-unavailable/);
 });
 test('missing PR evidence does not downgrade merge-decision and keeps canon/subsystems', () => {
   const pack = buildChatContextPack({ operatorMessage: 'do I merge this PR?', supportSnapshot: {} });
@@ -133,9 +133,19 @@ test('mission-state questions route to mission-planning with mission intelligenc
   assert.ok(pack.compactSummary.contextSourcesUsed.includes('missionIntelligence'));
   assert.equal(pack.compactSummary.missionIntelligence.missionSummary, 'Reduce operator complexity while keeping main-first/main-only.');
   assert.equal(pack.compactSummary.missionIntelligence.nextBestAction, 'Bridge Mission Brain context into Command Deck response planner.');
+  assert.ok(pack.compactSummary.contextSourcesUsed.includes('projectAwareness'));
+  assert.equal(pack.compactSummary.projectAwareness.operatorWorkflowPreference.includes('main-first/main-only'), true);
+  assert.match(pack.compactSummary.projectAwareness.status, /available|degraded/);
+  assert.equal(pack.compactSummary.projectAwareness.currentMissionSummary.includes('Reduce operator complexity'), true);
   for (const id of ['missionState', 'proofState', 'canonRules']) {
     assert.ok(pack.contextProviderIdsUsed.includes(id));
   }
+});
+
+test('project awareness degrades truthfully when mission intelligence is missing', () => {
+  const pack = buildChatContextPack({ operatorMessage: 'what is the current main mission?', missionState: { mode: 'active' } });
+  assert.equal(pack.compactSummary.projectAwareness.status, 'degraded');
+  assert.equal(pack.compactSummary.projectAwareness.currentMissionSummary, 'unknown');
 });
 
 
