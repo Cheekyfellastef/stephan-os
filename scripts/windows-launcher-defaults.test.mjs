@@ -14,6 +14,20 @@ test('launcher-root mode enables browser auto-open by default', async () => {
   );
 });
 
+test('launcher-root startup command uses canonical stephanos:ignite flow', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(
+    script,
+    /\$launcherRootCommand = 'npm run stephanos:ignite'/m,
+    'launcher-root must use canonical ignition entrypoint',
+  );
+  assert.doesNotMatch(
+    script,
+    /\$launcherRootCommand = 'npm run stephanos:serve'/m,
+    'launcher-root must not use direct serve entrypoint anymore',
+  );
+});
+
 test('launcher-root cmd default launch does not require explicit -AutoOpen switch', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_CMD, 'utf8');
   assert.doesNotMatch(
@@ -30,6 +44,11 @@ test('launcher-root cmd default launch does not require explicit -AutoOpen switc
 
 test('vite-dev localhost launch still uses explicit AutoOpen switch behavior', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(
+    script,
+    /Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl \$viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'/m,
+    'vite-dev mode must continue to use npm --prefix stephanos-ui run dev',
+  );
   assert.match(
     script,
     /elseif \(\$isLocalhostLaunch\) \{\s*\$AutoOpen\.IsPresent\s*\}/m,
