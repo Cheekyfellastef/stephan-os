@@ -1171,20 +1171,20 @@ function MissionConsoleTile({
             onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingCandidatePanel')}
           >
             <ul className="mission-console__status-list">
-              <li><strong>Recommended agent:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.recommendedAgent || 'unknown'}</li>
-              <li><strong>Task type:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.taskType || 'unknown'}</li>
-              <li><strong>Risk level:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.riskLevel || 'unknown'}</li>
-              <li><strong>Approval required:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.approvalRequired ? 'true' : 'false'}</li>
+              <li><strong>Recommended Worker:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.recommendedRoute || 'unknown'}</li>
+              <li><strong>Why:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.recommendedRouteReason || 'unknown'}</li>
+              <li><strong>Risk:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.riskLevel || 'unknown'}</li>
+              <li><strong>Operator Approval Needed:</strong> {operatorReliefProjection.agentWorkRoutingProjection?.operatorApprovalRequired || 'yes'}</li>
               <li><strong>Proof required:</strong> {(operatorReliefProjection.agentWorkRoutingProjection?.requiredProof || []).join(' · ') || 'none'}</li>
             </ul>
-            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyCodexPacket')}>
-              {codexPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Packet Copied' : codexPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Packet failed' : 'Copy Codex Packet'}
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection?.copyCodexWorkPacket || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyCodexPacket')}>
+              {codexPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Work Packet Copied' : codexPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Packet failed' : 'Copy Codex Work Packet'}
             </button>
             <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard((operatorReliefProjection.agentWorkRoutingProjection?.requiredProof || []).join('\n'), setOperatorChecklistCopyState, 'MissionConsoleTile.copyOperatorChecklist')}>
               {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Operator Proof Checklist Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Operator Proof Checklist failed' : 'Copy Operator Proof Checklist'}
             </button>
             <CollapsiblePanel panelId="missionConsoleWorkRoutingPacketPreviewPanel" title="Work Routing Packet Payload Preview" isOpen={workRoutingPayloadOpen} onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingPacketPreviewPanel')}>
-              <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection || {}, null, 2)}</pre>
+              <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection?.copyCodexWorkPacket || {}, null, 2)}</pre>
             </CollapsiblePanel>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleMissionApprovalQueuePanel" title="Mission Approval Queue" isOpen={uiLayout.missionConsoleMissionApprovalQueuePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMissionApprovalQueuePanel')}>

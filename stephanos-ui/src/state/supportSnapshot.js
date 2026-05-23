@@ -944,15 +944,23 @@ export function buildSupportSnapshot({
   const inferredPromptSources = executionMetadata?.project_awareness_sources_used || projectAwarenessProjection.projectAwarenessSourcesUsed || 'none';
   const missionPlanningModeActive = (chatContextResponseMode === 'mission-planning')
     || (responsePlannerResponseMode === 'mission-planning');
-  const projectAwarenessPromptInjected = executionMetadata?.project_awareness_prompt_injected
-    || (hasPromptInjectionMarker ? 'yes' : 'no');
-  const projectAwarenessPromptBlockLength = Number(executionMetadata?.project_awareness_prompt_block_length ?? 0) > 0
+  const rawProjectAwarenessPromptInjected = asText(executionMetadata?.project_awareness_prompt_injected, 'no');
+  const rawProjectAwarenessPromptBlockLength = Number(executionMetadata?.project_awareness_prompt_block_length ?? 0) > 0
     ? Number(executionMetadata?.project_awareness_prompt_block_length ?? 0)
+    : 0;
+  const promptMarkerAndBlockDetected = hasPromptInjectionMarker && rawProjectAwarenessPromptBlockLength > 0;
+  const projectAwarenessPromptInjected = promptMarkerAndBlockDetected
+    ? 'yes'
+    : (rawProjectAwarenessPromptInjected === 'yes' ? 'yes' : (hasPromptInjectionMarker ? 'yes' : 'no'));
+  const projectAwarenessPromptBlockLength = rawProjectAwarenessPromptBlockLength > 0
+    ? rawProjectAwarenessPromptBlockLength
     : (hasPromptInjectionMarker ? promptInjectionMarker.length : 0);
-  const projectAwarenessPromptSources = executionMetadata?.project_awareness_prompt_sources
-    || (hasPromptInjectionMarker ? inferredPromptSources : 'none');
-  const missionPlanningPromptContextUsed = executionMetadata?.mission_planning_prompt_context_used
-    || ((hasPromptInjectionMarker && missionPlanningModeActive) ? 'yes' : 'no');
+  const projectAwarenessPromptSources = promptMarkerAndBlockDetected
+    ? (asText(executionMetadata?.project_awareness_prompt_sources, '') || asText(inferredPromptSources, 'projectAwareness'))
+    : (executionMetadata?.project_awareness_prompt_sources || (hasPromptInjectionMarker ? inferredPromptSources : 'none'));
+  const missionPlanningPromptContextUsed = promptMarkerAndBlockDetected
+    ? 'yes'
+    : (executionMetadata?.mission_planning_prompt_context_used || ((hasPromptInjectionMarker && missionPlanningModeActive) ? 'yes' : 'no'));
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
