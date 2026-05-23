@@ -1107,7 +1107,7 @@ function MissionConsoleTile({
           </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleHarnessAgentPanel"
-            title="Harness Agent V1.1"
+            title={`Harness Agent ${operatorReliefProjection.harnessVersion?.toUpperCase?.() || 'V1.2'}`}
             isOpen={uiLayout.missionConsoleHarnessAgentPanel !== false}
             onToggle={() => dispatchPanelToggle('missionConsoleHarnessAgentPanel')}
           >
@@ -1121,6 +1121,7 @@ function MissionConsoleTile({
             </ul>
             <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify({
               missionSummary: operatorReliefProjection.harnessAgentProjection?.currentMissionSummary || '',
+              harnessVersion: operatorReliefProjection.harnessAgentProjection?.harnessVersion || operatorReliefProjection.harnessVersion || 'v1.2',
               allowedFiles: operatorReliefProjection.harnessAgentProjection?.allowedFileScopes || [],
               forbiddenFiles: operatorReliefProjection.harnessAgentProjection?.forbiddenFiles || operatorReliefProjection.harnessAgentProjection?.forbiddenFileScopes || [],
               protectedCanonClauses: operatorReliefProjection.harnessAgentProjection?.protectedCanonClauses || [],

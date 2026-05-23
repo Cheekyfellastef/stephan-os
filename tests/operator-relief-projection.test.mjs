@@ -135,6 +135,16 @@ test('Layer 7 queue emits approve-merge-review when browser proof passed and no 
 
 
 
+
+test('Harness Agent V1.2 version is emitted in projection and copy contract payload fields', () => {
+  const harness = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(harness.harnessVersion, 'v1.2');
+  assert.equal(harness.harnessAgentProjection?.harnessVersion, 'v1.2');
+});
+
 test('Harness Agent V1.2 applies conservative canon fallback for default idle high-risk contract', () => {
   const harness = deriveOperatorReliefProjection({
     intentToBuildModel: { missionSpec: { objective: 'Awaiting operator Intent-to-Build input.' } },
@@ -158,7 +168,7 @@ test('Harness Agent V1.2 applies conservative fallback for high-risk unknown tas
   assert.equal(harness.protectedSubsystems.includes('IGNITION'), true);
   assert.equal(harness.protectedSubsystems.includes('PR_HYGIENE'), true);
 });
-test('Harness Agent V1.1 hydrates protected canon clauses by subsystem and risk', () => {
+test('Harness Agent V1.2 hydrates protected canon clauses by subsystem and risk', () => {
   const commandDeck = deriveOperatorReliefProjection({
     prEvidenceModel: { changedFiles: ['stephanos-ui/src/hooks/useAIConsole.test.mjs'] },
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
