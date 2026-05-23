@@ -78,12 +78,21 @@ function deriveProtectedSubsystems(changedFiles = []) {
 function deriveProtectedCanonClauses({ riskLevel = 'low', changedFiles = [] } = {}) {
   const subsystems = deriveProtectedSubsystems(changedFiles);
   const clauseKeys = new Set(subsystems);
-  if (riskLevel === 'high' && clauseKeys.size === 1 && clauseKeys.has('PR_HYGIENE')) {
-    ['MISSION_BRAIN', 'PROVIDER_ROUTING'].forEach((k) => clauseKeys.add(k));
+  const hasUnknownSubsystem = clauseKeys.size === 0 || (clauseKeys.size === 1 && clauseKeys.has('PR_HYGIENE'));
+  const unknownBuildOrchestrationContext = asList(changedFiles).length === 0;
+
+  if (riskLevel === 'high' && hasUnknownSubsystem) {
+    ['PR_HYGIENE', 'MISSION_BRAIN', 'COMMAND_DECK', 'IGNITION'].forEach((k) => clauseKeys.add(k));
+    if (unknownBuildOrchestrationContext) ['PROVIDER_ROUTING', 'MEMORY_RETRIEVAL'].forEach((k) => clauseKeys.add(k));
   }
+
   const protectedCanonClauses = Array.from(clauseKeys).flatMap((k) => PROTECTED_CANON_CLAUSE_CATALOG[k] || []);
-  const protectedCanonWarning = protectedCanonClauses.length === 0 ? 'Protected canon clauses are empty; operator review required before high-risk execution.' : '';
-  return { protectedCanonClauses, protectedSubsystems: Array.from(clauseKeys), protectedCanonWarning };
+  const fallbackApplied = riskLevel === 'high' && hasUnknownSubsystem && protectedCanonClauses.length > 0;
+  const protectedCanonWarning = fallbackApplied
+    ? 'Affected subsystem unknown; conservative protected canon fallback applied.'
+    : (protectedCanonClauses.length === 0 ? 'Protected canon clauses are empty; operator review required before high-risk execution.' : '');
+
+  return { protectedCanonClauses, protectedSubsystems: Array.from(clauseKeys), protectedCanonWarning, fallbackApplied, hasUnknownSubsystem };
 }
 
 function truncateText(value, max = MAX_GAP_REASON_LENGTH) {
@@ -292,7 +301,7 @@ function buildTopProblemsProjection({ missionBrainNextAction = {}, supportSnapsh
 
 function deriveHarnessRiskLevel(changedFiles = []) {
   const files = asList(changedFiles).map((file) => String(file).toLowerCase());
-  if (files.length === 0) return 'low';
+  if (files.length === 0) return 'high';
   const hasHigh = files.some((file) => /commanddeck|aiconsole|answerdelivery|answerdeliverytruth|useaiconsole|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory|session/.test(file));
   if (hasHigh) return 'high';
   const hasMedium = files.some((file) => /missionconsole|mission-console|stephanos-ui\/src\/components|scripts\/.*ignite|routing|metadata/.test(file));
@@ -394,7 +403,7 @@ export function deriveOperatorReliefProjection(models = {}) {
   const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
   const harnessRiskLevel = deriveHarnessRiskLevel(changedFiles);
   const protectedCanonTouched = changedFiles.filter((file) => /commanddeck|aiconsole|answerdelivery|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory|operatorrelief|mission-console|harness/i.test(file));
-  const { protectedCanonClauses, protectedSubsystems, protectedCanonWarning } = deriveProtectedCanonClauses({ riskLevel: harnessRiskLevel, changedFiles });
+  const { protectedCanonClauses, protectedSubsystems, protectedCanonWarning, fallbackApplied, hasUnknownSubsystem } = deriveProtectedCanonClauses({ riskLevel: harnessRiskLevel, changedFiles });
   const protectedCanonAtRisk = protectedSubsystems.map((k) => k.toLowerCase());
   const browserProofRequired = browserRequired && changedFiles.some((file) => file.startsWith('stephanos-ui/'));
   const harnessAgentProjection = {
@@ -416,10 +425,14 @@ export function deriveOperatorReliefProjection(models = {}) {
     forbiddenFiles: ['apps/stephanos/dist/**', 'runtime/**', 'node_modules/**', 'secrets/**', 'root data/**'],
     definitionOfDone: ['preserve-canon-truth-boundaries', 'tests-build-verify-pr-clean-pass', 'copy-contract-is-actionable'],
     finalReportRequirements: ['audit-findings', 'files-changed', 'clause-catalogue', 'risk-to-clause-rules', 'example-contract-payload', 'tests-and-check-results', 'browser-proof-status', 'next-operator-action'],
-    mergeRecommendation: (protectedCanonWarning || harnessRiskLevel === 'high') ? 'hold-for-operator-review' : verificationReturnIntake.mergeRecommendation,
+    mergeRecommendation: (harnessRiskLevel === 'high' && (hasUnknownSubsystem || protectedCanonClauses.length === 0 || verificationReturnIntake.missingEvidence.length > 0 || browserProofRequired))
+      ? 'hold-for-operator-review'
+      : ((protectedCanonWarning || harnessRiskLevel === 'high') ? 'hold-for-operator-review' : verificationReturnIntake.mergeRecommendation),
     repairPromptRequired: evidenceGaps.length > 0,
     repairPromptCandidate: repairPromptBody,
-    nextOperatorAction: protectedCanonWarning ? 'Protected canon clauses need review before merge recommendation.' : (missionApprovalQueue.topRecommendation?.title || 'Review harness contract.'),
+    nextOperatorAction: (harnessRiskLevel === 'high' && hasUnknownSubsystem)
+      ? 'Review conservative canon fallback, provide/approve mission scope, then proceed.'
+      : (protectedCanonWarning ? 'Protected canon clauses need review before merge recommendation.' : (missionApprovalQueue.topRecommendation?.title || 'Review harness contract.')),
   };
 
   return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection };

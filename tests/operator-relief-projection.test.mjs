@@ -133,6 +133,31 @@ test('Layer 7 queue emits approve-merge-review when browser proof passed and no 
 });
 
 
+
+
+test('Harness Agent V1.2 applies conservative canon fallback for default idle high-risk contract', () => {
+  const harness = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Awaiting operator Intent-to-Build input.' } },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: false, verifyRun: false } } },
+  }).harnessAgentProjection;
+  assert.equal(harness.mergeRecommendation, 'hold-for-operator-review');
+  assert.equal(harness.protectedCanonClauses.length > 0, true);
+  assert.equal(harness.protectedCanonWarning, 'Affected subsystem unknown; conservative protected canon fallback applied.');
+  assert.equal(harness.protectedCanonClauses.some((c) => c.includes('source-only PR rule')), true);
+  assert.equal(harness.protectedCanonClauses.some((c) => c.includes('read-only/adjudication only')), true);
+  assert.equal(harness.nextOperatorAction.includes('Review conservative canon fallback'), true);
+});
+
+test('Harness Agent V1.2 applies conservative fallback for high-risk unknown task and preserves key protected surfaces', () => {
+  const harness = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['scripts/guard-pr-clean-runner.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  }).harnessAgentProjection;
+  assert.equal(harness.protectedCanonClauses.length > 0, true);
+  assert.equal(harness.protectedSubsystems.includes('COMMAND_DECK'), true);
+  assert.equal(harness.protectedSubsystems.includes('IGNITION'), true);
+  assert.equal(harness.protectedSubsystems.includes('PR_HYGIENE'), true);
+});
 test('Harness Agent V1.1 hydrates protected canon clauses by subsystem and risk', () => {
   const commandDeck = deriveOperatorReliefProjection({
     prEvidenceModel: { changedFiles: ['stephanos-ui/src/hooks/useAIConsole.test.mjs'] },
@@ -169,4 +194,6 @@ test('Harness Agent V1.1 hydrates protected canon clauses by subsystem and risk'
   const docsOnly = deriveOperatorReliefProjection({ prEvidenceModel: { changedFiles: ['docs/README.md'] } }).harnessAgentProjection;
   assert.equal(docsOnly.protectedCanonClauses.length > 0, true);
   assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('source-only PR rule')), true);
+  assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('Answer Delivery Contract')), false);
+  assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('Housekeeper preflight')), false);
 });
