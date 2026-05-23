@@ -1077,9 +1077,28 @@ function MissionConsoleTile({
             onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefSummaryPanel')}
           >
           <h5>Current Mission Summary</h5>
-          <p><strong>{operatorReliefProjection.mission.title}</strong></p>
-          <p>{operatorReliefProjection.mission.objective}</p>
-          <p><strong>Phase:</strong> {operatorReliefProjection.mission.currentPhase}</p>
+          <ul className="mission-console__status-list">
+            <li><strong>Current Mission:</strong> {operatorReliefProjection.missionIntelligenceSummary?.currentMissionSummary || operatorReliefProjection.mission.objective}</li>
+            <li><strong>Next Best Action:</strong> {operatorReliefProjection.missionIntelligenceSummary?.nextBestAction || operatorReliefProjection.missionBrainNextAction?.nextBestAction || 'Review mission evidence'}</li>
+            <li><strong>Can Codex Help?</strong> {operatorReliefProjection.missionIntelligenceSummary?.codexReady || 'unknown'}</li>
+            <li><strong>Can OpenClaw Help?</strong> {operatorReliefProjection.missionIntelligenceSummary?.openClawReady || 'unknown'}</li>
+            <li><strong>Operator Decision Needed:</strong> {operatorReliefProjection.missionIntelligenceSummary?.operatorDecisionRequired === false ? 'no' : 'yes'}</li>
+          </ul>
+          <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify({
+            missionIntelligenceSummary: operatorReliefProjection.missionIntelligenceSummary || {},
+            harnessContractSummary: {
+              harnessVersion: operatorReliefProjection.harnessAgentProjection?.harnessVersion || operatorReliefProjection.harnessVersion || 'v1.2',
+              mergeRecommendation: operatorReliefProjection.harnessAgentProjection?.mergeRecommendation || 'unknown',
+            },
+            nextAction: operatorReliefProjection.missionIntelligenceSummary?.nextBestAction || operatorReliefProjection.nextBestAction?.label || 'Review mission evidence',
+            allowedScopes: operatorReliefProjection.harnessAgentProjection?.allowedFileScopes || [],
+            forbiddenScopes: operatorReliefProjection.harnessAgentProjection?.forbiddenFileScopes || operatorReliefProjection.harnessAgentProjection?.forbiddenFiles || [],
+            proofRequirements: operatorReliefProjection.missionIntelligenceSummary?.proofRequiredSummary || 'targeted tests + build/verify + pr-clean',
+            currentBlockers: operatorReliefProjection.missionIntelligenceSummary?.currentBlockers || [],
+            finalReportRequirements: operatorReliefProjection.harnessAgentProjection?.finalReportRequirements || [],
+          }, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyMissionContext')}>
+            {missionHandoffCopyState === COPY_STATE.SUCCESS ? 'Mission Context Copied' : missionHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Mission Context failed' : 'Copy Mission Context'}
+          </button>
           </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleMissionBrainPanel"

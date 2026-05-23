@@ -209,6 +209,24 @@ export function buildChatContextPack(input = {}) {
   const contextProviderRegistryStatus = providerSnapshot.contextProviderRegistryStatus;
   const contextProviderCanonLinks = providerSnapshot.contextProviderCanonLinks;
 
+  const missionIntelligence = missionState?.operatorReliefProjection?.missionIntelligenceSummary
+    || missionState?.missionIntelligenceSummary
+    || {};
+  const boundedMissionIntelligenceContext = {
+    missionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
+    nextBestAction: missionIntelligence.nextBestAction || 'Review mission intelligence summary in Mission Brain.',
+    harnessAgentRiskLevel: missionState?.operatorReliefProjection?.missionBrainNextAction?.riskLevel || 'unknown',
+    affectedSubsystems: Array.isArray(input.supportSnapshot?.affectedSubsystems) ? input.supportSnapshot.affectedSubsystems : inferredSubsystems,
+    protectedCanonSummary: missionIntelligence.protectedCanonSummary || 'Preserve protected canon boundaries.',
+    proofStatus: missionIntelligence.proofRequiredSummary || 'targeted evidence required',
+    blockers: Array.isArray(missionIntelligence.currentBlockers) ? missionIntelligence.currentBlockers : [],
+    codexOpenClawReadiness: {
+      codexReady: missionIntelligence.codexReady || 'unknown',
+      openClawReady: missionIntelligence.openClawReady || 'unknown',
+    },
+    operatorApprovalRequired: missionIntelligence.operatorDecisionRequired !== false,
+  };
+
   const compactSummary = {
     status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
     version: CHAT_CONTEXT_VERSION,
@@ -226,6 +244,7 @@ export function buildChatContextPack(input = {}) {
           : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'))),
     warningCount: warnings.length,
     warnings,
+    missionIntelligence: boundedMissionIntelligenceContext,
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
     contextProviderIdsRegistered,
     contextProviderRegistryStatus,
@@ -335,6 +354,7 @@ export function buildChatContextPack(input = {}) {
       contextProviderCanonLinks,
       proofRequirements: uiTask ? 'ui-reality+source-truth required' : 'standard',
       operatorProfileLine: providerSummaries?.operatorProfile?.known === 'yes' ? `Operator profile indicates the operator's name is ${providerSummaries.operatorProfile.operatorName}. Use this if asked about the operator's name.` : 'Operator profile does not include a known operator name yet.',
+      missionIntelligence: boundedMissionIntelligenceContext,
     },
     classifierDebug: {
       classifierFunctionSource: intent.classifierFunctionSource,

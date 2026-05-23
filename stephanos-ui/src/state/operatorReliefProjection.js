@@ -408,6 +408,26 @@ export function deriveOperatorReliefProjection(models = {}) {
   const { protectedCanonClauses, protectedSubsystems, protectedCanonWarning, fallbackApplied, hasUnknownSubsystem } = deriveProtectedCanonClauses({ riskLevel: harnessRiskLevel, changedFiles });
   const protectedCanonAtRisk = protectedSubsystems.map((k) => k.toLowerCase());
   const browserProofRequired = browserRequired && changedFiles.some((file) => file.startsWith('stephanos-ui/'));
+
+  const missionIntelligenceSummary = {
+    missionIntelligenceStatus: missionState,
+    currentMissionSummary: `${missionHandoff.title}: ${missionObjective}`,
+    currentBlockers: evidenceGaps.map((gap) => gap.label),
+    nextBestAction: nextBestAction.label,
+    operatorDecisionRequired: true,
+    codexReady: evidenceGaps.length === 0 ? 'yes' : 'no',
+    openClawReady: evidenceGaps.length === 0 ? 'yes' : 'no',
+    harnessContractAvailable: true,
+    protectedCanonSummary: protectedCanonClauses.join(' | ') || 'No additional protected canon clauses derived.',
+    proofRequiredSummary: missionHandoff.browserProofChecklist.required ? 'browser-proof + targeted tests + build/verify + pr-clean' : 'targeted tests + build/verify + pr-clean',
+    relevantPaneTarget: 'missionConsoleOperatorReliefPanel',
+    commandDeckContextAvailable: true,
+    aiContextWarnings: [
+      ...(runtimeEvidence.warnings || []),
+      ...(verificationReturnIntake.missingEvidence || []).slice(0, 2),
+    ].filter(Boolean),
+  };
+
   const harnessAgentProjection = {
     harnessVersion: HARNESS_AGENT_VERSION,
     harnessStatus: harnessRiskLevel === 'high' ? 'blocked-until-proof' : 'read-only-advisory',
@@ -439,5 +459,5 @@ export function deriveOperatorReliefProjection(models = {}) {
   };
 
   return { status: missionState,
-    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection };
+    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary };
 }

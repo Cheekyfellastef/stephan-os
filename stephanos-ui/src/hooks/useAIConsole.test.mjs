@@ -317,3 +317,12 @@ test('operator explanation deterministic path is eligible from classified respon
   assert.match(source, /const operatorExplanationDeterministicEligible = operatorExplanationModeClassified \|\| explanationIntent\.matched;/);
   assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && operatorExplanationDeterministicEligible\)/);
 });
+
+
+test('chat context pack includes bounded mission intelligence context for project/build questions', async () => {
+  const source = await fs.readFile(path.join(new URL('..', import.meta.url).pathname, 'state/chatContextOrchestrator.js'), 'utf8');
+  assert.match(source, /missionIntelligence:/);
+  assert.match(source, /boundedMissionIntelligenceContext/);
+  assert.match(source, /operatorApprovalRequired/);
+  assert.match(source, /codexOpenClawReadiness/);
+});

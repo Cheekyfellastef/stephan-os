@@ -31,6 +31,11 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Required proof before approval:/);
   assert.match(source, /Copy Action Packet/);
   assert.match(source, /Copy Mission Handoff Update/);
+  assert.match(source, /Operator Decision Needed:/);
+  assert.match(source, /Can OpenClaw Help\?/);
+  assert.match(source, /Can Codex Help\?/);
+  assert.match(source, /Current Mission:/);
+  assert.match(source, /Copy Mission Context/);
   assert.match(source, /Copy Codex Packet/);
   assert.match(source, /Copy Operator Proof Checklist/);
   assert.match(source, /operator_relief\.browser_proof_missing/);
