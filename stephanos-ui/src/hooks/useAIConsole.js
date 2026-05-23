@@ -44,6 +44,7 @@ import { buildChatContinuitySummary, readChatContinuity, persistChatContinuity, 
 import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorProfile } from '../state/operatorProfileMemory.js';
 import { buildActiveMissionState, persistActiveMissionState, readActiveMissionState } from '../state/activeMissionState.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachPrEvidenceToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
+import { buildAnswerDeliveryTruth } from '../state/answerDeliveryTruth.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -1825,6 +1826,7 @@ function createOperatorExplanationDeterministicResult({
           operator_explanation_mode: projection?.mode || 'compact',
           operator_explanation_verdict: projection?.verdict || 'unknown',
           operator_explanation_triggered: 'yes',
+          operator_explanation_projection_used: 'yes',
         },
       },
       raw_input: prompt,
@@ -3991,8 +3993,30 @@ export function useAIConsole() {
       finalExecutionMetadata.direct_answer_submit_allowed = 'yes';
       finalExecutionMetadata.command_pipeline_last_user_message_recorded = userMessageRecordAttempted === 'yes' && userMessageRecordError === 'none' ? 'yes' : 'no';
       const finalAssistantAnswerVisibleCandidate = data.success && String(effectiveOutputText || '').trim().length > 0 && streamFinalizationMissing !== true;
-      finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = finalAssistantAnswerVisibleCandidate ? 'yes' : 'no';
-      finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = finalAssistantAnswerVisibleCandidate ? 'yes' : 'no';
+      const answerDeliveryTruth = buildAnswerDeliveryTruth({
+        finalAssistantMessageId: entry?.id || '',
+        finalAssistantText: effectiveOutputText,
+        providerExecutionStatus: finalExecutionMetadata.command_envelope_execution_status || finalExecutionMetadata.execution_status || 'unknown',
+        answerPaneRendered: finalAssistantAnswerVisibleCandidate,
+        responseMode: finalExecutionMetadata.chat_context_response_mode || 'direct-answer',
+        operatorExplanationIntentDetected: (finalExecutionMetadata.chat_context_operator_explanation_intent_detected || 'no') === 'yes',
+        operatorExplanationProjectionUsed: (finalExecutionMetadata.operator_explanation_projection_used || finalExecutionMetadata.operator_explanation_triggered || 'no') === 'yes',
+        operatorExplanationAnswerGenerated: (finalExecutionMetadata.operator_explanation_triggered || 'no') === 'yes',
+        executionSuccess: data.success === true,
+      });
+      Object.assign(finalExecutionMetadata, {
+        answer_delivery_status: answerDeliveryTruth.answerDeliveryStatus,
+        answer_delivery_generated: answerDeliveryTruth.answerDeliveryGenerated,
+        answer_delivery_rendered: answerDeliveryTruth.answerDeliveryRendered,
+        final_assistant_message_present: answerDeliveryTruth.finalAssistantMessagePresent,
+        final_assistant_message_id: answerDeliveryTruth.finalAssistantMessageId,
+        final_assistant_text_length: answerDeliveryTruth.finalAssistantTextLength,
+        answer_delivery_failure_reason: answerDeliveryTruth.answerDeliveryFailureReason,
+        answer_delivery_contradiction_detected: answerDeliveryTruth.answerDeliveryContradictionDetected,
+        answer_delivery_next_action: answerDeliveryTruth.answerDeliveryNextAction,
+      });
+      finalExecutionMetadata.command_pipeline_last_assistant_answer_generated = answerDeliveryTruth.answerDeliveryGenerated;
+      finalExecutionMetadata.command_pipeline_last_answer_pane_rendered = answerDeliveryTruth.answerDeliveryRendered;
       finalExecutionMetadata.command_pipeline_last_failure_reason = data.success ? 'none' : (data.error_code || data.error || 'unknown');
       finalExecutionMetadata.command_pipeline_last_finalization_path = lastFinalizationPath;
       finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
