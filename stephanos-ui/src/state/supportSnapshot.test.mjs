@@ -2384,6 +2384,38 @@ test('support snapshot prints project awareness fields from final execution meta
   assert.match(snapshot, /Project Awareness OpenClaw Role: OpenClaw orchestrates approval-gated execution through shared truth contracts\./);
 });
 
+test('support snapshot normalizes live mission-planning contradiction when project awareness fields are populated', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        project_awareness_pack_status: 'unavailable',
+        project_awareness_sources_used: 'proofState|canonRules',
+        project_awareness_next_best_action: 'preserved-next-action',
+        project_awareness_operator_workflow_preference: 'preserved-workflow',
+        project_awareness_codex_role: 'preserved-codex-role',
+        project_awareness_openclaw_role: 'preserved-openclaw-role',
+        chat_context_intent_classifier_matched_rule: 'mission-planning',
+        command_envelope_response_mode: 'mission-planning',
+        response_planner_response_mode: 'mission-planning',
+        chat_context_response_mode: 'mission-planning',
+        chat_context_pack_status: 'unavailable',
+        chat_context_sources_used: 'proofState|canonRules',
+        chat_context_provider_ids_used: 'proofState|canonRules|missionState',
+        chat_context_mission_state: 'unknown',
+      },
+    },
+  });
+  assert.match(snapshot, /Project Awareness Pack Status: degraded/);
+  assert.match(snapshot, /Project Awareness Sources Used: proofState\|canonRules/);
+  assert.match(snapshot, /Project Awareness Next Best Action: preserved-next-action/);
+  assert.match(snapshot, /Project Awareness Operator Workflow Preference: preserved-workflow/);
+  assert.match(snapshot, /Project Awareness Codex Role: preserved-codex-role/);
+  assert.match(snapshot, /Project Awareness OpenClaw Role: preserved-openclaw-role/);
+  assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
+  assert.match(snapshot, /Chat Context Sources Used: proofState\|canonRules\|projectAwareness|Chat Context Sources Used: proofState\|projectAwareness\|canonRules|Chat Context Sources Used: canonRules\|proofState\|projectAwareness|Chat Context Sources Used: canonRules\|projectAwareness\|proofState|Chat Context Sources Used: projectAwareness\|proofState\|canonRules|Chat Context Sources Used: projectAwareness\|canonRules\|proofState/);
+  assert.doesNotMatch(snapshot, /Chat Context Mission State: unknown/);
+});
+
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
