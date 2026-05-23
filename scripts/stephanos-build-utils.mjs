@@ -17,8 +17,19 @@ function resolveFsPath(...segments) {
 
 function readFileSyncWithDebug(filePath, options) {
   const normalizedPath = path.normalize(filePath);
-  console.log(`[stephanos debug] Reading filesystem path: ${normalizedPath}`);
+  if (isStephanosDebugEnabled()) {
+    console.log(`[stephanos debug] Reading filesystem path: ${normalizedPath}`);
+  }
   return readFileSync(normalizedPath, options);
+}
+
+export function isStephanosDebugEnabled({
+  argv = process.argv.slice(2),
+  env = process.env,
+} = {}) {
+  const hasDebugFlag = Array.isArray(argv) && argv.includes('--debug');
+  const debugEnv = String(env?.STEPHANOS_DEBUG || '').trim();
+  return hasDebugFlag || debugEnv === '1';
 }
 
 const buildUtilsDir = path.dirname(fileURLToPath(import.meta.url));
