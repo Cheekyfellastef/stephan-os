@@ -1107,7 +1107,7 @@ function MissionConsoleTile({
           </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleHarnessAgentPanel"
-            title="Harness Agent V1"
+            title="Harness Agent V1.1"
             isOpen={uiLayout.missionConsoleHarnessAgentPanel !== false}
             onToggle={() => dispatchPanelToggle('missionConsoleHarnessAgentPanel')}
           >
@@ -1122,11 +1122,14 @@ function MissionConsoleTile({
             <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify({
               missionSummary: operatorReliefProjection.harnessAgentProjection?.currentMissionSummary || '',
               allowedFiles: operatorReliefProjection.harnessAgentProjection?.allowedFileScopes || [],
-              forbiddenFiles: operatorReliefProjection.harnessAgentProjection?.forbiddenFileScopes || [],
-              protectedCanonClauses: operatorReliefProjection.harnessAgentProjection?.protectedCanonAtRisk || [],
+              forbiddenFiles: operatorReliefProjection.harnessAgentProjection?.forbiddenFiles || operatorReliefProjection.harnessAgentProjection?.forbiddenFileScopes || [],
+              protectedCanonClauses: operatorReliefProjection.harnessAgentProjection?.protectedCanonClauses || [],
+              riskLevel: operatorReliefProjection.harnessAgentProjection?.harnessStatus === 'blocked-until-proof' ? 'high' : (operatorReliefProjection.missionBrainNextAction?.riskLevel || 'medium'),
+              affectedSubsystems: operatorReliefProjection.harnessAgentProjection?.protectedSubsystems || [],
+              protectedCanonWarning: operatorReliefProjection.harnessAgentProjection?.protectedCanonWarning || '',
               requiredTests: operatorReliefProjection.harnessAgentProjection?.requiredTests || [],
-              definitionOfDone: 'Preserve canon/truth boundaries, include required checks/proof, keep source-only PR clean, no hidden side effects.',
-              finalReportRequirements: ['audit findings', 'files changed', 'risk rules', 'tests', 'build/verify/pr-clean', 'staging notes', 'next operator action'],
+              definitionOfDone: operatorReliefProjection.harnessAgentProjection?.definitionOfDone || ['Preserve canon/truth boundaries and proof.'],
+              finalReportRequirements: operatorReliefProjection.harnessAgentProjection?.finalReportRequirements || ['audit findings', 'files changed', 'tests'],
             }, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyHarnessContract')}>
               {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Harness Contract Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Harness Contract failed' : 'Copy Harness Contract'}
             </button>
