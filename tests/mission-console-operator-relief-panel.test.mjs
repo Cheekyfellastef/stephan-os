@@ -37,6 +37,10 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Current Mission:/);
   assert.match(source, /Copy Mission Context/);
   assert.match(source, /Copy Codex Packet/);
+  assert.match(source, /copyVerificationPacket/);
+  assert.match(source, /Copy Codex Implementation Packet/);
+  assert.match(source, /Copy OpenClaw Research Packet/);
+  assert.match(source, /Co-Builder Loop V1/);
   assert.match(source, /Copy Operator Proof Checklist/);
   assert.match(source, /operator_relief\.browser_proof_missing/);
 });

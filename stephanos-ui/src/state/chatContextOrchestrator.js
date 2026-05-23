@@ -255,6 +255,7 @@ export function buildChatContextPack(input = {}) {
     || missionState?.missionIntelligenceSummary
     || {};
   const agentWorkRouting = missionState?.operatorReliefProjection?.agentWorkRoutingProjection || missionState?.agentWorkRoutingProjection || {};
+  const coBuilderLoop = missionState?.operatorReliefProjection?.coBuilderLoopProjection || missionState?.coBuilderLoopProjection || {};
   const boundedMissionIntelligenceContext = {
     missionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
     nextBestAction: missionIntelligence.nextBestAction || 'Review mission intelligence summary in Mission Brain.',
@@ -278,6 +279,25 @@ export function buildChatContextPack(input = {}) {
       operatorApprovalRequired: agentWorkRouting.operatorApprovalRequired || 'yes',
       requiredProof: Array.isArray(agentWorkRouting.requiredProof) ? agentWorkRouting.requiredProof : [],
       nextOperatorAction: agentWorkRouting.nextOperatorAction || 'Review mission routing summary and hold or approve bounded packet.',
+    } : undefined,
+    coBuilderLoop: missionPlanningTask ? {
+      coBuilderStatus: coBuilderLoop.coBuilderStatus || 'inactive',
+      loopRound: coBuilderLoop.loopRound || 1,
+      maxRounds: coBuilderLoop.maxRounds || 3,
+      recommendedLead: coBuilderLoop.recommendedLead || 'hold',
+      recommendedNextWorker: coBuilderLoop.recommendedNextWorker || 'hold',
+      recommendedNextAction: coBuilderLoop.recommendedNextAction || 'Review Co-Builder Loop summary.',
+      operatorApprovalRequired: coBuilderLoop.operatorApprovalRequired || 'yes',
+      packetAvailability: {
+        openClawResearch: coBuilderLoop.openClawResearchPacketAvailable || 'no',
+        codexImplementation: coBuilderLoop.codexPacketAvailable || 'no',
+        verification: coBuilderLoop.verificationPacketAvailable || 'no',
+        repair: coBuilderLoop.repairPacketAvailable || 'no',
+        openClawExecution: coBuilderLoop.openClawExecutionPacketAvailable || 'no',
+      },
+      blockers: Array.isArray(coBuilderLoop.blockers) ? coBuilderLoop.blockers : [],
+      requiredProof: Array.isArray(coBuilderLoop.requiredProof) ? coBuilderLoop.requiredProof : [],
+      finalOperatorDecisionNeeded: coBuilderLoop.finalOperatorDecisionNeeded || 'approve | hold | copy packet',
     } : undefined,
   };
   const projectAwareness = buildProjectAwarenessPack({ missionState, missionIntelligence, proofState: contextProviderProofState, operatorProfile: input.operatorProfile || {} });
