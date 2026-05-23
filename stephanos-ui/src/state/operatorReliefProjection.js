@@ -214,6 +214,16 @@ function buildTopProblemsProjection({ missionBrainNextAction = {}, supportSnapsh
   return problems.slice(0, 3);
 }
 
+function deriveHarnessRiskLevel(changedFiles = []) {
+  const files = asList(changedFiles).map((file) => String(file).toLowerCase());
+  if (files.length === 0) return 'low';
+  const hasHigh = files.some((file) => /commanddeck|aiconsole|answerdelivery|answerdeliverytruth|useaiconsole|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory|session/.test(file));
+  if (hasHigh) return 'high';
+  const hasMedium = files.some((file) => /missionconsole|mission-console|stephanos-ui\/src\/components|scripts\/.*ignite|routing|metadata/.test(file));
+  if (hasMedium) return 'medium';
+  return 'low';
+}
+
 export function deriveOperatorReliefProjection(models = {}) {
   const { intentToBuildModel = {}, taskFinisherModel = {}, missionEvidenceLedgerModel = {}, prEvidenceModel = {}, proofOfDoneModel = {}, operatorDecisionQueue = {}, memoryLibrarianQueue = {}, supportSnapshot = {} } = models;
   const missionSpec = intentToBuildModel?.missionSpec || {};
@@ -305,6 +315,32 @@ export function deriveOperatorReliefProjection(models = {}) {
   const missionHandoff = { title: asText(missionSpec.title, 'Mission handoff'), objective: asText(missionSpec.objective, missionSpec.rawIntent || 'Not provided'), currentState: missionState, mergeSafety: verification.mergeReadyCandidate ? 'merge-candidate' : 'blocked', nextBestAction, evidenceSummary: { testsPassed, buildRun: parsed.buildRun === true, verifyRun: parsed.verifyRun === true, browserObserved: browserObserved.length }, evidenceGaps, repairPrompt: { available: repairPromptAvailable, title: 'Operator Relief V2 Repair Prompt', body: repairPromptBody, sourceEvidence: evidenceGaps.map((g) => g.source), copyLabel: 'Copy Repair Prompt' }, browserProofChecklist: { required: browserRequired, reason: browserRequired ? 'UI-facing mission requires browser proof before merge.' : 'Non-UI mission.', checklistItems: UI_BROWSER_CHECKLIST, observedItems: browserObserved, missingItems: browserMissing }, operatorDecisionQueue: operatorDecisionQueueV2, canonConstraints: ['No duplicate Mission Console shells/panes.', 'Merge is never automatic.', 'Operator remains final approver.'], requiredCommands: ['node --test tests/operator-relief-projection.test.mjs tests/operator-relief-merge-safety.test.mjs tests/operator-relief-repair-prompt.test.mjs tests/operator-relief-music-failure-pack.test.mjs tests/mission-console-operator-relief-panel.test.mjs','node --test stephanos-ui/src/components/MissionConsoleTile.render.test.mjs stephanos-ui/src/components/AIConsole.render.test.mjs stephanos-ui/src/components/AnswerPaneCopyButton.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs stephanos-ui/src/components/CollapsiblePanel.render.test.mjs stephanos-ui/src/components/stephanosPaneCanon.test.mjs','npm run stephanos:build','npm run stephanos:verify'] };
   const missionApprovalQueue = buildMissionApprovalQueue({ missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, repairPrompt: { prompt: repairPromptBody }, missionState, browserProof: missionHandoff.browserProofChecklist, missionHandoff, tests: { passed: testsPassed, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true } });
   const topProblemsProjection = buildTopProblemsProjection({ missionBrainNextAction, supportSnapshot, verificationReturnIntake, browserMissing });
+  const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
+  const harnessRiskLevel = deriveHarnessRiskLevel(changedFiles);
+  const protectedCanonTouched = changedFiles.filter((file) => /commanddeck|aiconsole|answerdelivery|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory/i.test(file));
+  const protectedCanonAtRisk = Array.from(new Set([
+    ...protectedCanonTouched.map((file) => file.includes('ignite') ? 'ignition-startup-flow' : file.includes('guard-pr-clean') ? 'pr-hygiene-guardrails' : file.toLowerCase().includes('command') || file.toLowerCase().includes('answer') || file.toLowerCase().includes('aiconsole') ? 'command-deck-answer-delivery' : 'provider-routing-or-memory'),
+    ...(harnessRiskLevel === 'high' ? ['protected-canon-preservation-list-required'] : []),
+  ]));
+  const browserProofRequired = browserRequired && changedFiles.some((file) => file.startsWith('stephanos-ui/'));
+  const harnessAgentProjection = {
+    harnessStatus: harnessRiskLevel === 'high' ? 'blocked-until-proof' : 'read-only-advisory',
+    currentMissionSummary: `${missionObjective} (${currentPhase})`,
+    protectedCanonTouched,
+    protectedCanonAtRisk,
+    allowedFileScopes: ['stephanos-ui/src/state/**', 'stephanos-ui/src/components/**', 'tests/**', 'docs/**', 'shared/**'],
+    forbiddenFileScopes: ['apps/stephanos/dist/**', 'runtime/**', 'node_modules/**', 'secrets/**', '*.bin'],
+    generatedArtifactRisk: verificationReturnIntake.forbiddenArtifactRisk,
+    browserProofRequired,
+    sourceOnlyRequired: true,
+    requiredTests: Array.from(new Set([...(missionHandoff.requiredCommands || []).filter((command) => command.startsWith('node --test'))])),
+    requiredBuildVerify: true,
+    requiredPrClean: true,
+    mergeRecommendation: harnessRiskLevel === 'high' ? 'hold-for-operator-review' : verificationReturnIntake.mergeRecommendation,
+    repairPromptRequired: evidenceGaps.length > 0,
+    repairPromptCandidate: repairPromptBody,
+    nextOperatorAction: missionApprovalQueue.topRecommendation?.title || 'Review harness contract.',
+  };
 
-  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection };
+  return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection };
 }

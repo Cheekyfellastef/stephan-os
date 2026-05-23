@@ -63,6 +63,43 @@ test('Layer 6 verification intake blocks forbidden artifacts', () => {
   assert.equal(r.verificationReturnIntake.forbiddenArtifactRisk, true);
 });
 
+test('Harness Agent V1 classifies command deck work as HIGH risk', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['tests/command-deck-protected-canon.test.mjs', 'stephanos-ui/src/state/answerDeliveryTruth.test.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(r.harnessAgentProjection.harnessStatus, 'blocked-until-proof');
+  assert.equal(r.harnessAgentProjection.protectedCanonAtRisk.includes('command-deck-answer-delivery'), true);
+});
+
+test('Harness Agent V1 classifies ignition startup work as HIGH risk', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['scripts/ignite-stephanos-local.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(r.harnessAgentProjection.harnessStatus, 'blocked-until-proof');
+  assert.equal(r.harnessAgentProjection.protectedCanonAtRisk.includes('ignition-startup-flow'), true);
+});
+
+test('Harness Agent V1 classifies docs-only work as LOW risk and enforces source-only rule', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['docs/STEPHANOS_NORTH_STAR.md'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(r.harnessAgentProjection.harnessStatus, 'read-only-advisory');
+  assert.equal(r.harnessAgentProjection.sourceOnlyRequired, true);
+});
+
+test('Harness Agent V1 requires browser proof for visible UI runtime changes and forbids generated artifacts', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx', 'apps/stephanos/dist/index.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.harnessAgentProjection.browserProofRequired, true);
+  assert.equal(r.harnessAgentProjection.generatedArtifactRisk, true);
+  assert.equal(r.harnessAgentProjection.forbiddenFileScopes.includes('apps/stephanos/dist/**'), true);
+});
+
 test('Layer 7 queue emits browser-proof action when proof is pending', () => {
   const r = deriveOperatorReliefProjection({
     prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx'] },

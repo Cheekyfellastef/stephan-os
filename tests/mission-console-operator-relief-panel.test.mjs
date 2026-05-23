@@ -9,6 +9,14 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Merge Safety Verdict/);
   assert.match(source, /Next Best Action/);
   assert.match(source, /Mission Brain \/ Next Action/);
+  assert.match(source, /Harness Agent V1/);
+  assert.match(source, /Harness Status:/);
+  assert.match(source, /Risk Level:/);
+  assert.match(source, /Protected Canon At Risk:/);
+  assert.match(source, /Required Proof:/);
+  assert.match(source, /Merge Recommendation:/);
+  assert.match(source, /Next Operator Action:/);
+  assert.match(source, /Copy Harness Contract/);
   assert.match(source, /Top 3 Problems \/ Next Moves/);
   assert.match(source, /Evidence gaps count:/);
   assert.match(source, /Copy Next Codex Prompt/);
@@ -32,5 +40,6 @@ test('Mission Console operator relief uses canonical collapsible panel wiring wi
   assert.match(source, /panelId=\"missionConsoleOperatorReliefPanel\"/);
   assert.match(source, /isOpen=\{uiLayout\.missionConsoleOperatorReliefPanel !== false\}/);
   assert.match(source, /panelId=\"missionConsoleMissionApprovalQueuePanel\"/);
+  assert.match(source, /panelId=\"missionConsoleHarnessAgentPanel\"/);
   assert.equal(source.includes("dispatchPanelToggle('missionConsoleOperatorReliefPanel')"), true);
 });
