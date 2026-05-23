@@ -15,7 +15,7 @@ $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
 $viteDevUrl = 'http://localhost:5173/'
-$launcherRootCommand = 'npm run stephanos:serve'
+$launcherRootCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 
 function Write-LiveLog([string]$Message) {
