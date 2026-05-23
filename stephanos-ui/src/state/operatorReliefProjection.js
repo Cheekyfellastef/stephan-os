@@ -10,6 +10,82 @@ const MAX_GAP_REASON_LENGTH = 240;
 const MAX_REPAIR_PROMPT_LENGTH = 4000;
 const MAX_QUEUE_PAYLOAD_LENGTH = 2400;
 
+
+const PROTECTED_CANON_CLAUSE_CATALOG = Object.freeze({
+  COMMAND_DECK: [
+    'Preserve Answer Delivery Contract.',
+    'Preserve final_assistant_message_id → deliveryAnchoredAssistantAnswerId binding.',
+    'Preserve data-assistant-answer-id, data-answer-role, data-answer-final, and data-delivery-anchored attributes.',
+    'Preserve delivered-answer reveal/scroll diagnostics.',
+    'Preserve inner answer-history scroll.',
+    'Preserve no-jump nearest outer reveal behavior.',
+    'Preserve tuned viewport clamp: min-height clamp(20rem, 46vh, 34rem) and max-height clamp(28rem, 66vh, 50rem).',
+    'Preserve composer/input/execute visibility.',
+    'Preserve canonical copy button behavior with green success state after successful clipboard write.',
+  ],
+  IGNITION: [
+    'Preserve Windows desktop Ignite button path: Launch-Stephanos-Local.cmd → Launch-Stephanos-Local.ps1 → npm run stephanos:ignite.',
+    'Preserve automatic Housekeeper preflight before normal ignition startup.',
+    'Preserve safe generated/runtime cleanup only.',
+    'Preserve source dirt, hard-block, secrets, unknown binaries blocking startup.',
+    'Preserve build + verify in ignition path.',
+    'Preserve compact default ignition output.',
+    'Preserve filesystem debug crawl only behind --debug or STEPHANOS_DEBUG=1.',
+    'Preserve vite-dev path behavior.',
+  ],
+  PR_HYGIENE: [
+    'Preserve source-only PR rule.',
+    'Forbid apps/stephanos/dist/**, runtime/**, node_modules/**, secrets/**, root data/** unless explicitly allowlisted.',
+    'Never use git add .',
+    'Require npm run stephanos:guard:pr-clean.',
+    'Require generated dist/runtime dirt cleanup after build/verify.',
+  ],
+  PROVIDER_ROUTING: [
+    'Preserve requested vs selected vs executable vs actual provider separation.',
+    'Preserve route reachability vs usability vs browser compatibility separation.',
+    'Preserve stale/fresh answer truth.',
+    'Preserve zero-cost fresh capability rules.',
+    'Preserve truthful degradation when fresh route is unavailable.',
+  ],
+  MEMORY_RETRIEVAL: [
+    'Preserve memory write gates.',
+    'Preserve provenance requirements for durable memory.',
+    'Preserve retrieval as context augmentation only.',
+    'Do not promote transient/freshness-sensitive facts into durable memory without approval.',
+    'Preserve operator approval for important durable project-law changes.',
+  ],
+  MISSION_BRAIN: [
+    'Preserve Harness Agent as read-only/adjudication only.',
+    'Preserve Operator Relief / Mission Brain as the existing surface.',
+    'Do not create duplicate panes or parallel authority.',
+    'Preserve operator as final merge approver.',
+    'Preserve merge recommendation as advisory, not automatic merge.',
+  ],
+});
+
+function deriveProtectedSubsystems(changedFiles = []) {
+  const files = asList(changedFiles).map((f) => String(f).toLowerCase());
+  const subsystems = new Set();
+  if (files.some((f) => /commanddeck|aiconsole|answerdelivery|useaiconsole|missioncommanddeck/.test(f))) subsystems.add('COMMAND_DECK');
+  if (files.some((f) => /ignite-stephanos-local|windows-launcher|launch-stephanos-local|housekeep|vite-dev/.test(f))) subsystems.add('IGNITION');
+  if (files.some((f) => /provider|backend|routing|route/.test(f))) subsystems.add('PROVIDER_ROUTING');
+  if (files.some((f) => /memory|retrieval|session/.test(f))) subsystems.add('MEMORY_RETRIEVAL');
+  if (files.some((f) => /operatorrelief|operator-relief|missionconsole|mission-console|harness/.test(f))) subsystems.add('MISSION_BRAIN');
+  if (files.length > 0) subsystems.add('PR_HYGIENE');
+  return Array.from(subsystems);
+}
+
+function deriveProtectedCanonClauses({ riskLevel = 'low', changedFiles = [] } = {}) {
+  const subsystems = deriveProtectedSubsystems(changedFiles);
+  const clauseKeys = new Set(subsystems);
+  if (riskLevel === 'high' && clauseKeys.size === 1 && clauseKeys.has('PR_HYGIENE')) {
+    ['MISSION_BRAIN', 'PROVIDER_ROUTING'].forEach((k) => clauseKeys.add(k));
+  }
+  const protectedCanonClauses = Array.from(clauseKeys).flatMap((k) => PROTECTED_CANON_CLAUSE_CATALOG[k] || []);
+  const protectedCanonWarning = protectedCanonClauses.length === 0 ? 'Protected canon clauses are empty; operator review required before high-risk execution.' : '';
+  return { protectedCanonClauses, protectedSubsystems: Array.from(clauseKeys), protectedCanonWarning };
+}
+
 function truncateText(value, max = MAX_GAP_REASON_LENGTH) {
   const text = asText(value, '');
   if (text.length <= max) return text;
@@ -317,11 +393,9 @@ export function deriveOperatorReliefProjection(models = {}) {
   const topProblemsProjection = buildTopProblemsProjection({ missionBrainNextAction, supportSnapshot, verificationReturnIntake, browserMissing });
   const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
   const harnessRiskLevel = deriveHarnessRiskLevel(changedFiles);
-  const protectedCanonTouched = changedFiles.filter((file) => /commanddeck|aiconsole|answerdelivery|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory/i.test(file));
-  const protectedCanonAtRisk = Array.from(new Set([
-    ...protectedCanonTouched.map((file) => file.includes('ignite') ? 'ignition-startup-flow' : file.includes('guard-pr-clean') ? 'pr-hygiene-guardrails' : file.toLowerCase().includes('command') || file.toLowerCase().includes('answer') || file.toLowerCase().includes('aiconsole') ? 'command-deck-answer-delivery' : 'provider-routing-or-memory'),
-    ...(harnessRiskLevel === 'high' ? ['protected-canon-preservation-list-required'] : []),
-  ]));
+  const protectedCanonTouched = changedFiles.filter((file) => /commanddeck|aiconsole|answerdelivery|ignite-stephanos-local|guard-pr-clean|windows-launcher|provider|backend|routing|memory|operatorrelief|mission-console|harness/i.test(file));
+  const { protectedCanonClauses, protectedSubsystems, protectedCanonWarning } = deriveProtectedCanonClauses({ riskLevel: harnessRiskLevel, changedFiles });
+  const protectedCanonAtRisk = protectedSubsystems.map((k) => k.toLowerCase());
   const browserProofRequired = browserRequired && changedFiles.some((file) => file.startsWith('stephanos-ui/'));
   const harnessAgentProjection = {
     harnessStatus: harnessRiskLevel === 'high' ? 'blocked-until-proof' : 'read-only-advisory',
@@ -336,10 +410,16 @@ export function deriveOperatorReliefProjection(models = {}) {
     requiredTests: Array.from(new Set([...(missionHandoff.requiredCommands || []).filter((command) => command.startsWith('node --test'))])),
     requiredBuildVerify: true,
     requiredPrClean: true,
-    mergeRecommendation: harnessRiskLevel === 'high' ? 'hold-for-operator-review' : verificationReturnIntake.mergeRecommendation,
+    protectedCanonClauses,
+    protectedSubsystems,
+    protectedCanonWarning,
+    forbiddenFiles: ['apps/stephanos/dist/**', 'runtime/**', 'node_modules/**', 'secrets/**', 'root data/**'],
+    definitionOfDone: ['preserve-canon-truth-boundaries', 'tests-build-verify-pr-clean-pass', 'copy-contract-is-actionable'],
+    finalReportRequirements: ['audit-findings', 'files-changed', 'clause-catalogue', 'risk-to-clause-rules', 'example-contract-payload', 'tests-and-check-results', 'browser-proof-status', 'next-operator-action'],
+    mergeRecommendation: (protectedCanonWarning || harnessRiskLevel === 'high') ? 'hold-for-operator-review' : verificationReturnIntake.mergeRecommendation,
     repairPromptRequired: evidenceGaps.length > 0,
     repairPromptCandidate: repairPromptBody,
-    nextOperatorAction: missionApprovalQueue.topRecommendation?.title || 'Review harness contract.',
+    nextOperatorAction: protectedCanonWarning ? 'Protected canon clauses need review before merge recommendation.' : (missionApprovalQueue.topRecommendation?.title || 'Review harness contract.'),
   };
 
   return { status: missionState, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection };

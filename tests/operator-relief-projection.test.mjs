@@ -69,7 +69,7 @@ test('Harness Agent V1 classifies command deck work as HIGH risk', () => {
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
   });
   assert.equal(r.harnessAgentProjection.harnessStatus, 'blocked-until-proof');
-  assert.equal(r.harnessAgentProjection.protectedCanonAtRisk.includes('command-deck-answer-delivery'), true);
+  assert.equal(r.harnessAgentProjection.protectedSubsystems.includes('COMMAND_DECK'), true);
 });
 
 test('Harness Agent V1 classifies ignition startup work as HIGH risk', () => {
@@ -78,7 +78,7 @@ test('Harness Agent V1 classifies ignition startup work as HIGH risk', () => {
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
   });
   assert.equal(r.harnessAgentProjection.harnessStatus, 'blocked-until-proof');
-  assert.equal(r.harnessAgentProjection.protectedCanonAtRisk.includes('ignition-startup-flow'), true);
+  assert.equal(r.harnessAgentProjection.protectedSubsystems.includes('IGNITION'), true);
 });
 
 test('Harness Agent V1 classifies docs-only work as LOW risk and enforces source-only rule', () => {
@@ -130,4 +130,43 @@ test('Layer 7 queue emits approve-merge-review when browser proof passed and no 
   const item = r.missionApprovalQueue.queue.find((entry) => entry.actionType === 'approve-merge-review');
   assert.equal(Boolean(item), true);
   assert.equal(item.approvalRequired, true);
+});
+
+
+test('Harness Agent V1.1 hydrates protected canon clauses by subsystem and risk', () => {
+  const commandDeck = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/hooks/useAIConsole.test.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  }).harnessAgentProjection;
+  assert.equal(commandDeck.protectedCanonClauses.some((c) => c.includes('Answer Delivery Contract')), true);
+  assert.equal(commandDeck.protectedCanonClauses.some((c) => c.includes('deliveryAnchoredAssistantAnswerId')), true);
+  assert.equal(commandDeck.protectedCanonClauses.some((c) => c.includes('composer/input/execute visibility')), true);
+  assert.equal(commandDeck.protectedCanonClauses.some((c) => c.includes('no-jump nearest outer reveal behavior')), true);
+  assert.equal(commandDeck.protectedCanonClauses.some((c) => c.includes('Never use git add .')), true);
+
+  const ignition = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['scripts/windows-launcher-defaults.test.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  }).harnessAgentProjection;
+  assert.equal(ignition.protectedCanonClauses.some((c) => c.includes('Launch-Stephanos-Local.cmd')), true);
+  assert.equal(ignition.protectedCanonClauses.some((c) => c.includes('Housekeeper preflight')), true);
+  assert.equal(ignition.protectedCanonClauses.some((c) => c.includes('build + verify')), true);
+  assert.equal(ignition.protectedCanonClauses.some((c) => c.includes('compact default ignition output')), true);
+
+  const provider = deriveOperatorReliefProjection({ prEvidenceModel: { changedFiles: ['src/provider-routing.md'] } }).harnessAgentProjection;
+  assert.equal(provider.protectedCanonClauses.some((c) => c.includes('requested vs selected vs executable vs actual provider separation')), true);
+  assert.equal(provider.protectedCanonClauses.some((c) => c.includes('reachability vs usability vs browser compatibility')), true);
+
+  const memory = deriveOperatorReliefProjection({ prEvidenceModel: { changedFiles: ['notes/memory-retrieval.txt'] } }).harnessAgentProjection;
+  assert.equal(memory.protectedCanonClauses.some((c) => c.includes('memory write gates')), true);
+  assert.equal(memory.protectedCanonClauses.some((c) => c.includes('provenance requirements')), true);
+
+  const missionBrain = deriveOperatorReliefProjection({ prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] } }).harnessAgentProjection;
+  assert.equal(missionBrain.protectedCanonClauses.some((c) => c.includes('read-only/adjudication only')), true);
+  assert.equal(missionBrain.protectedCanonClauses.some((c) => c.includes('duplicate panes or parallel authority')), true);
+  assert.equal(missionBrain.protectedCanonClauses.some((c) => c.includes('final merge approver')), true);
+
+  const docsOnly = deriveOperatorReliefProjection({ prEvidenceModel: { changedFiles: ['docs/README.md'] } }).harnessAgentProjection;
+  assert.equal(docsOnly.protectedCanonClauses.length > 0, true);
+  assert.equal(docsOnly.protectedCanonClauses.some((c) => c.includes('source-only PR rule')), true);
 });
