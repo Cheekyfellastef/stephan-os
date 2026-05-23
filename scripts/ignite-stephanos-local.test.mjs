@@ -115,6 +115,8 @@ test('package scripts include plain ignition aliases with expected targets', asy
   assert.equal(packageJson.scripts['stephanos:ignite'], 'npm run stephanos:serve');
   assert.equal(packageJson.scripts['stephanos:ignite:auto-publish'], 'node scripts/ignite-stephanos-local-autopublish.mjs');
   assert.equal(packageJson.scripts['stephanos:ignite:pr-clean'], 'STEPHANOS_IGNITION_MODE=pr-clean node scripts/ignite-stephanos-local.mjs');
+  assert.equal(packageJson.scripts['stephanos:ignite:housekeep'], 'STEPHANOS_IGNITION_MODE=housekeep node scripts/ignite-stephanos-local.mjs');
+  assert.equal(packageJson.scripts['stephanos:ignite:housekeep:dry-run'], 'STEPHANOS_IGNITION_MODE=housekeep-dry-run node scripts/ignite-stephanos-local.mjs');
 });
 test('isGitWorkingTreeClean returns true for empty porcelain output', () => {
   assert.equal(isGitWorkingTreeClean(''), true);
@@ -212,9 +214,11 @@ test('ignition dirt classifier maps required categories', () => {
   assert.equal(classifyIgnitionDirtPath('apps/stephanos/dist/index.html'), 'AUTO_CLEAN_GENERATED');
   assert.equal(classifyIgnitionDirtPath('apps/stephanos/dist/assets/chunk-a.js'), 'AUTO_CLEAN_GENERATED');
   assert.equal(classifyIgnitionDirtPath('stephanos-server/data/memory/durable-memory.json'), 'RUNTIME_CHECKPOINT_CLEAN');
+  assert.equal(classifyIgnitionDirtPath('data/activity/latest.json'), 'RUNTIME_CHECKPOINT_CLEAN');
+  assert.equal(classifyIgnitionDirtPath('data/knowledge-graph/nodes.json'), 'RUNTIME_CHECKPOINT_CLEAN');
   assert.equal(classifyIgnitionDirtPath('stephanos-ui/node_modules/foo/index.js'), 'DEPENDENCY_WARNING');
-  assert.equal(classifyIgnitionDirtPath('stephanos-ui/src/App.jsx'), 'SOURCE_DIRT');
-  assert.equal(classifyIgnitionDirtPath('package.json'), 'SOURCE_DIRT');
+  assert.equal(classifyIgnitionDirtPath('stephanos-ui/src/App.jsx'), 'SOURCE_DIRT_APPROVAL_REQUIRED');
+  assert.equal(classifyIgnitionDirtPath('package.json'), 'SOURCE_DIRT_APPROVAL_REQUIRED');
   assert.equal(classifyIgnitionDirtPath('.env.local'), 'HARD_BLOCK');
   assert.equal(classifyIgnitionDirtPath('unknown/payload.bin'), 'HARD_BLOCK');
 });
