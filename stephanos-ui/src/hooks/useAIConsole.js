@@ -559,6 +559,70 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.chat_context_provider_canon_links_count,
     0,
   );
+  const resolvedProjectAwarenessPackStatus = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_pack_status',
+    raw.project_awareness_pack_status,
+    trace.project_awareness_pack_status,
+    requestChatContext.project_awareness_pack_status,
+    rebuiltExecutionMetadata.project_awareness_pack_status,
+    'unavailable',
+  );
+  const resolvedProjectAwarenessSourcesUsed = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_sources_used',
+    raw.project_awareness_sources_used,
+    trace.project_awareness_sources_used,
+    requestChatContext.project_awareness_sources_used,
+    rebuiltExecutionMetadata.project_awareness_sources_used,
+    'none',
+  );
+  const resolvedProjectAwarenessCurrentMission = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_current_mission',
+    raw.project_awareness_current_mission,
+    trace.project_awareness_current_mission,
+    requestChatContext.project_awareness_current_mission,
+    rebuiltExecutionMetadata.project_awareness_current_mission,
+    'unknown',
+  );
+  const resolvedProjectAwarenessNextBestAction = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_next_best_action',
+    raw.project_awareness_next_best_action,
+    trace.project_awareness_next_best_action,
+    requestChatContext.project_awareness_next_best_action,
+    rebuiltExecutionMetadata.project_awareness_next_best_action,
+    'unknown',
+  );
+  const resolvedProjectAwarenessWorkflowPreference = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_operator_workflow_preference',
+    raw.project_awareness_operator_workflow_preference,
+    trace.project_awareness_operator_workflow_preference,
+    requestChatContext.project_awareness_operator_workflow_preference,
+    rebuiltExecutionMetadata.project_awareness_operator_workflow_preference,
+    'unknown',
+  );
+  const resolvedProjectAwarenessCodexRole = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_codex_role',
+    raw.project_awareness_codex_role,
+    trace.project_awareness_codex_role,
+    requestChatContext.project_awareness_codex_role,
+    rebuiltExecutionMetadata.project_awareness_codex_role,
+    'unknown',
+  );
+  const resolvedProjectAwarenessOpenClawRole = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_openclaw_role',
+    raw.project_awareness_openclaw_role,
+    trace.project_awareness_openclaw_role,
+    requestChatContext.project_awareness_openclaw_role,
+    rebuiltExecutionMetadata.project_awareness_openclaw_role,
+    'unknown',
+  );
+  const resolvedProjectAwarenessWarningCount = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'project_awareness_warning_count',
+    raw.project_awareness_warning_count,
+    trace.project_awareness_warning_count,
+    requestChatContext.project_awareness_warning_count,
+    rebuiltExecutionMetadata.project_awareness_warning_count,
+    0,
+  );
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
@@ -595,6 +659,14 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     chat_context_provider_proof_state: resolvedProviderProofState,
     chat_context_provider_next_actions: resolvedProviderNextActions,
     chat_context_provider_canon_links_count: resolvedProviderCanonLinksCount,
+    project_awareness_pack_status: resolvedProjectAwarenessPackStatus,
+    project_awareness_sources_used: resolvedProjectAwarenessSourcesUsed,
+    project_awareness_current_mission: resolvedProjectAwarenessCurrentMission,
+    project_awareness_next_best_action: resolvedProjectAwarenessNextBestAction,
+    project_awareness_operator_workflow_preference: resolvedProjectAwarenessWorkflowPreference,
+    project_awareness_codex_role: resolvedProjectAwarenessCodexRole,
+    project_awareness_openclaw_role: resolvedProjectAwarenessOpenClawRole,
+    project_awareness_warning_count: resolvedProjectAwarenessWarningCount,
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
