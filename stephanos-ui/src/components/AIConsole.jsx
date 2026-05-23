@@ -81,6 +81,11 @@ export default function AIConsole({
     }
     return '';
   }, [safeCommandHistory]);
+  const answerDeliveryStatus = String(lastExecutionMetadata?.answer_delivery_status || '').trim().toLowerCase();
+  const deliveredFinalAssistantMessageId = String(lastExecutionMetadata?.final_assistant_message_id || '').trim();
+  const deliveryAnchoredAssistantAnswerId = answerDeliveryStatus === 'delivered' && deliveredFinalAssistantMessageId
+    ? deliveredFinalAssistantMessageId
+    : latestAssistantAnswerId;
 
   const latestAssistantAnswerRef = useRef(null);
   const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
@@ -300,8 +305,8 @@ export default function AIConsole({
     const signatureChanged = currentSignature !== 'none' && currentSignature !== lastScrolledAnswerSignatureRef.current;
     const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
     const scrollContainer = getAnswerHistoryScrollContainer();
-    const targetKind = latestAssistantAnswerId ? 'latest-assistant-answer-pane' : 'none';
-    const targetId = latestAssistantAnswerId || 'none';
+    const targetKind = deliveryAnchoredAssistantAnswerId ? 'final-assistant-message-id' : 'none';
+    const targetId = deliveryAnchoredAssistantAnswerId || 'none';
     const viewPaneEl = containerRef.current?.closest?.('.panel-body') || null;
     const answerPaneCount = safeCommandHistory.filter((entry) => isAssistantHistoryEntry(entry) && String(entry?.output_text || '').trim().length > 0).length;
     latestScrollTargetRef.current = { kind: targetKind, id: targetId };
@@ -310,7 +315,7 @@ export default function AIConsole({
       const targetElFromRef = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
       const visibleDeckRoot = resolveVisibleCommandDeckRoot();
-      const visibleLatestAssistantAnswerEl = resolveLatestVisibleAssistantAnswerElement(latestAssistantAnswerId);
+      const visibleLatestAssistantAnswerEl = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
       const targetEl = visibleLatestAssistantAnswerEl || targetElFromRef;
       const visibleAnswerPanes = visibleDeckRoot ? Array.from(visibleDeckRoot.querySelectorAll('[data-testid="assistant-answer-pane"], [data-testid="latest-assistant-answer-pane"]')).filter((node) => isElementActuallyVisible(node)) : [];
       const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
@@ -378,7 +383,7 @@ export default function AIConsole({
         occlusionReason: visibility.occlusionReason,
         lastRequestedAt: previous.lastRequestedAt || 'none',
         lastCompletedAt: previous.lastCompletedAt || 'none',
-        latestAssistantAnswerId: latestAssistantAnswerId || 'none',
+        latestAssistantAnswerId: deliveryAnchoredAssistantAnswerId || 'none',
         latestAssistantAnswerPresent: latestAssistantEntry ? 'yes' : 'no',
         latestAssistantAnswerFinal: latestAssistantAnswerFinal ? 'yes' : 'no',
         latestAssistantAnswerTextLength: latestAssistantText.length,
@@ -449,19 +454,19 @@ export default function AIConsole({
     };
 
     if (!autoScrollEnabled) {
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'autoscroll-disabled' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'autoscroll-disabled' });
       return;
     }
     if (!latestAssistantEntry) {
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'no-final-assistant-answer' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'missing-target-diagnostic-failure', skipReason: 'no-final-assistant-answer' });
       return;
     }
     if (!latestAssistantAnswerFinal) {
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'pending-answer-only' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'pending-answer-only' });
       return;
     }
-    if (!latestAssistantAnswerId) {
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'none', skipReason: 'latest-assistant-id-missing' });
+    if (!deliveryAnchoredAssistantAnswerId) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'missing-target-diagnostic-failure', skipReason: 'latest-assistant-id-missing' });
       return;
     }
     if (!signatureChanged) {
@@ -478,17 +483,17 @@ export default function AIConsole({
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try {
         const pageScrollBefore = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0;
-        const latestAssistantAnswerTarget = resolveLatestVisibleAssistantAnswerElement(latestAssistantAnswerId) || latestAssistantAnswerRef.current;
+        const latestAssistantAnswerTarget = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId) || latestAssistantAnswerRef.current;
         const scrollContainerEl = getAnswerHistoryScrollContainer();
         if (!latestAssistantAnswerTarget) {
-          publishScrollDiagnostics({ requested: 'yes', requestReason: 'explicit-render-diagnostic-failure', method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
+          publishScrollDiagnostics({ requested: 'yes', requestReason: 'missing-target-diagnostic-failure', method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
               return;
         }
         if (!scrollContainerEl) {
-          publishScrollDiagnostics({ requested: 'yes', requestReason: 'explicit-render-diagnostic-failure', method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
+          publishScrollDiagnostics({ requested: 'yes', requestReason: 'missing-container-diagnostic-failure', method: 'skipped-no-container', completed: 'no', skipReason: 'scroll-container-missing' });
               return;
         }
-        const latestScrollKey = `${latestAnswerEnvelopeId}|${latestAssistantAnswerId}|${latestAssistantText.length}|final`;
+        const latestScrollKey = `${latestAnswerEnvelopeId}|${deliveryAnchoredAssistantAnswerId}|${latestAssistantText.length}|final`;
         lastScrolledAnswerSignatureRef.current = latestScrollKey;
         const previousScrollTop = scrollContainerEl.scrollTop;
         const safeTopPadding = 12;
@@ -554,7 +559,7 @@ export default function AIConsole({
         publishScrollDiagnostics({ method: `error:${error?.name || 'unknown'}`, completed: 'no', skipReason: 'scroll-exception', occlusionReason: String(error?.message || 'scroll-exception') });
       }
     }));
-  }, [autoScrollEnabled, historyRenderKey, latestAssistantAnswerId, safeCommandHistory, setUiDiagnostics]);
+  }, [autoScrollEnabled, answerDeliveryStatus, deliveredFinalAssistantMessageId, historyRenderKey, latestAssistantAnswerId, deliveryAnchoredAssistantAnswerId, safeCommandHistory, setUiDiagnostics]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -692,7 +697,7 @@ export default function AIConsole({
             const isAssistantEntry = isAssistantHistoryEntry(entry);
             const hasAssistantText = String(entry?.output_text || '').trim().length > 0;
             if (isAssistantEntry && hasAssistantText) {
-              const isLatestAssistantAnswer = latestAssistantAnswerId && String(entry.id || '') === latestAssistantAnswerId;
+              const isLatestAssistantAnswer = deliveryAnchoredAssistantAnswerId && String(entry.id || '') === String(deliveryAnchoredAssistantAnswerId);
               return (
                 <div
                   key={entry.id || `${entry.timestamp || 'entry'}-${entry.raw_input || ''}`}
@@ -700,6 +705,7 @@ export default function AIConsole({
                   data-assistant-answer-id={String(entry.id || '')}
                   data-answer-final={entry?.stream_finalized === false ? 'false' : 'true'}
                   data-answer-role="assistant"
+                  data-delivery-anchored={deliveryAnchoredAssistantAnswerId && String(entry.id || '') === String(deliveryAnchoredAssistantAnswerId) ? 'true' : 'false'}
                   ref={isLatestAssistantAnswer ? latestAssistantAnswerRef : null}
                 >
                   <CommandResultCard entry={entry} />

@@ -169,7 +169,7 @@ test('embedded mission console answer history keeps balanced viewport and visibl
 
 test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
-  assert.match(source, /targetKind = latestAssistantAnswerId \? 'latest-assistant-answer-pane' : 'none'/);
+  assert.match(source, /targetKind = deliveryAnchoredAssistantAnswerId \? 'final-assistant-message-id' : 'none'/);
   assert.match(source, /resolveVisibleAnswerHistoryContainer/);
   assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
   assert.match(source, /method: 'inner-container-scroll\|conditional-outer-reveal'/);
@@ -178,7 +178,9 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);
   assert.match(source, /requestReason: 'already-visible-confirmed'/);
   assert.match(source, /skipReason: 'same-answer-signature-already-scrolled'/);
-  assert.match(source, /requestReason: 'explicit-render-diagnostic-failure'/);
+  assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
+  assert.match(source, /requestReason: 'missing-container-diagnostic-failure'/);
+  assert.doesNotMatch(source, /requestReason: 'none'/);
   assert.match(source, /currentSignature/);
   assert.match(source, /effectFiredAt/);
   assert.match(source, /commandDeckComposerFound: 'no'/);

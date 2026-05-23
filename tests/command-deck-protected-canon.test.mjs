@@ -72,7 +72,9 @@ test('protected canon: dev-mode inline failure marker exists if composer contrac
 test('protected canon: no silent none scroll reason after final assistant answer render path', async () => {
   const source = await read(aiConsolePath);
   assert.match(source, /requestReason: 'already-visible-confirmed'/);
-  assert.match(source, /requestReason: 'explicit-render-diagnostic-failure'/);
+  assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
+  assert.match(source, /requestReason: 'missing-container-diagnostic-failure'/);
+  assert.match(source, /requestReason: 'reveal-skipped-by-policy'/);
   assert.doesNotMatch(source, /same-answer-signature-already-scrolled'\s*\}\)/);
 });
 
