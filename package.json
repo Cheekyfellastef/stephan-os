@@ -39,9 +39,9 @@
     "stephanos:ignite": "npm run stephanos:serve",
     "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs",
     "stephanos:guard:pr-clean": "node scripts/guard-pr-clean.mjs",
-    "stephanos:ignite:pr-clean": "STEPHANOS_IGNITION_MODE=pr-clean node scripts/ignite-stephanos-local.mjs",
-    "stephanos:ignite:housekeep": "STEPHANOS_IGNITION_MODE=housekeep node scripts/ignite-stephanos-local.mjs",
-    "stephanos:ignite:housekeep:dry-run": "STEPHANOS_IGNITION_MODE=housekeep-dry-run node scripts/ignite-stephanos-local.mjs"
+    "stephanos:ignite:pr-clean": "node scripts/ignite-stephanos-local.mjs --mode=pr-clean",
+    "stephanos:ignite:housekeep": "node scripts/ignite-stephanos-local.mjs --mode=housekeep",
+    "stephanos:ignite:housekeep:dry-run": "node scripts/ignite-stephanos-local.mjs --mode=housekeep-dry-run"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

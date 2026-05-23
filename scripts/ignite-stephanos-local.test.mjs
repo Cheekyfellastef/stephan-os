@@ -14,6 +14,7 @@ import {
   evaluateGitStatusForIgnition,
   isGitWorkingTreeClean,
   isMainModule,
+  resolveIgnitionMode,
   runGitPullPreflightWithDeps,
   resolveStepExecution,
   shouldAutoPublishDist,
@@ -114,9 +115,23 @@ test('package scripts include plain ignition aliases with expected targets', asy
   assert.equal(packageJson.scripts['stephanos:serve'], 'node scripts/ignite-stephanos-local.mjs');
   assert.equal(packageJson.scripts['stephanos:ignite'], 'npm run stephanos:serve');
   assert.equal(packageJson.scripts['stephanos:ignite:auto-publish'], 'node scripts/ignite-stephanos-local-autopublish.mjs');
-  assert.equal(packageJson.scripts['stephanos:ignite:pr-clean'], 'STEPHANOS_IGNITION_MODE=pr-clean node scripts/ignite-stephanos-local.mjs');
-  assert.equal(packageJson.scripts['stephanos:ignite:housekeep'], 'STEPHANOS_IGNITION_MODE=housekeep node scripts/ignite-stephanos-local.mjs');
-  assert.equal(packageJson.scripts['stephanos:ignite:housekeep:dry-run'], 'STEPHANOS_IGNITION_MODE=housekeep-dry-run node scripts/ignite-stephanos-local.mjs');
+  assert.equal(packageJson.scripts['stephanos:ignite:pr-clean'], 'node scripts/ignite-stephanos-local.mjs --mode=pr-clean');
+  assert.equal(packageJson.scripts['stephanos:ignite:housekeep'], 'node scripts/ignite-stephanos-local.mjs --mode=housekeep');
+  assert.equal(packageJson.scripts['stephanos:ignite:housekeep:dry-run'], 'node scripts/ignite-stephanos-local.mjs --mode=housekeep-dry-run');
+  assert.ok(!packageJson.scripts['stephanos:ignite:pr-clean'].includes('STEPHANOS_IGNITION_MODE='));
+  assert.ok(!packageJson.scripts['stephanos:ignite:housekeep'].includes('STEPHANOS_IGNITION_MODE='));
+  assert.ok(!packageJson.scripts['stephanos:ignite:housekeep:dry-run'].includes('STEPHANOS_IGNITION_MODE='));
+});
+
+test('resolveIgnitionMode accepts CLI housekeep modes', () => {
+  assert.equal(resolveIgnitionMode({ argvArgs: ['--mode=housekeep'], envMode: '', autoPublishEnabled: false }), 'HOUSEKEEP');
+  assert.equal(resolveIgnitionMode({ argvArgs: ['--mode=housekeep-dry-run'], envMode: '', autoPublishEnabled: false }), 'HOUSEKEEP_DRY_RUN');
+});
+
+test('resolveIgnitionMode keeps env fallback when CLI mode is absent', () => {
+  assert.equal(resolveIgnitionMode({ argvArgs: [], envMode: 'housekeep', autoPublishEnabled: false }), 'HOUSEKEEP');
+  assert.equal(resolveIgnitionMode({ argvArgs: [], envMode: 'housekeep-dry-run', autoPublishEnabled: false }), 'HOUSEKEEP_DRY_RUN');
+  assert.equal(resolveIgnitionMode({ argvArgs: [], envMode: 'pr-clean', autoPublishEnabled: false }), 'PR_CLEAN_ROOM');
 });
 test('isGitWorkingTreeClean returns true for empty porcelain output', () => {
   assert.equal(isGitWorkingTreeClean(''), true);

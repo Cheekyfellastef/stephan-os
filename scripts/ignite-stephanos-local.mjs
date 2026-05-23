@@ -111,6 +111,21 @@ export function shouldAutoPull(argvArgs = args) {
   return !argvArgs.has('--skip-auto-pull');
 }
 
+export function resolveIgnitionMode({
+  argvArgs = process.argv.slice(2),
+  envMode = process.env.STEPHANOS_IGNITION_MODE || '',
+  autoPublishEnabled = shouldAutoPublishDist(),
+} = {}) {
+  const cliModeArg = argvArgs.find((arg) => /^--mode=/.test(arg));
+  const cliMode = cliModeArg ? cliModeArg.split('=')[1] : '';
+  const requestedMode = (cliMode || envMode || 'launcher-root').trim();
+
+  if (requestedMode === 'pr-clean') return 'PR_CLEAN_ROOM';
+  if (requestedMode === 'housekeep') return 'HOUSEKEEP';
+  if (requestedMode === 'housekeep-dry-run') return 'HOUSEKEEP_DRY_RUN';
+  return autoPublishEnabled ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION';
+}
+
 function parseGitCountPair(value = '') {
   const [aheadRaw = '0', behindRaw = '0'] = String(value || '').trim().split('\t');
   const aheadCount = Number.parseInt(aheadRaw, 10);
@@ -861,10 +876,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
-  const ignitionModeRaw = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
-  const ignitionMode = ignitionModeRaw === 'pr-clean'
-    ? 'PR_CLEAN_ROOM'
-    : (ignitionModeRaw === 'housekeep' ? 'HOUSEKEEP' : (ignitionModeRaw === 'housekeep-dry-run' ? 'HOUSEKEEP_DRY_RUN' : (shouldAutoPublishDist() ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION')));
+  const ignitionMode = resolveIgnitionMode();
   if (ignitionMode === 'HOUSEKEEP' || ignitionMode === 'HOUSEKEEP_DRY_RUN') {
     runIgnitionHousekeep({ dryRun: ignitionMode === 'HOUSEKEEP_DRY_RUN' });
     return;
