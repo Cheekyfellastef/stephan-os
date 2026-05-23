@@ -36,7 +36,7 @@
     "stephanos:battle-bridge:autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1",
     "openclaw:stub:ensure": "node scripts/openclaw-readonly-adapter-ensure.mjs",
     "test:ui:reality": "playwright test",
-    "stephanos:ignite": "npm run stephanos:serve",
+    "stephanos:ignite": "node scripts/ignite-stephanos-local.mjs --mode=ignite",
     "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs",
     "stephanos:guard:pr-clean": "node scripts/guard-pr-clean.mjs",
     "stephanos:ignite:pr-clean": "node scripts/ignite-stephanos-local.mjs --mode=pr-clean",
