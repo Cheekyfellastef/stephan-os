@@ -52,6 +52,10 @@ windows\Launch-Stephanos-Local.cmd
 - `npm run stephanos:serve` — rebuild, verify, and serve the repository so the generated runtime can be checked in a browser.
 - `npm run stephanos:ignite` — alias for the local ignition flow (same behavior as `stephanos:serve`).
 - `npm run stephanos:ignite:auto-publish` — local ignition flow with `STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1` enabled via a Node wrapper for cross-platform use.
+- `npm run stephanos:ignite:housekeep` — standalone housekeeper clean pass (uses `scripts/ignite-stephanos-local.mjs --mode=housekeep`).
+- `npm run stephanos:ignite:housekeep:dry-run` — standalone housekeeper preview with no cleanup mutations (`--mode=housekeep-dry-run`).
+
+Housekeeper is intentionally standalone and is **not** auto-wired into `npm run stephanos:ignite`; normal ignition remains canonical build+verify flow and keeps source-dirt approval/hard-block safety unchanged.
 
 ## Required workflow after editing Stephanos UI source
 
