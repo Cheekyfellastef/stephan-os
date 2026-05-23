@@ -230,9 +230,19 @@ test('deterministic identity recall appends assistant answer through command his
 test('command pipeline render truth only reports rendered when final assistant text exists', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const finalAssistantAnswerVisibleCandidate = data\.success && String\(effectiveOutputText \|\| ''\)\.trim\(\)\.length > 0 && streamFinalizationMissing !== true;/);
-  assert.match(source, /command_pipeline_last_assistant_answer_generated = finalAssistantAnswerVisibleCandidate \? 'yes' : 'no';/);
-  assert.match(source, /command_pipeline_last_answer_pane_rendered = finalAssistantAnswerVisibleCandidate \? 'yes' : 'no';/);
+  assert.match(source, /const finalAssistantAnswerVisibleCandidate = data\.success && String\(effectiveOutputText \|\| ''\)\.trim\(\)\.length > 0 && streamFinalizationMissing !== true;/);
+  assert.match(source, /command_pipeline_last_assistant_answer_generated = answerDeliveryTruth\.answerDeliveryGenerated;/);
+  assert.match(source, /command_pipeline_last_answer_pane_rendered = answerDeliveryTruth\.answerDeliveryRendered;/);
   assert.match(source, /timeoutFailureMetadata\.command_pipeline_last_answer_pane_rendered = 'no';/);
+});
+
+
+test('command pipeline render truth is derived from answer delivery contract', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /buildAnswerDeliveryTruth/);
+  assert.match(source, /answer_delivery_status/);
+  assert.match(source, /command_pipeline_last_assistant_answer_generated = answerDeliveryTruth\.answerDeliveryGenerated;/);
+  assert.match(source, /command_pipeline_last_answer_pane_rendered = answerDeliveryTruth\.answerDeliveryRendered;/);
 });
 
 test('command input clearing is gated by submit acceptance return contract', async () => {
