@@ -238,17 +238,29 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
   const projectAwareness = chatContextPack?.contextForPrompt?.projectAwareness || chatContextPack?.compactSummary?.projectAwareness || {};
   const missionIntelligence = chatContextPack?.contextForPrompt?.missionIntelligence || chatContextPack?.compactSummary?.missionIntelligence || {};
   const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : [];
+  const hasStrategicContext = Boolean(
+    projectAwareness.projectNorthStar
+    || projectAwareness.operatorWorkflowPreference
+    || projectAwareness.nextBestAction
+    || projectAwareness.codexRole
+    || projectAwareness.openClawRole,
+  );
+  const strategicMissionFallback = 'Not fully established in active mission state, but best available project-awareness context says the active strategic mission is to reduce operator complexity by wiring Mission Brain, Harness Agent, proof, canon, and project awareness into the existing Command Deck AI path while preserving main-first/main-only simplicity and avoiding new panes.';
+  const currentMissionSummary = projectAwareness.currentMissionSummary
+    || missionIntelligence.missionSummary
+    || (hasStrategicContext ? strategicMissionFallback : 'unknown (warning: degraded context)');
   const blockLines = [
     '[Project Awareness Context: bounded truth for mission-planning only]',
     `- project north star: ${projectAwareness.projectNorthStar || 'unknown'}`,
     `- operator workflow preference: ${projectAwareness.operatorWorkflowPreference || 'unknown'}`,
     `- project awareness status: ${projectAwareness.status || 'unavailable'}`,
-    `- current mission: ${projectAwareness.currentMissionSummary || missionIntelligence.missionSummary || 'unknown (warning: degraded context)'}`,
+    `- current mission: ${currentMissionSummary}`,
     `- next best action: ${projectAwareness.nextBestAction || missionIntelligence.nextBestAction || 'unknown'}`,
     `- codex role: ${projectAwareness.codexRole || 'unknown'}`,
     `- openclaw role: ${projectAwareness.openClawRole || 'unknown'}`,
     `- protected canon summary: ${projectAwareness.protectedCanonSummary || 'Preserve launcher/runtime separation, truth boundaries, and command deck protections.'}`,
     `- forbidden complexity warnings: ${projectAwareness.forbiddenComplexityWarnings || 'Do not add panes/systems or duplicate mission/chat/memory surfaces.'}`,
+    '- answer synthesis directive (mission-planning only): For mission/project/build/next-action questions, provide bounded degraded truth with: strategic mission framing, next best action, why (Codex/OpenClaw heavy-lifting behind approval gates), and caveat that active mission store may still be degraded/unknown.',
     `- relevant mission/proof/canon sources: ${sources.length ? sources.join('|') : 'none'}`,
   ];
   const block = blockLines.join('\n');
