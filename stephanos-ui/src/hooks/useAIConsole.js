@@ -3996,6 +3996,7 @@ export function useAIConsole() {
       const answerDeliveryTruth = buildAnswerDeliveryTruth({
         finalAssistantMessageId: entry?.id || '',
         finalAssistantText: effectiveOutputText,
+        finalAssistantPayload: data?.structured_output || data?.output_payload || data?.data?.output_payload || data?.data?.structured_output || null,
         providerExecutionStatus: finalExecutionMetadata.command_envelope_execution_status || finalExecutionMetadata.execution_status || 'unknown',
         answerPaneRendered: finalAssistantAnswerVisibleCandidate,
         responseMode: finalExecutionMetadata.chat_context_response_mode || 'direct-answer',
@@ -4011,6 +4012,7 @@ export function useAIConsole() {
         final_assistant_message_present: answerDeliveryTruth.finalAssistantMessagePresent,
         final_assistant_message_id: answerDeliveryTruth.finalAssistantMessageId,
         final_assistant_text_length: answerDeliveryTruth.finalAssistantTextLength,
+        final_assistant_payload_present: answerDeliveryTruth.finalAssistantPayloadPresent,
         answer_delivery_failure_reason: answerDeliveryTruth.answerDeliveryFailureReason,
         answer_delivery_contradiction_detected: answerDeliveryTruth.answerDeliveryContradictionDetected,
         answer_delivery_next_action: answerDeliveryTruth.answerDeliveryNextAction,

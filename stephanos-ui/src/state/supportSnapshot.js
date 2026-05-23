@@ -1933,6 +1933,7 @@ export function buildSupportSnapshot({
     `Final Assistant Message Present: ${asText(executionMetadata?.final_assistant_message_present, 'no')}`,
     `Final Assistant Message ID: ${asText(executionMetadata?.final_assistant_message_id, 'none')}`,
     `Final Assistant Text Length: ${asText(executionMetadata?.final_assistant_text_length, '0')}`,
+    `Final Assistant Payload Present: ${asText(executionMetadata?.final_assistant_payload_present, 'no')}`,
     `Answer Delivery Failure Reason: ${asText(executionMetadata?.answer_delivery_failure_reason, 'none')}`,
     `Answer Delivery Contradiction Detected: ${asText(executionMetadata?.answer_delivery_contradiction_detected, 'no')}`,
     `Answer Delivery Next Action: ${asText(executionMetadata?.answer_delivery_next_action, 'none')}`,

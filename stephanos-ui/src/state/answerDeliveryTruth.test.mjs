@@ -54,3 +54,32 @@ test('top 3 problems operator explanation delivers final rendered answer', () =>
   assert.equal(truth.answerDeliveryGenerated, 'yes');
   assert.equal(truth.answerDeliveryRendered, 'yes');
 });
+
+
+test('provider unknown is diagnostic-failure and cannot claim generated/rendered', () => {
+  const truth = buildAnswerDeliveryTruth({
+    providerExecutionStatus: 'unknown',
+    executionSuccess: true,
+    finalAssistantMessageId: 'msg-2',
+    finalAssistantText: 'Answer exists but provider status is unknown',
+    answerPaneRendered: true,
+  });
+  assert.equal(truth.answerDeliveryStatus, 'diagnostic-failure');
+  assert.equal(truth.answerDeliveryFailureReason, 'provider-execution-status-unknown');
+  assert.equal(truth.answerDeliveryGenerated, 'no');
+  assert.equal(truth.answerDeliveryRendered, 'no');
+});
+
+test('structured empty-state payload satisfies final assistant content presence', () => {
+  const truth = buildAnswerDeliveryTruth({
+    providerExecutionStatus: 'ok',
+    executionSuccess: false,
+    finalAssistantMessageId: 'msg-3',
+    finalAssistantText: '',
+    finalAssistantPayload: { type: 'empty-state', code: 'NO_DATA' },
+    answerPaneRendered: true,
+  });
+  assert.equal(truth.answerDeliveryStatus, 'delivered');
+  assert.equal(truth.finalAssistantPayloadPresent, 'yes');
+  assert.equal(truth.answerDeliveryGenerated, 'yes');
+});
