@@ -3141,3 +3141,17 @@ test('support snapshot normalizes mission-planning prompt proof and chat-context
   assert.match(snapshot, /Chat Context Sources Used: .*projectAwareness/);
   assert.doesNotMatch(snapshot, /Chat Context Mission State: unknown/);
 });
+
+test('support snapshot prints co-builder and agent-work-routing inclusion markers', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        chat_context_response_mode: 'work-routing',
+        chat_context_sources_used: 'projectAwareness|missionIntelligence|agentWorkRouting|coBuilderLoop',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Response Mode: work-routing/);
+  assert.match(snapshot, /Chat Context Co-Builder Context Included: yes/);
+  assert.match(snapshot, /Chat Context Agent Work Routing Context Included: yes/);
+});
