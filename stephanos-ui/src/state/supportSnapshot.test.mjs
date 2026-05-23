@@ -2354,6 +2354,36 @@ test('support snapshot reads chat_context_* fields from latest execution metadat
   assert.match(snapshot, /Chat Context Was Overwritten: no/);
 });
 
+test('support snapshot prints project awareness fields from final execution metadata for mission-planning prompts', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        request_execution_id: 'req_mission_awareness',
+        chat_context_response_mode: 'mission-planning',
+        chat_context_sources_used: 'missionIntelligence|projectAwareness',
+        chat_context_mission_state: 'known',
+        project_awareness_pack_status: 'available',
+        project_awareness_sources_used: 'missionIntelligence|projectIntentPack',
+        project_awareness_current_mission: 'Preserve main-first/main-only operator workflow while hardening truth-preserving mission execution.',
+        project_awareness_next_best_action: 'Preserve project awareness through final execution metadata attachment.',
+        project_awareness_operator_workflow_preference: 'Operator prefers main-first/main-only simplicity.',
+        project_awareness_codex_role: 'Codex executes bounded source-only changes with proof.',
+        project_awareness_openclaw_role: 'OpenClaw orchestrates approval-gated execution through shared truth contracts.',
+        project_awareness_warning_count: 0,
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Response Mode: mission-planning/);
+  assert.match(snapshot, /Chat Context Sources Used: missionIntelligence\|projectAwareness/);
+  assert.match(snapshot, /Project Awareness Pack Status: available/);
+  assert.match(snapshot, /Project Awareness Sources Used: missionIntelligence\|projectIntentPack/);
+  assert.match(snapshot, /Project Awareness Current Mission: Preserve main-first\/main-only operator workflow while hardening truth-preserving mission execution\./);
+  assert.match(snapshot, /Project Awareness Next Best Action: Preserve project awareness through final execution metadata attachment\./);
+  assert.match(snapshot, /Project Awareness Operator Workflow Preference: Operator prefers main-first\/main-only simplicity\./);
+  assert.match(snapshot, /Project Awareness Codex Role: Codex executes bounded source-only changes with proof\./);
+  assert.match(snapshot, /Project Awareness OpenClaw Role: OpenClaw orchestrates approval-gated execution through shared truth contracts\./);
+});
+
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

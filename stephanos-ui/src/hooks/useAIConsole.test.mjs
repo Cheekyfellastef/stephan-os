@@ -193,6 +193,26 @@ test('buildChatContextAttachmentMetadata rebuild path rehydrates provider regist
   assert.match(source, /chat_context_provider_canon_links_count: resolvedProviderCanonLinksCount/);
 });
 
+test('buildChatContextAttachmentMetadata preserves project awareness fields through final execution metadata attachment', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const resolvedProjectAwarenessPackStatus = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessSourcesUsed = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessCurrentMission = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessNextBestAction = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessWorkflowPreference = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessCodexRole = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessOpenClawRole = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /const resolvedProjectAwarenessWarningCount = pickChatContextFieldPreferPackOrRebuildNonDefault\(/);
+  assert.match(source, /project_awareness_pack_status: resolvedProjectAwarenessPackStatus/);
+  assert.match(source, /project_awareness_sources_used: resolvedProjectAwarenessSourcesUsed/);
+  assert.match(source, /project_awareness_current_mission: resolvedProjectAwarenessCurrentMission/);
+  assert.match(source, /project_awareness_next_best_action: resolvedProjectAwarenessNextBestAction/);
+  assert.match(source, /project_awareness_operator_workflow_preference: resolvedProjectAwarenessWorkflowPreference/);
+  assert.match(source, /project_awareness_codex_role: resolvedProjectAwarenessCodexRole/);
+  assert.match(source, /project_awareness_openclaw_role: resolvedProjectAwarenessOpenClawRole/);
+  assert.match(source, /project_awareness_warning_count: resolvedProjectAwarenessWarningCount/);
+});
+
 test('provider registry resolution prefers rebuilt/request non-default values over inactive raw defaults', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /function pickChatContextFieldPreferPackOrRebuildNonDefault/);
