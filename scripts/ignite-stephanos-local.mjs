@@ -731,9 +731,11 @@ function runGitPullPreflight() {
   return runGitPullPreflightWithDeps();
 }
 
-function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false } = {}) {
-  const capture = runStepCapture('git-status', 'git', ['status', '--porcelain']);
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep } = {}) {
+  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
+  const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
+  const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({
     status: entry.status,
     paths: entry.paths,
@@ -746,52 +748,64 @@ function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false }
     }
   }
 
-  const autoCleanTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => isApprovedGeneratedDistPath(path));
-  const runtimeTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path));
-  const sourceTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
-  const dependencyTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => isDependencyDirtPath(path));
-  const hardBlockTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK');
+  const entryPaths = assessment.entries.flatMap((entry) => entry.paths);
+  const autoCleanTargets = entryPaths.filter((path) => isApprovedGeneratedDistPath(path));
+  const runtimeTargets = [...entryPaths.filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
+  const sourceTargets = entryPaths.filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
+  const dependencyTargets = entryPaths.filter((path) => isDependencyDirtPath(path));
+  const hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
+    .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
+    .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
 
   const trackedAuto = collectApprovedTrackedGeneratedRestorePaths(assessment);
   const trackedRuntime = assessment.runtimeStateEntries
     .filter((entry) => !entry.status.includes('?'))
     .flatMap((entry) => entry.paths);
-  const untrackedRuntime = assessment.entries
+  const untrackedRuntime = [...assessment.entries
     .filter((entry) => entry.status.includes('?'))
     .flatMap((entry) => entry.paths)
-    .filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path));
+    .filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
 
   let runtimeCleaned = 0;
   if (!dryRun) {
     if (trackedAuto.length > 0) {
-      runStep('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
+      runStepFn('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
     }
     if (trackedRuntime.length > 0) {
-      runStep('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
+      runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
       runtimeCleaned += trackedRuntime.length;
     }
     if (untrackedRuntime.length > 0) {
-      runStep('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
+      runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
       runtimeCleaned += untrackedRuntime.length;
     }
-    runStep('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
   }
 
-  const blocked = sourceTargets.length > 0 || hardBlockTargets.length > 0;
+  const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
+  const uniqueHardBlockTargets = [...new Set(hardBlockTargets)];
+  const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
   const status = {
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
     ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
     ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
     ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
+    ignitionRuntimeCleanedPaths: dryRun ? [] : uniqueRuntimeTargets.slice(0, 10),
+    ignitionAutoCleanedPaths: dryRun ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
     ignitionSourceDirtCount: sourceTargets.length,
     ignitionDependencyWarningCount: dependencyTargets.length,
-    ignitionHardBlockCount: hardBlockTargets.length,
-    ignitionBlockedReason: hardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
+    ignitionHardBlockCount: uniqueHardBlockTargets.length,
+    ignitionHardBlockPaths: uniqueHardBlockTargets.slice(0, 10),
+    ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
     ignitionNextOperatorAction: blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.',
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
+  if (blocked) {
+    const hardBlockLine = uniqueHardBlockTargets.slice(0, 10).join(',') || 'none';
+    console.log(`[HOUSEKEEP] hardBlockPaths=${hardBlockLine}`);
+  }
   if (compact) {
     console.log(`[IGNITION] phase=${status.ignitionPhase}`);
     console.log(`[IGNITION] housekeeperVerdict=${status.ignitionCleanlinessVerdict}`);
@@ -799,6 +813,7 @@ function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false }
     console.log(`[IGNITION] runtimeCleaned=${status.ignitionRuntimeCleaned}`);
     console.log(`[IGNITION] sourceDirtCount=${status.ignitionSourceDirtCount}`);
     console.log(`[IGNITION] hardBlockCount=${status.ignitionHardBlockCount}`);
+    if (status.ignitionHardBlockPaths?.length) console.log(`[IGNITION] hardBlockPaths=${status.ignitionHardBlockPaths.join(',')}`);
     console.log(`[IGNITION] readyToEnterCommandDeck=${status.ignitionReadyToEnterCommandDeck ? 'yes' : 'no'}`);
     console.log(`[IGNITION] nextOperatorAction=${status.ignitionNextOperatorAction}`);
   }
