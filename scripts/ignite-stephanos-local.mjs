@@ -289,10 +289,17 @@ function shouldRequirePublishedHead(argvArgs = args) {
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
 const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
+const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
+  'data/activity/',
+  'data/knowledge-graph/',
+  'data/proposals/',
+  'data/roadmap/',
+  'data/simulations/',
+];
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
 const ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES = [APPROVED_GENERATED_DIST_PREFIX];
-const KNOWN_SOURCE_PREFIXES = ['stephanos-ui/src/', 'scripts/', 'tests/', 'shared/'];
+const KNOWN_SOURCE_PREFIXES = ['stephanos-ui/src/', 'scripts/', 'tests/', 'shared/', 'docs/'];
 const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
 
 function normalizeGitPath(rawPath) {
@@ -332,6 +339,10 @@ function isTransientRootDataPath(path) {
   return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
 }
 
+function isAllowlistedRootRuntimePath(path) {
+  return ROOT_RUNTIME_ALLOWLIST_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
 function classifyStatusEntry(entry) {
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
@@ -352,10 +363,10 @@ function classifyStatusEntry(entry) {
 export function classifyIgnitionDirtPath(path) {
   const normalized = normalizeGitPath(path);
   if (SECRETS_PATTERN.test(normalized)) return 'HARD_BLOCK';
-  if (normalized === RUNTIME_MEMORY_PATH) return 'RUNTIME_CHECKPOINT_CLEAN';
+  if (normalized === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
   if (isDependencyDirtPath(normalized)) return 'DEPENDENCY_WARNING';
   if (isApprovedGeneratedDistPath(normalized)) return 'AUTO_CLEAN_GENERATED';
-  if (KNOWN_SOURCE_FILES.has(normalized) || KNOWN_SOURCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return 'SOURCE_DIRT';
+  if (KNOWN_SOURCE_FILES.has(normalized) || KNOWN_SOURCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return 'SOURCE_DIRT_APPROVAL_REQUIRED';
   const extension = normalized.includes('.') ? normalized.split('.').pop()?.toLowerCase() : '';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf', 'wasm', 'zip', '7z', 'tar', 'gz', 'pdf', 'bin', 'exe', 'dll'].includes(extension)) return 'HARD_BLOCK';
   return 'HARD_BLOCK';
@@ -422,6 +433,10 @@ function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = 
       ignitionBlockedReason: blockedFiles.length > 0 ? 'Hard-block dirt detected' : (sourceDirtFiles.length > 0 ? 'Source dirt detected' : ''),
       ignitionWarnings: dependencyWarnings,
       ignitionAutoCleaned: autoCleanedFiles.length,
+      ignitionRuntimeCleaned: 0,
+      ignitionSourceDirtCount: sourceDirtFiles.length,
+      ignitionDependencyWarningCount: dependencyWarnings.length,
+      ignitionHardBlockCount: blockedFiles.length,
       ignitionNextOperatorAction: blockedFiles.length > 0 ? 'Remove hard-block files from working tree and PR range.' : (sourceDirtFiles.length > 0 ? 'Commit/stash/discard source dirt or set STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE=1.' : 'Continue ignition.'),
       ignitionReadyToEnterCommandDeck: blockedFiles.length === 0 && sourceDirtFiles.length === 0,
     },
@@ -700,6 +715,70 @@ function runGitPullPreflight() {
   return runGitPullPreflightWithDeps();
 }
 
+function runIgnitionHousekeep({ dryRun = false } = {}) {
+  const capture = runStepCapture('git-status', 'git', ['status', '--porcelain']);
+  const assessment = evaluateGitStatusForIgnition(capture.stdout);
+  const plan = assessment.entries.map((entry) => ({
+    status: entry.status,
+    paths: entry.paths,
+    category: classifyIgnitionDirtPath(entry.paths[0]),
+  }));
+  console.log(`[HOUSEKEEP] mode=${dryRun ? 'dry-run' : 'clean'}`);
+  for (const row of plan) {
+    console.log(`[HOUSEKEEP] ${row.category} ${row.status} ${row.paths.join(' -> ')}`);
+  }
+
+  const autoCleanTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => isApprovedGeneratedDistPath(path));
+  const runtimeTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path));
+  const sourceTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
+  const dependencyTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => isDependencyDirtPath(path));
+  const hardBlockTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK');
+
+  const trackedAuto = collectApprovedTrackedGeneratedRestorePaths(assessment);
+  const trackedRuntime = assessment.runtimeStateEntries
+    .filter((entry) => !entry.status.includes('?'))
+    .flatMap((entry) => entry.paths);
+  const untrackedRuntime = assessment.entries
+    .filter((entry) => entry.status.includes('?'))
+    .flatMap((entry) => entry.paths)
+    .filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path));
+
+  let runtimeCleaned = 0;
+  if (!dryRun) {
+    if (trackedAuto.length > 0) {
+      runStep('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
+    }
+    if (trackedRuntime.length > 0) {
+      runStep('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
+      runtimeCleaned += trackedRuntime.length;
+    }
+    if (untrackedRuntime.length > 0) {
+      runStep('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
+      runtimeCleaned += untrackedRuntime.length;
+    }
+    runStep('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+  }
+
+  const blocked = sourceTargets.length > 0 || hardBlockTargets.length > 0;
+  const status = {
+    ignitionStatus: blocked ? 'BLOCKED' : 'READY',
+    ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
+    ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
+    ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
+    ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
+    ignitionSourceDirtCount: sourceTargets.length,
+    ignitionDependencyWarningCount: dependencyTargets.length,
+    ignitionHardBlockCount: hardBlockTargets.length,
+    ignitionBlockedReason: hardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
+    ignitionNextOperatorAction: blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.',
+    ignitionReadyToEnterCommandDeck: !blocked,
+  };
+  console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
+  if (!dryRun && blocked) {
+    throw new Error('housekeep blocked: source dirt or hard-block files detected');
+  }
+}
+
 function printPreflightSummary({
   decision,
   expectedMetadata,
@@ -783,7 +862,13 @@ export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionModeRaw = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root';
-  const ignitionMode = ignitionModeRaw === 'pr-clean' ? 'PR_CLEAN_ROOM' : (shouldAutoPublishDist() ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION');
+  const ignitionMode = ignitionModeRaw === 'pr-clean'
+    ? 'PR_CLEAN_ROOM'
+    : (ignitionModeRaw === 'housekeep' ? 'HOUSEKEEP' : (ignitionModeRaw === 'housekeep-dry-run' ? 'HOUSEKEEP_DRY_RUN' : (shouldAutoPublishDist() ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION')));
+  if (ignitionMode === 'HOUSEKEEP' || ignitionMode === 'HOUSEKEEP_DRY_RUN') {
+    runIgnitionHousekeep({ dryRun: ignitionMode === 'HOUSEKEEP_DRY_RUN' });
+    return;
+  }
   let publicationTruth = null;
 
   if (args.has('--probe-existing-server')) {
