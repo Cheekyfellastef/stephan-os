@@ -121,6 +121,7 @@ export function resolveIgnitionMode({
   const requestedMode = (cliMode || envMode || 'launcher-root').trim();
 
   if (requestedMode === 'pr-clean') return 'PR_CLEAN_ROOM';
+  if (requestedMode === 'ignite') return 'NORMAL_IGNITION';
   if (requestedMode === 'housekeep') return 'HOUSEKEEP';
   if (requestedMode === 'housekeep-dry-run') return 'HOUSEKEEP_DRY_RUN';
   return autoPublishEnabled ? 'AUTO_PUBLISH' : 'NORMAL_IGNITION';
@@ -730,7 +731,7 @@ function runGitPullPreflight() {
   return runGitPullPreflightWithDeps();
 }
 
-function runIgnitionHousekeep({ dryRun = false } = {}) {
+function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false } = {}) {
   const capture = runStepCapture('git-status', 'git', ['status', '--porcelain']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
   const plan = assessment.entries.map((entry) => ({
@@ -739,8 +740,10 @@ function runIgnitionHousekeep({ dryRun = false } = {}) {
     category: classifyIgnitionDirtPath(entry.paths[0]),
   }));
   console.log(`[HOUSEKEEP] mode=${dryRun ? 'dry-run' : 'clean'}`);
-  for (const row of plan) {
-    console.log(`[HOUSEKEEP] ${row.category} ${row.status} ${row.paths.join(' -> ')}`);
+  if (debug || !compact) {
+    for (const row of plan) {
+      console.log(`[HOUSEKEEP] ${row.category} ${row.status} ${row.paths.join(' -> ')}`);
+    }
   }
 
   const autoCleanTargets = assessment.entries.flatMap((entry) => entry.paths).filter((path) => isApprovedGeneratedDistPath(path));
@@ -789,6 +792,16 @@ function runIgnitionHousekeep({ dryRun = false } = {}) {
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
+  if (compact) {
+    console.log(`[IGNITION] phase=${status.ignitionPhase}`);
+    console.log(`[IGNITION] housekeeperVerdict=${status.ignitionCleanlinessVerdict}`);
+    console.log(`[IGNITION] filesAutoCleaned=${status.ignitionAutoCleaned}`);
+    console.log(`[IGNITION] runtimeCleaned=${status.ignitionRuntimeCleaned}`);
+    console.log(`[IGNITION] sourceDirtCount=${status.ignitionSourceDirtCount}`);
+    console.log(`[IGNITION] hardBlockCount=${status.ignitionHardBlockCount}`);
+    console.log(`[IGNITION] readyToEnterCommandDeck=${status.ignitionReadyToEnterCommandDeck ? 'yes' : 'no'}`);
+    console.log(`[IGNITION] nextOperatorAction=${status.ignitionNextOperatorAction}`);
+  }
   if (!dryRun && blocked) {
     throw new Error('housekeep blocked: source dirt or hard-block files detected');
   }
@@ -877,9 +890,13 @@ export async function run() {
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionMode = resolveIgnitionMode();
+  const debugEnabled = args.has('--debug') || String(process.env.STEPHANOS_DEBUG || '') === '1';
   if (ignitionMode === 'HOUSEKEEP' || ignitionMode === 'HOUSEKEEP_DRY_RUN') {
-    runIgnitionHousekeep({ dryRun: ignitionMode === 'HOUSEKEEP_DRY_RUN' });
+    runIgnitionHousekeep({ dryRun: ignitionMode === 'HOUSEKEEP_DRY_RUN', compact: false, debug: debugEnabled });
     return;
+  }
+  if (ignitionMode === 'NORMAL_IGNITION') {
+    runIgnitionHousekeep({ dryRun: false, compact: true, debug: debugEnabled });
   }
   let publicationTruth = null;
 
