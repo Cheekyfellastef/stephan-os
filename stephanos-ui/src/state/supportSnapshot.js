@@ -795,8 +795,8 @@ export function buildSupportSnapshot({
       ? (executionMetadata.chat_context_response_mode || runtimeStatus?.chatContextResponseMode || 'direct-answer')
       : (runtimeStatus?.chatContextResponseMode || 'direct-answer'));
   const plannerOrEnvelopeMode = executionMetadata?.response_planner_response_mode || executionMetadata?.command_envelope_response_mode || '';
-  const chatContextResponseMode = rawChatContextResponseMode === 'direct-answer' && plannerOrEnvelopeMode === 'mission-planning'
-    ? 'mission-planning'
+  const chatContextResponseMode = rawChatContextResponseMode === 'direct-answer' && ['mission-planning', 'work-routing'].includes(plannerOrEnvelopeMode)
+    ? plannerOrEnvelopeMode
     : rawChatContextResponseMode;
   const chatContextRelevantCanonCount = hasMergeDecisionProof ? derivedMergeCanonCount : (executionHasChatContext ? (executionMetadata.chat_context_relevant_canon_count ?? runtimeStatus?.chatContextRelevantCanonCount ?? 0) : (runtimeStatus?.chatContextRelevantCanonCount ?? 0));
   const chatContextAffectedSubsystems = hasMergeDecisionProof ? derivedMergeAffectedSubsystems : (executionHasChatContext ? (executionMetadata.chat_context_affected_subsystems || runtimeStatus?.chatContextAffectedSubsystems || 'none') : (runtimeStatus?.chatContextAffectedSubsystems || 'none'));

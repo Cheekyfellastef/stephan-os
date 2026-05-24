@@ -22,7 +22,8 @@ test('useAIConsole includes project awareness truth contract normalization helpe
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /export function normalizeProjectAwarenessMetadata/);
   assert.match(source, /if \(hasMeaningfulField && status === 'unavailable'\) status = 'degraded';/);
-  assert.match(source, /if \(responseMode === 'mission-planning' && status !== 'unavailable'\) sourceSet\.add\('projectAwareness'\);/);
+  assert.match(source, /const planningOrRoutingMode = responseMode === 'mission-planning' \|\| responseMode === 'work-routing';/);
+  assert.match(source, /if \(planningOrRoutingMode && status !== 'unavailable'\) sourceSet\.add\('projectAwareness'\);/);
   assert.match(source, /chatContextMissionState = boundedMissionKnown \|\| 'degraded';/);
   assert.match(source, /project awareness current mission summary unavailable/);
 });
