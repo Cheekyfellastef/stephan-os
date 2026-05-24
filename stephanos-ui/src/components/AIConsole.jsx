@@ -302,12 +302,17 @@ export default function AIConsole({
   useLayoutEffect(() => {
     const nowIso = new Date().toISOString();
     const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => hasFinalAssistantAnswerText(entry)) || null;
-    const latestAssistantText = String(latestAssistantEntry?.output_text || '').trim();
-    const latestAssistantAnswerFinal = !!latestAssistantEntry && latestAssistantText.length > 0 && latestAssistantEntry?.stream_finalized !== false;
-    const latestAnswerEnvelopeId = String(latestAssistantEntry?.envelope_id || latestAssistantEntry?.envelopeId || 'none');
-    const latestAnswerIdForSig = String(latestAssistantEntry?.id || 'none');
-    const currentSignature = latestAssistantAnswerFinal
-      ? `${latestAnswerEnvelopeId}|${latestAnswerIdForSig}|${latestAssistantText.length}|final`
+    const deliveryAnchoredAssistantEntry = deliveryAnchoredAssistantAnswerId
+      ? safeCommandHistory.find((entry) => String(entry?.id || '') === String(deliveryAnchoredAssistantAnswerId)) || null
+      : null;
+    const resolvedLatestAssistantEntry = deliveryAnchoredAssistantEntry || latestAssistantEntry;
+    const latestAssistantText = String(resolvedLatestAssistantEntry?.output_text || '').trim();
+    const latestAssistantAnswerFinal = !!resolvedLatestAssistantEntry && latestAssistantText.length > 0 && resolvedLatestAssistantEntry?.stream_finalized !== false;
+    const latestAnswerEnvelopeId = String(resolvedLatestAssistantEntry?.envelope_id || resolvedLatestAssistantEntry?.envelopeId || 'none');
+    const latestAnswerIdForSig = String(deliveryAnchoredAssistantAnswerId || resolvedLatestAssistantEntry?.id || 'none');
+    const deliveredAnchorAvailable = answerDeliveryStatus === 'delivered' && latestAnswerIdForSig !== 'none';
+    const currentSignature = (latestAssistantAnswerFinal || deliveredAnchorAvailable)
+      ? `${latestAnswerEnvelopeId}|${latestAnswerIdForSig}|${latestAssistantText.length}|${answerDeliveryStatus || 'unknown'}`
       : 'none';
     const signatureChanged = currentSignature !== 'none' && currentSignature !== lastScrolledAnswerSignatureRef.current;
     const latestAssistantAnswerEl = latestAssistantAnswerRef.current;
@@ -391,7 +396,7 @@ export default function AIConsole({
         lastRequestedAt: previous.lastRequestedAt || 'none',
         lastCompletedAt: previous.lastCompletedAt || 'none',
         latestAssistantAnswerId: deliveryAnchoredAssistantAnswerId || 'none',
-        latestAssistantAnswerPresent: latestAssistantEntry ? 'yes' : 'no',
+        latestAssistantAnswerPresent: resolvedLatestAssistantEntry ? 'yes' : 'no',
         latestAssistantAnswerFinal: latestAssistantAnswerFinal ? 'yes' : 'no',
         latestAssistantAnswerTextLength: latestAssistantText.length,
         lastSeenSignature: lastScrolledAnswerSignatureRef.current || 'none',
@@ -464,11 +469,11 @@ export default function AIConsole({
       publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'autoscroll-disabled' });
       return;
     }
-    if (!latestAssistantEntry) {
+    if (!resolvedLatestAssistantEntry && !deliveredAnchorAvailable) {
       publishScrollDiagnostics({ requested: 'no', requestReason: 'missing-target-diagnostic-failure', skipReason: 'no-final-assistant-answer' });
       return;
     }
-    if (!latestAssistantAnswerFinal) {
+    if (!latestAssistantAnswerFinal && !deliveredAnchorAvailable) {
       publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'pending-answer-only' });
       return;
     }
