@@ -53,6 +53,7 @@ test('AIConsole renders mission console shell with internal message region and a
   const rendered = renderAIConsole();
   assert.match(rendered, /mission-console-shell/);
   assert.match(rendered, /data-testid="command-deck-root"/);
+  assert.match(rendered, /data-ai-chat-command-deck="true"/);
   assert.match(rendered, /data-testid="command-deck-body"/);
   assert.match(rendered, /data-testid="command-deck-answer-history"/);
   assert.match(rendered, /output-panel ai-console-messages/);
@@ -182,6 +183,10 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /skipReason: 'same-answer-signature-already-scrolled'/);
   assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
   assert.match(source, /requestReason: 'missing-container-diagnostic-failure'/);
+  assert.match(source, /source: 'mounted-ai-console-instance'/);
+  assert.match(source, /visibleDeckInstanceMounted: 'yes'/);
+  assert.match(source, /requestReason: 'reveal-owner-mismatch'/);
+  assert.match(source, /skipReason: 'reveal-owner-mismatch'/);
   assert.doesNotMatch(source, /requestReason: 'none'/);
   assert.match(source, /const deliveredAnchorAvailable = answerDeliveryStatus === 'delivered' && latestAnswerIdForSig !== 'none'/);
   assert.match(source, /const resolvedLatestAssistantEntry = deliveryAnchoredAssistantEntry \|\| latestAssistantEntry/);

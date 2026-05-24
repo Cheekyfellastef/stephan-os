@@ -91,6 +91,17 @@ export default function AIConsole({
   const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
   const lastScrolledAnswerSignatureRef = useRef('');
   const answerScrollDiagnosticsRef = useRef({
+    source: 'uninitialized',
+    visibleDeckInstanceMounted: 'no',
+    visibleDeckRootFound: 'no',
+    historyContainerFound: 'no',
+    composerFound: 'no',
+    inputFound: 'no',
+    executeFound: 'no',
+    latestFinalAssistantCardFound: 'no',
+    revealOwnerInstanceId: 'none',
+    deliveryOwnerInstanceId: 'none',
+    ownerMismatch: 'no',
     targetKind: 'none',
     targetId: 'none',
     containerKind: 'none',
@@ -205,6 +216,7 @@ export default function AIConsole({
   };
 
   recordPerfCounter('render', 'AIConsole');
+  const aiConsoleInstanceIdRef = useRef(`ai-console-${Math.random().toString(36).slice(2, 10)}`);
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -300,6 +312,33 @@ export default function AIConsole({
   }, []);
 
   useLayoutEffect(() => {
+    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    const historyContainer = resolveVisibleAnswerHistoryContainer();
+    const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
+    const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
+    const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
+    const latestFinalAssistantCard = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
+    const deliveryOwnerInstanceId = String(lastExecutionMetadata?.ai_console_instance_id || '').trim() || aiConsoleInstanceIdRef.current;
+    const ownerMismatch = deliveryOwnerInstanceId !== aiConsoleInstanceIdRef.current;
+    const canaryDiagnostics = {
+      source: 'mounted-ai-console-instance',
+      visibleDeckInstanceMounted: 'yes',
+      visibleDeckRootFound: visibleDeckRoot ? 'yes' : 'no',
+      historyContainerFound: historyContainer ? 'yes' : 'no',
+      composerFound: composerEl ? 'yes' : 'no',
+      inputFound: inputEl ? 'yes' : 'no',
+      executeFound: executeButtonEl ? 'yes' : 'no',
+      latestFinalAssistantCardFound: latestFinalAssistantCard ? 'yes' : 'no',
+      finalAssistantMessageId: deliveryAnchoredAssistantAnswerId || 'none',
+      revealOwnerInstanceId: aiConsoleInstanceIdRef.current,
+      deliveryOwnerInstanceId,
+      ownerMismatch: ownerMismatch ? 'yes' : 'no',
+    };
+    answerScrollDiagnosticsRef.current = { ...answerScrollDiagnosticsRef.current, ...canaryDiagnostics };
+    setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+  }, [deliveryAnchoredAssistantAnswerId, historyRenderKey, safeUiLayout.commandDeck, setUiDiagnostics, lastExecutionMetadata?.ai_console_instance_id]);
+
+  useLayoutEffect(() => {
     const nowIso = new Date().toISOString();
     const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => hasFinalAssistantAnswerText(entry)) || null;
     const deliveryAnchoredAssistantEntry = deliveryAnchoredAssistantAnswerId
@@ -376,6 +415,17 @@ export default function AIConsole({
           : 'normal-answer-card-clipped';
       const previous = answerScrollDiagnosticsRef.current || {};
       answerScrollDiagnosticsRef.current = {
+        source: previous.source || 'mounted-ai-console-instance',
+        visibleDeckInstanceMounted: previous.visibleDeckInstanceMounted || 'yes',
+        visibleDeckRootFound: visibleDeckRoot ? 'yes' : previous.visibleDeckRootFound || 'no',
+        historyContainerFound: containerEl ? 'yes' : previous.historyContainerFound || 'no',
+        composerFound: composerEl ? 'yes' : previous.composerFound || 'no',
+        inputFound: inputEl ? 'yes' : previous.inputFound || 'no',
+        executeFound: executeButtonEl ? 'yes' : previous.executeFound || 'no',
+        latestFinalAssistantCardFound: targetEl ? 'yes' : previous.latestFinalAssistantCardFound || 'no',
+        revealOwnerInstanceId: previous.revealOwnerInstanceId || aiConsoleInstanceIdRef.current,
+        deliveryOwnerInstanceId: previous.deliveryOwnerInstanceId || aiConsoleInstanceIdRef.current,
+        ownerMismatch: previous.ownerMismatch || 'no',
         requested: previous.requested || 'no',
         requestReason: previous.requestReason || 'none',
         skipReason: previous.skipReason || 'effect-not-fired-yet',
@@ -467,6 +517,10 @@ export default function AIConsole({
 
     if (!autoScrollEnabled) {
       publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'autoscroll-disabled' });
+      return;
+    }
+    if (answerScrollDiagnosticsRef.current.ownerMismatch === 'yes') {
+      publishScrollDiagnostics({ requested: 'yes', requestReason: 'reveal-owner-mismatch', skipReason: 'reveal-owner-mismatch', completed: 'no' });
       return;
     }
     if (!resolvedLatestAssistantEntry && !deliveredAnchorAvailable) {
@@ -649,7 +703,7 @@ export default function AIConsole({
       isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div className="mission-console-shell" data-testid="command-deck-root">
+      <div className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
         <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
           <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
           <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
