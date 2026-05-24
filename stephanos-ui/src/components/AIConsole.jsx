@@ -200,6 +200,11 @@ export default function AIConsole({
     const roots = Array.from(document.querySelectorAll('[data-testid="command-deck-root"]'));
     return roots.find((root) => isElementActuallyVisible(root)) || roots[0] || null;
   };
+  const resolveLocalCommandDeckRoot = () => (
+    containerRef.current?.closest?.('[data-testid="command-deck-root"]')
+    || inputRef.current?.closest?.('[data-testid="command-deck-root"]')
+    || null
+  );
 
   const resolveVisibleAnswerHistoryContainer = () => {
     const visibleDeckRoot = resolveVisibleCommandDeckRoot();
@@ -345,7 +350,9 @@ export default function AIConsole({
   }, []);
 
   useLayoutEffect(() => {
-    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    const localDeckRoot = resolveLocalCommandDeckRoot();
+    if (!localDeckRoot) return;
+    const visibleDeckRoot = localDeckRoot;
     const historyContainer = resolveVisibleAnswerHistoryContainer();
     const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
     const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
@@ -397,9 +404,11 @@ export default function AIConsole({
     latestScrollTargetRef.current = { kind: targetKind, id: targetId };
 
     const publishScrollDiagnostics = (overrides = {}) => {
+      const localDeckRoot = resolveLocalCommandDeckRoot();
+      if (!localDeckRoot) return;
       const targetElFromRef = latestAssistantAnswerRef.current;
       const containerEl = getAnswerHistoryScrollContainer();
-      const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+      const visibleDeckRoot = localDeckRoot;
       const visibleLatestAssistantAnswerEl = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
       const targetEl = visibleLatestAssistantAnswerEl || targetElFromRef;
       const visibleAnswerPanes = visibleDeckRoot ? Array.from(visibleDeckRoot.querySelectorAll('[data-testid="assistant-answer-pane"], [data-testid="latest-assistant-answer-pane"]')).filter((node) => isElementActuallyVisible(node)) : [];
@@ -711,9 +720,8 @@ export default function AIConsole({
 
   useLayoutEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
-    const localRoot = containerRef.current?.closest?.('[data-testid="command-deck-root"]') || null;
-    const rootElement = localRoot || visibleDeckRoot;
+    const localRoot = resolveLocalCommandDeckRoot();
+    const rootElement = localRoot;
     const historyElement = rootElement?.querySelector('[data-testid="command-deck-answer-history"]') || null;
     const composerElement = rootElement?.querySelector('[data-testid="command-deck-composer"]') || null;
     const inputElement = rootElement?.querySelector('[data-testid="command-deck-input"]') || null;
