@@ -172,6 +172,8 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /targetKind = deliveryAnchoredAssistantAnswerId \? 'final-assistant-message-id' : 'none'/);
   assert.match(source, /resolveVisibleAnswerHistoryContainer/);
   assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
+  assert.ok(source.includes("containerRef.current?.closest?.('[data-testid=\"command-deck-root\"]')"));
+  assert.ok(source.includes('if (localContainer && visibleDeckRoot.contains(localContainer))'));
   assert.match(source, /method: 'inner-container-scroll\|conditional-outer-reveal'/);
   assert.match(source, /method: 'skipped-no-target-after-raf'/);
   assert.match(source, /aiConsoleAnswerScroll/);

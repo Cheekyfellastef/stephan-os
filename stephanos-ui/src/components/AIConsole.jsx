@@ -151,6 +151,10 @@ export default function AIConsole({
   };
 
   const resolveVisibleCommandDeckRoot = () => {
+    const localRoot = containerRef.current?.closest?.('[data-testid="command-deck-root"]')
+      || inputRef.current?.closest?.('[data-testid="command-deck-root"]')
+      || null;
+    if (localRoot) return localRoot;
     const roots = Array.from(document.querySelectorAll('[data-testid="command-deck-root"]'));
     return roots.find((root) => isElementActuallyVisible(root)) || roots[0] || null;
   };
@@ -158,6 +162,10 @@ export default function AIConsole({
   const resolveVisibleAnswerHistoryContainer = () => {
     const visibleDeckRoot = resolveVisibleCommandDeckRoot();
     if (!visibleDeckRoot) return null;
+    const localContainer = containerRef.current;
+    if (localContainer && visibleDeckRoot.contains(localContainer)) {
+      return localContainer;
+    }
     const historyNodes = Array.from(visibleDeckRoot.querySelectorAll('[data-testid="command-deck-answer-history"]'));
     return historyNodes.find((node) => isElementActuallyVisible(node)) || historyNodes[0] || null;
   };
@@ -167,8 +175,7 @@ export default function AIConsole({
     if (!visibleDeckRoot) return null;
     const historyContainer = resolveVisibleAnswerHistoryContainer();
     const queryRoot = historyContainer || visibleDeckRoot;
-    const finalAssistantAnswers = Array.from(queryRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]'))
-      .filter((node) => isElementActuallyVisible(node));
+    const finalAssistantAnswers = Array.from(queryRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]'));
     if (finalAssistantAnswers.length === 0) return null;
     if (assistantAnswerId) {
       const idMatch = finalAssistantAnswers.find((node) => String(node.getAttribute('data-assistant-answer-id') || '') === String(assistantAnswerId));
