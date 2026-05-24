@@ -3155,3 +3155,21 @@ test('support snapshot prints co-builder and agent-work-routing inclusion marker
   assert.match(snapshot, /Chat Context Co-Builder Context Included: yes/);
   assert.match(snapshot, /Chat Context Agent Work Routing Context Included: yes/);
 });
+
+test('support snapshot promotes work-routing response mode from planner metadata fallback', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        command_envelope_response_mode: 'work-routing',
+        response_planner_response_mode: 'work-routing',
+        chat_context_response_mode: 'direct-answer',
+        chat_context_pack_status: 'degraded',
+        chat_context_sources_used: 'projectAwareness|missionIntelligence|agentWorkRouting|coBuilderLoop',
+      },
+    },
+  });
+  assert.match(snapshot, /Chat Context Response Mode: work-routing/);
+  assert.match(snapshot, /Chat Context Co-Builder Context Included: yes/);
+  assert.match(snapshot, /Chat Context Agent Work Routing Context Included: yes/);
+  assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
+});

@@ -302,10 +302,11 @@ export function normalizeProjectAwarenessMetadata({
     chatContextMissionState = boundedMissionKnown || 'degraded';
   }
   const sourceSet = new Set(Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.filter(Boolean) : []);
-  if (responseMode === 'mission-planning' && status !== 'unavailable') sourceSet.add('projectAwareness');
-  if (responseMode === 'mission-planning' && boundedMissionKnown) sourceSet.add('missionIntelligence');
+  const planningOrRoutingMode = responseMode === 'mission-planning' || responseMode === 'work-routing';
+  if (planningOrRoutingMode && status !== 'unavailable') sourceSet.add('projectAwareness');
+  if (planningOrRoutingMode && boundedMissionKnown) sourceSet.add('missionIntelligence');
   const chatContextSourcesUsed = Array.from(sourceSet);
-  const chatContextPackStatus = compact?.status === 'unavailable' && responseMode === 'mission-planning' && providerIdsUsed.length
+  const chatContextPackStatus = compact?.status === 'unavailable' && planningOrRoutingMode && providerIdsUsed.length
     ? 'degraded'
     : (compact?.status || 'unavailable');
 
