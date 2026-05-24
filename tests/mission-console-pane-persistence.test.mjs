@@ -16,3 +16,7 @@ test('pane persistence source of truth remains shared app utilities', () => {
   assert.match(appSource, /loadPaneOrder\(/);
   assert.match(appSource, /savePaneOrder\(/);
 });
+
+test('App command deck pane passes explicit commandDeck owner key into AIConsole', () => {
+  assert.match(appSource, /id: 'commandDeck'[\s\S]*<AIConsole[\s\S]*surfaceOwnerKey="commandDeck-pane"/m);
+});

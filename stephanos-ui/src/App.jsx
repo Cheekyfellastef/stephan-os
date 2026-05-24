@@ -1263,6 +1263,7 @@ export default function App() {
   const paneDefinitions = useMemo(() => ([
     { id: 'commandDeck', title: 'Stephanos AI Chat Command Deck', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
       <AIConsole
+        surfaceOwnerKey="commandDeck-pane"
         input={input}
         setInput={setInput}
         submitPrompt={submitPrompt}

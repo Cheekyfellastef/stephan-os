@@ -229,3 +229,8 @@ test('MissionConsoleTile updates live pane diagnostics for landing-page agent mi
   ].forEach((token) => assert.equal(source.includes(token), true, `missing diagnostics token: ${token}`));
   assert.equal(source.includes("if (panelId !== 'missionConsolePanel') return;"), true);
 });
+
+test('MissionConsoleTile passes explicit assistant-console surface owner key to AIConsole', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.match(source, /<AIConsole[\s\S]*surfaceOwnerKey="mission-console-section"/m);
+});

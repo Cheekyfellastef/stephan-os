@@ -23,6 +23,7 @@ const getCommandDeckOwnershipRegistry = () => {
 };
 
 export default function AIConsole({
+  surfaceOwnerKey,
   input,
   setInput,
   submitPrompt,
@@ -165,6 +166,9 @@ export default function AIConsole({
 
   const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
   const resolveOwnerKey = () => {
+    if (typeof surfaceOwnerKey === 'string' && surfaceOwnerKey.trim()) {
+      return surfaceOwnerKey.trim();
+    }
     const localRoot = resolveLocalCommandDeckRoot();
     const ownerPanel = localRoot?.closest?.('[data-panel-id]') || inputRef.current?.closest?.('[data-panel-id]') || null;
     const panelId = String(ownerPanel?.getAttribute?.('data-panel-id') || '').trim();
@@ -784,30 +788,16 @@ export default function AIConsole({
       }
       return payload;
     };
-    const ownershipProjection = buildOwnershipProjection();
-    const fallbackMarker = ownershipProjection.ownershipInstanceCount > 0 ? 'command-deck-owner-not-found' : 'none';
     setUiDiagnostics((prev) => ({
       ...prev,
       aiConsoleCommandDeckOwnership: Object.values(registry),
-      ...(isCanonicalOwner
-        ? {}
-        : {
-            aiConsoleAnswerScroll: {
-              ...(prev?.aiConsoleAnswerScroll || answerScrollDiagnosticsRef.current),
-              ...ownershipProjection,
-              visibleOwnerInstanceId: ownershipProjection.visibleOwnerInstanceId === 'none' ? 'command-deck-owner-not-found' : ownershipProjection.visibleOwnerInstanceId,
-              revealOwnerInstanceId: ownershipProjection.revealOwnerInstanceId === 'none' ? fallbackMarker : ownershipProjection.revealOwnerInstanceId,
-              deliveryOwnerInstanceId: ownershipProjection.deliveryOwnerInstanceId === 'none' ? fallbackMarker : ownershipProjection.deliveryOwnerInstanceId,
-              visibleOwnerSourceMarker: ownershipProjection.visibleOwnerSourceMarker === 'none' ? 'command-deck-owner-not-found' : ownershipProjection.visibleOwnerSourceMarker,
-            },
-          }),
     }));
     return () => {
       const active = getCommandDeckOwnershipRegistry();
       delete active[aiConsoleInstanceIdRef.current];
       window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ = active;
     };
-  }, [historyRenderKey, deliveryAnchoredAssistantAnswerId, latestAssistantAnswerId, answerDeliveryStatus, safeUiLayout.commandDeck, setUiDiagnostics]);
+  }, [historyRenderKey, deliveryAnchoredAssistantAnswerId, latestAssistantAnswerId, answerDeliveryStatus, safeUiLayout.commandDeck, setUiDiagnostics, surfaceOwnerKey]);
 
   const commandPipelineFailureReason = String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const routeLayerHealthy = String(routeTruthView?.routeLayerStatus || '').trim().toLowerCase() === 'healthy';
