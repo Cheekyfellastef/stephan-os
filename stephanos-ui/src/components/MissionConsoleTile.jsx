@@ -1306,6 +1306,7 @@ function MissionConsoleTile({
       <section className="mission-console-section mission-console-section--assistant-console">
         <h4>Assistant Command Console</h4>
         <AIConsole
+          surfaceOwnerKey="mission-console-section"
           input={sharedConsoleInput}
           setInput={setSharedConsoleInput}
           submitPrompt={(rawPrompt) => submitPrompt?.(rawPrompt, { orchestrationTruth, submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router' })}

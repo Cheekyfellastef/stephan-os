@@ -170,6 +170,9 @@ test('embedded mission console answer history keeps balanced viewport and visibl
 
 test('AIConsole autoscroll diagnostics capture latest assistant pane targeting and fallback boundaries', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
+  assert.match(source, /surfaceOwnerKey/);
+  assert.match(source, /if \(typeof surfaceOwnerKey === 'string' && surfaceOwnerKey\.trim\(\)\) \{/);
+  assert.match(source, /return surfaceOwnerKey\.trim\(\);/);
   assert.match(source, /targetKind = deliveryAnchoredAssistantAnswerId \? 'final-assistant-message-id' : 'none'/);
   assert.match(source, /resolveVisibleAnswerHistoryContainer/);
   assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
@@ -211,6 +214,11 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /answerAlreadyVisibleBeforeOuterReveal/);
   assert.match(source, /latestAnswerVisibleRatio/);
   assert.match(source, /commandDeckVisibleRatio/);
+  assert.match(source, /const commandDeckOwnership = ownership\.filter\(\(entry\) => entry\?\.ownerKey === COMMAND_DECK_OWNER_KEY\)/);
+  assert.match(source, /visibleOwnerInstanceId: noCommandDeckOwner \? 'command-deck-owner-not-found'/);
+  assert.match(source, /visibleOwnerSourceMarker: noCommandDeckOwner \? 'command-deck-owner-not-found'/);
+  assert.match(source, /setUiDiagnostics\(\(prev\) => \(\{\s*\.\.\.prev,\s*aiConsoleCommandDeckOwnership: Object\.values\(registry\),/m);
+  assert.doesNotMatch(source, /aiConsoleAnswerScroll:[\s\S]*ownershipProjection/m);
   assert.match(source, /pageScrollDeltaY/);
   assert.match(source, /pageJumpPrevented/);
   assert.match(source, /innerHistoryScrollRequested/);
