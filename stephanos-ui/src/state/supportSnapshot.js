@@ -836,6 +836,8 @@ export function buildSupportSnapshot({
   const chatContextRebuiltAtFinalAttachment = executionMetadata?.chat_context_rebuilt_at_final_attachment || 'no';
   const chatContextRebuildSourceField = executionMetadata?.chat_context_rebuild_source_field || 'none';
   const chatContextClassifierProofSource = executionMetadata?.chat_context_classifier_proof_source || 'missing';
+  const retrievalQueryTextForRouting = String(executionMetadata?.retrieval_query || executionMetadata?.prompt || '').trim();
+  const hasWorkRoutingPromptMarker = retrievalQueryTextForRouting.includes('[Work Routing Context: bounded truth for Codex/OpenClaw task assignment only]');
   const rawProviderIdsUsed = executionMetadata?.chat_context_provider_ids_used || 'none';
   const providerIdsUsedList = String(rawProviderIdsUsed).split('|').map((item) => item.trim()).filter(Boolean);
   const projectAwarenessProjection = normalizeProjectAwarenessProjection({
@@ -850,8 +852,19 @@ export function buildSupportSnapshot({
   });
   const chatContextStatus = projectAwarenessProjection.chatContextPackStatus || rawChatContextStatus;
   const chatContextSourcesUsed = projectAwarenessProjection.chatContextSourcesUsed || rawChatContextSourcesUsed;
-  const chatContextCoBuilderContextIncluded = /\bcoBuilderLoop\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
-  const chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
+  let chatContextCoBuilderContextIncluded = /\bcoBuilderLoop\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
+  let chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
+  let normalizedChatContextSourcesUsed = chatContextSourcesUsed;
+  let normalizedChatContextStatus = chatContextStatus;
+  if (hasWorkRoutingPromptMarker) {
+    chatContextCoBuilderContextIncluded = 'yes';
+    chatContextAgentWorkRoutingContextIncluded = 'yes';
+    const sourceSet = new Set(String(chatContextSourcesUsed || 'none').split('|').map((item) => item.trim()).filter(Boolean).filter((item) => item !== 'none'));
+    sourceSet.add('agentWorkRouting');
+    sourceSet.add('coBuilderLoop');
+    normalizedChatContextSourcesUsed = sourceSet.size ? Array.from(sourceSet).join('|') : 'agentWorkRouting|coBuilderLoop';
+    if (normalizedChatContextStatus === 'unavailable') normalizedChatContextStatus = 'degraded';
+  }
   const chatContextMissionState = projectAwarenessProjection.chatContextMissionState || rawChatContextMissionState;
   const contextProviderRegistryStatus = executionMetadata?.chat_context_provider_registry_status || (chatContextStatus === 'active' ? 'active' : 'unavailable');
   const contextProvidersRegistered = executionMetadata?.chat_context_provider_ids_registered || 'none';
@@ -943,6 +956,7 @@ export function buildSupportSnapshot({
   const retrievalQueryText = String(executionMetadata?.retrieval_query || executionMetadata?.prompt || '').trim();
   const promptInjectionMarker = '[Project Awareness Context: bounded truth for mission-planning only]';
   const hasPromptInjectionMarker = retrievalQueryText.includes(promptInjectionMarker);
+  const workRoutingPromptMarker = '[Work Routing Context: bounded truth for Codex/OpenClaw task assignment only]';
   const inferredPromptSources = executionMetadata?.project_awareness_sources_used || projectAwarenessProjection.projectAwarenessSourcesUsed || 'none';
   const missionPlanningModeActive = (chatContextResponseMode === 'mission-planning')
     || (responsePlannerResponseMode === 'mission-planning');
@@ -963,6 +977,16 @@ export function buildSupportSnapshot({
   const missionPlanningPromptContextUsed = promptMarkerAndBlockDetected
     ? 'yes'
     : (executionMetadata?.mission_planning_prompt_context_used || ((hasPromptInjectionMarker && missionPlanningModeActive) ? 'yes' : 'no'));
+  const rawWorkRoutingPromptInjected = asText(executionMetadata?.work_routing_prompt_injected, 'no');
+  const rawWorkRoutingPromptBlockLength = Number(executionMetadata?.work_routing_prompt_block_length ?? 0) > 0
+    ? Number(executionMetadata?.work_routing_prompt_block_length ?? 0)
+    : 0;
+  const workRoutingPromptInjected = rawWorkRoutingPromptInjected === 'yes' || hasWorkRoutingPromptMarker ? 'yes' : 'no';
+  const workRoutingPromptBlockLength = rawWorkRoutingPromptBlockLength > 0
+    ? rawWorkRoutingPromptBlockLength
+    : (hasWorkRoutingPromptMarker ? workRoutingPromptMarker.length : 0);
+  const workRoutingPromptSources = executionMetadata?.work_routing_prompt_sources
+    || (hasWorkRoutingPromptMarker ? 'agentWorkRouting|coBuilderLoop' : 'none');
 
   const commandEnvelopeStatus = executionMetadata?.command_envelope_status || 'unavailable';
   const commandEnvelopeVersion = executionMetadata?.command_envelope_version || 'n/a';
@@ -1914,12 +1938,12 @@ export function buildSupportSnapshot({
     `Task Finisher Merge Operator Controlled: ${asText(runtimeStatus?.taskFinisherMergeOperatorControlled, 'yes')}`,
     `Task Finisher Warning Level: ${asText(runtimeStatus?.taskFinisherWarningLevel, 'none')}`,
     `Task Finisher Next Action: ${asText(runtimeStatus?.taskFinisherNextAction, 'not reported')}`,
-    `Chat Context Pack Status: ${asText(chatContextStatus, 'unavailable')}`,
+    `Chat Context Pack Status: ${asText(normalizedChatContextStatus, 'unavailable')}`,
     `Chat Context Version: ${asText(chatContextVersion, 'n/a')}`,
     `Chat Context Response Mode: ${asText(chatContextResponseMode, 'direct-answer')}`,
     `Chat Context Relevant Canon Count: ${asText(chatContextRelevantCanonCount, '0')}`,
     `Chat Context Affected Subsystems: ${asText(chatContextAffectedSubsystems, 'none')}`,
-    `Chat Context Sources Used: ${asText(chatContextSourcesUsed, 'none')}`,
+    `Chat Context Sources Used: ${asText(normalizedChatContextSourcesUsed, 'none')}`,
     `Chat Context Co-Builder Context Included: ${asText(chatContextCoBuilderContextIncluded, 'no')}`,
     `Chat Context Agent Work Routing Context Included: ${asText(chatContextAgentWorkRoutingContextIncluded, 'no')}`,
     `Chat Context UI Reality Status: ${asText(chatContextUiRealityStatus, 'UNKNOWN')}`,
@@ -1994,6 +2018,9 @@ export function buildSupportSnapshot({
     `Project Awareness Prompt Block Length: ${asText(projectAwarenessPromptBlockLength, '0')}`,
     `Project Awareness Prompt Sources: ${asText(projectAwarenessPromptSources, 'none')}`,
     `Mission Planning Prompt Context Used: ${asText(missionPlanningPromptContextUsed, 'no')}`,
+    `Work Routing Prompt Injected: ${asText(workRoutingPromptInjected, 'no')}`,
+    `Work Routing Prompt Block Length: ${asText(workRoutingPromptBlockLength, '0')}`,
+    `Work Routing Prompt Sources: ${asText(workRoutingPromptSources, 'none')}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,
