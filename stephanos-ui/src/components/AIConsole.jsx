@@ -9,6 +9,9 @@ import { copyPerfDiagnosticsSnapshot, recordPerfCounter, recordPerfEvent, setPer
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
 const AICONSOLE_SOURCE_MARKER = 'F:stephanos-ui/src/components/AIConsole.jsx';
+const COMMAND_DECK_OWNER_KEY = 'commandDeck-pane';
+const MISSION_CONSOLE_OWNER_KEY = 'mission-console-section';
+const UNKNOWN_OWNER_KEY = 'unknown-ai-console-surface';
 
 const getCommandDeckOwnershipRegistry = () => {
   if (typeof window === 'undefined') return {};
@@ -161,22 +164,33 @@ export default function AIConsole({
   });
 
   const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
+  const resolveOwnerKey = () => {
+    const localRoot = resolveLocalCommandDeckRoot();
+    const ownerPanel = localRoot?.closest?.('[data-panel-id]') || inputRef.current?.closest?.('[data-panel-id]') || null;
+    const panelId = String(ownerPanel?.getAttribute?.('data-panel-id') || '').trim();
+    if (panelId === 'commandDeck') return COMMAND_DECK_OWNER_KEY;
+    if (panelId) return MISSION_CONSOLE_OWNER_KEY;
+    return UNKNOWN_OWNER_KEY;
+  };
+  const isCommandDeckOwner = () => resolveOwnerKey() === COMMAND_DECK_OWNER_KEY;
   const buildOwnershipProjection = () => {
     const ownership = Object.values(getCommandDeckOwnershipRegistry());
-    const visibleOwner = ownership.find((entry) => entry?.isVisible === 'yes') || null;
-    const deliveryOwner = ownership.find((entry) => entry?.ownsDeliveryState === 'yes') || null;
-    const revealOwner = ownership.find((entry) => entry?.ownsRevealEffect === 'yes') || null;
+    const commandDeckOwnership = ownership.filter((entry) => entry?.ownerKey === COMMAND_DECK_OWNER_KEY);
+    const visibleOwner = commandDeckOwnership.find((entry) => entry?.isVisible === 'yes') || commandDeckOwnership[0] || null;
+    const deliveryOwner = commandDeckOwnership.find((entry) => entry?.ownsDeliveryState === 'yes') || null;
+    const revealOwner = commandDeckOwnership.find((entry) => entry?.ownsRevealEffect === 'yes') || null;
+    const noCommandDeckOwner = commandDeckOwnership.length === 0;
     return {
-      ownershipInstanceCount: ownership.length,
-      visibleOwnerInstanceId: visibleOwner?.instanceId || 'none',
-      deliveryOwnerInstanceId: deliveryOwner?.instanceId || 'none',
-      revealOwnerInstanceId: revealOwner?.instanceId || 'none',
+      ownershipInstanceCount: commandDeckOwnership.length,
+      visibleOwnerInstanceId: noCommandDeckOwner ? 'command-deck-owner-not-found' : (visibleOwner?.instanceId || 'none'),
+      deliveryOwnerInstanceId: noCommandDeckOwner ? 'command-deck-owner-not-found' : (deliveryOwner?.instanceId || 'none'),
+      revealOwnerInstanceId: noCommandDeckOwner ? 'command-deck-owner-not-found' : (revealOwner?.instanceId || 'none'),
       ownershipMismatch: visibleOwner && deliveryOwner && revealOwner
         ? (visibleOwner.instanceId === deliveryOwner.instanceId && visibleOwner.instanceId === revealOwner.instanceId ? 'no' : 'yes')
-        : 'yes',
-      visibleOwnerSourceMarker: visibleOwner?.sourceMarker || 'none',
-      deliveryOwnerSourceMarker: deliveryOwner?.sourceMarker || 'none',
-      revealOwnerSourceMarker: revealOwner?.sourceMarker || 'none',
+        : (noCommandDeckOwner ? 'yes' : 'yes'),
+      visibleOwnerSourceMarker: noCommandDeckOwner ? 'command-deck-owner-not-found' : (visibleOwner?.sourceMarker || 'none'),
+      deliveryOwnerSourceMarker: noCommandDeckOwner ? 'command-deck-owner-not-found' : (deliveryOwner?.sourceMarker || 'none'),
+      revealOwnerSourceMarker: noCommandDeckOwner ? 'command-deck-owner-not-found' : (revealOwner?.sourceMarker || 'none'),
       visibleOwnerHasHistory: visibleOwner?.hasHistory || 'no',
       visibleOwnerHasInput: visibleOwner?.hasInput || 'no',
       visibleOwnerHasLatestAnswer: visibleOwner?.latestAnswerDomFound || 'no',
@@ -350,6 +364,7 @@ export default function AIConsole({
   }, []);
 
   useLayoutEffect(() => {
+    if (!isCommandDeckOwner()) return;
     const localDeckRoot = resolveLocalCommandDeckRoot();
     if (!localDeckRoot) return;
     const visibleDeckRoot = localDeckRoot;
@@ -380,6 +395,7 @@ export default function AIConsole({
   }, [deliveryAnchoredAssistantAnswerId, historyRenderKey, safeUiLayout.commandDeck, setUiDiagnostics, lastExecutionMetadata?.ai_console_instance_id]);
 
   useLayoutEffect(() => {
+    if (!isCommandDeckOwner()) return;
     const nowIso = new Date().toISOString();
     const latestAssistantEntry = [...safeCommandHistory].reverse().find((entry) => hasFinalAssistantAnswerText(entry)) || null;
     const deliveryAnchoredAssistantEntry = deliveryAnchoredAssistantAnswerId
@@ -727,6 +743,8 @@ export default function AIConsole({
     const inputElement = rootElement?.querySelector('[data-testid="command-deck-input"]') || null;
     const executeElement = rootElement?.querySelector('[data-testid="command-deck-execute"]') || null;
     const paneAncestor = rootElement?.closest?.('[data-pane-id], [data-pane-title], [data-title], .panel') || null;
+    const ownerKey = resolveOwnerKey();
+    const isCanonicalOwner = ownerKey === COMMAND_DECK_OWNER_KEY;
     const paneId = paneAncestor?.getAttribute?.('data-pane-id') || 'unknown';
     const paneTitle = paneAncestor?.getAttribute?.('data-pane-title') || paneAncestor?.getAttribute?.('data-title') || 'unknown';
     const finalAssistantNode = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
@@ -740,6 +758,7 @@ export default function AIConsole({
       isVisible: isElementActuallyVisible(rootElement) ? 'yes' : 'no',
       paneId,
       paneTitle,
+      ownerKey,
       hasComposer: composerElement ? 'yes' : 'no',
       hasInput: inputElement ? 'yes' : 'no',
       hasExecute: executeElement ? 'yes' : 'no',
@@ -747,8 +766,8 @@ export default function AIConsole({
       finalAssistantMessageId: finalAssistantId,
       answerCount: answerNodes.length,
       latestAnswerDomFound: finalAssistantNode ? 'yes' : 'no',
-      ownsRevealEffect: answerScrollDiagnosticsRef.current.revealOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
-      ownsDeliveryState: answerScrollDiagnosticsRef.current.deliveryOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
+      ownsRevealEffect: isCanonicalOwner && answerScrollDiagnosticsRef.current.revealOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
+      ownsDeliveryState: isCanonicalOwner && answerScrollDiagnosticsRef.current.deliveryOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
       renderCount: renderCountRef.current,
       ownerInputRef: inputRef.current ? 'yes' : 'no',
       ownerContainerRef: containerRef.current ? 'yes' : 'no',
@@ -765,7 +784,24 @@ export default function AIConsole({
       }
       return payload;
     };
-    setUiDiagnostics((prev) => ({ ...prev, aiConsoleCommandDeckOwnership: Object.values(registry) }));
+    const ownershipProjection = buildOwnershipProjection();
+    const fallbackMarker = ownershipProjection.ownershipInstanceCount > 0 ? 'command-deck-owner-not-found' : 'none';
+    setUiDiagnostics((prev) => ({
+      ...prev,
+      aiConsoleCommandDeckOwnership: Object.values(registry),
+      ...(isCanonicalOwner
+        ? {}
+        : {
+            aiConsoleAnswerScroll: {
+              ...(prev?.aiConsoleAnswerScroll || answerScrollDiagnosticsRef.current),
+              ...ownershipProjection,
+              visibleOwnerInstanceId: ownershipProjection.visibleOwnerInstanceId === 'none' ? 'command-deck-owner-not-found' : ownershipProjection.visibleOwnerInstanceId,
+              revealOwnerInstanceId: ownershipProjection.revealOwnerInstanceId === 'none' ? fallbackMarker : ownershipProjection.revealOwnerInstanceId,
+              deliveryOwnerInstanceId: ownershipProjection.deliveryOwnerInstanceId === 'none' ? fallbackMarker : ownershipProjection.deliveryOwnerInstanceId,
+              visibleOwnerSourceMarker: ownershipProjection.visibleOwnerSourceMarker === 'none' ? 'command-deck-owner-not-found' : ownershipProjection.visibleOwnerSourceMarker,
+            },
+          }),
+    }));
     return () => {
       const active = getCommandDeckOwnershipRegistry();
       delete active[aiConsoleInstanceIdRef.current];
