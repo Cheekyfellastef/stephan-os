@@ -267,6 +267,50 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
   return { block, injected: 'yes', sources, missionPlanningContextUsed: 'yes' };
 }
 
+function buildWorkRoutingPromptContext(chatContextPack = null, prompt = '') {
+  const responseMode = String(chatContextPack?.recommendedResponseMode || '').trim().toLowerCase();
+  if (responseMode !== 'work-routing') {
+    return { block: '', injected: 'no', sources: [], packStatus: 'unavailable' };
+  }
+  const missionIntelligence = chatContextPack?.contextForPrompt?.missionIntelligence || chatContextPack?.compactSummary?.missionIntelligence || {};
+  const agentWorkRouting = missionIntelligence?.agentWorkRouting || {};
+  const coBuilderLoop = missionIntelligence?.coBuilderLoop || {};
+  const sources = ['agentWorkRouting', 'coBuilderLoop'];
+  const requiredProof = [
+    ...(Array.isArray(agentWorkRouting.requiredProof) ? agentWorkRouting.requiredProof : []),
+    ...(Array.isArray(coBuilderLoop.requiredProof) ? coBuilderLoop.requiredProof : []),
+  ].filter(Boolean);
+  const blockers = [
+    ...(Array.isArray(agentWorkRouting.blockers) ? agentWorkRouting.blockers : []),
+    ...(Array.isArray(coBuilderLoop.blockers) ? coBuilderLoop.blockers : []),
+  ].filter(Boolean);
+  const packetAvailability = coBuilderLoop?.packetAvailability || {};
+  const hasAnyContext = Object.keys(agentWorkRouting).length > 0 || Object.keys(coBuilderLoop).length > 0;
+  const packStatus = hasAnyContext ? 'degraded' : 'unavailable';
+  const blockLines = [
+    '[Work Routing Context: bounded truth for Codex/OpenClaw task assignment only]',
+    `- recommended route: ${agentWorkRouting.recommendedRoute || 'unknown'}`,
+    `- recommended next worker: ${coBuilderLoop.recommendedNextWorker || 'hold'}`,
+    `- codex readiness: ${agentWorkRouting.codexReady || 'unknown'}`,
+    `- openclaw research readiness: ${agentWorkRouting.openClawResearchReady || 'unknown'}`,
+    `- openclaw execution readiness: ${agentWorkRouting.openClawExecutionReady || 'no'}`,
+    `- operator approval required: ${agentWorkRouting.operatorApprovalRequired || coBuilderLoop.operatorApprovalRequired || 'yes'}`,
+    `- current co-builder loop status: ${coBuilderLoop.coBuilderStatus || 'inactive'}`,
+    `- round / maxRounds: ${coBuilderLoop.loopRound || 1} / ${coBuilderLoop.maxRounds || 3}`,
+    `- OpenClaw Research Packet availability: ${packetAvailability.openClawResearch || 'no'}`,
+    `- Codex Implementation Packet availability: ${packetAvailability.codexImplementation || 'no'}`,
+    `- Verification Packet availability: ${packetAvailability.verification || 'no'}`,
+    `- Repair Packet availability: ${packetAvailability.repair || 'no'}`,
+    `- required proof: ${requiredProof.length ? requiredProof.join(' | ') : 'targeted proof required'}`,
+    `- blockers / warnings: ${blockers.length ? blockers.join(' | ') : 'none reported'}`,
+    `- next operator action: ${agentWorkRouting.nextOperatorAction || coBuilderLoop.recommendedNextAction || 'Review routing summary, then approve | hold | copy packet.'}`,
+    '- approval-gated caveat: operator remains final approval authority for execution and merge.',
+    '- no auto-dispatch / no auto-merge caveat: do not auto-dispatch OpenClaw/Codex execution and do not auto-merge.',
+    '- operator preference: main-first/main-only workflow until approved otherwise.',
+  ];
+  return { block: blockLines.join('\n'), injected: 'yes', sources, packStatus };
+}
+
 export function normalizeProjectAwarenessMetadata({
   responseMode = 'direct-answer',
   compact = {},
@@ -3813,9 +3857,13 @@ export function useAIConsole() {
       const identityRecallDeterministicEligible = responsePlan?.responseMode === 'identity-recall'
         && responsePlan?.operatorNameUsed === 'yes';
       const projectAwarenessPromptContext = buildProjectAwarenessPromptContext(chatContextPack, prompt);
+      const workRoutingPromptContext = buildWorkRoutingPromptContext(chatContextPack, prompt);
       const promptWithProjectAwareness = projectAwarenessPromptContext.injected === 'yes'
         ? `${prompt}\n\n${projectAwarenessPromptContext.block}`
         : prompt;
+      const promptWithRoutingContext = workRoutingPromptContext.injected === 'yes'
+        ? `${promptWithProjectAwareness}\n\n${workRoutingPromptContext.block}`
+        : promptWithProjectAwareness;
       if (identityRecallDeterministicEligible) {
         responsePlan.finalAnswerUsedOperatorProfile = 'yes';
         responsePlan.identityRecallDeterministicAnswerUsed = 'yes';
@@ -3825,6 +3873,10 @@ export function useAIConsole() {
       requestPayload.project_awareness_prompt_block_length = projectAwarenessPromptContext.block.length;
       requestPayload.project_awareness_prompt_sources = projectAwarenessPromptContext.sources.length ? projectAwarenessPromptContext.sources.join('|') : 'none';
       requestPayload.mission_planning_prompt_context_used = projectAwarenessPromptContext.missionPlanningContextUsed;
+      requestPayload.work_routing_prompt_injected = workRoutingPromptContext.injected;
+      requestPayload.work_routing_prompt_block_length = workRoutingPromptContext.block.length;
+      requestPayload.work_routing_prompt_sources = workRoutingPromptContext.sources.length ? workRoutingPromptContext.sources.join('|') : 'none';
+      requestPayload.work_routing_pack_status = workRoutingPromptContext.packStatus;
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
         executionMetadata: {
@@ -3977,8 +4029,8 @@ export function useAIConsole() {
       }
       providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used
-          ? contextAssembly.augmentedPrompt.replace(prompt, promptWithProjectAwareness)
-          : promptWithProjectAwareness,
+          ? contextAssembly.augmentedPrompt.replace(prompt, promptWithRoutingContext)
+          : promptWithRoutingContext,
         provider: requestedProvider,
         uiRequestedProvider: requestPayload.ui_requested_provider,
         requestSideSelectedProvider: requestPayload.request_side_selected_provider,
