@@ -183,6 +183,10 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
   assert.match(source, /requestReason: 'missing-container-diagnostic-failure'/);
   assert.doesNotMatch(source, /requestReason: 'none'/);
+  assert.match(source, /const deliveredAnchorAvailable = answerDeliveryStatus === 'delivered' && latestAnswerIdForSig !== 'none'/);
+  assert.match(source, /const resolvedLatestAssistantEntry = deliveryAnchoredAssistantEntry \|\| latestAssistantEntry/);
+  assert.match(source, /if \(!resolvedLatestAssistantEntry && !deliveredAnchorAvailable\) \{/);
+  assert.match(source, /if \(!latestAssistantAnswerFinal && !deliveredAnchorAvailable\) \{/);
   assert.match(source, /currentSignature/);
   assert.match(source, /effectFiredAt/);
   assert.match(source, /commandDeckComposerFound: 'no'/);
