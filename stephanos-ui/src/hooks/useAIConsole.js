@@ -267,8 +267,16 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
   return { block, injected: 'yes', sources, missionPlanningContextUsed: 'yes' };
 }
 
-function buildWorkRoutingPromptContext(chatContextPack = null, prompt = '') {
-  const responseMode = String(chatContextPack?.recommendedResponseMode || '').trim().toLowerCase();
+function buildWorkRoutingPromptContext(chatContextPack = null, prompt = '', modeHints = {}) {
+  const responseModeCandidates = [
+    chatContextPack?.recommendedResponseMode,
+    modeHints?.responsePlannerResponseMode,
+    modeHints?.commandEnvelopeResponseMode,
+    modeHints?.chatContextResponseMode,
+  ]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const responseMode = responseModeCandidates.find((value) => value !== 'direct-answer') || (responseModeCandidates[0] || '');
   if (responseMode !== 'work-routing') {
     return { block: '', injected: 'no', sources: [], packStatus: 'unavailable' };
   }
@@ -3857,7 +3865,11 @@ export function useAIConsole() {
       const identityRecallDeterministicEligible = responsePlan?.responseMode === 'identity-recall'
         && responsePlan?.operatorNameUsed === 'yes';
       const projectAwarenessPromptContext = buildProjectAwarenessPromptContext(chatContextPack, prompt);
-      const workRoutingPromptContext = buildWorkRoutingPromptContext(chatContextPack, prompt);
+      const workRoutingPromptContext = buildWorkRoutingPromptContext(chatContextPack, prompt, {
+        responsePlannerResponseMode: responsePlan?.responseMode,
+        commandEnvelopeResponseMode: commandEnvelope?.responseMode,
+        chatContextResponseMode: chatContextPack?.recommendedResponseMode,
+      });
       const promptWithProjectAwareness = projectAwarenessPromptContext.injected === 'yes'
         ? `${prompt}\n\n${projectAwarenessPromptContext.block}`
         : prompt;
