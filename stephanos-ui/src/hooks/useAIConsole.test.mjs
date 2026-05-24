@@ -33,6 +33,11 @@ test('useAIConsole request path includes chat context pack metadata', async () =
   assert.match(source, /buildChatContextPack/);
   assert.match(source, /chatContextPack/);
   assert.match(source, /chat_context_response_mode/);
+  assert.match(source, /function buildWorkRoutingPromptContext\(chatContextPack = null, prompt = '', modeHints = \{\}\)/);
+  assert.match(source, /responsePlannerResponseMode: responsePlan\?\.responseMode/);
+  assert.match(source, /commandEnvelopeResponseMode: commandEnvelope\?\.responseMode/);
+  assert.match(source, /responseModeCandidates/);
+  assert.match(source, /const responseMode = responseModeCandidates\.find\(\(value\) => value !== 'direct-answer'\)/);
 });
 
 test('resolveExecuteRouteTruth promotes local-desktop execute route from structured candidate data', async () => {
