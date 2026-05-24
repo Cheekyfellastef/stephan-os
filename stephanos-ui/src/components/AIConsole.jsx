@@ -8,6 +8,16 @@ import CommandResultCard from './CommandResultCard';
 import { copyPerfDiagnosticsSnapshot, recordPerfCounter, recordPerfEvent, setPerfIdentityField } from '../state/perfDiagnostics.js';
 
 const AICONSOLE_COMPONENT_MARKER = 'stephanos-ui/components/AIConsole.jsx::free-tier-router-v1';
+const AICONSOLE_SOURCE_MARKER = 'F:stephanos-ui/src/components/AIConsole.jsx';
+
+const getCommandDeckOwnershipRegistry = () => {
+  if (typeof window === 'undefined') return {};
+  const existing = window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__;
+  if (existing && typeof existing === 'object') return existing;
+  const next = {};
+  window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ = next;
+  return next;
+};
 
 export default function AIConsole({
   input,
@@ -151,6 +161,27 @@ export default function AIConsole({
   });
 
   const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
+  const buildOwnershipProjection = () => {
+    const ownership = Object.values(getCommandDeckOwnershipRegistry());
+    const visibleOwner = ownership.find((entry) => entry?.isVisible === 'yes') || null;
+    const deliveryOwner = ownership.find((entry) => entry?.ownsDeliveryState === 'yes') || null;
+    const revealOwner = ownership.find((entry) => entry?.ownsRevealEffect === 'yes') || null;
+    return {
+      ownershipInstanceCount: ownership.length,
+      visibleOwnerInstanceId: visibleOwner?.instanceId || 'none',
+      deliveryOwnerInstanceId: deliveryOwner?.instanceId || 'none',
+      revealOwnerInstanceId: revealOwner?.instanceId || 'none',
+      ownershipMismatch: visibleOwner && deliveryOwner && revealOwner
+        ? (visibleOwner.instanceId === deliveryOwner.instanceId && visibleOwner.instanceId === revealOwner.instanceId ? 'no' : 'yes')
+        : 'yes',
+      visibleOwnerSourceMarker: visibleOwner?.sourceMarker || 'none',
+      deliveryOwnerSourceMarker: deliveryOwner?.sourceMarker || 'none',
+      revealOwnerSourceMarker: revealOwner?.sourceMarker || 'none',
+      visibleOwnerHasHistory: visibleOwner?.hasHistory || 'no',
+      visibleOwnerHasInput: visibleOwner?.hasInput || 'no',
+      visibleOwnerHasLatestAnswer: visibleOwner?.latestAnswerDomFound || 'no',
+    };
+  };
   const isElementActuallyVisible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect?.();
@@ -217,6 +248,8 @@ export default function AIConsole({
 
   recordPerfCounter('render', 'AIConsole');
   const aiConsoleInstanceIdRef = useRef(`ai-console-${Math.random().toString(36).slice(2, 10)}`);
+  const renderCountRef = useRef(0);
+  renderCountRef.current += 1;
 
   useEffect(() => {
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleRendered: true, aiConsoleMarker: AICONSOLE_COMPONENT_MARKER }));
@@ -333,6 +366,7 @@ export default function AIConsole({
       revealOwnerInstanceId: aiConsoleInstanceIdRef.current,
       deliveryOwnerInstanceId,
       ownerMismatch: ownerMismatch ? 'yes' : 'no',
+      ...buildOwnershipProjection(),
     };
     answerScrollDiagnosticsRef.current = { ...answerScrollDiagnosticsRef.current, ...canaryDiagnostics };
     setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
@@ -510,6 +544,7 @@ export default function AIConsole({
         pageJumpPrevented: previous.pageJumpPrevented || 'no',
         innerHistoryScrollRequested: previous.innerHistoryScrollRequested || 'no',
         innerHistoryScrollCompleted: previous.innerHistoryScrollCompleted || 'no',
+        ...buildOwnershipProjection(),
         ...overrides,
       };
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
@@ -672,6 +707,64 @@ export default function AIConsole({
   };
 
 
+
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
+    const localRoot = containerRef.current?.closest?.('[data-testid="command-deck-root"]') || null;
+    const rootElement = localRoot || visibleDeckRoot;
+    const historyElement = rootElement?.querySelector('[data-testid="command-deck-answer-history"]') || null;
+    const composerElement = rootElement?.querySelector('[data-testid="command-deck-composer"]') || null;
+    const inputElement = rootElement?.querySelector('[data-testid="command-deck-input"]') || null;
+    const executeElement = rootElement?.querySelector('[data-testid="command-deck-execute"]') || null;
+    const paneAncestor = rootElement?.closest?.('[data-pane-id], [data-pane-title], [data-title], .panel') || null;
+    const paneId = paneAncestor?.getAttribute?.('data-pane-id') || 'unknown';
+    const paneTitle = paneAncestor?.getAttribute?.('data-pane-title') || paneAncestor?.getAttribute?.('data-title') || 'unknown';
+    const finalAssistantNode = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
+    const finalAssistantId = String(finalAssistantNode?.getAttribute?.('data-assistant-answer-id') || deliveryAnchoredAssistantAnswerId || latestAssistantAnswerId || 'none');
+    const answerNodes = historyElement ? Array.from(historyElement.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"]')) : [];
+    const ownership = {
+      instanceId: aiConsoleInstanceIdRef.current,
+      component: 'AIConsole',
+      sourceMarker: `${AICONSOLE_SOURCE_MARKER}#${AICONSOLE_COMPONENT_MARKER}`,
+      rootElementFound: rootElement ? 'yes' : 'no',
+      isVisible: isElementActuallyVisible(rootElement) ? 'yes' : 'no',
+      paneId,
+      paneTitle,
+      hasComposer: composerElement ? 'yes' : 'no',
+      hasInput: inputElement ? 'yes' : 'no',
+      hasExecute: executeElement ? 'yes' : 'no',
+      hasHistory: historyElement ? 'yes' : 'no',
+      finalAssistantMessageId: finalAssistantId,
+      answerCount: answerNodes.length,
+      latestAnswerDomFound: finalAssistantNode ? 'yes' : 'no',
+      ownsRevealEffect: answerScrollDiagnosticsRef.current.revealOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
+      ownsDeliveryState: answerScrollDiagnosticsRef.current.deliveryOwnerInstanceId === aiConsoleInstanceIdRef.current ? 'yes' : 'no',
+      renderCount: renderCountRef.current,
+      ownerInputRef: inputRef.current ? 'yes' : 'no',
+      ownerContainerRef: containerRef.current ? 'yes' : 'no',
+      ownerHistoryRef: historyElement && containerRef.current === historyElement ? 'yes' : (historyElement ? 'shared' : 'no'),
+      ownerAnswerDeliveryState: answerDeliveryStatus === 'delivered' ? 'yes' : 'no',
+    };
+    const registry = getCommandDeckOwnershipRegistry();
+    registry[aiConsoleInstanceIdRef.current] = ownership;
+    window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ = registry;
+    window.__COPY_STEPHANOS_COMMAND_DECK_OWNERSHIP__ = () => {
+      const payload = JSON.stringify(Object.values(window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ || {}), null, 2);
+      if (window.navigator?.clipboard?.writeText) {
+        window.navigator.clipboard.writeText(payload).catch(() => {});
+      }
+      return payload;
+    };
+    setUiDiagnostics((prev) => ({ ...prev, aiConsoleCommandDeckOwnership: Object.values(registry) }));
+    return () => {
+      const active = getCommandDeckOwnershipRegistry();
+      delete active[aiConsoleInstanceIdRef.current];
+      window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ = active;
+    };
+  }, [historyRenderKey, deliveryAnchoredAssistantAnswerId, latestAssistantAnswerId, answerDeliveryStatus, safeUiLayout.commandDeck, setUiDiagnostics]);
+
   const commandPipelineFailureReason = String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const routeLayerHealthy = String(routeTruthView?.routeLayerStatus || '').trim().toLowerCase() === 'healthy';
   const routeUsableHealthy = String(routeTruthView?.selectedRouteReachableState || '').trim().toLowerCase() === 'yes'
@@ -704,6 +797,9 @@ export default function AIConsole({
       onToggle={() => togglePanel('commandDeck')}
     >
       <div className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
+        <div data-testid="command-deck-ownership-stamp" style={{ fontSize: '0.75rem', color: '#2f6f3e', paddingBottom: '0.25rem' }}>
+          CD Ownership · component=AIConsole · instance={aiConsoleInstanceIdRef.current} · render={renderCountRef.current} · src={AICONSOLE_SOURCE_MARKER} · owns(inputRef={inputRef.current ? 'yes' : 'no'},containerRef={containerRef.current ? 'yes' : 'no'},historyRef={containerRef.current ? 'yes' : 'no'}) · ownsDeliveryState={answerDeliveryStatus === 'delivered' ? 'yes' : 'no'} · finalAssistant={deliveryAnchoredAssistantAnswerId || 'none'}
+        </div>
         <div className={`api-connection-banner ${safeApiStatus.state || 'checking'}`}>
           <strong>{safeApiStatus.label || 'Checking backend...'}</strong>
           <span>{safeApiStatus.detail || 'Waiting for health check.'}</span>
