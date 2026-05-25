@@ -173,7 +173,7 @@ export default function AIConsole({
     const ownerPanel = localRoot?.closest?.('[data-panel-id]') || inputRef.current?.closest?.('[data-panel-id]') || null;
     const panelId = String(ownerPanel?.getAttribute?.('data-panel-id') || '').trim();
     if (panelId === 'commandDeck') return COMMAND_DECK_OWNER_KEY;
-    if (panelId) return MISSION_CONSOLE_OWNER_KEY;
+    if (panelId === 'missionConsolePanel' || panelId === 'aiCoreMissionConsolePanel') return MISSION_CONSOLE_OWNER_KEY;
     return UNKNOWN_OWNER_KEY;
   };
   const isCommandDeckOwner = () => resolveOwnerKey() === COMMAND_DECK_OWNER_KEY;
@@ -395,7 +395,9 @@ export default function AIConsole({
       ...buildOwnershipProjection(),
     };
     answerScrollDiagnosticsRef.current = { ...answerScrollDiagnosticsRef.current, ...canaryDiagnostics };
-    setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+    if (isCommandDeckOwner()) {
+      setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+    }
   }, [deliveryAnchoredAssistantAnswerId, historyRenderKey, safeUiLayout.commandDeck, setUiDiagnostics, lastExecutionMetadata?.ai_console_instance_id]);
 
   useLayoutEffect(() => {
@@ -576,7 +578,9 @@ export default function AIConsole({
         ...buildOwnershipProjection(),
         ...overrides,
       };
-      setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+      if (isCommandDeckOwner()) {
+        setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+      }
     };
 
     if (!autoScrollEnabled) {
