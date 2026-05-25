@@ -761,7 +761,8 @@ export default function AIConsole({
     const ownership = {
       instanceId: aiConsoleInstanceIdRef.current,
       component: 'AIConsole',
-      sourceMarker: `${AICONSOLE_SOURCE_MARKER}#${AICONSOLE_COMPONENT_MARKER}`,
+      sourceMarker: ownerKey,
+      sourceComponentMarker: `${AICONSOLE_SOURCE_MARKER}#${AICONSOLE_COMPONENT_MARKER}`,
       rootElementFound: rootElement ? 'yes' : 'no',
       isVisible: isElementActuallyVisible(rootElement) ? 'yes' : 'no',
       paneId,
