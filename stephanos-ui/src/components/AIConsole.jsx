@@ -394,6 +394,9 @@ export default function AIConsole({
       ownerMismatch: ownerMismatch ? 'yes' : 'no',
       ...buildOwnershipProjection(),
     };
+    if (canaryDiagnostics.ownershipInstanceCount === 0 && visibleDeckRoot) {
+      canaryDiagnostics.source = 'command-deck-registry-empty-live-dom-present';
+    }
     answerScrollDiagnosticsRef.current = { ...answerScrollDiagnosticsRef.current, ...canaryDiagnostics };
     if (isCommandDeckOwner()) {
       setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
@@ -763,6 +766,12 @@ export default function AIConsole({
       component: 'AIConsole',
       sourceMarker: ownerKey,
       sourceComponentMarker: `${AICONSOLE_SOURCE_MARKER}#${AICONSOLE_COMPONENT_MARKER}`,
+      mounted: 'yes',
+      rootFound: rootElement ? 'yes' : 'no',
+      historyFound: historyElement ? 'yes' : 'no',
+      inputFound: inputElement ? 'yes' : 'no',
+      executeFound: executeElement ? 'yes' : 'no',
+      latestAnswerFound: finalAssistantNode ? 'yes' : 'no',
       rootElementFound: rootElement ? 'yes' : 'no',
       isVisible: isElementActuallyVisible(rootElement) ? 'yes' : 'no',
       paneId,
@@ -799,7 +808,16 @@ export default function AIConsole({
     }));
     return () => {
       const active = getCommandDeckOwnershipRegistry();
-      delete active[aiConsoleInstanceIdRef.current];
+      const existing = active[aiConsoleInstanceIdRef.current];
+      if (existing && typeof existing === 'object') {
+        active[aiConsoleInstanceIdRef.current] = {
+          ...existing,
+          mounted: 'no',
+          isVisible: 'no',
+          ownsRevealEffect: 'no',
+          ownsDeliveryState: 'no',
+        };
+      }
       window.__STEPHANOS_COMMAND_DECK_OWNERSHIP__ = active;
     };
   }, [historyRenderKey, deliveryAnchoredAssistantAnswerId, latestAssistantAnswerId, answerDeliveryStatus, safeUiLayout.commandDeck, setUiDiagnostics, surfaceOwnerKey]);
