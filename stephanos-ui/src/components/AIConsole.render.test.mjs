@@ -183,8 +183,9 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /latest-answer-card-not-found-in-command-deck-instance/);
   assert.match(source, /aiConsoleAnswerScroll/);
   assert.match(source, /requestReason: commandDeckMandatoryReveal \? 'final-assistant-answer-rendered-mandatory-reveal' : 'final-assistant-answer-rendered'/);
-  assert.match(source, /requestReason: 'already-visible-confirmed'/);
-  assert.match(source, /skipReason: 'already-visible-confirmed'/);
+  assert.match(source, /skipReason: 'already-revealed-current-answer'/);
+  assert.match(source, /commandDeckAutoRevealSuppressedReason: 'already-revealed-current-answer'/);
+  assert.match(source, /manual-scroll-after-reveal/);
   assert.match(source, /if \(!autoScrollEnabled && !commandDeckMandatoryReveal\) \{/);
   assert.match(source, /commandDeckLocalRevealResult: \(previous\.requested \|\| 'no'\) === 'yes' \?/);
   assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
