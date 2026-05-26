@@ -106,3 +106,13 @@ test('rendered App path keeps ai-core mission console in aiCoreMissionConsolePan
   assert.equal(uiReality.uiRealityAiCoreMissionConsoleDomParentPaneId, 'aiCoreMissionConsolePanel');
   assert.equal(uiReality.uiRealityAiCoreMissionConsoleInsideAgentMissionConsole, 'no');
 });
+
+
+test('App operator relief projection handler records source surface and bridge diagnostics from MissionConsoleTile mounts', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  assert.match(appSource, /const handleOperatorReliefProjectionUpdate = useCallback\(\(projection, options = \{\}\) => \{/);
+  assert.match(appSource, /const sourceSurface = typeof options\?\.sourceSurface === 'string' && options\.sourceSurface \? options\.sourceSurface : 'unknown';/);
+  assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection \}\);/);
+  assert.match(appSource, /sourceSurface,/);
+  assert.match(appSource, /onOperatorReliefProjectionUpdate=\{handleOperatorReliefProjectionUpdate\}/);
+});

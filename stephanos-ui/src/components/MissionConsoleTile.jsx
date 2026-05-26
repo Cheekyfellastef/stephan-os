@@ -358,8 +358,8 @@ function MissionConsoleTile({
       return;
     }
     operatorReliefProjectionPublishSignatureRef.current = nextSignature;
-    onOperatorReliefProjectionUpdate(nextProjection);
-  }, [onOperatorReliefProjectionUpdate, operatorReliefProjection]);
+    onOperatorReliefProjectionUpdate(nextProjection, { sourceSurface: panelId });
+  }, [onOperatorReliefProjectionUpdate, operatorReliefProjection, panelId]);
 
   useEffect(() => {
     const verdict = operatorReliefProjection?.mergeSafety?.verdict;
