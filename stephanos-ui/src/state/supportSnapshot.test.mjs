@@ -3196,3 +3196,16 @@ test('support snapshot promotes work-routing response mode from planner metadata
   assert.match(snapshot, /Chat Context Agent Work Routing Context Included: yes/);
   assert.doesNotMatch(snapshot, /Chat Context Pack Status: unavailable/);
 });
+
+test('support snapshot never reports availability blocker none when projection is unavailable', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        agent_reality_loop_projection_available: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Agent Reality Loop Projection Available: no/);
+  assert.match(snapshot, /Agent Reality Loop Availability Blocker: projection-missing-from-command-deck-path/);
+  assert.doesNotMatch(snapshot, /Agent Reality Loop Availability Blocker: none/);
+});

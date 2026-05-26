@@ -31,6 +31,8 @@ test('agent reality loop availability blocker cannot be none when projection is 
   assert.match(source, /const projectionObjectPresent = Object\.keys\(agentRealityLoopProjection\)\.length > 0;/);
   assert.match(source, /const projectionAvailable = projectionAvailableStatus \|\| projectionObjectPresent;/);
   assert.match(source, /agent_reality_loop_availability_blocker: projectionAvailable \? 'none' : 'projection-missing-from-command-deck-path'/);
+  assert.match(source, /const resolvedAgentRealityLoopProjectionUnavailable = String\(resolvedAgentRealityLoopProjectionAvailable\)\.trim\(\)\.toLowerCase\(\) !== 'yes';/);
+  assert.match(source, /agent_reality_loop_availability_blocker: resolvedAgentRealityLoopAvailabilityBlocker/);
   assert.match(source, /if \(projectionObjectPresent\) contextSourceParts\.push\('command-deck-projection-bridge'\);/);
 });
 

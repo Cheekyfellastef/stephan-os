@@ -895,6 +895,21 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.agent_reality_loop_copy_packets_available,
     'no',
   );
+  const resolvedAgentRealityLoopAvailabilityBlockerRaw = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_availability_blocker',
+    raw.agent_reality_loop_availability_blocker,
+    trace.agent_reality_loop_availability_blocker,
+    requestChatContext.agent_reality_loop_availability_blocker,
+    rebuiltExecutionMetadata.agent_reality_loop_availability_blocker,
+    'projection-missing-from-command-deck-path',
+  );
+  const resolvedAgentRealityLoopProjectionUnavailable = String(resolvedAgentRealityLoopProjectionAvailable).trim().toLowerCase() !== 'yes';
+  const resolvedAgentRealityLoopAvailabilityBlocker = resolvedAgentRealityLoopProjectionUnavailable
+    ? (
+      String(resolvedAgentRealityLoopAvailabilityBlockerRaw || '').trim()
+      || 'projection-missing-from-command-deck-path'
+    )
+    : 'none';
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
@@ -949,6 +964,7 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     agent_reality_loop_recommended_lead: resolvedAgentRealityLoopRecommendedLead,
     agent_reality_loop_merge_recommendation: resolvedAgentRealityLoopMergeRecommendation,
     agent_reality_loop_copy_packets_available: resolvedAgentRealityLoopCopyPacketsAvailable,
+    agent_reality_loop_availability_blocker: resolvedAgentRealityLoopAvailabilityBlocker,
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
