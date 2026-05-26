@@ -1126,9 +1126,14 @@ export function AIStoreProvider({ children }) {
         apiBaseUrl: apiStatus.baseUrl,
         homeNode: apiStatus.runtimeContext?.homeNode || null,
       }),
-      operatorReliefProjection: operatorReliefProjectionBridge
+      operatorReliefProjection: operatorReliefProjectionBridge?.projection
         || apiStatus?.runtimeContext?.operatorReliefProjection
         || null,
+      operatorReliefBridgeDiagnostics: {
+        ...(apiStatus?.runtimeContext?.operatorReliefBridgeDiagnostics || {}),
+        ...(operatorReliefProjectionBridge?.diagnostics || {}),
+        runtimeContextSeen: operatorReliefProjectionBridge?.projection ? 'yes' : 'no',
+      },
       surfaceAwareness: {
         ...surfaceAwareness,
         recentFrictionEvents: surfaceFrictionEvents,

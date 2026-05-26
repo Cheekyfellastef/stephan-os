@@ -3756,9 +3756,11 @@ export function useAIConsole() {
       const previousActiveMission = readActiveMissionState();
       const chatContextGithubEvidence = liveGithubPrEvidence || null;
       const bridgedOperatorReliefProjection = requestRuntimeStatus?.operatorReliefProjection
+        || requestRuntimeStatus?.runtimeContext?.operatorReliefProjection
         || requestRuntimeStatus?.missionState?.operatorReliefProjection
         || requestRuntimeStatus?.inputMissionState?.operatorReliefProjection
         || {};
+      const operatorReliefBridgeDiagnostics = requestRuntimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics || {};
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
@@ -4055,6 +4057,15 @@ export function useAIConsole() {
         provider_generation_still_running_unknown: false,
         provider_generation_confirmed_stopped: false,
         ...buildChatContextExecutionMetadata(chatContextPack),
+        operator_relief_bridge_published: operatorReliefBridgeDiagnostics?.published || 'no',
+        operator_relief_bridge_source_surface: operatorReliefBridgeDiagnostics?.sourceSurface || 'unknown',
+        operator_relief_bridge_projection_keys_seen: Array.isArray(operatorReliefBridgeDiagnostics?.projectionKeysSeen) ? operatorReliefBridgeDiagnostics.projectionKeysSeen.join('|') : 'none',
+        operator_relief_bridge_agent_reality_loop_seen: operatorReliefBridgeDiagnostics?.agentRealityLoopSeen ? 'yes' : 'no',
+        operator_relief_bridge_store_updated: operatorReliefBridgeDiagnostics?.storeUpdated || 'no',
+        operator_relief_bridge_runtime_context_seen: operatorReliefBridgeDiagnostics?.runtimeContextSeen || 'no',
+        operator_relief_bridge_request_runtime_status_seen: bridgedOperatorReliefProjection && Object.keys(bridgedOperatorReliefProjection).length ? 'yes' : 'no',
+        operator_relief_bridge_last_updated_at: operatorReliefBridgeDiagnostics?.lastUpdatedAt || 'unknown',
+        operator_relief_bridge_drop_boundary: bridgedOperatorReliefProjection && Object.keys(bridgedOperatorReliefProjection).length ? 'none' : 'request-runtime-status',
         ...buildResponsePlanExecutionMetadata(responsePlan),
         ...projectEnvelopeToExecutionMetadata(commandEnvelope),
         },
