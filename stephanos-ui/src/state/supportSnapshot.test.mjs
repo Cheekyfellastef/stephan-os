@@ -2917,6 +2917,24 @@ test('support snapshot projects mission repair loop fields', () => {
   assert.match(snapshot, /Mission Repair Loop Duplicate Authority Detected: no/);
 });
 
+test('support snapshot reports operator-approved repair loop lines', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {},
+    executionMetadata: {
+      operator_approved_repair_loop_status: 'proof-failed',
+      operator_approved_repair_loop_mission: 'Repair ARL bridge',
+      operator_approved_repair_loop_approval_still_valid: 'yes',
+      operator_approved_repair_loop_failure_class: 'projection-bridge-loss',
+      operator_approved_repair_loop_recommended_lead: 'openclaw',
+      operator_approved_repair_loop_openclaw_packet_available: 'yes',
+    },
+  });
+  assert.match(snapshot, /Operator Approved Repair Loop Status:/);
+  assert.match(snapshot, /Operator Approved Repair Loop Mission:/);
+  assert.match(snapshot, /Operator Approved Repair Loop Failure Class:/);
+  assert.match(snapshot, /Operator Approved Repair Loop Recommended Lead:/);
+});
+
 test('Support Snapshot reports rehydrated operator profile storage diagnostics', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: {
     chat_context_operator_name_known: 'yes',

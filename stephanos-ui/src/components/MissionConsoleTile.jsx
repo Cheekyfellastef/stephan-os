@@ -1188,6 +1188,21 @@ function MissionConsoleTile({
             <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentRealityLoopProjection?.copyOpenClawPacket || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyAgentRealityLoopOpenClawPacket')}>Copy Agent Reality Loop OpenClaw Packet</button>
             <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.agentRealityLoopProjection?.copyOperatorProofChecklist || '', setOperatorChecklistCopyState, 'MissionConsoleTile.copyAgentRealityLoopOperatorChecklist')}>Copy Agent Reality Loop Operator Checklist</button>
           </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleOperatorApprovedRepairLoopPanel" title="Operator-Approved Repair Loop V1" isOpen={uiLayout.missionConsoleOperatorApprovedRepairLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleOperatorApprovedRepairLoopPanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Current repair loop status:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.status || 'inactive'}</li>
+              <li><strong>Approved mission:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.approvedMissionTitle || 'none'}</li>
+              <li><strong>Recommended lead:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.recommendedLead || 'hold'}</li>
+              <li><strong>Current blocker:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.currentBlocker || 'none'}</li>
+              <li><strong>Next action:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.nextAction || 'Review mission evidence'}</li>
+              <li><strong>Proof state:</strong> {(operatorReliefProjection.operatorApprovedRepairLoopProjection?.missingProofLines || []).length > 0 ? 'proof-missing' : 'proof-satisfied'}</li>
+              <li><strong>Scope-change required:</strong> {operatorReliefProjection.operatorApprovedRepairLoopProjection?.scopeChangeRequired || 'no'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.operatorApprovedRepairLoopProjection?.copyOpenClawContinuationPacket || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyOpenClawContinuationPacket')}>Copy OpenClaw Continuation Packet</button>
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.operatorApprovedRepairLoopProjection?.copyCodexContinuationPacket || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyCodexContinuationPacket')}>Copy Codex Continuation Packet</button>
+            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.operatorApprovedRepairLoopProjection?.copyOperatorProofChecklist || '', setOperatorChecklistCopyState, 'MissionConsoleTile.copyOperatorRepairChecklist')}>Copy Operator Proof Checklist</button>
+            <button type="button" className={`status-panel-copy-button ${repairPromptCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.operatorApprovedRepairLoopProjection?.copyMissionContract || '', setRepairPromptCopyState, 'MissionConsoleTile.copyOperatorMissionContract')}>Copy Mission Contract</button>
+          </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleWorkRoutingCandidatePanel"
             title="Work Routing Candidate"
