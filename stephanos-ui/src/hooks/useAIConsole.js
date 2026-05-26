@@ -1211,7 +1211,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     ui_requested_provider: uiRequestedProvider || requestPayload.provider,
     request_side_selected_provider: requestSideSelectedProvider || requestPayload.provider,
     router_selected_provider: routerSelectedProvider || selectedProvider,
-    submission_console: executionMetadata.submission_console || requestTrace.submission_console || requestPayload.submissionSource || 'stephanos-mission-console',
+    submission_console: requestTrace.submission_console || requestPayload.submissionSource || executionMetadata.submission_console || 'stephanos-mission-console',
     submission_route: executionMetadata.submission_route || requestTrace.submission_route || requestPayload.submissionRoute || 'assistant-router',
     requested_provider_intent: requestedProviderIntent,
     requested_provider_for_request: requestedProviderForRequest,

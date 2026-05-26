@@ -568,8 +568,8 @@ export default function AIConsole({
         commandDeckLocalHistoryRefPresent: containerRef.current ? 'yes' : 'no',
         commandDeckLocalLatestAnswerRefPresent: targetEl ? 'yes' : 'no',
         commandDeckLocalRevealAttempted: previous.requested || 'no',
-        commandDeckLocalRevealResult: previous.completed || 'no',
-        commandDeckLocalRevealReason: previous.skipReason || 'none',
+        commandDeckLocalRevealResult: (previous.requested || 'no') === 'yes' ? (previous.completed || 'no') : 'no',
+        commandDeckLocalRevealReason: (previous.requested || 'no') === 'yes' ? (previous.skipReason || 'none') : 'not-attempted',
         commandDeckLocalRevealAssistantId: deliveryAnchoredAssistantAnswerId || 'none',
         commandDeckLocalHistoryScrollPrevious: previous.previousScrollTop ?? 'n/a',
         commandDeckLocalHistoryScrollNext: previous.nextScrollTop ?? 'n/a',
@@ -597,7 +597,8 @@ export default function AIConsole({
       }
     };
 
-    if (!autoScrollEnabled) {
+    const commandDeckMandatoryReveal = isCommandDeckOwner();
+    if (!autoScrollEnabled && !commandDeckMandatoryReveal) {
       publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'autoscroll-disabled' });
       return;
     }
@@ -619,14 +620,19 @@ export default function AIConsole({
     }
     if (!signatureChanged) {
       recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_signature');
-      publishScrollDiagnostics({ requested: 'no', requestReason: 'already-visible-confirmed', skipReason: 'same-answer-signature-already-scrolled', completed: 'yes', method: 'already-visible-confirmed' });
+      publishScrollDiagnostics({ requested: 'yes', requestReason: 'already-visible-confirmed', skipReason: 'already-visible-confirmed', completed: 'yes', method: 'already-visible-confirmed' });
       return;
     }
     lastHistoryRenderKeyRef.current = historyRenderKey;
     recordPerfCounter('timers', 'ai_core.autoscroll_run');
     preserveDocumentScrollPosition();
 
-    publishScrollDiagnostics({ requested: 'yes', requestReason: 'final-assistant-answer-rendered', skipReason: 'none', lastRequestedAt: nowIso });
+    publishScrollDiagnostics({
+      requested: 'yes',
+      requestReason: commandDeckMandatoryReveal ? 'final-assistant-answer-rendered-mandatory-reveal' : 'final-assistant-answer-rendered',
+      skipReason: 'none',
+      lastRequestedAt: nowIso,
+    });
 
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try {
