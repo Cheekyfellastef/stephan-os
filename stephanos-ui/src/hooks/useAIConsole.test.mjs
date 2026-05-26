@@ -18,6 +18,22 @@ import path from 'node:path';
 
 
 
+
+test('command deck missionState bridge forwards operator relief agent reality loop projection into chat context pack', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const bridgedOperatorReliefProjection = requestRuntimeStatus\?\.operatorReliefProjection/);
+  assert.match(source, /operatorReliefProjection: bridgedOperatorReliefProjection,/);
+  assert.match(source, /agentRealityLoopProjection: bridgedOperatorReliefProjection\?\.agentRealityLoopProjection \|\| \{\},/);
+});
+
+test('agent reality loop availability blocker cannot be none when projection is unavailable', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const projectionObjectPresent = Object\.keys\(agentRealityLoopProjection\)\.length > 0;/);
+  assert.match(source, /const projectionAvailable = projectionAvailableStatus \|\| projectionObjectPresent;/);
+  assert.match(source, /agent_reality_loop_availability_blocker: projectionAvailable \? 'none' : 'projection-missing-from-command-deck-path'/);
+  assert.match(source, /if \(projectionObjectPresent\) contextSourceParts\.push\('command-deck-projection-bridge'\);/);
+});
+
 test('useAIConsole includes project awareness truth contract normalization helper', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /export function normalizeProjectAwarenessMetadata/);
