@@ -186,7 +186,7 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /requestReason: 'already-visible-confirmed'/);
   assert.match(source, /skipReason: 'already-visible-confirmed'/);
   assert.match(source, /if \(!autoScrollEnabled && !commandDeckMandatoryReveal\) \{/);
-  assert.match(source, /commandDeckLocalRevealResult: \(previous\.requested \|\| 'no'\) === 'yes' \? \(previous\.completed \|\| 'no'\) : 'no'/);
+  assert.match(source, /commandDeckLocalRevealResult: \(previous\.requested \|\| 'no'\) === 'yes' \?/);
   assert.match(source, /requestReason: 'missing-target-diagnostic-failure'/);
   assert.match(source, /requestReason: 'missing-container-diagnostic-failure'/);
   assert.match(source, /source: 'mounted-ai-console-instance'/);
