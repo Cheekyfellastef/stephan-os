@@ -231,7 +231,8 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
   const responseMode = String(chatContextPack?.recommendedResponseMode || '').trim().toLowerCase();
   const normalizedPrompt = String(prompt || '').trim().toLowerCase();
   const missionPlanningEligible = responseMode === 'mission-planning'
-    || /\b(mission|project|build|next best action|next action|workflow|codex|openclaw)\b/.test(normalizedPrompt);
+    || responseMode === 'architecture-guidance'
+    || /\b(mission|project|build|next best action|next action|workflow|codex|openclaw|agent reality loop|reality loop|agent loop|proof loop|merge readiness loop)\b/.test(normalizedPrompt);
   if (!missionPlanningEligible) {
     return { block: '', injected: 'no', sources: [], missionPlanningContextUsed: 'no' };
   }
@@ -258,6 +259,8 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
     `- next best action: ${projectAwareness.nextBestAction || missionIntelligence.nextBestAction || 'unknown'}`,
     `- codex role: ${projectAwareness.codexRole || 'unknown'}`,
     `- openclaw role: ${projectAwareness.openClawRole || 'unknown'}`,
+    `- agent reality loop v1 summary: ${projectAwareness.agentRealityLoopV1Summary || 'Agent Reality Loop V1: read-only coordination/proof projection inside Mission Brain / Operator Relief.'}`,
+    `- agent reality loop projection status: ${projectAwareness.agentRealityLoopProjectionStatus || 'unavailable'}`,
     `- protected canon summary: ${projectAwareness.protectedCanonSummary || 'Preserve launcher/runtime separation, truth boundaries, and command deck protections.'}`,
     `- forbidden complexity warnings: ${projectAwareness.forbiddenComplexityWarnings || 'Do not add panes/systems or duplicate mission/chat/memory surfaces.'}`,
     '- answer synthesis directive (mission-planning only): For mission/project/build/next-action questions, provide bounded degraded truth with: strategic mission framing, next best action, why (Codex/OpenClaw heavy-lifting behind approval gates), and caveat that active mission store may still be degraded/unknown.',
@@ -404,6 +407,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     missionState: chatContextPack?.inputMissionState || {},
     boundedMissionSummary: compact?.missionIntelligence?.missionSummary || 'unknown',
   });
+  const agentRealityLoopProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
+    || chatContextPack?.inputMissionState?.agentRealityLoopProjection
+    || {};
+  const agentRealityLoopTermsDetected = /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/.test(
+    String(chatContextPack?.matchInput || '').toLowerCase(),
+  );
 
   return {
     chat_context_pack_status: projectAwarenessTruth.chatContextPackStatus || compact?.status || (hasPack ? 'active' : 'unavailable'),
@@ -460,6 +469,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     project_awareness_prompt_block_length: 0,
     project_awareness_prompt_sources: 'none',
     mission_planning_prompt_context_used: 'no',
+    agent_reality_loop_context_recognized: agentRealityLoopTermsDetected ? 'yes' : 'no',
+    agent_reality_loop_context_source: agentRealityLoopTermsDetected ? 'chatContext.intent+projectAwareness' : 'none',
+    agent_reality_loop_projection_available: Object.keys(agentRealityLoopProjection).length > 0 ? 'yes' : 'no',
+    agent_reality_loop_recommended_lead: agentRealityLoopProjection?.recommendedLead || 'hold',
+    agent_reality_loop_merge_recommendation: agentRealityLoopProjection?.mergeRecommendation || 'hold',
+    agent_reality_loop_copy_packets_available: ((agentRealityLoopProjection?.copyCodexPacket || agentRealityLoopProjection?.copyOpenClawPacket || agentRealityLoopProjection?.copyOperatorProofChecklist) ? 'yes' : 'no'),
   };
 }
 

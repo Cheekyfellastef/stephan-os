@@ -376,6 +376,8 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /function buildProjectAwarenessPromptContext\(chatContextPack = null, prompt = ''\)/);
   assert.match(source, /responseMode === 'mission-planning'/);
+  assert.match(source, /responseMode === 'architecture-guidance'/);
+  assert.match(source, /agent reality loop v1 summary:/);
   assert.match(source, /forbidden complexity warnings:/);
   assert.match(source, /requestPayload\.project_awareness_prompt_injected = projectAwarenessPromptContext\.injected;/);
   assert.match(source, /requestPayload\.mission_planning_prompt_context_used = projectAwarenessPromptContext\.missionPlanningContextUsed;/);
@@ -383,4 +385,6 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /strategicMissionFallback/);
   assert.match(source, /reduce operator complexity by wiring Mission Brain, Harness Agent, proof, canon, and project awareness into the existing Command Deck AI path/);
   assert.match(source, /answer synthesis directive \(mission-planning only\)/);
+  assert.match(source, /agent_reality_loop_context_recognized/);
+  assert.match(source, /agent_reality_loop_merge_recommendation/);
 });

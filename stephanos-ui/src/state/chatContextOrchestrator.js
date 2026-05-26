@@ -26,6 +26,11 @@ export const INTENT_RULES = [
     pattern: /\b(can you remember my name|what is my name|who am i|do you know my name|remember my name)\b/,
   },
   {
+    id: 'agent-reality-loop',
+    responseMode: 'architecture-guidance',
+    pattern: /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/,
+  },
+  {
     id: 'merge-decision',
     responseMode: 'merge-decision',
     pattern: 'contains "merge" and merge-decision companion phrase',
@@ -159,6 +164,7 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
   if (proofState && Object.keys(proofState).length) sourcesUsed.push('proofState');
   if (operatorProfile && Object.keys(operatorProfile).length) sourcesUsed.push('operatorProfile');
   sourcesUsed.push('canonRules');
+  const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
 
   const warnings = [
     'Do not add new panes when existing Mission Brain / Operator Relief / Command Deck surfaces can be extended.',
@@ -185,6 +191,8 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
     codexRole: 'Codex executes bounded implementation/proof work under approval gates; no autonomous execution or merge authority.',
     openClawRole: 'OpenClaw supports orchestration/research/proof under approval gates without bypassing operator merge authority.',
     nextBestAction: missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
+    agentRealityLoopV1Summary: 'Agent Reality Loop V1 is a read-only coordination/proof projection in Mission Brain / Operator Relief that routes work between Codex, OpenClaw, operator, or hold; exposes required proof; blocks merge when proof is missing; and proposes lesson candidates for operator approval.',
+    agentRealityLoopProjectionStatus: agentRealityLoopProjection.loopStatus || 'unavailable',
     forbiddenComplexityWarnings: warnings,
     warningCount: warnings.length,
   };
@@ -209,20 +217,21 @@ export function buildChatContextPack(input = {}) {
   const identityRecallTask = responseMode === 'identity-recall';
   const operatorExplanationTask = responseMode === 'operator-explanation' || explanationIntent.matched;
   const missionPlanningTask = responseMode === 'mission-planning' || responseMode === 'work-routing';
+  const agentRealityLoopTask = intent.matchedRule === 'agent-reality-loop';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']
-    : (missionPlanningTask ? ['missionState', 'proofState', 'canonRules'] : []);
+    : ((missionPlanningTask || agentRealityLoopTask) ? ['missionState', 'proofState', 'canonRules'] : []);
   const optionalProviders = mergeDecisionTask
     ? ['memoryContinuity', 'conversationContinuity', 'operatorProfile', 'agentState']
-    : (missionPlanningTask ? ['runtimeTruth', 'providerTruth', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState']);
+    : ((missionPlanningTask || agentRealityLoopTask) ? ['runtimeTruth', 'providerTruth', 'conversationContinuity', 'operatorProfile', 'agentState'] : ['conversationContinuity', 'operatorProfile', 'agentState']);
   const contextProviderIdsRequested = [...requiredProviders, ...optionalProviders];
-  const inferredSubsystems = mergeDecisionTask
-    ? ['merge', 'pr', 'codex', 'proof', 'source-truth']
-    : (codexDispatchTask
-      ? ['codex', 'mission-console', 'proof', 'source-truth']
-      : (operatorExplanationTask
-        ? ['operator-relief', 'support-snapshot', 'proof', 'source-truth']
-        : (uiTask ? ['ui', 'proof', 'source-truth'] : (identityRecallTask ? ['identity', 'memory', 'operator-profile'] : ['general']))));
+  let inferredSubsystems = ['general'];
+  if (mergeDecisionTask) inferredSubsystems = ['merge', 'pr', 'codex', 'proof', 'source-truth'];
+  else if (codexDispatchTask) inferredSubsystems = ['codex', 'mission-console', 'proof', 'source-truth'];
+  else if (operatorExplanationTask) inferredSubsystems = ['operator-relief', 'support-snapshot', 'proof', 'source-truth'];
+  else if (uiTask) inferredSubsystems = ['ui', 'proof', 'source-truth'];
+  else if (identityRecallTask) inferredSubsystems = ['identity', 'memory', 'operator-profile'];
+  else if (agentRealityLoopTask) inferredSubsystems = ['operator-relief', 'mission-brain', 'proof', 'codex', 'openclaw'];
   const githubPrEvidence = buildGithubPrEvidenceProvider({
     ...(input.githubPrEvidence || {}),
     connectorEvidence: input.githubPrEvidence?.connectorEvidence || input.connectorEvidence,
@@ -319,9 +328,11 @@ export function buildChatContextPack(input = {}) {
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (codexDispatchTask
         ? 'Build a Codex Dispatch Packet draft and wait for operator approval.'
+        : (agentRealityLoopTask
+          ? 'Answer with Stephanos Agent Reality Loop V1 projection (coordination/proof/merge-readiness/lesson-candidate truth), not generic agent loop failure guidance.'
         : (operatorExplanationTask
           ? 'Provide compact operator explanation and next bounded action.'
-          : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'))),
+          : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.')))),
     warningCount: warnings.length,
     warnings,
     missionIntelligence: boundedMissionIntelligenceContext,
@@ -431,7 +442,9 @@ export function buildChatContextPack(input = {}) {
       ? 'Collect build/verify/UI proof and amend the open PR before deciding merge.'
       : (codexDispatchTask
         ? 'Build a Codex Dispatch Packet draft and wait for operator approval.'
-        : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.')),
+        : (agentRealityLoopTask
+          ? 'Answer with Stephanos Agent Reality Loop V1 projection (coordination/proof/merge-readiness/lesson-candidate truth), not generic agent loop failure guidance.'
+          : (uiTask ? 'Capture browser/UI Reality proof before asserting visible fix.' : 'Answer directly with bounded confidence.'))),
     warnings,
     contextForPrompt: {
       operatorMessage,
