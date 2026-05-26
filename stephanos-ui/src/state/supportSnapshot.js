@@ -658,6 +658,12 @@ export function buildSupportSnapshot({
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
     : {};
+  const commandDeckLocalReveal = globalThis.window?.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__ && typeof globalThis.window.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__ === 'object'
+    ? globalThis.window.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__
+    : null;
+  const commandDeckFallbackRoot = commandDeckLocalReveal ? null : globalThis.window?.document?.querySelector?.('[data-panel-id="commandDeck"]');
+  const commandDeckFallbackAnswers = commandDeckFallbackRoot ? Array.from(commandDeckFallbackRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"]')) : [];
+  const commandDeckFallbackLatestAnswer = commandDeckFallbackAnswers.length ? commandDeckFallbackAnswers[commandDeckFallbackAnswers.length - 1] : null;
   const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
   const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const executionTruthState = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
@@ -2157,18 +2163,18 @@ export function buildSupportSnapshot({
     `Answer Scroll Signature Current: ${asText(aiConsoleAnswerScroll?.currentSignature, 'none')}`,
     `Answer Scroll Signature Changed: ${asText(aiConsoleAnswerScroll?.signatureChanged, 'no')}`,
     `Answer Scroll Effect Fired: ${asText(aiConsoleAnswerScroll?.effectFired, 'no')}`,
-    `Command Deck Local Root Ref Present: ${asText(aiConsoleAnswerScroll?.commandDeckLocalRootRefPresent, 'no')}`,
-    `Command Deck Local History Ref Present: ${asText(aiConsoleAnswerScroll?.commandDeckLocalHistoryRefPresent, 'no')}`,
-    `Command Deck Local Latest Answer Ref Present: ${asText(aiConsoleAnswerScroll?.commandDeckLocalLatestAnswerRefPresent, 'no')}`,
-    `Command Deck Local Reveal Attempted: ${asText(aiConsoleAnswerScroll?.commandDeckLocalRevealAttempted, 'no')}`,
-    `Command Deck Local Reveal Result: ${asText(aiConsoleAnswerScroll?.commandDeckLocalRevealResult, 'no')}`,
-    `Command Deck Local Reveal Reason: ${asText(aiConsoleAnswerScroll?.commandDeckLocalRevealReason, 'none')}`,
+    `Command Deck Local Root Ref Present: ${asText(commandDeckLocalReveal?.rootRefPresent || aiConsoleAnswerScroll?.commandDeckLocalRootRefPresent, 'no')}`,
+    `Command Deck Local History Ref Present: ${asText(commandDeckLocalReveal?.historyRefPresent || aiConsoleAnswerScroll?.commandDeckLocalHistoryRefPresent, 'no')}`,
+    `Command Deck Local Latest Answer Ref Present: ${asText(commandDeckLocalReveal?.latestAnswerRefPresent || aiConsoleAnswerScroll?.commandDeckLocalLatestAnswerRefPresent, 'no')}`,
+    `Command Deck Local Reveal Attempted: ${asText(commandDeckLocalReveal?.revealAttempted || aiConsoleAnswerScroll?.commandDeckLocalRevealAttempted, 'no')}`,
+    `Command Deck Local Reveal Result: ${asText(commandDeckLocalReveal?.revealResult || aiConsoleAnswerScroll?.commandDeckLocalRevealResult, 'no')}`,
+    `Command Deck Local Reveal Reason: ${asText(commandDeckLocalReveal?.revealReason || aiConsoleAnswerScroll?.commandDeckLocalRevealReason, 'none')}`,
     `Command Deck Local Reveal Assistant ID: ${asText(aiConsoleAnswerScroll?.commandDeckLocalRevealAssistantId, 'none')}`,
     `Command Deck Local History Scroll Previous: ${asText(aiConsoleAnswerScroll?.commandDeckLocalHistoryScrollPrevious, 'n/a')}`,
     `Command Deck Local History Scroll Next: ${asText(aiConsoleAnswerScroll?.commandDeckLocalHistoryScrollNext, 'n/a')}`,
     `Command Deck Local Latest Answer Visible: ${asText(aiConsoleAnswerScroll?.commandDeckLocalLatestAnswerVisible, 'no')}`,
-    `Command Deck Submission Source: ${asText(aiConsoleAnswerScroll?.commandDeckSubmissionSource, 'unknown')}`,
-    `Command Deck Surface Owner Key: ${asText(aiConsoleAnswerScroll?.commandDeckSurfaceOwnerKey, 'unknown')}`,
+    `Command Deck Submission Source: ${asText(commandDeckLocalReveal?.submissionSource || aiConsoleAnswerScroll?.commandDeckSubmissionSource, 'unknown')}`,
+    `Command Deck Surface Owner Key: ${asText(commandDeckLocalReveal?.surfaceOwnerKey || aiConsoleAnswerScroll?.commandDeckSurfaceOwnerKey, 'unknown')}`,
     `Command Deck Ownership Instance Count: ${asText(aiConsoleAnswerScroll?.ownershipInstanceCount, '0')}`,
     `Visible Owner Instance ID: ${asText(aiConsoleAnswerScroll?.visibleOwnerInstanceId, 'none')}`,
     `Delivery Owner Instance ID: ${asText(aiConsoleAnswerScroll?.deliveryOwnerInstanceId, 'none')}`,
@@ -2180,6 +2186,12 @@ export function buildSupportSnapshot({
     `Visible Owner Has History: ${asText(aiConsoleAnswerScroll?.visibleOwnerHasHistory, 'no')}`,
     `Visible Owner Has Input: ${asText(aiConsoleAnswerScroll?.visibleOwnerHasInput, 'no')}`,
     `Visible Owner Has Latest Answer: ${asText(aiConsoleAnswerScroll?.visibleOwnerHasLatestAnswer, 'no')}`,
+
+    `Command Deck DOM Fallback Root Found: ${asText(commandDeckFallbackRoot ? 'yes' : 'no', 'no')}`,
+    `Command Deck DOM Fallback Owner Attr: ${asText(commandDeckFallbackRoot?.getAttribute?.('data-surface-owner-key'), 'unknown')}`,
+    `Command Deck DOM Fallback Submission Source Attr: ${asText(commandDeckFallbackRoot?.getAttribute?.('data-submission-source'), 'unknown')}`,
+    `Command Deck DOM Fallback Final Answer Count: ${asText(commandDeckFallbackAnswers.length, '0')}`,
+    `Command Deck DOM Fallback Latest Answer Found: ${asText(commandDeckFallbackLatestAnswer ? 'yes' : 'no', 'no')}`,
     `Command Envelope Build Attempted: ${asText(executionMetadata?.command_envelope_build_attempted, 'no')}`,
     `Command Envelope Build Error: ${asText(executionMetadata?.command_envelope_build_error, 'none')}`,
     `Dispatch Gate Allowed: ${asText(executionMetadata?.dispatch_gate_allowed, 'unknown')}`,
