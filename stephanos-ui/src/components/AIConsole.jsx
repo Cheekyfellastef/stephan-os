@@ -109,6 +109,10 @@ export default function AIConsole({
   const latestAssistantAnswerRef = useRef(null);
   const latestScrollTargetRef = useRef({ kind: 'none', id: '' });
   const lastScrolledAnswerSignatureRef = useRef('');
+  const lastRevealedAssistantIdRef = useRef('none');
+  const lastRevealSignatureRef = useRef('none');
+  const manualScrollAfterRevealAssistantIdRef = useRef('none');
+  const manualScrollAfterRevealDetectedRef = useRef(false);
   const answerScrollDiagnosticsRef = useRef({
     source: 'uninitialized',
     visibleDeckInstanceMounted: 'no',
@@ -167,6 +171,12 @@ export default function AIConsole({
     pageJumpPrevented: 'no',
     innerHistoryScrollRequested: 'no',
     innerHistoryScrollCompleted: 'no',
+    commandDeckLocalRevealSignature: 'none',
+    commandDeckLocalLastRevealedAssistantId: 'none',
+    commandDeckManualScrollAfterReveal: 'no',
+    commandDeckAutoRevealSuppressedReason: 'none',
+    commandDeckCopyButtonsReachabilityChecked: 'no',
+    commandDeckCopyButtonsReachable: 'unknown',
   });
 
   const getAnswerHistoryScrollContainer = () => containerRef.current || null;
@@ -574,6 +584,12 @@ export default function AIConsole({
         commandDeckLocalHistoryScrollPrevious: previous.previousScrollTop ?? 'n/a',
         commandDeckLocalHistoryScrollNext: previous.nextScrollTop ?? 'n/a',
         commandDeckLocalLatestAnswerVisible: (visibility.fullyVisible || ((previous.skipReason || 'none') === 'already-visible-confirmed')) ? 'yes' : 'no',
+        commandDeckLocalRevealSignature: lastRevealSignatureRef.current || currentSignature || 'none',
+        commandDeckLocalLastRevealedAssistantId: lastRevealedAssistantIdRef.current || 'none',
+        commandDeckManualScrollAfterReveal: manualScrollAfterRevealDetectedRef.current ? 'yes' : 'no',
+        commandDeckAutoRevealSuppressedReason: previous.commandDeckAutoRevealSuppressedReason || 'none',
+        commandDeckCopyButtonsReachabilityChecked: containerScrollable ? 'yes' : 'no',
+        commandDeckCopyButtonsReachable: containerScrollable ? 'yes' : 'unknown',
         commandDeckSubmissionSource: String(lastExecutionMetadata?.submission_console || lastExecutionMetadata?.command_envelope_submission_source || 'unknown').trim() || 'unknown',
         commandDeckSurfaceOwnerKey: resolveOwnerKey(),
         ...buildOwnershipProjection(),
@@ -620,7 +636,11 @@ export default function AIConsole({
     }
     if (!signatureChanged) {
       recordPerfCounter('timers', 'ai_core.autoscroll_skipped_same_signature');
-      publishScrollDiagnostics({ requested: 'yes', requestReason: 'already-visible-confirmed', skipReason: 'already-visible-confirmed', completed: 'yes', method: 'already-visible-confirmed' });
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'already-revealed-current-answer', completed: 'yes', method: 'already-visible-confirmed', commandDeckAutoRevealSuppressedReason: 'already-revealed-current-answer' });
+      return;
+    }
+    if (manualScrollAfterRevealDetectedRef.current && manualScrollAfterRevealAssistantIdRef.current === latestAnswerIdForSig) {
+      publishScrollDiagnostics({ requested: 'no', requestReason: 'reveal-skipped-by-policy', skipReason: 'manual-scroll-after-reveal', completed: 'yes', method: 'manual-scroll-after-reveal', commandDeckAutoRevealSuppressedReason: 'manual-scroll-after-reveal' });
       return;
     }
     lastHistoryRenderKeyRef.current = historyRenderKey;
@@ -649,6 +669,10 @@ export default function AIConsole({
         }
         const latestScrollKey = `${latestAnswerEnvelopeId}|${deliveryAnchoredAssistantAnswerId}|${latestAssistantText.length}|final`;
         lastScrolledAnswerSignatureRef.current = latestScrollKey;
+        lastRevealSignatureRef.current = latestScrollKey;
+        lastRevealedAssistantIdRef.current = latestAnswerIdForSig;
+        manualScrollAfterRevealDetectedRef.current = false;
+        manualScrollAfterRevealAssistantIdRef.current = 'none';
         const previousScrollTop = scrollContainerEl.scrollTop;
         const safeTopPadding = 12;
         const targetRect = latestAssistantAnswerTarget.getBoundingClientRect();
@@ -739,6 +763,10 @@ export default function AIConsole({
       revealResult: 'no',
       revealReason: 'none',
       revealAssistantId: deliveryAnchoredAssistantAnswerId || latestAssistantAnswerId || 'none',
+      revealSignature: lastRevealSignatureRef.current || 'none',
+      lastRevealedAssistantId: lastRevealedAssistantIdRef.current || 'none',
+      manualScrollAfterReveal: manualScrollAfterRevealDetectedRef.current ? 'yes' : 'no',
+      autoRevealSuppressedReason: answerScrollDiagnosticsRef.current.commandDeckAutoRevealSuppressedReason || 'none',
       historyScrollPrevious: historyEl ? historyEl.scrollTop : 'n/a',
       historyScrollNext: historyEl ? historyEl.scrollTop : 'n/a',
       updatedAt: new Date().toISOString(),
@@ -760,6 +788,16 @@ export default function AIConsole({
       recordPerfCounter('events', 'ai_core.scroll.autoscroll_toggle');
       return isNearBottom;
     });
+    const currentAssistantId = String(deliveryAnchoredAssistantAnswerId || latestAssistantAnswerId || 'none');
+    if (currentAssistantId !== 'none' && lastRevealedAssistantIdRef.current === currentAssistantId) {
+      manualScrollAfterRevealDetectedRef.current = true;
+      manualScrollAfterRevealAssistantIdRef.current = currentAssistantId;
+      answerScrollDiagnosticsRef.current = {
+        ...answerScrollDiagnosticsRef.current,
+        commandDeckManualScrollAfterReveal: 'yes',
+        commandDeckAutoRevealSuppressedReason: 'manual-scroll-after-reveal',
+      };
+    }
   };
 
   const copyPerfDiagnostics = async () => {
@@ -882,6 +920,13 @@ export default function AIConsole({
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    manualScrollAfterRevealDetectedRef.current = false;
+    manualScrollAfterRevealAssistantIdRef.current = 'none';
+    answerScrollDiagnosticsRef.current = {
+      ...answerScrollDiagnosticsRef.current,
+      commandDeckManualScrollAfterReveal: 'no',
+      commandDeckAutoRevealSuppressedReason: 'none',
+    };
     const submittedInput = input;
     const submitResult = await submitPrompt(submittedInput);
     if (submitResult?.inputCleared === true || submitResult?.submitAccepted === true) {
