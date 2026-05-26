@@ -1164,6 +1164,18 @@ function MissionConsoleTile({
             {nextCodexPromptCopyState === COPY_STATE.SUCCESS ? 'Next Codex Prompt Copied' : nextCodexPromptCopyState === COPY_STATE.FAILURE ? 'Copy Next Codex Prompt failed' : 'Copy Next Codex Prompt'}
           </button>
           </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleAgentRealityLoopPanel" title="Agent Reality Loop V1" isOpen={uiLayout.missionConsoleAgentRealityLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleAgentRealityLoopPanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Status:</strong> {operatorReliefProjection.agentRealityLoopProjection?.status || 'unknown'}</li>
+              <li><strong>Lead recommendation:</strong> {operatorReliefProjection.agentRealityLoopProjection?.recommendedLead || 'hold'}</li>
+              <li><strong>Next action:</strong> {operatorReliefProjection.agentRealityLoopProjection?.nextBestAction || 'Review mission evidence'}</li>
+              <li><strong>Proof required:</strong> {(operatorReliefProjection.agentRealityLoopProjection?.requiredProof || []).join(' · ') || 'none'}</li>
+              <li><strong>Merge recommendation:</strong> {operatorReliefProjection.agentRealityLoopProjection?.mergeRecommendation || 'unknown'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentRealityLoopProjection?.copyCodexPacket || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyAgentRealityLoopCodexPacket')}>Copy Agent Reality Loop Codex Packet</button>
+            <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentRealityLoopProjection?.copyOpenClawPacket || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyAgentRealityLoopOpenClawPacket')}>Copy Agent Reality Loop OpenClaw Packet</button>
+            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.agentRealityLoopProjection?.copyOperatorProofChecklist || '', setOperatorChecklistCopyState, 'MissionConsoleTile.copyAgentRealityLoopOperatorChecklist')}>Copy Agent Reality Loop Operator Checklist</button>
+          </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleWorkRoutingCandidatePanel"
             title="Work Routing Candidate"

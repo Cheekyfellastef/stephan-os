@@ -234,3 +234,26 @@ test('Co-Builder Loop projection is deterministic, approval-gated, and bounded t
   assert.equal(r.coBuilderLoopProjection.operatorApprovalRequired, 'yes');
   assert.equal(r.coBuilderLoopProjection.repairPacketAvailable, 'yes');
 });
+
+test('Agent Reality Loop chooses Codex for bounded code work and emits copy packets', () => {
+  const observed = ['Mission Console opens from landing tile','Operator Relief panel visible','idle state renders','active/fixture state renders','merge safety verdict visible','browser proof gaps visible','repair prompt visible/copyable','no red console errors','no broken chevron/collapse','existing Mission Console controls still work'];
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] }, mergeReadyCandidate: true }, browserChecksObserved: observed },
+    supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
+  });
+  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'Codex');
+  assert.equal(typeof r.agentRealityLoopProjection.copyCodexPacket.nextBestAction, 'string');
+  assert.equal(r.agentRealityLoopProjection.hasDuplicatePaneRisk, 'no');
+});
+
+test('Agent Reality Loop chooses OpenClaw for live proof and blocks merge when browser proof is absent', () => {
+  const r = deriveOperatorReliefProjection({
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] } }, browserChecksObserved: [] },
+  });
+  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'hold');
+  assert.equal(r.agentRealityLoopProjection.mergeRecommendation, 'hold-browser-proof-missing');
+  assert.equal(r.agentRealityLoopProjection.operatorApprovalRequired, true);
+  assert.match(r.agentRealityLoopProjection.copyOpenClawPacket.liveProofFirst, /Support Snapshot/);
+});
