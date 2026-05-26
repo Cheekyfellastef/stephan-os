@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRuntimeStatusModel } from './runtimeStatusModel.mjs';
+import { createRuntimeStatusModel, normalizeRuntimeContext } from './runtimeStatusModel.mjs';
 
 test('createRuntimeStatusModel treats LAN sessions with loopback backend leakage as hosted-web and prefers home-node targets', () => {
   const status = createRuntimeStatusModel({
@@ -1425,4 +1425,30 @@ test('createRuntimeStatusModel clears stale local-desktop offline blocker when b
   assert.equal(localDesktop?.reachable, true);
   assert.equal(localDesktop?.usable, true);
   assert.notEqual(localDesktop?.state, 'configured-unreachable');
+});
+
+test('normalizeRuntimeContext preserves operatorReliefProjection and nested Agent Reality Loop payload', () => {
+  const normalized = normalizeRuntimeContext({
+    operatorReliefProjection: {
+      status: 'active',
+      agentRealityLoopProjection: {
+        status: 'available',
+        loopStatus: 'stable',
+        recommendedLead: 'codex',
+        mergeRecommendation: 'hold',
+        copyCodexPacket: { headline: 'codex packet' },
+        copyOpenClawPacket: { headline: 'openclaw packet' },
+        copyOperatorProofChecklist: { headline: 'operator proof checklist' },
+      },
+    },
+  });
+
+  assert.equal(normalized.operatorReliefProjection.status, 'active');
+  assert.equal(normalized.operatorReliefProjection.agentRealityLoopProjection.status, 'available');
+  assert.equal(normalized.operatorReliefProjection.agentRealityLoopProjection.loopStatus, 'stable');
+  assert.equal(normalized.operatorReliefProjection.agentRealityLoopProjection.recommendedLead, 'codex');
+  assert.equal(normalized.operatorReliefProjection.agentRealityLoopProjection.mergeRecommendation, 'hold');
+  assert.deepEqual(normalized.operatorReliefProjection.agentRealityLoopProjection.copyCodexPacket, { headline: 'codex packet' });
+  assert.deepEqual(normalized.operatorReliefProjection.agentRealityLoopProjection.copyOpenClawPacket, { headline: 'openclaw packet' });
+  assert.deepEqual(normalized.operatorReliefProjection.agentRealityLoopProjection.copyOperatorProofChecklist, { headline: 'operator proof checklist' });
 });

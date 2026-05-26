@@ -2033,7 +2033,12 @@ export function buildSupportSnapshot({
     `Agent Reality Loop Recommended Lead: ${asText(executionMetadata?.agent_reality_loop_recommended_lead, 'hold')}`,
     `Agent Reality Loop Merge Recommendation: ${asText(executionMetadata?.agent_reality_loop_merge_recommendation, 'hold')}`,
     `Agent Reality Loop Copy Packets Available: ${asText(executionMetadata?.agent_reality_loop_copy_packets_available, 'no')}`,
-    `Agent Reality Loop Availability Blocker: ${asText(executionMetadata?.agent_reality_loop_availability_blocker, 'none')}`,
+    `Agent Reality Loop Availability Blocker: ${asText(
+      executionMetadata?.agent_reality_loop_availability_blocker,
+      String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
+        ? 'none'
+        : 'projection-missing-from-command-deck-path',
+    )}`,
     `Command Envelope Status: ${asText(commandEnvelopeStatus, 'unavailable')}`,
     `Command Envelope Version: ${asText(commandEnvelopeVersion, 'n/a')}`,
     `Command Envelope ID: ${asText(commandEnvelopeId, 'n/a')}`,

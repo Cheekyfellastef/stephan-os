@@ -143,6 +143,24 @@ function normalizeProviderExecutionIntent(runtimeContext = {}) {
   };
 }
 
+function normalizeOperatorReliefProjection(runtimeContext = {}) {
+  const projection = runtimeContext?.operatorReliefProjection && typeof runtimeContext.operatorReliefProjection === 'object'
+    ? runtimeContext.operatorReliefProjection
+    : null;
+  if (!projection) {
+    return null;
+  }
+  const loopProjection = projection?.agentRealityLoopProjection && typeof projection.agentRealityLoopProjection === 'object'
+    ? projection.agentRealityLoopProjection
+    : null;
+  return {
+    ...projection,
+    ...(loopProjection ? {
+      agentRealityLoopProjection: { ...loopProjection },
+    } : {}),
+  };
+}
+
 function parseHostname(value = '') {
   try {
     return new URL(value).hostname || '';
@@ -1156,6 +1174,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
   const surfaceAwareness = normalizeSurfaceAwareness(runtimeContext.surfaceAwareness);
   const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
   const providerExecutionIntent = normalizeProviderExecutionIntent(runtimeContext);
+  const operatorReliefProjection = normalizeOperatorReliefProjection(runtimeContext);
   return {
     frontendOrigin,
     apiBaseUrl,
@@ -1215,6 +1234,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
     hostedCloudConfig: runtimeContext.hostedCloudConfig && typeof runtimeContext.hostedCloudConfig === 'object'
       ? runtimeContext.hostedCloudConfig
       : {},
+    ...(operatorReliefProjection ? { operatorReliefProjection } : {}),
   };
 }
 
