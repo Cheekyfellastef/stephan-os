@@ -192,7 +192,7 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
     openClawRole: 'OpenClaw supports orchestration/research/proof under approval gates without bypassing operator merge authority.',
     nextBestAction: missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
     agentRealityLoopV1Summary: 'Agent Reality Loop V1 is a read-only coordination/proof projection in Mission Brain / Operator Relief that routes work between Codex, OpenClaw, operator, or hold; exposes required proof; blocks merge when proof is missing; and proposes lesson candidates for operator approval.',
-    agentRealityLoopProjectionStatus: agentRealityLoopProjection.loopStatus || 'unavailable',
+    agentRealityLoopProjectionStatus: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || 'unavailable',
     forbiddenComplexityWarnings: warnings,
     warningCount: warnings.length,
   };

@@ -387,4 +387,6 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /answer synthesis directive \(mission-planning only\)/);
   assert.match(source, /agent_reality_loop_context_recognized/);
   assert.match(source, /agent_reality_loop_merge_recommendation/);
+  assert.match(source, /resolvedAgentRealityLoopProjectionAvailable/);
+  assert.match(source, /agent_reality_loop_copy_packets_available: resolvedAgentRealityLoopCopyPacketsAvailable/);
 });

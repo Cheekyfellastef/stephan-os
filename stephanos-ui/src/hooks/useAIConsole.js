@@ -806,6 +806,54 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.project_awareness_warning_count,
     0,
   );
+  const resolvedAgentRealityLoopContextRecognized = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_context_recognized',
+    raw.agent_reality_loop_context_recognized,
+    trace.agent_reality_loop_context_recognized,
+    requestChatContext.agent_reality_loop_context_recognized,
+    rebuiltExecutionMetadata.agent_reality_loop_context_recognized,
+    'no',
+  );
+  const resolvedAgentRealityLoopContextSource = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_context_source',
+    raw.agent_reality_loop_context_source,
+    trace.agent_reality_loop_context_source,
+    requestChatContext.agent_reality_loop_context_source,
+    rebuiltExecutionMetadata.agent_reality_loop_context_source,
+    'none',
+  );
+  const resolvedAgentRealityLoopProjectionAvailable = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_projection_available',
+    raw.agent_reality_loop_projection_available,
+    trace.agent_reality_loop_projection_available,
+    requestChatContext.agent_reality_loop_projection_available,
+    rebuiltExecutionMetadata.agent_reality_loop_projection_available,
+    'no',
+  );
+  const resolvedAgentRealityLoopRecommendedLead = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_recommended_lead',
+    raw.agent_reality_loop_recommended_lead,
+    trace.agent_reality_loop_recommended_lead,
+    requestChatContext.agent_reality_loop_recommended_lead,
+    rebuiltExecutionMetadata.agent_reality_loop_recommended_lead,
+    'hold',
+  );
+  const resolvedAgentRealityLoopMergeRecommendation = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_merge_recommendation',
+    raw.agent_reality_loop_merge_recommendation,
+    trace.agent_reality_loop_merge_recommendation,
+    requestChatContext.agent_reality_loop_merge_recommendation,
+    rebuiltExecutionMetadata.agent_reality_loop_merge_recommendation,
+    'hold',
+  );
+  const resolvedAgentRealityLoopCopyPacketsAvailable = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_copy_packets_available',
+    raw.agent_reality_loop_copy_packets_available,
+    trace.agent_reality_loop_copy_packets_available,
+    requestChatContext.agent_reality_loop_copy_packets_available,
+    rebuiltExecutionMetadata.agent_reality_loop_copy_packets_available,
+    'no',
+  );
   return {
     ...merged,
     chat_context_raw_operator_message_seen: rawOperatorMessage || 'n/a',
@@ -854,6 +902,12 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     project_awareness_prompt_block_length: Number(requestPayload?.project_awareness_prompt_block_length || 0),
     project_awareness_prompt_sources: String(requestPayload?.project_awareness_prompt_sources || 'none'),
     mission_planning_prompt_context_used: String(requestPayload?.mission_planning_prompt_context_used || 'no'),
+    agent_reality_loop_context_recognized: resolvedAgentRealityLoopContextRecognized,
+    agent_reality_loop_context_source: resolvedAgentRealityLoopContextSource,
+    agent_reality_loop_projection_available: resolvedAgentRealityLoopProjectionAvailable,
+    agent_reality_loop_recommended_lead: resolvedAgentRealityLoopRecommendedLead,
+    agent_reality_loop_merge_recommendation: resolvedAgentRealityLoopMergeRecommendation,
+    agent_reality_loop_copy_packets_available: resolvedAgentRealityLoopCopyPacketsAvailable,
     chat_context_default_override_reason: overwrittenByDefault ? 'backend-default-overrode-request-pack' : (requestPayload?.chatContextPack?.classifierDebug?.defaultOverrideReason || 'none'),
     chat_context_metadata_keys_present: metadataKeys.join('|') || 'none',
   };
