@@ -262,6 +262,21 @@ export default function App() {
   const previousAppStoreFieldsRef = useRef(null);
   const operatorReliefProjectionSignatureRef = useRef('');
   const operatorReliefBridgePublishedAtRef = useRef('');
+  const missionConsoleBridgeInstancesRef = useRef({});
+  const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
+  const registerMissionConsoleBridgeInstance = useCallback((panelId, metadata = {}) => {
+    const key = typeof panelId === 'string' && panelId ? panelId : 'unknown';
+    missionConsoleBridgeInstancesRef.current = {
+      ...missionConsoleBridgeInstancesRef.current,
+      [key]: {
+        panelId: key,
+        sourceSurface: metadata.sourceSurface || key,
+        visible: metadata.visible === true,
+        collapsed: metadata.collapsed === true,
+        hasBridgeCallback: metadata.hasBridgeCallback !== false,
+      },
+    };
+  }, []);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
     const nextProjection = projection || null;
     const sourceSurface = typeof options?.sourceSurface === 'string' && options.sourceSurface ? options.sourceSurface : 'unknown';
@@ -272,11 +287,30 @@ export default function App() {
     operatorReliefProjectionSignatureRef.current = nextSignature;
     const publishedAt = new Date().toISOString();
     operatorReliefBridgePublishedAtRef.current = publishedAt;
+    const publisherPanelId = options?.panelId || sourceSurface;
+    missionConsoleBridgeLastPublisherRef.current = { panelId: publisherPanelId, sourceSurface };
+    const bridgeInstances = Object.values(missionConsoleBridgeInstancesRef.current || {});
+    const instanceIds = bridgeInstances.map((entry) => entry.panelId);
+    const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
+    const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
+    const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
+    const visibleInstancePublished = visibleInstance ? visibleInstance.panelId === publisherPanelId : false;
     setOperatorReliefProjectionBridge({
       projection: nextProjection,
       diagnostics: {
         published: 'yes',
         sourceSurface,
+        sourcePanelId: publisherPanelId,
+        missionConsoleInstanceCount: instanceIds.length,
+        missionConsoleInstanceIds: instanceIds,
+        missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
+        missionConsoleBridgeCapableInstanceIds: bridgeCapableInstanceIds,
+        missionConsoleInstancesMissingBridgeCallback: missingBridgeCallbackIds,
+        missionConsoleLastPublishingInstanceId: publisherPanelId,
+        missionConsoleLastPublishingSourceSurface: sourceSurface,
+        missionConsoleVisibleInstancePublished: visibleInstancePublished ? 'yes' : 'no',
+        missionConsoleBridgeParityStatus: missingBridgeCallbackIds.length === 0 ? 'OK' : 'FAIL',
+        missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length === 0 ? 'none' : 'missing-bridge-callback',
         projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
         agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
         storeUpdated: 'yes',
@@ -284,6 +318,21 @@ export default function App() {
       },
     });
   }, [setOperatorReliefProjectionBridge]);
+  const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {
+    const sourceSurface = options?.sourceSurface || panelId || 'unknown';
+    registerMissionConsoleBridgeInstance(panelId, {
+      sourceSurface,
+      visible: options?.visible === true,
+      collapsed: options?.collapsed === true,
+      hasBridgeCallback: true,
+    });
+    return {
+      panelId,
+      onOperatorReliefProjectionUpdate: (projection, callbackOptions = {}) => {
+        handleOperatorReliefProjectionUpdate(projection, { ...callbackOptions, panelId, sourceSurface });
+      },
+    };
+  }, [handleOperatorReliefProjectionUpdate, registerMissionConsoleBridgeInstance]);
   recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
   const startupStageRef = useRef(new Set());
@@ -1308,7 +1357,7 @@ export default function App() {
           <MissionConsoleTile
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
-            panelId="aiCoreMissionConsolePanel"
+            {...createMissionConsoleTileBridgeProps('aiCoreMissionConsolePanel', { sourceSurface: 'aiCoreMissionConsolePanel', visible: true, collapsed: safeUiLayout.aiCoreMissionConsolePanel === false })}
             panelTitle="Stephanos Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
@@ -1316,7 +1365,6 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -1476,7 +1524,7 @@ export default function App() {
           <MissionConsoleTile
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
-            panelId="missionConsolePanel"
+            {...createMissionConsoleTileBridgeProps('missionConsolePanel', { sourceSurface: 'missionConsolePanel', visible: safeUiLayout.missionConsolePanel !== false, collapsed: safeUiLayout.missionConsolePanel === false })}
             panelTitle="Agent Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
@@ -1484,7 +1532,6 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -2108,7 +2155,7 @@ export default function App() {
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
             forcePanelOpen
-            panelId="aiCoreMissionConsolePanel"
+            {...createMissionConsoleTileBridgeProps('aiCoreMissionConsolePanel', { sourceSurface: 'aiCoreMissionConsolePanel', visible: true, collapsed: false })}
             panelTitle="Stephanos Mission Console"
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
@@ -2116,7 +2163,6 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -2200,13 +2246,13 @@ export default function App() {
           <MissionConsoleTile
             uiLayout={safeUiLayout}
             togglePanel={togglePanel}
+            {...createMissionConsoleTileBridgeProps('missionConsolePanel', { sourceSurface: 'missionConsolePanel', visible: true, collapsed: false })}
             runtimeStatusModel={runtimeStatusModel}
             finalRouteTruth={routeTruthView}
             finalAgentView={displayAgentView}
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
-            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}

@@ -38,11 +38,11 @@ test('App wires canonical MissionConsoleTile mount props for AI Core and dedicat
 
   assert.match(
     appSource,
-    /id: 'aiCoreMissionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?panelId="aiCoreMissionConsolePanel"/m,
+    /id: 'aiCoreMissionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'/m,
   );
   assert.match(
     appSource,
-    /id: 'missionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?panelId="missionConsolePanel"/m,
+    /id: 'missionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?createMissionConsoleTileBridgeProps\('missionConsolePanel'/m,
   );
 });
 
@@ -51,7 +51,7 @@ test('ai-core mission console marker is not rendered inside missionConsolePanel 
   const missionConsolePaneSegment = appSource.match(/id: 'missionConsolePanel'[\s\S]*?render: \(\) => \([\s\S]*?\),\n\s*\},/m)?.[0] || '';
   assert.equal(missionConsolePaneSegment.includes('data-testid="ai-core-mission-console"'), false);
   assert.match(appSource, /data-testid="ai-core-mission-console"/);
-  assert.match(appSource, /panelId="aiCoreMissionConsolePanel"/);
+  assert.match(appSource, /createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'/);
 });
 
 test('ai-core mission console ancestry diagnostics require closest pane shell truth markers', async () => {
@@ -114,5 +114,5 @@ test('App operator relief projection handler records source surface and bridge d
   assert.match(appSource, /const sourceSurface = typeof options\?\.sourceSurface === 'string' && options\.sourceSurface \? options\.sourceSurface : 'unknown';/);
   assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection \}\);/);
   assert.match(appSource, /sourceSurface,/);
-  assert.match(appSource, /onOperatorReliefProjectionUpdate=\{handleOperatorReliefProjectionUpdate\}/);
+  assert.match(appSource, /createMissionConsoleTileBridgeProps\(/);
 });
