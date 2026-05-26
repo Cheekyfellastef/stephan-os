@@ -108,6 +108,7 @@ function MissionConsoleTile({
   emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
+  onOperatorReliefProjectionUpdate = () => {},
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
@@ -348,6 +349,10 @@ function MissionConsoleTile({
     supportSnapshot: runtimeStatusModel || {},
     });
   }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
+
+  useEffect(() => {
+    onOperatorReliefProjectionUpdate(operatorReliefProjection || null);
+  }, [onOperatorReliefProjectionUpdate, operatorReliefProjection]);
 
   useEffect(() => {
     const verdict = operatorReliefProjection?.mergeSafety?.verdict;
