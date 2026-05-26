@@ -237,6 +237,18 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
     return { block: '', injected: 'no', sources: [], missionPlanningContextUsed: 'no' };
   }
   const projectAwareness = chatContextPack?.contextForPrompt?.projectAwareness || chatContextPack?.compactSummary?.projectAwareness || {};
+  const missionAgentRealityLoopProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
+    || chatContextPack?.inputMissionState?.agentRealityLoopProjection
+    || {};
+  const projectionStatusNormalized = String(
+    missionAgentRealityLoopProjection?.status
+    || missionAgentRealityLoopProjection?.loopStatus
+    || projectAwareness?.agentRealityLoopProjectionStatus
+    || '',
+  ).trim().toLowerCase();
+  const projectionAvailable = ['available', 'active', 'ready'].includes(projectionStatusNormalized)
+    || Object.keys(missionAgentRealityLoopProjection).length > 0;
+  const projectionBlocker = projectionAvailable ? 'none' : 'projection-missing-from-command-deck-path';
   const missionIntelligence = chatContextPack?.contextForPrompt?.missionIntelligence || chatContextPack?.compactSummary?.missionIntelligence || {};
   const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : [];
   const hasStrategicContext = Boolean(
@@ -260,10 +272,12 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
     `- codex role: ${projectAwareness.codexRole || 'unknown'}`,
     `- openclaw role: ${projectAwareness.openClawRole || 'unknown'}`,
     `- agent reality loop v1 summary: ${projectAwareness.agentRealityLoopV1Summary || 'Agent Reality Loop V1: read-only coordination/proof projection inside Mission Brain / Operator Relief.'}`,
-    `- agent reality loop projection status: ${projectAwareness.agentRealityLoopProjectionStatus || 'unavailable'}`,
+    `- agent reality loop projection status: ${projectAwareness.agentRealityLoopProjectionStatus || missionAgentRealityLoopProjection?.status || missionAgentRealityLoopProjection?.loopStatus || 'unavailable'}`,
+    `- agent reality loop projection available: ${projectionAvailable ? 'yes' : 'no'}`,
+    `- agent reality loop availability blocker: ${projectionBlocker}`,
     `- protected canon summary: ${projectAwareness.protectedCanonSummary || 'Preserve launcher/runtime separation, truth boundaries, and command deck protections.'}`,
     `- forbidden complexity warnings: ${projectAwareness.forbiddenComplexityWarnings || 'Do not add panes/systems or duplicate mission/chat/memory surfaces.'}`,
-    '- answer synthesis directive (mission-planning only): For mission/project/build/next-action questions, provide bounded degraded truth with: strategic mission framing, next best action, why (Codex/OpenClaw heavy-lifting behind approval gates), and caveat that active mission store may still be degraded/unknown.',
+    '- answer synthesis directive (mission-planning only): Do not claim Agent Reality Loop V1 is unavailable when projection exists. If Project Awareness is degraded, phrase only as: "Some mission details may be incomplete because Project Awareness is degraded."',
     `- relevant mission/proof/canon sources: ${sources.length ? sources.join('|') : 'none'}`,
   ];
   const block = blockLines.join('\n');
@@ -422,7 +436,9 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     || agentRealityLoopTermsDetected;
   const projectionStatus = String(agentRealityLoopProjection?.status || agentRealityLoopProjection?.loopStatus || '').trim().toLowerCase();
   const projectionAvailableStatus = ['available', 'active', 'ready'].includes(projectionStatus);
-  const projectionAvailable = projectionAvailableStatus || Object.keys(agentRealityLoopProjection).length > 0;
+  const projectionAvailable = projectionAvailableStatus
+    || Object.keys(agentRealityLoopProjection).length > 0
+    || ['available', 'active', 'ready'].includes(String(projectAwareness?.agentRealityLoopProjectionStatus || '').trim().toLowerCase());
   const copyPacketsAvailable = Boolean(
     agentRealityLoopProjection?.copyCodexPacket
     && agentRealityLoopProjection?.copyOpenClawPacket
@@ -491,6 +507,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     agent_reality_loop_context_recognized: agentRealityLoopContextRecognized ? 'yes' : 'no',
     agent_reality_loop_context_source: contextSource,
     agent_reality_loop_projection_available: projectionAvailable ? 'yes' : 'no',
+    agent_reality_loop_projection_source_seen: Object.keys(agentRealityLoopProjection).length > 0 ? 'missionState.operatorReliefProjection' : (projectAwareness?.agentRealityLoopProjectionStatus ? 'projectAwareness.status-only' : 'none'),
+    agent_reality_loop_projection_raw_status: projectionStatus || String(projectAwareness?.agentRealityLoopProjectionStatus || '').trim().toLowerCase() || 'unknown',
+    agent_reality_loop_projection_keys_seen: Object.keys(agentRealityLoopProjection).length > 0 ? Object.keys(agentRealityLoopProjection).join('|') : 'none',
+    agent_reality_loop_metadata_source: hasPack ? 'chatContextPack' : 'none',
+    agent_reality_loop_metadata_derivation_reason: agentRealityLoopContextRecognized ? 'intent-classifier-match-or-term-detection' : 'no-agent-reality-loop-signal',
+    agent_reality_loop_availability_blocker: projectionAvailable ? 'none' : 'projection-missing-from-command-deck-path',
     agent_reality_loop_recommended_lead: agentRealityLoopProjection?.recommendedLead || 'hold',
     agent_reality_loop_merge_recommendation: agentRealityLoopProjection?.mergeRecommendation || 'hold',
     agent_reality_loop_copy_packets_available: copyPacketsAvailable ? 'yes' : 'no',

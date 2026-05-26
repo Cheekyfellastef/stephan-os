@@ -392,4 +392,8 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /matchedRule === 'agent-reality-loop'/);
   assert.match(source, /projectionAvailableStatus = \['available', 'active', 'ready'\]/);
   assert.match(source, /copyCodexPacket\s*&&\s*agentRealityLoopProjection\?\.copyOpenClawPacket\s*&&\s*agentRealityLoopProjection\?\.copyOperatorProofChecklist/);
+  assert.match(source, /Do not claim Agent Reality Loop V1 is unavailable when projection exists/);
+  assert.match(source, /Some mission details may be incomplete because Project Awareness is degraded\./);
+  assert.match(source, /agent_reality_loop_projection_source_seen/);
+  assert.match(source, /agent_reality_loop_availability_blocker/);
 });
