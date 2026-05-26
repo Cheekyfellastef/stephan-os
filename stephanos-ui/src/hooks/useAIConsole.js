@@ -436,9 +436,8 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     || agentRealityLoopTermsDetected;
   const projectionStatus = String(agentRealityLoopProjection?.status || agentRealityLoopProjection?.loopStatus || '').trim().toLowerCase();
   const projectionAvailableStatus = ['available', 'active', 'ready'].includes(projectionStatus);
-  const projectionAvailable = projectionAvailableStatus
-    || Object.keys(agentRealityLoopProjection).length > 0
-    || ['available', 'active', 'ready'].includes(String(projectAwareness?.agentRealityLoopProjectionStatus || '').trim().toLowerCase());
+  const projectionObjectPresent = Object.keys(agentRealityLoopProjection).length > 0;
+  const projectionAvailable = projectionAvailableStatus || projectionObjectPresent;
   const copyPacketsAvailable = Boolean(
     agentRealityLoopProjection?.copyCodexPacket
     && agentRealityLoopProjection?.copyOpenClawPacket
@@ -446,7 +445,8 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   );
   const contextSourceParts = [];
   if (agentRealityLoopContextRecognized) contextSourceParts.push('chatContext.intent');
-  if (projectionAvailable || projectAwarenessTruth.projectAwarenessStatus !== 'unavailable') contextSourceParts.push('projectAwareness');
+  if (projectionObjectPresent) contextSourceParts.push('command-deck-projection-bridge');
+  else if (projectAwarenessTruth.projectAwarenessStatus !== 'unavailable') contextSourceParts.push('projectAwareness');
   const contextSource = contextSourceParts.length ? contextSourceParts.join('+') : 'none';
 
   return {
@@ -507,9 +507,9 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     agent_reality_loop_context_recognized: agentRealityLoopContextRecognized ? 'yes' : 'no',
     agent_reality_loop_context_source: contextSource,
     agent_reality_loop_projection_available: projectionAvailable ? 'yes' : 'no',
-    agent_reality_loop_projection_source_seen: Object.keys(agentRealityLoopProjection).length > 0 ? 'missionState.operatorReliefProjection' : (projectAwareness?.agentRealityLoopProjectionStatus ? 'projectAwareness.status-only' : 'none'),
+    agent_reality_loop_projection_source_seen: projectionObjectPresent ? 'missionState.operatorReliefProjection' : (projectAwareness?.agentRealityLoopProjectionStatus ? 'projectAwareness.status-only' : 'none'),
     agent_reality_loop_projection_raw_status: projectionStatus || String(projectAwareness?.agentRealityLoopProjectionStatus || '').trim().toLowerCase() || 'unknown',
-    agent_reality_loop_projection_keys_seen: Object.keys(agentRealityLoopProjection).length > 0 ? Object.keys(agentRealityLoopProjection).join('|') : 'none',
+    agent_reality_loop_projection_keys_seen: projectionObjectPresent ? Object.keys(agentRealityLoopProjection).join('|') : 'none',
     agent_reality_loop_metadata_source: hasPack ? 'chatContextPack' : 'none',
     agent_reality_loop_metadata_derivation_reason: agentRealityLoopContextRecognized ? 'intent-classifier-match-or-term-detection' : 'no-agent-reality-loop-signal',
     agent_reality_loop_availability_blocker: projectionAvailable ? 'none' : 'projection-missing-from-command-deck-path',
@@ -3739,6 +3739,10 @@ export function useAIConsole() {
       });
       const previousActiveMission = readActiveMissionState();
       const chatContextGithubEvidence = liveGithubPrEvidence || null;
+      const bridgedOperatorReliefProjection = requestRuntimeStatus?.operatorReliefProjection
+        || requestRuntimeStatus?.missionState?.operatorReliefProjection
+        || requestRuntimeStatus?.inputMissionState?.operatorReliefProjection
+        || {};
       const chatContextPack = buildChatContextPack({
         operatorMessage: prompt,
         buildSource: submissionSource,
@@ -3755,6 +3759,8 @@ export function useAIConsole() {
         missionState: {
           status: missionPacketWorkflow?.status || requestRuntimeStatus?.missionStatus || 'unknown',
           activeMission: previousActiveMission,
+          operatorReliefProjection: bridgedOperatorReliefProjection,
+          agentRealityLoopProjection: bridgedOperatorReliefProjection?.agentRealityLoopProjection || {},
         },
         agentState: {
           actingAgentId: requestRuntimeStatus?.agentActingAgentId || 'none',
