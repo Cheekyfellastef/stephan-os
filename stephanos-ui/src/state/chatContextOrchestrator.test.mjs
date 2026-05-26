@@ -188,6 +188,19 @@ test('agent reality loop prompts classify as architecture-guidance and use proje
   assert.ok(pack.affectedSubsystems.includes('operator-relief'));
   assert.ok(pack.contextProviderIdsUsed.includes('missionState'));
   assert.match(pack.recommendedNextAction, /Agent Reality Loop V1 projection/i);
+  assert.equal(pack.compactSummary.projectAwareness.agentRealityLoopProjectionStatus, 'active');
+});
+
+test('project awareness keeps agent reality loop projection available from canonical projection status field', () => {
+  const pack = buildChatContextPack({
+    operatorMessage: 'tell me about the agent reality loop',
+    missionState: {
+      operatorReliefProjection: {
+        agentRealityLoopProjection: { status: 'active', recommendedLead: 'codex' },
+      },
+    },
+  });
+  assert.equal(pack.compactSummary.projectAwareness.agentRealityLoopProjectionStatus, 'active');
 });
 
 test('project awareness degrades truthfully when mission intelligence is missing', () => {
