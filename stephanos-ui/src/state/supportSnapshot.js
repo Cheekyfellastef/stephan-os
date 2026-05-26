@@ -2245,7 +2245,7 @@ export function buildSupportSnapshot({
     `Mission Bridge Last AI Router Request Source: ${asText(missionBridge.lastAiRouterRequestSource, 'none')}`,
     `Mission Bridge Latest Submission Console: ${asText(missionBridge.latestSubmissionConsole, 'none')}`,
     `Mission Bridge Latest Submission Route: ${asText(missionBridge.latestSubmissionRoute, 'mission-bridge')}`,
-    `Latest Command Submission Console: ${asText(runtimeStatus?.lastCommandSubmissionConsole, 'stephanos-mission-console')}`,
+    `Latest Command Submission Console: ${asText(runtimeStatus?.lastCommandSubmissionConsole || aiConsoleAnswerScroll?.commandDeckSubmissionSource || commandDeckLocalReveal?.submissionSource, 'stephanos-mission-console')}`,
     `Latest Command Submission Route: ${asText(runtimeStatus?.lastCommandSubmissionRoute, 'assistant-router')}`,
     `Mission Bridge Last AI Response Routed To Mission Console: ${missionBridge.lastAiResponseRoutedToMissionConsole === true ? 'yes' : 'no'}`,
     `Mission Bridge Local Desktop Agent Gate Passed: ${missionBridge.localDesktopAgentGatePassed === true ? 'yes' : 'no'}`,
