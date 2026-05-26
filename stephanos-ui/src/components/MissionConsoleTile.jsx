@@ -108,6 +108,7 @@ function MissionConsoleTile({
   emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
+  onOperatorReliefProjectionUpdate = () => {},
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
@@ -183,6 +184,7 @@ function MissionConsoleTile({
   const [missionApprovalDecisionState, setMissionApprovalDecisionState] = useState(() => ({ selectedDecision: 'hold', timestamp: '', sourceQueueItemId: '' }));
 
   const operatorReliefPresenceSignatureRef = useRef('');
+  const operatorReliefProjectionPublishSignatureRef = useRef('');
   const intentUpdateSignatureRef = useRef('');
   const openClawIntegrationSignatureRef = useRef('');
   const missionBridgeSignatureRef = useRef('');
@@ -348,6 +350,16 @@ function MissionConsoleTile({
     supportSnapshot: runtimeStatusModel || {},
     });
   }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
+
+  useEffect(() => {
+    const nextProjection = operatorReliefProjection || null;
+    const nextSignature = JSON.stringify(nextProjection);
+    if (operatorReliefProjectionPublishSignatureRef.current === nextSignature) {
+      return;
+    }
+    operatorReliefProjectionPublishSignatureRef.current = nextSignature;
+    onOperatorReliefProjectionUpdate(nextProjection);
+  }, [onOperatorReliefProjectionUpdate, operatorReliefProjection]);
 
   useEffect(() => {
     const verdict = operatorReliefProjection?.mergeSafety?.verdict;

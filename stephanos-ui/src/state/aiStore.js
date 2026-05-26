@@ -1072,6 +1072,7 @@ export function AIStoreProvider({ children }) {
     activeProviderConfigAdjusted: false,
   });
   const [lastExecutionMetadata, setLastExecutionMetadata] = useState(null);
+  const [operatorReliefProjectionBridge, setOperatorReliefProjectionBridge] = useState(null);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
@@ -1125,6 +1126,9 @@ export function AIStoreProvider({ children }) {
         apiBaseUrl: apiStatus.baseUrl,
         homeNode: apiStatus.runtimeContext?.homeNode || null,
       }),
+      operatorReliefProjection: operatorReliefProjectionBridge
+        || apiStatus?.runtimeContext?.operatorReliefProjection
+        || null,
       surfaceAwareness: {
         ...surfaceAwareness,
         recentFrictionEvents: surfaceFrictionEvents,
@@ -1171,6 +1175,7 @@ export function AIStoreProvider({ children }) {
     bridgeTransportTruth,
     hostedIdeaStagingQueue,
     hostedCloudCognition,
+    operatorReliefProjectionBridge,
   ]);
   const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
     runtimeStatusModel,
@@ -2790,6 +2795,7 @@ export function AIStoreProvider({ children }) {
     isDraftDirty,
     apiStatus,
     setApiStatus,
+    setOperatorReliefProjectionBridge,
     runtimeStatusModel,
     uiDiagnostics,
     setUiDiagnostics,
@@ -2878,6 +2884,7 @@ export function AIStoreProvider({ children }) {
     homeNodeStatus,
     sessionRestoreDiagnostics,
     lastExecutionMetadata,
+    operatorReliefProjectionBridge,
     apiStatus,
     runtimeStatusModel,
     uiDiagnostics,

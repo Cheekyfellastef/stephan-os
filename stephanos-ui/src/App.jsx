@@ -257,8 +257,19 @@ export default function App() {
     missionLineage,
     surfaceFrictionPatterns,
     debugData,
+    setOperatorReliefProjectionBridge,
   } = useAIStore();
   const previousAppStoreFieldsRef = useRef(null);
+  const operatorReliefProjectionSignatureRef = useRef('');
+  const handleOperatorReliefProjectionUpdate = useCallback((projection) => {
+    const nextProjection = projection || null;
+    const nextSignature = JSON.stringify(nextProjection);
+    if (operatorReliefProjectionSignatureRef.current === nextSignature) {
+      return;
+    }
+    operatorReliefProjectionSignatureRef.current = nextSignature;
+    setOperatorReliefProjectionBridge(nextProjection);
+  }, [setOperatorReliefProjectionBridge]);
   recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
   const startupStageRef = useRef(new Set());
@@ -1291,6 +1302,7 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -1458,6 +1470,7 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -2089,6 +2102,7 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
@@ -2178,6 +2192,7 @@ export default function App() {
             branchName={runtimeStatus?.runtimeContext?.repoBranch || runtimeStatus?.runtimeTruth?.repoBranch || 'unknown'}
             onOpenClawIntegrationUpdate={trackedSetOpenClawIntegration}
             onIntentToBuildUpdate={trackedSetIntentToBuildTruth}
+            onOperatorReliefProjectionUpdate={handleOperatorReliefProjectionUpdate}
             onMissionBridgeUpdate={trackedSetMissionBridgeTruth}
             submitPrompt={submitPrompt}
             sharedConsoleInput={input}
