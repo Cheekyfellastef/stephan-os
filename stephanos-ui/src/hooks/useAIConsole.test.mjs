@@ -389,4 +389,7 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /agent_reality_loop_merge_recommendation/);
   assert.match(source, /resolvedAgentRealityLoopProjectionAvailable/);
   assert.match(source, /agent_reality_loop_copy_packets_available: resolvedAgentRealityLoopCopyPacketsAvailable/);
+  assert.match(source, /matchedRule === 'agent-reality-loop'/);
+  assert.match(source, /projectionAvailableStatus = \['available', 'active', 'ready'\]/);
+  assert.match(source, /copyCodexPacket\s*&&\s*agentRealityLoopProjection\?\.copyOpenClawPacket\s*&&\s*agentRealityLoopProjection\?\.copyOperatorProofChecklist/);
 });
