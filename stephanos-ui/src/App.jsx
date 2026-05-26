@@ -259,10 +259,17 @@ export default function App() {
     debugData,
     setOperatorReliefProjectionBridge,
   } = useAIStore();
-  const handleOperatorReliefProjectionUpdate = useCallback((projection) => {
-    setOperatorReliefProjectionBridge(projection || null);
-  }, [setOperatorReliefProjectionBridge]);
   const previousAppStoreFieldsRef = useRef(null);
+  const operatorReliefProjectionSignatureRef = useRef('');
+  const handleOperatorReliefProjectionUpdate = useCallback((projection) => {
+    const nextProjection = projection || null;
+    const nextSignature = JSON.stringify(nextProjection);
+    if (operatorReliefProjectionSignatureRef.current === nextSignature) {
+      return;
+    }
+    operatorReliefProjectionSignatureRef.current = nextSignature;
+    setOperatorReliefProjectionBridge(nextProjection);
+  }, [setOperatorReliefProjectionBridge]);
   recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
   const startupStageRef = useRef(new Set());

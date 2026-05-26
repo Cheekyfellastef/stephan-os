@@ -184,6 +184,7 @@ function MissionConsoleTile({
   const [missionApprovalDecisionState, setMissionApprovalDecisionState] = useState(() => ({ selectedDecision: 'hold', timestamp: '', sourceQueueItemId: '' }));
 
   const operatorReliefPresenceSignatureRef = useRef('');
+  const operatorReliefProjectionPublishSignatureRef = useRef('');
   const intentUpdateSignatureRef = useRef('');
   const openClawIntegrationSignatureRef = useRef('');
   const missionBridgeSignatureRef = useRef('');
@@ -351,7 +352,13 @@ function MissionConsoleTile({
   }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
 
   useEffect(() => {
-    onOperatorReliefProjectionUpdate(operatorReliefProjection || null);
+    const nextProjection = operatorReliefProjection || null;
+    const nextSignature = JSON.stringify(nextProjection);
+    if (operatorReliefProjectionPublishSignatureRef.current === nextSignature) {
+      return;
+    }
+    operatorReliefProjectionPublishSignatureRef.current = nextSignature;
+    onOperatorReliefProjectionUpdate(nextProjection);
   }, [onOperatorReliefProjectionUpdate, operatorReliefProjection]);
 
   useEffect(() => {
