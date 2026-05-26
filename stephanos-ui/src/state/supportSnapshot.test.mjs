@@ -2432,6 +2432,7 @@ test('support snapshot exposes agent reality loop proof lines from execution met
         agent_reality_loop_recommended_lead: 'codex',
         agent_reality_loop_merge_recommendation: 'hold',
         agent_reality_loop_copy_packets_available: 'yes',
+        agent_reality_loop_availability_blocker: 'none',
       },
     },
   });
@@ -2441,6 +2442,7 @@ test('support snapshot exposes agent reality loop proof lines from execution met
   assert.match(snapshot, /Agent Reality Loop Recommended Lead: codex/);
   assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
   assert.match(snapshot, /Agent Reality Loop Copy Packets Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Availability Blocker: none/);
 });
 
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
