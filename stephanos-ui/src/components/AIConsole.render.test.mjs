@@ -176,10 +176,11 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /targetKind = deliveryAnchoredAssistantAnswerId \? 'final-assistant-message-id' : 'none'/);
   assert.match(source, /resolveVisibleAnswerHistoryContainer/);
   assert.match(source, /resolveLatestVisibleAssistantAnswerElement/);
-  assert.ok(source.includes("containerRef.current?.closest?.('[data-testid=\"command-deck-root\"]')"));
-  assert.ok(source.includes('if (localContainer && visibleDeckRoot.contains(localContainer))'));
+  assert.match(source, /const resolveLocalCommandDeckRoot = \(\) => rootRef\.current \|\| null;/);
+  assert.match(source, /const resolveVisibleAnswerHistoryContainer = \(\) => containerRef\.current \|\| null;/);
   assert.match(source, /method: 'inner-container-scroll\|conditional-outer-reveal'/);
   assert.match(source, /method: 'skipped-no-target-after-raf'/);
+  assert.match(source, /latest-answer-card-not-found-in-command-deck-instance/);
   assert.match(source, /aiConsoleAnswerScroll/);
   assert.match(source, /requestReason: 'final-assistant-answer-rendered'/);
   assert.match(source, /requestReason: 'already-visible-confirmed'/);
@@ -198,6 +199,7 @@ test('AIConsole autoscroll diagnostics capture latest assistant pane targeting a
   assert.match(source, /currentSignature/);
   assert.match(source, /effectFiredAt/);
   assert.match(source, /commandDeckComposerFound: 'no'/);
+  assert.match(source, /commandDeckLocalRootRefPresent/);
   assert.match(source, /latestAssistantAnswerDomFound: 'no'/);
   assert.match(source, /latestAnswerCardClientHeight/);
   assert.match(source, /answerViewportClientHeight/);

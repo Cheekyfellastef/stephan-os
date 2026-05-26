@@ -1264,9 +1264,10 @@ export default function App() {
     { id: 'commandDeck', title: 'Stephanos AI Chat Command Deck', layoutKey: 'commandDeck', className: 'pane-span-2', render: () => (
       <AIConsole
         surfaceOwnerKey="commandDeck-pane"
+        panelId="commandDeck"
         input={input}
         setInput={setInput}
-        submitPrompt={submitPrompt}
+        submitPrompt={(rawPrompt) => submitPrompt(rawPrompt, { submissionSource: 'stephanos-command-deck', submissionRoute: 'assistant-router' })}
         cancelActivePrompt={cancelActivePrompt}
         emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
         commandHistory={commandHistory}

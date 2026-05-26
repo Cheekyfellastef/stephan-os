@@ -6,6 +6,7 @@ const aiConsolePath = new URL('../stephanos-ui/src/components/AIConsole.jsx', im
 const stylesPath = new URL('../stephanos-ui/src/styles.css', import.meta.url);
 
 const missionConsoleTilePath = new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url);
+const appPath = new URL('../stephanos-ui/src/App.jsx', import.meta.url);
 
 async function read(fileUrl) {
   return fs.readFile(fileUrl, 'utf8');
@@ -97,4 +98,14 @@ test('protected canon: mission brain top-3 stays inside existing operator relief
   const top3Index = source.indexOf('Top 3 Problems / Next Moves');
   const operatorReliefIndex = source.indexOf('mission-console-section--operator-relief');
   assert.ok(top3Index > operatorReliefIndex);
+});
+
+
+test('protected canon: render sites pass canonical and non-canonical AIConsole identities', async () => {
+  const appSource = await read(appPath);
+  const missionSource = await read(missionConsoleTilePath);
+  assert.match(appSource, /<AIConsole[\s\S]*surfaceOwnerKey="commandDeck-pane"[\s\S]*panelId="commandDeck"/m);
+  assert.match(appSource, /submissionSource: 'stephanos-command-deck'/);
+  assert.match(missionSource, /<AIConsole[\s\S]*surfaceOwnerKey="mission-console-section"[\s\S]*panelId="aiCoreMissionConsolePanel"/m);
+  assert.match(missionSource, /submissionSource: 'stephanos-mission-console'/);
 });
