@@ -29,6 +29,10 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Copy Agent Reality Loop Codex Packet/);
   assert.match(source, /Copy Agent Reality Loop OpenClaw Packet/);
   assert.match(source, /Copy Agent Reality Loop Operator Checklist/);
+  assert.match(source, /Operator-Approved Repair Loop V1/);
+  assert.match(source, /Copy OpenClaw Continuation Packet/);
+  assert.match(source, /Copy Codex Continuation Packet/);
+  assert.match(source, /Copy Mission Contract/);
   assert.match(source, /Verification Return Intake/);
   assert.match(source, /Mission Approval Queue/);
   assert.match(source, /Top recommended decision:/);

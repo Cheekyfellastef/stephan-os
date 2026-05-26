@@ -257,3 +257,15 @@ test('Agent Reality Loop chooses OpenClaw for live proof and blocks merge when b
   assert.equal(r.agentRealityLoopProjection.operatorApprovalRequired, true);
   assert.match(r.agentRealityLoopProjection.copyOpenClawPacket.liveProofFirst, /Support Snapshot/);
 });
+
+test('Operator-Approved Repair Loop routes projection bridge loss to OpenClaw while keeping approval valid', () => {
+  const r = deriveOperatorReliefProjection({
+    missionRepairLoopModel: { approvedMissionId: 'arl-1', approvedMissionTitle: 'Repair ARL bridge', retryCount: 1, maxRetries: 3 },
+    supportSnapshot: { executionMetadata: { agent_reality_loop_projection_available: 'no', agent_reality_loop_availability_blocker: 'projection-missing-from-command-deck-path', operator_relief_bridge_drop_boundary: 'request-runtime-status' } },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.equal(r.operatorApprovedRepairLoopProjection.failureClass, 'projection-bridge-loss');
+  assert.equal(r.operatorApprovedRepairLoopProjection.recommendedLead, 'openclaw');
+  assert.equal(r.operatorApprovedRepairLoopProjection.operatorApprovalStillValid, 'yes');
+  assert.equal(r.operatorApprovedRepairLoopProjection.scopeChangeRequired, 'no');
+});

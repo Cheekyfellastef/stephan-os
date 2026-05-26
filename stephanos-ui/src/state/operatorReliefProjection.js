@@ -357,6 +357,71 @@ function buildAgentRealityLoopProjection({
     hasDuplicatePaneRisk: 'no',
   };
 }
+
+function buildOperatorApprovedRepairLoopProjection({
+  missionRepairLoop = {},
+  supportSnapshot = {},
+  agentRealityLoopProjection = {},
+  verificationReturnIntake = {},
+  harnessAgentProjection = {},
+  missionIntelligenceSummary = {},
+} = {}) {
+  const approvedMissionId = asText(missionRepairLoop.approvedMissionId || missionRepairLoop.missionId, 'none');
+  const approvedMissionTitle = asText(missionRepairLoop.approvedMissionTitle || missionIntelligenceSummary.currentMissionSummary, 'Unapproved mission');
+  const approvedScopeSummary = asText(missionRepairLoop.approvedScopeSummary, 'Bounded source-only repair scope.');
+  const forbiddenScopeSummary = asText(missionRepairLoop.forbiddenScopeSummary, 'No protected Command Deck reveal/scroll behavior; no provider/backend/routing/ignition edits; no generated/runtime/secrets staging.');
+  const retryCount = Number(missionRepairLoop.retryCount || 0);
+  const maxRetries = Number(missionRepairLoop.maxRetries || 3);
+  const bridgeDrop = asText(supportSnapshot?.executionMetadata?.operator_relief_bridge_drop_boundary, 'none');
+  const arlProjectionAvailable = asText(supportSnapshot?.executionMetadata?.agent_reality_loop_projection_available, 'unknown');
+  const arlBlocker = asText(supportSnapshot?.executionMetadata?.agent_reality_loop_availability_blocker, 'none');
+  const protectedCanonAtRisk = asText(missionRepairLoop.protectedCanonAtRisk, 'no');
+  const scopeChangeRequired = retryCount > maxRetries || protectedCanonAtRisk === 'yes' ? 'yes' : 'no';
+  const failureClass = (arlProjectionAvailable === 'no' && /projection|bridge|command-deck-path/.test(`${arlBlocker} ${bridgeDrop}`.toLowerCase()))
+    ? 'projection-bridge-loss'
+    : (verificationReturnIntake.buildObserved === false ? 'build-failed'
+      : (verificationReturnIntake.verifyObserved === false ? 'verify-failed'
+        : (asList(verificationReturnIntake.missingEvidence).length > 0 ? 'check-failed' : 'unknown')));
+  const operatorApprovalStillValid = scopeChangeRequired === 'yes' ? 'no' : (approvedMissionId === 'none' ? 'no' : 'yes');
+  const status = operatorApprovalStillValid === 'no'
+    ? (scopeChangeRequired === 'yes' ? 'scope-change-required' : 'awaiting-approval')
+    : (failureClass === 'unknown' && verificationReturnIntake.evidenceCompleteness === 'complete' ? 'ready-for-merge-review' : 'proof-failed');
+  const recommendedLead = status === 'ready-for-merge-review' ? 'operator' : (failureClass === 'projection-bridge-loss' ? 'openclaw' : 'codex');
+  const requiredProofLines = ['targeted tests pass', 'build pass', 'verify pass', 'Support Snapshot required lines pass', 'live UI/Snapshot proof attached'];
+  const missingProofLines = requiredProofLines.filter((line) => line.includes('Support Snapshot') ? failureClass === 'projection-bridge-loss' : false);
+  const nextAction = recommendedLead === 'openclaw'
+    ? 'Inspect and prove the failed bridge hop before patching; patch only the proven source-only hop.'
+    : (recommendedLead === 'operator' ? 'Operator review/merge decision.' : 'Apply bounded deterministic repair and rerun required checks.');
+  const copyMissionContract = `Approved mission: ${approvedMissionTitle}\nScope: ${approvedScopeSummary}\nForbidden: ${forbiddenScopeSummary}\nRe-ask operator only on scope expansion/protected canon risk/merge request/destructive action.`;
+  return {
+    status,
+    approvedMissionId,
+    approvedMissionTitle,
+    approvedScopeSummary,
+    forbiddenScopeSummary,
+    operatorApprovalStillValid,
+    approvalInvalidReason: operatorApprovalStillValid === 'no' ? (scopeChangeRequired === 'yes' ? 'scope-expanded-or-protected-canon-risk' : 'approval-missing') : 'none',
+    failureClass,
+    recommendedLead,
+    recommendedLeadReason: recommendedLead === 'openclaw' ? 'Live/projection contradiction requires OpenClaw-first bridge tracing.' : (recommendedLead === 'operator' ? 'All required checks passed; operator decides merge.' : 'Deterministic boundary already known and bounded.'),
+    nextAction,
+    retryCount,
+    maxRetries,
+    scopeChangeRequired,
+    protectedCanonAtRisk,
+    mergeAllowed: 'no',
+    liveProofRequired: 'yes',
+    requiredProofLines,
+    missingProofLines,
+    currentBlocker: failureClass === 'projection-bridge-loss' ? (arlBlocker || bridgeDrop || 'projection-bridge-loss') : 'none',
+    previousAttemptSummary: asText(agentRealityLoopProjection.nextBestAction, 'No prior attempt summary.'),
+    lessonCandidate: 'When classifier intent succeeds but projection path fails, route OpenClaw-first to prove bridge hop.',
+    copyOpenClawContinuationPacket: { missionId: approvedMissionId, failureClass, nextAction, boundedPatchRule: 'Only proven failed hop; source-only; no protected surfaces.', requiredChecks: ['tests', 'build', 'verify', 'Support Snapshot proof'] },
+    copyCodexContinuationPacket: recommendedLead === 'codex' ? { missionId: approvedMissionId, nextAction, boundedScope: approvedScopeSummary, requiredChecks: ['tests', 'build', 'verify', 'Support Snapshot proof'] } : null,
+    copyOperatorProofChecklist: requiredProofLines.join('\n'),
+    copyMissionContract,
+  };
+}
 function buildVerificationReturnIntake({ prEvidenceModel = {}, parsed = {}, missionState = 'active', missionBrainNextAction = {} } = {}) {
   const changedFiles = asList(prEvidenceModel.changedFiles || prEvidenceModel.files);
   const forbiddenPattern = /(apps\/stephanos\/dist\/|node_modules\/|runtime\/|root data\/|secret|token)/i;
@@ -486,7 +551,7 @@ function deriveHarnessRiskLevel(changedFiles = []) {
 }
 
 export function deriveOperatorReliefProjection(models = {}) {
-  const { intentToBuildModel = {}, taskFinisherModel = {}, missionEvidenceLedgerModel = {}, prEvidenceModel = {}, proofOfDoneModel = {}, operatorDecisionQueue = {}, memoryLibrarianQueue = {}, supportSnapshot = {} } = models;
+  const { intentToBuildModel = {}, taskFinisherModel = {}, missionEvidenceLedgerModel = {}, prEvidenceModel = {}, proofOfDoneModel = {}, operatorDecisionQueue = {}, memoryLibrarianQueue = {}, supportSnapshot = {}, missionRepairLoopModel = {} } = models;
   const missionSpec = intentToBuildModel?.missionSpec || {};
   const verification = proofOfDoneModel?.verificationJudge || {};
   const parsed = verification.parsed || {};
@@ -642,7 +707,15 @@ export function deriveOperatorReliefProjection(models = {}) {
     lessonCandidates,
     browserProof: missionHandoff.browserProofChecklist,
   });
+  const operatorApprovedRepairLoopProjection = buildOperatorApprovedRepairLoopProjection({
+    missionRepairLoop: missionRepairLoopModel,
+    supportSnapshot,
+    agentRealityLoopProjection,
+    verificationReturnIntake,
+    harnessAgentProjection,
+    missionIntelligenceSummary,
+  });
 
   return { status: missionState,
-    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, agentRealityLoopProjection };
+    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, agentRealityLoopProjection, operatorApprovedRepairLoopProjection };
 }
