@@ -2300,6 +2300,35 @@ test('buildSupportSnapshot marks mission console multi-surface FAIL when AI Core
   assert.match(snapshot, /UI Reality Mission Console Next Action: Restore missing Mission Console surface via canonical MissionConsoleTile mount path\./);
 });
 
+test('support snapshot reports mission console bridge parity blocker as projection-not-published when instances exist but bridge has not published', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_instance_count: '2',
+        mission_console_instance_ids: 'aiCoreMissionConsolePanel|missionConsolePanel',
+        mission_console_visible_instance_id: 'aiCoreMissionConsolePanel',
+        mission_console_visible_instance_published: 'no',
+        operator_relief_bridge_published: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Instance Count: 2/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: visible-instance-not-published/);
+});
+
+test('support snapshot reports mission console bridge parity blocker as projection-not-published when no instances are registered yet', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_instance_count: '0',
+        operator_relief_bridge_published: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Instance Count: 0/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
+});
+
 test('support snapshot reads chat_context_* fields from latest execution metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

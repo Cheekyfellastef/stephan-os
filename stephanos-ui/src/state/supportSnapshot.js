@@ -92,6 +92,18 @@ function firstKnownValue(candidates = [], fallback = 'n/a') {
   return fallback;
 }
 
+function deriveMissionConsoleBridgeParityBlocker(executionMetadata = {}) {
+  const explicit = asText(executionMetadata?.mission_console_bridge_parity_blocker, '');
+  if (explicit) return explicit;
+  const instanceCount = Number.parseInt(asText(executionMetadata?.mission_console_instance_count, '0'), 10);
+  const visiblePublished = String(executionMetadata?.mission_console_visible_instance_published || '').trim().toLowerCase();
+  const bridgePublished = String(executionMetadata?.operator_relief_bridge_published || '').trim().toLowerCase();
+  if (Number.isFinite(instanceCount) && instanceCount <= 0) return 'projection-not-published';
+  if (visiblePublished === 'no') return 'visible-instance-not-published';
+  if (bridgePublished === 'no') return 'projection-not-published';
+  return 'bridge-instance-diagnostics-unavailable';
+}
+
 function resolvePrEvidenceNumber(executionMetadata = {}, runtimeStatus = {}, prFallback = { source: 'none', parseInput: '', prNumber: '' }) {
   const candidates = [
     { source: 'explicit-provider', value: executionMetadata?.github_pr_evidence_number },
@@ -2057,7 +2069,7 @@ export function buildSupportSnapshot({
     `Mission Console Last Publishing Source Surface: ${asText(executionMetadata?.mission_console_last_publishing_source_surface, 'unknown')}`,
     `Mission Console Visible Instance Published: ${asText(executionMetadata?.mission_console_visible_instance_published, 'no')}`,
     `Mission Console Bridge Parity Status: ${asText(executionMetadata?.mission_console_bridge_parity_status, 'WARN')}`,
-    `Mission Console Bridge Parity Blocker: ${asText(executionMetadata?.mission_console_bridge_parity_blocker, 'bridge-instance-diagnostics-unavailable')}`,
+    `Mission Console Bridge Parity Blocker: ${deriveMissionConsoleBridgeParityBlocker(executionMetadata)}`,
     `Operator Approved Repair Loop Status: ${asText(executionMetadata?.operator_approved_repair_loop_status, 'inactive')}`,
     `Operator Approved Repair Loop Mission: ${asText(executionMetadata?.operator_approved_repair_loop_mission, 'none')}`,
     `Operator Approved Repair Loop Approval Still Valid: ${asText(executionMetadata?.operator_approved_repair_loop_approval_still_valid, 'no')}`,
