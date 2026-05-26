@@ -262,9 +262,10 @@ export default function App() {
   const previousAppStoreFieldsRef = useRef(null);
   const operatorReliefProjectionSignatureRef = useRef('');
   const operatorReliefBridgePublishedAtRef = useRef('');
-  const handleOperatorReliefProjectionUpdate = useCallback((projection) => {
+  const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
     const nextProjection = projection || null;
-    const nextSignature = JSON.stringify(nextProjection);
+    const sourceSurface = typeof options?.sourceSurface === 'string' && options.sourceSurface ? options.sourceSurface : 'unknown';
+    const nextSignature = JSON.stringify({ sourceSurface, projection: nextProjection });
     if (operatorReliefProjectionSignatureRef.current === nextSignature) {
       return;
     }
@@ -275,7 +276,7 @@ export default function App() {
       projection: nextProjection,
       diagnostics: {
         published: 'yes',
-        sourceSurface: 'aiCoreMissionConsolePanel',
+        sourceSurface,
         projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
         agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
         storeUpdated: 'yes',

@@ -62,3 +62,11 @@ test('Mission Console operator relief uses canonical collapsible panel wiring wi
   assert.match(source, /panelId=\"missionConsoleHarnessAgentPanel\"/);
   assert.equal(source.includes("dispatchPanelToggle('missionConsoleOperatorReliefPanel')"), true);
 });
+
+
+test('Mission Console publishes operator relief projection bridge payload with source surface and first-publish guard', () => {
+  assert.match(source, /const operatorReliefProjectionPublishSignatureRef = useRef\(''\);/);
+  assert.match(source, /const nextSignature = JSON\.stringify\(nextProjection\);/);
+  assert.match(source, /onOperatorReliefProjectionUpdate\(nextProjection, \{ sourceSurface: panelId \}\);/);
+  assert.match(source, /\}, \[onOperatorReliefProjectionUpdate, operatorReliefProjection, panelId\]\);/);
+});
