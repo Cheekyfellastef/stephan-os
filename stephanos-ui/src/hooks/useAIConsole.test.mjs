@@ -59,7 +59,7 @@ test('useAIConsole stores compact chat context metadata in latest execution meta
   assert.match(source, /\.\.\.buildChatContextExecutionMetadata\(chatContextPack\)/);
   assert.match(source, /function attachChatContextToExecutionMetadata/);
   assert.match(source, /setLastExecutionMetadata\(attachChatContextToExecutionMetadata\(\{/);
-  assert.match(source, /submission_console: executionMetadata\.submission_console \|\| requestTrace\.submission_console \|\| requestPayload\.submissionSource \|\| 'stephanos-mission-console'/);
+  assert.match(source, /submission_console: requestTrace\.submission_console \|\| requestPayload\.submissionSource \|\| executionMetadata\.submission_console \|\| 'stephanos-mission-console'/);
   assert.match(source, /submission_route: executionMetadata\.submission_route \|\| requestTrace\.submission_route \|\| requestPayload\.submissionRoute \|\| 'assistant-router'/);
   assert.match(source, /chat_context_pack_status/);
   assert.match(source, /chat_context_version/);
