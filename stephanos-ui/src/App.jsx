@@ -261,6 +261,7 @@ export default function App() {
   } = useAIStore();
   const previousAppStoreFieldsRef = useRef(null);
   const operatorReliefProjectionSignatureRef = useRef('');
+  const operatorReliefBridgePublishedAtRef = useRef('');
   const handleOperatorReliefProjectionUpdate = useCallback((projection) => {
     const nextProjection = projection || null;
     const nextSignature = JSON.stringify(nextProjection);
@@ -268,7 +269,19 @@ export default function App() {
       return;
     }
     operatorReliefProjectionSignatureRef.current = nextSignature;
-    setOperatorReliefProjectionBridge(nextProjection);
+    const publishedAt = new Date().toISOString();
+    operatorReliefBridgePublishedAtRef.current = publishedAt;
+    setOperatorReliefProjectionBridge({
+      projection: nextProjection,
+      diagnostics: {
+        published: 'yes',
+        sourceSurface: 'aiCoreMissionConsolePanel',
+        projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
+        agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
+        storeUpdated: 'yes',
+        lastUpdatedAt: publishedAt,
+      },
+    });
   }, [setOperatorReliefProjectionBridge]);
   recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
