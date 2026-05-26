@@ -12,6 +12,7 @@ const AICONSOLE_SOURCE_MARKER = 'F:stephanos-ui/src/components/AIConsole.jsx';
 const COMMAND_DECK_OWNER_KEY = 'commandDeck-pane';
 const MISSION_CONSOLE_OWNER_KEY = 'mission-console-section';
 const UNKNOWN_OWNER_KEY = 'unknown-ai-console-surface';
+const COMMAND_DECK_LOCAL_REVEAL_GLOBAL_KEY = '__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__';
 
 const getCommandDeckOwnershipRegistry = () => {
   if (typeof window === 'undefined') return {};
@@ -353,6 +354,7 @@ export default function AIConsole({
 
   useLayoutEffect(() => {
     if (!isCommandDeckOwner()) return;
+    publishCommandDeckLocalReveal();
     const localDeckRoot = resolveLocalCommandDeckRoot();
     if (!localDeckRoot) return;
     const visibleDeckRoot = localDeckRoot;
@@ -579,6 +581,19 @@ export default function AIConsole({
       };
       if (isCommandDeckOwner()) {
         setUiDiagnostics((prev) => ({ ...prev, aiConsoleAnswerScroll: { ...answerScrollDiagnosticsRef.current } }));
+        publishCommandDeckLocalReveal({
+          rootRefPresent: answerScrollDiagnosticsRef.current.commandDeckLocalRootRefPresent || 'no',
+          historyRefPresent: answerScrollDiagnosticsRef.current.commandDeckLocalHistoryRefPresent || 'no',
+          latestAnswerRefPresent: answerScrollDiagnosticsRef.current.commandDeckLocalLatestAnswerRefPresent || 'no',
+          latestAnswerFound: answerScrollDiagnosticsRef.current.latestAssistantAnswerDomFound || 'no',
+          latestAnswerVisible: answerScrollDiagnosticsRef.current.commandDeckLocalLatestAnswerVisible || 'no',
+          revealAttempted: answerScrollDiagnosticsRef.current.commandDeckLocalRevealAttempted || 'no',
+          revealResult: answerScrollDiagnosticsRef.current.commandDeckLocalRevealResult || 'no',
+          revealReason: answerScrollDiagnosticsRef.current.commandDeckLocalRevealReason || 'none',
+          revealAssistantId: answerScrollDiagnosticsRef.current.commandDeckLocalRevealAssistantId || 'none',
+          historyScrollPrevious: answerScrollDiagnosticsRef.current.commandDeckLocalHistoryScrollPrevious || 'n/a',
+          historyScrollNext: answerScrollDiagnosticsRef.current.commandDeckLocalHistoryScrollNext || 'n/a',
+        });
       }
     };
 
@@ -693,6 +708,38 @@ export default function AIConsole({
       }
     }));
   }, [autoScrollEnabled, answerDeliveryStatus, deliveredFinalAssistantMessageId, historyRenderKey, latestAssistantAnswerId, deliveryAnchoredAssistantAnswerId, safeCommandHistory, setUiDiagnostics]);
+
+
+  const publishCommandDeckLocalReveal = (overrides = {}) => {
+    if (typeof window === 'undefined' || !isCommandDeckOwner()) return;
+    const rootEl = rootRef.current || null;
+    const historyEl = containerRef.current || null;
+    const inputEl = inputRef.current || null;
+    const executeEl = executeRef.current || null;
+    const latestAnswerEl = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId) || latestAssistantAnswerRef.current || null;
+    const payload = {
+      instanceId: aiConsoleInstanceIdRef.current,
+      surfaceOwnerKey: resolveOwnerKey(),
+      panelId,
+      submissionSource: 'stephanos-command-deck',
+      rootRefPresent: rootEl ? 'yes' : 'no',
+      historyRefPresent: historyEl ? 'yes' : 'no',
+      inputRefPresent: inputEl ? 'yes' : 'no',
+      executeRefPresent: executeEl ? 'yes' : 'no',
+      latestAnswerRefPresent: latestAnswerEl ? 'yes' : 'no',
+      latestAnswerFound: latestAnswerEl ? 'yes' : 'no',
+      latestAnswerVisible: latestAnswerEl && historyEl ? (computeAnswerScrollVisibility(latestAnswerEl.getBoundingClientRect(), historyEl.getBoundingClientRect()).fullyVisible ? 'yes' : 'no') : 'no',
+      revealAttempted: 'no',
+      revealResult: 'no',
+      revealReason: 'none',
+      revealAssistantId: deliveryAnchoredAssistantAnswerId || latestAssistantAnswerId || 'none',
+      historyScrollPrevious: historyEl ? historyEl.scrollTop : 'n/a',
+      historyScrollNext: historyEl ? historyEl.scrollTop : 'n/a',
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    };
+    window[COMMAND_DECK_LOCAL_REVEAL_GLOBAL_KEY] = payload;
+  };
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -849,7 +896,7 @@ export default function AIConsole({
       isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div ref={rootRef} className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-panel-id={panelId} data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
+      <div ref={rootRef} className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-panel-id={panelId} data-surface-owner-key={resolveOwnerKey()} data-submission-source="stephanos-command-deck" data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
         <div data-testid="command-deck-ownership-stamp" style={{ fontSize: '0.75rem', color: '#2f6f3e', paddingBottom: '0.25rem' }}>
           CD Ownership · component=AIConsole · instance={aiConsoleInstanceIdRef.current} · render={renderCountRef.current} · src={AICONSOLE_SOURCE_MARKER} · owns(inputRef={inputRef.current ? 'yes' : 'no'},containerRef={containerRef.current ? 'yes' : 'no'},historyRef={containerRef.current ? 'yes' : 'no'}) · ownsDeliveryState={answerDeliveryStatus === 'delivered' ? 'yes' : 'no'} · finalAssistant={deliveryAnchoredAssistantAnswerId || 'none'}
         </div>
