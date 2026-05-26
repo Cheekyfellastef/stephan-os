@@ -110,7 +110,16 @@ test('rendered App path keeps ai-core mission console in aiCoreMissionConsolePan
 
 test('App operator relief projection handler records source surface and bridge diagnostics from MissionConsoleTile mounts', async () => {
   const appSource = await fs.readFile(appPath, 'utf8');
+  const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
+  assert.match(missionConsoleSource, /onMissionConsoleInstanceRegistration = \(\) => \{\},/);
+  assert.match(missionConsoleSource, /onMissionConsoleInstanceRegistration\(panelId, \{/);
+  assert.match(missionConsoleSource, /hasBridgeCallback: typeof onOperatorReliefProjectionUpdate === 'function',/);
   assert.match(appSource, /const handleOperatorReliefProjectionUpdate = useCallback\(\(projection, options = \{\}\) => \{/);
+  assert.match(appSource, /const publishMissionConsoleBridgeDiagnostics = useCallback\(\(overrides = \{\}\) => \{/);
+  assert.match(appSource, /published: overrides\.published \|\| \(prev\?\.diagnostics\?\.published \|\| 'no'\),/);
+  assert.match(appSource, /missionConsoleBridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback' : \(visibleInstance && !visibleInstancePublished \? 'visible-instance-not-published' : 'none'\),/);
+  assert.match(appSource, /onMissionConsoleInstanceRegistration: \(registeredPanelId, registrationOptions = \{\}\) => \{/);
+  assert.match(appSource, /registerMissionConsoleBridgeInstance\(registeredPanelId \|\| panelId/);
   assert.match(appSource, /const sourceSurface = typeof options\?\.sourceSurface === 'string' && options\.sourceSurface \? options\.sourceSurface : 'unknown';/);
   assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection \}\);/);
   assert.match(appSource, /sourceSurface,/);

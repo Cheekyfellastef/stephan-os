@@ -109,6 +109,7 @@ function MissionConsoleTile({
   orchestrationTruth = null,
   agentTaskProjection = null,
   onOperatorReliefProjectionUpdate = () => {},
+  onMissionConsoleInstanceRegistration = () => {},
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
@@ -117,11 +118,17 @@ function MissionConsoleTile({
   useEffect(() => {
     setPerfIdentityField('component.MissionConsoleTile.mounted', true);
     recordPerfCounter('surface_mount', 'MissionConsoleTile.mount');
+    onMissionConsoleInstanceRegistration(panelId, {
+      sourceSurface: panelId,
+      visible: uiLayout?.[panelId] !== false || forcePanelOpen,
+      collapsed: forcePanelOpen ? false : uiLayout?.[panelId] === false,
+      hasBridgeCallback: typeof onOperatorReliefProjectionUpdate === 'function',
+    });
     return () => {
       setPerfIdentityField('component.MissionConsoleTile.mounted', false);
       recordPerfCounter('surface_mount', 'MissionConsoleTile.unmount');
     };
-  }, []);
+  }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, uiLayout]);
   recordMissionConsoleRenderReasons({
     uiLayout, runtimeStatusModel, finalRouteTruth, finalAgentView, branchName,
     onOpenClawIntegrationUpdate, onIntentToBuildUpdate, onMissionBridgeUpdate,

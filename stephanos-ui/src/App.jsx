@@ -264,6 +264,38 @@ export default function App() {
   const operatorReliefBridgePublishedAtRef = useRef('');
   const missionConsoleBridgeInstancesRef = useRef({});
   const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
+  const publishMissionConsoleBridgeDiagnostics = useCallback((overrides = {}) => {
+    const bridgeInstances = Object.values(missionConsoleBridgeInstancesRef.current || {});
+    const instanceIds = bridgeInstances.map((entry) => entry.panelId);
+    const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
+    const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
+    const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
+    const publisherPanelId = overrides.publisherPanelId || missionConsoleBridgeLastPublisherRef.current.panelId || '';
+    const sourceSurface = overrides.sourceSurface || missionConsoleBridgeLastPublisherRef.current.sourceSurface || 'unknown';
+    const visibleInstancePublished = visibleInstance ? visibleInstance.panelId === publisherPanelId : false;
+    const publishedAt = new Date().toISOString();
+    setOperatorReliefProjectionBridge((prev) => ({
+      projection: overrides.projection !== undefined ? overrides.projection : (prev?.projection || null),
+      diagnostics: {
+        ...(prev?.diagnostics || {}),
+        published: overrides.published || (prev?.diagnostics?.published || 'no'),
+        sourceSurface,
+        sourcePanelId: publisherPanelId || 'unknown',
+        missionConsoleInstanceCount: instanceIds.length,
+        missionConsoleInstanceIds: instanceIds,
+        missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
+        missionConsoleBridgeCapableInstanceIds: bridgeCapableInstanceIds,
+        missionConsoleInstancesMissingBridgeCallback: missingBridgeCallbackIds,
+        missionConsoleLastPublishingInstanceId: publisherPanelId || '',
+        missionConsoleLastPublishingSourceSurface: sourceSurface,
+        missionConsoleVisibleInstancePublished: visibleInstancePublished ? 'yes' : 'no',
+        missionConsoleBridgeParityStatus: missingBridgeCallbackIds.length === 0 ? 'OK' : 'FAIL',
+        missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length > 0 ? 'missing-bridge-callback' : (visibleInstance && !visibleInstancePublished ? 'visible-instance-not-published' : 'none'),
+        storeUpdated: 'yes',
+        lastUpdatedAt: publishedAt,
+      },
+    }));
+  }, [setOperatorReliefProjectionBridge]);
   const registerMissionConsoleBridgeInstance = useCallback((panelId, metadata = {}) => {
     const key = typeof panelId === 'string' && panelId ? panelId : 'unknown';
     missionConsoleBridgeInstancesRef.current = {
@@ -276,7 +308,8 @@ export default function App() {
         hasBridgeCallback: metadata.hasBridgeCallback !== false,
       },
     };
-  }, []);
+    publishMissionConsoleBridgeDiagnostics();
+  }, [publishMissionConsoleBridgeDiagnostics]);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
     const nextProjection = projection || null;
     const sourceSurface = typeof options?.sourceSurface === 'string' && options.sourceSurface ? options.sourceSurface : 'unknown';
@@ -289,35 +322,21 @@ export default function App() {
     operatorReliefBridgePublishedAtRef.current = publishedAt;
     const publisherPanelId = options?.panelId || sourceSurface;
     missionConsoleBridgeLastPublisherRef.current = { panelId: publisherPanelId, sourceSurface };
-    const bridgeInstances = Object.values(missionConsoleBridgeInstancesRef.current || {});
-    const instanceIds = bridgeInstances.map((entry) => entry.panelId);
-    const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
-    const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
-    const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
-    const visibleInstancePublished = visibleInstance ? visibleInstance.panelId === publisherPanelId : false;
-    setOperatorReliefProjectionBridge({
+    publishMissionConsoleBridgeDiagnostics({
+      projection: nextProjection,
+      published: 'yes',
+      sourceSurface,
+      publisherPanelId,
+    });
+    setOperatorReliefProjectionBridge((prev) => ({
       projection: nextProjection,
       diagnostics: {
-        published: 'yes',
-        sourceSurface,
-        sourcePanelId: publisherPanelId,
-        missionConsoleInstanceCount: instanceIds.length,
-        missionConsoleInstanceIds: instanceIds,
-        missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
-        missionConsoleBridgeCapableInstanceIds: bridgeCapableInstanceIds,
-        missionConsoleInstancesMissingBridgeCallback: missingBridgeCallbackIds,
-        missionConsoleLastPublishingInstanceId: publisherPanelId,
-        missionConsoleLastPublishingSourceSurface: sourceSurface,
-        missionConsoleVisibleInstancePublished: visibleInstancePublished ? 'yes' : 'no',
-        missionConsoleBridgeParityStatus: missingBridgeCallbackIds.length === 0 ? 'OK' : 'FAIL',
-        missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length === 0 ? 'none' : 'missing-bridge-callback',
+        ...(prev?.diagnostics || {}),
         projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
         agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
-        storeUpdated: 'yes',
-        lastUpdatedAt: publishedAt,
       },
-    });
-  }, [setOperatorReliefProjectionBridge]);
+    }));
+  }, [publishMissionConsoleBridgeDiagnostics, setOperatorReliefProjectionBridge]);
   const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {
     const sourceSurface = options?.sourceSurface || panelId || 'unknown';
     registerMissionConsoleBridgeInstance(panelId, {
@@ -328,6 +347,9 @@ export default function App() {
     });
     return {
       panelId,
+      onMissionConsoleInstanceRegistration: (registeredPanelId, registrationOptions = {}) => {
+        registerMissionConsoleBridgeInstance(registeredPanelId || panelId, { ...options, ...registrationOptions, sourceSurface });
+      },
       onOperatorReliefProjectionUpdate: (projection, callbackOptions = {}) => {
         handleOperatorReliefProjectionUpdate(projection, { ...callbackOptions, panelId, sourceSurface });
       },
