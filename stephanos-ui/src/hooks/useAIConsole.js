@@ -410,9 +410,28 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const agentRealityLoopProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
     || chatContextPack?.inputMissionState?.agentRealityLoopProjection
     || {};
+  const matchedRule = String(chatContextPack?.intentClassifierMatchedRule || compact?.intentClassifierMatchedRule || '').trim().toLowerCase();
+  const firstMatchingRule = String(chatContextPack?.firstMatchingRule || compact?.firstMatchingRule || '').trim().toLowerCase();
+  const explicitIntentMatched = String(chatContextPack?.contextForPrompt?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop';
   const agentRealityLoopTermsDetected = /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/.test(
     String(chatContextPack?.matchInput || '').toLowerCase(),
   );
+  const agentRealityLoopContextRecognized = matchedRule === 'agent-reality-loop'
+    || firstMatchingRule === 'agent-reality-loop'
+    || explicitIntentMatched
+    || agentRealityLoopTermsDetected;
+  const projectionStatus = String(agentRealityLoopProjection?.status || agentRealityLoopProjection?.loopStatus || '').trim().toLowerCase();
+  const projectionAvailableStatus = ['available', 'active', 'ready'].includes(projectionStatus);
+  const projectionAvailable = projectionAvailableStatus || Object.keys(agentRealityLoopProjection).length > 0;
+  const copyPacketsAvailable = Boolean(
+    agentRealityLoopProjection?.copyCodexPacket
+    && agentRealityLoopProjection?.copyOpenClawPacket
+    && agentRealityLoopProjection?.copyOperatorProofChecklist,
+  );
+  const contextSourceParts = [];
+  if (agentRealityLoopContextRecognized) contextSourceParts.push('chatContext.intent');
+  if (projectionAvailable || projectAwarenessTruth.projectAwarenessStatus !== 'unavailable') contextSourceParts.push('projectAwareness');
+  const contextSource = contextSourceParts.length ? contextSourceParts.join('+') : 'none';
 
   return {
     chat_context_pack_status: projectAwarenessTruth.chatContextPackStatus || compact?.status || (hasPack ? 'active' : 'unavailable'),
@@ -469,12 +488,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     project_awareness_prompt_block_length: 0,
     project_awareness_prompt_sources: 'none',
     mission_planning_prompt_context_used: 'no',
-    agent_reality_loop_context_recognized: agentRealityLoopTermsDetected ? 'yes' : 'no',
-    agent_reality_loop_context_source: agentRealityLoopTermsDetected ? 'chatContext.intent+projectAwareness' : 'none',
-    agent_reality_loop_projection_available: Object.keys(agentRealityLoopProjection).length > 0 ? 'yes' : 'no',
+    agent_reality_loop_context_recognized: agentRealityLoopContextRecognized ? 'yes' : 'no',
+    agent_reality_loop_context_source: contextSource,
+    agent_reality_loop_projection_available: projectionAvailable ? 'yes' : 'no',
     agent_reality_loop_recommended_lead: agentRealityLoopProjection?.recommendedLead || 'hold',
     agent_reality_loop_merge_recommendation: agentRealityLoopProjection?.mergeRecommendation || 'hold',
-    agent_reality_loop_copy_packets_available: ((agentRealityLoopProjection?.copyCodexPacket || agentRealityLoopProjection?.copyOpenClawPacket || agentRealityLoopProjection?.copyOperatorProofChecklist) ? 'yes' : 'no'),
+    agent_reality_loop_copy_packets_available: copyPacketsAvailable ? 'yes' : 'no',
   };
 }
 
