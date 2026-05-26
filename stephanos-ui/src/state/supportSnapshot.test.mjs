@@ -2422,6 +2422,27 @@ test('support snapshot normalizes live mission-planning contradiction when proje
   assert.doesNotMatch(snapshot, /Chat Context Mission State: unknown/);
 });
 
+test('support snapshot exposes agent reality loop proof lines from execution metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        agent_reality_loop_context_recognized: 'yes',
+        agent_reality_loop_context_source: 'chatContext.intent+projectAwareness',
+        agent_reality_loop_projection_available: 'yes',
+        agent_reality_loop_recommended_lead: 'codex',
+        agent_reality_loop_merge_recommendation: 'hold',
+        agent_reality_loop_copy_packets_available: 'yes',
+      },
+    },
+  });
+  assert.match(snapshot, /Agent Reality Loop Context Recognized: yes/);
+  assert.match(snapshot, /Agent Reality Loop Context Source: chatContext\.intent\+projectAwareness/);
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Recommended Lead: codex/);
+  assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
+  assert.match(snapshot, /Agent Reality Loop Copy Packets Available: yes/);
+});
+
 test('support snapshot reads chat context for stephanos-mission-console latest execution path', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {

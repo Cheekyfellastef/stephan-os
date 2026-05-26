@@ -174,6 +174,22 @@ test('codex/openclaw routing prompts classify as work-routing and include co-bui
   }
 });
 
+test('agent reality loop prompts classify as architecture-guidance and use project-aware subsystems', () => {
+  const pack = buildChatContextPack({
+    operatorMessage: 'tell me about the agent reality loop',
+    missionState: {
+      operatorReliefProjection: {
+        agentRealityLoopProjection: { loopStatus: 'active', recommendedLead: 'codex' },
+      },
+    },
+  });
+  assert.equal(pack.recommendedResponseMode, 'architecture-guidance');
+  assert.equal(pack.intentClassifierMatchedRule, 'agent-reality-loop');
+  assert.ok(pack.affectedSubsystems.includes('operator-relief'));
+  assert.ok(pack.contextProviderIdsUsed.includes('missionState'));
+  assert.match(pack.recommendedNextAction, /Agent Reality Loop V1 projection/i);
+});
+
 test('project awareness degrades truthfully when mission intelligence is missing', () => {
   const pack = buildChatContextPack({ operatorMessage: 'what is the current main mission?', missionState: { mode: 'active' } });
   assert.equal(pack.compactSummary.projectAwareness.status, 'degraded');
