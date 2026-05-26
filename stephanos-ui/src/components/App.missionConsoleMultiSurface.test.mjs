@@ -115,4 +115,7 @@ test('App operator relief projection handler records source surface and bridge d
   assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection \}\);/);
   assert.match(appSource, /sourceSurface,/);
   assert.match(appSource, /createMissionConsoleTileBridgeProps\(/);
+  assert.match(appSource, /onMissionConsoleInstanceRegister:/);
+  assert.match(appSource, /updateOperatorReliefBridgeDiagnostics\(null\);/);
+  assert.match(appSource, /missionConsoleBridgeParityBlocker: parityBlocker,/);
 });

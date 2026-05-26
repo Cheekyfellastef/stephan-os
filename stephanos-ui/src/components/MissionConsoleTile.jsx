@@ -109,6 +109,7 @@ function MissionConsoleTile({
   orchestrationTruth = null,
   agentTaskProjection = null,
   onOperatorReliefProjectionUpdate = () => {},
+  onMissionConsoleInstanceRegister = () => {},
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
@@ -923,6 +924,17 @@ function MissionConsoleTile({
   }
 
   const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout[panelId] !== false;
+  useEffect(() => {
+    onMissionConsoleInstanceRegister({
+      panelId,
+      sourceSurface: panelId,
+      isVisible: missionConsolePanelOpen,
+      hasOperatorReliefProjectionUpdateCallback: typeof onOperatorReliefProjectionUpdate === 'function',
+      bridgeCapable: typeof onOperatorReliefProjectionUpdate === 'function',
+      surfaceMode: forcePanelOpen ? 'embedded-force-open' : 'workspace-pane',
+      registeredAt: new Date().toISOString(),
+    });
+  }, [forcePanelOpen, missionConsolePanelOpen, onMissionConsoleInstanceRegister, onOperatorReliefProjectionUpdate, panelId]);
   const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
   const missionBrainPanelOpen = uiLayout.missionConsoleMissionBrainPanel !== false;
   const operatorReliefSummaryPanelOpen = uiLayout.missionConsoleOperatorReliefSummaryPanel !== false;

@@ -3227,3 +3227,21 @@ test('support snapshot never reports availability blocker none when projection i
   assert.match(snapshot, /Agent Reality Loop Availability Blocker: projection-missing-from-command-deck-path/);
   assert.doesNotMatch(snapshot, /Agent Reality Loop Availability Blocker: none/);
 });
+
+test('support snapshot reports mission console instance diagnostics independently from projection publish', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_instance_count: '2',
+        mission_console_instance_ids: 'aiCoreMissionConsolePanel, missionConsolePanel',
+        mission_console_bridge_capable_instance_ids: 'aiCoreMissionConsolePanel, missionConsolePanel',
+        mission_console_bridge_parity_status: 'WARN',
+        mission_console_bridge_parity_blocker: 'projection-not-published',
+        operator_relief_bridge_published: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Instance Count: 2/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
+  assert.doesNotMatch(snapshot, /Mission Console Bridge Parity Blocker: bridge-instance-diagnostics-unavailable/);
+});
